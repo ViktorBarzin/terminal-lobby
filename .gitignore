@@ -1,0 +1,15 @@
+# Built Go binaries — produced by CI / local builds, never committed.
+tmux-api/tmux-api
+clipboard-upload/clipboard-upload
+/tmp-build/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Optional local config
+.env
+.env.local

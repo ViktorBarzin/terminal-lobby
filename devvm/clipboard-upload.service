@@ -1,0 +1,11 @@
+[Unit]
+Description=Clipboard Image Upload Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/clipboard-upload
+Restart=always
+User=wizard
+
+[Install]
+WantedBy=multi-user.target
