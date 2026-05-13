@@ -35,42 +35,39 @@ for bookmarks / CLI links.
 
 ## Deployment
 
-CI/CD via Woodpecker (`.woodpecker.yml`): on push to master, build the
-two Go binaries (`linux/amd64`), SSH to `192.0.2.10`, install
-binaries + frontend + systemd units + config, daemon-reload, restart
-the affected services.
-
-Manual deploy:
+For now: **manual deploy via `./scripts/deploy.sh`** from a workstation
+that can SSH `wizard@192.0.2.10`. The script cross-builds the Go
+binaries, SCPs all artefacts, installs them under `sudo`, runs
+`daemon-reload`, restarts services, and smoke-tests `/whoami` +
+`/health`.
 
 ```bash
-DEVVM=192.0.2.10
-( cd tmux-api && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/tmux-api . )
-( cd clipboard-upload && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/clipboard-upload . )
-
-scp /tmp/tmux-api /tmp/clipboard-upload $DEVVM:/tmp/
-scp frontend/index.html $DEVVM:/tmp/
-scp devvm/tmux-attach.sh devvm/ttyd-user-map devvm/sudoers.d-ttyd-users $DEVVM:/tmp/
-scp devvm/*.service devvm/*.timer $DEVVM:/tmp/
-
-ssh $DEVVM '
-  sudo install -m 0755 /tmp/tmux-api          /usr/local/bin/tmux-api
-  sudo install -m 0755 /tmp/clipboard-upload  /usr/local/bin/clipboard-upload
-  sudo install -m 0755 /tmp/tmux-attach.sh    /usr/local/bin/tmux-attach.sh
-  sudo install -m 0644 /tmp/index.html        /usr/local/share/ttyd/index.html
-  sudo install -m 0644 /tmp/ttyd-user-map     /etc/ttyd-user-map
-  sudo install -m 0440 -o root -g root /tmp/sudoers.d-ttyd-users /etc/sudoers.d/ttyd-users
-  sudo visudo -cf /etc/sudoers.d/ttyd-users
-  for u in ttyd ttyd-ro tmux-api clipboard-upload clipboard-cleanup; do
-    sudo install -m 0644 /tmp/$u.service /etc/systemd/system/$u.service 2>/dev/null || true
-  done
-  sudo install -m 0644 /tmp/clipboard-cleanup.timer /etc/systemd/system/clipboard-cleanup.timer
-  sudo systemctl daemon-reload
-  sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
-  sudo systemctl enable --now clipboard-cleanup.timer
-  rm /tmp/{tmux-api,clipboard-upload,tmux-attach.sh,index.html,ttyd-user-map,sudoers.d-ttyd-users}
-  rm /tmp/*.service /tmp/*.timer
-'
+./scripts/deploy.sh                      # full deploy
+DEVVM=192.0.2.10 ./scripts/deploy.sh     # explicit host
+SKIP_BUILD=1 ./scripts/deploy.sh         # reuse ./out/ binaries
 ```
+
+### CI status — TODO
+
+`.woodpecker.yml` is ready and the deploy SSH key is provisioned
+(`secret/woodpecker/devvm_ssh_key`), but **Forgejo-side activation is
+blocked**:
+
+- Woodpecker user `viktor` (forge_id=2) cannot activate `viktor/terminal-lobby`
+  in the current installation — returns HTTP 500 on activation, same
+  symptom that blocked `viktor/payslip-ingest` previously.
+- Forgejo Actions is not enabled in `app.ini` and there's no
+  `forgejo-runner` provisioned in the cluster.
+
+Either of these unblocks CI:
+1. **Enable Forgejo Actions**: add `[actions] ENABLED = true` to
+   Forgejo `app.ini`, restart, then deploy a `forgejo-runner` Helm
+   release in a new Terraform stack. Move `.woodpecker.yml` →
+   `.forgejo/workflows/deploy.yml` (similar syntax, native YAML).
+2. **Fix Woodpecker ↔ Forgejo activation** (root cause of the
+   HTTP 500 unknown — needs server logs).
+
+Until then: `./scripts/deploy.sh` after each push.
 
 ## Per-user setup
 
