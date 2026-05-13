@@ -1,0 +1,6 @@
+[Unit]
+Description=Clean old clipboard images
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/find /tmp/clipboard-images -type f -mtime +7 -delete

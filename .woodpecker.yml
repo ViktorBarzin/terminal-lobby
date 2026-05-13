@@ -1,0 +1,99 @@
+# Build + deploy terminal-lobby to the DevVM (10.0.10.10).
+#
+# Two stages:
+#  1. build-binaries  — cross-compile the two Go services for linux/amd64.
+#  2. deploy          — SSH to the DevVM, install binaries + frontend +
+#                       systemd units + config, daemon-reload, restart
+#                       affected services.
+#
+# Secrets (Woodpecker repo-secrets, also mirrored in Vault for recovery):
+#   - devvm_ssh_key  : ed25519 private key. Public is in
+#                      wizard@10.0.10.10:~/.ssh/authorized_keys with the
+#                      "woodpecker-terminal-lobby" comment. Mirror at
+#                      secret/woodpecker/devvm_ssh_key.
+
+when:
+  event: [push, manual]
+  branch: master
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      attempts: 5
+      backoff: 10s
+
+steps:
+  - name: build-binaries
+    image: golang:1.23-alpine
+    commands:
+      - apk add --no-cache git
+      - mkdir -p out
+      - (cd tmux-api          && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../out/tmux-api          .)
+      - (cd clipboard-upload  && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../out/clipboard-upload  .)
+      - ls -la out/
+
+  - name: deploy
+    image: alpine:3.20
+    depends_on: [build-binaries]
+    environment:
+      DEVVM_SSH_KEY:
+        from_secret: devvm_ssh_key
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$DEVVM_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      # Pin host key. CI's known_hosts is ephemeral, so accept-new on first pull is safe enough.
+      - ssh-keyscan -t ed25519 10.0.10.10 >> ~/.ssh/known_hosts 2>/dev/null
+      # Stage everything in /tmp on the DevVM, then install with sudo in one shell.
+      - scp -o BatchMode=yes out/tmux-api           wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes out/clipboard-upload   wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes frontend/index.html               wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/tmux-attach.sh              wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/ttyd-user-map               wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/sudoers.d-ttyd-users        wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/ttyd.service                wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/ttyd-ro.service             wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/tmux-api.service            wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/clipboard-upload.service    wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/clipboard-cleanup.service   wizard@10.0.10.10:/tmp/
+      - scp -o BatchMode=yes devvm/clipboard-cleanup.timer     wizard@10.0.10.10:/tmp/
+      - |
+        ssh -o BatchMode=yes wizard@10.0.10.10 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          sudo install -m 0755 /tmp/tmux-api         /usr/local/bin/tmux-api
+          sudo install -m 0755 /tmp/clipboard-upload /usr/local/bin/clipboard-upload
+          sudo install -m 0755 /tmp/tmux-attach.sh   /usr/local/bin/tmux-attach.sh
+          sudo install -m 0644 /tmp/index.html       /usr/local/share/ttyd/index.html
+          sudo install -m 0644 /tmp/ttyd-user-map    /etc/ttyd-user-map
+          sudo install -m 0440 -o root -g root /tmp/sudoers.d-ttyd-users /etc/sudoers.d/ttyd-users
+          sudo visudo -cf /etc/sudoers.d/ttyd-users
+          for u in ttyd ttyd-ro tmux-api clipboard-upload clipboard-cleanup; do
+            sudo install -m 0644 /tmp/$u.service /etc/systemd/system/$u.service
+          done
+          sudo install -m 0644 /tmp/clipboard-cleanup.timer /etc/systemd/system/clipboard-cleanup.timer
+          sudo systemctl daemon-reload
+          sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
+          sudo systemctl enable --now clipboard-cleanup.timer
+          rm -f /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/index.html
+          rm -f /tmp/ttyd-user-map /tmp/sudoers.d-ttyd-users
+          rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
+          rm -f /tmp/clipboard-upload.service /tmp/clipboard-cleanup.service /tmp/clipboard-cleanup.timer
+          systemctl is-active ttyd ttyd-ro tmux-api clipboard-upload
+        REMOTE
+
+  - name: smoke-test
+    image: alpine:3.20
+    depends_on: [deploy]
+    environment:
+      DEVVM_SSH_KEY:
+        from_secret: devvm_ssh_key
+    commands:
+      - apk add --no-cache openssh-client curl
+      - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      - printf '%s\n' "$DEVVM_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      - ssh-keyscan -t ed25519 10.0.10.10 >> ~/.ssh/known_hosts 2>/dev/null
+      - ssh -o BatchMode=yes wizard@10.0.10.10 'curl -sf -H "X-Authentik-Username: vbarzin" http://localhost:7684/whoami | grep -q wizard'
+      - ssh -o BatchMode=yes wizard@10.0.10.10 'curl -sf http://localhost:7683/health'

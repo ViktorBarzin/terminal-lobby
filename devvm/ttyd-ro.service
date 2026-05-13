@@ -1,0 +1,11 @@
+[Unit]
+Description=ttyd Read-Only Terminal Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ttyd -R -p 7682 tmux new-session -A -s read-only -c /home/wizard/code
+Restart=always
+User=wizard
+
+[Install]
+WantedBy=multi-user.target
