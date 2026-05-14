@@ -8,6 +8,35 @@ iframe that swaps between sessions on click. Direct-linked sessions
 (`?arg=<name>` at the top level) bypass the lobby and render fullscreen
 for bookmarks / CLI links.
 
+![lobby with an active session, slate theme](docs/screenshots/lobby-active-session.png)
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/lobby-slate.png"  alt="Slate theme — default"></td>
+    <td><img src="docs/screenshots/lobby-carbon.png" alt="Carbon theme — warm dark"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Slate (default) — cool dark, electric blue accent</sub></td>
+    <td align="center"><sub>Carbon — warm dark, restrained amber</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/lobby-mono.png" alt="Mono theme — greyscale"></td>
+    <td><img src="docs/screenshots/lobby-ink.png"  alt="Ink theme — warm paper light"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Mono — strict greyscale</sub></td>
+    <td align="center"><sub>Ink — warm paper, terracotta accent</sub></td>
+  </tr>
+</table>
+
+The `‹` toggle in the top of the sidebar collapses it for a fullscreen
+terminal view; click `›` to bring it back. Choice persists per browser
+(localStorage).
+
+![sidebar collapsed — fullscreen terminal](docs/screenshots/sidebar-collapsed.png)
+
 ## Components
 
 | Piece | Where it runs | Port | Purpose |
