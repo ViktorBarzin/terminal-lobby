@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -21,7 +22,19 @@ const (
 	tmuxBinary   = "/usr/bin/tmux"
 	sudoBinary   = "/usr/bin/sudo"
 	tmuxListFmt  = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}"
+
+	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
+	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
+	// matches that interval — every other poll lands inside the window
+	// and skips the `sudo tmux list-sessions` fork. Concurrent
+	// pollers (e.g. two browser tabs open by the same identity) also
+	// coalesce. Mutations (kill / rename) invalidate per-user, so a
+	// user's own action shows up immediately. New sessions created
+	// outside the API (via ttyd / shell) can lag by up to one TTL.
+	sessionsTTL = 5 * time.Second
 )
+
+var sessionsCacheInstance = newSessionsCache(sessionsTTL)
 
 var sessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
@@ -148,16 +161,26 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 	if osUser == "" {
 		return
 	}
-
-	out, err := tmuxCmd(osUser, "list-sessions", "-F", tmuxListFmt).Output()
 	w.Header().Set("Content-Type", "application/json")
-	if err != nil {
-		// tmux exits non-zero when no server is running or there are no
-		// sessions for this uid — treat both as an empty list.
-		w.Write([]byte("[]"))
+
+	if body, ok := sessionsCacheInstance.get(osUser); ok {
+		w.Write(body)
 		return
 	}
+	body := buildSessionsBody(osUser)
+	sessionsCacheInstance.put(osUser, body)
+	w.Write(body)
+}
 
+// buildSessionsBody runs `tmux list-sessions` as osUser and returns the
+// JSON body to write on the wire. Mirrors the historic encoder output:
+// success → marshaled slice + trailing newline; tmux error → "[]"
+// without a newline.
+func buildSessionsBody(osUser string) []byte {
+	out, err := tmuxCmd(osUser, "list-sessions", "-F", tmuxListFmt).Output()
+	if err != nil {
+		return []byte("[]")
+	}
 	sessions := make([]Session, 0)
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if line == "" {
@@ -177,7 +200,11 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 			Created:      created,
 		})
 	}
-	json.NewEncoder(w).Encode(sessions)
+	body, err := json.Marshal(sessions)
+	if err != nil {
+		return []byte("[]")
+	}
+	return append(body, '\n')
 }
 
 func handleSessionByName(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +252,7 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 		http.Error(w, "kill-session failed", http.StatusInternalServerError)
 		return
 	}
+	sessionsCacheInstance.invalidate(osUser)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -261,5 +289,6 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 		http.Error(w, "rename-session failed", http.StatusInternalServerError)
 		return
 	}
+	sessionsCacheInstance.invalidate(osUser)
 	w.WriteHeader(http.StatusNoContent)
 }
