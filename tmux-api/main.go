@@ -135,6 +135,15 @@ func main() {
 
 // /whoami → {authentik, osUser}. Used by the lobby HTML to render the
 // current identity and to preflight access before opening a session.
+//
+// Side effect: invalidates the per-user /sessions cache. /whoami is
+// called on every page load — both the outer lobby AND each iframe
+// in terminal-mode (the iframe loads the same index.html with
+// ?arg=<name>, which re-runs the preflight). So when the user clicks
+// "Create & Open" and the iframe loads, the iframe's /whoami clears
+// the outer lobby's stale cache for that user, and the lobby's next
+// periodic poll shows the new session within one cycle — without
+// having to drop the TTL or push a client-side invalidate call.
 func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
@@ -145,6 +154,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if osUser == "" {
 		return
 	}
+	sessionsCacheInstance.invalidate(osUser)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"authentik": authUser,
