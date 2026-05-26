@@ -155,6 +155,12 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionsCacheInstance.invalidate(osUser)
+	// no-store: the browser MUST hit the server every page load, otherwise
+	// the iframe's call gets served from the HTTP cache and the
+	// invalidate side-effect above never fires — at which point the outer
+	// lobby keeps polling its 5 s tmux-api cache and the freshly-created
+	// session doesn't appear until the user manually refreshes.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"authentik": authUser,
@@ -171,6 +177,10 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 	if osUser == "" {
 		return
 	}
+	// Same reason as /whoami: prevent the browser from caching the list,
+	// otherwise the periodic poll never refreshes from the server's
+	// (already-invalidated) cache.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 
 	if body, ok := sessionsCacheInstance.get(osUser); ok {
