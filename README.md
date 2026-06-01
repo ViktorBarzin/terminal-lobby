@@ -139,3 +139,34 @@ Four themes shipped as CSS variables on `body.theme-{slate,carbon,mono,ink}`.
 Slate is the default. Picker lives at the bottom of the sidebar; choice
 persists in `localStorage` (`tmux-theme`). The iframe re-mounts on
 theme change so the inner xterm re-reads CSS vars.
+
+## Mobile
+
+The lobby works on phones and tablets. The viewport meta declares
+`viewport-fit=cover` + `interactive-widget=resizes-content` so the
+soft keyboard pushes the layout up instead of overlaying it, and the
+xterm pane refits whenever `visualViewport` reports a size change.
+
+**Soft-key toolbar.** On any device that reports `pointer: coarse`, a
+docked toolbar appears above the soft keyboard with keys mobile
+keyboards lack: `Esc`, `Tab`, `Ctrl`, `Alt`, arrow keys, `|`, `` ` ``,
+plus `Copy` / `Paste` / `Kbd` (re-summon keyboard). `Ctrl` and `Alt`
+are one-shot on a single tap and **latch** on a double-tap (within
+400 ms); a small dot on the button indicates latch state. Latched
+modifiers apply to subsequent letters typed on the system soft
+keyboard until you tap the modifier again to release.
+
+**Install as a PWA.** A `manifest.webmanifest` (served from `/`) plus
+the two icons (`/icon-192.png`, `/icon-512.png`) let iOS Safari and
+Chrome Android "Add to Home Screen" install the lobby as a standalone
+app. Run in standalone mode and the URL bar / tab strip disappear,
+giving the terminal the full screen. iOS PWA cookies are sandboxed
+per-app, so on first launch you may need to re-authenticate via
+Authentik.
+
+**Gestures.** `overscroll-behavior: none` suppresses Chrome
+pull-to-refresh and iOS rubber-band on the terminal. `touch-action`
+keeps pinch-zoom available for accessibility but kills double-tap
+zoom. The sidebar auto-collapses on first session activation on
+mobile so the terminal gets the full viewport; the toggle in the
+top-right re-opens it (choice persists in `localStorage`).
