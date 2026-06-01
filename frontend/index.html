@@ -438,6 +438,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.1.0/lib/addon-clipboard.min.js"></script>
     <script>
     (async function() {
         const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
@@ -967,6 +968,15 @@
             console.warn('WebGL addon failed:', e);
         }
 
+        // OSC 52 clipboard: lets tmux's own copy (with `set-clipboard on`) and
+        // any program write straight to the OS clipboard. Wrapped so a CDN/load
+        // hiccup can't break the terminal.
+        try {
+            term.loadAddon(new ClipboardAddon.ClipboardAddon());
+        } catch (e) {
+            console.warn('Clipboard addon failed:', e);
+        }
+
         term.open(document.getElementById('terminal'));
         fitAddon.fit();
 
@@ -1262,7 +1272,9 @@
 
         term.attachCustomKeyEventHandler((e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'c' && term.hasSelection()) {
-                navigator.clipboard.writeText(term.getSelection());
+                navigator.clipboard.writeText(term.getSelection())
+                    .then(() => showToast('Copied', 'success', 1500))
+                    .catch(() => showToast('Copy blocked by browser', 'error', 2500));
                 return false;
             }
             if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
