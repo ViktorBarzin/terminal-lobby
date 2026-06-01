@@ -2,7 +2,14 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="theme-color" content="#0d1117">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Terminal">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/icon-192.png">
     <title>Terminal</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
     <style>
@@ -80,8 +87,19 @@
             margin: 0; padding: 0; height: 100%; overflow: hidden;
             background: var(--bg-page, #0d1117);
             color: var(--text-primary, #e6e8eb);
+            /* Suppress Chrome pull-to-refresh and iOS rubber-band scroll. */
+            overscroll-behavior: none;
         }
-        #terminal { height: 100%; width: 100%; }
+        #terminal {
+            height: 100%; width: 100%;
+            /* Allow scroll + pinch-zoom (accessibility); kill double-tap zoom. */
+            touch-action: pan-x pan-y pinch-zoom;
+        }
+        /* Use dynamic viewport height where supported so the terminal pane
+           shrinks when the soft keyboard opens. Older browsers stick with 100%. */
+        @supports (height: 100dvh) {
+            html, body { height: 100dvh; }
+        }
         .hidden { display: none !important; }
         #toast {
             position: fixed; top: 16px; right: 16px; z-index: 9999;
@@ -95,7 +113,11 @@
         #toast.error { color: var(--danger); border-color: var(--danger); }
         #toast.success { color: var(--success); border-color: var(--success); }
         #paste-btn, #img-btn {
-            position: fixed; bottom: 24px; z-index: 9999;
+            position: fixed;
+            /* --kb-offset is updated from window.visualViewport on touch
+               devices so floating elements lift above the soft keyboard. */
+            bottom: calc(24px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+            z-index: 9999;
             width: 48px; height: 48px; border-radius: 12px;
             background: color-mix(in srgb, var(--accent) 22%, transparent);
             border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
@@ -105,8 +127,15 @@
             transition: background 0.2s, transform 0.1s;
             touch-action: manipulation; -webkit-tap-highlight-color: transparent;
         }
-        #paste-btn { right: 24px; }
-        #img-btn { right: 80px; }
+        #paste-btn { right: calc(24px + env(safe-area-inset-right)); }
+        #img-btn   { right: calc(80px + env(safe-area-inset-right)); }
+        /* On touch devices the floating Paste/Img buttons would sit on top
+           of the soft-key toolbar — lift them above it. */
+        @media (pointer: coarse) {
+            #paste-btn, #img-btn {
+                bottom: calc(72px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+            }
+        }
         #paste-btn:hover, #img-btn:hover {
             background: color-mix(in srgb, var(--accent) 35%, transparent);
         }
@@ -162,8 +191,15 @@
             outline-offset: 2px;
         }
         @media (max-width: 720px) {
-            #sidebar-toggle { left: auto; right: 12px; }
-            #lobby.sidebar-collapsed #sidebar-toggle { left: 12px; right: auto; }
+            #sidebar-toggle {
+                left: auto;
+                right: calc(12px + env(safe-area-inset-right));
+                top: calc(12px + env(safe-area-inset-top));
+            }
+            #lobby.sidebar-collapsed #sidebar-toggle {
+                left: calc(12px + env(safe-area-inset-left));
+                right: auto;
+            }
         }
         #session-frame { width: 100%; height: 100%; border: 0; display: block; }
         #session-frame.hidden { display: none; }
@@ -179,7 +215,9 @@
         .new-row input {
             box-sizing: border-box; padding: 8px 12px; border-radius: 8px;
             border: 1px solid var(--border); background: var(--bg-card);
-            color: var(--text-primary); font-family: inherit; font-size: 13px;
+            color: var(--text-primary); font-family: inherit;
+            /* 16px so iOS Safari doesn't auto-zoom on focus. */
+            font-size: 16px;
         }
         .new-row input:focus { outline: none; border-color: var(--accent); }
         .new-row button {
@@ -266,20 +304,99 @@
         }
 
         @media (max-width: 720px) {
+            /* Stack sidebar + terminal; let the terminal pane take whatever
+               remains after the sidebar so it tracks the soft keyboard via
+               the dynamic viewport height. */
+            #lobby, #lobby-shell { height: 100dvh; }
             #lobby-shell {
                 grid-template-columns: 1fr;
-                grid-template-rows: auto 60vh;
+                grid-template-rows: auto 1fr;
             }
             #lobby-sidebar {
                 border-right: 0; border-bottom: 1px solid var(--border);
                 max-height: 40vh;
             }
-            #lobby-content { height: 60vh; }
+            #lobby-content { height: auto; min-height: 0; }
             #lobby.sidebar-collapsed #lobby-shell {
                 grid-template-columns: 1fr;
-                grid-template-rows: 0 100vh;
+                grid-template-rows: 0 1fr;
             }
-            #lobby.sidebar-collapsed #lobby-content { height: 100vh; }
+            #lobby.sidebar-collapsed #lobby-content { height: auto; }
+        }
+
+        /* Soft-key toolbar — terminal mode only, touch devices only.
+           Built in JS after xterm mounts; lives docked above the soft
+           keyboard (visualViewport-aware). Display:none by default; the
+           pointer:coarse media query un-hides it. */
+        #soft-keys {
+            display: none;
+            position: fixed;
+            left: 0; right: 0;
+            /* Lift above the soft keyboard via --kb-offset (JS-updated from
+               visualViewport). Without this iOS Safari's keyboard would
+               cover the toolbar — the layout viewport doesn't shrink when
+               the keyboard opens, only the visual viewport does. */
+            bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+            z-index: 9998;
+            box-sizing: border-box;
+            padding: 6px calc(6px + env(safe-area-inset-left))
+                     6px calc(6px + env(safe-area-inset-right));
+            background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+            border-top: 1px solid var(--border-strong);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            white-space: nowrap;
+            font-family: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace;
+        }
+        #soft-keys::-webkit-scrollbar { height: 0; }
+        #soft-keys .sk-row {
+            display: inline-flex; gap: 6px; align-items: center;
+        }
+        #soft-keys button {
+            flex: 0 0 auto;
+            min-width: 38px; height: 38px;
+            padding: 0 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-strong);
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font: inherit; font-size: 14px;
+            cursor: pointer;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            transition: background 0.1s, border-color 0.1s, color 0.1s;
+        }
+        #soft-keys button:active {
+            background: color-mix(in srgb, var(--accent) 25%, var(--bg-card-hover));
+        }
+        #soft-keys button.sk-mod.armed {
+            color: var(--accent);
+            border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+            background: color-mix(in srgb, var(--accent) 18%, var(--bg-card-hover));
+        }
+        #soft-keys button.sk-mod.latched {
+            color: var(--bg-page);
+            background: var(--accent);
+            border-color: var(--accent);
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
+        }
+        #soft-keys button.sk-mod.latched::after {
+            content: '•';
+            margin-left: 4px;
+            font-weight: 700;
+        }
+        @media (pointer: coarse) {
+            #soft-keys { display: flex; }
+            /* Shrink the terminal container so its bottom edge meets the
+               top of the soft-key toolbar. Using height (not padding) so
+               xterm's FitAddon — which reads getComputedStyle(parent).height
+               — picks up the reduced size and proposes the right row count. */
+            body.has-soft-keys #terminal {
+                height: calc(100% - 50px - env(safe-area-inset-bottom));
+            }
         }
     </style>
 </head>
@@ -489,6 +606,20 @@
                 });
             }
 
+            // On touch + small screen, the first session activation collapses
+            // the sidebar so the terminal gets the full viewport. We stamp a
+            // localStorage flag so we don't fight users who manually re-open it.
+            const MOBILE_AUTO_COLLAPSE_KEY = 'tmux-mobile-auto-collapsed';
+            const mobileQuery = matchMedia('(pointer: coarse) and (max-width: 720px)');
+            function maybeAutoCollapseSidebar() {
+                if (!mobileQuery.matches) return;
+                try {
+                    if (localStorage.getItem(MOBILE_AUTO_COLLAPSE_KEY) === 'done') return;
+                    localStorage.setItem(MOBILE_AUTO_COLLAPSE_KEY, 'done');
+                } catch (e) { /* localStorage disabled — best-effort */ }
+                setSidebarCollapsed(true);
+            }
+
             function activateSession(name) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
                 if (currentActive === name) { updateActiveCard(); return; }
@@ -501,6 +632,7 @@
                 }
                 document.title = 'tmux: ' + whoami.osUser + '/' + name;
                 updateActiveCard();
+                maybeAutoCollapseSidebar();
             }
 
             function deactivateSession() {
@@ -683,6 +815,13 @@
                 }
             }
 
+            // A newly-created session is spawned by the iframe's WebSocket a
+            // beat after it loads, so the regular 5s poll can miss it and the
+            // per-user API cache can briefly hold a pre-spawn empty list. Poll a
+            // few times in the first seconds so the new card appears within ~1-2s.
+            function quickRefreshAfterCreate() {
+                [700, 1600, 3000, 4500].forEach((ms) => setTimeout(renderLobby, ms));
+            }
             newBtnEl.addEventListener('click', () => {
                 const name = newNameEl.value.trim();
                 if (!NAME_RE.test(name)) {
@@ -691,6 +830,7 @@
                 }
                 newNameEl.value = '';
                 activateSession(name);
+                quickRefreshAfterCreate();
             });
             newNameEl.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') newBtnEl.click();
@@ -775,6 +915,7 @@
         const MSG_RESIZE    = '1';  // client → server: {columns, rows}
 
         let ws = null;
+        let hasConnectedOnce = false;
         const textEncoder = new TextEncoder();
         const textDecoder = new TextDecoder();
 
@@ -804,6 +945,194 @@
 
         document.title = 'tmux: ' + whoami.osUser + '/' + validArg;
 
+        // ------------------------------------------------------------------
+        // Mobile / touch UI — soft keyboard, modifier toolbar, resize plumbing
+        // ------------------------------------------------------------------
+
+        // xterm.js mounts an offscreen <textarea> as its input proxy. On touch
+        // devices the soft keyboard targets that textarea, so we harden it:
+        //   - autocorrect/spellcheck/etc off (no inline suggestions)
+        //   - type=password suppresses Gboard predictive text (xterm.js #2403),
+        //     which would otherwise inject duplicate/spurious keystrokes
+        //   - font-size 16px prevents iOS Safari auto-zoom on focus
+        const helperTextarea = document.querySelector('.xterm-helper-textarea');
+        if (helperTextarea) {
+            helperTextarea.setAttribute('autocorrect', 'off');
+            helperTextarea.setAttribute('autocapitalize', 'off');
+            helperTextarea.setAttribute('autocomplete', 'off');
+            helperTextarea.setAttribute('spellcheck', 'false');
+            helperTextarea.setAttribute('type', 'password');
+            helperTextarea.setAttribute('aria-label', 'terminal input');
+            helperTextarea.style.fontSize = '16px';
+        }
+
+        const isCoarsePointer = matchMedia('(pointer: coarse)').matches;
+        const terminalEl = document.getElementById('terminal');
+
+        // Shared modifier state for the soft-key toolbar (only populated on
+        // touch devices). Reads in the term.onData wrapper below.
+        let softMods = null;
+        let consumeSoftMods = () => {};
+
+        if (isCoarsePointer) {
+            // Touch behaviour on the terminal canvas:
+            //   tap  → focus helper textarea → soft keyboard appears
+            //   swipe → dispatch synthetic wheel events on the xterm root.
+            //           xterm forwards them to the PTY (tmux has `mouse on`
+            //           globally) which scrolls copy-mode. Without this,
+            //           there's no way to see scrollback on touch.
+            //
+            // We defer the focus call to touchend with a movement-threshold
+            // check so a swipe never accidentally summons the keyboard.
+            (() => {
+                let startY = null, lastY = null, moved = false;
+                const SWIPE_THRESHOLD = 6;  // px — tap vs. swipe
+                terminalEl.addEventListener('touchstart', (e) => {
+                    if (e.touches.length !== 1) { startY = lastY = null; return; }
+                    startY = lastY = e.touches[0].clientY;
+                    moved = false;
+                }, { passive: true });
+                terminalEl.addEventListener('touchmove', (e) => {
+                    if (e.touches.length !== 1 || lastY === null) return;
+                    const y = e.touches[0].clientY;
+                    const delta = lastY - y;
+                    lastY = y;
+                    if (!moved && Math.abs(startY - y) > SWIPE_THRESHOLD) moved = true;
+                    if (!moved || delta === 0 || !term.element) return;
+                    term.element.dispatchEvent(new WheelEvent('wheel', {
+                        deltaY: delta,
+                        deltaMode: 0,
+                        bubbles: true, cancelable: true,
+                        clientX: 0, clientY: y,
+                    }));
+                }, { passive: true });
+                terminalEl.addEventListener('touchend', () => {
+                    if (!moved && startY !== null) term.focus();
+                    startY = lastY = null;
+                    moved = false;
+                }, { passive: true });
+            })();
+
+            softMods = { ctrl: 'idle', alt: 'idle' };
+            const modTimers = { ctrl: null, alt: null };
+            const DOUBLE_TAP_MS = 400;
+
+            // Build the toolbar first so paintMod can find buttons by data-mod.
+            const toolbar = document.createElement('div');
+            toolbar.id = 'soft-keys';
+            toolbar.setAttribute('role', 'toolbar');
+            toolbar.setAttribute('aria-label', 'Terminal keys');
+            const row = document.createElement('div');
+            row.className = 'sk-row';
+            toolbar.appendChild(row);
+
+            function paintMod(name) {
+                const btn = toolbar.querySelector('[data-mod="' + name + '"]');
+                if (!btn) return;
+                btn.classList.remove('armed', 'latched');
+                if (softMods[name] === 'armed')   btn.classList.add('armed');
+                if (softMods[name] === 'latched') btn.classList.add('latched');
+            }
+            function tapMod(name) {
+                clearTimeout(modTimers[name]);
+                const cur = softMods[name];
+                if (cur === 'idle') {
+                    // First tap arms; a second tap within DOUBLE_TAP_MS latches.
+                    softMods[name] = 'armed';
+                    modTimers[name] = setTimeout(() => {
+                        if (softMods[name] === 'armed') {
+                            softMods[name] = 'idle';
+                            paintMod(name);
+                        }
+                    }, DOUBLE_TAP_MS);
+                } else if (cur === 'armed') {
+                    softMods[name] = 'latched';
+                } else {
+                    softMods[name] = 'idle';
+                }
+                paintMod(name);
+            }
+            consumeSoftMods = function() {
+                // Drop armed → idle, leave latched. Called after every normal key.
+                for (const name of ['ctrl', 'alt']) {
+                    if (softMods[name] === 'armed') {
+                        softMods[name] = 'idle';
+                        paintMod(name);
+                    }
+                }
+            };
+
+            function makeBtn(label, onTap, opts) {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.textContent = label;
+                if (opts && opts.cls)     b.classList.add(opts.cls);
+                if (opts && opts.dataMod) b.setAttribute('data-mod', opts.dataMod);
+                if (opts && opts.ariaLabel) b.setAttribute('aria-label', opts.ariaLabel);
+                // pointerdown + preventDefault: stop the button from taking
+                // focus away from the helper textarea (which would collapse
+                // the soft keyboard between keystrokes).
+                b.addEventListener('pointerdown', (ev) => {
+                    ev.preventDefault();
+                    try { onTap(); } catch (err) { console.error(err); }
+                    // Re-arm helper textarea for the next physical keystroke —
+                    // but skip on modifiers and arrows so tapping a navigation
+                    // key doesn't summon the keyboard if it wasn't already up.
+                    const skipFocus = b.classList.contains('sk-mod')
+                                   || (opts && opts.noFocus);
+                    if (!skipFocus) term.focus();
+                });
+                return b;
+            }
+
+            // A normal toolbar key — pre-baked bytes (escape sequences for
+            // Esc/Tab/arrows, literal '|' / '`'). Always consume armed
+            // modifiers; the bytes themselves are sent as-is (no Ctrl-byte
+            // transform on toolbar keys — that only makes sense for letters
+            // typed on the system soft keyboard).
+            function sendKey(bytes) {
+                sendInput(bytes);
+                consumeSoftMods();
+            }
+
+            row.appendChild(makeBtn('Esc',  () => sendKey('\x1b')));
+            row.appendChild(makeBtn('Tab',  () => sendKey('\t')));
+            row.appendChild(makeBtn('Ctrl', () => tapMod('ctrl'),
+                { cls: 'sk-mod', dataMod: 'ctrl', ariaLabel: 'Ctrl modifier' }));
+            row.appendChild(makeBtn('Alt',  () => tapMod('alt'),
+                { cls: 'sk-mod', dataMod: 'alt',  ariaLabel: 'Alt modifier' }));
+            row.appendChild(makeBtn('↑', () => sendKey('\x1b[A'), { ariaLabel: 'Up arrow',    noFocus: true }));
+            row.appendChild(makeBtn('↓', () => sendKey('\x1b[B'), { ariaLabel: 'Down arrow',  noFocus: true }));
+            row.appendChild(makeBtn('←', () => sendKey('\x1b[D'), { ariaLabel: 'Left arrow',  noFocus: true }));
+            row.appendChild(makeBtn('→', () => sendKey('\x1b[C'), { ariaLabel: 'Right arrow', noFocus: true }));
+            row.appendChild(makeBtn('|',  () => sendKey('|')));
+            row.appendChild(makeBtn('`',  () => sendKey('`')));
+
+            row.appendChild(makeBtn('Copy', async () => {
+                const sel = term.getSelection();
+                if (!sel) { showToast('No selection', 'error', 1500); return; }
+                try {
+                    await navigator.clipboard.writeText(sel);
+                    showToast('Copied', 'success', 1500);
+                } catch (err) {
+                    showToast('Copy failed', 'error', 2500);
+                }
+            }));
+            row.appendChild(makeBtn('Paste', async () => {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    if (text) sendInput(text);
+                } catch (err) {
+                    showToast('Clipboard access denied', 'error', 2500);
+                }
+            }));
+            row.appendChild(makeBtn('Kbd', () => term.focus(),
+                { ariaLabel: 'Show keyboard' }));
+
+            document.body.appendChild(toolbar);
+            document.body.classList.add('has-soft-keys');
+        }
+
         function sendInput(data) {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const payload = textEncoder.encode(data);
@@ -823,7 +1152,28 @@
             ws.send(buf.buffer);
         }
 
-        term.onData(sendInput);
+        // term.onData wrapper: when a soft-toolbar modifier is armed/latched,
+        // remap the first char (Ctrl-letter or Alt-prefix) before sending.
+        // On desktop softMods stays null and this falls through to sendInput.
+        term.onData((data) => {
+            if (softMods && data) {
+                const ctrlActive = softMods.ctrl !== 'idle';
+                const altActive  = softMods.alt  !== 'idle';
+                if (ctrlActive || altActive) {
+                    const first = data.charAt(0);
+                    const rest  = data.slice(1);
+                    let mapped  = first;
+                    if (ctrlActive && /^[a-zA-Z]$/.test(first)) {
+                        mapped = String.fromCharCode(first.toLowerCase().charCodeAt(0) & 0x1f);
+                    }
+                    if (altActive) mapped = '\x1b' + mapped;
+                    sendInput(mapped + rest);
+                    consumeSoftMods();
+                    return;
+                }
+            }
+            sendInput(data);
+        });
         term.onBinary((data) => {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const bytes = new Uint8Array(data.length + 1);
@@ -833,7 +1183,55 @@
         });
 
         term.onResize(() => sendResize());
-        window.addEventListener('resize', () => fitAddon.fit());
+
+        // Refit on every viewport change. visualViewport tracks the visible
+        // area below the soft keyboard on iOS Safari (and is the most
+        // reliable signal on Chrome Android too). rAF-debounce coalesces
+        // multiple events fired in the same frame (rotate + keyboard).
+        // Resize is split into a fast visual pass and a debounced fit:
+        //   syncViewport() — rAF-fast. Updates --kb-offset AND the terminal's
+        //     pixel height from visualViewport. iOS Safari does NOT shrink the
+        //     layout viewport when the soft keyboard rises (only visualViewport
+        //     reflects it), so a CSS height:100% terminal renders its bottom
+        //     rows — the prompt — behind the keyboard. Driving height off
+        //     visualViewport keeps the prompt visible.
+        //   refit() — debounced fitAddon.fit(). fit() emits a tmux resize on
+        //     every call; the keyboard animates over ~250ms firing a burst of
+        //     resize/scroll events, so we coalesce them into a single resize
+        //     instead of thrashing tmux (the "glitchy resize" on mobile).
+        function syncViewport() {
+            if (!window.visualViewport) return;
+            const vv = window.visualViewport;
+            const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+            document.documentElement.style.setProperty('--kb-offset', kb + 'px');
+            if (document.body.classList.contains('has-soft-keys')) {
+                const tb = document.getElementById('soft-keys');
+                const tbH = tb ? tb.offsetHeight : 0;
+                terminalEl.style.height = Math.max(0, vv.height - tbH) + 'px';
+            }
+        }
+        let kbRafScheduled = false;
+        let fitTimer = null;
+        function refit() {
+            if (!kbRafScheduled) {
+                kbRafScheduled = true;
+                requestAnimationFrame(() => { kbRafScheduled = false; syncViewport(); });
+            }
+            clearTimeout(fitTimer);
+            fitTimer = setTimeout(() => {
+                try { fitAddon.fit(); } catch (e) { console.warn('fit failed:', e); }
+            }, 120);
+        }
+        window.addEventListener('resize', refit);
+        window.addEventListener('orientationchange', refit);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', refit);
+            window.visualViewport.addEventListener('scroll', refit);
+        }
+        // Seed offset + height + an immediate fit on first frame so floating
+        // elements and the terminal are sized correctly before any event fires.
+        syncViewport();
+        try { fitAddon.fit(); } catch (e) {}
 
         term.attachCustomKeyEventHandler((e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'c' && term.hasSelection()) {
@@ -939,6 +1337,26 @@
             term.focus();
         });
 
+        // Reconnect guard: ttyd attaches with `tmux new-session -A`, so a blind
+        // reconnect RECREATES a session that was just killed. Returns false only
+        // when we positively confirm the session is gone; any uncertainty
+        // (network/API error) returns true so a transient blip still reconnects.
+        async function sessionStillExists() {
+            try {
+                const resp = await fetch(SESSIONS_API, { credentials: 'same-origin' });
+                if (!resp.ok) return true;
+                const list = await resp.json();
+                return Array.isArray(list) && list.some((s) => s.name === validArg);
+            } catch (e) {
+                return true;
+            }
+        }
+
+        function scheduleReconnect() {
+            term.write('\r\n\x1b[31mDisconnected. Reconnecting...\x1b[0m\r\n');
+            setTimeout(connect, 3000);
+        }
+
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const argSuffix = '?arg=' + encodeURIComponent(validArg);
@@ -954,12 +1372,20 @@
 
                     ws.onopen = () => {
                         console.log('Connected to ttyd (session: ' + validArg + ')');
+                        hasConnectedOnce = true;
                         const initMsg = JSON.stringify({
                             AuthToken: token,
                             columns: term.cols,
                             rows: term.rows
                         });
                         ws.send(initMsg);
+                        // The session now exists (ttyd just ran tmux new-session).
+                        // The lobby's /sessions cache was invalidated on this
+                        // iframe's earlier /whoami, but that fired BEFORE the
+                        // session was spawned — so the lobby may have re-cached an
+                        // empty list. Invalidate again now that it's live so the
+                        // parent lobby's next poll surfaces it promptly.
+                        fetch(WHOAMI_API, { credentials: 'same-origin' }).catch(() => {});
                     };
 
                     ws.onmessage = (event) => {
@@ -988,8 +1414,22 @@
                     };
 
                     ws.onclose = () => {
-                        term.write('\r\n\x1b[31mDisconnected. Reconnecting...\x1b[0m\r\n');
-                        setTimeout(connect, 3000);
+                        // First connection is the create/attach — always retry it.
+                        // After we've connected once, a close may mean the session
+                        // was killed (by this or another client); reconnecting would
+                        // resurrect it via `tmux new-session -A`. Only reconnect if
+                        // the session still exists.
+                        if (!hasConnectedOnce) {
+                            scheduleReconnect();
+                            return;
+                        }
+                        sessionStillExists().then((exists) => {
+                            if (exists) {
+                                scheduleReconnect();
+                            } else {
+                                term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
+                            }
+                        });
                     };
 
                     ws.onerror = (e) => console.error('WebSocket error:', e);
