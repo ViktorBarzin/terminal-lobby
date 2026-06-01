@@ -46,8 +46,11 @@ name="${1:-$os_user}"
 home_dir=$(getent passwd "$os_user" | cut -d: -f6)
 home_dir="${home_dir:-/}"
 
+# Launch via tmux-user-attach so the tmux *server* is parented to the OS
+# user's own systemd manager (user@<uid>.service), not the ttyd.service
+# cgroup. Without this, a `systemctl restart ttyd` kills every session.
 if [[ "$os_user" == "$(id -un)" ]]; then
-    exec tmux new-session -A -s "$name" -c "$home_dir"
+    exec /usr/local/bin/tmux-user-attach "$name" "$home_dir"
 else
-    exec sudo -n -H -u "$os_user" tmux new-session -A -s "$name" -c "$home_dir"
+    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach "$name" "$home_dir"
 fi

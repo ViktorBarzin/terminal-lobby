@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Installed at /usr/local/bin/tmux-user-attach (root:root, mode 0755).
+#
+# Runs AS the target OS user — invoked by tmux-attach.sh, either directly
+# (lobby user == OS user) or via `sudo -n -H -u <user> ...`.
+#
+# Why this exists: ttyd.service runs `sudo -u <user> tmux new-session`. In
+# that non-login sudo context tmux cannot reach the user's D-Bus, so its
+# built-in systemd scope creation no-ops and the tmux *server* is left in
+# the ttyd.service cgroup (system.slice). `Restart=always` on ttyd then
+# means every ttyd restart/redeploy/crash tears down that cgroup and kills
+# the server + ALL of the user's sessions — linger does not help, because
+# linger only protects user@<uid>.service, not system.slice/ttyd.service.
+#
+# Fix: launch tmux inside an explicit `systemd-run --user --scope`, which
+# parents the server to user@<uid>.service/app.slice (linger-protected),
+# exactly where a normal SSH-login tmux server lives. The server then
+# outlives ttyd restarts. Verified: server lands in
+#   user.slice/user-<uid>.slice/user@<uid>.service/app.slice/run-*.scope
+set -euo pipefail
+
+NAME_RE='^[a-zA-Z0-9_-]{1,32}$'
+name="${1:-}"
+[[ "$name" =~ $NAME_RE ]] || name="$(id -un)"
+start_dir="${2:-$HOME}"
+[[ -d "$start_dir" ]] || start_dir="$HOME"
+
+uid="$(id -u)"
+export XDG_RUNTIME_DIR="/run/user/$uid"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
+
+# Only use the user scope when the per-user systemd manager is reachable
+# (linger on + /run/user/<uid> populated). Otherwise fall back to a plain
+# attach so a connection never fails outright.
+if systemctl --user show-environment >/dev/null 2>&1; then
+    exec systemd-run --user --scope --quiet --collect \
+        tmux new-session -A -s "$name" -c "$start_dir"
+fi
+
+exec tmux new-session -A -s "$name" -c "$start_dir"
