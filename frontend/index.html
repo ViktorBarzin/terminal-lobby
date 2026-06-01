@@ -945,6 +945,12 @@
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
             fontSize: 15,
             theme: readTerminalTheme(),
+            // tmux (mouse on) forwards the mouse to copy-mode; native browser
+            // selection requires holding Shift, which xterm bounds to its OWN
+            // scrollback buffer. The default (1000) is why Shift-selecting a big
+            // chunk "runs out". 10000 comfortably exceeds tmux's history-limit
+            // (5000), so Shift+scroll/drag selection reaches the full history.
+            scrollback: 10000,
             allowProposedApi: true
         });
 
