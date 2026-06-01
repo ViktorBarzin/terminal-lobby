@@ -23,7 +23,10 @@ if [[ -n "$auth_local" && -r "$MAP" ]]; then
     ' "$MAP")
 fi
 
+logger -t ttyd-attach "attach: TTYD_USER='${auth_user:-<none>}' arg='${1:-<none>}' os_user='${os_user:-<unresolved>}'"
+
 if [[ -z "$os_user" ]] || ! id "$os_user" >/dev/null 2>&1; then
+    logger -t ttyd-attach "DENIED: no os_user mapping for TTYD_USER='${auth_user:-<missing>}'"
     cat <<EOF
 
   Access denied
@@ -45,6 +48,8 @@ name="${1:-$os_user}"
 
 home_dir=$(getent passwd "$os_user" | cut -d: -f6)
 home_dir="${home_dir:-/}"
+
+logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$home_dir' self='$(id -un)'"
 
 # Launch via tmux-user-attach so the tmux *server* is parented to the OS
 # user's own systemd manager (user@<uid>.service), not the ttyd.service

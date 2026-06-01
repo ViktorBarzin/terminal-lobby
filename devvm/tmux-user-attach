@@ -32,7 +32,10 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
 # Only use the user scope when the per-user systemd manager is reachable
 # (linger on + /run/user/<uid> populated). Otherwise fall back to a plain
 # attach so a connection never fails outright.
-if systemctl --user show-environment >/dev/null 2>&1; then
+scope_ok=no
+if systemctl --user show-environment >/dev/null 2>&1; then scope_ok=yes; fi
+logger -t tmux-user-attach "user=$(id -un) name='$name' dir='$start_dir' scope=$scope_ok"
+if [[ "$scope_ok" == yes ]]; then
     exec systemd-run --user --scope --quiet --collect \
         tmux new-session -A -s "$name" -c "$start_dir"
 fi
