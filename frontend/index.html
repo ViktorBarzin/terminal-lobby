@@ -1275,6 +1275,8 @@
             const text = e.clipboardData.getData('text');
             if (text) {
                 e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
                 sendInput(text);
             }
         }, true);
