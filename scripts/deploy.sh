@@ -61,7 +61,9 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" 'bash -se' <<'REMOTE'
     sudo install -m 0644 /tmp/$u.service /etc/systemd/system/$u.service
   done
   sudo install -m 0644 /tmp/clipboard-cleanup.timer /etc/systemd/system/clipboard-cleanup.timer
-  sudo systemctl daemon-reload
+  # daemon-reload can transiently time out when the devvm is under heavy
+  # interactive load (D-Bus slow to answer); retry once before giving up.
+  sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
   sudo systemctl enable --now clipboard-cleanup.timer
   rm -f /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/index.html
