@@ -893,6 +893,19 @@
             });
             paintThemeButtons();
 
+            // Files go into the terminal (the iframe handles drops). Suppress the
+            // browser's default "open dropped file" navigation if one lands on the
+            // lobby chrome by accident, and point the user at the terminal.
+            window.addEventListener('dragover', (e) => {
+                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
+            });
+            window.addEventListener('drop', (e) => {
+                if (e.dataTransfer && (e.dataTransfer.files || []).length) {
+                    e.preventDefault();
+                    showToast('Open a session and drop files onto the terminal', '', 3500);
+                }
+            });
+
             renderLobby();
             setInterval(renderLobby, 5000);
 
@@ -1338,6 +1351,84 @@
             }
             term.focus();
         });
+
+        // ------------------------------------------------------------------
+        // Drag-and-drop files → upload to /tmp → type the path(s) into the PTY.
+        // Any file type is accepted; the clipboard-upload service saves it under
+        // /tmp/clipboard-files keeping a sanitized original name, and the
+        // absolute path(s) are sent as input so you can use them in a command.
+        // ------------------------------------------------------------------
+        const dropOverlay = document.createElement('div');
+        dropOverlay.id = 'drop-overlay';
+        dropOverlay.textContent = 'Drop files — saved to /tmp, paths typed into the session';
+        Object.assign(dropOverlay.style, {
+            position: 'fixed', inset: '0', zIndex: '9997', display: 'none',
+            alignItems: 'center', justifyContent: 'center', textAlign: 'center',
+            padding: '24px', boxSizing: 'border-box',
+            background: 'color-mix(in srgb, var(--accent) 14%, rgba(0,0,0,0.55))',
+            border: '3px dashed var(--accent)', color: 'var(--text-primary)',
+            font: "600 16px 'JetBrains Mono', Menlo, Monaco, monospace",
+            backdropFilter: 'blur(2px)', webkitBackdropFilter: 'blur(2px)',
+            pointerEvents: 'none'
+        });
+        document.body.appendChild(dropOverlay);
+
+        const dragHasFiles = (e) => !!e.dataTransfer &&
+            Array.from(e.dataTransfer.types || []).includes('Files');
+        let dragDepth = 0;
+        window.addEventListener('dragenter', (e) => {
+            if (!dragHasFiles(e)) return;
+            e.preventDefault();
+            dragDepth++;
+            dropOverlay.style.display = 'flex';
+        });
+        window.addEventListener('dragover', (e) => {
+            if (!dragHasFiles(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        });
+        window.addEventListener('dragleave', (e) => {
+            if (dragDepth === 0) return;
+            e.preventDefault();
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) dropOverlay.style.display = 'none';
+        });
+        window.addEventListener('drop', async (e) => {
+            const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
+            dragDepth = 0;
+            dropOverlay.style.display = 'none';
+            // Only intercept file drops; let text/other drops fall through.
+            if (!files.length) return;
+            e.preventDefault();
+            await uploadDroppedFiles(files);
+        });
+
+        async function uploadDroppedFiles(files) {
+            showToast('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '...', '');
+            const paths = [];
+            for (const f of files) {
+                try {
+                    const fd = new FormData();
+                    fd.append('file', f, f.name);
+                    const resp = await fetch('/clipboard/upload', { method: 'POST', body: fd });
+                    if (!resp.ok) {
+                        showToast('Upload failed (' + f.name + '): ' + (await resp.text()), 'error', 5000);
+                        continue;
+                    }
+                    const { path } = await resp.json();
+                    if (path) paths.push(path);
+                } catch (err) {
+                    showToast('Upload error (' + f.name + '): ' + err.message, 'error', 5000);
+                }
+            }
+            if (paths.length) {
+                // Saved names are sanitized (no spaces/shell specials), so paths
+                // are safe to insert verbatim, space-separated.
+                sendInput(paths.join(' '));
+                showToast('Added ' + paths.length + ' path' + (paths.length > 1 ? 's' : ''), 'success', 4000);
+            }
+            term.focus();
+        }
 
         // Reconnect guard: ttyd attaches with `tmux new-session -A`, so a blind
         // reconnect RECREATES a session that was just killed. Returns false only
