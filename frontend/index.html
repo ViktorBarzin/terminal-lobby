@@ -893,16 +893,24 @@
             });
             paintThemeButtons();
 
-            // Files go into the terminal (the iframe handles drops). Suppress the
-            // browser's default "open dropped file" navigation if one lands on the
-            // lobby chrome by accident, and point the user at the terminal.
+            // Drops on the terminal are handled inside the iframe. If one lands
+            // on the lobby chrome (sidebar) instead, suppress the browser's
+            // default file-open and forward the files to the active session's
+            // iframe (it uploads them and types the paths in). preventDefault is
+            // unconditional — gating it caused Chrome to open the file instead.
             window.addEventListener('dragover', (e) => {
-                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
             });
             window.addEventListener('drop', (e) => {
-                if (e.dataTransfer && (e.dataTransfer.files || []).length) {
-                    e.preventDefault();
-                    showToast('Open a session and drop files onto the terminal', '', 3500);
+                e.preventDefault();
+                const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
+                if (!files.length) return;
+                if (currentActive && frameEl.contentWindow) {
+                    frameEl.contentWindow.postMessage({ type: 'tl-drop-files', files }, location.origin);
+                    showToast('Sent ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' to ' + currentActive, 'success', 3000);
+                } else {
+                    showToast('Open a session first, then drop files', 'error', 3500);
                 }
             });
 
@@ -1357,6 +1365,11 @@
         // Any file type is accepted; the clipboard-upload service saves it under
         // /tmp/clipboard-files keeping a sanitized original name, and the
         // absolute path(s) are sent as input so you can use them in a command.
+        //
+        // preventDefault MUST run on dragover AND drop UNCONDITIONALLY — if it
+        // doesn't, the browser falls back to its default "open the dropped file"
+        // (Chrome opens it in a new tab). Only the overlay + upload are gated on
+        // whether the drag actually carries files.
         // ------------------------------------------------------------------
         const dropOverlay = document.createElement('div');
         dropOverlay.id = 'drop-overlay';
@@ -1373,34 +1386,44 @@
         });
         document.body.appendChild(dropOverlay);
 
-        const dragHasFiles = (e) => !!e.dataTransfer &&
-            Array.from(e.dataTransfer.types || []).includes('Files');
+        // dataTransfer.types is a DOMStringList in some browsers and an array in
+        // others — probe both ways so file detection is reliable.
+        const dragHasFiles = (e) => {
+            const types = e.dataTransfer && e.dataTransfer.types;
+            if (!types) return false;
+            return (types.contains && types.contains('Files')) ||
+                   Array.prototype.indexOf.call(types, 'Files') !== -1;
+        };
         let dragDepth = 0;
         window.addEventListener('dragenter', (e) => {
-            if (!dragHasFiles(e)) return;
             e.preventDefault();
+            if (!dragHasFiles(e)) return;
             dragDepth++;
             dropOverlay.style.display = 'flex';
         });
         window.addEventListener('dragover', (e) => {
-            if (!dragHasFiles(e)) return;
             e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
         });
-        window.addEventListener('dragleave', (e) => {
+        window.addEventListener('dragleave', () => {
             if (dragDepth === 0) return;
-            e.preventDefault();
             dragDepth = Math.max(0, dragDepth - 1);
             if (dragDepth === 0) dropOverlay.style.display = 'none';
         });
-        window.addEventListener('drop', async (e) => {
-            const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
+        window.addEventListener('drop', (e) => {
+            e.preventDefault();
             dragDepth = 0;
             dropOverlay.style.display = 'none';
-            // Only intercept file drops; let text/other drops fall through.
-            if (!files.length) return;
-            e.preventDefault();
-            await uploadDroppedFiles(files);
+            const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
+            if (files.length) uploadDroppedFiles(files);
+        });
+
+        // The lobby (parent) forwards files dropped on its chrome here via
+        // postMessage, so a drop anywhere in the browser ends up in this session.
+        window.addEventListener('message', (e) => {
+            if (e.origin !== location.origin || !e.data || e.data.type !== 'tl-drop-files') return;
+            const files = Array.isArray(e.data.files) ? e.data.files : [];
+            if (files.length) uploadDroppedFiles(files);
         });
 
         async function uploadDroppedFiles(files) {
