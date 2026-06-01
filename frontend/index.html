@@ -970,6 +970,25 @@
         term.open(document.getElementById('terminal'));
         fitAddon.fit();
 
+        // Make the WEB client's mouse fully browser-native (plain wheel scrolls
+        // the viewport, plain drag selects, Ctrl+C copies) WITHOUT touching
+        // tmux's server-side `mouse on` — so the SAME sessions over SSH keep
+        // tmux mouse. tmux (and apps) enable mouse reporting with the private
+        // DECSET sequences CSI ? 1000/1001/1002/1003 h; we intercept those in
+        // xterm's parser and swallow them, so xterm never enters mouse-events
+        // mode. Non-mouse private modes (alt-screen 1049, bracketed paste 2004,
+        // SGR-encoding 1006, …) pass through untouched. Web-only by construction
+        // (this runs in the browser, not on the tmux server).
+        const MOUSE_TRACKING_MODES = new Set([1000, 1001, 1002, 1003]);
+        const swallowMouseTracking = (params) => {
+            if (params.length === 0) return false;
+            for (const p of params) {
+                if (typeof p !== 'number' || !MOUSE_TRACKING_MODES.has(p)) return false;
+            }
+            return true; // every param is a mouse-tracking mode → swallow the enable
+        };
+        term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, swallowMouseTracking);
+
         document.title = 'tmux: ' + whoami.osUser + '/' + validArg;
 
         // ------------------------------------------------------------------
@@ -1004,10 +1023,10 @@
         if (isCoarsePointer) {
             // Touch behaviour on the terminal canvas:
             //   tap  → focus helper textarea → soft keyboard appears
-            //   swipe → dispatch synthetic wheel events on the xterm root.
-            //           xterm forwards them to the PTY (tmux has `mouse on`
-            //           globally) which scrolls copy-mode. Without this,
-            //           there's no way to see scrollback on touch.
+            //   swipe → dispatch synthetic wheel events on the xterm root,
+            //           which scroll xterm's OWN viewport (mouse reporting is
+            //           swallowed client-side — see the CSI handler above), so
+            //           there's a way to scroll back on touch.
             //
             // We defer the focus call to touchend with a movement-threshold
             // check so a swipe never accidentally summons the keyboard.
