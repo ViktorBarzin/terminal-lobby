@@ -90,6 +90,7 @@ func loadUserMap() map[string]string {
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
 	authUser := r.Header.Get(authHeader)
 	if authUser == "" {
+		log.Printf("auth: missing %s header (%s %s)", authHeader, r.Method, r.URL.Path)
 		http.Error(w, "missing "+authHeader, http.StatusUnauthorized)
 		return ""
 	}
@@ -99,6 +100,7 @@ func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
 	}
 	osUser := loadUserMap()[local]
 	if osUser == "" {
+		log.Printf("auth: no terminal account for %q (local=%q, %s %s)", authUser, local, r.Method, r.URL.Path)
 		http.Error(w, fmt.Sprintf("no terminal account for '%s'", authUser), http.StatusForbidden)
 		return ""
 	}
@@ -154,6 +156,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if osUser == "" {
 		return
 	}
+	log.Printf("whoami: auth=%q -> os=%q", authUser, osUser)
 	sessionsCacheInstance.invalidate(osUser)
 	// no-store: the browser MUST hit the server every page load, otherwise
 	// the iframe's call gets served from the HTTP cache and the
