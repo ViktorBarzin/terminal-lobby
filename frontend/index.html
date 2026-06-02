@@ -969,10 +969,19 @@
         }
 
         // OSC 52 clipboard: lets tmux's own copy (with `set-clipboard on`) and
-        // any program write straight to the OS clipboard. Wrapped so a CDN/load
-        // hiccup can't break the terminal.
+        // any program write straight to the OS clipboard. NOTE: this addon's
+        // UMD build exposes the class as the global `ClipboardAddon` directly,
+        // NOT `ClipboardAddon.ClipboardAddon` like fit/webgl — accept both
+        // shapes. Wrapped so a load hiccup can't break the terminal.
         try {
-            term.loadAddon(new ClipboardAddon.ClipboardAddon());
+            const ClipAddon = (typeof ClipboardAddon !== 'undefined')
+                && (ClipboardAddon.ClipboardAddon || ClipboardAddon);
+            if (ClipAddon) {
+                term.loadAddon(new ClipAddon());
+                console.log('clipboard addon (OSC 52) loaded');
+            } else {
+                console.warn('ClipboardAddon global not found');
+            }
         } catch (e) {
             console.warn('Clipboard addon failed:', e);
         }
