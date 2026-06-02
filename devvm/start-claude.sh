@@ -15,16 +15,23 @@ if [ -n "${TMUX:-}" ]; then
 fi
 
 cd /home/wizard/code
-# Do NOT `exec`: if claude exits or fails to launch (bad model, npx/network
-# hiccup), the tmux window's command ends and — with remain-on-exit off — the
-# whole session is destroyed, after which ttyd's auto-reconnect recreates and
-# re-kills it in a loop. Falling through to an interactive shell keeps the
-# freshly-created session alive instead.
+# Branch on Claude's exit code. We deliberately do NOT `exec` claude so we can
+# react to how it exited:
+#   - clean exit (user quit) -> end the pane's command. With remain-on-exit off
+#     the tmux window/session closes and ttyd closes the terminal — no shell.
+#   - crash / failed launch (bad model, npx/network hiccup -> non-zero) -> fall
+#     through to an interactive shell, so the freshly-created session isn't
+#     destroyed-and-recreated in a ttyd auto-reconnect loop.
 npx @anthropic-ai/claude-code \
   --dangerously-skip-permissions --model claude-opus-4-8 "${name_args[@]}"
 code=$?
+
+if [ "$code" -eq 0 ]; then
+  exit 0
+fi
+
 echo ""
-echo "  claude exited (status $code). Dropping to a shell — your tmux session is preserved."
+echo "  claude exited abnormally (status $code). Dropping to a shell — your tmux session is preserved."
 echo "  Re-launch any time with: ~/start-claude.sh"
 echo ""
 exec "${SHELL:-/bin/bash}" -l
