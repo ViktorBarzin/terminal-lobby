@@ -552,6 +552,15 @@
             const emptyEl   = document.getElementById('lobby-empty');
 
             let currentActive = null;
+            // A session is "confirmed" once a /sessions poll has actually listed
+            // it. Only a confirmed-then-vanished session means it was killed
+            // elsewhere (→ deactivate). A freshly-activated session that has
+            // never appeared yet is still being CREATED — its tmux session is
+            // born only after the iframe's WebSocket reaches ttyd (whoami →
+            // token → ws). Tearing the iframe down before then aborts that very
+            // chain ("Token fetch failed: TypeError: Failed to fetch"), so the
+            // session never gets created. Gate deactivation on this flag.
+            let activeConfirmed = false;
             let dragSrcCard = null;
             let isDragging = false;
             const ORDER_KEY = 'tmux-session-order-' + whoami.osUser;
@@ -625,6 +634,7 @@
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
                 if (currentActive === name) { updateActiveCard(); return; }
                 currentActive = name;
+                activeConfirmed = false;
                 emptyEl.classList.add('hidden');
                 frameEl.classList.remove('hidden');
                 frameEl.src = '/?arg=' + encodeURIComponent(name);
@@ -639,6 +649,7 @@
             function deactivateSession() {
                 if (!currentActive && frameEl.classList.contains('hidden')) return;
                 currentActive = null;
+                activeConfirmed = false;
                 frameEl.classList.add('hidden');
                 emptyEl.classList.remove('hidden');
                 frameEl.src = 'about:blank';
@@ -800,7 +811,12 @@
                         return;
                     }
                     const sessions = await resp.json();
-                    if (currentActive && !sessions.some(s => s.name === currentActive)) {
+                    const activeListed = sessions.some(s => s.name === currentActive);
+                    if (currentActive && activeListed) activeConfirmed = true;
+                    // Only deactivate a session we've SEEN before and that is now
+                    // gone (killed elsewhere). Never tear down one that has yet to
+                    // appear — it's still being created (see activeConfirmed note).
+                    if (currentActive && !activeListed && activeConfirmed) {
                         deactivateSession();
                     }
                     clearChildren(listEl);
