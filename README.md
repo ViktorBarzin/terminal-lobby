@@ -42,9 +42,10 @@ terminal view; click `›` to bring it back. Choice persists per browser
 | Piece | Where it runs | Port | Purpose |
 |---|---|---|---|
 | `frontend/index.html` | Served by ttyd on the DevVM | 7681 | Lobby UI + xterm.js terminal |
-| `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions`, `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami` |
+| `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions`, `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore` |
 | `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Receives pasted/uploaded images, returns a path the terminal can paste |
 | `devvm/tmux-attach.sh` | DevVM, invoked by ttyd | — | Validates `X-authentik-username`, maps to OS user via `/etc/ttyd-user-map`, `sudo -u <user> tmux new-session -A` |
+| `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`) | — | "Restore sessions" button helper: validates the user against `/etc/ttyd-user-map`, runs `tmux-persist restore <user>` (recreates that user's saved-but-dead sessions, resuming each Claude conversation). Idempotent — live sessions are left alone. Useful after an OOM kills the tmux server without a reboot (the boot-only restore never fires) |
 | `devvm/ttyd.service`, `ttyd-ro.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units |
 | `devvm/clipboard-cleanup.service` + `.timer` | DevVM | — | Daily `find /tmp/clipboard-images -mtime +7 -delete` |
 | `devvm/ttyd-user-map`, `sudoers.d-ttyd-users` | `/etc/` on DevVM | — | Authentik → OS-user mapping + sudo grant |
