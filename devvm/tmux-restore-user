@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Restore ONE terminal user's saved tmux sessions — backs the web-UI
+# "Restore sessions" button (frontend/index.html -> tmux-api POST /restore).
+#
+# Invoked as ROOT by tmux-api (which runs as wizard) through the passwordless
+# grant in /etc/sudoers.d/ttyd-users:
+#     wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-restore-user
+#
+# Root is required because the real work is tmux-persist's single-user restore,
+# which reads the root-owned 0600 manifest (/var/lib/tmux-persist/<user>.tsv)
+# and `runuser`s into the target user to recreate sessions. The grant is safe
+# because this wrapper accepts exactly one argument and re-validates it against
+# /etc/ttyd-user-map before doing anything — it can only ever restore a real
+# terminal user's OWN saved sessions (idempotent: live sessions are skipped).
+set -euo pipefail
+
+MAP=/etc/ttyd-user-map
+TMUX_PERSIST=/usr/local/bin/tmux-persist
+
+u="${1:-}"
+[[ "$u" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "tmux-restore-user: invalid user '$u'" >&2; exit 2; }
+
+# os_user = right-hand side of the map, minus any optional :cwd suffix
+# (mirrors tmux-api's loadUserMap parsing).
+if ! cut -d= -f2 "$MAP" | sed 's/:.*//' | grep -qxF "$u"; then
+  echo "tmux-restore-user: '$u' is not a terminal user (not in $MAP)" >&2
+  exit 2
+fi
+
+exec "$TMUX_PERSIST" restore "$u"

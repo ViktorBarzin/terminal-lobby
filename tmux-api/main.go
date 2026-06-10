@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	listenAddr   = "0.0.0.0:7684"
-	mapPath      = "/etc/ttyd-user-map"
-	authHeader   = "X-Authentik-Username"
-	tmuxBinary   = "/usr/bin/tmux"
-	sudoBinary   = "/usr/bin/sudo"
-	tmuxListFmt  = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}"
+	listenAddr     = "0.0.0.0:7684"
+	mapPath        = "/etc/ttyd-user-map"
+	authHeader     = "X-Authentik-Username"
+	tmuxBinary     = "/usr/bin/tmux"
+	sudoBinary     = "/usr/bin/sudo"
+	restoreWrapper = "/usr/local/bin/tmux-restore-user"
+	tmuxListFmt    = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}"
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
@@ -127,6 +128,7 @@ func main() {
 	http.HandleFunc("/sessions", handleSessions)
 	http.HandleFunc("/sessions/", handleSessionByName)
 	http.HandleFunc("/whoami", handleWhoami)
+	http.HandleFunc("/restore", handleRestore)
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})
@@ -169,6 +171,34 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		"authentik": authUser,
 		"osUser":    osUser,
 	})
+}
+
+// handleRestore (POST /restore) recreates the caller's saved-but-dead tmux
+// sessions by invoking the validated root wrapper tmux-restore-user via the
+// passwordless sudo grant in /etc/sudoers.d/ttyd-users. The wrapper
+// re-validates the OS user against /etc/ttyd-user-map and runs
+// `tmux-persist restore <user>`. Idempotent: already-live sessions are left
+// alone, so this only fills in what an OOM/crash killed (the boot-only
+// tmux-persist-restore.service never fires without a reboot).
+func handleRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	osUser := resolveOSUser(w, r)
+	if osUser == "" {
+		return
+	}
+	out, err := exec.Command(sudoBinary, "-n", restoreWrapper, osUser).CombinedOutput()
+	if err != nil {
+		log.Printf("restore for %s failed: %v: %s", osUser, err, strings.TrimSpace(string(out)))
+		http.Error(w, "restore failed", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("restore for %s: %s", osUser, strings.TrimSpace(string(out)))
+	sessionsCacheInstance.invalidate(osUser)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func handleSessions(w http.ResponseWriter, r *http.Request) {

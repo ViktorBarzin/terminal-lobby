@@ -7,6 +7,12 @@
 #   /usr/bin/tmux               tmux-api polls `tmux list-sessions`
 #   /usr/local/bin/tmux-user-attach   ttyd attach (re-homes the server into
 #                                      the user's systemd scope; see script)
+#   /usr/local/bin/tmux-restore-user  tmux-api POST /restore (web-UI button).
+#                                      Runs as root because it drives
+#                                      tmux-persist's single-user restore (reads
+#                                      the root-owned manifest + runuser into the
+#                                      target user). Self-validates its one arg
+#                                      against /etc/ttyd-user-map.
 #
 # Add one line per OS user listed on the right-hand side of
 # /etc/ttyd-user-map. The mapping file is the source of truth for which
@@ -14,3 +20,10 @@
 # that makes the per-user attach actually work.
 
 wizard ALL=(bob) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach
+
+# Restore button (POST /restore): run the validated root wrapper. It accepts a
+# single OS-user arg and re-checks it against /etc/ttyd-user-map, so this grant
+# can only ever restore a real terminal user's OWN saved sessions. Target is
+# root (not a per-user target) because tmux-persist itself does the per-user
+# runuser + reads the root-owned manifest.
+wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-restore-user
