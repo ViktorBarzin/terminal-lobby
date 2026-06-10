@@ -4,6 +4,9 @@ clipboard-upload/clipboard-upload
 /out/
 /tmp-build/
 
+# Per-feature git worktrees (worktree-first workflow)
+.worktrees/
+
 # Editor / OS noise
 .DS_Store
 *.swp

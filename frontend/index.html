@@ -229,6 +229,16 @@
         .new-row button:hover {
             background: color-mix(in srgb, var(--accent) 30%, transparent);
         }
+        .restore-btn {
+            margin: 10px 0 4px; width: 100%; padding: 7px 12px; border-radius: 8px;
+            border: 1px solid var(--border-strong); background: transparent;
+            color: var(--text-muted); font-family: inherit; font-size: 12px; cursor: pointer;
+        }
+        .restore-btn:hover {
+            color: var(--text-primary); border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 10%, transparent);
+        }
+        .restore-btn:disabled { opacity: 0.55; cursor: default; }
 
         .session-list { display: flex; flex-direction: column; gap: 6px; }
         .session-card {
@@ -413,6 +423,8 @@
                     <button id="new-btn">Create &amp; Open</button>
                 </div>
                 <div id="session-list" class="session-list"></div>
+                <button id="restore-btn" class="restore-btn" type="button"
+                        title="Recreate your saved sessions that aren't currently running (e.g. after an OOM), resuming each Claude conversation">&#8635; Restore saved sessions</button>
                 <div id="theme-picker" class="theme-picker">
                     <span class="theme-picker-label">Theme</span>
                     <div class="theme-options">
@@ -443,6 +455,7 @@
     (async function() {
         const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
         const SESSIONS_API = '/api/sessions/sessions';
+        const RESTORE_API  = '/api/sessions/restore';
         const WHOAMI_API   = '/api/sessions/whoami';
         const params = new URLSearchParams(location.search);
         const rawArg = params.get('arg');
@@ -548,6 +561,7 @@
             const listEl    = document.getElementById('session-list');
             const newNameEl = document.getElementById('new-name');
             const newBtnEl  = document.getElementById('new-btn');
+            const restoreBtnEl = document.getElementById('restore-btn');
             const frameEl   = document.getElementById('session-frame');
             const emptyEl   = document.getElementById('lobby-empty');
 
@@ -678,6 +692,30 @@
                     renderLobby();
                 } catch (err) {
                     showToast('Kill error: ' + err.message, 'error');
+                }
+            }
+
+            // Restore the current user's saved-but-dead sessions (tmux-persist
+            // manifest) on demand. Non-destructive: tmux-persist skips sessions
+            // that are already live, so this only recreates missing ones and
+            // resumes their Claude conversations. Useful after an OOM kills the
+            // tmux server without a reboot (the boot-only restore never fires).
+            async function restoreSessions(btn) {
+                if (btn) btn.disabled = true;
+                try {
+                    const resp = await fetch(RESTORE_API, { method: 'POST', credentials: 'same-origin' });
+                    if (resp.ok) {
+                        showToast('Restoring your saved sessions…', 'success', 3500);
+                        quickRefreshAfterCreate();
+                    } else if (resp.status === 401 || resp.status === 403) {
+                        showToast('Not authorized to restore', 'error', 4000);
+                    } else {
+                        showToast('Restore failed: HTTP ' + resp.status, 'error', 4000);
+                    }
+                } catch (err) {
+                    showToast('Restore error: ' + err.message, 'error', 4000);
+                } finally {
+                    if (btn) btn.disabled = false;
                 }
             }
 
@@ -852,6 +890,7 @@
             newNameEl.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') newBtnEl.click();
             });
+            restoreBtnEl.addEventListener('click', () => restoreSessions(restoreBtnEl));
 
             window.addEventListener('hashchange', () => {
                 const hash = location.hash.slice(1);

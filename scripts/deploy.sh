@@ -33,6 +33,7 @@ scp -o BatchMode=yes \
   frontend/icon-512.png \
   devvm/tmux-attach.sh \
   devvm/tmux-user-attach \
+  devvm/tmux-restore-user \
   devvm/ttyd-user-map \
   devvm/sudoers.d-ttyd-users \
   devvm/ttyd.service \
@@ -50,6 +51,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" 'bash -se' <<'REMOTE'
   sudo install -m 0755 /tmp/clipboard-upload /usr/local/bin/clipboard-upload
   sudo install -m 0755 /tmp/tmux-attach.sh   /usr/local/bin/tmux-attach.sh
   sudo install -m 0755 /tmp/tmux-user-attach /usr/local/bin/tmux-user-attach
+  sudo install -m 0755 /tmp/tmux-restore-user /usr/local/bin/tmux-restore-user
   sudo install -m 0644 /tmp/index.html               /usr/local/share/ttyd/index.html
   sudo install -m 0644 /tmp/manifest.webmanifest     /usr/local/share/ttyd/manifest.webmanifest
   sudo install -m 0644 /tmp/icon-192.png             /usr/local/share/ttyd/icon-192.png
@@ -66,7 +68,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" 'bash -se' <<'REMOTE'
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
   sudo systemctl enable --now clipboard-cleanup.timer
-  rm -f /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/index.html
+  rm -f /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/index.html
   rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png
   rm -f /tmp/ttyd-user-map /tmp/sudoers.d-ttyd-users
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
