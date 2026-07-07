@@ -6,6 +6,7 @@ clipboard-upload/clipboard-upload
 
 # Per-feature git worktrees (worktree-first workflow)
 .worktrees/
+.claude/worktrees/
 
 # Editor / OS noise
 .DS_Store
