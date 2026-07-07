@@ -46,8 +46,10 @@ terminal view; click `›` to bring it back. Choice persists per browser
 sessions by dragging a card onto a project header, or via the card's
 `⋯` menu (**Move to…**, which also holds Rename/Kill). Each project
 header has a `+` (new session directly in the project) and a `⋯` menu
-(rename / delete — deleting moves members to **Ungrouped**, it never
-kills sessions). Sections collapse per browser; a collapsed header
+(move up / move down / rename / delete — deleting moves members to
+**Ungrouped**, it never kills sessions). Drag a project header to
+reorder projects (Ungrouped stays pinned on top); the `⋯` move entries
+are the touch equivalent. Sections collapse per browser; a collapsed header
 shows its session count plus aggregated state dots. Membership and all
 ordering live server-side per user (`GET`/`PUT /layout`), so the
 arrangement follows you across desktop and phone and survives OOM

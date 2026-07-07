@@ -373,6 +373,7 @@
         .project-group[data-project=""] .project-sessions {
             margin-left: 0; padding-left: 0; border-left: 0;
         }
+        .project-group.dragging { opacity: 0.4; }
         .project-header.drag-over {
             outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent);
             outline-offset: -2px;
@@ -712,6 +713,9 @@
             // session never gets created. Gate deactivation on this flag.
             let activeConfirmed = false;
             let dragSrcCard = null;
+            // Dragging a project header reorders whole groups; mutually
+            // exclusive with dragSrcCard (a drag is one or the other).
+            let dragSrcGroup = null;
             let isDragging = false;
             // Legacy per-browser drag-order; used once to seed the server-side
             // layout, then left alone.
@@ -1125,6 +1129,17 @@
                 saveLayout();
             }
 
+            // Move a project one slot up/down — the touch-friendly counterpart
+            // of dragging its header.
+            function moveProject(name, delta) {
+                const i = layout.projects.findIndex(p => p.name === name);
+                const j = i + delta;
+                if (i < 0 || j < 0 || j >= layout.projects.length) return;
+                const [p] = layout.projects.splice(i, 1);
+                layout.projects.splice(j, 0, p);
+                saveLayout();
+            }
+
             // Header "+" — create a session directly inside the project. The
             // assignment is recorded BEFORE the iframe spawn so the card never
             // flickers through Ungrouped.
@@ -1312,6 +1327,7 @@
                     addBtn.textContent = '+';
                     addBtn.title = 'New session in ' + projectName;
                     addBtn.setAttribute('aria-label', 'New session in project ' + projectName);
+                    addBtn.draggable = false;
                     addBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         createSessionInProject(projectName);
@@ -1321,15 +1337,54 @@
                     pMenuBtn.textContent = '⋯';
                     pMenuBtn.title = 'Project actions';
                     pMenuBtn.setAttribute('aria-label', 'Actions for project ' + projectName);
+                    pMenuBtn.draggable = false;
                     pMenuBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
+                        const idx = layout.projects.findIndex(p => p.name === projectName);
                         openMenu(pMenuBtn, [
+                            // Touch parity for header drag-reorder (HTML5 DnD
+                            // is mouse-only), mirroring the card Move-to menu.
+                            { label: 'Move up', disabled: idx <= 0,
+                              onClick: () => moveProject(projectName, -1) },
+                            { label: 'Move down', disabled: idx < 0 || idx >= layout.projects.length - 1,
+                              onClick: () => moveProject(projectName, 1) },
                             { label: 'Rename project', onClick: () => renameProject(projectName) },
                             { label: 'Delete project', danger: true, onClick: () => deleteProject(projectName) }
                         ]);
                     });
                     actions.appendChild(pMenuBtn);
                     header.appendChild(actions);
+
+                    // Drag the header to reorder whole projects. (Ungrouped is
+                    // pinned on top and not draggable.) Order persists via the
+                    // same captureLayoutFromDom as card drags — it rebuilds
+                    // layout.projects in DOM order.
+                    header.draggable = true;
+                    header.addEventListener('dragstart', (e) => {
+                        dragSrcGroup = group;
+                        isDragging = true;
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', projectName);
+                        group.classList.add('dragging');
+                    });
+                    header.addEventListener('dragend', () => {
+                        group.classList.remove('dragging');
+                        if (dragSrcGroup === group) {
+                            captureLayoutFromDom();
+                            saveLayout();
+                        }
+                        dragSrcGroup = null;
+                        isDragging = false;
+                    });
+                    group.addEventListener('dragover', (e) => {
+                        if (!dragSrcGroup || dragSrcGroup === group) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        const rect = group.getBoundingClientRect();
+                        const after = (e.clientY - rect.top) > rect.height / 2;
+                        if (after) group.after(dragSrcGroup);
+                        else group.before(dragSrcGroup);
+                    });
                 }
 
                 function toggleCollapse() {
