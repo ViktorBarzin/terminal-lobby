@@ -1,0 +1,59 @@
+#!/bin/sh
+# claude-tmux-state — Claude Code hook that stamps the current tmux
+# session with @claude_state so the terminal-lobby sidebar can show a
+# per-session indicator (ADR-0001). Wired org-wide via
+# /etc/claude-code/managed-settings.json (infra repo):
+#
+#   UserPromptSubmit / PreToolUse / PostToolUse  -> running
+#   Stop / SessionStart                          -> done
+#   SessionEnd                                   -> clear (unset)
+#   Notification                                 -> notify (classified below)
+#
+# Contract with the hook runner:
+#   - MUST stay silent: stdout of several hook events is injected into
+#     the conversation as context.
+#   - MUST exit 0: a non-zero PreToolUse exit blocks the tool call.
+#   - No-ops outside tmux ($TMUX unset) — t3-serve and headless Claude
+#     instances run these same org-wide hooks.
+set -u
+
+[ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || exit 0
+command -v tmux >/dev/null 2>&1 || exit 0
+
+mode="${1:-}"
+
+stamp() {
+    tmux set-option -t "$TMUX_PANE" @claude_state "$1" >/dev/null 2>&1 || true
+}
+
+case "$mode" in
+running|done)
+    stamp "$mode"
+    ;;
+awaiting)
+    stamp awaiting
+    ;;
+clear)
+    tmux set-option -u -t "$TMUX_PANE" @claude_state >/dev/null 2>&1 || true
+    ;;
+notify)
+    # Notifications are not all "awaiting input": permission/approval asks
+    # are, unconditionally. The ~60s idle reminder ("waiting for your
+    # input") also fires on a session that finished its turn long ago —
+    # only promote it to awaiting when a turn was mid-flight (state
+    # running = Claude stopped mid-turn to ask something, e.g. a plan
+    # approval or a question). A completed session stays "done".
+    msg="$(cat 2>/dev/null || true)"
+    case "$msg" in
+    *[Pp]ermission*|*[Aa]pproval*)
+        stamp awaiting
+        ;;
+    *)
+        cur="$(tmux show-option -qv -t "$TMUX_PANE" @claude_state 2>/dev/null || true)"
+        [ "$cur" = "running" ] && stamp awaiting
+        ;;
+    esac
+    ;;
+esac
+
+exit 0
