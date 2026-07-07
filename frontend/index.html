@@ -724,7 +724,7 @@
             // The user's sidebar layout: ordered projects (may reference dead
             // sessions — kept so restores regroup, see ADR-0002) + ungrouped
             // order. Server-side so it roams across devices.
-            let layout = { version: 1, projects: [], ungrouped: [] };
+            let layout = { version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 };
             let layoutLoaded = false;
             // Last /sessions payload — lets layout mutations repaint instantly
             // without waiting for the next poll.
@@ -756,7 +756,25 @@
                 const l = await resp.json();
                 l.projects  = Array.isArray(l.projects)  ? l.projects  : [];
                 l.ungrouped = Array.isArray(l.ungrouped) ? l.ungrouped : [];
+                l.ungroupedIndex = Number.isInteger(l.ungroupedIndex)
+                    ? Math.max(0, Math.min(l.ungroupedIndex, l.projects.length))
+                    : 0;
                 return l;
+            }
+
+            // The sidebar is one ordered sequence of groups: the Ungrouped
+            // section (sentinel) sitting at ungroupedIndex among the projects.
+            // All reordering goes through this sequence so moving anything
+            // past anything else — including Ungrouped itself — is one code
+            // path.
+            function groupSeq() {
+                const seq = layout.projects.slice();
+                seq.splice(Math.min(layout.ungroupedIndex, seq.length), 0, UNGROUPED_COLLAPSE_ID);
+                return seq;
+            }
+            function applyGroupSeq(seq) {
+                layout.ungroupedIndex = seq.indexOf(UNGROUPED_COLLAPSE_ID);
+                layout.projects = seq.filter(x => x !== UNGROUPED_COLLAPSE_ID);
             }
 
             async function putLayout() {
@@ -828,21 +846,24 @@
 
                 const projects = [];
                 let ungrouped = [];
+                let ungroupedIndex = -1;
                 listEl.querySelectorAll('.project-group').forEach(group => {
                     const name = group.dataset.project;
                     const members = Array.from(group.querySelectorAll('.session-card')).map(c => c.dataset.name);
                     if (name === '') {
                         ungrouped = members.concat(deadUngrouped);
+                        ungroupedIndex = projects.length;
                     } else {
                         projects.push({ name, sessions: members.concat(deadByProject.get(name) || []) });
                     }
                 });
                 // The ungrouped group isn't rendered while empty — keep its
-                // dead entries anyway.
-                if (!listEl.querySelector('.project-group[data-project=""]')) {
+                // dead entries and its stored slot anyway.
+                if (ungroupedIndex < 0) {
                     ungrouped = deadUngrouped;
+                    ungroupedIndex = Math.min(layout.ungroupedIndex, projects.length);
                 }
-                layout = { version: 1, projects, ungrouped };
+                layout = { version: 1, projects, ungrouped, ungroupedIndex };
             }
 
             // --- collapse state (per-browser view preference) ----------------
@@ -1125,18 +1146,25 @@
                 if (!confirm('Delete project "' + name + '"?' + suffix + ' (Sessions are never killed by this.)')) return;
                 layout.ungrouped.push(...p.sessions);
                 layout.projects = layout.projects.filter(x => x !== p);
+                layout.ungroupedIndex = Math.min(layout.ungroupedIndex, layout.projects.length);
                 setCollapsed(name, false);
                 saveLayout();
             }
 
-            // Move a project one slot up/down — the touch-friendly counterpart
-            // of dragging its header.
-            function moveProject(name, delta) {
-                const i = layout.projects.findIndex(p => p.name === name);
+            // Move a group one visual slot up/down — the touch-friendly
+            // counterpart of dragging its header. Works on the combined
+            // sequence, so projects and the Ungrouped section move past each
+            // other symmetrically. groupId '' = Ungrouped.
+            function moveGroup(groupId, delta) {
+                const seq = groupSeq();
+                const i = groupId === ''
+                    ? seq.indexOf(UNGROUPED_COLLAPSE_ID)
+                    : seq.findIndex(x => x !== UNGROUPED_COLLAPSE_ID && x.name === groupId);
                 const j = i + delta;
-                if (i < 0 || j < 0 || j >= layout.projects.length) return;
-                const [p] = layout.projects.splice(i, 1);
-                layout.projects.splice(j, 0, p);
+                if (i < 0 || j < 0 || j >= seq.length) return;
+                const [g] = seq.splice(i, 1);
+                seq.splice(j, 0, g);
+                applyGroupSeq(seq);
                 saveLayout();
             }
 
@@ -1320,9 +1348,9 @@
                 }
                 header.appendChild(badges);
 
+                const actions = document.createElement('span');
+                actions.className = 'project-actions';
                 if (!isUngrouped) {
-                    const actions = document.createElement('span');
-                    actions.className = 'project-actions';
                     const addBtn = document.createElement('button');
                     addBtn.textContent = '+';
                     addBtn.title = 'New session in ' + projectName;
@@ -1333,59 +1361,70 @@
                         createSessionInProject(projectName);
                     });
                     actions.appendChild(addBtn);
-                    const pMenuBtn = document.createElement('button');
-                    pMenuBtn.textContent = '⋯';
-                    pMenuBtn.title = 'Project actions';
-                    pMenuBtn.setAttribute('aria-label', 'Actions for project ' + projectName);
-                    pMenuBtn.draggable = false;
-                    pMenuBtn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        const idx = layout.projects.findIndex(p => p.name === projectName);
-                        openMenu(pMenuBtn, [
-                            // Touch parity for header drag-reorder (HTML5 DnD
-                            // is mouse-only), mirroring the card Move-to menu.
-                            { label: 'Move up', disabled: idx <= 0,
-                              onClick: () => moveProject(projectName, -1) },
-                            { label: 'Move down', disabled: idx < 0 || idx >= layout.projects.length - 1,
-                              onClick: () => moveProject(projectName, 1) },
+                }
+                const pMenuBtn = document.createElement('button');
+                pMenuBtn.textContent = '⋯';
+                pMenuBtn.title = isUngrouped ? 'Ungrouped actions' : 'Project actions';
+                pMenuBtn.setAttribute('aria-label',
+                    isUngrouped ? 'Actions for ungrouped sessions' : 'Actions for project ' + projectName);
+                pMenuBtn.draggable = false;
+                pMenuBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    // Touch parity for header drag-reorder (HTML5 DnD is
+                    // mouse-only), mirroring the card Move-to menu. Positions
+                    // are on the combined sequence, so Ungrouped and projects
+                    // move past each other.
+                    const seq = groupSeq();
+                    const idx = isUngrouped
+                        ? seq.indexOf(UNGROUPED_COLLAPSE_ID)
+                        : seq.findIndex(x => x !== UNGROUPED_COLLAPSE_ID && x.name === projectName);
+                    const items = [
+                        { label: 'Move up', disabled: idx <= 0,
+                          onClick: () => moveGroup(projectName, -1) },
+                        { label: 'Move down', disabled: idx < 0 || idx >= seq.length - 1,
+                          onClick: () => moveGroup(projectName, 1) }
+                    ];
+                    if (!isUngrouped) {
+                        items.push(
                             { label: 'Rename project', onClick: () => renameProject(projectName) },
                             { label: 'Delete project', danger: true, onClick: () => deleteProject(projectName) }
-                        ]);
-                    });
-                    actions.appendChild(pMenuBtn);
-                    header.appendChild(actions);
+                        );
+                    }
+                    openMenu(pMenuBtn, items);
+                });
+                actions.appendChild(pMenuBtn);
+                header.appendChild(actions);
 
-                    // Drag the header to reorder whole projects. (Ungrouped is
-                    // pinned on top and not draggable.) Order persists via the
-                    // same captureLayoutFromDom as card drags — it rebuilds
-                    // layout.projects in DOM order.
-                    header.draggable = true;
-                    header.addEventListener('dragstart', (e) => {
-                        dragSrcGroup = group;
-                        isDragging = true;
-                        e.dataTransfer.effectAllowed = 'move';
-                        e.dataTransfer.setData('text/plain', projectName);
-                        group.classList.add('dragging');
-                    });
-                    header.addEventListener('dragend', () => {
-                        group.classList.remove('dragging');
-                        if (dragSrcGroup === group) {
-                            captureLayoutFromDom();
-                            saveLayout();
-                        }
-                        dragSrcGroup = null;
-                        isDragging = false;
-                    });
-                    group.addEventListener('dragover', (e) => {
-                        if (!dragSrcGroup || dragSrcGroup === group) return;
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'move';
-                        const rect = group.getBoundingClientRect();
-                        const after = (e.clientY - rect.top) > rect.height / 2;
-                        if (after) group.after(dragSrcGroup);
-                        else group.before(dragSrcGroup);
-                    });
-                }
+                // Drag the header to reorder whole groups — projects AND the
+                // Ungrouped section. Order persists via the same
+                // captureLayoutFromDom as card drags — it rebuilds
+                // layout.projects (+ ungroupedIndex) in DOM order.
+                header.draggable = true;
+                header.addEventListener('dragstart', (e) => {
+                    dragSrcGroup = group;
+                    isDragging = true;
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', projectName);
+                    group.classList.add('dragging');
+                });
+                header.addEventListener('dragend', () => {
+                    group.classList.remove('dragging');
+                    if (dragSrcGroup === group) {
+                        captureLayoutFromDom();
+                        saveLayout();
+                    }
+                    dragSrcGroup = null;
+                    isDragging = false;
+                });
+                group.addEventListener('dragover', (e) => {
+                    if (!dragSrcGroup || dragSrcGroup === group) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    const rect = group.getBoundingClientRect();
+                    const after = (e.clientY - rect.top) > rect.height / 2;
+                    if (after) group.after(dragSrcGroup);
+                    else group.before(dragSrcGroup);
+                });
 
                 function toggleCollapse() {
                     setCollapsed(collapseId, !getCollapsed()[collapseId]);
@@ -1441,17 +1480,20 @@
                 for (const p of layout.projects) p.sessions.forEach(n => referenced.add(n));
                 layout.ungrouped.forEach(n => referenced.add(n));
 
-                // Ungrouped (top): explicit order first, then any live session
-                // the layout has never seen (fresh creations), in tmux order.
+                // Ungrouped members: explicit order first, then any live
+                // session the layout has never seen (fresh creations), in
+                // tmux order. The section renders at its slot in the combined
+                // sequence (ungroupedIndex) and is skipped while empty.
                 const ungrouped = layout.ungrouped
                     .map(n => liveByName.get(n)).filter(Boolean)
                     .concat(lastSessions.filter(s => !referenced.has(s.name)));
-                if (ungrouped.length) {
-                    listEl.appendChild(renderGroup('', ungrouped));
-                }
-                for (const p of layout.projects) {
-                    const members = p.sessions.map(n => liveByName.get(n)).filter(Boolean);
-                    listEl.appendChild(renderGroup(p.name, members));
+                for (const g of groupSeq()) {
+                    if (g === UNGROUPED_COLLAPSE_ID) {
+                        if (ungrouped.length) listEl.appendChild(renderGroup('', ungrouped));
+                        continue;
+                    }
+                    const members = g.sessions.map(n => liveByName.get(n)).filter(Boolean);
+                    listEl.appendChild(renderGroup(g.name, members));
                 }
                 if (!ungrouped.length && !layout.projects.length) {
                     listEl.appendChild(emptyState('No sessions yet.'));

@@ -21,8 +21,10 @@ _Avoid_: group, folder, workspace
 
 **Ungrouped**:
 The implicit area of the sidebar holding sessions assigned to no
-project, rendered above all projects. Collapsible like a project, but
-not a project — it cannot be renamed or deleted.
+project. Collapsible and reorderable like a project — it occupies a
+movable slot among the projects (default: top) — but not a project:
+it cannot be renamed or deleted, and it hides while empty (keeping
+its slot).
 _Avoid_: default project, inbox
 
 **Assignment**:
@@ -32,9 +34,9 @@ server crashes and restores.
 
 **Layout**:
 The per-user sidebar arrangement owned by tmux-api: the ordered list
-of projects, each project's ordered member sessions, and the Ungrouped
-order. Collapse state is NOT part of the layout — it is a per-browser
-view preference.
+of projects, each project's ordered member sessions, the Ungrouped
+order, and the Ungrouped section's slot among the projects. Collapse
+state is NOT part of the layout — it is a per-browser view preference.
 
 **Session state**:
 What the Claude conversation inside a session is doing: *running* (a
