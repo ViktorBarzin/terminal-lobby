@@ -26,6 +26,11 @@
             --accent: #d4a574;
             --danger: #c47a5a;
             --success: #88a888;
+            /* Claude state dots. Carbon's accent is itself amber, so
+               "awaiting" leans hotter orange to stay distinguishable. */
+            --state-running: #d4a574;
+            --state-awaiting: #e06c3a;
+            --state-done: #88a888;
             --terminal-bg: #0c0c0a;
             --terminal-fg: #e8e3d6;
             --terminal-cursor: #d4a574;
@@ -43,6 +48,9 @@
             --accent: #4493f8;
             --danger: #f47067;
             --success: #56d364;
+            --state-running: #4493f8;
+            --state-awaiting: #d29922;
+            --state-done: #56d364;
             --terminal-bg: #0d1117;
             --terminal-fg: #e6e8eb;
             --terminal-cursor: #4493f8;
@@ -60,6 +68,9 @@
             --accent: #e8e8e8;
             --danger: #cc7070;
             --success: #9ccb9c;
+            --state-running: #e8e8e8;
+            --state-awaiting: #d4a054;
+            --state-done: #9ccb9c;
             --terminal-bg: #0d0d0d;
             --terminal-fg: #e0e0e0;
             --terminal-cursor: #e8e8e8;
@@ -77,6 +88,9 @@
             --accent: #b5482d;
             --danger: #b5482d;
             --success: #3d6b3d;
+            --state-running: #b5482d;
+            --state-awaiting: #9a6b00;
+            --state-done: #3d6b3d;
             --terminal-bg: #faf7f2;
             --terminal-fg: #1d1b18;
             --terminal-cursor: #b5482d;
@@ -287,6 +301,124 @@
         .session-card.dragging { opacity: 0.4; cursor: grabbing; }
         .empty { color: var(--text-muted); font-style: italic; padding: 12px 0; font-size: 12px; }
 
+        /* Claude state dot — running pulses, awaiting glows, done sits still. */
+        .session-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+        .state-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            flex: 0 0 8px; display: inline-block;
+        }
+        .state-dot.running {
+            background: var(--state-running);
+            animation: state-pulse 1.3s ease-in-out infinite;
+        }
+        .state-dot.awaiting {
+            background: var(--state-awaiting);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-awaiting) 22%, transparent);
+        }
+        .state-dot.done { background: var(--state-done); }
+        @keyframes state-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%      { opacity: 0.35; transform: scale(0.8); }
+        }
+
+        /* Project groups */
+        .project-group { display: flex; flex-direction: column; gap: 6px; }
+        .project-header {
+            display: flex; align-items: center; gap: 6px;
+            padding: 4px 6px 4px 2px; border-radius: 6px;
+            cursor: pointer; user-select: none; -webkit-user-select: none;
+            color: var(--text-muted); min-width: 0;
+        }
+        .project-header:hover { background: var(--bg-card); color: var(--text-primary); }
+        .project-header:focus-visible {
+            outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+            outline-offset: -2px;
+        }
+        .project-header .chev {
+            display: inline-block; width: 12px; text-align: center;
+            font-size: 10px; transition: transform 0.15s;
+        }
+        .project-group.collapsed .project-header .chev { transform: rotate(-90deg); }
+        .project-title {
+            font-size: 12px; font-weight: 700;
+            letter-spacing: 0.05em; text-transform: uppercase;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .project-badges {
+            display: flex; align-items: center; gap: 8px;
+            margin-left: auto; flex-shrink: 0;
+            font-size: 11px; color: var(--text-muted);
+        }
+        .project-badges .state-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+        }
+        .project-badges .state-dot { width: 7px; height: 7px; flex-basis: 7px; }
+        .project-actions { display: flex; gap: 4px; flex-shrink: 0; }
+        .project-actions button {
+            padding: 1px 7px 2px; border-radius: 6px;
+            border: 1px solid var(--border); background: transparent;
+            color: var(--text-muted); font-family: inherit; font-size: 13px;
+            line-height: 1.4; cursor: pointer;
+        }
+        .project-actions button:hover {
+            color: var(--accent); background: var(--bg-card-hover);
+            border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+        }
+        .project-sessions {
+            display: flex; flex-direction: column; gap: 6px;
+            margin-left: 5px; padding-left: 8px;
+            border-left: 1px solid var(--border);
+        }
+        .project-group.collapsed .project-sessions { display: none; }
+        .project-group[data-project=""] .project-sessions {
+            margin-left: 0; padding-left: 0; border-left: 0;
+        }
+        .project-header.drag-over {
+            outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+            outline-offset: -2px;
+            background: color-mix(in srgb, var(--accent) 10%, transparent);
+        }
+        .project-empty-hint {
+            color: var(--text-muted); font-style: italic;
+            font-size: 11px; padding: 2px 0 2px 2px;
+        }
+        .new-project-btn {
+            margin-top: 10px; width: 100%; padding: 6px 12px;
+            border-radius: 8px; border: 1px dashed var(--border-strong);
+            background: transparent; color: var(--text-muted);
+            font-family: inherit; font-size: 12px; cursor: pointer;
+        }
+        .new-project-btn:hover {
+            color: var(--text-primary); border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 10%, transparent);
+        }
+
+        /* Card/header popup menu (Move to…, Rename, Kill / project actions) */
+        .popup-menu {
+            position: fixed; z-index: 10000;
+            background: var(--bg-card);
+            border: 1px solid var(--border-strong); border-radius: 8px;
+            padding: 4px; min-width: 150px; max-width: 230px;
+            max-height: 60vh; overflow-y: auto;
+            display: flex; flex-direction: column;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            font-family: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace;
+        }
+        .popup-menu .menu-label {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-muted); padding: 6px 10px 2px;
+        }
+        .popup-menu button {
+            text-align: left; padding: 7px 10px; border: 0; border-radius: 6px;
+            background: transparent; color: var(--text-primary);
+            font-family: inherit; font-size: 13px; cursor: pointer;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .popup-menu button:hover { background: var(--bg-card-hover); color: var(--accent); }
+        .popup-menu button.danger { color: var(--danger); }
+        .popup-menu button.danger:hover { color: var(--danger); }
+        .popup-menu button:disabled { opacity: 0.45; cursor: default; }
+
         /* Theme picker — sits at the bottom of the sidebar */
         .theme-picker {
             margin-top: auto; padding-top: 14px;
@@ -423,6 +555,8 @@
                     <button id="new-btn">Create &amp; Open</button>
                 </div>
                 <div id="session-list" class="session-list"></div>
+                <button id="new-project-btn" class="new-project-btn" type="button"
+                        title="Create an empty project folder to group sessions into">+ Project</button>
                 <button id="restore-btn" class="restore-btn" type="button"
                         title="Recreate your saved sessions that aren't currently running (e.g. after an OOM), resuming each Claude conversation">&#8635; Restore saved sessions</button>
                 <div id="theme-picker" class="theme-picker">
@@ -457,6 +591,7 @@
         const SESSIONS_API = '/api/sessions/sessions';
         const RESTORE_API  = '/api/sessions/restore';
         const WHOAMI_API   = '/api/sessions/whoami';
+        const LAYOUT_API   = '/api/sessions/layout';
         const params = new URLSearchParams(location.search);
         const rawArg = params.get('arg');
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
@@ -561,6 +696,7 @@
             const listEl    = document.getElementById('session-list');
             const newNameEl = document.getElementById('new-name');
             const newBtnEl  = document.getElementById('new-btn');
+            const newProjectBtnEl = document.getElementById('new-project-btn');
             const restoreBtnEl = document.getElementById('restore-btn');
             const frameEl   = document.getElementById('session-frame');
             const emptyEl   = document.getElementById('lobby-empty');
@@ -577,7 +713,18 @@
             let activeConfirmed = false;
             let dragSrcCard = null;
             let isDragging = false;
+            // Legacy per-browser drag-order; used once to seed the server-side
+            // layout, then left alone.
             const ORDER_KEY = 'tmux-session-order-' + whoami.osUser;
+
+            // The user's sidebar layout: ordered projects (may reference dead
+            // sessions — kept so restores regroup, see ADR-0002) + ungrouped
+            // order. Server-side so it roams across devices.
+            let layout = { version: 1, projects: [], ungrouped: [] };
+            let layoutLoaded = false;
+            // Last /sessions payload — lets layout mutations repaint instantly
+            // without waiting for the next poll.
+            let lastSessions = [];
 
             function relativeTime(epochSec) {
                 if (!epochSec) return '';
@@ -596,31 +743,129 @@
                     return Array.isArray(arr) ? arr.filter(n => typeof n === 'string') : [];
                 } catch (e) { return []; }
             }
-            function saveOrder(names) {
-                try { localStorage.setItem(ORDER_KEY, JSON.stringify(names)); } catch (e) {}
+
+            // --- layout store client -----------------------------------------
+
+            async function fetchLayout() {
+                const resp = await fetch(LAYOUT_API, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const l = await resp.json();
+                l.projects  = Array.isArray(l.projects)  ? l.projects  : [];
+                l.ungrouped = Array.isArray(l.ungrouped) ? l.ungrouped : [];
+                return l;
             }
-            function captureOrderFromDom() {
-                return Array.from(listEl.querySelectorAll('.session-card')).map(c => c.dataset.name);
+
+            async function putLayout() {
+                const resp = await fetch(LAYOUT_API, {
+                    method: 'PUT',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(layout)
+                });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
             }
-            function applySavedOrder(sessions) {
-                const saved = getSavedOrder();
-                const byName = new Map(sessions.map(s => [s.name, s]));
-                const out = [];
-                for (const name of saved) {
-                    const s = byName.get(name);
-                    if (s) { out.push(s); byName.delete(name); }
+
+            // Mutate-then-save: repaint optimistically, then persist; on failure
+            // re-fetch so the sidebar snaps back to the server's truth.
+            async function saveLayout() {
+                paint();
+                try {
+                    await putLayout();
+                } catch (err) {
+                    showToast('Saving layout failed: ' + err.message, 'error', 4000);
+                    try { layout = await fetchLayout(); } catch (e) { /* next poll */ }
+                    paint();
                 }
-                for (const s of sessions) {
-                    if (byName.has(s.name)) out.push(s);
-                }
-                return out;
             }
-            function renameInOrder(oldName, newName) {
-                const order = getSavedOrder();
-                const i = order.indexOf(oldName);
-                if (i < 0) return;
-                order[i] = newName;
-                saveOrder(order);
+
+            function projectOfSession(name) {
+                for (const p of layout.projects) {
+                    if (p.sessions.includes(name)) return p.name;
+                }
+                return '';
+            }
+
+            // Remove a session from every layout list (before re-inserting it
+            // somewhere else). Returns true when something was removed.
+            function pullFromLayout(name) {
+                let removed = false;
+                for (const p of layout.projects) {
+                    const i = p.sessions.indexOf(name);
+                    if (i >= 0) { p.sessions.splice(i, 1); removed = true; }
+                }
+                const i = layout.ungrouped.indexOf(name);
+                if (i >= 0) { layout.ungrouped.splice(i, 1); removed = true; }
+                return removed;
+            }
+
+            function moveSessionTo(name, projectName) {
+                pullFromLayout(name);
+                if (projectName === '') {
+                    layout.ungrouped.push(name);
+                } else {
+                    const p = layout.projects.find(p => p.name === projectName);
+                    if (!p) return;
+                    p.sessions.push(name);
+                }
+                saveLayout();
+            }
+
+            // Rebuild ordering from the rendered cards after a drag. Live-card
+            // order comes from the DOM; dead members (not rendered) are
+            // re-appended to their project so a drag never drops the
+            // assignments that make OOM restores regroup.
+            function captureLayoutFromDom() {
+                const deadByProject = new Map();
+                const liveNames = new Set(lastSessions.map(s => s.name));
+                for (const p of layout.projects) {
+                    deadByProject.set(p.name, p.sessions.filter(n => !liveNames.has(n)));
+                }
+                const deadUngrouped = layout.ungrouped.filter(n => !liveNames.has(n));
+
+                const projects = [];
+                let ungrouped = [];
+                listEl.querySelectorAll('.project-group').forEach(group => {
+                    const name = group.dataset.project;
+                    const members = Array.from(group.querySelectorAll('.session-card')).map(c => c.dataset.name);
+                    if (name === '') {
+                        ungrouped = members.concat(deadUngrouped);
+                    } else {
+                        projects.push({ name, sessions: members.concat(deadByProject.get(name) || []) });
+                    }
+                });
+                // The ungrouped group isn't rendered while empty — keep its
+                // dead entries anyway.
+                if (!listEl.querySelector('.project-group[data-project=""]')) {
+                    ungrouped = deadUngrouped;
+                }
+                layout = { version: 1, projects, ungrouped };
+            }
+
+            // --- collapse state (per-browser view preference) ----------------
+
+            const COLLAPSE_KEY = 'tmux-collapsed-' + whoami.osUser;
+            const UNGROUPED_COLLAPSE_ID = '__ungrouped__';
+            function getCollapsed() {
+                try {
+                    const raw = localStorage.getItem(COLLAPSE_KEY);
+                    const obj = raw ? JSON.parse(raw) : {};
+                    return (obj && typeof obj === 'object') ? obj : {};
+                } catch (e) { return {}; }
+            }
+            function setCollapsed(id, collapsed) {
+                const all = getCollapsed();
+                if (collapsed) all[id] = 1; else delete all[id];
+                try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(all)); } catch (e) {}
+            }
+            // Activating a session hidden inside a collapsed project would
+            // highlight nothing — auto-expand its group.
+            function ensureSessionVisible(name) {
+                const proj = projectOfSession(name);
+                const id = proj === '' ? UNGROUPED_COLLAPSE_ID : proj;
+                if (getCollapsed()[id]) {
+                    setCollapsed(id, false);
+                    paint();
+                }
             }
 
             function updateActiveCard() {
@@ -644,6 +889,15 @@
                 setSidebarCollapsed(true);
             }
 
+            // Tab title carries an attention badge while any session awaits
+            // input, so a backgrounded lobby tab still signals.
+            function updateTitle() {
+                const awaiting = lastSessions.filter(s => s.state === 'awaiting').length;
+                const badge = awaiting > 0 ? '(' + awaiting + '●) ' : '';
+                document.title = badge +
+                    (currentActive ? 'tmux: ' + whoami.osUser + '/' + currentActive : baseTitle);
+            }
+
             function activateSession(name) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
                 if (currentActive === name) { updateActiveCard(); return; }
@@ -655,7 +909,8 @@
                 if (location.hash.slice(1) !== name) {
                     history.replaceState(null, '', '#' + name);
                 }
-                document.title = 'tmux: ' + whoami.osUser + '/' + name;
+                updateTitle();
+                ensureSessionVisible(name);
                 updateActiveCard();
                 maybeAutoCollapseSidebar();
             }
@@ -670,7 +925,7 @@
                 if (location.hash) {
                     history.replaceState(null, '', location.pathname + location.search);
                 }
-                document.title = baseTitle;
+                updateTitle();
                 updateActiveCard();
             }
 
@@ -737,13 +992,21 @@
                         body: JSON.stringify({ name: newName })
                     });
                     if (resp.status === 204) {
-                        renameInOrder(oldName, newName);
+                        // The server renames the layout entry too — the next
+                        // fetch reflects it; mirror locally for the instant
+                        // repaint.
+                        for (const p of layout.projects) {
+                            const i = p.sessions.indexOf(oldName);
+                            if (i >= 0) p.sessions[i] = newName;
+                        }
+                        const ui = layout.ungrouped.indexOf(oldName);
+                        if (ui >= 0) layout.ungrouped[ui] = newName;
                         showToast('Renamed to ' + newName, 'success');
                         if (currentActive === oldName) {
                             currentActive = newName;
                             frameEl.src = '/?arg=' + encodeURIComponent(newName);
                             history.replaceState(null, '', '#' + newName);
-                            document.title = 'tmux: ' + whoami.osUser + '/' + newName;
+                            updateTitle();
                         }
                         renderLobby();
                     } else if (resp.status === 404) {
@@ -760,6 +1023,151 @@
                 }
             }
 
+            // --- popup menu (session ⋯ and project ⋯) -------------------------
+
+            let openMenuEl = null;
+            function closeMenu() {
+                if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; }
+            }
+            // items: {label, onClick, danger?, disabled?} or {labelHeading}
+            function openMenu(anchor, items) {
+                closeMenu();
+                const menu = document.createElement('div');
+                menu.className = 'popup-menu';
+                for (const it of items) {
+                    if (it.labelHeading) {
+                        const l = document.createElement('div');
+                        l.className = 'menu-label';
+                        l.textContent = it.labelHeading;
+                        menu.appendChild(l);
+                        continue;
+                    }
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.textContent = it.label;
+                    if (it.danger) b.classList.add('danger');
+                    if (it.disabled) b.disabled = true;
+                    b.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        closeMenu();
+                        it.onClick();
+                    });
+                    menu.appendChild(b);
+                }
+                document.body.appendChild(menu);
+                const r = anchor.getBoundingClientRect();
+                const mw = menu.offsetWidth, mh = menu.offsetHeight;
+                let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+                let top  = r.bottom + 4;
+                if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+                menu.style.left = Math.max(8, left) + 'px';
+                menu.style.top  = top + 'px';
+                openMenuEl = menu;
+            }
+            document.addEventListener('pointerdown', (e) => {
+                if (openMenuEl && !openMenuEl.contains(e.target)) closeMenu();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closeMenu();
+            });
+
+            // --- project CRUD --------------------------------------------------
+
+            function promptProjectName(promptText, initial) {
+                const input = prompt(promptText, initial || '');
+                if (input === null) return null;
+                const name = input.trim();
+                if (!NAME_RE.test(name)) {
+                    showToast('Project name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                    return null;
+                }
+                if (layout.projects.some(p => p.name === name)) {
+                    showToast('Project "' + name + '" already exists', 'error', 4000);
+                    return null;
+                }
+                return name;
+            }
+
+            function createProject() {
+                const name = promptProjectName('New project name:');
+                if (!name) return;
+                layout.projects.push({ name, sessions: [] });
+                saveLayout();
+            }
+
+            function renameProject(oldName) {
+                const name = promptProjectName('Rename project "' + oldName + '" to:', oldName);
+                if (!name || name === oldName) return;
+                const p = layout.projects.find(p => p.name === oldName);
+                if (!p) return;
+                p.name = name;
+                // Carry the per-browser collapse flag to the new name.
+                const collapsed = getCollapsed()[oldName];
+                setCollapsed(oldName, false);
+                if (collapsed) setCollapsed(name, true);
+                saveLayout();
+            }
+
+            // Deleting a project never touches tmux — members drop back to
+            // Ungrouped.
+            function deleteProject(name) {
+                const p = layout.projects.find(p => p.name === name);
+                if (!p) return;
+                const liveNames = new Set(lastSessions.map(s => s.name));
+                const liveMembers = p.sessions.filter(n => liveNames.has(n));
+                const suffix = liveMembers.length
+                    ? ' Its ' + liveMembers.length + ' session' + (liveMembers.length > 1 ? 's' : '') + ' move to Ungrouped.'
+                    : '';
+                if (!confirm('Delete project "' + name + '"?' + suffix + ' (Sessions are never killed by this.)')) return;
+                layout.ungrouped.push(...p.sessions);
+                layout.projects = layout.projects.filter(x => x !== p);
+                setCollapsed(name, false);
+                saveLayout();
+            }
+
+            // Header "+" — create a session directly inside the project. The
+            // assignment is recorded BEFORE the iframe spawn so the card never
+            // flickers through Ungrouped.
+            function createSessionInProject(projectName) {
+                const input = prompt('New session in "' + projectName + '":');
+                if (input === null) return;
+                const name = input.trim();
+                if (!NAME_RE.test(name)) {
+                    showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                    return;
+                }
+                moveSessionTo(name, projectName);
+                activateSession(name);
+                quickRefreshAfterCreate();
+            }
+
+            function moveMenuItems(sessionName) {
+                const current = projectOfSession(sessionName);
+                const items = [{ labelHeading: 'Move to' }];
+                if (current !== '') {
+                    items.push({ label: 'Ungrouped', onClick: () => moveSessionTo(sessionName, '') });
+                }
+                for (const p of layout.projects) {
+                    if (p.name === current) continue;
+                    items.push({ label: p.name, onClick: () => moveSessionTo(sessionName, p.name) });
+                }
+                if (items.length === 1) {
+                    items.push({ label: 'No projects yet', onClick: () => {}, disabled: true });
+                }
+                return items;
+            }
+
+            // --- rendering -----------------------------------------------------
+
+            function stateDot(state, extraClass) {
+                if (!state) return null;
+                const dot = document.createElement('span');
+                dot.className = 'state-dot ' + state + (extraClass ? ' ' + extraClass : '');
+                dot.title = 'Claude: ' + (state === 'done' ? 'completed' :
+                    state === 'awaiting' ? 'awaiting your input' : 'running');
+                return dot;
+            }
+
             function renderCard(s) {
                 const card = document.createElement('div');
                 card.className = 'session-card';
@@ -772,10 +1180,15 @@
 
                 const meta = document.createElement('div');
                 meta.className = 'session-meta';
+                const titleRow = document.createElement('div');
+                titleRow.className = 'session-title-row';
+                const dot = stateDot(s.state);
+                if (dot) titleRow.appendChild(dot);
                 const name = document.createElement('div');
                 name.className = 'session-name';
                 name.textContent = s.name;
-                meta.appendChild(name);
+                titleRow.appendChild(name);
+                meta.appendChild(titleRow);
                 const detail = document.createElement('div');
                 detail.className = 'session-detail' + (s.attached > 0 ? ' attached' : '');
                 const attachedText = s.attached > 0 ? (s.attached + ' attached') : 'idle';
@@ -785,24 +1198,21 @@
 
                 const actions = document.createElement('div');
                 actions.className = 'session-actions';
-                const renameBtn = document.createElement('button');
-                renameBtn.className = 'rename';
-                renameBtn.textContent = 'Rename';
-                renameBtn.draggable = false;
-                renameBtn.addEventListener('click', (e) => {
+                const menuBtn = document.createElement('button');
+                menuBtn.textContent = '⋯';
+                menuBtn.title = 'Session actions';
+                menuBtn.setAttribute('aria-label', 'Actions for session ' + s.name);
+                menuBtn.draggable = false;
+                menuBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    renameSession(s.name);
+                    openMenu(menuBtn, [
+                        ...moveMenuItems(s.name),
+                        { labelHeading: 'Session' },
+                        { label: 'Rename', onClick: () => renameSession(s.name) },
+                        { label: 'Kill', danger: true, onClick: () => killSession(s.name) }
+                    ]);
                 });
-                actions.appendChild(renameBtn);
-                const killBtn = document.createElement('button');
-                killBtn.className = 'kill';
-                killBtn.textContent = 'Kill';
-                killBtn.draggable = false;
-                killBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    killSession(s.name);
-                });
-                actions.appendChild(killBtn);
+                actions.appendChild(menuBtn);
                 card.appendChild(actions);
 
                 card.addEventListener('click', () => activateSession(s.name));
@@ -822,10 +1232,15 @@
                 });
                 card.addEventListener('dragend', () => {
                     card.classList.remove('dragging');
-                    if (dragSrcCard === card) saveOrder(captureOrderFromDom());
+                    if (dragSrcCard === card) {
+                        captureLayoutFromDom();
+                        saveLayout();
+                    }
                     dragSrcCard = null;
                     isDragging = false;
                 });
+                // Dropping on a card positions before/after it — including
+                // cards in ANOTHER project, which reassigns on dragend.
                 card.addEventListener('dragover', (e) => {
                     if (!dragSrcCard || dragSrcCard === card) return;
                     e.preventDefault();
@@ -839,16 +1254,180 @@
                 return card;
             }
 
+            // One collapsible section: the Ungrouped area (projectName '') or a
+            // project. `members` are live sessions in layout order.
+            function renderGroup(projectName, members) {
+                const isUngrouped = projectName === '';
+                const collapseId = isUngrouped ? UNGROUPED_COLLAPSE_ID : projectName;
+                const collapsed = !!getCollapsed()[collapseId];
+
+                const group = document.createElement('div');
+                group.className = 'project-group' + (collapsed ? ' collapsed' : '');
+                group.dataset.project = projectName;
+
+                const header = document.createElement('div');
+                header.className = 'project-header';
+                header.setAttribute('role', 'button');
+                header.setAttribute('tabindex', '0');
+                header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                header.setAttribute('aria-label',
+                    (collapsed ? 'Expand ' : 'Collapse ') + (isUngrouped ? 'ungrouped sessions' : 'project ' + projectName));
+
+                const chev = document.createElement('span');
+                chev.className = 'chev';
+                chev.textContent = '▾';
+                header.appendChild(chev);
+
+                const title = document.createElement('span');
+                title.className = 'project-title';
+                title.textContent = isUngrouped ? 'Ungrouped' : projectName;
+                header.appendChild(title);
+
+                const badges = document.createElement('span');
+                badges.className = 'project-badges';
+                const count = document.createElement('span');
+                count.textContent = String(members.length);
+                badges.appendChild(count);
+                // Collapsed headers aggregate member states so a folded
+                // project still shows when something inside needs you.
+                if (collapsed) {
+                    for (const state of ['running', 'awaiting', 'done']) {
+                        const n = members.filter(s => s.state === state).length;
+                        if (!n) continue;
+                        const chip = document.createElement('span');
+                        chip.className = 'state-chip';
+                        chip.appendChild(stateDot(state));
+                        const num = document.createElement('span');
+                        num.textContent = String(n);
+                        chip.appendChild(num);
+                        badges.appendChild(chip);
+                    }
+                }
+                header.appendChild(badges);
+
+                if (!isUngrouped) {
+                    const actions = document.createElement('span');
+                    actions.className = 'project-actions';
+                    const addBtn = document.createElement('button');
+                    addBtn.textContent = '+';
+                    addBtn.title = 'New session in ' + projectName;
+                    addBtn.setAttribute('aria-label', 'New session in project ' + projectName);
+                    addBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        createSessionInProject(projectName);
+                    });
+                    actions.appendChild(addBtn);
+                    const pMenuBtn = document.createElement('button');
+                    pMenuBtn.textContent = '⋯';
+                    pMenuBtn.title = 'Project actions';
+                    pMenuBtn.setAttribute('aria-label', 'Actions for project ' + projectName);
+                    pMenuBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        openMenu(pMenuBtn, [
+                            { label: 'Rename project', onClick: () => renameProject(projectName) },
+                            { label: 'Delete project', danger: true, onClick: () => deleteProject(projectName) }
+                        ]);
+                    });
+                    actions.appendChild(pMenuBtn);
+                    header.appendChild(actions);
+                }
+
+                function toggleCollapse() {
+                    setCollapsed(collapseId, !getCollapsed()[collapseId]);
+                    paint();
+                }
+                header.addEventListener('click', toggleCollapse);
+                header.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleCollapse();
+                    }
+                });
+
+                // Header as a drop target: drop = append to this project.
+                header.addEventListener('dragover', (e) => {
+                    if (!dragSrcCard) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    header.classList.add('drag-over');
+                });
+                header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
+                header.addEventListener('drop', (e) => {
+                    if (!dragSrcCard) return;
+                    e.preventDefault();
+                    header.classList.remove('drag-over');
+                    group.querySelector('.project-sessions').appendChild(dragSrcCard);
+                    // If the group was collapsed the card is now hidden —
+                    // dragend's captureLayoutFromDom still finds it in the DOM.
+                });
+
+                group.appendChild(header);
+
+                const body = document.createElement('div');
+                body.className = 'project-sessions';
+                for (const s of members) body.appendChild(renderCard(s));
+                if (!members.length && !isUngrouped) {
+                    const hint = document.createElement('div');
+                    hint.className = 'project-empty-hint';
+                    hint.textContent = 'empty — drag a session here, or +';
+                    body.appendChild(hint);
+                }
+                group.appendChild(body);
+                return group;
+            }
+
+            // paint renders the sidebar from lastSessions + layout. Pure view —
+            // no fetching — so layout mutations repaint instantly.
+            function paint() {
+                if (isDragging || openMenuEl) return;
+                clearChildren(listEl);
+                const liveByName = new Map(lastSessions.map(s => [s.name, s]));
+                const referenced = new Set();
+                for (const p of layout.projects) p.sessions.forEach(n => referenced.add(n));
+                layout.ungrouped.forEach(n => referenced.add(n));
+
+                // Ungrouped (top): explicit order first, then any live session
+                // the layout has never seen (fresh creations), in tmux order.
+                const ungrouped = layout.ungrouped
+                    .map(n => liveByName.get(n)).filter(Boolean)
+                    .concat(lastSessions.filter(s => !referenced.has(s.name)));
+                if (ungrouped.length) {
+                    listEl.appendChild(renderGroup('', ungrouped));
+                }
+                for (const p of layout.projects) {
+                    const members = p.sessions.map(n => liveByName.get(n)).filter(Boolean);
+                    listEl.appendChild(renderGroup(p.name, members));
+                }
+                if (!ungrouped.length && !layout.projects.length) {
+                    listEl.appendChild(emptyState('No sessions yet.'));
+                }
+                updateTitle();
+            }
+
             async function renderLobby() {
-                if (isDragging) return;
+                if (isDragging || openMenuEl) return;
                 try {
-                    const resp = await fetch(SESSIONS_API, { credentials: 'same-origin' });
-                    if (!resp.ok) {
+                    const [sessResp, layoutResult] = await Promise.all([
+                        fetch(SESSIONS_API, { credentials: 'same-origin' }),
+                        fetchLayout().catch(err => err)
+                    ]);
+                    if (!sessResp.ok) {
                         clearChildren(listEl);
-                        listEl.appendChild(emptyState('Failed to load sessions: HTTP ' + resp.status));
+                        listEl.appendChild(emptyState('Failed to load sessions: HTTP ' + sessResp.status));
                         return;
                     }
-                    const sessions = await resp.json();
+                    const sessions = await sessResp.json();
+                    if (layoutResult instanceof Error) {
+                        // Grouping degrades gracefully: keep the last-known
+                        // layout, sessions still render.
+                        if (!layoutLoaded) console.warn('layout fetch failed:', layoutResult);
+                    } else {
+                        layout = layoutResult;
+                        if (!layoutLoaded) {
+                            layoutLoaded = true;
+                            seedLayoutFromLegacyOrder();
+                        }
+                    }
                     const activeListed = sessions.some(s => s.name === currentActive);
                     if (currentActive && activeListed) activeConfirmed = true;
                     // Only deactivate a session we've SEEN before and that is now
@@ -857,17 +1436,22 @@
                     if (currentActive && !activeListed && activeConfirmed) {
                         deactivateSession();
                     }
-                    clearChildren(listEl);
-                    if (sessions.length === 0) {
-                        listEl.appendChild(emptyState('No sessions yet.'));
-                        return;
-                    }
-                    const ordered = applySavedOrder(sessions);
-                    for (const s of ordered) listEl.appendChild(renderCard(s));
+                    lastSessions = sessions;
+                    paint();
                 } catch (err) {
                     clearChildren(listEl);
                     listEl.appendChild(emptyState('Error: ' + err.message));
                 }
+            }
+
+            // One-time migration: an untouched server layout + a legacy
+            // localStorage drag-order → carry the old order into Ungrouped.
+            function seedLayoutFromLegacyOrder() {
+                if (layout.projects.length || layout.ungrouped.length) return;
+                const old = getSavedOrder().filter(n => NAME_RE.test(n));
+                if (!old.length) return;
+                layout.ungrouped = old;
+                putLayout().catch(() => {});
             }
 
             // A newly-created session is spawned by the iframe's WebSocket a
@@ -891,6 +1475,7 @@
                 if (e.key === 'Enter') newBtnEl.click();
             });
             restoreBtnEl.addEventListener('click', () => restoreSessions(restoreBtnEl));
+            newProjectBtnEl.addEventListener('click', createProject);
 
             window.addEventListener('hashchange', () => {
                 const hash = location.hash.slice(1);
