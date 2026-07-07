@@ -22,7 +22,12 @@ const (
 	tmuxBinary     = "/usr/bin/tmux"
 	sudoBinary     = "/usr/bin/sudo"
 	restoreWrapper = "/usr/local/bin/tmux-restore-user"
-	tmuxListFmt    = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}"
+	// @claude_state is stamped by the claude-tmux-state hook script
+	// (ADR-0001); pane_current_command is the backstop that catches a
+	// Claude that died without firing hooks (kill -9, OOM) — the pane
+	// falls back to a shell. Both resolve against the session's active
+	// pane, matching the one-claude-per-session usage pattern.
+	tmuxListFmt = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}|#{@claude_state}|#{pane_current_command}"
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
@@ -51,6 +56,28 @@ type Session struct {
 	Attached     int    `json:"attached"`
 	LastActivity int64  `json:"lastActivity"`
 	Created      int64  `json:"created"`
+	// State of the Claude conversation inside the session: "running",
+	// "awaiting", "done", or "" when no live Claude. omitempty keeps the
+	// old wire shape for stateless sessions (external /sessions pollers).
+	State string `json:"state,omitempty"`
+	// Project the session is assigned to per the user's layout; "" =
+	// ungrouped.
+	Project string `json:"project,omitempty"`
+}
+
+// Claude state values as stamped into @claude_state by the hook script.
+const (
+	stateRunning  = "running"
+	stateAwaiting = "awaiting"
+	stateDone     = "done"
+)
+
+var knownStates = map[string]bool{stateRunning: true, stateAwaiting: true, stateDone: true}
+
+// shellCommands are pane commands that mean "no Claude in the foreground":
+// a stale @claude_state paired with one of these is a dead Claude.
+var shellCommands = map[string]bool{
+	"bash": true, "zsh": true, "sh": true, "fish": true, "dash": true, "ash": true, "ksh": true,
 }
 
 // loadUserMap reads /etc/ttyd-user-map → map[authentik_local]os_user.
@@ -129,6 +156,7 @@ func main() {
 	http.HandleFunc("/sessions/", handleSessionByName)
 	http.HandleFunc("/whoami", handleWhoami)
 	http.HandleFunc("/restore", handleRestore)
+	http.HandleFunc("/layout", handleLayout)
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})
@@ -234,30 +262,71 @@ func buildSessionsBody(osUser string) []byte {
 	if err != nil {
 		return []byte("[]")
 	}
-	sessions := make([]Session, 0)
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, "|")
-		if len(parts) != 4 {
-			continue
-		}
-		attached, _ := strconv.Atoi(parts[1])
-		activity, _ := strconv.ParseInt(parts[2], 10, 64)
-		created, _ := strconv.ParseInt(parts[3], 10, 64)
-		sessions = append(sessions, Session{
-			Name:         parts[0],
-			Attached:     attached,
-			LastActivity: activity,
-			Created:      created,
-		})
+	sessions := parseSessions(out)
+	// Layout trouble must not take the session list down with it — the
+	// project column just goes empty until the store recovers.
+	if layout, err := layoutStoreInstance.load(osUser); err == nil {
+		applyLayout(sessions, layout)
+	} else {
+		log.Printf("layout load for %s failed (serving sessions without projects): %v", osUser, err)
 	}
 	body, err := json.Marshal(sessions)
 	if err != nil {
 		return []byte("[]")
 	}
 	return append(body, '\n')
+}
+
+// parseSessions decodes `tmux list-sessions -F tmuxListFmt` output. Lines
+// with the wrong field count are skipped (a tmux hiccup must not 500 the
+// list). State is dropped unless it is a known value AND the pane still
+// runs something Claude-shaped (see shellCommands).
+func parseSessions(out []byte) []Session {
+	sessions := make([]Session, 0)
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) != 6 {
+			continue
+		}
+		attached, _ := strconv.Atoi(parts[1])
+		activity, _ := strconv.ParseInt(parts[2], 10, 64)
+		created, _ := strconv.ParseInt(parts[3], 10, 64)
+		state := parts[4]
+		if !knownStates[state] || shellCommands[parts[5]] {
+			state = ""
+		}
+		sessions = append(sessions, Session{
+			Name:         parts[0],
+			Attached:     attached,
+			LastActivity: activity,
+			Created:      created,
+			State:        state,
+		})
+	}
+	return sessions
+}
+
+// applyLayout fills each session's Project from the user's layout; sessions
+// in no project (or unknown to the layout) stay ungrouped.
+func applyLayout(sessions []Session, l Layout) {
+	projectOf := map[string]string{}
+	for _, p := range l.Projects {
+		for _, sess := range p.Sessions {
+			projectOf[sess] = p.Name
+		}
+	}
+	for i := range sessions {
+		sessions[i].Project = projectOf[sessions[i].Name]
+	}
+}
+
+// logAndFail logs the operator-facing detail and returns an opaque 500.
+func logAndFail(w http.ResponseWriter, format string, args ...any) {
+	log.Printf(format, args...)
+	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
 func handleSessionByName(w http.ResponseWriter, r *http.Request) {
@@ -305,6 +374,11 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 		http.Error(w, "kill-session failed", http.StatusInternalServerError)
 		return
 	}
+	// A UI kill is deliberate — drop the session's project assignment.
+	// (Deaths outside the API keep theirs so a restore regroups them.)
+	if err := layoutStoreInstance.removeSession(osUser, name); err != nil {
+		log.Printf("layout cleanup after killing %s for %s failed: %v", name, osUser, err)
+	}
 	sessionsCacheInstance.invalidate(osUser)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -341,6 +415,11 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 		log.Printf("rename-session %s→%s as %s failed: %v: %s", oldName, newName, osUser, err, msg)
 		http.Error(w, "rename-session failed", http.StatusInternalServerError)
 		return
+	}
+	// Assignments are keyed by session name — follow the rename or the
+	// session would silently fall out of its project.
+	if err := layoutStoreInstance.renameSession(osUser, oldName, newName); err != nil {
+		log.Printf("layout rename %s→%s for %s failed: %v", oldName, newName, osUser, err)
 	}
 	sessionsCacheInstance.invalidate(osUser)
 	w.WriteHeader(http.StatusNoContent)
