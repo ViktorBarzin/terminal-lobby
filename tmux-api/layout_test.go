@@ -42,7 +42,8 @@ func TestLayoutSaveLoadRoundtrip(t *testing.T) {
 			{Name: "tripit", Sessions: []string{"fix-dates", "demo"}},
 			{Name: "infra", Sessions: []string{}},
 		},
-		Ungrouped: []string{"scratch"},
+		Ungrouped:      []string{"scratch"},
+		UngroupedIndex: 2,
 	}
 	if err := st.save("alice", in); err != nil {
 		t.Fatalf("save: %v", err)
@@ -53,6 +54,26 @@ func TestLayoutSaveLoadRoundtrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(in, out) {
 		t.Fatalf("roundtrip mismatch:\n in: %+v\nout: %+v", in, out)
+	}
+}
+
+// Documents written before the Ungrouped section became movable have no
+// ungroupedIndex — they must load as 0 (top), preserving the old layout.
+func TestLayoutLoadLegacyDocDefaultsUngroupedIndexZero(t *testing.T) {
+	st := testStore(t)
+	if err := os.MkdirAll(st.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"version":1,"projects":[{"name":"tripit","sessions":[]}],"ungrouped":["scratch"]}`
+	if err := os.WriteFile(filepath.Join(st.dir, "alice.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := st.load("alice")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if l.UngroupedIndex != 0 {
+		t.Fatalf("legacy ungroupedIndex: got %d, want 0", l.UngroupedIndex)
 	}
 }
 
@@ -179,6 +200,8 @@ func TestValidateLayoutRejects(t *testing.T) {
 		{"bad ungrouped name", func(l *Layout) { l.Ungrouped[0] = "bad!name" }},
 		{"session in two projects", func(l *Layout) { l.Projects[1].Sessions = []string{"fix-dates"} }},
 		{"session both grouped and ungrouped", func(l *Layout) { l.Ungrouped = append(l.Ungrouped, "fix-dates") }},
+		{"negative ungroupedIndex", func(l *Layout) { l.UngroupedIndex = -1 }},
+		{"ungroupedIndex past last slot", func(l *Layout) { l.UngroupedIndex = len(l.Projects) + 1 }},
 		{"too many projects", func(l *Layout) {
 			for i := 0; i < maxProjects+1; i++ {
 				l.Projects = append(l.Projects, Project{Name: "p" + strconv.Itoa(i), Sessions: []string{}})

@@ -23,6 +23,11 @@ type Layout struct {
 	Version   int       `json:"version"`
 	Projects  []Project `json:"projects"`
 	Ungrouped []string  `json:"ungrouped"`
+	// UngroupedIndex is the Ungrouped section's slot among the rendered
+	// groups: it renders before Projects[UngroupedIndex] (len(Projects)
+	// = last). Absent in pre-field documents -> 0, the historic pinned-
+	// top position.
+	UngroupedIndex int `json:"ungroupedIndex"`
 }
 
 type Project struct {
@@ -191,6 +196,9 @@ func validateLayout(l Layout) error {
 	}
 	if len(l.Projects) > maxProjects {
 		return fmt.Errorf("too many projects (%d > %d)", len(l.Projects), maxProjects)
+	}
+	if l.UngroupedIndex < 0 || l.UngroupedIndex > len(l.Projects) {
+		return fmt.Errorf("ungroupedIndex %d out of range [0,%d]", l.UngroupedIndex, len(l.Projects))
 	}
 	projectNames := map[string]bool{}
 	seenSession := map[string]bool{}
