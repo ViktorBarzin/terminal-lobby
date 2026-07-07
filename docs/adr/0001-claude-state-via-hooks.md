@@ -35,5 +35,12 @@ instances are unaffected. `tmux-api` returns the option through the
   other being absent (missing script → hook exits 0; unset option →
   no indicator).
 - A session whose Claude died without hooks firing (kill -9, OOM) is
-  caught by the `pane_current_command != claude` backstop and shows no
-  indicator.
+  caught by a liveness backstop: a state only survives while a claude
+  process is alive under the session's `pane_pid` (one /proc scan per
+  refresh, no forks). The first version used
+  `pane_current_command != claude`, which is WRONG for launcher-started
+  sessions: it reports the pane tty's foreground process-group leader,
+  and start-claude.sh (bash, runs npx without exec, no job control)
+  keeps that leader as `bash` while claude runs underneath — blanking
+  every launcher user's dots (found on emo's sessions, 2026-07-07,
+  same day).

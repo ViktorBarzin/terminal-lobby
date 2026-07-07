@@ -23,11 +23,12 @@ const (
 	sudoBinary     = "/usr/bin/sudo"
 	restoreWrapper = "/usr/local/bin/tmux-restore-user"
 	// @claude_state is stamped by the claude-tmux-state hook script
-	// (ADR-0001); pane_current_command is the backstop that catches a
-	// Claude that died without firing hooks (kill -9, OOM) — the pane
-	// falls back to a shell. Both resolve against the session's active
-	// pane, matching the one-claude-per-session usage pattern.
-	tmuxListFmt = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}|#{@claude_state}|#{pane_current_command}"
+	// (ADR-0001). pane_pid feeds the liveness backstop (proc.go): state
+	// survives only while a claude process is alive under the pane —
+	// catches a claude killed without firing SessionEnd. Both resolve
+	// against the session's active pane, matching the one-claude-per-
+	// session usage pattern.
+	tmuxListFmt = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}|#{@claude_state}|#{pane_pid}"
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
@@ -63,6 +64,9 @@ type Session struct {
 	// Project the session is assigned to per the user's layout; "" =
 	// ungrouped.
 	Project string `json:"project,omitempty"`
+	// PanePID is the session's active-pane process — internal input to
+	// the claude-liveness backstop (proc.go), never serialized.
+	PanePID int `json:"-"`
 }
 
 // Claude state values as stamped into @claude_state by the hook script.
@@ -73,12 +77,6 @@ const (
 )
 
 var knownStates = map[string]bool{stateRunning: true, stateAwaiting: true, stateDone: true}
-
-// shellCommands are pane commands that mean "no Claude in the foreground":
-// a stale @claude_state paired with one of these is a dead Claude.
-var shellCommands = map[string]bool{
-	"bash": true, "zsh": true, "sh": true, "fish": true, "dash": true, "ash": true, "ksh": true,
-}
 
 // loadUserMap reads /etc/ttyd-user-map → map[authentik_local]os_user.
 // Format: "<auth>=<os_user>[:<cwd>]" per line. Comments (#) and blanks ignored.
@@ -263,6 +261,13 @@ func buildSessionsBody(osUser string) []byte {
 		return []byte("[]")
 	}
 	sessions := parseSessions(out)
+	// Liveness backstop: drop states whose claude died without a
+	// SessionEnd hook. A failed /proc scan fails open (states kept).
+	if tree, err := procTreeFrom("/proc"); err == nil {
+		clearDeadStates(sessions, tree)
+	} else {
+		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
+	}
 	// Layout trouble must not take the session list down with it — the
 	// project column just goes empty until the store recovers.
 	if layout, err := layoutStoreInstance.load(osUser); err == nil {
@@ -279,8 +284,8 @@ func buildSessionsBody(osUser string) []byte {
 
 // parseSessions decodes `tmux list-sessions -F tmuxListFmt` output. Lines
 // with the wrong field count are skipped (a tmux hiccup must not 500 the
-// list). State is dropped unless it is a known value AND the pane still
-// runs something Claude-shaped (see shellCommands).
+// list). Unknown state values are dropped; whether the claude behind a
+// state is still alive is decided later by clearDeadStates (proc.go).
 func parseSessions(out []byte) []Session {
 	sessions := make([]Session, 0)
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
@@ -295,15 +300,17 @@ func parseSessions(out []byte) []Session {
 		activity, _ := strconv.ParseInt(parts[2], 10, 64)
 		created, _ := strconv.ParseInt(parts[3], 10, 64)
 		state := parts[4]
-		if !knownStates[state] || shellCommands[parts[5]] {
+		if !knownStates[state] {
 			state = ""
 		}
+		panePID, _ := strconv.Atoi(parts[5])
 		sessions = append(sessions, Session{
 			Name:         parts[0],
 			Attached:     attached,
 			LastActivity: activity,
 			Created:      created,
 			State:        state,
+			PanePID:      panePID,
 		})
 	}
 	return sessions
