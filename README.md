@@ -3,7 +3,9 @@
 Web tmux sessions, gated by Authentik, isolated per OS user. Lives at
 `https://terminal.viktorbarzin.me/`.
 
-A sidebar lists the current user's tmux sessions; the right pane is an
+A sidebar lists the current user's tmux sessions — grouped into
+collapsible **projects**, each session carrying a **Claude state dot**
+(running / awaiting input / completed) — and the right pane is an
 iframe that swaps between sessions on click. Direct-linked sessions
 (`?arg=<name>` at the top level) bypass the lobby and render fullscreen
 for bookmarks / CLI links.
@@ -37,14 +39,42 @@ terminal view; click `›` to bring it back. Choice persists per browser
 
 ![sidebar collapsed — fullscreen terminal](docs/screenshots/sidebar-collapsed.png)
 
+## Projects & session state
+
+**Projects** are named folders that group sessions in the sidebar
+(domain glossary: `CONTEXT.md`). Create one with **+ Project**; assign
+sessions by dragging a card onto a project header, or via the card's
+`⋯` menu (**Move to…**, which also holds Rename/Kill). Each project
+header has a `+` (new session directly in the project) and a `⋯` menu
+(rename / delete — deleting moves members to **Ungrouped**, it never
+kills sessions). Sections collapse per browser; a collapsed header
+shows its session count plus aggregated state dots. Membership and all
+ordering live server-side per user (`GET`/`PUT /layout`), so the
+arrangement follows you across desktop and phone and survives OOM
+restores — see `docs/adr/0002-layout-store-in-tmux-api.md` for why
+that beats tmux options or localStorage.
+
+**Claude state dots** show what the Claude conversation inside each
+session is doing: pulsing accent = *running* (turn in flight), amber =
+*awaiting your input* (permission ask / question), green = *completed*
+(turn done). No dot = no live Claude (plain shell, or Claude exited).
+The browser tab title gains an `(N●)` badge while anything awaits
+input. State comes from org-wide Claude Code hooks stamping
+`@claude_state` on the tmux session (`devvm/claude-tmux-state`;
+`docs/adr/0001-claude-state-via-hooks.md` — the pane title is a static
+summary, so hooks it is). Claudes started before the hooks were
+installed show no dot until their next restart/resume; worst-case
+display lag is ~10 s (5 s API cache + 5 s poll).
+
 ## Components
 
 | Piece | Where it runs | Port | Purpose |
 |---|---|---|---|
 | `frontend/index.html` | Served by ttyd on the DevVM | 7681 | Lobby UI + xterm.js terminal |
-| `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions`, `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore` |
+| `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions` (incl. per-session `state` + `project`), `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore`, `GET`/`PUT /layout` (per-user sidebar layout, stored under `/var/lib/tmux-api/layout/`) |
 | `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Receives pasted/uploaded images, returns a path the terminal can paste |
 | `devvm/tmux-attach.sh` | DevVM, invoked by ttyd | — | Validates `X-authentik-username`, maps to OS user via `/etc/ttyd-user-map`, `sudo -u <user> tmux new-session -A` |
+| `devvm/claude-tmux-state` | DevVM, invoked by Claude Code hooks | — | Stamps `@claude_state` (running / awaiting / done) on the enclosing tmux session; wired org-wide via `/etc/claude-code/managed-settings.json` (infra repo, `scripts/workstation/`, self-deploys hourly). No-ops outside tmux. See `docs/adr/0001-claude-state-via-hooks.md` |
 | `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`) | — | "Restore sessions" button helper: validates the user against `/etc/ttyd-user-map`, runs `tmux-persist restore <user>` (recreates that user's saved-but-dead sessions, resuming each Claude conversation). Idempotent — live sessions are left alone. Useful after an OOM kills the tmux server without a reboot (the boot-only restore never fires) |
 | `devvm/ttyd.service`, `ttyd-ro.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units |
 | `devvm/clipboard-cleanup.service` + `.timer` | DevVM | — | Daily `find /tmp/clipboard-images -mtime +7 -delete` |
