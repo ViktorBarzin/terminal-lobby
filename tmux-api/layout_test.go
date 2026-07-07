@@ -222,12 +222,12 @@ func TestValidateLayoutRejects(t *testing.T) {
 // --- session parsing + enrichment -------------------------------------------
 
 func TestParseSessionsSixFields(t *testing.T) {
-	out := []byte("alpha|1|1751800000|1751700000|running|node\n" +
-		"beta|0|1751800001|1751700001||zsh\n")
+	out := []byte("alpha|1|1751800000|1751700000|running|4242\n" +
+		"beta|0|1751800001|1751700001||991\n")
 	got := parseSessions(out)
 	want := []Session{
-		{Name: "alpha", Attached: 1, LastActivity: 1751800000, Created: 1751700000, State: "running"},
-		{Name: "beta", Attached: 0, LastActivity: 1751800001, Created: 1751700001},
+		{Name: "alpha", Attached: 1, LastActivity: 1751800000, Created: 1751700000, State: "running", PanePID: 4242},
+		{Name: "beta", Attached: 0, LastActivity: 1751800001, Created: 1751700001, PanePID: 991},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parse:\n got %+v\nwant %+v", got, want)
@@ -235,31 +235,15 @@ func TestParseSessionsSixFields(t *testing.T) {
 }
 
 func TestParseSessionsSkipsMalformed(t *testing.T) {
-	out := []byte("only|three|fields\n\nok|0|1|2|done|claude\n")
+	out := []byte("only|three|fields\n\nok|0|1|2|done|77\n")
 	got := parseSessions(out)
 	if len(got) != 1 || got[0].Name != "ok" || got[0].State != "done" {
 		t.Fatalf("malformed handling: %+v", got)
 	}
 }
 
-// A dead Claude leaves a stale @claude_state behind (kill -9 fires no hook);
-// the pane having fallen back to a shell is the tell.
-func TestParseSessionsShellBackstopClearsState(t *testing.T) {
-	out := []byte("alpha|0|1|2|running|zsh\n" +
-		"bravo|0|1|2|awaiting|bash\n" +
-		"charlie|0|1|2|done|claude\n" +
-		"delta|0|1|2|running|node\n")
-	got := parseSessions(out)
-	if got[0].State != "" || got[1].State != "" {
-		t.Fatalf("shell sessions must have state cleared: %+v", got[:2])
-	}
-	if got[2].State != "done" || got[3].State != "running" {
-		t.Fatalf("claude/node sessions must keep state: %+v", got[2:])
-	}
-}
-
 func TestParseSessionsUnknownStateDropped(t *testing.T) {
-	out := []byte("alpha|0|1|2|banana|claude\n")
+	out := []byte("alpha|0|1|2|banana|77\n")
 	got := parseSessions(out)
 	if got[0].State != "" {
 		t.Fatalf("unknown state value must be dropped, got %q", got[0].State)
