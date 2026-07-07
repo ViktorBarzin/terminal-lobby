@@ -1,0 +1,45 @@
+# Terminal Lobby
+
+Web tmux sessions gated by Authentik, isolated per OS user, at
+`terminal.viktorbarzin.me`. This context covers the lobby UI, the
+tmux-api, and the devvm-side session plumbing.
+
+## Language
+
+**Session**:
+One named tmux session belonging to one OS user, listed in the sidebar
+and rendered in the terminal pane. Usually runs a Claude Code
+conversation, but may be a plain shell.
+_Avoid_: terminal, tab, thread
+
+**Project**:
+A user-defined named folder in the sidebar that groups sessions.
+Created and deleted deliberately (explicit CRUD) and may sit empty.
+Purely organizational — no directory semantics, no launcher behavior.
+A session belongs to at most one project.
+_Avoid_: group, folder, workspace
+
+**Ungrouped**:
+The implicit area of the sidebar holding sessions assigned to no
+project, rendered above all projects. Collapsible like a project, but
+not a project — it cannot be renamed or deleted.
+_Avoid_: default project, inbox
+
+**Assignment**:
+The session→project mapping. Server-side per-user state owned by
+tmux-api, so it follows the user across devices and survives tmux
+server crashes and restores.
+
+**Layout**:
+The per-user sidebar arrangement owned by tmux-api: the ordered list
+of projects, each project's ordered member sessions, and the Ungrouped
+order. Collapse state is NOT part of the layout — it is a per-browser
+view preference.
+
+**Session state**:
+What the Claude conversation inside a session is doing: *running* (a
+turn is in flight), *awaiting input* (Claude asked something and is
+blocked on the user), or *completed* (turn finished, ready for the
+next prompt). A session with no live Claude has no state.
+_Avoid_: status, activity (tmux "activity" means terminal output, not
+Claude turn state)
