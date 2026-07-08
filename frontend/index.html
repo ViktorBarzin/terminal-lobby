@@ -1906,7 +1906,25 @@
         // (double/triple click) is an explicit new-selection gesture and
         // goes through immediately — except within the ghost window of the
         // last drag lift, where browsers may stamp the ghost with detail=2.
-        const GHOST_MS = 400, GHOST_PX = 8, DRAG_PX = 4;
+        // REPLACE_PX is deliberately larger than a typical trackpad jitter:
+        // macOS tap-drag continuations and micro-slips move a few px; an
+        // intentional replacing drag travels. WHEEL_CLEAR_PX/WINDOW gate the
+        // scroll trigger — trackpads emit micro-wheel events during plain
+        // pointer movement (resting finger, inertia crumbs), which must not
+        // count as 'scroll' (that regression: selection died on pointer move).
+        const GHOST_MS = 400, GHOST_PX = 8, REPLACE_PX = 10;
+        const WHEEL_CLEAR_PX = 40, WHEEL_WINDOW_MS = 500;
+        // Opt-in diagnostics: add ?seldebug=1 to the session URL and every
+        // selection clear announces its trigger in a toast + console.
+        const selDebug = params.get('seldebug') === '1';
+        function clearSelectionBecause(why) {
+            if (!term.hasSelection()) return;
+            term.clearSelection();
+            if (selDebug) {
+                console.log('[seldebug] cleared by:', why);
+                showToast('selection cleared: ' + why, 'error', 2500);
+            }
+        }
         let lastHijackUp = null;
         function dispatchSelectionClone(e) {
             const init = {
@@ -1935,7 +1953,7 @@
                     && Math.abs(e.clientY - lastHijackUp.y) <= GHOST_PX;
             if (ghost && term.hasSelection()) return;        // lift ghost: keep the selection
             if (!term.hasSelection() || e.detail > 1) {
-                if (e.detail > 1) term.clearSelection();     // dbl/triple replaces
+                if (e.detail > 1) clearSelectionBecause('double-click replace');
                 dispatchSelectionClone(e);
                 term.focus();
                 return;
@@ -1944,10 +1962,12 @@
             // to be a drag. Release without travel = keep the selection.
             const start = e;
             const onMove = (m) => {
-                if (Math.abs(m.clientX - start.clientX) < DRAG_PX
-                        && Math.abs(m.clientY - start.clientY) < DRAG_PX) return;
+                if (Math.abs(m.clientX - start.clientX) < REPLACE_PX
+                        && Math.abs(m.clientY - start.clientY) < REPLACE_PX) return;
                 cleanup();
-                term.clearSelection();                       // replacing drag begins
+                clearSelectionBecause('replacing drag (' +
+                    Math.abs(m.clientX - start.clientX) + ',' +
+                    Math.abs(m.clientY - start.clientY) + 'px)');
                 dispatchSelectionClone(start);
             };
             const onUp = () => { cleanup(); };
@@ -1960,8 +1980,18 @@
             term.focus();                                    // we swallowed xterm's focus click
         }, true);
         // The other two clear triggers of the contract:
-        document.getElementById('terminal').addEventListener('wheel', () => {
-            if (term.hasSelection()) term.clearSelection();
+        let wheelAccum = 0, wheelAccumAt = 0;
+        document.getElementById('terminal').addEventListener('wheel', (w) => {
+            if (!term.hasSelection()) return;
+            const now = Date.now();
+            if (now - wheelAccumAt > WHEEL_WINDOW_MS) wheelAccum = 0;
+            wheelAccumAt = now;
+            wheelAccum += Math.abs(w.deltaY) + Math.abs(w.deltaX);
+            if (wheelAccum >= WHEEL_CLEAR_PX) {
+                const total = Math.round(wheelAccum);
+                wheelAccum = 0;
+                clearSelectionBecause('scroll (' + total + 'px)');
+            }
         }, { passive: true, capture: true });
 
         document.title = 'tmux: ' + whoami.osUser + '/' + validArg;
@@ -2288,7 +2318,7 @@
         term.attachCustomKeyEventHandler((e) => {
             if (e.type !== 'keydown') return true;           // also consulted on keyup
             if (e.key === 'Escape' && term.hasSelection()) {
-                term.clearSelection();                       // contract: Esc clears...
+                clearSelectionBecause('Escape');             // contract: Esc clears...
                 return true;                                 // ...and still reaches the app
             }
             if (isChord(e, 'c', 'KeyC') && term.hasSelection()) {
