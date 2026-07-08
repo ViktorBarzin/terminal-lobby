@@ -2376,7 +2376,10 @@
                                     } catch (e) {}
                                     break;
                                 case MSG_SET_TITLE:
-                                    document.title = textDecoder.decode(payload);
+                                    // ttyd sends one SET_TITLE frame per connect,
+                                    // carrying '<command> (<hostname>)'. The page
+                                    // already set the meaningful 'tmux: <user>/<session>'
+                                    // title — keep it; don't let the frame overwrite.
                                     break;
                             }
                         }
