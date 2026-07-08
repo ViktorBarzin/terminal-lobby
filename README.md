@@ -110,6 +110,24 @@ DEVVM=10.0.10.10 ./scripts/deploy.sh     # explicit host
 SKIP_BUILD=1 ./scripts/deploy.sh         # reuse ./out/ binaries
 ```
 
+### ttyd (patched)
+
+The devvm runs a patched ttyd: stock 1.7.7 reports a 0×0 pixel size to
+the pty, which makes tmux swallow sixel images — the patch forwards
+the browser's pixel size so `viu` & co. render inline (see
+`docs/adr/0004-sixel-images-in-the-terminal.md`). Run
+`./scripts/build-ttyd.sh` once before deploying whenever the ttyd
+binary needs (re)building — it pins upstream tag 1.7.7, applies
+`devvm/ttyd-pixel-size.patch`, and drops the binary at `out/ttyd`;
+`deploy.sh` ships it only if it exists and says so either way.
+
+### viu
+
+`viu` is a system binary on the devvm, installed once, outside
+`deploy.sh`: `cargo install viu --features icy_sixel` (the sixel
+feature is off by default), then
+`sudo install ~/.cargo/bin/viu /usr/local/bin/viu`.
+
 ### CI status — TODO
 
 `.woodpecker.yml` is ready and the deploy SSH key is provisioned
