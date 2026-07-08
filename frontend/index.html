@@ -2682,6 +2682,47 @@
             setTimeout(connect, 3000);
         }
 
+        // ---- stale-tab self-heal ----------------------------------------
+        // Deploys restart ttyd, which only DROPS the WebSocket: the page
+        // silently reconnects and keeps running its old JavaScript forever —
+        // Cache-Control: no-store never helps because the tab never
+        // re-fetches itself. (Found the hard way: a day-old tab lacked the
+        // drag-select feature entirely; drags fell through to Claude Code's
+        // own hold-to-select highlight, which dies on mouse release.)
+        // Remedy: hash our own served bytes at boot, and on every RECONNECT
+        // re-fetch + compare — if the server now serves a different page,
+        // reload into it. Reconnect is the perfect moment: the connection
+        // just dropped anyway and tmux keeps the session.
+        // Known gap: a deploy landing between page load and the boot fetch
+        // makes the baseline the NEW bytes while old code runs — heals on
+        // the deploy after next. Not worth a build-stamp pipeline.
+        let bootPageHash = null;
+        function hashPage(text) {
+            let h = 5381;
+            for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+            return text.length + ':' + h;
+        }
+        function fetchSelf() {
+            return fetch(location.pathname + location.search,
+                         { cache: 'no-store', credentials: 'same-origin' })
+                .then(r => r.ok ? r.text() : null);
+        }
+        fetchSelf().then(t => { if (t) bootPageHash = hashPage(t); }).catch(() => {});
+        function reloadIfStale() {
+            if (!bootPageHash) return;
+            fetchSelf().then(t => {
+                if (!t || hashPage(t) === bootPageHash) return;
+                // Loop guard: at most one auto-reload per 2 minutes per tab
+                // (a flaky fetch must not reload-storm a working terminal).
+                let last = 0;
+                try { last = Number(sessionStorage.getItem('tl-stale-reload') || 0); } catch (e) {}
+                if (Date.now() - last < 120000) return;
+                try { sessionStorage.setItem('tl-stale-reload', String(Date.now())); } catch (e) {}
+                console.log('page changed on the server — reloading to pick it up');
+                location.reload();
+            }).catch(() => {});
+        }
+
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const argSuffix = '?arg=' + encodeURIComponent(validArg);
@@ -2697,7 +2738,11 @@
 
                     ws.onopen = () => {
                         console.log('Connected to ttyd (session: ' + validArg + ')');
+                        const isReconnect = hasConnectedOnce;
                         hasConnectedOnce = true;
+                        // A reconnect usually means ttyd restarted — i.e. a
+                        // deploy. Check whether this page is now stale.
+                        if (isReconnect) reloadIfStale();
                         const initMsg = JSON.stringify({
                             AuthToken: token,
                             columns: term.cols,
