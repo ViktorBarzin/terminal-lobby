@@ -156,6 +156,44 @@
         #paste-btn:active, #img-btn:active { transform: scale(0.92); }
         #img-input { display: none; }
 
+        /* Pasted/uploaded image preview — floating thumbnail just above the
+           Paste/Img buttons (terminal mode only, element built from JS).
+           Click opens the #img-lightbox enlargement; closing that removes
+           the preview entirely. */
+        #img-preview {
+            position: fixed;
+            bottom: calc(84px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+            right: calc(24px + env(safe-area-inset-right));
+            z-index: 9999;
+            max-width: 220px; max-height: 160px;
+            object-fit: contain;
+            background: var(--bg-card);
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            cursor: zoom-in;
+        }
+        /* Track the floating buttons, which sit higher on touch devices. */
+        @media (pointer: coarse) {
+            #img-preview {
+                bottom: calc(132px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+            }
+        }
+        #img-lightbox {
+            position: fixed; inset: 0; z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(0, 0, 0, 0.65);
+            cursor: zoom-out;
+        }
+        #img-lightbox img {
+            max-width: 85vw; max-height: 85vh;
+            object-fit: contain;
+            background: var(--bg-card);
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        }
+
         /* Lobby */
         #lobby {
             display: none; height: 100vh; box-sizing: border-box;
@@ -2152,6 +2190,84 @@
             return true;                                     // no selection: Ctrl+C stays SIGINT
         });
 
+        // ------------------------------------------------------------------
+        // Image preview — a pasted/uploaded/dropped image pops up as a
+        // floating thumbnail the moment it is captured, BEFORE the upload,
+        // so it appears even when the upload fails (the toasts keep
+        // reporting the upload itself; typing the returned path into the
+        // PTY is untouched). Click → full lightbox; click anywhere or
+        // Escape then dismisses the preview entirely. The thumbnail
+        // auto-removes after 6s (hover pauses the timer); a new image
+        // replaces any previous preview. It never steals terminal focus:
+        // mousedown is preventDefault'ed (clicks still fire), and the
+        // Escape listener only exists while the lightbox is open
+        // (capture + stopPropagation, so xterm never sees that Escape —
+        // and terminal Escape is untouched the rest of the time).
+        // ------------------------------------------------------------------
+        const PREVIEW_TTL_MS = 6000;
+        let preview = null;    // { url, thumb, lightbox, timer, onKey }
+
+        function destroyImagePreview() {
+            // Single exit point for every removal path (timeout, replaced
+            // by a new image, lightbox close) — the object URL is always
+            // revoked here, exactly once.
+            if (!preview) return;
+            clearTimeout(preview.timer);
+            if (preview.thumb) preview.thumb.remove();
+            if (preview.lightbox) preview.lightbox.remove();
+            if (preview.onKey) document.removeEventListener('keydown', preview.onKey, true);
+            URL.revokeObjectURL(preview.url);
+            preview = null;
+        }
+
+        function armImagePreviewTimer() {
+            clearTimeout(preview.timer);
+            preview.timer = setTimeout(destroyImagePreview, PREVIEW_TTL_MS);
+        }
+
+        function openImageLightbox() {
+            if (!preview || preview.lightbox) return;
+            clearTimeout(preview.timer);   // no auto-fade while enlarged
+            preview.thumb.remove();        // once seen large, never back to thumbnail
+            preview.thumb = null;
+            const box = document.createElement('div');
+            box.id = 'img-lightbox';
+            const img = document.createElement('img');
+            img.src = preview.url;
+            img.alt = 'pasted image';
+            box.appendChild(img);
+            box.addEventListener('mousedown', (e) => e.preventDefault());
+            box.addEventListener('click', destroyImagePreview);
+            preview.onKey = (e) => {
+                if (e.key !== 'Escape') return;
+                e.preventDefault();
+                e.stopPropagation();
+                destroyImagePreview();
+            };
+            document.addEventListener('keydown', preview.onKey, true);
+            preview.lightbox = box;
+            document.body.appendChild(box);
+        }
+
+        function showImagePreview(blob) {
+            if (!(blob instanceof Blob)) return;
+            destroyImagePreview();         // a new image replaces the old preview
+            const url = URL.createObjectURL(blob);
+            const thumb = document.createElement('img');
+            thumb.id = 'img-preview';
+            thumb.alt = 'pasted image preview';
+            thumb.src = url;
+            preview = { url, thumb, lightbox: null, timer: null, onKey: null };
+            // Keep xterm focused: swallow the focus-stealing mousedown but
+            // let the click through (same trick as the soft-key toolbar).
+            thumb.addEventListener('mousedown', (e) => e.preventDefault());
+            thumb.addEventListener('click', openImageLightbox);
+            thumb.addEventListener('mouseenter', () => { if (preview) clearTimeout(preview.timer); });
+            thumb.addEventListener('mouseleave', () => { if (preview && !preview.lightbox) armImagePreviewTimer(); });
+            document.body.appendChild(thumb);
+            armImagePreviewTimer();
+        }
+
         document.addEventListener('paste', async (e) => {
             const items = e.clipboardData?.items;
             if (!items) return;
@@ -2163,6 +2279,7 @@
 
                     const blob = item.getAsFile();
                     if (!blob) { showToast('Failed to read image', 'error'); return; }
+                    showImagePreview(blob);
 
                     showToast('Uploading image...', '');
                     try {
@@ -2203,6 +2320,7 @@
                         const imageType = item.types.find(t => t.startsWith('image/'));
                         if (imageType) {
                             const blob = await item.getType(imageType);
+                            showImagePreview(blob);
                             showToast('Uploading image...', '');
                             const formData = new FormData();
                             formData.append('image', blob);
@@ -2239,6 +2357,7 @@
             const file = e.target.files[0];
             if (!file) return;
             e.target.value = ''; // reset so same file can be re-selected
+            showImagePreview(file);
 
             showToast('Uploading image...', '');
             try {
@@ -2322,6 +2441,9 @@
         });
 
         async function uploadDroppedFiles(files) {
+            // Preview the first dropped image (non-images have nothing to show).
+            const firstImage = files.find((f) => f.type && f.type.startsWith('image/'));
+            if (firstImage) showImagePreview(firstImage);
             showToast('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '...', '');
             const paths = [];
             for (const f of files) {
