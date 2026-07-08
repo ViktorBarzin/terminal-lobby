@@ -7,7 +7,8 @@ Makes the REAL page fully functional on loopback without Authentik/nginx:
                    ├── /api/sessions/*  → http://127.0.0.1:7684/*  (live tmux-api,
                    │                      prefix stripped, X-Authentik-Username added)
                    ├── /clipboard/*     → http://127.0.0.1:7683/*  (clipboard-upload,
-                   │                      prefix stripped — paste-upload E2E; run
+                   │                      prefix stripped, X-Authentik-Username added
+                   │                      — paste-upload + session-gallery E2E; run
                    │                      `cd clipboard-upload && go run .` locally)
                    └── everything else  → http://127.0.0.1:7996    (local ttyd child,
                                           including the /ws WebSocket, subprotocol 'tty')
@@ -49,7 +50,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_INDEX = os.path.join(REPO_ROOT, "frontend", "index.html")
 
 # clipboard-upload pins 0.0.0.0:7683 (clipboard-upload/main.go listenAddr),
-# so unlike --api there is nothing to configure. It serves /upload + /health.
+# so unlike --api there is nothing to configure. It serves /upload, /register,
+# /list, /img/* and /health.
 CLIPBOARD_BASE = "http://127.0.0.1:7683"
 
 # Hop-by-hop headers must not be blindly forwarded.
@@ -142,14 +144,17 @@ def make_app(args: argparse.Namespace) -> web.Application:
             return web.Response(status=502, text=f"tmux-api upstream error: {exc}")
 
     async def clipboard_proxy(request: web.Request) -> web.StreamResponse:
-        """/clipboard/<tail> → CLIPBOARD_BASE/<tail>, prefix stripped (mirrors
-        the prod ingress route to the clipboard-upload service)."""
+        """/clipboard/<tail> → CLIPBOARD_BASE/<tail>, prefix stripped, auth
+        header injected (mirrors the prod ingress route + forward-auth to the
+        clipboard-upload service — its store/list/img routes resolve the
+        caller's OS user from the header exactly like tmux-api does)."""
         tail = request.match_info["tail"]
         url = f"{CLIPBOARD_BASE}/{tail}"
         headers = {
             k: v for k, v in request.headers.items()
             if k.lower() not in HOP_BY_HOP
         }
+        headers["X-Authentik-Username"] = args.user
         body = await request.read()
         try:
             async with request.app["client"].request(

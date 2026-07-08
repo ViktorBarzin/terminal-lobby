@@ -12,7 +12,10 @@ browser ── http://127.0.0.1:7997 (aiohttp reverse proxy, this script)
              │                     prefix stripped, X-Authentik-Username: vbarzin added
              │                     (without it the page hard-stops on Access denied)
              ├─ /clipboard/*     → http://127.0.0.1:7683/*   clipboard-upload; prefix
-             │                     stripped (paste-upload E2E — `cd clipboard-upload && go run .`)
+             │                     stripped, X-Authentik-Username: vbarzin added — the
+             │                     store/list/img routes resolve the caller from that
+             │                     header like tmux-api does (paste-upload + session-
+             │                     gallery E2E — `cd clipboard-upload && go run .`)
              └─ everything else  → http://127.0.0.1:7996     local ttyd child
                                    (incl. /ws WebSocket, subprotocol 'tty', binary frames)
 ```
@@ -43,6 +46,9 @@ python3 scripts/dev-harness.py --index /tmp/proto-index.html
 
 Open `http://127.0.0.1:7997/?arg=copytest` (terminal) or `/` (lobby).
 Requires: `aiohttp`, `ttyd`, `tmux` on PATH; the live tmux-api on :7684.
+For the paste/gallery flows a local `clipboard-upload` additionally
+wants `/etc/ttyd-user-map` to map `--user` and a writable
+`/var/lib/clipboard-store` (`sudo install -d -o $USER /var/lib/clipboard-store`).
 
 ## Options
 
