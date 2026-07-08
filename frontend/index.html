@@ -1893,32 +1893,22 @@
         // for presses it processes itself, so nothing leaks to the PTY during a
         // hijacked drag. The bottom row is the tmux status line — real clicks
         // (window switching) matter more there than selection, so it passes.
-        // Trackpad lifts (macOS, and some Windows precision touchpads) emit a
-        // GHOST CLICK right after the drag's own mouseup — a full trusted
-        // mousedown/up pair at nearly the lift position. Without a guard,
-        // that ghost hits the clearSelection branch below and the fresh
-        // selection "disappears on lift". Record where each hijacked drag
-        // ends; a plain press landing within GHOST_MS/GHOST_PX of it while a
-        // selection exists is swallowed whole. A deliberate re-click is
-        // slower or elsewhere and still clears as designed.
-        const GHOST_MS = 350, GHOST_PX = 8;
+        // SELECTION LIFECYCLE (Viktor, 2026-07-08): a selection clears ONLY
+        // on scroll, Escape, or a replacing drag — never on a plain click or
+        // pointer motion. This is both the wanted UX and the only design
+        // that is immune to trackpad ghost clicks: macOS trackpads emit
+        // spurious trusted mousedown/up pairs after a drag lift (sometimes
+        // deferred until the finger next touches to MOVE the pointer), so
+        // any click-clears rule eventually eats a fresh selection. Presses
+        // while a selection exists are therefore held back: only actual
+        // pointer travel (>DRAG_PX) commits them as a replacing drag; a
+        // press that releases without travel keeps the selection. detail>1
+        // (double/triple click) is an explicit new-selection gesture and
+        // goes through immediately — except within the ghost window of the
+        // last drag lift, where browsers may stamp the ghost with detail=2.
+        const GHOST_MS = 400, GHOST_PX = 8, DRAG_PX = 4;
         let lastHijackUp = null;
-        document.addEventListener('mousedown', (e) => {
-            if (!e.isTrusted || e.button !== 0) return;      // clones + non-left pass
-            if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
-            const scr = document.querySelector('.xterm-screen');
-            if (!scr || !(e.target instanceof Node) || !scr.contains(e.target)) return;
-            const rect = scr.getBoundingClientRect();
-            if (term.rows > 1 && e.clientY - rect.top >= rect.height * (term.rows - 1) / term.rows) return;
-            e.stopImmediatePropagation();
-            e.preventDefault();
-            if (lastHijackUp && term.hasSelection()
-                    && Date.now() - lastHijackUp.t < GHOST_MS
-                    && Math.abs(e.clientX - lastHijackUp.x) <= GHOST_PX
-                    && Math.abs(e.clientY - lastHijackUp.y) <= GHOST_PX) {
-                return;                                      // trackpad ghost: keep the selection
-            }
-            if (term.hasSelection()) term.clearSelection();  // click replaces, never extends
+        function dispatchSelectionClone(e) {
             const init = {
                 bubbles: true, cancelable: true, composed: true, view: window,
                 detail: e.detail, screenX: e.screenX, screenY: e.screenY,
@@ -1929,8 +1919,50 @@
             document.addEventListener('mouseup', (up) => {
                 lastHijackUp = { t: Date.now(), x: up.clientX, y: up.clientY };
             }, { capture: true, once: true });
+        }
+        document.addEventListener('mousedown', (e) => {
+            if (!e.isTrusted || e.button !== 0) return;      // clones + non-left pass
+            if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+            const scr = document.querySelector('.xterm-screen');
+            if (!scr || !(e.target instanceof Node) || !scr.contains(e.target)) return;
+            const rect = scr.getBoundingClientRect();
+            if (term.rows > 1 && e.clientY - rect.top >= rect.height * (term.rows - 1) / term.rows) return;
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            const ghost = lastHijackUp
+                    && Date.now() - lastHijackUp.t < GHOST_MS
+                    && Math.abs(e.clientX - lastHijackUp.x) <= GHOST_PX
+                    && Math.abs(e.clientY - lastHijackUp.y) <= GHOST_PX;
+            if (ghost && term.hasSelection()) return;        // lift ghost: keep the selection
+            if (!term.hasSelection() || e.detail > 1) {
+                if (e.detail > 1) term.clearSelection();     // dbl/triple replaces
+                dispatchSelectionClone(e);
+                term.focus();
+                return;
+            }
+            // Selection exists + single press: hold it back until it proves
+            // to be a drag. Release without travel = keep the selection.
+            const start = e;
+            const onMove = (m) => {
+                if (Math.abs(m.clientX - start.clientX) < DRAG_PX
+                        && Math.abs(m.clientY - start.clientY) < DRAG_PX) return;
+                cleanup();
+                term.clearSelection();                       // replacing drag begins
+                dispatchSelectionClone(start);
+            };
+            const onUp = () => { cleanup(); };
+            function cleanup() {
+                document.removeEventListener('mousemove', onMove, true);
+                document.removeEventListener('mouseup', onUp, true);
+            }
+            document.addEventListener('mousemove', onMove, true);
+            document.addEventListener('mouseup', onUp, true);
             term.focus();                                    // we swallowed xterm's focus click
         }, true);
+        // The other two clear triggers of the contract:
+        document.getElementById('terminal').addEventListener('wheel', () => {
+            if (term.hasSelection()) term.clearSelection();
+        }, { passive: true, capture: true });
 
         document.title = 'tmux: ' + whoami.osUser + '/' + validArg;
 
@@ -2255,6 +2287,10 @@
         }
         term.attachCustomKeyEventHandler((e) => {
             if (e.type !== 'keydown') return true;           // also consulted on keyup
+            if (e.key === 'Escape' && term.hasSelection()) {
+                term.clearSelection();                       // contract: Esc clears...
+                return true;                                 // ...and still reaches the app
+            }
             if (isChord(e, 'c', 'KeyC') && term.hasSelection()) {
                 navigator.clipboard.writeText(term.getSelection())
                     .then(() => showToast('Copied', 'success', 1500))
