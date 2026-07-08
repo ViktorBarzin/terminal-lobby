@@ -1,0 +1,28 @@
+#!/bin/sh
+# Show an image to the human at the terminal. Inside tmux, renders in a
+# temporary split pane via viu (sixel; Enter closes) — Claude Code's Bash
+# tool captures stdout, so running bare `viu` from a tool call prints
+# garbage instead; this helper targets the real pane tty via tmux.
+# Outside tmux, plain viu.
+# Usage: show-image <image-file>
+
+if [ "$#" -ne 1 ]; then
+    echo "Usage: show-image <image-file>" >&2
+    exit 2
+fi
+if [ ! -f "$1" ] || [ ! -r "$1" ]; then
+    echo "show-image: cannot read file: $1" >&2
+    exit 1
+fi
+
+if [ -n "$TMUX" ]; then
+    # -e passes the path out-of-band as an env var, so it survives spaces
+    # and quotes: tmux putenvs the value verbatim and the pane's /bin/sh
+    # only ever expands "$IMG" inside double quotes. The pane shell is
+    # dash, whose `read` has no -n/-s — hence plain `read x` + Enter.
+    # A split pane, not display-popup: tmux 3.4 popups don't pass sixel
+    # through (empty box).
+    exec tmux split-window -l 15 -e "IMG=$1" 'viu -h 12 "$IMG"; printf "\n[Enter closes]"; read x'
+else
+    exec viu "$1"
+fi
