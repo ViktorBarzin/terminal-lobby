@@ -586,6 +586,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.1.0/lib/addon-clipboard.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-image@0.9.0/lib/addon-image.min.js"></script>
     <script>
     (async function() {
         const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
@@ -1676,6 +1677,13 @@
 
         let ws = null;
         let hasConnectedOnce = false;
+        // Armed per connection: the page's initial size reaches ttyd via
+        // the JSON handshake, which carries NO pixel fields, and ttyd drops
+        // RESIZE messages that arrive before the process is spawned — so
+        // the pty's pixel size (which tmux needs for sixel) only starts
+        // flowing once we push one explicit resize after the process
+        // provably exists. See the MSG_OUTPUT handler.
+        let needsPixelResizeKick = false;
         const textEncoder = new TextEncoder();
         const textDecoder = new TextDecoder();
 
@@ -1748,6 +1756,27 @@
             }
         } catch (e) {
             console.warn('Clipboard addon failed:', e);
+        }
+
+        // Inline images: renders sixel (and iTerm IIP) sequences on the
+        // canvas — viu, img2sixel, matplotlib backends, anything that
+        // emits sixel. Loading it also amends the terminal's DA1 response
+        // so tmux and the apps inside it auto-detect sixel support, and
+        // answers CSI 14t/16t pixel-size reports. Default options are
+        // fine. Same UMD shape caveat as the clipboard addon — accept
+        // both `ImageAddon` and `ImageAddon.ImageAddon`; wrapped so a
+        // load hiccup can't break the terminal.
+        try {
+            const ImgAddon = (typeof ImageAddon !== 'undefined')
+                && (ImageAddon.ImageAddon || ImageAddon);
+            if (ImgAddon) {
+                term.loadAddon(new ImgAddon());
+                console.log('image addon (sixel) loaded');
+            } else {
+                console.warn('ImageAddon global not found');
+            }
+        } catch (e) {
+            console.warn('Image addon failed:', e);
         }
 
         term.open(document.getElementById('terminal'));
@@ -1994,7 +2023,20 @@
 
         function sendResize() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
-            const json = JSON.stringify({ columns: term.cols, rows: term.rows });
+            // Carry the terminal's pixel size alongside cols/rows: tmux
+            // only re-emits sixel to clients whose pty reports a pixel
+            // size (it reads it exclusively via TIOCGWINSZ; zero pixels →
+            // "SIXEL IMAGE (WxH)" text placeholder instead). Our patched
+            // ttyd (devvm/ttyd-pixel-size.patch) forwards these optional
+            // fields to the pty; stock ttyd ignores unknown JSON fields,
+            // so this stays backward compatible.
+            const scr = document.querySelector('.xterm-screen');
+            const rect = scr ? scr.getBoundingClientRect() : null;
+            const json = JSON.stringify({
+                columns: term.cols, rows: term.rows,
+                xpixel: rect ? Math.round(rect.width) : 0,
+                ypixel: rect ? Math.round(rect.height) : 0
+            });
             const payload = textEncoder.encode(json);
             const buf = new Uint8Array(payload.length + 1);
             buf[0] = MSG_RESIZE.charCodeAt(0);
@@ -2355,6 +2397,15 @@
                         // empty list. Invalidate again now that it's live so the
                         // parent lobby's next poll surfaces it promptly.
                         fetch(WHOAMI_API, { credentials: 'same-origin' }).catch(() => {});
+                        // Arm the one-shot pixel-size kick for THIS connection
+                        // (fires on the first OUTPUT message — the only proof
+                        // ttyd's process exists; earlier RESIZEs are dropped).
+                        needsPixelResizeKick = true;
+                        // Belt-and-braces: usually a no-op server-side (the
+                        // process may not be spawned yet, and ttyd drops
+                        // RESIZE until it is), but harmless — term is already
+                        // opened by this point and sendResize guards the ws.
+                        sendResize();
                     };
 
                     ws.onmessage = (event) => {
@@ -2367,6 +2418,17 @@
 
                             switch (msgType) {
                                 case MSG_OUTPUT:
+                                    // First server output = ttyd's process
+                                    // provably exists (ttyd drops RESIZE
+                                    // messages that arrive before spawn, and
+                                    // the initial JSON handshake carries no
+                                    // pixel fields). Send one explicit resize
+                                    // now so the pty learns its pixel size
+                                    // and tmux starts re-emitting sixel.
+                                    if (needsPixelResizeKick) {
+                                        needsPixelResizeKick = false;
+                                        sendResize();
+                                    }
                                     term.write(payload);
                                     break;
                                 case MSG_SET_PREFS:
