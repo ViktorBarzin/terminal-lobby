@@ -1789,6 +1789,11 @@
             // as force-selection — without it they leak to the app as
             // Alt-clicks. Must be set in the constructor.
             macOptionClickForcesSelection: true,
+            // Off: with it on (xterm default), a real Option-drag's RELEASE
+            // moves the cursor via arrow-key spam into the app and clears
+            // the just-made selection (reproduced on the Mac path). We never
+            // want click-to-move-cursor in tmux/Claude panes.
+            altClickMovesCursor: false,
             // tmux attaches on the ALTERNATE screen, so xterm's scrollback
             // holds nothing while attached: Shift+scroll/drag never reaches
             // history, selection is limited to the visible frame, and deep
@@ -1888,6 +1893,16 @@
         // for presses it processes itself, so nothing leaks to the PTY during a
         // hijacked drag. The bottom row is the tmux status line — real clicks
         // (window switching) matter more there than selection, so it passes.
+        // Trackpad lifts (macOS, and some Windows precision touchpads) emit a
+        // GHOST CLICK right after the drag's own mouseup — a full trusted
+        // mousedown/up pair at nearly the lift position. Without a guard,
+        // that ghost hits the clearSelection branch below and the fresh
+        // selection "disappears on lift". Record where each hijacked drag
+        // ends; a plain press landing within GHOST_MS/GHOST_PX of it while a
+        // selection exists is swallowed whole. A deliberate re-click is
+        // slower or elsewhere and still clears as designed.
+        const GHOST_MS = 350, GHOST_PX = 8;
+        let lastHijackUp = null;
         document.addEventListener('mousedown', (e) => {
             if (!e.isTrusted || e.button !== 0) return;      // clones + non-left pass
             if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -1897,6 +1912,12 @@
             if (term.rows > 1 && e.clientY - rect.top >= rect.height * (term.rows - 1) / term.rows) return;
             e.stopImmediatePropagation();
             e.preventDefault();
+            if (lastHijackUp && term.hasSelection()
+                    && Date.now() - lastHijackUp.t < GHOST_MS
+                    && Math.abs(e.clientX - lastHijackUp.x) <= GHOST_PX
+                    && Math.abs(e.clientY - lastHijackUp.y) <= GHOST_PX) {
+                return;                                      // trackpad ghost: keep the selection
+            }
             if (term.hasSelection()) term.clearSelection();  // click replaces, never extends
             const init = {
                 bubbles: true, cancelable: true, composed: true, view: window,
@@ -1905,6 +1926,9 @@
             };
             if (isMacLike) init.altKey = true; else init.shiftKey = true;
             e.target.dispatchEvent(new MouseEvent('mousedown', init));
+            document.addEventListener('mouseup', (up) => {
+                lastHijackUp = { t: Date.now(), x: up.clientX, y: up.clientY };
+            }, { capture: true, once: true });
             term.focus();                                    // we swallowed xterm's focus click
         }, true);
 

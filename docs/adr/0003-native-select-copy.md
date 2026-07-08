@@ -82,3 +82,16 @@ program running in the PTY read the user's clipboard.
   line-by-line in shells) and `\r\n` is normalized.
 - Verified end-to-end against a live ttyd+tmux pane with
   `scripts/dev-harness.py` (41/41 assertions, Linux + emulated Mac).
+
+## Addendum (2026-07-08): trackpad ghost clicks and Option-click cursor moves
+
+macOS trackpads (and some Windows precision touchpads) emit a ghost
+click — a full mousedown/up pair near the lift position — right after a
+drag's own mouseup. The interceptor's click-clears-selection rule read
+that ghost as a deliberate click, so selections "disappeared on lift"
+for trackpad users. Guard: a plain press within 350 ms and 8 px of the
+last hijacked drag's release, while a selection exists, is swallowed
+whole; deliberate re-clicks are slower or farther and clear as designed.
+Separately, xterm's default altClickMovesCursor cleared selections on a
+real Option-drag's release (and sprayed arrow keys into the pane app);
+it is now disabled — click-to-move-cursor has no place in tmux panes.
