@@ -42,7 +42,7 @@ scp -o BatchMode=yes \
   $TTYD_BIN \
   out/tmux-api \
   out/clipboard-upload \
-  frontend/index.html \
+  out/index.html \
   frontend/manifest.webmanifest \
   frontend/icon-192.png \
   frontend/icon-512.png \
