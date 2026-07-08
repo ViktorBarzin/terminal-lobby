@@ -79,6 +79,7 @@ display lag is ~10 s (5 s API cache + 5 s poll).
 | `devvm/tmux-attach.sh` | DevVM, invoked by ttyd | — | Validates `X-authentik-username`, maps to OS user via `/etc/ttyd-user-map`, `sudo -u <user> tmux new-session -A` |
 | `devvm/claude-tmux-state` | DevVM, invoked by Claude Code hooks | — | Stamps `@claude_state` (running / awaiting / done) on the enclosing tmux session; wired org-wide via `/etc/claude-code/managed-settings.json` (infra repo, `scripts/workstation/`, self-deploys hourly). No-ops outside tmux. See `docs/adr/0001-claude-state-via-hooks.md` |
 | `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`) | — | "Restore sessions" button helper: validates the user against `/etc/ttyd-user-map`, runs `tmux-persist restore <user>` (recreates that user's saved-but-dead sessions, resuming each Claude conversation). Idempotent — live sessions are left alone. Useful after an OOM kills the tmux server without a reboot (the boot-only restore never fires) |
+| `devvm/show-image` | DevVM, `/usr/local/bin/show-image`, run inside sessions | — | Shows an image at the terminal. Inside tmux: temporary split pane running `viu` (sixel; Enter closes) — the reliable path for Claude/agents, whose captured stdout breaks bare `viu`. Outside tmux: plain `viu`. See "Showing images in sessions" |
 | `devvm/ttyd.service`, `ttyd-ro.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units |
 | `devvm/clipboard-cleanup.service` + `.timer` | DevVM | — | Daily `find /tmp/clipboard-images -mtime +7 -delete` |
 | `devvm/ttyd-user-map`, `sudoers.d-ttyd-users` | `/etc/` on DevVM | — | Authentik → OS-user mapping + sudo grant |
@@ -127,6 +128,17 @@ binary needs (re)building — it pins upstream tag 1.7.7, applies
 `deploy.sh`: `cargo install viu --features icy_sixel` (the sixel
 feature is off by default), then
 `sudo install ~/.cargo/bin/viu /usr/local/bin/viu`.
+
+### Showing images in sessions
+
+Humans at the terminal just run `viu <file>` — sixel renders inline.
+Claude/agents must run `show-image <file>` instead: Claude Code's Bash
+tool captures stdout, so bare `viu` from a tool call prints garbage
+into the transcript and leaks terminal query replies into the input
+line. `show-image` opens a temporary tmux split pane on the real pane
+tty (viu at 12 rows; Enter closes it). A split — not `display-popup` —
+is deliberate: tmux 3.4 popups don't pass sixel through, so an image
+in a popup renders as an empty box.
 
 ### CI status — TODO
 

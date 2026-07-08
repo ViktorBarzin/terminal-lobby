@@ -6,6 +6,9 @@ Makes the REAL page fully functional on loopback without Authentik/nginx:
     browser ──► http://127.0.0.1:7997  (this aiohttp reverse proxy)
                    ├── /api/sessions/*  → http://127.0.0.1:7684/*  (live tmux-api,
                    │                      prefix stripped, X-Authentik-Username added)
+                   ├── /clipboard/*     → http://127.0.0.1:7683/*  (clipboard-upload,
+                   │                      prefix stripped — paste-upload E2E; run
+                   │                      `cd clipboard-upload && go run .` locally)
                    └── everything else  → http://127.0.0.1:7996    (local ttyd child,
                                           including the /ws WebSocket, subprotocol 'tty')
 
@@ -44,6 +47,10 @@ from aiohttp import WSMsgType, web
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_INDEX = os.path.join(REPO_ROOT, "frontend", "index.html")
+
+# clipboard-upload pins 0.0.0.0:7683 (clipboard-upload/main.go listenAddr),
+# so unlike --api there is nothing to configure. It serves /upload + /health.
+CLIPBOARD_BASE = "http://127.0.0.1:7683"
 
 # Hop-by-hop headers must not be blindly forwarded.
 HOP_BY_HOP = {
@@ -134,6 +141,35 @@ def make_app(args: argparse.Namespace) -> web.Application:
             log(f"{request.method} /api/sessions/{tail} → 502 ({exc})")
             return web.Response(status=502, text=f"tmux-api upstream error: {exc}")
 
+    async def clipboard_proxy(request: web.Request) -> web.StreamResponse:
+        """/clipboard/<tail> → CLIPBOARD_BASE/<tail>, prefix stripped (mirrors
+        the prod ingress route to the clipboard-upload service)."""
+        tail = request.match_info["tail"]
+        url = f"{CLIPBOARD_BASE}/{tail}"
+        headers = {
+            k: v for k, v in request.headers.items()
+            if k.lower() not in HOP_BY_HOP
+        }
+        body = await request.read()
+        try:
+            async with request.app["client"].request(
+                request.method, url, params=request.rel_url.query,
+                headers=headers, data=body if body else None,
+                allow_redirects=False,
+            ) as upstream:
+                payload = await upstream.read()
+                resp_headers = {
+                    k: v for k, v in upstream.headers.items()
+                    if k.lower() not in HOP_BY_HOP
+                }
+                log(f"{request.method} /clipboard/{tail} → {upstream.status}")
+                return web.Response(status=upstream.status, body=payload,
+                                    headers=resp_headers)
+        except aiohttp.ClientError as exc:
+            log(f"{request.method} /clipboard/{tail} → 502 ({exc})")
+            return web.Response(status=502,
+                                text=f"clipboard-upload upstream error: {exc}")
+
     async def ws_proxy(request: web.Request) -> web.StreamResponse:
         """Bidirectional WebSocket pump browser ⇄ ttyd (subprotocol 'tty')."""
         offered = [
@@ -221,6 +257,7 @@ def make_app(args: argparse.Namespace) -> web.Application:
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     app.router.add_route("*", "/api/sessions/{tail:.*}", api_proxy)
+    app.router.add_route("*", "/clipboard/{tail:.*}", clipboard_proxy)
     app.router.add_route("*", "/{tail:.*}", ttyd_proxy)
     return app
 

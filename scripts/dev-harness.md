@@ -11,6 +11,8 @@ browser ── http://127.0.0.1:7997 (aiohttp reverse proxy, this script)
              ├─ /api/sessions/*  → http://127.0.0.1:7684/*   live tmux-api;
              │                     prefix stripped, X-Authentik-Username: vbarzin added
              │                     (without it the page hard-stops on Access denied)
+             ├─ /clipboard/*     → http://127.0.0.1:7683/*   clipboard-upload; prefix
+             │                     stripped (paste-upload E2E — `cd clipboard-upload && go run .`)
              └─ everything else  → http://127.0.0.1:7996     local ttyd child
                                    (incl. /ws WebSocket, subprotocol 'tty', binary frames)
 ```
