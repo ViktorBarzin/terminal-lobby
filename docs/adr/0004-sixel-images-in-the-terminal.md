@@ -68,7 +68,7 @@ The frontend closes the loop with three pieces:
   in-repo patch file, `scripts/build-ttyd.sh` rebuilds it reproducibly
   from the pinned upstream 1.7.7 tag (idempotent, checksum-markered),
   and an upstream PR is planned so the fork can eventually retire.
-  Upstream PR: <pending>
+  Upstream PR: https://github.com/tsl0922/ttyd/pull/1560 (open, 2026-07-08) — retire the local patch if/when it merges into a released ttyd
 - `scripts/deploy.sh` ships `out/ttyd` only when it exists — building
   stays an explicit `build-ttyd.sh` step, never a deploy side effect.
 - Any sixel-capable program now renders inline, not just viu:
