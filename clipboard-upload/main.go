@@ -1,46 +1,165 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
 
 const (
-	imageDir   = "/tmp/clipboard-images"
-	fileDir    = "/tmp/clipboard-files"
-	maxUpload  = 100 << 20 // 100MB
-	listenAddr = "0.0.0.0:7683"
+	fileDir   = "/tmp/clipboard-files"
+	storeRoot = "/var/lib/clipboard-store"
+	maxUpload = 100 << 20 // 100MB
+	// maxRegister bounds files accepted via /register — big enough for any
+	// real screenshot or photo, small enough that a stray path can't
+	// balloon the store.
+	maxRegister = 25 << 20 // 25MB
+	listenAddr  = "0.0.0.0:7683"
+	mapPath     = "/etc/ttyd-user-map"
+	authHeader  = "X-Authentik-Username"
+	// unsortedSession is the store bucket for writes that arrive without a
+	// (valid) session name. Nothing ties its contents to a session's
+	// lifetime, so the cleaner (devvm/clipboard-store-clean) ages it out on
+	// a fixed clock instead.
+	unsortedSession = "_unsorted"
 )
 
+// Session names: same charset as tmux-api and the frontend's NAME_RE.
+var sessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
+
+// Stored image names as accepted by /img: strictly a clean basename ('/'
+// cannot match; '..' and leading dots are rejected separately in
+// handleImage).
+var imageNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
 func main() {
-	for _, d := range []string{imageDir, fileDir} {
-		if err := os.MkdirAll(d, 0755); err != nil {
-			log.Fatalf("Failed to create upload dir %s: %v", d, err)
-		}
+	if err := os.MkdirAll(fileDir, 0755); err != nil {
+		log.Fatalf("Failed to create upload dir %s: %v", fileDir, err)
+	}
+	// deploy.sh installs the store root with the right ownership; creating
+	// it here too keeps a local `go run .` usable. A failure (unwritable
+	// /var/lib on a dev box) only disables the store routes, so warn
+	// instead of dying.
+	if err := os.MkdirAll(storeRoot, 0755); err != nil {
+		log.Printf("WARNING: cannot create store root %s (%v) — store writes will fail until it exists", storeRoot, err)
 	}
 
 	http.HandleFunc("/upload", handleUpload)
+	http.HandleFunc("/register", handleRegister)
+	http.HandleFunc("/list", handleList)
+	http.HandleFunc("/img/", handleImage)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
 
-	log.Printf("Clipboard upload service listening on %s (images=%s files=%s)", listenAddr, imageDir, fileDir)
+	log.Printf("Clipboard upload service listening on %s (store=%s files=%s)", listenAddr, storeRoot, fileDir)
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
 }
 
+// loadUserMap reads /etc/ttyd-user-map → map[authentik_local]os_user.
+// Format: "<auth>=<os_user>[:<cwd>]" per line. Comments (#) and blanks
+// ignored. Re-read on every request — file is small and changes are rare.
+// (Mirrors tmux-api/main.go.)
+func loadUserMap() map[string]string {
+	m := map[string]string{}
+	f, err := os.Open(mapPath)
+	if err != nil {
+		log.Printf("loadUserMap: %v", err)
+		return m
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		eq := strings.IndexByte(line, '=')
+		if eq <= 0 {
+			continue
+		}
+		auth := strings.TrimSpace(line[:eq])
+		rhs := strings.TrimSpace(line[eq+1:])
+		if c := strings.IndexByte(rhs, ':'); c > 0 {
+			rhs = rhs[:c]
+		}
+		if auth != "" && rhs != "" {
+			m[auth] = rhs
+		}
+	}
+	return m
+}
+
+// resolveOSUser → mapped OS user from the Authentik header, or "" after
+// writing the appropriate 401/403 to w. The store is keyed per OS user, so
+// an unauthenticated request has no directory to touch. (Mirrors
+// tmux-api/main.go minus the user.Lookup — this service never execs as the
+// user, it only needs a directory name.)
+func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
+	authUser := r.Header.Get(authHeader)
+	if authUser == "" {
+		log.Printf("auth: missing %s header (%s %s)", authHeader, r.Method, r.URL.Path)
+		http.Error(w, "missing "+authHeader, http.StatusUnauthorized)
+		return ""
+	}
+	local := authUser
+	if i := strings.IndexByte(local, '@'); i > 0 {
+		local = local[:i]
+	}
+	osUser := loadUserMap()[local]
+	if osUser == "" {
+		log.Printf("auth: no terminal account for %q (local=%q, %s %s)", authUser, local, r.Method, r.URL.Path)
+		http.Error(w, fmt.Sprintf("no terminal account for '%s'", authUser), http.StatusForbidden)
+		return ""
+	}
+	return osUser
+}
+
+// osUserKnown reports whether name is a mapped OS user (a right-hand side
+// in /etc/ttyd-user-map). /register's localhost callers self-report their
+// user; only real terminal accounts are accepted.
+func osUserKnown(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, osUser := range loadUserMap() {
+		if osUser == name {
+			return true
+		}
+	}
+	return false
+}
+
+// storeSession maps a client-supplied session name onto a store bucket:
+// valid names key their own directory, everything else (absent, oversize,
+// bad charset) collapses to the shared "_unsorted" bucket.
+func storeSession(name string) string {
+	if sessionNameRe.MatchString(name) {
+		return name
+	}
+	return unsortedSession
+}
+
 // handleUpload accepts a multipart POST with EITHER a generic "file" field
-// (drag-dropped files of any type, saved under fileDir keeping the original
-// name) OR a legacy "image" field (clipboard image paste/upload, must be
-// image/*, saved under imageDir with a random name). Responds {"path": "..."}.
+// (drag-dropped files of any type — transfer conveniences saved under
+// fileDir keeping the original name, NOT gallery content) OR an "image"
+// field (clipboard image paste/upload, must be image/*, persisted into the
+// caller's per-session store for the gallery; optional "session" field
+// picks the bucket). Responds {"path": "..."} — the frontend types that
+// path into the PTY, so the shape is load-bearing.
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -68,7 +187,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Legacy clipboard image — must be image/*, random name + extension.
+	// Clipboard image — must be image/*, lands in the per-(user, session)
+	// store so the gallery can list and re-serve it.
 	file, header, err := r.FormFile("image")
 	if err != nil {
 		http.Error(w, "Missing 'file' or 'image' field", http.StatusBadRequest)
@@ -76,19 +196,279 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// A store write needs an owner: the Authentik header is mandatory here
+	// (the ingress always adds it; 401 covers direct unauthenticated hits).
+	osUser := resolveOSUser(w, r)
+	if osUser == "" {
+		return
+	}
+
 	ct := header.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "image/") {
 		http.Error(w, "Not an image", http.StatusBadRequest)
 		return
 	}
-	name := fmt.Sprintf("%s-%s%s", stamp(), randToken(), imageExt(ct))
-	path, err := save(imageDir, name, file)
+	session := storeSession(r.FormValue("session"))
+	name := fmt.Sprintf("pasted-%s-%s%s", stamp(), randToken(), imageExt(ct))
+	path, err := saveToStore(osUser, session, name, file)
 	if err != nil {
+		log.Printf("save pasted image for %s/%s failed: %v", osUser, session, err)
 		http.Error(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
 	log.Printf("Saved clipboard image: %s (%s, %d bytes)", path, ct, header.Size)
 	writePath(w, path)
+}
+
+// handleRegister (POST /register, fields user/session/path) records an
+// image that show-image just rendered so the gallery can re-serve it. The
+// call arrives via localhost from the user's own shell, so there is
+// normally no forward-auth header to lean on: the caller self-reports its
+// OS user, which must be mapped in /etc/ttyd-user-map. When the header IS
+// present (a request that rode the ingress after all), the mapped header
+// identity wins and the user field is ignored. The path must name an
+// absolute, existing, regular image file ≤ 25MB; paths already inside the
+// store are answered as-is (no duplicate copy), anything else is copied to
+// store/<user>/<session>/displayed-<timestamp>-<basename>. Responds
+// {"path": "..."} like /upload.
+func handleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	// Fields only — the image itself never rides this request.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseMultipartForm(64 << 10); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	var osUser string
+	if r.Header.Get(authHeader) != "" {
+		osUser = resolveOSUser(w, r)
+		if osUser == "" {
+			return
+		}
+	} else {
+		osUser = r.FormValue("user")
+		if !osUserKnown(osUser) {
+			log.Printf("register: unknown user %q", osUser)
+			http.Error(w, "unknown user", http.StatusForbidden)
+			return
+		}
+	}
+	session := storeSession(r.FormValue("session"))
+
+	src := filepath.Clean(r.FormValue("path"))
+	if !filepath.IsAbs(src) {
+		http.Error(w, "path must be absolute", http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(src)
+	if err != nil || !info.Mode().IsRegular() {
+		http.Error(w, "not an existing regular file", http.StatusBadRequest)
+		return
+	}
+	if info.Size() > maxRegister {
+		http.Error(w, "file too large (max 25MB)", http.StatusRequestEntityTooLarge)
+		return
+	}
+	f, err := os.Open(src)
+	if err != nil {
+		http.Error(w, "cannot read file", http.StatusBadRequest)
+		return
+	}
+	defer f.Close()
+	if !isImage(f, src) {
+		http.Error(w, "not an image", http.StatusBadRequest)
+		return
+	}
+
+	// Already persisted (e.g. show-image on a previously pasted file) —
+	// nothing to copy, answer with the path unchanged.
+	if strings.HasPrefix(src, storeRoot+string(os.PathSeparator)) {
+		writePath(w, src)
+		return
+	}
+
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		log.Printf("register: rewind %s failed: %v", src, err)
+		http.Error(w, "Failed to save", http.StatusInternalServerError)
+		return
+	}
+	name := fmt.Sprintf("displayed-%s-%s", stamp(), sanitizeName(filepath.Base(src)))
+	path, err := saveToStore(osUser, session, name, f)
+	if err != nil {
+		log.Printf("register %s for %s/%s failed: %v", src, osUser, session, err)
+		http.Error(w, "Failed to save", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Registered displayed image: %s -> %s (%d bytes)", src, path, info.Size())
+	writePath(w, path)
+}
+
+// isImage sniffs the first 512 bytes (http.DetectContentType) and falls
+// back to the filename extension — covering formats the sniffer doesn't
+// know (e.g. SVG). The reader is left mid-file; callers rewind before
+// copying.
+func isImage(f *os.File, path string) bool {
+	head := make([]byte, 512)
+	n, err := f.Read(head)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	if strings.HasPrefix(http.DetectContentType(head[:n]), "image/") {
+		return true
+	}
+	return strings.HasPrefix(mime.TypeByExtension(filepath.Ext(path)), "image/")
+}
+
+// storedImage is one /list entry. Kind derives from the filename prefix the
+// store writes ("pasted-" / "displayed-"); legacy names count as pasted.
+type storedImage struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Size  int64  `json:"size"`
+	Mtime int64  `json:"mtime"`
+	Kind  string `json:"kind"`
+}
+
+// handleList (GET /list?session=<name>) returns the caller's stored images
+// for one session, newest first. Header required — resolving it is the
+// per-user isolation boundary.
+func handleList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	osUser := resolveOSUser(w, r)
+	if osUser == "" {
+		return
+	}
+	session := r.URL.Query().Get("session")
+	if !sessionNameRe.MatchString(session) {
+		http.Error(w, "invalid session", http.StatusBadRequest)
+		return
+	}
+
+	entries, err := os.ReadDir(filepath.Join(storeRoot, osUser, session))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("list %s/%s failed: %v", osUser, session, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	images := make([]storedImage, 0, len(entries))
+	for _, e := range entries {
+		// Skip subdirectories and dotfiles (the cleaner's .deleted-at marker).
+		if !e.Type().IsRegular() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		kind := "pasted"
+		if strings.HasPrefix(e.Name(), "displayed-") {
+			kind = "displayed"
+		}
+		images = append(images, storedImage{
+			Name:  e.Name(),
+			Path:  filepath.Join(storeRoot, osUser, session, e.Name()),
+			Size:  info.Size(),
+			Mtime: info.ModTime().Unix(),
+			Kind:  kind,
+		})
+	}
+	sort.Slice(images, func(i, j int) bool { return images[i].Mtime > images[j].Mtime })
+
+	// no-store: the gallery re-fetches on every open and must see new
+	// pastes immediately.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(images)
+}
+
+// handleImage (GET /img/<session>/<name>) serves one stored image back to
+// the gallery. Traversal-proof by construction: both path elements are
+// charset-pinned (no separator can pass), names containing '..' or leading
+// dots are rejected, and the joined path is re-checked to sit inside the
+// caller's own store directory.
+func handleImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	osUser := resolveOSUser(w, r)
+	if osUser == "" {
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/img/"), "/")
+	if len(parts) != 2 {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	session, name := parts[0], parts[1]
+	if !sessionNameRe.MatchString(session) {
+		http.Error(w, "invalid session", http.StatusBadRequest)
+		return
+	}
+	if !imageNameRe.MatchString(name) || strings.Contains(name, "..") ||
+		strings.HasPrefix(name, ".") || name != filepath.Base(name) {
+		http.Error(w, "invalid name", http.StatusBadRequest)
+		return
+	}
+	userDir := filepath.Join(storeRoot, osUser)
+	path := filepath.Join(userDir, session, name)
+	if !strings.HasPrefix(path, userDir+string(os.PathSeparator)) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		log.Printf("img open %s failed: %v", path, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	// Sniff the real content type — stored extensions are advisory.
+	head := make([]byte, 512)
+	n, err := f.Read(head)
+	if err != nil && !errors.Is(err, io.EOF) {
+		log.Printf("img read %s failed: %v", path, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		log.Printf("img rewind %s failed: %v", path, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(head[:n]))
+	// private: per-user content behind auth. An hour of browser caching
+	// keeps gallery re-opens cheap without letting shared caches hold it.
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	http.ServeContent(w, r, "", info.ModTime(), f)
+}
+
+// saveToStore writes src into the per-(user, session) store directory,
+// creating it as needed, and returns the absolute path.
+func saveToStore(osUser, session, name string, src io.Reader) (string, error) {
+	dir := filepath.Join(storeRoot, osUser, session)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	return save(dir, name, src)
 }
 
 func save(dir, name string, src io.Reader) (string, error) {
