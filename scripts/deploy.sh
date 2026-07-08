@@ -23,8 +23,23 @@ if [[ -z "${SKIP_BUILD:-}" ]]; then
   (cd clipboard-upload  && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../out/clipboard-upload  .)
 fi
 
+# Patched ttyd (forwards the client's pixel size to the pty so tmux
+# re-emits sixel — docs/adr/0004-sixel-images-in-the-terminal.md) is
+# shipped only when a build exists. Building is scripts/build-ttyd.sh's
+# explicit job; deploy just ships what's there.
+TTYD_BIN=""
+if [[ -f out/ttyd ]]; then
+  TTYD_BIN="out/ttyd"
+  echo "==> Including patched ttyd binary (out/ttyd)"
+else
+  echo "==> No out/ttyd — skipping ttyd binary (./scripts/build-ttyd.sh to build it)"
+fi
+
 echo "==> Staging files on $DEVVM..."
+# $TTYD_BIN is intentionally unquoted: empty expands to zero words
+# (file skipped), non-empty is a single shell-safe path.
 scp -o BatchMode=yes \
+  $TTYD_BIN \
   out/tmux-api \
   out/clipboard-upload \
   frontend/index.html \
@@ -46,8 +61,17 @@ scp -o BatchMode=yes \
   "wizard@${DEVVM}:/tmp/"
 
 echo "==> Installing on $DEVVM..."
-ssh -o BatchMode=yes "wizard@${DEVVM}" 'bash -se' <<'REMOTE'
+# INCLUDE_TTYD rides the remote command line (the heredoc is quoted, so
+# it can't interpolate); guarding on the flag rather than on a /tmp/ttyd
+# stat means a stale binary from an aborted earlier run is never installed.
+ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<'REMOTE'
   set -euo pipefail
+  if [[ "${INCLUDE_TTYD:-}" == "1" ]]; then
+    # Pixel-size-patched ttyd (sixel; ADR 0004) — the systemctl restarts
+    # below already cover ttyd + ttyd-ro, so no extra restart needed.
+    sudo install -m 0755 /tmp/ttyd /usr/local/bin/ttyd
+    rm -f /tmp/ttyd
+  fi
   sudo install -m 0755 /tmp/tmux-api         /usr/local/bin/tmux-api
   sudo install -m 0755 /tmp/clipboard-upload /usr/local/bin/clipboard-upload
   sudo install -m 0755 /tmp/tmux-attach.sh   /usr/local/bin/tmux-attach.sh
@@ -72,7 +96,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" 'bash -se' <<'REMOTE'
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
   sudo systemctl enable --now clipboard-cleanup.timer
-  rm -f /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/index.html
+  rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/index.html
   rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png
   rm -f /tmp/ttyd-user-map /tmp/sudoers.d-ttyd-users
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
