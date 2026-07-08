@@ -126,7 +126,7 @@
         #toast.visible { opacity: 1; }
         #toast.error { color: var(--danger); border-color: var(--danger); }
         #toast.success { color: var(--success); border-color: var(--success); }
-        #paste-btn, #img-btn {
+        #paste-btn, #img-btn, #gallery-btn {
             position: fixed;
             /* --kb-offset is updated from window.visualViewport on touch
                devices so floating elements lift above the soft keyboard. */
@@ -141,19 +141,20 @@
             transition: background 0.2s, transform 0.1s;
             touch-action: manipulation; -webkit-tap-highlight-color: transparent;
         }
-        #paste-btn { right: calc(24px + env(safe-area-inset-right)); }
-        #img-btn   { right: calc(80px + env(safe-area-inset-right)); }
-        /* On touch devices the floating Paste/Img buttons would sit on top
-           of the soft-key toolbar — lift them above it. */
+        #paste-btn   { right: calc(24px + env(safe-area-inset-right)); }
+        #img-btn     { right: calc(80px + env(safe-area-inset-right)); }
+        #gallery-btn { right: calc(136px + env(safe-area-inset-right)); }
+        /* On touch devices the floating Paste/Img/Gallery buttons would sit
+           on top of the soft-key toolbar — lift them above it. */
         @media (pointer: coarse) {
-            #paste-btn, #img-btn {
+            #paste-btn, #img-btn, #gallery-btn {
                 bottom: calc(72px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
             }
         }
-        #paste-btn:hover, #img-btn:hover {
+        #paste-btn:hover, #img-btn:hover, #gallery-btn:hover {
             background: color-mix(in srgb, var(--accent) 35%, transparent);
         }
-        #paste-btn:active, #img-btn:active { transform: scale(0.92); }
+        #paste-btn:active, #img-btn:active, #gallery-btn:active { transform: scale(0.92); }
         #img-input { display: none; }
 
         /* Pasted/uploaded image preview — floating thumbnail just above the
@@ -192,6 +193,55 @@
             border: 1px solid var(--border-strong);
             border-radius: 8px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        }
+
+        /* Session image gallery — overlay grid of everything stored for
+           this (user, session); a thumbnail click opens #img-lightbox on
+           top and closing that lands back here. Backdrop/panel theming
+           matches the lightbox. */
+        #img-gallery {
+            position: fixed; inset: 0; z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(0, 0, 0, 0.65);
+        }
+        #img-gallery .gallery-panel {
+            box-sizing: border-box;
+            max-width: 85vw; max-height: 85vh;
+            min-width: min(60vw, 480px);
+            display: flex; flex-direction: column;
+            background: var(--bg-card);
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            padding: 14px 16px 16px;
+            font-family: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace;
+        }
+        #img-gallery .gallery-title {
+            margin: 0 0 10px; font-size: 14px; font-weight: 600;
+            color: var(--text-primary);
+        }
+        #img-gallery .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 8px; overflow-y: auto; min-height: 0;
+        }
+        #img-gallery .gallery-cell {
+            position: relative; aspect-ratio: 1 / 1; padding: 0;
+            border: 1px solid var(--border); border-radius: 6px;
+            overflow: hidden; background: var(--bg-page); cursor: zoom-in;
+        }
+        #img-gallery .gallery-cell img {
+            width: 100%; height: 100%; object-fit: cover; display: block;
+        }
+        #img-gallery .gallery-badge {
+            position: absolute; top: 4px; right: 4px;
+            padding: 1px 6px; border-radius: 6px; font-size: 10px;
+            font-family: inherit; color: var(--text-primary);
+            background: color-mix(in srgb, var(--accent) 30%, rgba(0, 0, 0, 0.6));
+        }
+        #img-gallery .gallery-note {
+            grid-column: 1 / -1; padding: 12px 4px;
+            color: var(--text-muted); font-style: italic; font-size: 13px;
         }
 
         /* Lobby */
@@ -615,6 +665,7 @@
         </div>
     </div>
     <div id="toast"></div>
+    <button id="gallery-btn" title="Session images">&#128444;&#65039;</button>
     <button id="img-btn" title="Upload image">&#128247;</button>
     <button id="paste-btn" title="Paste from clipboard">&#128203;</button>
     <input type="file" id="img-input" accept="image/*">
@@ -684,6 +735,7 @@
             document.getElementById('terminal').classList.add('hidden');
             document.getElementById('paste-btn').classList.add('hidden');
             document.getElementById('img-btn').classList.add('hidden');
+            document.getElementById('gallery-btn').classList.add('hidden');
             const lobby = document.getElementById('lobby');
             clearChildren(lobby);
             const h = document.createElement('h1');
@@ -727,6 +779,7 @@
             document.getElementById('terminal').classList.add('hidden');
             document.getElementById('paste-btn').classList.add('hidden');
             document.getElementById('img-btn').classList.add('hidden');
+            document.getElementById('gallery-btn').classList.add('hidden');
             document.getElementById('lobby').classList.add('visible');
             const baseTitle = 'tmux sessions (' + whoami.osUser + ')';
             document.title = baseTitle;
@@ -2205,19 +2258,20 @@
         // and terminal Escape is untouched the rest of the time).
         // ------------------------------------------------------------------
         const PREVIEW_TTL_MS = 6000;
-        let preview = null;    // { url, thumb, lightbox, timer, onKey }
+        let preview = null;    // { url, thumb, lightbox, timer }
 
         function destroyImagePreview() {
             // Single exit point for every removal path (timeout, replaced
             // by a new image, lightbox close) — the object URL is always
-            // revoked here, exactly once.
+            // revoked here, exactly once. Gallery lightboxes carry server
+            // URLs and never come through here.
             if (!preview) return;
-            clearTimeout(preview.timer);
-            if (preview.thumb) preview.thumb.remove();
-            if (preview.lightbox) preview.lightbox.remove();
-            if (preview.onKey) document.removeEventListener('keydown', preview.onKey, true);
-            URL.revokeObjectURL(preview.url);
-            preview = null;
+            const p = preview;
+            preview = null;             // null first: close() re-enters here
+            clearTimeout(p.timer);
+            if (p.thumb) p.thumb.remove();
+            if (p.lightbox) p.lightbox.close();
+            URL.revokeObjectURL(p.url);
         }
 
         function armImagePreviewTimer() {
@@ -2225,28 +2279,49 @@
             preview.timer = setTimeout(destroyImagePreview, PREVIEW_TTL_MS);
         }
 
+        // Shared lightbox: full-screen enlargement of an image URL — an
+        // object URL for the paste preview, a /clipboard/img/... URL for
+        // the gallery. Click or Escape closes it and then runs onClose:
+        // the preview flow tears the whole preview down (revoking its
+        // object URL), the gallery flow just lands back on the grid. The
+        // Escape listener exists only while the box is open (capture +
+        // stopPropagation, so xterm never sees that Escape).
+        function openLightbox(url, onClose) {
+            const box = document.createElement('div');
+            box.id = 'img-lightbox';
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = 'image';
+            box.appendChild(img);
+            // Keep xterm focused: swallow the focus-stealing mousedown but
+            // let the click through (same trick as the preview thumbnail).
+            box.addEventListener('mousedown', (e) => e.preventDefault());
+            let closed = false;
+            const onKey = (e) => {
+                if (e.key !== 'Escape') return;
+                e.preventDefault();
+                e.stopPropagation();
+                close();
+            };
+            function close() {
+                if (closed) return;     // destroy → close → destroy re-entry
+                closed = true;
+                document.removeEventListener('keydown', onKey, true);
+                box.remove();
+                if (onClose) onClose();
+            }
+            box.addEventListener('click', close);
+            document.addEventListener('keydown', onKey, true);
+            document.body.appendChild(box);
+            return { close };
+        }
+
         function openImageLightbox() {
             if (!preview || preview.lightbox) return;
             clearTimeout(preview.timer);   // no auto-fade while enlarged
             preview.thumb.remove();        // once seen large, never back to thumbnail
             preview.thumb = null;
-            const box = document.createElement('div');
-            box.id = 'img-lightbox';
-            const img = document.createElement('img');
-            img.src = preview.url;
-            img.alt = 'pasted image';
-            box.appendChild(img);
-            box.addEventListener('mousedown', (e) => e.preventDefault());
-            box.addEventListener('click', destroyImagePreview);
-            preview.onKey = (e) => {
-                if (e.key !== 'Escape') return;
-                e.preventDefault();
-                e.stopPropagation();
-                destroyImagePreview();
-            };
-            document.addEventListener('keydown', preview.onKey, true);
-            preview.lightbox = box;
-            document.body.appendChild(box);
+            preview.lightbox = openLightbox(preview.url, destroyImagePreview);
         }
 
         function showImagePreview(blob) {
@@ -2257,7 +2332,7 @@
             thumb.id = 'img-preview';
             thumb.alt = 'pasted image preview';
             thumb.src = url;
-            preview = { url, thumb, lightbox: null, timer: null, onKey: null };
+            preview = { url, thumb, lightbox: null, timer: null };
             // Keep xterm focused: swallow the focus-stealing mousedown but
             // let the click through (same trick as the soft-key toolbar).
             thumb.addEventListener('mousedown', (e) => e.preventDefault());
@@ -2285,6 +2360,7 @@
                     try {
                         const formData = new FormData();
                         formData.append('image', blob);
+                        formData.append('session', validArg);
                         const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
                         if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
                         const { path } = await resp.json();
@@ -2324,6 +2400,7 @@
                             showToast('Uploading image...', '');
                             const formData = new FormData();
                             formData.append('image', blob);
+                            formData.append('session', validArg);
                             const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
                             if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
                             const { path } = await resp.json();
@@ -2363,6 +2440,7 @@
             try {
                 const formData = new FormData();
                 formData.append('image', file);
+                formData.append('session', validArg);
                 const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
                 if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
                 const { path } = await resp.json();
@@ -2373,6 +2451,109 @@
             }
             term.focus();
         });
+
+        // ------------------------------------------------------------------
+        // Session image gallery — the 🖼 button opens an overlay grid of
+        // every image stored for this (user, session): clipboard pastes/
+        // uploads and show-image renders (GET /clipboard/list + /img;
+        // isolation is enforced server-side off the Authentik header). The
+        // grid re-fetches on every open — no caching. A thumbnail click
+        // opens the shared lightbox ON TOP; closing it lands back on the
+        // grid. Escape / backdrop click closes the gallery; the Escape
+        // listener is managed exactly like the lightbox's (capture,
+        // only-while-open) and defers to an open lightbox.
+        // ------------------------------------------------------------------
+        let gallery = null;    // { box, onKey }
+
+        function closeGallery() {
+            if (!gallery) return;
+            document.removeEventListener('keydown', gallery.onKey, true);
+            gallery.box.remove();
+            gallery = null;
+            term.focus();
+        }
+
+        async function openGallery() {
+            if (gallery) return;
+            const box = document.createElement('div');
+            box.id = 'img-gallery';
+            const panel = document.createElement('div');
+            panel.className = 'gallery-panel';
+            const title = document.createElement('h2');
+            title.className = 'gallery-title';
+            title.textContent = 'Session images';
+            panel.appendChild(title);
+            const grid = document.createElement('div');
+            grid.className = 'gallery-grid';
+            panel.appendChild(grid);
+            box.appendChild(panel);
+            // Keep xterm focused while browsing (same trick as the lightbox).
+            box.addEventListener('mousedown', (e) => e.preventDefault());
+            box.addEventListener('click', (e) => {
+                if (e.target === box) closeGallery();   // backdrop only
+            });
+            const onKey = (e) => {
+                if (e.key !== 'Escape') return;
+                // A lightbox opened from the grid sits on top and owns
+                // Escape (its listener closes it back to the gallery).
+                if (document.getElementById('img-lightbox')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                closeGallery();
+            };
+            document.addEventListener('keydown', onKey, true);
+            gallery = { box, onKey };
+            document.body.appendChild(box);
+
+            function note(text) {
+                clearChildren(grid);
+                const n = document.createElement('div');
+                n.className = 'gallery-note';
+                n.textContent = text;
+                grid.appendChild(n);
+            }
+            note('Loading…');
+            let images;
+            try {
+                const resp = await fetch('/clipboard/list?session=' + encodeURIComponent(validArg),
+                    { credentials: 'same-origin' });
+                if (!resp.ok) { note('Loading images failed: HTTP ' + resp.status); return; }
+                images = await resp.json();
+            } catch (err) {
+                note('Loading images failed: ' + err.message);
+                return;
+            }
+            if (!Array.isArray(images) || !images.length) {
+                note('Nothing pasted or shown in this session yet');
+                return;
+            }
+            clearChildren(grid);
+            for (const im of images) {   // server orders mtime-desc = newest first
+                const cell = document.createElement('button');
+                cell.type = 'button';
+                cell.className = 'gallery-cell';
+                cell.title = im.name;
+                const img = document.createElement('img');
+                img.loading = 'lazy';
+                img.alt = im.name;
+                img.src = '/clipboard/img/' + encodeURIComponent(validArg) + '/' + encodeURIComponent(im.name);
+                cell.appendChild(img);
+                if (im.kind === 'displayed') {
+                    const badge = document.createElement('span');
+                    badge.className = 'gallery-badge';
+                    badge.textContent = 'shown';
+                    cell.appendChild(badge);
+                }
+                cell.addEventListener('click', () => {
+                    // No onClose teardown: the gallery stays mounted
+                    // underneath, so closing the lightbox returns to it.
+                    openLightbox(img.src, null);
+                });
+                grid.appendChild(cell);
+            }
+        }
+
+        document.getElementById('gallery-btn').addEventListener('click', openGallery);
 
         // ------------------------------------------------------------------
         // Drag-and-drop files → upload to /tmp → type the path(s) into the PTY.
@@ -2450,6 +2631,7 @@
                 try {
                     const fd = new FormData();
                     fd.append('file', f, f.name);
+                    fd.append('session', validArg);
                     const resp = await fetch('/clipboard/upload', { method: 'POST', body: fd });
                     if (!resp.ok) {
                         showToast('Upload failed (' + f.name + '): ' + (await resp.text()), 'error', 5000);
