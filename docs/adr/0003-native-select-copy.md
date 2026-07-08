@@ -95,7 +95,11 @@ a drag lift — sometimes deferred until the finger next touches the pad —
 so ANY click-clears rule eventually eats a fresh selection; a contract
 where clicks never clear is immune by construction. The ghost-window
 guard is retained only to stop a detail=2-stamped ghost from triggering
-the double-click word-select path.
+the double-click word-select path. The status-line carve-out is
+drag-aware too: presses on the bottom row are held back — travel makes
+them a selection drag (selections often START on the bottom row, where
+the Claude input box lives), while a travel-less release is replayed to
+tmux as a raw SGR click so window tabs stay clickable.
 
 ## Addendum 1 (2026-07-08): trackpad ghost clicks and Option-click cursor moves
 

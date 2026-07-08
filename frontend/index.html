@@ -1986,9 +1986,47 @@
             const scr = document.querySelector('.xterm-screen');
             if (!scr || !(e.target instanceof Node) || !scr.contains(e.target)) return;
             const rect = scr.getBoundingClientRect();
-            if (term.rows > 1 && e.clientY - rect.top >= rect.height * (term.rows - 1) / term.rows) return;
+            const onStatusRow = term.rows > 1 &&
+                e.clientY - rect.top >= rect.height * (term.rows - 1) / term.rows;
             e.stopImmediatePropagation();
             e.preventDefault();
+            if (onStatusRow) {
+                // Bottom row = tmux status line, but it is ALSO where drags
+                // start when selecting the last lines of output upward (the
+                // Claude input box lives at the bottom). Disambiguate by
+                // travel: >REPLACE_PX becomes a selection drag; releasing
+                // without travel replays the click to the app (window tabs).
+                const start0 = e;
+                const onMove0 = (m) => {
+                    if (Math.abs(m.clientX - start0.clientX) < REPLACE_PX
+                            && Math.abs(m.clientY - start0.clientY) < REPLACE_PX) return;
+                    cleanup0();
+                    if (term.hasSelection()) clearSelectionBecause('replacing drag (bottom row)');
+                    dispatchSelectionClone(start0);
+                };
+                const onUp0 = (u) => {
+                    cleanup0();
+                    // Replay the click to the app as a raw SGR mouse report —
+                    // deterministic (no re-entrant DOM dispatch), and only
+                    // when the app actually has mouse tracking on (otherwise
+                    // the bytes would land as typed garbage — and a status
+                    // line click needs tmux mouse mode anyway).
+                    if (term.modes.mouseTrackingMode === 'none') return;
+                    const col = Math.min(term.cols, Math.max(1,
+                        Math.floor((start0.clientX - rect.left) / (rect.width / term.cols)) + 1));
+                    const row = Math.min(term.rows, Math.max(1,
+                        Math.floor((start0.clientY - rect.top) / (rect.height / term.rows)) + 1));
+                    sendInput('\x1b[<0;' + col + ';' + row + 'M');
+                    sendInput('\x1b[<0;' + col + ';' + row + 'm');
+                };
+                function cleanup0() {
+                    document.removeEventListener('mousemove', onMove0, true);
+                    document.removeEventListener('mouseup', onUp0, true);
+                }
+                document.addEventListener('mousemove', onMove0, true);
+                document.addEventListener('mouseup', onUp0, true);
+                return;
+            }
             const ghost = lastHijackUp
                     && Date.now() - lastHijackUp.t < GHOST_MS
                     && Math.abs(e.clientX - lastHijackUp.x) <= GHOST_PX
