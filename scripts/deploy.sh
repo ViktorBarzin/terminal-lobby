@@ -51,6 +51,7 @@ scp -o BatchMode=yes \
   devvm/tmux-restore-user \
   devvm/claude-tmux-state \
   devvm/show-image \
+  devvm/clipboard-store-clean \
   devvm/ttyd-user-map \
   devvm/sudoers.d-ttyd-users \
   devvm/ttyd.service \
@@ -80,8 +81,13 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   sudo install -m 0755 /tmp/tmux-restore-user /usr/local/bin/tmux-restore-user
   sudo install -m 0755 /tmp/claude-tmux-state /usr/local/bin/claude-tmux-state
   sudo install -m 0755 /tmp/show-image        /usr/local/bin/show-image
+  sudo install -m 0755 /tmp/clipboard-store-clean /usr/local/bin/clipboard-store-clean
   # Per-user sidebar layout store — owned by the tmux-api service user.
   sudo install -d -o wizard -g wizard -m 0700 /var/lib/tmux-api /var/lib/tmux-api/layout
+  # Per-(user, session) image store — owned by the clipboard-upload service
+  # user; world-readable by design (ADR-0005: isolation is API-enforced,
+  # OS-level reads follow OS permissions).
+  sudo install -d -o wizard -g wizard -m 0755 /var/lib/clipboard-store
   sudo install -m 0644 /tmp/index.html               /usr/local/share/ttyd/index.html
   sudo install -m 0644 /tmp/manifest.webmanifest     /usr/local/share/ttyd/manifest.webmanifest
   sudo install -m 0644 /tmp/icon-192.png             /usr/local/share/ttyd/icon-192.png
@@ -98,7 +104,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
   sudo systemctl enable --now clipboard-cleanup.timer
-  rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/show-image /tmp/index.html
+  rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html
   rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png
   rm -f /tmp/ttyd-user-map /tmp/sudoers.d-ttyd-users
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
