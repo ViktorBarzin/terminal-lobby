@@ -35,6 +35,11 @@ else
   echo "==> No out/ttyd — skipping ttyd binary (./scripts/build-ttyd.sh to build it)"
 fi
 
+echo "==> Stamping frontend build id..."
+REV=$(git -C "$ROOT" rev-parse --short HEAD)
+mkdir -p out
+sed "s/__TL_BUILD__/${REV}/" frontend/index.html > out/index.html
+
 echo "==> Staging files on $DEVVM..."
 # $TTYD_BIN is intentionally unquoted: empty expands to zero words
 # (file skipped), non-empty is a single shell-safe path.
