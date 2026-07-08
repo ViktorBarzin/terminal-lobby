@@ -2145,7 +2145,10 @@
                 e.stopImmediatePropagation();
                 // term.paste, not raw sendInput: wraps in bracketed paste when
                 // the app enabled it and normalizes \r\n, so multiline text no
-                // longer executes line-by-line in shells.
+                // longer executes line-by-line in shells. It routes through
+                // onData, so disarm any armed soft-modifier first — it would
+                // remap the pasted text's first char.
+                consumeSoftMods();
                 term.paste(text);
             }
         }, true);
@@ -2171,13 +2174,14 @@
                         if (item.types.includes('text/plain')) {
                             const blob = await item.getType('text/plain');
                             const text = await blob.text();
-                            // term.paste: bracketed paste + \r\n normalization
-                            if (text) { term.paste(text); return; }
+                            // term.paste: bracketed paste + \r\n normalization;
+                            // disarm soft-mods so onData can't remap char 1
+                            if (text) { consumeSoftMods(); term.paste(text); return; }
                         }
                     }
                 } else {
                     const text = await navigator.clipboard.readText();
-                    if (text) term.paste(text);
+                    if (text) { consumeSoftMods(); term.paste(text); }
                 }
             } catch (err) {
                 showToast('Clipboard access denied', 'error', 3000);
