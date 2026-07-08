@@ -7,11 +7,12 @@ that session's web view days later, not evaporate from `/tmp`.
 
 Five decisions were interview-locked:
 
-1. **What persists** — clipboard pastes/uploads (the `image` upload
-   field) AND `show-image` renders (registered by the script itself).
-   Drag-dropped files stay ephemeral transfer conveniences in
-   `/tmp/clipboard-files`: they are arbitrary file handoffs into a
-   shell command, not gallery content.
+1. **What persists** — clipboard pastes/uploads, drag-dropped images
+   (the frontend routes any dropped `image/*` file onto the same
+   `image` upload field as a paste) AND `show-image` renders
+   (registered by the script itself). Only NON-image drops stay
+   ephemeral transfer conveniences in `/tmp/clipboard-files`: they are
+   arbitrary file handoffs into a shell command, not gallery content.
 2. **Where** — `/var/lib/clipboard-store/<osUser>/<session>/` on the
    devvm's durable disk, one flat directory per (OS user, session).
    `/tmp` was the whole problem (tmpfs semantics + the 7-day sweep);
@@ -74,9 +75,9 @@ image written ──► session alive (tmux OR saved layout)? ──► stays, m
 `clipboard-store-clean` (daily, via the existing
 `clipboard-cleanup.timer`) implements this; liveness errs toward
 keeping — an unreachable tmux-api just starts/continues grace, never
-deletes early. `_unsorted`: 90 days. Drag-dropped files: unchanged
+deletes early. `_unsorted`: 90 days. Non-image drops: unchanged
 7-day `/tmp/clipboard-files` sweep, now the final step of the same
-script.
+script (dropped images ride the store lifecycle above, like pastes).
 
 ## The typed-path contract
 
