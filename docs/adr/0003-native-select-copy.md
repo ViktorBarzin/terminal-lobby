@@ -83,7 +83,21 @@ program running in the PTY read the user's clipboard.
 - Verified end-to-end against a live ttyd+tmux pane with
   `scripts/dev-harness.py` (41/41 assertions, Linux + emulated Mac).
 
-## Addendum (2026-07-08): trackpad ghost clicks and Option-click cursor moves
+## Addendum 2 (2026-07-08, supersedes Addendum 1's click semantics): selection lifecycle
+
+A selection now clears ONLY on scroll (wheel), Escape (which also still
+reaches the app — vim-safe), or a replacing drag/double-click — never on
+a plain click or pointer motion (Viktor's explicit contract). Presses
+made while a selection exists are held back until they travel >4px and
+prove to be a drag; a press that releases without travel keeps the
+selection. Motivation beyond UX: macOS trackpads emit ghost clicks after
+a drag lift — sometimes deferred until the finger next touches the pad —
+so ANY click-clears rule eventually eats a fresh selection; a contract
+where clicks never clear is immune by construction. The ghost-window
+guard is retained only to stop a detail=2-stamped ghost from triggering
+the double-click word-select path.
+
+## Addendum 1 (2026-07-08): trackpad ghost clicks and Option-click cursor moves
 
 macOS trackpads (and some Windows precision touchpads) emit a ghost
 click — a full mousedown/up pair near the lift position — right after a
