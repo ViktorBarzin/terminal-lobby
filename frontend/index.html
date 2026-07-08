@@ -1684,11 +1684,18 @@
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
             fontSize: 15,
             theme: readTerminalTheme(),
-            // tmux (mouse on) forwards the mouse to copy-mode; native browser
-            // selection requires holding Shift, which xterm bounds to its OWN
-            // scrollback buffer. The default (1000) is why Shift-selecting a big
-            // chunk "runs out". 10000 comfortably exceeds tmux's history-limit
-            // (5000), so Shift+scroll/drag selection reaches the full history.
+            // Mac leg of the plain-drag selection reclaim (mousedown
+            // interceptor below term.open): the synthetic clones carry
+            // altKey, and only this option makes xterm treat Option-clicks
+            // as force-selection — without it they leak to the app as
+            // Alt-clicks. Must be set in the constructor.
+            macOptionClickForcesSelection: true,
+            // tmux attaches on the ALTERNATE screen, so xterm's scrollback
+            // holds nothing while attached: Shift+scroll/drag never reaches
+            // history, selection is limited to the visible frame, and deep
+            // history is tmux copy-mode's job. This buffer is inert under
+            // tmux's alt screen — it only matters if alternate-screen were
+            // ever disabled.
             scrollback: 10000,
             allowProposedApi: true
         });
@@ -1715,7 +1722,26 @@
             const ClipAddon = (typeof ClipboardAddon !== 'undefined')
                 && (ClipboardAddon.ClipboardAddon || ClipboardAddon);
             if (ClipAddon) {
-                term.loadAddon(new ClipAddon());
+                // Custom provider instead of the addon's default, for two
+                // verified reasons:
+                //   - tmux 3.4 emits OSC 52 with an EMPTY selection field
+                //     (\x1b]52;;<base64>), and the default provider drops any
+                //     selection that isn't exactly 'c' — so tmux copy-mode
+                //     copies never reached the browser clipboard. Accept ''
+                //     and 'c'.
+                //   - readText deliberately refuses: answering OSC 52 '?'
+                //     queries would let any program running in the PTY read
+                //     the user's clipboard.
+                const osc52Provider = {
+                    readText: () => Promise.resolve(''),
+                    writeText: (selection, text) =>
+                        selection === '' || selection === 'c'
+                            ? navigator.clipboard.writeText(text)
+                                  .then(() => showToast('Copied', 'success', 1500))
+                                  .catch(() => {})
+                            : Promise.resolve()
+                };
+                term.loadAddon(new ClipAddon(undefined, osc52Provider));
                 console.log('clipboard addon (OSC 52) loaded');
             } else {
                 console.warn('ClipboardAddon global not found');
@@ -1726,6 +1752,41 @@
 
         term.open(document.getElementById('terminal'));
         fitAddon.fit();
+        // Nothing else focuses the terminal on load — without this,
+        // keystrokes on desktop are dead until the user clicks.
+        term.focus();
+
+        const isMacLike = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'].includes(navigator.platform);
+        // Reclaim plain left-drag for NATIVE selection. tmux — and Claude Code
+        // inside it — keep the terminal in mouse-report mode, so xterm.js only
+        // selects while a force-modifier is held (Shift here; Option on Mac via
+        // macOptionClickForcesSelection). Intercept unmodified left presses over
+        // the screen before xterm sees them and re-dispatch a clone carrying
+        // that modifier: xterm's own SelectionService takes over (drag growth,
+        // double-click words, persistence) while wheel / right-click / modifier
+        // chords still reach the app. xterm registers its mouse reporters only
+        // for presses it processes itself, so nothing leaks to the PTY during a
+        // hijacked drag. The bottom row is the tmux status line — real clicks
+        // (window switching) matter more there than selection, so it passes.
+        document.addEventListener('mousedown', (e) => {
+            if (!e.isTrusted || e.button !== 0) return;      // clones + non-left pass
+            if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+            const scr = document.querySelector('.xterm-screen');
+            if (!scr || !(e.target instanceof Node) || !scr.contains(e.target)) return;
+            const rect = scr.getBoundingClientRect();
+            if (term.rows > 1 && e.clientY - rect.top >= rect.height * (term.rows - 1) / term.rows) return;
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            if (term.hasSelection()) term.clearSelection();  // click replaces, never extends
+            const init = {
+                bubbles: true, cancelable: true, composed: true, view: window,
+                detail: e.detail, screenX: e.screenX, screenY: e.screenY,
+                clientX: e.clientX, clientY: e.clientY, button: 0, buttons: 1
+            };
+            if (isMacLike) init.altKey = true; else init.shiftKey = true;
+            e.target.dispatchEvent(new MouseEvent('mousedown', init));
+            term.focus();                                    // we swallowed xterm's focus click
+        }, true);
 
         document.title = 'tmux: ' + whoami.osUser + '/' + validArg;
 
@@ -1905,7 +1966,12 @@
             row.appendChild(makeBtn('Paste', async () => {
                 try {
                     const text = await navigator.clipboard.readText();
-                    if (text) sendInput(text);
+                    if (text) {
+                        // term.paste routes through term.onData — consume any
+                        // armed soft-modifier so it can't remap the first char.
+                        consumeSoftMods();
+                        term.paste(text);
+                    }
                 } catch (err) {
                     showToast('Clipboard access denied', 'error', 2500);
                 }
@@ -2017,17 +2083,31 @@
         syncViewport();
         try { fitAddon.fit(); } catch (e) {}
 
+        // Layout-proof copy/paste chord matching. e.key follows the keyboard
+        // layout — under Cyrillic, Ctrl+C reports 'с'/'ъ'/'ц', an e.key==='c'
+        // match fails, and the chord falls through as ^C: SIGINT with a
+        // visible selection. e.code is the physical key position. Match e.key
+        // first while it is a Latin letter (keeps Dvorak-style remaps
+        // correct); fall back to e.code only when the layout yields a
+        // non-Latin key. toLowerCase handles CapsLock/Shift. altKey is
+        // excluded so AltGr (Ctrl+Alt) typing chords are never hijacked.
+        function isChord(e, latin, code) {
+            if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+            const k = (e.key && e.key.length === 1) ? e.key.toLowerCase() : e.key;
+            return k === latin || (!/^[a-zA-Z]$/.test(e.key || '') && e.code === code);
+        }
         term.attachCustomKeyEventHandler((e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'c' && term.hasSelection()) {
+            if (e.type !== 'keydown') return true;           // also consulted on keyup
+            if (isChord(e, 'c', 'KeyC') && term.hasSelection()) {
                 navigator.clipboard.writeText(term.getSelection())
                     .then(() => showToast('Copied', 'success', 1500))
                     .catch(() => showToast('Copy blocked by browser', 'error', 2500));
                 return false;
             }
-            if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-                return false; // let browser paste event fire
+            if (isChord(e, 'v', 'KeyV')) {
+                return false;                                // let the browser paste event fire
             }
-            return true;
+            return true;                                     // no selection: Ctrl+C stays SIGINT
         });
 
         document.addEventListener('paste', async (e) => {
@@ -2063,7 +2143,10 @@
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
-                sendInput(text);
+                // term.paste, not raw sendInput: wraps in bracketed paste when
+                // the app enabled it and normalizes \r\n, so multiline text no
+                // longer executes line-by-line in shells.
+                term.paste(text);
             }
         }, true);
 
@@ -2088,12 +2171,13 @@
                         if (item.types.includes('text/plain')) {
                             const blob = await item.getType('text/plain');
                             const text = await blob.text();
-                            if (text) { sendInput(text); return; }
+                            // term.paste: bracketed paste + \r\n normalization
+                            if (text) { term.paste(text); return; }
                         }
                     }
                 } else {
                     const text = await navigator.clipboard.readText();
-                    if (text) sendInput(text);
+                    if (text) term.paste(text);
                 }
             } catch (err) {
                 showToast('Clipboard access denied', 'error', 3000);
