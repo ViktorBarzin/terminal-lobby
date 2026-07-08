@@ -1,6 +1,6 @@
 [Unit]
-Description=Clean old clipboard images and dropped files
+Description=Retention sweep for the session image store and old dropped files
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'find /tmp/clipboard-images /tmp/clipboard-files -type f -mtime +7 -delete 2>/dev/null || true'
+ExecStart=/usr/local/bin/clipboard-store-clean

@@ -1,0 +1,124 @@
+#!/bin/sh
+# Retention sweep for the per-session image store (/var/lib/clipboard-store)
+# plus the legacy /tmp upload dirs. Runs daily via clipboard-cleanup.timer
+# (ExecStart of devvm/clipboard-cleanup.service). Policy — see
+# docs/adr/0005-session-image-store.md:
+#
+#   store/<user>/<session>/  kept while the session is ALIVE: live in tmux
+#                            (tmux-api /sessions) OR referenced by the
+#                            user's saved sidebar layout. A dead session
+#                            gets a .deleted-at marker and 30 days of
+#                            grace before the directory is removed — a
+#                            session recreated within the grace window
+#                            gets its images back (marker dropped).
+#   store/<user>/_unsorted/  no session to tie a lifetime to: files age
+#                            out after 90 days.
+#   /tmp/clipboard-files     dropped-file transfer conveniences: 7 days,
+#                            exactly as the old find sweep did.
+#                            /tmp/clipboard-images only holds pre-store
+#                            leftovers (nothing writes there any more)
+#                            and rides the same sweep until empty.
+#
+# Liveness errs on the side of keeping: an unreachable tmux-api only makes
+# a session LOOK dead this run, which merely starts (or continues) the
+# 30-day grace — the next healthy run removes the marker again.
+set -u
+
+STORE=/var/lib/clipboard-store
+MAP=/etc/ttyd-user-map
+LAYOUT_DIR=/var/lib/tmux-api/layout
+SESSIONS_URL=http://127.0.0.1:7684/sessions
+GRACE_DAYS=30
+UNSORTED_DAYS=90
+
+# authentik_for <os_user> — reverse-map an OS user to an Authentik login by
+# scanning ttyd-user-map ("<auth>=<os_user>[:<cwd>]" per line, comments and
+# blanks ignored — the same grammar tmux-api/main.go parses; entries are
+# machine-managed and carry no whitespace). Several logins may map to one
+# OS user; any of them resolves to the same session list, so first hit wins.
+authentik_for() {
+    while IFS= read -r line; do
+        case "$line" in ''|\#*) continue ;; esac
+        case "$line" in *=*) ;; *) continue ;; esac
+        auth=${line%%=*}
+        rhs=${line#*=}
+        rhs=${rhs%%:*}
+        if [ -n "$auth" ] && [ "$rhs" = "$1" ]; then
+            printf '%s\n' "$auth"
+            return 0
+        fi
+    done < "$MAP"
+    return 1
+}
+
+# session_alive <os_user> <session> — success when the session is live in
+# tmux (asking tmux-api AS the user, via the same forward-auth header the
+# ingress would add) or referenced by the user's saved sidebar layout.
+session_alive() {
+    user=$1
+    session=$2
+
+    auth=$(authentik_for "$user") || auth=
+    if [ -n "$auth" ]; then
+        json=$(curl -s -m 5 -H "X-Authentik-Username: $auth" "$SESSIONS_URL") || json=
+        if [ -n "$json" ]; then
+            if command -v jq >/dev/null 2>&1; then
+                if printf '%s\n' "$json" | jq -e --arg n "$session" \
+                        'type == "array" and any(.[]; .name == $n)' >/dev/null 2>&1; then
+                    return 0
+                fi
+            # tmux-api marshals compactly (encoding/json), so a live
+            # session appears exactly as "name":"<session>" — no spaces to
+            # defeat a fixed-string grep (tmux-api/main.go, Session struct).
+            elif printf '%s\n' "$json" | grep -qF "\"name\":\"$session\""; then
+                return 0
+            fi
+        fi
+    fi
+
+    # Saved layout (tmux-api layout store): session names sit in JSON
+    # string arrays. grep -F for the quoted name is a substring probe — a
+    # PROJECT with the same name also matches — but a false "alive" only
+    # delays deletion (the grace clock resets); it never deletes early.
+    # Acceptable tradeoff over parsing JSON without a jq guarantee.
+    layout="$LAYOUT_DIR/$user.json"
+    if [ -f "$layout" ] && grep -qF "\"$session\"" "$layout"; then
+        return 0
+    fi
+    return 1
+}
+
+if [ -d "$STORE" ]; then
+    for userdir in "$STORE"/*/; do
+        [ -d "$userdir" ] || continue
+        user=$(basename "$userdir")
+
+        for sessdir in "$userdir"*/; do
+            [ -d "$sessdir" ] || continue
+            session=$(basename "$sessdir")
+            [ "$session" = "_unsorted" ] && continue
+            marker="$sessdir.deleted-at"
+
+            if session_alive "$user" "$session"; then
+                rm -f "$marker"
+            elif [ ! -f "$marker" ]; then
+                # Start the grace clock. Content = epoch for a human
+                # reading the store; the AGE decision below runs on the
+                # marker's mtime (find -mtime), which tests can drive
+                # with touch -d.
+                date +%s > "$marker"
+            elif [ -n "$(find "$marker" -mtime +"$GRACE_DAYS" -print 2>/dev/null)" ]; then
+                rm -rf "$sessdir"
+            fi
+        done
+
+        # _unsorted has no session lifetime — age files out on a fixed clock.
+        find "${userdir}_unsorted" -type f -mtime +"$UNSORTED_DAYS" -delete 2>/dev/null
+    done
+fi
+
+# Dropped-file transfer conveniences stay ephemeral (7 days, as the old
+# sweep); /tmp/clipboard-images holds only pre-store leftovers.
+find /tmp/clipboard-files /tmp/clipboard-images -type f -mtime +7 -delete 2>/dev/null
+
+exit 0

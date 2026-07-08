@@ -15,6 +15,18 @@ if [ ! -f "$1" ] || [ ! -r "$1" ]; then
     exit 1
 fi
 
+# Absolute path: the split pane and the gallery registration below both
+# run without this shell's cwd. realpath is present on the devvm; the
+# case fallback keeps the script POSIX-portable.
+if command -v realpath >/dev/null 2>&1; then
+    img=$(realpath "$1")
+else
+    case "$1" in
+        /*) img=$1 ;;
+        *)  img="$(pwd)/$1" ;;
+    esac
+fi
+
 if [ -n "$TMUX" ]; then
     # -e passes the path out-of-band as an env var, so it survives spaces
     # and quotes: tmux putenvs the value verbatim and the pane's /bin/sh
@@ -22,7 +34,19 @@ if [ -n "$TMUX" ]; then
     # dash, whose `read` has no -n/-s — hence plain `read x` + Enter.
     # A split pane, not display-popup: tmux 3.4 popups don't pass sixel
     # through (empty box).
-    exec tmux split-window -l 15 -e "IMG=$1" 'viu -h 12 "$IMG"; printf "\n[Enter closes]"; read x'
+    tmux split-window -l 15 -e "IMG=$img" 'viu -h 12 "$IMG"; printf "\n[Enter closes]"; read x' || exit 1
+    # Persist what was shown into the per-session gallery store
+    # (docs/adr/0005-session-image-store.md) — unless it already lives
+    # there. Fire-and-forget: the backgrounded subshell with all output
+    # dropped means a dead or slow clipboard-upload service can never
+    # break or delay rendering.
+    case "$img" in
+        /var/lib/clipboard-store/*) ;;
+        *) (curl -s -m 5 -X POST http://127.0.0.1:7683/register \
+                -F "user=$(id -un)" \
+                -F "session=$(tmux display -p '#S')" \
+                -F "path=$img" >/dev/null 2>&1 &) ;;
+    esac
 else
-    exec viu "$1"
+    exec viu "$img"
 fi
