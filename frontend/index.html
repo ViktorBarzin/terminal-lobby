@@ -1926,6 +1926,46 @@
             }
         }
         let lastHijackUp = null;
+        // Live clone-drag state, for healing drags whose mouseup never
+        // arrives. Two real-world ways that happens:
+        //   (a) the button is released OUTSIDE this document — past the
+        //       window edge, or over the lobby sidebar when this page runs
+        //       in the lobby iframe — so xterm stays in drag-state and every
+        //       later pointer move keeps re-extending the "selection";
+        //   (b) macOS three-finger-drag / tap-drag-lock: lifting the fingers
+        //       does NOT release the button; the OS keeps the drag alive and
+        //       the user's next pointer move CONTINUES it (the button is
+        //       genuinely still down), silently dragging the selection away.
+        // Healing: watch motion during a clone-drag. Motion with the button
+        // up finalizes at the last dragged point (case a). On Macs, motion
+        // resuming after >=STALL_MS stationary — while the button is still
+        // held — finalizes at the stationary point first (case b): a lift
+        // pause then travel is drag-lock, not deliberate selection growth.
+        const STALL_MS = 500;
+        let cloneDrag = null;
+        function finalizeCloneDrag(x, y, tgt) {
+            const t = (cloneDrag && cloneDrag.target) || tgt || document.querySelector('.xterm-screen');
+            cloneDrag = null;
+            if (!t) return;
+            t.dispatchEvent(new MouseEvent('mouseup', {
+                bubbles: true, cancelable: true, composed: true, view: window,
+                clientX: x, clientY: y, button: 0, buttons: 0
+            }));
+            lastHijackUp = { t: Date.now(), x: x, y: y };
+        }
+        document.addEventListener('mousemove', (m) => {
+            if (!m.isTrusted || !cloneDrag) return;
+            const now = Date.now();
+            if ((m.buttons & 1) === 0) {                     // lost mouseup (a)
+                finalizeCloneDrag(cloneDrag.x, cloneDrag.y);
+                return;
+            }
+            if (isMacLike && now - cloneDrag.at >= STALL_MS) {
+                finalizeCloneDrag(cloneDrag.x, cloneDrag.y); // drag-lock resume (b)
+                return;
+            }
+            cloneDrag.x = m.clientX; cloneDrag.y = m.clientY; cloneDrag.at = now;
+        }, true);
         function dispatchSelectionClone(e) {
             const init = {
                 bubbles: true, cancelable: true, composed: true, view: window,
@@ -1933,8 +1973,10 @@
                 clientX: e.clientX, clientY: e.clientY, button: 0, buttons: 1
             };
             if (isMacLike) init.altKey = true; else init.shiftKey = true;
+            cloneDrag = { x: e.clientX, y: e.clientY, at: Date.now(), target: e.target };
             e.target.dispatchEvent(new MouseEvent('mousedown', init));
             document.addEventListener('mouseup', (up) => {
+                cloneDrag = null;                            // clean release
                 lastHijackUp = { t: Date.now(), x: up.clientX, y: up.clientY };
             }, { capture: true, once: true });
         }
