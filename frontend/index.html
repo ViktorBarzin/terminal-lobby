@@ -2556,10 +2556,13 @@
         document.getElementById('gallery-btn').addEventListener('click', openGallery);
 
         // ------------------------------------------------------------------
-        // Drag-and-drop files → upload to /tmp → type the path(s) into the PTY.
-        // Any file type is accepted; the clipboard-upload service saves it under
-        // /tmp/clipboard-files keeping a sanitized original name, and the
-        // absolute path(s) are sent as input so you can use them in a command.
+        // Drag-and-drop files → upload → type the path(s) into the PTY.
+        // Any file type is accepted. Dropped IMAGES are gallery content like
+        // pastes: they ride the "image" field into the per-session store.
+        // Everything else keeps the "file" field — saved under
+        // /tmp/clipboard-files with a sanitized original name, a transfer
+        // convenience. Either way the absolute path(s) are sent as input so
+        // you can use them in a command.
         //
         // preventDefault MUST run on dragover AND drop UNCONDITIONALLY — if it
         // doesn't, the browser falls back to its default "open the dropped file"
@@ -2568,7 +2571,7 @@
         // ------------------------------------------------------------------
         const dropOverlay = document.createElement('div');
         dropOverlay.id = 'drop-overlay';
-        dropOverlay.textContent = 'Drop files — saved to /tmp, paths typed into the session';
+        dropOverlay.textContent = 'Drop files — paths typed into the session (images join its gallery)';
         Object.assign(dropOverlay.style, {
             position: 'fixed', inset: '0', zIndex: '9997', display: 'none',
             alignItems: 'center', justifyContent: 'center', textAlign: 'center',
@@ -2630,7 +2633,14 @@
             for (const f of files) {
                 try {
                     const fd = new FormData();
-                    fd.append('file', f, f.name);
+                    // Images persist like pastes (per-session store → gallery,
+                    // Viktor's locked scope); anything else stays an ephemeral
+                    // /tmp transfer via the legacy file field.
+                    if (f.type && f.type.startsWith('image/')) {
+                        fd.append('image', f, f.name);
+                    } else {
+                        fd.append('file', f, f.name);
+                    }
                     fd.append('session', validArg);
                     const resp = await fetch('/clipboard/upload', { method: 'POST', body: fd });
                     if (!resp.ok) {

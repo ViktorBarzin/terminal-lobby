@@ -71,15 +71,15 @@ display lag is ~10 s (5 s API cache + 5 s poll).
 
 ## Session image gallery
 
-Every image pasted/uploaded into a session, and every image rendered
-with `show-image`, persists under
+Every image pasted, uploaded, or drag-dropped into a session, and
+every image rendered with `show-image`, persists under
 `/var/lib/clipboard-store/<user>/<session>/` and is re-viewable from
 the terminal view: the floating 🖼 button (next to Img/Paste) opens
 an overlay grid — newest first, `show-image` renders badged "shown" —
 and a thumbnail click enlarges in the usual lightbox (Escape/click
 steps back to the grid). Images live as long as their session does
 (live in tmux, or still in your saved sidebar layout) plus a 30-day
-grace after it dies; drag-dropped *files* remain 7-day ephemera in
+grace after it dies; *non-image* drops remain 7-day ephemera in
 `/tmp` — they're transfer conveniences, not gallery content. Details
 and trade-offs: `docs/adr/0005-session-image-store.md`.
 
@@ -89,7 +89,7 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 |---|---|---|---|
 | `frontend/index.html` | Served by ttyd on the DevVM | 7681 | Lobby UI + xterm.js terminal |
 | `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions` (incl. per-session `state` + `project`), `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore`, `GET`/`PUT /layout` (per-user sidebar layout, stored under `/var/lib/tmux-api/layout/`) |
-| `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session image store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded images and returns a path the terminal can paste (drag-dropped files stay in `/tmp/clipboard-files`), `POST /register` records `show-image` renders (localhost), `GET /list` + `GET /img/…` serve the gallery. Per-user isolation via `X-Authentik-Username` → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
+| `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session image store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded/dropped images and returns a path the terminal can paste (non-image drops stay in `/tmp/clipboard-files`), `POST /register` records `show-image` renders (localhost), `GET /list` + `GET /img/…` serve the gallery. Per-user isolation via `X-Authentik-Username` → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
 | `devvm/tmux-attach.sh` | DevVM, invoked by ttyd | — | Validates `X-authentik-username`, maps to OS user via `/etc/ttyd-user-map`, `sudo -u <user> tmux new-session -A` |
 | `devvm/claude-tmux-state` | DevVM, invoked by Claude Code hooks | — | Stamps `@claude_state` (running / awaiting / done) on the enclosing tmux session; wired org-wide via `/etc/claude-code/managed-settings.json` (infra repo, `scripts/workstation/`, self-deploys hourly). No-ops outside tmux. See `docs/adr/0001-claude-state-via-hooks.md` |
 | `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`) | — | "Restore sessions" button helper: validates the user against `/etc/ttyd-user-map`, runs `tmux-persist restore <user>` (recreates that user's saved-but-dead sessions, resuming each Claude conversation). Idempotent — live sessions are left alone. Useful after an OOM kills the tmux server without a reboot (the boot-only restore never fires) |
@@ -205,9 +205,10 @@ curl -H "X-Authentik-Username: $(whoami)" http://localhost:7684/sessions
 ```
 
 `clipboard-upload` reads the same user map and header for its store
-routes (`/upload` image field, `/list`, `/img/…`); dropped files still
-land header-free in `/tmp/clipboard-files`. Locally it needs a
-writable `/var/lib/clipboard-store` (`sudo install -d -o $USER
+routes (`/upload` image field — pastes, uploads and dropped images
+alike — plus `/list`, `/img/…`); non-image drops still land
+header-free in `/tmp/clipboard-files`. Locally it needs a writable
+`/var/lib/clipboard-store` (`sudo install -d -o $USER
 /var/lib/clipboard-store`) — without it only the store routes 500.
 
 For the frontend, there's no build step. The whole UI is a single
