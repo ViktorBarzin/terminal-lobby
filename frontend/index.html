@@ -1666,10 +1666,11 @@
         // TERMINAL MODE — valid ?arg=<session>, attach via ttyd
         // ============================================================
 
-        // ttyd binary protocol
+        // ttyd binary protocol (server → client: '0' OUTPUT,
+        // '1' SET_WINDOW_TITLE, '2' SET_PREFERENCES)
         const MSG_OUTPUT    = 0x30; // '0' - terminal output
-        const MSG_SET_PREFS = 0x31; // '1' - JSON preferences
-        const MSG_SET_TITLE = 0x32; // '2' - window title
+        const MSG_SET_TITLE = 0x31; // '1' - window title
+        const MSG_SET_PREFS = 0x32; // '2' - JSON preferences
         const MSG_INPUT     = '0';  // client → server: input data
         const MSG_RESIZE    = '1';  // client → server: {columns, rows}
 
