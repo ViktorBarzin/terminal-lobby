@@ -678,6 +678,10 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-image@0.9.0/lib/addon-image.min.js"></script>
     <script>
     (async function() {
+        // Stamped by deploy.sh at install time; 'dev' when served from a checkout.
+        const TL_BUILD = '__TL_BUILD__';
+        console.log('terminal-lobby build:', TL_BUILD);
+        try { document.documentElement.dataset.tlBuild = TL_BUILD; } catch (e) {}
         const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
         const SESSIONS_API = '/api/sessions/sessions';
         const RESTORE_API  = '/api/sessions/restore';
@@ -1922,7 +1926,7 @@
             term.clearSelection();
             if (selDebug) {
                 console.log('[seldebug] cleared by:', why);
-                showToast('selection cleared: ' + why, 'error', 2500);
+                showToast('selection cleared: ' + why + ' [' + TL_BUILD + ']', 'error', 2500);
             }
         }
         let lastHijackUp = null;
@@ -2875,11 +2879,22 @@
         function fetchSelf() {
             return fetch(location.pathname + location.search,
                          { cache: 'no-store', credentials: 'same-origin' })
-                .then(r => r.ok ? r.text() : null);
+                // Validate it is OUR page — an auth interstitial must never
+                // become the baseline (it would blind the comparison).
+                .then(r => r.ok ? r.text() : null)
+                .then(t => (t && t.includes('terminal-lobby build:') ? t : null));
         }
-        fetchSelf().then(t => { if (t) bootPageHash = hashPage(t); }).catch(() => {});
+        function armBaseline(where) {
+            return fetchSelf().then(t => {
+                if (t) { bootPageHash = hashPage(t); }
+                else { console.warn('stale-tab healer: baseline fetch failed (' + where + ') — will retry on reconnect'); }
+            }).catch(() => {});
+        }
+        armBaseline('boot');
         function reloadIfStale() {
-            if (!bootPageHash) return;
+            // A failed boot baseline must not disarm the healer forever:
+            // re-arm now, compare on the NEXT reconnect.
+            if (!bootPageHash) { armBaseline('reconnect'); return; }
             fetchSelf().then(t => {
                 if (!t || hashPage(t) === bootPageHash) return;
                 // Loop guard: at most one auto-reload per 2 minutes per tab
