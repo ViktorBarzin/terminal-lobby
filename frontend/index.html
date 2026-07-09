@@ -1921,8 +1921,62 @@
         // Opt-in diagnostics: add ?seldebug=1 to the session URL and every
         // selection clear announces its trigger in a toast + console.
         const selDebug = params.get('seldebug') === '1';
+        // ---- selection telemetry (DEFAULT ON; ?seldebug=0 opts this tab out).
+        // Ships selection lifecycle events + a ring buffer of raw INPUT
+        // events to /clipboard/telemetry (JSONL per user on the devvm), so a
+        // clear caused by a specific physical trackpad can be diagnosed
+        // server-side. Captures ONLY mouse/wheel geometry and the chord keys
+        // (Escape, mod+C/V) — never general typing.
+        const telemetryOn = params.get('seldebug') !== '0';
+        const evRing = [];
+        function ring(rec) {
+            rec.t = Math.round(performance.now());
+            evRing.push(rec);
+            if (evRing.length > 30) evRing.shift();
+        }
+        let telBatch = [], telTimer = null;
+        function flushTel() {
+            clearTimeout(telTimer); telTimer = null;
+            if (!telBatch.length) return;
+            const payload = JSON.stringify({ events: telBatch });
+            telBatch = [];
+            try {
+                navigator.sendBeacon('/clipboard/telemetry',
+                    new Blob([payload], { type: 'application/json' }));
+            } catch (e) {}
+        }
+        function tel(type, data) {
+            if (!telemetryOn) return;
+            telBatch.push(Object.assign({ type: type, t: Math.round(performance.now()),
+                build: TL_BUILD, session: validArg, plat: navigator.platform }, data));
+            if (telBatch.length >= 6) flushTel();
+            else if (!telTimer) telTimer = setTimeout(flushTel, 3000);
+        }
+        window.addEventListener('pagehide', flushTel);
+        const modBits = e => (e.shiftKey?1:0)|(e.altKey?2:0)|(e.ctrlKey?4:0)|(e.metaKey?8:0);
+        document.addEventListener('mousedown', (e) => ring({ k: 'md', x: e.clientX|0,
+            y: e.clientY|0, b: e.buttons, d: e.detail, tr: e.isTrusted?1:0, m: modBits(e) }), true);
+        document.addEventListener('mouseup', (e) => ring({ k: 'mu', x: e.clientX|0,
+            y: e.clientY|0, b: e.buttons, tr: e.isTrusted?1:0 }), true);
+        let lastRingMM = 0;
+        document.addEventListener('mousemove', (e) => {
+            const now = performance.now();
+            if (e.buttons === 0 && now - lastRingMM < 60) return; // sample idle motion
+            lastRingMM = now;
+            ring({ k: 'mm', x: e.clientX|0, y: e.clientY|0, b: e.buttons, tr: e.isTrusted?1:0 });
+        }, true);
+        document.addEventListener('wheel', (e) => ring({ k: 'wh', x: e.clientX|0, y: e.clientY|0,
+            dy: Math.round(e.deltaY*10)/10, dx: Math.round(e.deltaX*10)/10, mode: e.deltaMode }),
+            { capture: true, passive: true });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && (e.code === 'KeyC' || e.code === 'KeyV')))
+                ring({ k: 'kd', key: e.key === 'Escape' ? 'Esc' : e.code, m: modBits(e) });
+        }, true);
+        let lastExplainedClear = { why: null, t: 0 };
         function clearSelectionBecause(why) {
             if (!term.hasSelection()) return;
+            lastExplainedClear = { why: why, t: performance.now() };
+            tel('sel-cleared', { reason: why, ring: evRing.slice() });
             term.clearSelection();
             if (selDebug) {
                 console.log('[seldebug] cleared by:', why);
@@ -2077,6 +2131,24 @@
                 clearSelectionBecause('scroll (' + total + 'px)');
             }
         }, { passive: true, capture: true });
+
+        // Selection lifecycle watcher: every clear that did NOT route
+        // through clearSelectionBecause within 200ms is UNEXPLAINED — the
+        // interesting kind — and ships with the raw input ring buffer.
+        let telHadSelection = false;
+        term.onSelectionChange(() => {
+            const has = term.hasSelection();
+            if (has && !telHadSelection) {
+                tel('sel-created', { len: term.getSelection().length });
+            } else if (!has && telHadSelection) {
+                const dt = performance.now() - lastExplainedClear.t;
+                if (!(lastExplainedClear.why && dt < 200)) {
+                    tel('sel-cleared', { reason: 'UNEXPLAINED', ring: evRing.slice() });
+                    if (selDebug) showToast('selection cleared: UNEXPLAINED [' + TL_BUILD + ']', 'error', 2500);
+                }
+            }
+            telHadSelection = has;
+        });
 
         document.title = 'tmux: ' + whoami.osUser + '/' + validArg;
 
