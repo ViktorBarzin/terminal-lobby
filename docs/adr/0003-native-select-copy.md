@@ -113,3 +113,22 @@ whole; deliberate re-clicks are slower or farther and clear as designed.
 Separately, xterm's default altClickMovesCursor cleared selections on a
 real Option-drag's release (and sprayed arrow keys into the pane app);
 it is now disabled — click-to-move-cursor has no place in tmux panes.
+
+## Addendum 3 (2026-07-09): the actual culprit — mode-1003 motion reports
+
+Field telemetry (default-on since build 03bfaff) ended a seven-fix
+guessing streak in one recording: every clear rode the FIRST buttonless
+pointer move after release. Claude Code and t3 panes enable mouse mode
+1003 (any-motion) — every pointer move is reported to the TUI, the TUI
+hover-repaints, and that output clears xterm's selection. Local
+matrices passed for fifteen rounds because the sensor pane used 1002
+(drag-only), where post-release motion reports nothing. Fix, two
+layers: (1) while a selection exists and no button is down, buttonless
+motion over the screen is swallowed at document-capture — nothing is
+reported, nothing repaints, the highlight survives; the first
+click/drag/wheel/Escape clears per contract and motion flows again.
+(2) A 15-second selection-text stash backs the copy chord: pane OUTPUT
+(a streaming turn) can still repaint-clear the highlight, and the chord
+then copies the stash ("Copied (recovered)") instead of falling through
+as SIGINT; wheel/Escape/replace null the stash so deliberate dismissal
+restores interrupt semantics immediately.

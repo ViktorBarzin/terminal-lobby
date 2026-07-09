@@ -1973,8 +1973,10 @@
                 ring({ k: 'kd', key: e.key === 'Escape' ? 'Esc' : e.code, m: modBits(e) });
         }, true);
         let lastExplainedClear = { why: null, t: 0 };
+        let selStash = null;
         function clearSelectionBecause(why) {
             if (!term.hasSelection()) return;
+            selStash = null;                     // deliberate dismiss kills the fallback
             lastExplainedClear = { why: why, t: performance.now() };
             tel('sel-cleared', { reason: why, ring: evRing.slice() });
             term.clearSelection();
@@ -2117,6 +2119,25 @@
             document.addEventListener('mouseup', onUp, true);
             term.focus();                                    // we swallowed xterm's focus click
         }, true);
+        // Mode-1003 panes (Claude Code, t3) get EVERY pointer motion
+        // reported; the TUI hover-repaints in response and that output
+        // clears xterm's selection — field telemetry showed every clear
+        // riding the FIRST post-release pointer move (Mac trackpad and
+        // Windows mouse alike; bob's 1px release-jitter killed his within
+        // 3ms). While a selection exists and no button is down, swallow
+        // motion over the screen at document-capture: xterm never sees it,
+        // nothing is reported, nothing repaints, the highlight lives. The
+        // first click/drag/wheel/Escape clears per contract and motion
+        // flows again. (Our telemetry ring listener registered earlier on
+        // this node, so forensics keep recording these swallowed moves.)
+        document.addEventListener('mousemove', (m) => {
+            if (!m.isTrusted || (m.buttons & 1) !== 0) return;
+            if (!term.hasSelection() || cloneDrag) return;
+            const scr = document.querySelector('.xterm-screen');
+            if (!scr || !(m.target instanceof Node) || !scr.contains(m.target)) return;
+            m.stopImmediatePropagation();
+        }, true);
+
         // The other two clear triggers of the contract:
         let wheelAccum = 0, wheelAccumAt = 0;
         document.getElementById('terminal').addEventListener('wheel', (w) => {
@@ -2138,6 +2159,14 @@
         let telHadSelection = false;
         term.onSelectionChange(() => {
             const has = term.hasSelection();
+            if (has) {
+                const txt = term.getSelection();
+                // Stash for the copy chord: pane OUTPUT (a streaming turn)
+                // can repaint-clear the highlight before Ctrl+C lands; the
+                // chord falls back to this for 15s unless the user
+                // explicitly dismissed (wheel/Escape/replace null it).
+                if (txt) selStash = { text: txt, t: performance.now() };
+            }
             if (has && !telHadSelection) {
                 tel('sel-created', { len: term.getSelection().length });
             } else if (!has && telHadSelection) {
@@ -2481,6 +2510,16 @@
                 navigator.clipboard.writeText(term.getSelection())
                     .then(() => showToast('Copied', 'success', 1500))
                     .catch(() => showToast('Copy blocked by browser', 'error', 2500));
+                return false;
+            }
+            if (isChord(e, 'c', 'KeyC') && selStash
+                    && performance.now() - selStash.t < 15000) {
+                // The highlight was repaint-cleared since the selection was
+                // made (streaming output); the user's intent is still copy.
+                navigator.clipboard.writeText(selStash.text)
+                    .then(() => showToast('Copied (recovered)', 'success', 1500))
+                    .catch(() => showToast('Copy blocked by browser', 'error', 2500));
+                tel('copy-recovered', { len: selStash.text.length });
                 return false;
             }
             if (isChord(e, 'v', 'KeyV')) {
