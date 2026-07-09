@@ -45,3 +45,13 @@ blocked on the user), or *completed* (turn finished, ready for the
 next prompt). A session with no live Claude has no state.
 _Avoid_: status, activity (tmux "activity" means terminal output, not
 Claude turn state)
+
+**Session images**:
+The per-(user, session) store of images the session visually touched —
+pasted, uploaded, drag-dropped, or rendered via `show-image` — owned by
+clipboard-upload under `/var/lib/clipboard-store/` and browsed from the
+🖼 gallery in the terminal view. Server-side state like Layout: it
+survives reloads and session restores, and outlives a deleted session
+by a 30-day grace. Non-image file drops are NOT session images (they
+stay 7-day transfer ephemera in /tmp).
+_Avoid_: screenshots, attachments (images need not come from pastes)
