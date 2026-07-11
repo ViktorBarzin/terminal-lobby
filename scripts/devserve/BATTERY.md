@@ -275,3 +275,28 @@ implements the feature. Format:
   WITHOUT an iframe reload (supersedes the reload expectation recorded
   in the Task 1.6 line — `__tlThemeLive` replaces it; `__tlMark`
   survives the flip).
+- [Task 1.8] Stepper shrinks the grid: attach `#main`, record
+  `tmux -L tl-dev display -p '#{client_width}x#{client_height}'`; click
+  the sidebar `A+` TWICE (15→17) → `window.__term.options.fontSize`
+  increments each click AND the tmux client grid SHRINKS through the
+  normal fit/sendResize path (measured 111x36 @15 → 100x32 @17). A
+  single step can be width-neutral — JBM's floored cell width is 9px
+  at BOTH 15 and 16 (only rows shrink on that step, 36→34) — so
+  assert on the two-click delta, not per-click. The floating `A−`
+  inside the terminal steps back down (grid recovers, sidebar readout
+  tracks via the storage event). No iframe reload either way
+  (`__tlMark` survives).
+- [Task 1.8] Clamp: hold `A−` down to the floor → `fontSize` stops at
+  **10**; hold `A+` to the ceiling → stops at **22**; localStorage
+  `tl-font-size` never leaves [10, 22]; garbage in the key (e.g.
+  `"huge"`) → next boot falls back to 15, no crash.
+- [Task 1.8] Persistence: set size 18, reload the top-level page →
+  the terminal boots at 18 (`window.__term.options.fontSize` → 18,
+  constructor read — no postMessage involved) and the sidebar readout
+  shows 18.
+- [Task 1.8] Box redraw stays aligned: at sizes 12 and 20 run a
+  Claude-style box
+  (`tmux -L tl-dev send-keys -t main "printf '╭──────╮\n│ box  │\n╰──────╯\n'" Enter`)
+  → screenshot: borders align, no ragged right edge (tmux redraws to
+  the new cols/rows; same class of check as the Task 1.1 extremes
+  line).
