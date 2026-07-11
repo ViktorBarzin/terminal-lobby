@@ -368,7 +368,8 @@ implements the feature. Format:
   `--surface-shadow` (dark: 5% drop + inset 0 1px white 6%; light
   themes: inset 0 -1px black 4%); `.popup-menu` radius `10px`,
   hairline `var(--border)` border, shadow = elevation drop + bevel;
-  gallery panel radius `18px`; `#toast` radius `8px`; `.new-row
+  gallery panel radius `18px`; toast radius `8px` (measure `.toast-card` —
+  since Task 2.7 `#toast` is the position-only stack viewport); `.new-row
   button` carries `inset 0 1px rgba(255,255,255,.16)` + an
   accent-tinted 24% drop, collapsing to `inset 0 1px rgba(0,0,0,.08)`
   while `:active`. Lobby screenshot on EVERY theme (grain over
@@ -536,3 +537,45 @@ implements the feature. Format:
   menu, click into the new-session name input → menu closes and the
   INPUT keeps focus (`document.activeElement.id === 'new-name'`).
   Cleanup: kill `tl-battery-focus`.
+- [Task 2.7] Typed toasts + legacy wrapper: `showToast('hello','success',1500)`
+  still works — `#toast` gains `.visible` (the A.3 selector is unchanged
+  by design) containing a `.toast-card.t-success` child that auto-closes
+  after 1.5s (`.visible` drops with the last card). Via the battery hook:
+  `id = __tlToast.add({type:'error', title:'boom', description:<220-char
+  string>, timeout:0})` → the card shows the ✕ error icon, a 4-line
+  clamped description (`.t-desc.t-clamp`, computed `-webkit-line-clamp`
+  4) and a Copy button that puts the FULL 220-char string on the
+  clipboard; `__tlToast.update(id, {description:'short now'})` mutates
+  the SAME element in place (child count of `#toast` unchanged); the ×
+  button (and `__tlToast.close(id)`) removes it. A `type:'loading'` card
+  renders the ring spinner. Stack cap: 7 quick `add`s → ≤6 cards, the
+  oldest auto-dismiss card evicted first, sticky (timeout 0) cards
+  survive.
+- [Task 2.7] Slow-request health toast (fetch path, end-to-end): run the
+  harness with `--delay /sessions=20` and load the lobby → ~15-16s after
+  the first `/sessions` poll ONE sticky warning card "Some requests are
+  slow" appears (timeout 0), description `N request(s) waiting longer
+  than 15s.`; "Show requests ▾" expands rows
+  `GET /api/sessions/sessions` + `Started HH:MM:SS`. The 5s poll cadence
+  plus Chrome's 6-connections-per-origin queueing keeps ~4-7 requests in
+  the slow set at any moment (measured 2026-07-11; tracking starts at
+  `fetch()` call time, the 20s delay only once a pooled connection frees
+  up), so the SAME card persists and updates in place — still exactly
+  one `.toast-card.t-warning`, count changing, oldest `Started` rows
+  rolling off as their responses ack — it cannot drain while the flag
+  is on. Clear-on-ack is the single-shot variant: rerun with
+  `--delay /whoami=20` — the boot preflight is the only lobby whoami
+  call, so the card appears ~15s into the load and closes BY ITSELF at
+  ~20s when the response lands (the lobby renders right after). Restart
+  the harness without flags → no slow toast within 30s of normal use.
+  (SIGSTOP/SIGCONT on the live tmux-api also demonstrates it but touches
+  the production service — prefer the flag.)
+- [Task 2.7] WS liveness feeds the same toast: the aiohttp harness
+  accepts the browser WS before dialing ttyd, so a true CONNECTING hang is
+  unreachable locally — assert the wiring via the hook instead:
+  `id = __tlSlowRequests.track('WS /ws')` → after 15s the warning card
+  appears listing `WS /ws`; `__tlSlowRequests.ack(id)` closes it. Wiring
+  is code-visible in `connect()` (track at socket creation, ack in both
+  onopen and onclose): during battery A runs the toast must NEVER appear
+  from normal connects/reconnects (onclose acks failed attempts — only a
+  socket genuinely stuck >15s in CONNECTING qualifies).
