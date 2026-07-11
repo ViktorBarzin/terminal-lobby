@@ -757,6 +757,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.1.0/lib/addon-clipboard.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-image@0.9.0/lib/addon-image.min.js"></script>
+    <!-- Deliberately the published non-.min path: jsdelivr-generated .min
+         files are SRI-unsafe; the .min tags above migrate at the SRI task. -->
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js"></script>
     <script>
     (async function() {
         // Stamped by deploy.sh at install time; 'dev' when served from a checkout.
@@ -1985,6 +1988,29 @@
             }
         } catch (e) {
             console.warn('Image addon failed:', e);
+        }
+
+        // Unicode 11 width tables: xterm's built-in tables are Unicode 6,
+        // which counts most emoji as width 1 while tmux measures them as 2
+        // — everything after an emoji then drifts one cell (misaligned
+        // `├──` trees under Claude Code's emoji output). Version 11 matches
+        // tmux's wcwidth. Activated before open() so the first frame is
+        // already measured with the right tables. Same UMD shape caveat as
+        // the clipboard addon — accept both `Unicode11Addon` and
+        // `Unicode11Addon.Unicode11Addon`; wrapped so a load hiccup can't
+        // break the terminal (falls back to the built-in version 6).
+        try {
+            const U11Addon = (typeof Unicode11Addon !== 'undefined')
+                && (Unicode11Addon.Unicode11Addon || Unicode11Addon);
+            if (U11Addon) {
+                term.loadAddon(new U11Addon());
+                term.unicode.activeVersion = '11';
+                console.log('unicode11 addon loaded (active version ' + term.unicode.activeVersion + ')');
+            } else {
+                console.warn('Unicode11Addon global not found');
+            }
+        } catch (e) {
+            console.warn('Unicode11 addon failed:', e);
         }
 
         term.open(document.getElementById('terminal'));
