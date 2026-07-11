@@ -353,3 +353,31 @@ implements the feature. Format:
   (deliberately excluded from the ::-webkit-scrollbar restyle —
   custom-scrollbar mode could change the width xterm measured at
   open, a geometry red line).
+- [Task 1.11] Grain is lobby-only: on the top-level lobby page
+  `document.body.classList.contains('lobby')` → `true` and
+  `getComputedStyle(document.body, '::after').backgroundImage` starts
+  `url("data:image/svg+xml…feTurbulence…")` at opacity 0.035 /
+  z-index 0; `getComputedStyle(#lobby-content).zIndex` → `1` (the
+  terminal iframe pane paints ABOVE the grain). In the terminal
+  IFRAME document: body has NO `lobby` class and
+  `getComputedStyle(body, '::after').content` → `none` — the
+  terminal/sixel canvas is never washed by grain. §A.4 (sixel) must
+  render identically to baseline.
+- [Task 1.11] Surfaces + radius scale: `.session-card` computed
+  `borderRadius` `18px` and `boxShadow` = the scheme's
+  `--surface-shadow` (dark: 5% drop + inset 0 1px white 6%; light
+  themes: inset 0 -1px black 4%); `.popup-menu` radius `10px`,
+  hairline `var(--border)` border, shadow = elevation drop + bevel;
+  gallery panel radius `18px`; `#toast` radius `8px`; `.new-row
+  button` carries `inset 0 1px rgba(255,255,255,.16)` + an
+  accent-tinted 24% drop, collapsing to `inset 0 1px rgba(0,0,0,.08)`
+  while `:active`. Lobby screenshot on EVERY theme (grain over
+  sidebar chrome, bevelled cards, no layout shift vs baseline beyond
+  the radii).
+- [Task 1.11] Loading skeletons: throttle the first `/sessions`
+  response (`--delay /sessions=3` harness flag) and load the lobby →
+  `#session-list` shows exactly 3 `.session-skeleton` shimmer cards
+  (animation `skeleton 2s -1s infinite linear`, gradient over
+  `--bg-card` with the scheme's `--skeleton-highlight`), then the
+  first render replaces them with real cards (skeleton count drops
+  to 0; no flash of "No sessions yet" before the response).
