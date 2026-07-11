@@ -42,6 +42,11 @@ set -g @plugin 'tmux-plugins/tpm'
 set -g @plugin 'tmux-plugins/tmux-resurrect'
 set -g @plugin 'tmux-plugins/tmux-continuum'
 set -g @resurrect-capture-pane-contents 'on'
+# Strip terminal query/reply sequences (DSR/CPR/DA/OSC color) from the
+# saved pane contents BEFORE resurrect cats them back into each pty —
+# otherwise the attached terminal re-answers captured queries and the
+# answers land in the fresh shell as junk input (tmux-api sanitize.go).
+set -g @resurrect-hook-pre-restore-all '/usr/local/bin/tmux-api sanitize-resurrect'
 set -g @continuum-restore 'on'
 set -g @continuum-save-interval '5'
 run '~/.tmux/plugins/tpm/tpm'
