@@ -300,3 +300,37 @@ implements the feature. Format:
   → screenshot: borders align, no ragged right edge (tmux redraws to
   the new cols/rows; same class of check as the Task 1.1 extremes
   line).
+- [Task 1.9] Window padding geometry — NOTE the padding lives on
+  `.xterm`, NOT `#terminal` (deviation from the plan text, measured
+  live: FitAddon reads `#terminal`'s computed size raw, and Chrome
+  resolves a border-box element's computed width/height to the BORDER
+  box, so plan-placement padding produced a 36-row/720px canvas in a
+  704px content box — bottom row clipped 8px. addon-fit@0.10.0
+  explicitly subtracts `.xterm`'s own padding, so that is the
+  supported spot). Checks, in the terminal iframe:
+  `getComputedStyle(document.querySelector('.xterm')).padding` →
+  `8px 10px`; `getComputedStyle(#terminal)` → `padding 0px`,
+  `boxSizing border-box`, `backgroundColor` = the theme's
+  `--terminal-bg`. `.xterm-screen`'s rect sits at inset (10, 8) from
+  `#terminal` AND fits INSIDE the frame: `screen.bottom ≤
+  terminal.bottom − 8`, `screen.right ≤ terminal.right − 10` (this
+  pair is what caught the clip). No overflow: `scrollWidth ===
+  clientWidth` and `scrollHeight === clientHeight` on the iframe's
+  documentElement; same on the top-level page. Screenshot: grid inset
+  in a theme-colored frame (verified 2026-07-11: 109×35 grid, screen
+  981×700 @ (10,8) in a 1020×720 pane; baseline was 111×36 flush —
+  the one-col/one-row cost is the padding, intended).
+- [Task 1.9] **Red-line re-run REQUIRED: §A.1 + §A.2** (padding shifts
+  the grid 10px right/8px down — the ADR-0003 pixel→cell replay is
+  anchored to `.xterm-screen`'s LIVE rect and must self-correct;
+  challenge-verified but verify anyway).
+- [Task 1.9] Mobile keyboard path with padding: emulate 390×844 touch
+  viewport (soft-keys active), focus the terminal (keyboard-open path —
+  in the harness force it by shrinking the emulated `visualViewport` or
+  dispatching its `resize` after a height override); `syncViewport()`
+  sets an inline px height on `#terminal` (border-box, zero own
+  padding → border edge lands exactly at visualViewport height −
+  toolbar) → the prompt row stays visible above the keyboard, no
+  horizontal scroll, and the LAST column is not clipped (echo a
+  full-width ruler `printf '%*s' $(tmux -L tl-dev display -p '#{client_width}') '' | tr ' ' '='`
+  → screenshot shows the closing `=` inside the padded frame).

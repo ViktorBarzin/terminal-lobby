@@ -425,9 +425,32 @@
         }
         #terminal {
             height: 100%; width: 100%;
+            /* border-box so any future padding/border here stays inside the
+               100%/inline-px height (syncViewport sets one on the mobile
+               keyboard path). The window padding itself must NOT live here:
+               FitAddon reads THIS element's computed width/height raw —
+               Chrome resolves them to the border box once box-sizing is
+               border-box, so padding here silently clips one grid row/column
+               (measured: 36 rows × 20px = 720px canvas in a 704px content
+               box). It lives on .xterm below instead. */
+            box-sizing: border-box;
+            /* Fills the sliver the cell grid can't cover (rounding remainder
+               below/right of .xterm) so the frame reads as one surface —
+               Ghostty's window-padding-color=background. */
+            background: var(--terminal-bg);
             /* Allow scroll + pinch-zoom (accessibility); kill double-tap zoom. */
             touch-action: pan-x pan-y pinch-zoom;
         }
+        /* Window padding (Task 1.9): 8×10px grid inset. The .xterm element
+           is the ONE padding location addon-fit@0.10.0 actually subtracts
+           when proposing cols/rows (it reads the parent's size and THIS
+           element's padding — verified against the pinned addon source), so
+           the grid shrinks to fit instead of clipping. The theme-colored
+           frame comes for free: .xterm-viewport is absolutely inset-0 over
+           the padding box and xterm paints it with theme.background. The
+           ADR-0003 pixel→cell replay anchors to .xterm-screen's LIVE rect,
+           which now simply sits 10/8px in — no replay math touched. */
+        #terminal .xterm { padding: 8px 10px; }
         /* Use dynamic viewport height where supported so the terminal pane
            shrinks when the soft keyboard opens. Older browsers stick with 100%. */
         @supports (height: 100dvh) {
