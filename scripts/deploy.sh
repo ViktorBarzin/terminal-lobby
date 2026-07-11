@@ -23,10 +23,11 @@ if [[ -z "${SKIP_BUILD:-}" ]]; then
   (cd clipboard-upload  && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../out/clipboard-upload  .)
 fi
 
-# Patched ttyd (forwards the client's pixel size to the pty so tmux
-# re-emits sixel — docs/adr/0004-sixel-images-in-the-terminal.md) is
-# shipped only when a build exists. Building is scripts/build-ttyd.sh's
-# explicit job; deploy just ships what's there.
+# Locally-patched ttyd (devvm/ttyd-local.patch: pixel size → pty so tmux
+# re-emits sixel, docs/adr/0004-sixel-images-in-the-terminal.md; + honor
+# client PAUSE flow control, upstream no-op) is shipped only when a build
+# exists. Building is scripts/build-ttyd.sh's explicit job; deploy just
+# ships what's there.
 TTYD_BIN=""
 if [[ -f out/ttyd ]]; then
   TTYD_BIN="out/ttyd"
@@ -81,8 +82,14 @@ echo "==> Installing on $DEVVM..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<'REMOTE'
   set -euo pipefail
   if [[ "${INCLUDE_TTYD:-}" == "1" ]]; then
-    # Pixel-size-patched ttyd (sixel; ADR 0004) — the systemctl restarts
-    # below already cover ttyd + ttyd-ro, so no extra restart needed.
+    # Locally-patched ttyd (sixel pixel-size ADR 0004 + PAUSE flow control,
+    # devvm/ttyd-local.patch) — the systemctl restarts below already cover
+    # ttyd + ttyd-ro, so no extra restart needed. Keep the previous binary
+    # aside first: /usr/local/bin/ttyd.prev is the fastest rollback channel
+    # (reinstall it + restart ttyd ttyd-ro — no rebuild needed).
+    if [[ -f /usr/local/bin/ttyd ]]; then
+      sudo cp -f /usr/local/bin/ttyd /usr/local/bin/ttyd.prev
+    fi
     sudo install -m 0755 /tmp/ttyd /usr/local/bin/ttyd
     rm -f /tmp/ttyd
   fi

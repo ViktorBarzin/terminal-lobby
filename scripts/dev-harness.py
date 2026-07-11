@@ -40,7 +40,7 @@ Usage:
         [--scratch | --no-scratch]
         [--proxy-port 7997] [--ttyd-port 7996]
         [--tmux-api-port 7684] [--clipboard-port 7683]
-        [--api URL] [--user alice]
+        [--api URL] [--user alice] [--ttyd-bin PATH]
         [--delay /PATH=SECS] [--kill-session-on-exit]
 
 Then open:  http://127.0.0.1:7997/?arg=<session>   (terminal mode)
@@ -151,13 +151,14 @@ def build_stamped_index(src: str) -> str:
 
 
 def start_ttyd(port: int, index: str, session: str,
-               socket_name: str | None = None) -> subprocess.Popen:
+               socket_name: str | None = None,
+               ttyd_bin: str = "ttyd") -> subprocess.Popen:
     if socket_name:
         tmux_cmd = ["tmux", "-L", socket_name, "new-session", "-A", "-s", session]
     else:
         tmux_cmd = ["tmux", "new", "-As", session]
     cmd = [
-        "ttyd",
+        ttyd_bin,
         "--port", str(port),
         "--interface", "127.0.0.1",
         "--writable",                      # ttyd.service: -W
@@ -435,6 +436,11 @@ def main() -> None:
                         help="debug: sleep SECS before proxying requests whose "
                              "path starts with /PATH (repeatable), e.g. "
                              "--delay /sessions=20")
+    parser.add_argument("--ttyd-bin", default="ttyd",
+                        help="ttyd binary for the child (default: ttyd from "
+                             "PATH; point at out/ttyd to exercise a fresh "
+                             "scripts/build-ttyd.sh build, e.g. for the "
+                             "flow-control battery — plan Task 3.4)")
     parser.add_argument("--no-ttyd", action="store_true",
                         help="don't spawn ttyd; assume one is already on --ttyd-port")
     parser.add_argument("--kill-session-on-exit", action="store_true",
@@ -458,7 +464,7 @@ def main() -> None:
     if not args.no_ttyd:
         index_for_ttyd = build_stamped_index(args.index)
         ttyd_proc = start_ttyd(args.ttyd_port, index_for_ttyd, args.session,
-                               socket_name)
+                               socket_name, ttyd_bin=args.ttyd_bin)
     wait_for_port(args.ttyd_port)
 
     loop = asyncio.new_event_loop()

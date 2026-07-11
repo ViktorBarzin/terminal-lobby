@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Build the pixel-size-patched ttyd reproducibly into ./out/ttyd.
+# Build the locally-patched ttyd reproducibly into ./out/ttyd.
 #
-# Why a patched ttyd at all: tmux only re-emits sixel images to clients
-# whose pty reports a pixel size via TIOCGWINSZ, and stock ttyd 1.7.7
-# hardcodes ws_xpixel/ws_ypixel to 0 on every resize (src/pty.c). The
-# patch (devvm/ttyd-pixel-size.patch — taken verbatim from the validated
-# prototype tree, see docs/adr/0004-sixel-images-in-the-terminal.md)
-# adds optional "xpixel"/"ypixel" fields to the RESIZE_TERMINAL message
-# and forwards them to the pty. Upstream PR planned; until it lands we
-# pin tag 1.7.7 and apply the patch on top.
+# Why a patched ttyd at all — devvm/ttyd-local.patch carries two fixes:
+# 1. Pixel size → pty (sixel): tmux only re-emits sixel images to clients
+#    whose pty reports a pixel size via TIOCGWINSZ, and stock ttyd 1.7.7
+#    hardcodes ws_xpixel/ws_ypixel to 0 on every resize (src/pty.c). The
+#    patch adds optional "xpixel"/"ypixel" fields to the RESIZE_TERMINAL
+#    message and forwards them to the pty
+#    (docs/adr/0004-sixel-images-in-the-terminal.md).
+# 2. Honor client PAUSE/RESUME (flow control, plan Task 3.4): upstream
+#    1.7.7's pause is a no-op (pty_spawn leaves process->paused stuck true
+#    so pty_pause early-returns, and the writeable pump unconditionally
+#    resumes). Verified red/green by scripts/devserve/flowprobe.py.
+# Upstream PRs planned; until they land we pin tag 1.7.7 and apply the
+# patch on top.
 #
 # Usage:
 #   ./scripts/build-ttyd.sh            # build if out/ttyd is missing/stale
@@ -23,7 +28,7 @@ cd "$ROOT"
 
 TTYD_REPO="https://github.com/tsl0922/ttyd.git"
 TTYD_TAG="1.7.7"
-PATCH="$ROOT/devvm/ttyd-pixel-size.patch"
+PATCH="$ROOT/devvm/ttyd-local.patch"
 BUILD_DIR="$ROOT/out/ttyd-build"   # gitignored (out/)
 OUT_BIN="$ROOT/out/ttyd"
 MARKER="$ROOT/out/.ttyd-build-ok"
@@ -66,7 +71,7 @@ mkdir -p "$ROOT/out"
 echo "==> Cloning ttyd $TTYD_TAG..."
 git clone --depth 1 --branch "$TTYD_TAG" "$TTYD_REPO" "$BUILD_DIR"
 
-echo "==> Applying devvm/ttyd-pixel-size.patch..."
+echo "==> Applying devvm/ttyd-local.patch..."
 if ! git -C "$BUILD_DIR" apply --verbose "$PATCH"; then
   echo "ERROR: patch failed to apply to ttyd $TTYD_TAG — refusing to build unpatched." >&2
   exit 1

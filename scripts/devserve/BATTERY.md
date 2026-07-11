@@ -846,6 +846,31 @@ implements the feature. Format:
   `/fonts/` → 200 `font/woff2` + `Cache-Control: public,max-age=604800`
   with `content-length` equal to the repo file
   (JetBrainsMono-Regular.woff2 = 92164).
+- [Task 3.4] ttyd honors client PAUSE (server side): build the patched
+  binary (`./scripts/build-ttyd.sh` — its preflight aborts with apt names
+  if cmake/gcc/libwebsockets-dev/libjson-c-dev are missing) and run the
+  harness against it:
+  `python3 scripts/dev-harness.py --scratch --ttyd-bin out/ttyd`. Then
+  `python3 scripts/devserve/flowprobe.py` → `pause_honored: true`, exit 0
+  (post-PAUSE the stream drains only in-flight bytes and goes quiet,
+  delivers ZERO bytes in the 2s strict window, and RESUME revives it —
+  measured 2026-07-11: drain 323-646 B quiet within 0.02s, strict 0,
+  ~80 KB after RESUME). Regression sentinel: the same probe against a
+  stock-pause build prints `pause_honored: false` (1.1-1.2 MB streamed
+  past PAUSE, never quiet within the 8s cap).
+- [Task 3.4] Un-paused throughput control (shared-binary guard — a partial
+  freeze would sneak past a total-freeze check):
+  `python3 scripts/devserve/flowprobe.py --no-pause` against the patched
+  binary vs a pre-fix baseline build → median `bytes_per_sec` within ~10%
+  and totals match (measured 2026-07-11: fixed median 150306 B/s (n=5) vs
+  baseline 144937 B/s (n=3), +3.7%; per-run spread is ±10% tmux pacing
+  noise, so compare MEDIANS of ≥3 runs; a 20M `yes` flood collapses to
+  ~2.49 MB total at ~0.13 MiB/s client-visible — tmux frame-skipping, see
+  flowprobe.py's instrument notes).
+- [Task 3.4] Sixel §A.4 re-run against `out/ttyd` (the pixel-size hunks
+  ride the same renamed `devvm/ttyd-local.patch`): still ≥100 distinct
+  colors in the image crop (measured 635) and the attached client's
+  `#{client_termfeatures}` lists `sixel`.
 - [Task 3.1] Traversal probes — direct against the scratch service with
   raw paths (`curl --path-as-is -so /dev/null -w '%{http_code}'
   http://127.0.0.1:17683/<path>`): `/icon-../etc/passwd` → 404,
