@@ -1882,6 +1882,19 @@
             else if (readRawPrefs()) schedulePrefsPut();     // seed a fresh server doc
         })();
 
+        // Task 3.5: WS flow-control kill-switch — a PLAIN per-browser
+        // localStorage key, deliberately OUTSIDE tl:prefs:v1 (never roamed,
+        // and it must keep working even when the prefs machinery is broken:
+        // it exists so flow control is disableable without a redeploy).
+        // 'off' bypasses the client flow-control branch entirely; anything
+        // else (or unset) = enabled. Read by the terminal iframe at boot +
+        // every onopen and live via the storage event; written by the
+        // settings-panel toggle.
+        const FLOW_KILL_KEY = 'tl-flow-control';
+        function flowControlWanted() {
+            try { return localStorage.getItem(FLOW_KILL_KEY) !== 'off'; } catch (e) { return true; }
+        }
+
         // ---- typed toast manager (Task 2.7) ---------------------------
         // T3's toast surface (apps/web ui/toast.tsx) reduced to vanilla
         // DOM: five types with icons, id-based update-in-place + close,
@@ -3778,7 +3791,7 @@
             // open panel track in-terminal changes. No forward back into the
             // iframe: the change originated there and is already applied.
             window.addEventListener('storage', (e) => {
-                if (e.key === FONT_SIZE_KEY || e.key === PREFS_KEY) {
+                if (e.key === FONT_SIZE_KEY || e.key === PREFS_KEY || e.key === FLOW_KILL_KEY) {
                     paintFontSize();
                     paintSettingsPanel();
                 }
@@ -3806,6 +3819,8 @@
             // lineHeight, letterSpacing, cursorStyle, cursorBlink,
             // fontWeightBold. Deliberately EXCLUDED (red line): smooth-
             // scroll, renderer toggles, and any mouse/wheel/scroll option.
+            // Plus one NON-roaming control: the Task 3.5 flow-control
+            // kill-switch (plain tl-flow-control localStorage key).
             const settingsBtn = document.getElementById('settings-btn');
             let settingsPanel = null;
             function paintSettingsPanel() {
@@ -3819,6 +3834,7 @@
                 ls.value = String(p.letterSpacing);
                 settingsPanel.querySelector('#sp-ls-val').textContent = p.letterSpacing.toFixed(1) + 'px';
                 settingsPanel.querySelector('#sp-blink').checked = p.cursorBlink;
+                settingsPanel.querySelector('#sp-flow').checked = flowControlWanted();
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     const val = String(p[seg.dataset.pref]);
                     seg.querySelectorAll('button').forEach(b => {
@@ -3920,6 +3936,23 @@
                 blinkRow.appendChild(blink);
                 segCtl(row('Bold weight'), 'fontWeightBold', ['600', '700'], ['600', '700']);
 
+                // Task 3.5: WS flow-control kill-switch — writes the plain
+                // tl-flow-control key, NOT setPrefs (per-browser, never
+                // roamed). The attached terminal picks a flip up live via
+                // the storage event, or at its next connect.
+                const flowRow = row('Flow control');
+                const flow = document.createElement('input');
+                flow.type = 'checkbox';
+                flow.id = 'sp-flow';
+                flow.title = 'Backpressure the server when output floods a slow tab (recommended). Untick to bypass flow control in this browser.';
+                flow.addEventListener('change', () => {
+                    try {
+                        if (flow.checked) localStorage.removeItem(FLOW_KILL_KEY);
+                        else localStorage.setItem(FLOW_KILL_KEY, 'off');
+                    } catch (e) {}
+                });
+                flowRow.appendChild(flow);
+
                 document.body.appendChild(panel);
                 settingsPanel = panel;
                 paintSettingsPanel();
@@ -3986,6 +4019,99 @@
         const MSG_SET_PREFS = 0x32; // '2' - JSON preferences
         const MSG_INPUT     = '0';  // client → server: input data
         const MSG_RESIZE    = '1';  // client → server: {columns, rows}
+
+        // --- Task 3.5 (P20): client → server WS flow control ----------
+        // Port of stock ttyd's writeData accounting (upstream
+        // html/src/components/terminal/xterm/index.ts): every FLOW_LIMIT
+        // bytes written to xterm, register a term.write completion
+        // callback and count it pending; pending > FLOW_HIGH → send the
+        // 1-byte PAUSE frame ('2'/0x32), a callback dropping pending
+        // below FLOW_LOW → RESUME ('3'/0x33). The patched ttyd
+        // (devvm/ttyd-local.patch, Task 3.4) actually stops reading the
+        // pty on PAUSE, so a slow tab backpressures tmux instead of
+        // ballooning xterm's write buffer unboundedly.
+        //
+        // Fail-OPEN by design (challenge round: fail-closed = a frozen
+        // terminal for a real user):
+        //  (a) watchdog — while paused, if NO write callback fires for
+        //      4s, force RESUME + reset counters + console.warn;
+        //  (b) kill-switch — tl-flow-control='off' (settings-panel
+        //      toggle) bypasses the whole branch: plain term.write,
+        //      byte-identical to the pre-3.5 path;
+        //  (c) onopen resets every counter, and each completion callback
+        //      captures ITS socket: a stale callback must never RESUME
+        //      (or miscount) a newer connection.
+        const FLOW_LIMIT = 100000;      // bytes between counted callbacks
+        const FLOW_HIGH  = 10;          // pending > high  → PAUSE
+        const FLOW_LOW   = 4;           // pending < low   → RESUME
+        const FLOW_WATCHDOG_MS = 4000;
+        const FLOW_PAUSE_FRAME  = Uint8Array.of(0x32).buffer;  // '2'
+        const FLOW_RESUME_FRAME = Uint8Array.of(0x33).buffer;  // '3'
+        let flowOn = flowControlWanted();
+        let flowWritten = 0;     // bytes since the last counted callback
+        let flowPending = 0;     // counted callbacks not yet completed
+        let flowPaused  = false; // we told the server to stop reading
+        let flowWatchdog = null;
+
+        function flowReset() {
+            clearTimeout(flowWatchdog);
+            flowWatchdog = null;
+            flowPaused = false;
+            flowPending = 0;
+            flowWritten = 0;
+        }
+        function flowForceResume(reason) {
+            const wasPaused = flowPaused;
+            flowReset();
+            if (!wasPaused) return;
+            console.warn('tl-flow: ' + reason + ' resume');
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(FLOW_RESUME_FRAME);
+        }
+        function flowArmWatchdog() {
+            clearTimeout(flowWatchdog);
+            flowWatchdog = setTimeout(() => {
+                flowWatchdog = null;
+                flowForceResume('watchdog');
+            }, FLOW_WATCHDOG_MS);
+        }
+        function writeData(data) {
+            flowWritten += data.length;
+            if (flowWritten <= FLOW_LIMIT) { term.write(data); return; }
+            // Boundary crossed: this chunk carries a counted callback.
+            const sock = ws;    // stale-callback guard (see (c) above)
+            term.write(data, () => {
+                if (sock !== ws) return;  // counters belong to a newer conn
+                flowPending = Math.max(flowPending - 1, 0);
+                if (!flowOn) return;      // kill-switch flipped mid-flight
+                if (flowPending < FLOW_LOW) {
+                    if (flowPaused) {
+                        flowPaused = false;
+                        clearTimeout(flowWatchdog);
+                        flowWatchdog = null;
+                    }
+                    if (sock.readyState === WebSocket.OPEN) sock.send(FLOW_RESUME_FRAME);
+                } else if (flowPaused) {
+                    flowArmWatchdog();    // progress while paused: feed the timer
+                }
+            });
+            flowPending++;
+            flowWritten = 0;
+            if (flowPending > FLOW_HIGH && sock.readyState === WebSocket.OPEN) {
+                sock.send(FLOW_PAUSE_FRAME);
+                if (!flowPaused) {
+                    flowPaused = true;
+                    flowArmWatchdog();
+                }
+            }
+        }
+        // Kill-switch flips live from the lobby's settings panel (the
+        // storage event fires in this iframe because ANOTHER window wrote
+        // the key). Turning it off while paused must release the server.
+        window.addEventListener('storage', (e) => {
+            if (e.key !== FLOW_KILL_KEY) return;
+            flowOn = flowControlWanted();
+            if (!flowOn) flowForceResume('kill-switch');
+        });
 
         let ws = null;
         let hasConnectedOnce = false;
@@ -5597,6 +5723,13 @@
                     ws.onopen = () => {
                         console.log('Connected to ttyd (session: ' + validArg + ')');
                         slowRequests.ack(wsSlowId);
+                        // Task 3.5: flow-control counters must not leak
+                        // across connections (a carried-over PAUSE state
+                        // would strangle the fresh pty stream). Re-read the
+                        // kill-switch too — a same-window flip (no storage
+                        // event) applies from this connection on.
+                        flowOn = flowControlWanted();
+                        flowReset();
                         hideConnPill();
                         // Ladder reset only after the connection PROVES
                         // stable (30s up) — an instant re-drop keeps the
@@ -5660,7 +5793,10 @@
                                         hiddenOutputSignaled = true;
                                         signalAttention('output');
                                     }
-                                    term.write(payload);
+                                    // Task 3.5: counted write (flow control)
+                                    // unless the kill-switch says plain.
+                                    if (flowOn) writeData(payload);
+                                    else term.write(payload);
                                     break;
                                 case MSG_SET_PREFS:
                                     try {
