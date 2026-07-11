@@ -60,6 +60,20 @@
             src: url('/fonts/JetBrainsMono-BoldItalic.woff2') format('woff2'),
                  url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-BoldItalic.woff2') format('woff2');
         }
+        /* DM Sans Variable (OFL-1.1, @fontsource-variable latin subset) — the
+           lobby-chrome UI face (T3 parity). Same two-source chain as JBM;
+           swap (not block): chrome text may briefly show the system face.
+           NEVER applied to the xterm element or anything rendering pty
+           content — terminal text stays on the mono stack. */
+        @font-face {
+            font-family: 'DM Sans Variable';
+            font-style: normal;
+            font-weight: 100 1000;
+            font-display: swap;
+            src: url('/fonts/dm-sans-latin-wght-normal.woff2') format('woff2-variations'),
+                 url('https://cdn.jsdelivr.net/npm/@fontsource-variable/dm-sans@5.2.8/files/dm-sans-latin-wght-normal.woff2') format('woff2-variations');
+            unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+        }
 
         :root {
             /* Single source of truth for chrome mono stacks. The xterm
@@ -67,6 +81,9 @@
                CSS vars). 'TL Symbols' (Iosevka subset, loaded post-boot as a
                data: FontFace) is terminal-only — chrome text never needs it. */
             --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace;
+            /* Lobby chrome only (sidebar, cards, dialogs, toasts, buttons,
+               headers). Weights in use: 400 body / 500 buttons / 600 headings. */
+            --font-ui: 'DM Sans Variable', 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
         }
 
         /* Themes — set on <body> as theme-{carbon,slate,mono,ink}. Slate is the default. */
@@ -175,7 +192,7 @@
             position: fixed; top: 16px; right: 16px; z-index: 9999;
             background: var(--bg-card); color: var(--text-primary);
             border: 1px solid var(--border); border-radius: 8px;
-            padding: 10px 18px; font-family: monospace;
+            padding: 10px 18px; font-family: var(--font-ui);
             font-size: 14px; opacity: 0; transition: opacity 0.3s;
             pointer-events: none; max-width: 500px; word-break: break-all;
         }
@@ -270,7 +287,7 @@
             border-radius: 8px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
             padding: 14px 16px 16px;
-            font-family: var(--font-mono);
+            font-family: var(--font-ui);
         }
         #img-gallery .gallery-title {
             margin: 0 0 10px; font-size: 14px; font-weight: 600;
@@ -303,11 +320,19 @@
         /* Lobby */
         #lobby {
             display: none; height: 100vh; box-sizing: border-box;
-            font-family: var(--font-mono);
+            font-family: var(--font-ui);
             color: var(--text-primary); background: var(--bg-sidebar);
         }
         #lobby.visible { display: block; }
         #lobby.access-denied { padding: 32px; overflow-y: auto; }
+        /* T3 weight scale on the UI face: 400 body / 500 buttons / 600
+           headings (headings already carry 600 individually). Chrome-text
+           buttons only — icon/glyph buttons (#sidebar-toggle 600, floating
+           paste/img/gallery, #soft-keys) keep their own weights. */
+        .new-row button, .new-project-btn, .restore-btn, .theme-options button,
+        .session-actions button, .project-actions button, .popup-menu button {
+            font-weight: 500;
+        }
 
         #lobby-shell {
             display: grid; grid-template-columns: 260px 1fr; height: 100vh;
@@ -547,7 +572,7 @@
             max-height: 60vh; overflow-y: auto;
             display: flex; flex-direction: column;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-            font-family: var(--font-mono);
+            font-family: var(--font-ui);
         }
         .popup-menu .menu-label {
             font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
