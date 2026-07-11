@@ -17,7 +17,6 @@ import (
 
 const (
 	listenAddr     = "0.0.0.0:7684"
-	mapPath        = "/etc/ttyd-user-map"
 	authHeader     = "X-Authentik-Username"
 	tmuxBinary     = "/usr/bin/tmux"
 	sudoBinary     = "/usr/bin/sudo"
@@ -46,6 +45,11 @@ const (
 )
 
 var sessionsCacheInstance = newSessionsCache(sessionsTTL)
+
+// mapPath is the Authentik→OS-user map consumed by resolveOSUser. A var
+// (not const) purely as a test seam: handler tests point it at a fixture
+// so the real header→user path runs hermetically (see prefs_test.go).
+var mapPath = "/etc/ttyd-user-map"
 
 var sessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
@@ -165,6 +169,7 @@ func main() {
 	http.HandleFunc("/whoami", handleWhoami)
 	http.HandleFunc("/restore", handleRestore)
 	http.HandleFunc("/layout", handleLayout)
+	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})

@@ -656,3 +656,56 @@ implements the feature. Format:
   listener anywhere on the xterm surface — the native browser menu
   still appears; red line). Cleanup: kill the session, `rm -rf
   /var/lib/clipboard-store/<osUser>/tl-battery-cmd2`.
+- [Task 2.6] Go side: `go test ./...` in `tmux-api/` green — incl. the
+  /prefs suite (GET empty → `{}`, PUT→GET round-trip incl. last-writer-
+  wins, per-user isolation via X-Authentik-Username against a fixture
+  user map, invalid/oversize body → 400, no-header → 401, unmapped →
+  403, POST → 405). End-to-end needs a SCRATCH build (production
+  tmux-api predates /prefs) with a DISPOSABLE store — never the real
+  `/var/lib/tmux-api/prefs`:
+  `go build -o $SCRATCH/tmux-api-dev ./tmux-api &&
+  TMUX_API_ADDR=127.0.0.1:17684 TMUX_API_PREFS_DIR=$SCRATCH/prefs
+  $SCRATCH/tmux-api-dev &`, harness with `--tmux-api-port 17684` →
+  `curl -H 'X-Authentik-Username: wizard' :17684/prefs` → `{}`; PUT
+  `{"cursorStyle":"bar"}` → 204 and GET echoes it back.
+- [Task 2.6] Settings popover: click the sidebar `⚙ Terminal settings`
+  button → `#settings-panel` opens anchored to it with EXACTLY six
+  controls — font-size A−/A+ (same store as the Task 1.8 steppers:
+  panel steps move `#font-size-value` and vice versa), line-height
+  range 1–1.4, letter-spacing range 0–1px, cursor Block/Bar/Under
+  segments, cursor-blink checkbox, bold-weight 600/700 segments — and
+  NO smooth-scroll / renderer / mouse / wheel / scroll option anywhere
+  in it (red line; assert by scanning the panel's text). Escape closes
+  it AND the terminal regains the keyboard (type → capture-pane shows
+  it; the Task 2.3 closeOverlay path). Outside-click closes it WITHOUT
+  stealing focus (click into `#new-name` → input keeps focus).
+- [Task 2.6] Live apply + refit, no reload: attached to `#main`, record
+  `tmux -L tl-dev display -p '#{client_width}x#{client_height}'`; set
+  line height 1.4 → `window.__term.options.lineHeight` → 1.4 and
+  client_height SHRINKS while client_width holds (deviation from the
+  plan's "client_width changes": lineHeight only affects row height —
+  the width assert moved to letter spacing); set letter spacing 1 →
+  client_width shrinks. Cursor Bar → `options.cursorStyle` `'bar'`;
+  blink off → `options.cursorBlink` `false`; bold 600 →
+  `options.fontWeightBold` `'600'` (rendering note: with only the
+  400/700 JBM faces vendored, CSS matching resolves 600 to the Bold
+  face — assert the option value, not pixels). `__tlMark` survives
+  throughout (no iframe reload), then §A.1 + §A.2 pass immediately
+  after (fit() is the declared-safe resize path).
+- [Task 2.6] Roaming: with the scratch tmux-api wired (recipe above),
+  change prefs in the panel → within ~1s (400ms debounce + write)
+  `$SCRATCH/prefs/wizard.json` holds the new doc (PUT-on-change).
+  Open a SECOND browser context (fresh profile, empty localStorage) →
+  after the boot GET the panel shows the roamed values and
+  `window.__term.options.lineHeight` matches (server doc adopted, and
+  a pre-existing `tl-font-size` legacy key seeds fontSize when the doc
+  lacks one). Local-wins guard: while the GET is still in flight (or
+  with the server doc stale), change a pref immediately after load →
+  no snap-back (prefsDirty skips adoption) and the next PUT pushes the
+  local doc up.
+- [Task 2.6] Validate-or-default: set `localStorage['tl:prefs:v1']` to
+  `'{"fontSize":999,"lineHeight":"huge","cursorStyle":"comic-sans"}'`,
+  then to `'not-json'`, reloading each time → no crash, terminal boots
+  at defaults (fontSize falls back to the `tl-font-size` legacy key),
+  panel paints defaults; making one valid change replaces the garbage
+  doc wholesale (localStorage now a clean six-field doc).
