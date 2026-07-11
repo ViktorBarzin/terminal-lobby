@@ -412,3 +412,20 @@ implements the feature. Format:
   `curl -s <url> | openssl dgst -sha384 -binary | base64` fresh from
   the exact URL — never reuse a hash across versions or `.min`/non-min
   variants (jsdelivr-generated `.min` files are SRI-unsafe).
+- [Task 1.14] Truecolor through tmux: with a browser client attached,
+  `tmux -L tl-dev source-file devvm/tmux.conf.system` (the harness
+  equivalent of the deploy-installed `/etc/tmux.conf` — same option,
+  applied to new client attaches) then reload/attach fresh →
+  `tmux -L tl-dev display -p '#{client_termfeatures}'` contains `RGB`,
+  and the 77-cell 24-bit ramp
+  (`awk 'BEGIN{for(i=0;i<77;i++){r=255-i*3;printf "\033[48;2;%d;%d;%dm ",r,i*3,i*2}print "\033[0m"}'`)
+  screenshots as a SMOOTH gradient: ≥60 distinct colors on the ramp's
+  pixel row (detect it as a vertically-constant row with ≥10 colors —
+  pure backgrounds, no glyph antialiasing; text rows fail constancy).
+  Measured 2026-07-11: 78 distinct fixed vs 13 banded baseline
+  (the 256-cube collapses the ramp to ~12 values). WITHOUT the conf →
+  no `RGB`, ~13 colors (that IS the shipped-config regression signal).
+  Re-run the ramp on prod after deploy. Note: `Environment=
+  COLORTERM=truecolor` on ttyd.service is inert on tmux 3.4 (verified
+  empirically + binary strings + upstream CHANGES — the COLORTERM hint
+  ships in tmux 3.6); do not count on it in any battery.
