@@ -445,7 +445,7 @@
         #toast.visible { opacity: 1; }
         #toast.error { color: var(--danger); border-color: var(--danger); }
         #toast.success { color: var(--success); border-color: var(--success); }
-        #paste-btn, #img-btn, #gallery-btn {
+        #paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn {
             position: fixed;
             /* --kb-offset is updated from window.visualViewport on touch
                devices so floating elements lift above the soft keyboard. */
@@ -463,17 +463,25 @@
         #paste-btn   { right: calc(24px + env(safe-area-inset-right)); }
         #img-btn     { right: calc(80px + env(safe-area-inset-right)); }
         #gallery-btn { right: calc(136px + env(safe-area-inset-right)); }
-        /* On touch devices the floating Paste/Img/Gallery buttons would sit
-           on top of the soft-key toolbar — lift them above it. */
+        #font-inc-btn { right: calc(192px + env(safe-area-inset-right)); }
+        #font-dec-btn { right: calc(248px + env(safe-area-inset-right)); }
+        /* A+/A− are text glyphs, not 22px emoji — UI face, smaller size. */
+        #font-inc-btn, #font-dec-btn {
+            font-family: var(--font-ui); font-size: 15px; font-weight: 600;
+        }
+        /* On touch devices the floating buttons would sit on top of the
+           soft-key toolbar — lift them above it. */
         @media (pointer: coarse) {
-            #paste-btn, #img-btn, #gallery-btn {
+            #paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn {
                 bottom: calc(72px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
             }
         }
-        #paste-btn:hover, #img-btn:hover, #gallery-btn:hover {
+        #paste-btn:hover, #img-btn:hover, #gallery-btn:hover,
+        #font-inc-btn:hover, #font-dec-btn:hover {
             background: color-mix(in srgb, var(--accent) 35%, transparent);
         }
-        #paste-btn:active, #img-btn:active, #gallery-btn:active { transform: scale(0.92); }
+        #paste-btn:active, #img-btn:active, #gallery-btn:active,
+        #font-inc-btn:active, #font-dec-btn:active { transform: scale(0.92); }
         #img-input { display: none; }
 
         /* Pasted/uploaded image preview — floating thumbnail just above the
@@ -863,6 +871,27 @@
             background: var(--bg-card-hover);
         }
 
+        /* Font-size stepper — sits under the theme picker (Task 1.8).
+           Steps the TERMINAL font (xterm fontSize), not lobby chrome. */
+        .font-size-row {
+            display: flex; align-items: center; gap: 6px;
+            padding-top: 10px; font-size: 11px; color: var(--text-muted);
+        }
+        .font-size-row .theme-picker-label { display: inline; margin: 0 auto 0 0; }
+        .font-size-row button {
+            width: 36px; padding: 5px 0; border-radius: 6px;
+            background: var(--bg-card); color: var(--text-muted);
+            border: 1px solid var(--border); font-family: inherit;
+            font-size: 11px; font-weight: 500; cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .font-size-row button:hover {
+            background: var(--bg-card-hover); color: var(--text-primary);
+        }
+        #font-size-value {
+            min-width: 2ch; text-align: center; color: var(--text-primary);
+        }
+
         @media (max-width: 720px) {
             /* Stack sidebar + terminal; let the terminal pane take whatever
                remains after the sidebar so it tracks the soft keyboard via
@@ -1046,6 +1075,12 @@
                                 title="Follow the OS light/dark setting (T3 Light / T3 Dark)">System</button>
                     </div>
                 </div>
+                <div class="font-size-row">
+                    <span class="theme-picker-label">Font size</span>
+                    <button type="button" id="font-size-dec" title="Smaller terminal font (min 10)">A&#8722;</button>
+                    <span id="font-size-value">15</span>
+                    <button type="button" id="font-size-inc" title="Larger terminal font (max 22)">A+</button>
+                </div>
             </aside>
             <main id="lobby-content">
                 <div id="lobby-empty">Pick a session, or create one above.</div>
@@ -1054,6 +1089,8 @@
         </div>
     </div>
     <div id="toast"></div>
+    <button id="font-dec-btn" title="Smaller terminal font">A&#8722;</button>
+    <button id="font-inc-btn" title="Larger terminal font">A+</button>
     <button id="gallery-btn" title="Session images">&#128444;&#65039;</button>
     <button id="img-btn" title="Upload image">&#128247;</button>
     <button id="paste-btn" title="Paste from clipboard">&#128203;</button>
@@ -1129,6 +1166,26 @@
         }
         applyTheme(getTheme());
 
+        // Terminal font size (Task 1.8) — persisted and clamped, shared by
+        // the lobby's A−/A+ stepper, the terminal-mode floating stepper and
+        // the xterm constructor (15 was the historical hardcoded value).
+        const FONT_SIZE_KEY = 'tl-font-size';
+        const FONT_SIZE_MIN = 10, FONT_SIZE_MAX = 22, FONT_SIZE_DEFAULT = 15;
+        function clampFontSize(n) {
+            n = Math.round(Number(n));
+            if (!Number.isFinite(n)) return FONT_SIZE_DEFAULT;
+            return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, n));
+        }
+        function getFontSize() {
+            try {
+                const v = localStorage.getItem(FONT_SIZE_KEY);
+                return v === null ? FONT_SIZE_DEFAULT : clampFontSize(v);
+            } catch (e) { return FONT_SIZE_DEFAULT; }
+        }
+        function setFontSize(n) {
+            try { localStorage.setItem(FONT_SIZE_KEY, String(n)); } catch (e) {}
+        }
+
         function showToast(msg, type, duration) {
             const el = document.getElementById('toast');
             el.textContent = msg;
@@ -1153,6 +1210,8 @@
             document.getElementById('paste-btn').classList.add('hidden');
             document.getElementById('img-btn').classList.add('hidden');
             document.getElementById('gallery-btn').classList.add('hidden');
+            document.getElementById('font-inc-btn').classList.add('hidden');
+            document.getElementById('font-dec-btn').classList.add('hidden');
             const lobby = document.getElementById('lobby');
             clearChildren(lobby);
             const h = document.createElement('h1');
@@ -1197,6 +1256,8 @@
             document.getElementById('paste-btn').classList.add('hidden');
             document.getElementById('img-btn').classList.add('hidden');
             document.getElementById('gallery-btn').classList.add('hidden');
+            document.getElementById('font-inc-btn').classList.add('hidden');
+            document.getElementById('font-dec-btn').classList.add('hidden');
             document.getElementById('lobby').classList.add('visible');
             const baseTitle = 'tmux sessions (' + whoami.osUser + ')';
             document.title = baseTitle;
@@ -2166,6 +2227,30 @@
             });
             paintThemeButtons();
 
+            // Font-size stepper — persists tl-font-size and live-applies to
+            // the attached terminal over postMessage. No ACK dance needed: a
+            // stale iframe build without the handler still picks the size up
+            // at its next boot (the constructor reads the same key).
+            const fontValEl = document.getElementById('font-size-value');
+            function paintFontSize() { fontValEl.textContent = getFontSize(); }
+            function stepFontSize(delta) {
+                const size = clampFontSize(getFontSize() + delta);
+                setFontSize(size);
+                paintFontSize();
+                if (currentActive && frameEl.contentWindow) {
+                    frameEl.contentWindow.postMessage({ type: 'tl-font-size', size }, location.origin);
+                }
+            }
+            document.getElementById('font-size-dec').addEventListener('click', () => stepFontSize(-1));
+            document.getElementById('font-size-inc').addEventListener('click', () => stepFontSize(1));
+            // The terminal's floating A−/A+ write the same key; storage
+            // events fire only in windows that did NOT write — i.e. exactly
+            // here — so the sidebar readout tracks in-terminal steps.
+            window.addEventListener('storage', (e) => {
+                if (e.key === FONT_SIZE_KEY) paintFontSize();
+            });
+            paintFontSize();
+
             // Drops on the terminal are handled inside the iframe. If one lands
             // on the lobby chrome (sidebar) instead, suppress the browser's
             // default file-open and forward the files to the active session's
@@ -2236,7 +2321,10 @@
         const term = new Terminal({
             cursorBlink: true,
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
-            fontSize: 15,
+            // User-steppable via A−/A+ (Task 1.8): persisted in
+            // tl-font-size, clamped 10-22, default 15 (the historical
+            // hardcoded value).
+            fontSize: getFontSize(),
             // Pin both weights to the vendored JetBrains Mono faces (400/700)
             // so browsers never synthesize a faux bold — or substitute a
             // different family for it — now that real webfonts are in play.
@@ -3363,6 +3451,28 @@
 
         document.getElementById('gallery-btn').addEventListener('click', openGallery);
 
+        // Font-size stepper (Task 1.8): clamp → persist → live-apply. fit()
+        // routes the change through the exact window-resize path (sendResize
+        // with pixel size) that ADR-0003 already declares safe — no new
+        // scroll/selection semantics.
+        function applyFontSize(n) {
+            const size = clampFontSize(n);
+            setFontSize(size);
+            if (term.options.fontSize !== size) {
+                term.options.fontSize = size;
+                try { fitAddon.fit(); } catch (e) { console.warn('font-size fit failed:', e); }
+            }
+            return size;
+        }
+        document.getElementById('font-dec-btn').addEventListener('click', () => {
+            applyFontSize(getFontSize() - 1);
+            term.focus();
+        });
+        document.getElementById('font-inc-btn').addEventListener('click', () => {
+            applyFontSize(getFontSize() + 1);
+            term.focus();
+        });
+
         // ------------------------------------------------------------------
         // Drag-and-drop files → upload → type the path(s) into the PTY.
         // Any file type is accepted. Dropped IMAGES are gallery content like
@@ -3438,14 +3548,18 @@
         window.__tlThemeLive = liveRetheme;
 
         // The lobby (parent) drives this page over postMessage: files dropped
-        // on its chrome (tl-drop-files) and live theme switches (tl-theme —
+        // on its chrome (tl-drop-files), live theme switches (tl-theme —
         // ACKed back, so a lobby talking to a stale build without this branch
-        // knows to fall back to its old iframe reload).
+        // knows to fall back to its old iframe reload) and font-size steps
+        // (tl-font-size — no ACK: a stale build reads the persisted size at
+        // its next boot anyway).
         window.addEventListener('message', (e) => {
             if (e.origin !== location.origin || !e.data) return;
             if (e.data.type === 'tl-drop-files') {
                 const files = Array.isArray(e.data.files) ? e.data.files : [];
                 if (files.length) uploadDroppedFiles(files);
+            } else if (e.data.type === 'tl-font-size') {
+                applyFontSize(e.data.size);
             } else if (e.data.type === 'tl-theme') {
                 // localStorage (shared same-origin, written by the lobby
                 // before posting) is the source of truth; the message name
