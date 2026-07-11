@@ -709,3 +709,42 @@ implements the feature. Format:
   at defaults (fontSize falls back to the `tl-font-size` legacy key),
   panel paints defaults; making one valid change replaces the garbage
   doc wholesale (localStorage now a clean six-field doc).
+- [Task 2.8] Density metrics (desktop viewport, any dark theme):
+  `.lobby-header-row` computed min-height `52px` (T3's
+  --workspace-topbar-height); #new-btn, #restore-btn and
+  #new-project-btn each measure exactly 32px tall (border-box) with
+  computed padding `0px 11px`, border-radius `10px`, font `500 14px`
+  var(--font-ui); #new-name matches at 32px but KEEPS 16px text (iOS
+  no-zoom rule); #notify-toggle is 32×32 with a 16px glyph at opacity
+  0.8 (T3 icon tier); group labels (.theme-picker-label,
+  .project-title, .popup-menu .menu-label, .settings-panel .sp-title)
+  compute 10px uppercase letter-spacing 0.8px (.08em); the old 11px
+  chrome tier now reads 12px (.session-detail, .theme-options /
+  .font-size-row / #settings-btn / .sp-* controls, .project-badges)
+  and .popup-menu button 14px — EXCEPT `.cmd-chip`, which stays 11px
+  (Task 2.5 lock). Theme chips and settings-panel segments show NO
+  text clipping at the new sizes (scrollWidth ≤ clientWidth on each).
+- [Task 2.8] Focus rings + disabled: starting from body, keyboard-Tab
+  through the lobby (sidebar toggle → bell → name input → Create →
+  project headers / cards / ⋯ → + Project → Restore → theme buttons →
+  A−/A+ → settings) → EVERY stop computes `outline: 2px solid` in the
+  theme's --ring (= --accent) at outline-offset `1px` — except the
+  full-bleed rows (.session-card, .project-header), which keep an
+  INSET `-2px` offset (deviation from the plan's uniform 1px: a +1px
+  ring on those rows clips under the sidebar's overflow-x: hidden).
+  Pointer clicks paint no ring (:focus-visible), and the inline rename
+  editor keeps outline: none. Any disabled chrome control (e.g. force
+  `#restore-btn.disabled = true`) computes opacity `0.64`.
+- [Task 2.8] Hover tint + coarse targets: on a dark theme
+  `getComputedStyle(document.body)` --hover-tint =
+  `rgba(255, 255, 255, 0.04)`; on ink/t3-light/latte =
+  `rgba(0, 0, 0, 0.04)`; `.popup-menu button:hover` and
+  `.project-header:hover` backgrounds resolve to it. On an emulated
+  coarse-pointer viewport (Pixel 7 class, 412×915): every lobby
+  control — buttons + the #new-name input, popup-menu items,
+  settings-panel controls — measures ≥44px tall; #sidebar-toggle and
+  #notify-toggle square 44×44; standard buttons step to 16px text and
+  the 12px tier to 14px; the rename editor is exempt (no card jump);
+  no horizontal scroll. The soft-key toolbar (#soft-keys) is
+  UNTOUCHED: its buttons still measure 38px tall with min-height auto
+  (the plan's "keeps the existing soft-key toolbar sizing").
