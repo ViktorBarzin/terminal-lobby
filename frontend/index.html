@@ -1749,10 +1749,11 @@
         // document, last-writer-wins shape as /layout). Boot order:
         // localStorage applies immediately (the constructor can't wait on
         // the network); one GET then adopts the server copy — unless the
-        // user already changed something this page-life (prefsDirty), in
-        // which case the local change wins and is pushed up instead.
-        // Every change PUTs (debounced); a failed PUT just leaves
-        // localStorage ahead until the next change or boot.
+        // user already changed something (prefsDirty in this frame, the
+        // tl:prefs-dirty:v1 marker across frames), in which case the
+        // local change wins and is pushed up instead. Every change PUTs
+        // (debounced); a failed PUT just leaves localStorage ahead —
+        // marker uncleared — until a later PUT lands.
         const PREFS_KEY = 'tl:prefs:v1';
         const PREFS_API = '/api/sessions/prefs';
         const PREF_DEFAULTS = Object.freeze({
@@ -1795,16 +1796,37 @@
             return p;
         }
         let prefsDirty = false;    // a local change happened this page-life
+        // prefsDirty is PER-FRAME, but the lobby and the terminal iframe
+        // each run their own bootSyncPrefs against the SAME localStorage:
+        // a change made in one frame must also stop the OTHER frame's
+        // in-flight boot GET from adopting the stale server doc over it
+        // (2026-07-11 battery fail: panel change during the iframe's GET
+        // snapped back). setPrefs stamps this marker; a PUT that acks
+        // while the stamp is unchanged retires it — so an UNACKED change
+        // (failed PUT, closed tab) survives reloads and keeps winning
+        // until some frame pushes it up.
+        const PREFS_DIRTY_KEY = 'tl:prefs-dirty:v1';
+        function prefsDirtyMark() {
+            try { return localStorage.getItem(PREFS_DIRTY_KEY); } catch (e) { return null; }
+        }
         let prefsPutTimer = null;
         function schedulePrefsPut() {
             clearTimeout(prefsPutTimer);
             prefsPutTimer = setTimeout(() => {
                 prefsPutTimer = null;
+                const sentMark = prefsDirtyMark();
                 fetch(PREFS_API, {
                     method: 'PUT',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(getPrefs())
+                }).then((resp) => {
+                    // Server holds this doc now: retire the dirty marker —
+                    // unless a NEWER change re-stamped it mid-flight (its
+                    // own debounced PUT is coming).
+                    if (resp.ok && sentMark !== null && prefsDirtyMark() === sentMark) {
+                        try { localStorage.removeItem(PREFS_DIRTY_KEY); } catch (e) {}
+                    }
                 }).catch(() => { /* offline/api down: localStorage still holds it */ });
             }, 400);
         }
@@ -1816,6 +1838,7 @@
             const next = normalizePrefs(Object.assign({}, cur, patch));
             if (JSON.stringify(next) === JSON.stringify(cur)) return cur;
             prefsDirty = true;
+            try { localStorage.setItem(PREFS_DIRTY_KEY, String(Date.now())); } catch (e) {}
             try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch (e) {}
             if (next.fontSize !== cur.fontSize) setFontSize(next.fontSize);
             try { window.dispatchEvent(new CustomEvent('tl-prefs-change', { detail: next })); } catch (e) {}
@@ -1849,7 +1872,10 @@
                 if (!resp.ok) return;              // keep local; next boot retries
                 doc = await resp.json();
             } catch (e) { return; }
-            if (prefsDirty) { schedulePrefsPut(); return; }  // user moved first — local wins
+            // User moved first — local wins. prefsDirty covers changes made
+            // in THIS frame; the marker covers the sibling frame (its own
+            // PUT is pending) and unacked changes from a previous page-life.
+            if (prefsDirty || prefsDirtyMark() !== null) { schedulePrefsPut(); return; }
             const hasAny = doc && typeof doc === 'object' && !Array.isArray(doc) &&
                 Object.keys(PREF_VALID).some(k => PREF_VALID[k](doc[k]));
             if (hasAny) adoptPrefs(doc);
