@@ -2284,6 +2284,28 @@
             const frameEl   = document.getElementById('session-frame');
             const emptyEl   = document.getElementById('lobby-empty');
 
+            // Task M.3: every session-iframe navigation goes through here.
+            // Same-origin location.replace() swaps the framed document
+            // WITHOUT adding a joint session-history entry (a plain
+            // frameEl.src= write pushes one per swap from the second swap
+            // on), so history.length stays 1: the iOS-standalone
+            // edge-back-swipe stays permanently disarmed and Android
+            // predictive-back minimizes the app instead of walking stale
+            // attaches. location.replace() does NOT reflect into the src
+            // attribute — frameUrl tracks the current URL; always read it
+            // instead of frameEl.src (which goes stale on the first swap).
+            let frameUrl = '';
+            function setFrameUrl(url) {
+                frameUrl = url;
+                try {
+                    frameEl.contentWindow.location.replace(url);
+                } catch (e) {
+                    // Detached/foreign contentWindow — degraded fallback
+                    // (costs one history entry, never a dead iframe).
+                    frameEl.src = url;
+                }
+            }
+
             // Loading skeletons (Task 1.11d): three shimmer cards fill
             // #session-list until the first /sessions response — paint()
             // and both renderLobby error paths start with
@@ -2800,7 +2822,7 @@
                 activeConfirmed = false;
                 emptyEl.classList.add('hidden');
                 frameEl.classList.remove('hidden');
-                frameEl.src = '/?arg=' + encodeURIComponent(name);
+                setFrameUrl('/?arg=' + encodeURIComponent(name));
                 if (location.hash.slice(1) !== name) {
                     history.replaceState(null, '', '#' + name);
                 }
@@ -2821,7 +2843,7 @@
                 activeConfirmed = false;
                 frameEl.classList.add('hidden');
                 emptyEl.classList.remove('hidden');
-                frameEl.src = 'about:blank';
+                setFrameUrl('about:blank');
                 if (location.hash) {
                     history.replaceState(null, '', location.pathname + location.search);
                 }
@@ -2909,7 +2931,7 @@
                         showToast('Renamed to ' + newName, 'success');
                         if (currentActive === oldName) {
                             currentActive = newName;
-                            frameEl.src = '/?arg=' + encodeURIComponent(newName);
+                            setFrameUrl('/?arg=' + encodeURIComponent(newName));
                             history.replaceState(null, '', '#' + newName);
                             updateTitle();
                         }
@@ -3719,17 +3741,17 @@
                     try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
                     applyTheme(t);
                     paintThemeButtons();
-                    if (currentActive && frameEl.src && frameEl.contentWindow) {
+                    if (currentActive && frameUrl && frameEl.contentWindow) {
                         clearTimeout(themeAckTimer);
                         themeAckTimer = setTimeout(() => {
                             themeAckTimer = null;
                             // No ACK: reload iframe so xterm picks up the new
-                            // theme (re-read src — the session may have
-                            // changed during the wait).
-                            const url = frameEl.src;
+                            // theme (re-read the tracked frameUrl — the
+                            // session may have changed during the wait).
+                            const url = frameUrl;
                             if (!url || url === 'about:blank') return;
-                            frameEl.src = 'about:blank';
-                            setTimeout(() => { frameEl.src = url; }, 0);
+                            setFrameUrl('about:blank');
+                            setTimeout(() => { setFrameUrl(url); }, 0);
                         }, 1000);
                         frameEl.contentWindow.postMessage({ type: 'tl-theme', name: t }, location.origin);
                     }
@@ -3772,7 +3794,7 @@
             window.addEventListener('tl-prefs-change', () => {
                 paintFontSize();
                 paintSettingsPanel();
-                if (currentActive && frameEl.src && frameEl.contentWindow) {
+                if (currentActive && frameUrl && frameEl.contentWindow) {
                     const p = getPrefs();
                     frameEl.contentWindow.postMessage({ type: 'tl-prefs', prefs: p }, location.origin);
                     frameEl.contentWindow.postMessage({ type: 'tl-font-size', size: p.fontSize }, location.origin);
