@@ -231,3 +231,24 @@ implements the feature. Format:
   (they are a light theme's "paper" colors, and █ block glyphs are
   excluded from the minimum-contrast adjustment). Verified 2026-07-11
   on ink: 14 chromatic swatches + dark black pair all clearly visible.
+- [Task 1.6] New presets: for each of t3-dark / t3-light /
+  catppuccin-mocha / catppuccin-latte — click its picker button → lobby
+  chrome re-themes (body class `theme-<name>`, sidebar/cards/accent
+  change) and the attached terminal re-themes after the iframe reload;
+  run the Task 1.5 swatch line → screenshot: terminal bg + 16 swatches
+  match the preset (t3-dark bg #161616, t3-light bg #ffffff, mocha bg
+  #1e1e2e with pastel swatches, latte bg #eff1f5).
+- [Task 1.6] System auto-follow: click "System" (persists
+  `tmux-theme=system`), emulate the OS scheme (Playwright
+  `page.emulateMedia({colorScheme:'dark'})`) → body carries
+  `theme-t3-dark` AND `meta[name=theme-color]` content is `#161616`;
+  flip to `light` → `theme-t3-light` + `#ffffff` with NO user action
+  (the terminal iframe reloads itself to re-read xterm colors — the
+  reload path holds until Task 1.7's live switch replaces it).
+- [Task 1.6] Pre-paint boot: with `tmux-theme=catppuccin-latte` in
+  localStorage a fresh top-level load already has body class
+  `theme-catppuccin-latte` at `DOMContentLoaded` (no dark→light flash:
+  the boot script is body's first child) and `meta[name=theme-color]`
+  equals the theme's `--bg-page` (#eff1f5). With localStorage UNSET →
+  `theme-slate` and meta `#0d1117` (historical default — zero change
+  for users who never picked a theme).
