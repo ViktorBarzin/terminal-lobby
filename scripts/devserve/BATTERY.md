@@ -727,10 +727,19 @@ implements the feature. Format:
   after the boot GET the panel shows the roamed values and
   `window.__term.options.lineHeight` matches (server doc adopted, and
   a pre-existing `tl-font-size` legacy key seeds fontSize when the doc
-  lacks one). Local-wins guard: while the GET is still in flight (or
-  with the server doc stale), change a pref immediately after load →
-  no snap-back (prefsDirty skips adoption) and the next PUT pushes the
-  local doc up.
+  lacks one). Local-wins guard — CROSS-FRAME (2026-07-11 regression:
+  per-frame prefsDirty let the terminal iframe's boot GET revert a
+  change made in the outer panel): run the harness with
+  `--delay /prefs=3`, seed the server doc with a different lineHeight,
+  load + attach so BOTH frames have boot GETs in flight, change
+  lineHeight via the OUTER panel ~1s after load → when the delayed
+  GETs resolve there is NO snap-back in either frame (panel value,
+  `localStorage['tl:prefs:v1']` and `window.__term.options.lineHeight`
+  all keep the user's value — the changing frame skips adoption via
+  prefsDirty, the sibling via the `tl:prefs-dirty:v1` marker), and the
+  next PUT pushes the local doc up, after which the marker is retired
+  (`localStorage['tl:prefs-dirty:v1']` gone once the PUT acks — a
+  stale-server-doc reload before any ack must also NOT adopt).
 - [Task 2.6] Validate-or-default: set `localStorage['tl:prefs:v1']` to
   `'{"fontSize":999,"lineHeight":"huge","cursorStyle":"comic-sans"}'`,
   then to `'not-json'`, reloading each time → no crash, terminal boots
