@@ -579,3 +579,35 @@ implements the feature. Format:
   onopen and onclose): during battery A runs the toast must NEVER appear
   from normal connects/reconnects (onclose acks failed attempts — only a
   socket genuinely stuck >15s in CONNECTING qualifies).
+- [Task 2.4] Pills v2 state cycle (fake-claude recipe from the Task 2.1
+  line — REAL default tmux server, so isolation rules apply; session
+  `tl-battery-pills`): create + fake claude, then step `@claude_state`
+  through the trio, waiting ≤1 poll (5s + ε) per step:
+  `awaiting` → the card's `.state-dot` carries class `awaiting`, computed
+  background = the theme's `--state-awaiting` (amber `#f59e0b` on
+  t3-dark/t3-light), and the tab title gains `(1●)`;
+  `running` → dot class `running` + the `state-pulse` animation, computed
+  background `--state-running` (sky `#0ea5e9` on t3-*), the detail row
+  gains `.working-note` — three 4px `working-pulse` dots at
+  animation-delay 0/200/400ms + literal `Working for ` + a
+  `.working-timer` span — and the title badge rolls to `(1⋯)` (running
+  outranks nothing here; with another session awaiting, `(N●)` wins);
+  `done` (do NOT click the card) → dot class `done unseen`, computed
+  opacity `1` + emerald ring (`--state-done`, `#10b981` on t3-*), title
+  badge `(1✓)`.
+- [Task 2.4] Timer ticks with NO re-render: while `running`, capture the
+  card node + its `.working-timer` textContent (e.g. `4s`); wait 2-3s
+  (between polls — the shared 1 Hz ticker drives it); textContent
+  increased AND both the card element and the timer span are the SAME
+  nodes (isSameNode) — updates are textContent-only. Values follow the
+  T3 format: `34s` → `2m 10s` → `1h 5m`.
+- [Task 2.4] Visiting clears the emerald: with `tl-battery-pills` in
+  unseen-done, click its card (the harness iframe attaches the scratch
+  `main` session whatever the card name — the visit stamp is client-side
+  `activateSession` and fires regardless) → the dot immediately drops
+  `unseen` (computed opacity ≈0.45), the `(1✓)` badge clears, and
+  localStorage `tl:session-visits:v1` now maps the session to a
+  fresh epoch-ms. Reload the lobby → still seen (both stores persist;
+  `tl:session-states:v1` keeps the transition timestamp). Cleanup:
+  `tmux kill-session -t tl-battery-pills` → after the next poll the
+  stores PRUNE the dead name (both keys no longer contain it).
