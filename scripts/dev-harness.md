@@ -16,6 +16,11 @@ browser ── http://127.0.0.1:7997 (aiohttp reverse proxy, this script)
              │                     store/list/img routes resolve the caller from that
              │                     header like tmux-api does (paste-upload + session-
              │                     gallery E2E — `cd clipboard-upload && go run .`)
+             ├─ PWA/font assets  → http://127.0.0.1:7683     clipboard-upload; the 9
+             │                     EXACT paths in ASSET_PATHS (/manifest.webmanifest,
+             │                     /icon-*.png, /fonts/*.woff2) kept UNSTRIPPED with
+             │                     NO auth header — mirrors the public auth="none"
+             │                     ingress carve-out (plan Tasks 3.1/3.2)
              └─ everything else  → http://127.0.0.1:7996     local ttyd child
                                    (incl. /ws WebSocket, subprotocol 'tty', binary frames)
 ```
@@ -71,7 +76,7 @@ wants `/etc/ttyd-user-map` to map `--user` and a writable
 | `--session` | `main` (scratch) / `copytest` | tmux session created/attached |
 | `--proxy-port` / `--ttyd-port` | 7997 / 7996 | loopback ports |
 | `--tmux-api-port` | 7684 | tmux-api port (point at a scratch build to test server changes — the binary honors `TMUX_API_ADDR=127.0.0.1:<port>` since Task 2.5, production's fixed :7684 can't be double-bound) |
-| `--clipboard-port` | 7683 | clipboard-upload port (same idea) |
+| `--clipboard-port` | 7683 | clipboard-upload port (same idea — the binary honors `CLIPBOARD_UPLOAD_ADDR=127.0.0.1:<port>` since Task 3.1, plus `CLIPBOARD_UPLOAD_ASSET_DIR=$PWD/frontend` to serve the repo's PWA/font assets) |
 | `--api` | derived from `--tmux-api-port` | full tmux-api base URL override |
 | `--user` | `vbarzin` | injected `X-Authentik-Username` value |
 | `--delay /PATH=SECS` | none | debug: sleep before proxying matching requests (repeatable; slow-toast battery) |

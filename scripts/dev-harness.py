@@ -10,6 +10,11 @@ Makes the REAL page fully functional on loopback without Authentik/nginx:
                    │                      prefix stripped, X-Authentik-Username added
                    │                      — paste-upload + session-gallery E2E; run
                    │                      `cd clipboard-upload && go run .` locally)
+                   ├── PWA/font assets  → http://127.0.0.1:7683    (clipboard-upload,
+                   │                      the 9 EXACT paths in ASSET_PATHS, kept
+                   │                      UNSTRIPPED and with NO auth header —
+                   │                      mirrors the public auth="none" ingress
+                   │                      carve-out, plan Tasks 3.1/3.2)
                    └── everything else  → http://127.0.0.1:7996    (local ttyd child,
                                           including the /ws WebSocket, subprotocol 'tty')
 
@@ -72,6 +77,25 @@ HOP_BY_HOP = {
     "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions",
     "sec-websocket-protocol", "accept-encoding", "content-length",
 }
+
+# Public PWA/webfont asset carve-out — MUST mirror the ingress_path list of
+# infra Task 3.2 (stacks/terminal `module "ingress_assets"`, auth = "none")
+# and clipboard-upload's exact-path whitelist (main.go publicAssets). These
+# paths reach clipboard-upload UNSTRIPPED with NO auth header injected, so
+# battery curls without credentials exercise the real Go handlers and the
+# page's same-origin /fonts/ @font-face sources resolve locally.
+# (/icon-512-maskable.png 404s until Task M.9 ships the file — expected.)
+ASSET_PATHS = (
+    "/manifest.webmanifest",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/icon-512-maskable.png",
+    "/fonts/JetBrainsMono-Regular.woff2",
+    "/fonts/JetBrainsMono-Bold.woff2",
+    "/fonts/JetBrainsMono-Italic.woff2",
+    "/fonts/JetBrainsMono-BoldItalic.woff2",
+    "/fonts/dm-sans-latin-wght-normal.woff2",
+)
 
 
 def log(msg: str) -> None:
@@ -254,6 +278,37 @@ def make_app(args: argparse.Namespace) -> web.Application:
             return web.Response(status=502,
                                 text=f"clipboard-upload upstream error: {exc}")
 
+    async def asset_proxy(request: web.Request) -> web.StreamResponse:
+        """One of ASSET_PATHS → clipboard-upload, path UNSTRIPPED and NO
+        X-Authentik-Username injected (the prod carve-out routes these
+        outside Authentik; the Go asset handlers never read the header)."""
+        url = f"{clipboard_base}{request.rel_url.raw_path}"
+        await maybe_delay(request.rel_url.raw_path)
+        headers = {
+            k: v for k, v in request.headers.items()
+            if k.lower() not in HOP_BY_HOP
+        }
+        body = await request.read()
+        try:
+            async with request.app["client"].request(
+                request.method, url, params=request.rel_url.query,
+                headers=headers, data=body if body else None,
+                allow_redirects=False,
+            ) as upstream:
+                payload = await upstream.read()
+                resp_headers = {
+                    k: v for k, v in upstream.headers.items()
+                    if k.lower() not in HOP_BY_HOP
+                }
+                log(f"{request.method} {request.rel_url.raw_path} → "
+                    f"{upstream.status} (public asset)")
+                return web.Response(status=upstream.status, body=payload,
+                                    headers=resp_headers)
+        except aiohttp.ClientError as exc:
+            log(f"{request.method} {request.rel_url.raw_path} → 502 ({exc})")
+            return web.Response(status=502,
+                                text=f"clipboard-upload upstream error: {exc}")
+
     async def ws_proxy(request: web.Request) -> web.StreamResponse:
         """Bidirectional WebSocket pump browser ⇄ ttyd (subprotocol 'tty')."""
         offered = [
@@ -343,6 +398,8 @@ def make_app(args: argparse.Namespace) -> web.Application:
     app.on_cleanup.append(on_cleanup)
     app.router.add_route("*", "/api/sessions/{tail:.*}", api_proxy)
     app.router.add_route("*", "/clipboard/{tail:.*}", clipboard_proxy)
+    for asset_path in ASSET_PATHS:  # exact paths, before the catch-all
+        app.router.add_route("*", asset_path, asset_proxy)
     app.router.add_route("*", "/{tail:.*}", ttyd_proxy)
     return app
 
