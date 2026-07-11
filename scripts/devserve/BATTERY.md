@@ -477,3 +477,27 @@ implements the feature. Format:
   latches the output-while-hidden signal — one postMessage per hidden
   period, not one per chunk). Un-shim + dispatch `visibilitychange` →
   prefix AND badge clear (window focus is the other clear trigger).
+- [Task 2.3] Focus return — gallery + lightbox (terminal iframe on
+  `#main`): click the 🖼 floating button (the BUTTON takes focus — that
+  is the bug being guarded), gallery overlay opens; press Escape → it
+  closes; type `echo focus-back` + Enter IMMEDIATELY (no click) →
+  `tmux -L tl-dev capture-pane -p -t main` shows the command ran
+  (keystrokes reached the pty). Repeat via the lightbox: paste/upload
+  an image first, open the gallery, click a thumbnail (lightbox on
+  top), Escape → back on the grid, Escape → closed → type → reaches
+  the pty. Backdrop-click dismissal refocuses the same way.
+- [Task 2.3] Focus return — lobby menus + dialogs (drive the OUTER
+  page): create `tl-battery-focus` on the real server (isolation
+  rules), open its card's ⋯ menu, press Escape → menu closes AND the
+  terminal iframe regains the keyboard: type `echo menu-esc` + Enter →
+  shows in `tmux -L tl-dev capture-pane -p -t main` (the harness pty;
+  the outer→inner hop is a `tl-focus` postMessage into the iframe's
+  `term.focus()`, deferred via rAF raced with a 50ms timeout — rAF
+  alone starves in an iframe with no pending paint, measured in
+  headless Chromium). Dialog path: ⋯ → Rename opens a native
+  prompt() — cancel it → focus lands back in the terminal (the rAF
+  refocus fires after the modal returns); type → reaches the pty.
+  Outside-CLICK menu dismissal must NOT steal focus back: open the ⋯
+  menu, click into the new-session name input → menu closes and the
+  INPUT keeps focus (`document.activeElement.id === 'new-name'`).
+  Cleanup: kill `tl-battery-focus`.
