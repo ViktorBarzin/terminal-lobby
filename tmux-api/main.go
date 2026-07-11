@@ -164,6 +164,16 @@ func tmuxCmd(osUser string, args ...string) *exec.Cmd {
 }
 
 func main() {
+	// CLI mode (not the HTTP service): `tmux-api sanitize-resurrect
+	// [archive...]` strips terminal query replies from tmux-resurrect's
+	// saved pane contents before they are replayed into a pty — wired as
+	// @resurrect-hook-pre-restore-all by devvm/setup-user-persistence.sh.
+	// It lives inside this binary so the per-user hook needs no extra
+	// deployed artifact (sanitize.go has the full rationale).
+	if len(os.Args) > 1 && os.Args[1] == "sanitize-resurrect" {
+		os.Exit(runSanitizeResurrect(os.Args[2:], os.Stderr))
+	}
+
 	http.HandleFunc("/sessions", handleSessions)
 	http.HandleFunc("/sessions/", handleSessionByName)
 	http.HandleFunc("/whoami", handleWhoami)

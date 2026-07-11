@@ -934,3 +934,30 @@ implements the feature. Format:
   `/manifest.webmanifest` → 405. Existing routes intact through the
   harness: `/clipboard/list?session=main` (auth header injected by the
   proxy) still answers JSON, `/health` direct → `ok`.
+- [Task 3.6] Query-reply sanitizer unit suite: `go test ./...` in
+  `tmux-api/` green — T3-ported strip rules (CSI `…n` DSR, CSI
+  `[0-9;?]*R` CPR, CSI `[>0-9;?]*c` DA, OSC `(10|11|12);(?|rgb:)`),
+  keep-table (SGR/DECSET/titles/OSC52/DCS-atomicity/UTF-8/binary),
+  chunk-boundary straddle at EVERY split point + byte-at-a-time,
+  seeded 300-iteration sequence-free identity property, idempotence,
+  and the resurrect-archive rewriter (strip, clean-noop, mode
+  preservation, corrupt-leaves-original, exit-0 hook contract).
+- [Task 3.6] Replay-path CLI round-trip (the wired path: resurrect's
+  `@resurrect-hook-pre-restore-all` → `tmux-api sanitize-resurrect`
+  runs BEFORE restore.sh extracts + `cat`s pane contents into the
+  recreated ptys): build `tmux-api`, write a fixture
+  `$HOME/.tmux/resurrect/pane_contents.tar.gz` whose pane file mixes
+  SGR + `\x1b[6n` + `\x1b[?64;…c` + `\x1b]11;rgb:…\x1b\\` + emoji,
+  run `HOME=<fixture> tmux-api sanitize-resurrect` → exit 0, stderr
+  names the archive, re-read: query/reply bytes GONE, SGR + text +
+  emoji byte-identical, entry layout/modes preserved (measured
+  2026-07-11: 95 → 62-byte pane file). Second run → silent no-op,
+  archive mtime+size unchanged. Service mode unaffected by the CLI
+  dispatch: `TMUX_API_ADDR=127.0.0.1:17699 tmux-api` (no args) still
+  serves `/health` → `ok`.
+- [Task 3.6] Negative wiring finding (recorded, no action): the web
+  "Restore sessions" path (POST /restore → tmux-restore-user →
+  tmux-persist) replays NO captured content — its manifest is
+  name/cwd/claude-uuid and sessions are recreated via `claude
+  --resume`; the ONLY capture→pty replay route in the stack is
+  tmux-resurrect's pane-contents `cat`, covered above.
