@@ -2949,10 +2949,19 @@
             // disarmed while editing so selecting text inside the input
             // can't start a card drag; every key/pointer event stops at
             // the input (the card beneath activates on click/Enter/Space).
+            //
+            // renameEditing pauses the poll repaint exactly like
+            // openMenuEl/ctxMenuOpen (2026-07-11 finding: paint() rebuilds
+            // the card DOM, destroying the focused editor at the next 5s
+            // poll or state-change repaint). Cleared the moment the edit
+            // settles — commit, Escape, blur — so the repaint that re-keys
+            // a renamed card still happens.
+            let renameEditing = false;
             function startInlineRename(name) {
                 const card = listEl.querySelector('.session-card[data-name="' + name + '"]');
                 const nameEl = card && card.querySelector('.session-name');
                 if (!nameEl || nameEl.querySelector('input')) return;
+                renameEditing = true;
                 const input = document.createElement('input');
                 input.type = 'text';
                 input.className = 'rename-input';
@@ -2967,6 +2976,7 @@
                 function finish() {
                     if (settled) return;
                     settled = true;
+                    renameEditing = false;
                     card.draggable = wasDraggable;
                     nameEl.textContent = name;   // renderLobby repaints after a commit
                 }
@@ -2987,6 +2997,7 @@
                             return;   // editor stays open for correction
                         }
                         settled = true;   // block the blur-cancel during the await
+                        renameEditing = false;   // repaint may resume (it re-keys the card)
                         card.draggable = wasDraggable;
                         const ok = await performRename(name, newName);
                         if (!ok) nameEl.textContent = name;
@@ -3534,7 +3545,7 @@
             // paint renders the sidebar from lastSessions + layout. Pure view —
             // no fetching — so layout mutations repaint instantly.
             function paint() {
-                if (isDragging || openMenuEl || ctxMenuOpen) return;
+                if (isDragging || openMenuEl || ctxMenuOpen || renameEditing) return;
                 clearChildren(listEl);
                 const liveByName = new Map(lastSessions.map(s => [s.name, s]));
                 const referenced = new Set();
@@ -3563,7 +3574,7 @@
             }
 
             async function renderLobby() {
-                if (isDragging || openMenuEl || ctxMenuOpen) return;
+                if (isDragging || openMenuEl || ctxMenuOpen || renameEditing) return;
                 try {
                     const [sessResp, layoutResult] = await Promise.all([
                         fetch(SESSIONS_API, { credentials: 'same-origin' }),

@@ -662,7 +662,14 @@ implements the feature. Format:
   Escape or blur restores the title untouched; an invalid name toasts
   and keeps the editor open. Guards: single click still activates
   (only `detail > 1` is suppressed), dblclick with a held modifier or
-  on a nested button does nothing.
+  on a nested button does nothing. Editor survives the poll repaint
+  (2026-07-11 regression: paint() rebuilt the card DOM under the
+  editor): hold the editor open across ≥2 poll boundaries (>11s, with
+  other sessions' states churning) → the SAME `input.rename-input`
+  element is still connected, focused, and keeps the typed draft
+  (renameEditing pauses paint like the menus); after Escape the
+  repaint resumes (kill the session from tmux → its card disappears
+  within ~2 polls).
 - [Task 2.5] Card context menu (T3 fallback port): right-click a card →
   ONE `.popup-menu` at the pointer with Move to…/Session/Rename/Kill;
   the menu survives its own opening gesture (rAF first-frame guard);
