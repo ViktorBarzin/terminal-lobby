@@ -990,10 +990,35 @@
             background: var(--state-awaiting);
             box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-awaiting) 22%, transparent);
         }
-        .state-dot.done { background: var(--state-done); }
+        /* Pills v2 (Task 2.4): done only demands attention while UNSEEN —
+           full emerald + soft ring until the next visit (T3's unseen-
+           Completed pill), then it settles to a dimmed dot. */
+        .state-dot.done { background: var(--state-done); opacity: 0.45; }
+        .state-dot.done.unseen {
+            opacity: 1;
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-done) 22%, transparent);
+        }
         @keyframes state-pulse {
             0%, 100% { opacity: 1; transform: scale(1); }
             50%      { opacity: 0.35; transform: scale(0.8); }
+        }
+        /* "Working for Xs" note on running cards (Task 2.4, T3's
+           WorkingTimelineRow): three 4px dots pulsing staggered
+           0/200/400ms + a self-ticking seconds span. */
+        .working-note {
+            display: inline-flex; align-items: center; gap: 3px;
+            color: var(--state-running); white-space: nowrap;
+        }
+        .working-note i {
+            width: 4px; height: 4px; border-radius: 50%;
+            background: var(--state-running);
+            animation: working-pulse 1.4s ease-in-out infinite;
+        }
+        .working-note i:nth-child(2) { animation-delay: 200ms; }
+        .working-note i:nth-child(3) { animation-delay: 400ms; margin-right: 3px; }
+        @keyframes working-pulse {
+            0%, 100% { opacity: 0.25; }
+            50%      { opacity: 1; }
         }
 
         /* Project groups */
@@ -2049,11 +2074,102 @@
                 setSidebarCollapsed(true);
             }
 
-            // Tab title carries an attention badge while any session awaits
-            // input, so a backgrounded lobby tab still signals.
+            // --- status pills v2 (Task 2.4) -----------------------------
+            // "Unseen done" bookkeeping, T3's hasUnseenCompletion shape: a
+            // done state stays emerald only while stateChangedAt > the
+            // user's last visit. The hooks don't timestamp transitions, so
+            // stateChangedAt is OUR first observation of each state —
+            // persisted per-browser so reloads keep both the emerald latch
+            // and the working timer's start:
+            //   tl:session-visits:v1  name → epoch-ms of the last attach
+            //   tl:session-states:v1  name → {state, at} as of the last poll
+            const VISITS_KEY = 'tl:session-visits:v1';
+            const STATES_KEY = 'tl:session-states:v1';
+            function readStore(key) {
+                try {
+                    const obj = JSON.parse(localStorage.getItem(key));
+                    return (obj && typeof obj === 'object') ? obj : {};
+                } catch (e) { return {}; }
+            }
+            function writeStore(key, obj) {
+                try { localStorage.setItem(key, JSON.stringify(obj)); } catch (e) {}
+            }
+            function stampVisit(name) {
+                const visits = readStore(VISITS_KEY);
+                visits[name] = Date.now();
+                writeStore(VISITS_KEY, visits);
+            }
+            // Every poll: timestamp state transitions, prune dead sessions
+            // from both stores, and keep the attached session "seen" while
+            // the tab is actually visible (attached-but-hidden completions
+            // still earn the emerald).
+            function trackStateChanges(sessions) {
+                const states = readStore(STATES_KEY);
+                const visits = readStore(VISITS_KEY);
+                const live = new Set(sessions.map(s => s.name));
+                let dirtyStates = false, dirtyVisits = false;
+                for (const name of Object.keys(states)) {
+                    if (!live.has(name)) { delete states[name]; dirtyStates = true; }
+                }
+                for (const name of Object.keys(visits)) {
+                    if (!live.has(name)) { delete visits[name]; dirtyVisits = true; }
+                }
+                for (const s of sessions) {
+                    const cur = s.state || '';
+                    const rec = states[s.name];
+                    if (!rec || rec.state !== cur) {
+                        states[s.name] = { state: cur, at: Date.now() };
+                        dirtyStates = true;
+                    }
+                }
+                if (currentActive && live.has(currentActive) && !document.hidden) {
+                    visits[currentActive] = Date.now();
+                    dirtyVisits = true;
+                }
+                if (dirtyStates) writeStore(STATES_KEY, states);
+                if (dirtyVisits) writeStore(VISITS_KEY, visits);
+            }
+            function stateChangedAt(name) {
+                const rec = readStore(STATES_KEY)[name];
+                return (rec && typeof rec.at === 'number') ? rec.at : 0;
+            }
+            function isUnseenDone(s) {
+                if (s.state !== 'done') return false;
+                return stateChangedAt(s.name) > (readStore(VISITS_KEY)[s.name] || 0);
+            }
+            // Elapsed-time formatting, ported from T3's formatWorkingTimer
+            // (MessagesTimeline.tsx): "34s", "2m 10s", "1h 5m".
+            function formatWorking(elapsedMs) {
+                const sec = Math.max(0, Math.floor(elapsedMs / 1000));
+                if (sec < 60) return sec + 's';
+                const h = Math.floor(sec / 3600);
+                const m = Math.floor((sec % 3600) / 60);
+                const s = sec % 60;
+                if (h > 0) return m > 0 ? h + 'h ' + m + 'm' : h + 'h';
+                return s > 0 ? m + 'm ' + s + 's' : m + 'm';
+            }
+            // One shared 1 Hz ticker drives every visible working timer —
+            // span.textContent only, never a card re-render (plan/T3
+            // requirement). Hidden tabs skip the work; the next poll's
+            // paint refreshes anyway.
+            setInterval(() => {
+                if (document.hidden) return;
+                listEl.querySelectorAll('.working-timer').forEach(el => {
+                    el.textContent = formatWorking(Date.now() - Number(el.dataset.since));
+                });
+            }, 1000);
+
+            // Tab title carries an attention badge for the MAX-priority
+            // state across sessions (Task 2.4; priority order mirrors T3's
+            // pill ranking): awaiting ● > running ⋯ > unseen-done ✓. The
+            // awaiting shape (N●) predates this task — kept verbatim.
             function updateTitle() {
                 const awaiting = lastSessions.filter(s => s.state === 'awaiting').length;
-                const badge = awaiting > 0 ? '(' + awaiting + '●) ' : '';
+                const running  = lastSessions.filter(s => s.state === 'running').length;
+                const unseen   = lastSessions.filter(isUnseenDone).length;
+                const badge = awaiting > 0 ? '(' + awaiting + '●) '
+                            : running  > 0 ? '(' + running + '⋯) '
+                            : unseen   > 0 ? '(' + unseen + '✓) ' : '';
                 // Bell/output attention (Task 2.1): '● <session>' leads while
                 // latched; cleared the moment the user looks again.
                 const attention = attentionSession ? '● ' + attentionSession + ' ' : '';
@@ -2246,10 +2362,15 @@
                 if (location.hash.slice(1) !== name) {
                     history.replaceState(null, '', '#' + name);
                 }
+                // Attaching = seeing (Task 2.4): clears the unseen-done
+                // emerald; paint() repaints the dot + title badge now
+                // rather than on the next poll.
+                stampVisit(name);
                 updateTitle();
                 ensureSessionVisible(name);
                 updateActiveCard();
                 maybeAutoCollapseSidebar();
+                paint();
             }
 
             function deactivateSession() {
@@ -2551,7 +2672,24 @@
                 dot.className = 'state-dot ' + state + (extraClass ? ' ' + extraClass : '');
                 dot.title = 'Claude: ' + (state === 'done' ? 'completed' :
                     state === 'awaiting' ? 'awaiting your input' : 'running');
+                if (extraClass === 'unseen') dot.title += ' (new since your last visit)';
                 return dot;
+            }
+
+            // Running cards carry "● ● ● Working for Xs" in the detail row
+            // (Task 2.4). The seconds span self-ticks via the shared 1 Hz
+            // interval — dataset.since anchors it to the state transition.
+            function workingNote(sinceMs) {
+                const note = document.createElement('span');
+                note.className = 'working-note';
+                for (let i = 0; i < 3; i++) note.appendChild(document.createElement('i'));
+                note.append('Working for ');
+                const timer = document.createElement('span');
+                timer.className = 'working-timer';
+                timer.dataset.since = String(sinceMs || Date.now());
+                timer.textContent = formatWorking(Date.now() - Number(timer.dataset.since));
+                note.appendChild(timer);
+                return note;
             }
 
             function renderCard(s) {
@@ -2568,7 +2706,7 @@
                 meta.className = 'session-meta';
                 const titleRow = document.createElement('div');
                 titleRow.className = 'session-title-row';
-                const dot = stateDot(s.state);
+                const dot = stateDot(s.state, isUnseenDone(s) ? 'unseen' : '');
                 if (dot) titleRow.appendChild(dot);
                 const name = document.createElement('div');
                 name.className = 'session-name';
@@ -2578,7 +2716,11 @@
                 const detail = document.createElement('div');
                 detail.className = 'session-detail' + (s.attached > 0 ? ' attached' : '');
                 const attachedText = s.attached > 0 ? (s.attached + ' attached') : 'idle';
-                detail.textContent = attachedText + ' · ' + relativeTime(s.lastActivity);
+                detail.append(attachedText + ' · ' + relativeTime(s.lastActivity));
+                if (s.state === 'running') {
+                    detail.append(' · ');
+                    detail.appendChild(workingNote(stateChangedAt(s.name)));
+                }
                 meta.appendChild(detail);
                 card.appendChild(meta);
 
@@ -2682,7 +2824,10 @@
                         if (!n) continue;
                         const chip = document.createElement('span');
                         chip.className = 'state-chip';
-                        chip.appendChild(stateDot(state));
+                        // A folded project's done chip keeps the unseen
+                        // emphasis while ANY member completion is unseen.
+                        chip.appendChild(stateDot(state,
+                            state === 'done' && members.some(isUnseenDone) ? 'unseen' : ''));
                         const num = document.createElement('span');
                         num.textContent = String(n);
                         chip.appendChild(num);
@@ -2879,8 +3024,11 @@
                     lastSessions = sessions;
                     // Attention (Task 2.1): favicon + OS notifications track
                     // the same poll that paints the cards (title via paint's
-                    // updateTitle).
+                    // updateTitle). State-change timestamps (Task 2.4) must
+                    // land BEFORE paint so fresh transitions render with a
+                    // non-zero stateChangedAt.
                     notifyTransitions(sessions);
+                    trackStateChanges(sessions);
                     updateFavicon();
                     paint();
                 } catch (err) {
