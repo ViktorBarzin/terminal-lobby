@@ -155,4 +155,24 @@ Each task appends its acceptance line(s) here **in the same commit** that
 implements the feature. Format:
 `- [Task N.M] <exact check> → <expected result>`.
 
-*(empty — populated from Wave 1 onward)*
+- [Task 1.1] In the terminal iframe: `document.fonts.check('15px "JetBrains Mono"')`
+  → `true`, AND for **each** of `✢ ✳ ✻ ✽ ⏺ ⎿ ✔ ☐ ☒ ⏵ ◼ ※ ⠋`:
+  `document.fonts.check('15px "TL Symbols"', ch)` → `true`.
+- [Task 1.1] Echo the glyph battery into the pty
+  (`tmux -L tl-dev send-keys -t main "echo '✢ ✳ ✻ ✽ ⏺ ⎿ ✔ ☐ ☒ ⏵ ◼ ※ ⠋ ─│┌┐└┘├┤╭╮╯╰ ▀▄█░▒▓ '" Enter`),
+  screenshot → **zero tofu boxes** (compare against baseline: pre-webfont
+  rendering depended on OS fallbacks).
+- [Task 1.1] Metrics guard (the webfont must not shrink the grid): at a
+  390×844 portrait viewport record cols×rows before/after the webfont →
+  cols **unchanged** (measured 41→41; JBM 'W' advance 9.000px ≤ OS-mono
+  9.031px at 15px, so cols cannot regress). Rows may shrink slightly with
+  JBM's taller line box (measured 27→23 — the "font metrics shift cols/rows
+  slightly — intended" note in the plan's deploy heads-up). 80-col floor
+  where geometry allows it: 844×390 landscape, sidebar collapsed →
+  cols **≥80** (measured 92). *Deviation from the plan's "cols ≥80
+  portrait": arithmetically impossible at fontSize 15 — 390px ÷ ~9px/cell
+  ≈ 43 cols with ANY mono face; adapted to no-cols-regression portrait +
+  the achievable landscape floor.*
+- [Task 1.1] Box-drawing alignment (`├──` tree, Claude Code box borders)
+  intact at fontSize 15 **and** at the stepper extremes 10 and 22 (until
+  Task 1.8 lands, drive via `window.__term.options.fontSize = N`).
