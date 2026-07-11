@@ -477,6 +477,41 @@ implements the feature. Format:
   latches the output-while-hidden signal — one postMessage per hidden
   period, not one per chunk). Un-shim + dispatch `visibilitychange` →
   prefix AND badge clear (window focus is the other clear trigger).
+- [Task 2.2] Reconnect ladder + pill (healer untouched): create
+  `tl-battery-conn` via the lobby (REAL server — isolation rules, clean up
+  after) and attach `#tl-battery-conn` (the harness ttyd still puts the pty
+  on scratch `main`; the name only feeds `sessionStillExists`). Pre-set
+  `frameEl.contentWindow.__tlMark = 1`. Kill the harness ttyd child
+  (`pkill -f 'ttyd.*--port 7996'`). **Expect:** `#conn-pill` in the iframe
+  loses `.hidden` reading `Connecting…`, then `Reconnecting… (attempt N)`
+  with ladder gaps — attempt N+1 starts ≥ the rung delay after N
+  (1/2/4/8/16s, holding at 16s for N≥6; watch `connAttempts` climb via the
+  pill text). Restart the same ttyd command
+  (`ttyd --port 7996 --interface 127.0.0.1 --writable -a -t
+  enableClipboard=true --index out/index.html tmux -L tl-dev new-session -A
+  -s main`) → the next rung reattaches: pill regains `.hidden`, typing
+  echoes, console logs a second `Connected to ttyd`, and `__tlMark` still
+  `1` — the healer's reloadIfStale ran on that reconnect against an
+  unchanged build without reloading (the changed-build reload leg is the
+  Task 1.7 ACK line).
+- [Task 2.2] Ladder reset + instant retry: stay connected ≥30s, kill ttyd
+  again → the FIRST pill text is `Connecting…` (the 30s stability timer
+  reset the attempt counter). While a long rung is pending, dispatch
+  `window.dispatchEvent(new Event('online'))` in the iframe → the attempt
+  fires immediately (console `reconnect: instant retry (back online)`);
+  same via the visibility path (hidden-shim recipe in the Task 2.1 line,
+  un-shim + `visibilitychange` → `instant retry (tab visible)`). With
+  `navigator.onLine` shimmed to `false`
+  (`Object.defineProperty(navigator,'onLine',{value:false,configurable:true})`)
+  a repaint shows `You are offline` + `.offline` class (amber pulse dot
+  turns danger-red); delete the shim + fire `online` → reconnects at once.
+- [Task 2.2] Session-ended guard unchanged: with ttyd killed AND
+  `tl-battery-conn` deleted (`DELETE /api/sessions/tl-battery-conn`), the
+  iframe's next close-check finds the session gone → writes
+  `Session ended.`, pill goes `.hidden`, and NO further attempts start for
+  ≥20s (a killed session must never be resurrected by the retry loop;
+  the lobby deactivates the frame on its next poll — assert within that
+  ≤5s window or block the poll first).
 - [Task 2.3] Focus return — gallery + lightbox (terminal iframe on
   `#main`): click the 🖼 floating button (the BUTTON takes focus — that
   is the bug being guarded), gallery overlay opens; press Escape → it
