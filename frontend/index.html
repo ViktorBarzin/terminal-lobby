@@ -84,6 +84,9 @@
             /* Lobby chrome only (sidebar, cards, dialogs, toasts, buttons,
                headers). Weights in use: 400 body / 500 buttons / 600 headings. */
             --font-ui: 'DM Sans Variable', 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            /* T3 radius scale (Task 1.11c): buttons/menus/inputs = --radius,
+               cards/dialog panels = +8, toasts/menu items = −2. */
+            --radius: 10px;
         }
 
         /* Themes — set on <body> as theme-{carbon,slate,mono,ink,t3-dark,
@@ -416,20 +419,30 @@
             --terminal-ansi-bright-white: #bcc0cc;
         }
 
-        /* Scheme-dependent scrollbar tokens (Task 1.10) — dark defaults on
+        /* Scheme-dependent tokens (Tasks 1.10/1.11) — dark defaults on
            body, flipped by the light themes as a GROUP (body.theme-* wins on
            specificity). A new light theme must join this selector list. The
-           same values feed the xterm ITheme scrollbarSlider* keys via
-           readTerminalTheme(). */
+           scrollbar values also feed the xterm ITheme scrollbarSlider* keys
+           via readTerminalTheme(). --surface-shadow = T3's card treatment:
+           soft 5% drop + a scheme-dependent 1px inner bevel (light-catching
+           top edge on dark, grounding bottom edge on light).
+           --skeleton-highlight = T3's shimmer band (white 4% dark / 64%
+           light, over the card surface). */
         body {
             --scrollbar-thumb: rgba(255, 255, 255, 0.1);
             --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
             --scrollbar-thumb-active: rgba(255, 255, 255, 0.22);
+            --surface-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05),
+                              inset 0 1px rgba(255, 255, 255, 0.06);
+            --skeleton-highlight: rgba(255, 255, 255, 0.04);
         }
         body.theme-ink, body.theme-t3-light, body.theme-catppuccin-latte {
             --scrollbar-thumb: rgba(0, 0, 0, 0.15);
             --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
             --scrollbar-thumb-active: rgba(0, 0, 0, 0.3);
+            --surface-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05),
+                              inset 0 -1px rgba(0, 0, 0, 0.04);
+            --skeleton-highlight: rgba(255, 255, 255, 0.64);
         }
 
         html, body {
@@ -476,7 +489,8 @@
         #toast {
             position: fixed; top: 16px; right: 16px; z-index: 9999;
             background: var(--bg-card); color: var(--text-primary);
-            border: 1px solid var(--border); border-radius: 8px;
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 2px);
             padding: 10px 18px; font-family: var(--font-ui);
             font-size: 14px; opacity: 0; transition: opacity 0.3s;
             pointer-events: none; max-width: 500px; word-break: break-all;
@@ -576,9 +590,12 @@
             min-width: min(60vw, 480px);
             display: flex; flex-direction: column;
             background: var(--bg-card);
-            border: 1px solid var(--border-strong);
-            border-radius: 8px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            /* T3 dialog surface (Task 1.11b/c): hairline border + panel
+               radius; the elevation drop stays (separation over dark
+               themes) and gains the scheme bevel via --surface-shadow. */
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) + 8px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), var(--surface-shadow);
             padding: 14px 16px 16px;
             font-family: var(--font-ui);
         }
@@ -618,6 +635,23 @@
         }
         #lobby.visible { display: block; }
         #lobby.access-denied { padding: 32px; overflow-y: auto; }
+        /* Film grain over the lobby chrome (Task 1.11a — T3's body::after,
+           same SVG turbulence tile at 3.5%). body.lobby is set ONLY in
+           lobby mode; z-0 keeps it UNDER the z-1 #lobby-content pane, so
+           the terminal iframe (and any sixel inside it) is never washed by
+           grain — and terminal-mode pages never carry the class at all.
+           pointer-events: none = purely decorative, hit-testing unchanged. */
+        body.lobby::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.035;
+            z-index: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            background-repeat: repeat;
+            background-size: 256px 256px;
+        }
         /* T3 weight scale on the UI face: 400 body / 500 buttons / 600
            headings (headings already carry 600 individually). Chrome-text
            buttons only — icon/glyph buttons (#sidebar-toggle 600, floating
@@ -641,6 +675,11 @@
         #lobby-content {
             position: relative; background: var(--terminal-bg);
             min-width: 0; height: 100vh; overflow: hidden;
+            /* Above the body.lobby::after grain (z-0): the terminal iframe
+               pane must stay grain-free (red line: nothing may sit over the
+               terminal/sixel canvas). Overlays (toast 9999, menus 10000,
+               #sidebar-toggle 100) are body-level siblings — unaffected. */
+            z-index: 1;
         }
         #sidebar-toggle {
             position: fixed; top: 12px; left: 220px; z-index: 100;
@@ -648,7 +687,7 @@
             background: var(--bg-card);
             color: var(--accent);
             border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-            border-radius: 8px;
+            border-radius: var(--radius);
             font-family: inherit; font-size: 18px; font-weight: 600; line-height: 1;
             cursor: pointer;
             display: flex; align-items: center; justify-content: center;
@@ -689,7 +728,8 @@
         .lobby-sub { color: var(--text-muted); font-size: 12px; margin: 0 0 18px 0; line-height: 1.5; }
         .new-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
         .new-row input {
-            box-sizing: border-box; padding: 8px 12px; border-radius: 8px;
+            box-sizing: border-box; padding: 8px 12px;
+            border-radius: var(--radius);
             border: 1px solid var(--border); background: var(--bg-card);
             color: var(--text-primary); font-family: inherit;
             /* 16px so iOS Safari doesn't auto-zoom on focus. */
@@ -697,16 +737,26 @@
         }
         .new-row input:focus { outline: none; border-color: var(--accent); }
         .new-row button {
-            padding: 8px 12px; border-radius: 8px;
+            padding: 8px 12px; border-radius: var(--radius);
             border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
             background: color-mix(in srgb, var(--accent) 18%, transparent);
             color: var(--text-primary); font-family: inherit; font-size: 13px; cursor: pointer;
+            /* T3 primary-button finish (Task 1.11b): 1px light inner bevel +
+               a primary-tinted drop (T3 hardcodes its blue at 24%; ours is
+               theme-accent-tinted — same recipe, themed). */
+            box-shadow: inset 0 1px rgba(255, 255, 255, 0.16),
+                        0 1px 2px color-mix(in srgb, var(--accent) 24%, transparent);
         }
         .new-row button:hover {
             background: color-mix(in srgb, var(--accent) 30%, transparent);
         }
+        .new-row button:active {
+            /* T3 pressed state: bevel flips dark, drop collapses. */
+            box-shadow: inset 0 1px rgba(0, 0, 0, 0.08);
+        }
         .restore-btn {
-            margin: 10px 0 4px; width: 100%; padding: 7px 12px; border-radius: 8px;
+            margin: 10px 0 4px; width: 100%; padding: 7px 12px;
+            border-radius: var(--radius);
             border: 1px solid var(--border-strong); background: transparent;
             color: var(--text-muted); font-family: inherit; font-size: 12px; cursor: pointer;
         }
@@ -720,7 +770,10 @@
         .session-card {
             display: flex; align-items: center; justify-content: space-between;
             background: var(--bg-card); border: 1px solid var(--border);
-            border-left: 3px solid transparent; border-radius: 8px;
+            border-left: 3px solid transparent;
+            border-radius: calc(var(--radius) + 8px);
+            /* T3 card surface: soft drop + 1px scheme bevel (Task 1.11b). */
+            box-shadow: var(--surface-shadow);
             padding: 10px 12px; cursor: pointer;
             transition: background 0.15s, border-color 0.15s;
             font-family: inherit; color: var(--text-primary); text-align: left;
@@ -747,7 +800,9 @@
         .session-detail.attached { color: var(--success); }
         .session-actions { display: flex; gap: 6px; flex-shrink: 0; }
         .session-actions button {
-            padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border);
+            /* xs buttons sit at radius − 2 (T3's rounded-md tier). */
+            padding: 4px 8px; border-radius: calc(var(--radius) - 2px);
+            border: 1px solid var(--border);
             background: var(--bg-card-hover); color: var(--text-primary);
             font-family: inherit; font-size: 11px; cursor: pointer;
         }
@@ -762,6 +817,26 @@
         .session-actions button:hover { filter: brightness(1.25); }
         .session-card.dragging { opacity: 0.4; cursor: grabbing; }
         .empty { color: var(--text-muted); font-style: italic; padding: 12px 0; font-size: 12px; }
+
+        /* Session-card loading skeleton (Task 1.11d — T3's shimmer):
+           placeholder cards seeded into #session-list at lobby boot, alive
+           only until the first /sessions render (every render path starts
+           with clearChildren). One gradient band sweeps the card surface;
+           the -1s delay starts it mid-sweep so the first paint already
+           moves. */
+        .session-skeleton {
+            height: 55px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) + 8px);
+            background: linear-gradient(120deg, transparent 40%,
+                            var(--skeleton-highlight), transparent 60%)
+                        var(--bg-card) 0 0 / 200% 100%;
+            animation: skeleton 2s -1s infinite linear;
+        }
+        @keyframes skeleton {
+            to { background-position: -200% 0; }
+        }
 
         /* Claude state dot — running pulses, awaiting glows, done sits still. */
         .session-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
@@ -817,7 +892,8 @@
         .project-badges .state-dot { width: 7px; height: 7px; flex-basis: 7px; }
         .project-actions { display: flex; gap: 4px; flex-shrink: 0; }
         .project-actions button {
-            padding: 1px 7px 2px; border-radius: 6px;
+            padding: 1px 7px 2px;
+            border-radius: calc(var(--radius) - 2px);
             border: 1px solid var(--border); background: transparent;
             color: var(--text-muted); font-family: inherit; font-size: 13px;
             line-height: 1.4; cursor: pointer;
@@ -847,7 +923,8 @@
         }
         .new-project-btn {
             margin-top: 10px; width: 100%; padding: 6px 12px;
-            border-radius: 8px; border: 1px dashed var(--border-strong);
+            border-radius: var(--radius);
+            border: 1px dashed var(--border-strong);
             background: transparent; color: var(--text-muted);
             font-family: inherit; font-size: 12px; cursor: pointer;
         }
@@ -860,11 +937,13 @@
         .popup-menu {
             position: fixed; z-index: 10000;
             background: var(--bg-card);
-            border: 1px solid var(--border-strong); border-radius: 8px;
+            /* T3 menu surface (Task 1.11b/c): hairline border, --radius,
+               elevation drop kept + scheme bevel appended. */
+            border: 1px solid var(--border); border-radius: var(--radius);
             padding: 4px; min-width: 150px; max-width: 230px;
             max-height: 60vh; overflow-y: auto;
             display: flex; flex-direction: column;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), var(--surface-shadow);
             font-family: var(--font-ui);
         }
         .popup-menu .menu-label {
@@ -872,7 +951,8 @@
             color: var(--text-muted); padding: 6px 10px 2px;
         }
         .popup-menu button {
-            text-align: left; padding: 7px 10px; border: 0; border-radius: 6px;
+            text-align: left; padding: 7px 10px; border: 0;
+            border-radius: calc(var(--radius) - 2px);
             background: transparent; color: var(--text-primary);
             font-family: inherit; font-size: 13px; cursor: pointer;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -925,7 +1005,8 @@
         .theme-options { display: flex; flex-wrap: wrap; gap: 4px; }
         .theme-options button {
             flex: 1 1 calc(33.33% - 3px); min-width: 0;
-            white-space: nowrap; padding: 5px 4px; border-radius: 6px;
+            white-space: nowrap; padding: 5px 4px;
+            border-radius: calc(var(--radius) - 2px);
             background: var(--bg-card); color: var(--text-muted);
             border: 1px solid var(--border); font-family: inherit;
             font-size: 11px; cursor: pointer;
@@ -947,7 +1028,8 @@
         }
         .font-size-row .theme-picker-label { display: inline; margin: 0 auto 0 0; }
         .font-size-row button {
-            width: 36px; padding: 5px 0; border-radius: 6px;
+            width: 36px; padding: 5px 0;
+            border-radius: calc(var(--radius) - 2px);
             background: var(--bg-card); color: var(--text-muted);
             border: 1px solid var(--border); font-family: inherit;
             font-size: 11px; font-weight: 500; cursor: pointer;
@@ -1339,6 +1421,11 @@
             document.getElementById('font-inc-btn').classList.add('hidden');
             document.getElementById('font-dec-btn').classList.add('hidden');
             document.getElementById('lobby').classList.add('visible');
+            // Lobby-scoped styling hook (Task 1.11): drives the film-grain
+            // overlay (body.lobby::after). Never set in terminal mode, so
+            // the inner iframe document stays grain-free; applyTheme only
+            // strips theme-* classes, so this survives theme switches.
+            document.body.classList.add('lobby');
             const baseTitle = 'tmux sessions (' + whoami.osUser + ')';
             document.title = baseTitle;
             document.querySelector('#lobby .lobby-sub').textContent =
@@ -1351,6 +1438,17 @@
             const restoreBtnEl = document.getElementById('restore-btn');
             const frameEl   = document.getElementById('session-frame');
             const emptyEl   = document.getElementById('lobby-empty');
+
+            // Loading skeletons (Task 1.11d): three shimmer cards fill
+            // #session-list until the first /sessions response — paint()
+            // and both renderLobby error paths start with
+            // clearChildren(listEl), which removes them.
+            for (let i = 0; i < 3; i++) {
+                const sk = document.createElement('div');
+                sk.className = 'session-skeleton';
+                sk.setAttribute('aria-hidden', 'true');
+                listEl.appendChild(sk);
+            }
 
             let currentActive = null;
             // A session is "confirmed" once a /sessions poll has actually listed
