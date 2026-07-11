@@ -22,17 +22,28 @@ only add a 401 failure mode. The tmux session is pre-created so that ttyd's
 `-a` (which appends `?arg=<x>` to the command line) can never turn the URL
 arg into a new-session shell command.
 
+By default the ttyd child attaches an ISOLATED scratch tmux server
+(`tmux -L tl-dev`, session `main`) that is torn down on exit, so harness
+and battery runs never touch the user's real tmux sessions (`--no-scratch`
+restores the old attach-the-default-server behavior). The served page is a
+build of --index with the deploy.sh stamp sed applied
+(`__TL_BUILD__` -> `DEV-<git short sha>`, written to out/index.html) so the
+console prints a recognizable `terminal-lobby build: DEV-...` line.
+
 Usage:
-    python3 scripts/dev-harness.py [--index PATH] [--session copytest]
+    python3 scripts/dev-harness.py [--index PATH] [--session NAME]
+        [--scratch | --no-scratch]
         [--proxy-port 7997] [--ttyd-port 7996]
-        [--api http://127.0.0.1:7684] [--user alice]
-        [--kill-session-on-exit]
+        [--tmux-api-port 7684] [--clipboard-port 7683]
+        [--api URL] [--user alice]
+        [--delay /PATH=SECS] [--kill-session-on-exit]
 
 Then open:  http://127.0.0.1:7997/?arg=<session>   (terminal mode)
             http://127.0.0.1:7997/                 (lobby mode)
 
-Stop with Ctrl+C / SIGTERM; the ttyd child is killed on exit. Everything
-binds to 127.0.0.1 only. Requires: aiohttp, ttyd, tmux.
+Stop with Ctrl+C / SIGTERM; the ttyd child is killed on exit (and in
+scratch mode the tl-dev tmux server with it). Everything binds to
+127.0.0.1 only. Requires: aiohttp, ttyd, tmux.
 """
 
 import argparse
@@ -48,11 +59,11 @@ from aiohttp import WSMsgType, web
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_INDEX = os.path.join(REPO_ROOT, "frontend", "index.html")
+STAMPED_INDEX = os.path.join(REPO_ROOT, "out", "index.html")
 
-# clipboard-upload pins 0.0.0.0:7683 (clipboard-upload/main.go listenAddr),
-# so unlike --api there is nothing to configure. It serves /upload, /register,
-# /list, /img/* and /health.
-CLIPBOARD_BASE = "http://127.0.0.1:7683"
+# Scratch tmux server socket name (tmux -L). `-L` only changes the socket —
+# the user's ~/.tmux.conf still loads, matching prod behavior.
+SCRATCH_SOCKET = "tl-dev"
 
 # Hop-by-hop headers must not be blindly forwarded.
 HOP_BY_HOP = {
@@ -67,23 +78,60 @@ def log(msg: str) -> None:
     print(f"[harness] {msg}", file=sys.stderr, flush=True)
 
 
-def ensure_tmux_session(session: str) -> None:
+def tmux_base(socket_name: str | None) -> list:
+    """tmux argv prefix — scratch servers get their own -L socket."""
+    return ["tmux", "-L", socket_name] if socket_name else ["tmux"]
+
+
+def ensure_tmux_session(session: str, socket_name: str | None = None) -> None:
     """Create the target tmux session if it doesn't exist (detached)."""
+    where = f" on scratch server '-L {socket_name}'" if socket_name else ""
     probe = subprocess.run(
-        ["tmux", "has-session", "-t", f"={session}"],
+        [*tmux_base(socket_name), "has-session", "-t", f"={session}"],
         capture_output=True,
     )
     if probe.returncode != 0:
         subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session, "-x", "220", "-y", "50"],
+            [*tmux_base(socket_name), "new-session", "-d", "-s", session,
+             "-x", "220", "-y", "50"],
             check=True,
         )
-        log(f"created tmux session '{session}'")
+        log(f"created tmux session '{session}'{where}")
     else:
-        log(f"tmux session '{session}' already exists — reusing")
+        log(f"tmux session '{session}'{where} already exists — reusing")
 
 
-def start_ttyd(port: int, index: str, session: str) -> subprocess.Popen:
+def build_stamped_index(src: str) -> str:
+    """Mirror deploy.sh's stamp sed: __TL_BUILD__ → DEV-<git short sha>.
+
+    Written to out/index.html (gitignored, same spot deploy.sh uses and
+    unconditionally regenerates). Lets the page log a recognizable
+    `terminal-lobby build: DEV-…` so battery runs can assert which build
+    the browser actually loaded.
+    """
+    try:
+        rev = subprocess.run(
+            ["git", "-C", REPO_ROOT, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        rev = "local"
+    stamp = f"DEV-{rev}"
+    with open(src, encoding="utf-8") as f:
+        html = f.read()
+    os.makedirs(os.path.dirname(STAMPED_INDEX), exist_ok=True)
+    with open(STAMPED_INDEX, "w", encoding="utf-8") as f:
+        f.write(html.replace("__TL_BUILD__", stamp))
+    log(f"stamped {src} → {STAMPED_INDEX} (build {stamp})")
+    return STAMPED_INDEX
+
+
+def start_ttyd(port: int, index: str, session: str,
+               socket_name: str | None = None) -> subprocess.Popen:
+    if socket_name:
+        tmux_cmd = ["tmux", "-L", socket_name, "new-session", "-A", "-s", session]
+    else:
+        tmux_cmd = ["tmux", "new", "-As", session]
     cmd = [
         "ttyd",
         "--port", str(port),
@@ -92,11 +140,25 @@ def start_ttyd(port: int, index: str, session: str) -> subprocess.Popen:
         "-a",                              # ttyd.service: -a (URL ?arg= → argv)
         "-t", "enableClipboard=true",      # ttyd.service: -t enableClipboard=true
         "--index", index,                  # ttyd.service: -I <custom index>
-        "tmux", "new", "-As", session,
+        *tmux_cmd,
     ]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     log(f"ttyd started (pid {proc.pid}): {' '.join(cmd)}")
     return proc
+
+
+def parse_delays(specs) -> list:
+    """--delay '/sessions=20' (or '20s') → [('/sessions', 20.0), …]."""
+    rules = []
+    for spec in specs or []:
+        path, eq, secs = spec.rpartition("=")
+        if not eq or not path.startswith("/"):
+            raise SystemExit(f"--delay expects /PATH=SECONDS, got {spec!r}")
+        try:
+            rules.append((path, float(secs.rstrip("sS"))))
+        except ValueError:
+            raise SystemExit(f"--delay: bad seconds value in {spec!r}")
+    return rules
 
 
 def wait_for_port(port: int, timeout: float = 8.0) -> None:
@@ -113,12 +175,28 @@ def wait_for_port(port: int, timeout: float = 8.0) -> None:
 
 def make_app(args: argparse.Namespace) -> web.Application:
     ttyd_base = f"http://127.0.0.1:{args.ttyd_port}"
-    api_base = args.api.rstrip("/")
+    api_base = args.api_base
+    clipboard_base = args.clipboard_base
+
+    async def maybe_delay(*paths) -> None:
+        """--delay debug hook: sleep before proxying a matching request.
+
+        Matches by prefix against every candidate spelling of the request
+        path (browser-facing and upstream-stripped), so both
+        `--delay /sessions=20` and `--delay /api/sessions=20` work.
+        """
+        for prefix, secs in args.delays:
+            for p in paths:
+                if p.startswith(prefix):
+                    log(f"delay {secs:g}s ({prefix} matched {p})")
+                    await asyncio.sleep(secs)
+                    return
 
     async def api_proxy(request: web.Request) -> web.StreamResponse:
         """/api/sessions/<tail> → <api_base>/<tail> with the auth header."""
         tail = request.match_info["tail"]
         url = f"{api_base}/{tail}"
+        await maybe_delay(f"/{tail}", request.rel_url.path)
         headers = {
             k: v for k, v in request.headers.items()
             if k.lower() not in HOP_BY_HOP
@@ -149,7 +227,8 @@ def make_app(args: argparse.Namespace) -> web.Application:
         clipboard-upload service — its store/list/img routes resolve the
         caller's OS user from the header exactly like tmux-api does)."""
         tail = request.match_info["tail"]
-        url = f"{CLIPBOARD_BASE}/{tail}"
+        url = f"{clipboard_base}/{tail}"
+        await maybe_delay(f"/{tail}", request.rel_url.path)
         headers = {
             k: v for k, v in request.headers.items()
             if k.lower() not in HOP_BY_HOP
@@ -228,6 +307,7 @@ def make_app(args: argparse.Namespace) -> web.Application:
                 and "upgrade" in request.headers.get("Connection", "").lower()):
             return await ws_proxy(request)
 
+        await maybe_delay(request.rel_url.raw_path)
         url = f"{ttyd_base}{request.rel_url.raw_path}"
         headers = {
             k: v for k, v in request.headers.items()
@@ -270,29 +350,58 @@ def make_app(args: argparse.Namespace) -> web.Application:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--index", default=DEFAULT_INDEX,
-                        help=f"index.html for ttyd -I (default: {DEFAULT_INDEX})")
-    parser.add_argument("--session", default="copytest",
-                        help="tmux session name to create/attach (default: copytest)")
+                        help=f"index.html source for ttyd -I; the build stamp is "
+                             f"applied to a copy (default: {DEFAULT_INDEX})")
+    parser.add_argument("--session", default=None,
+                        help="tmux session name to create/attach "
+                             "(default: main in scratch mode, copytest with --no-scratch)")
+    parser.add_argument("--scratch", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="run the ttyd child against an isolated scratch tmux "
+                             f"server (tmux -L {SCRATCH_SOCKET}), killed on exit; "
+                             "--no-scratch attaches the REAL default tmux server "
+                             "(pre-battery behavior)")
     parser.add_argument("--proxy-port", type=int, default=7997)
     parser.add_argument("--ttyd-port", type=int, default=7996)
-    parser.add_argument("--api", default="http://127.0.0.1:7684",
-                        help="live tmux-api base URL")
+    parser.add_argument("--tmux-api-port", type=int, default=7684,
+                        help="tmux-api port on 127.0.0.1 (default 7684 = the live "
+                             "service; point at a scratch `go run .` build to test "
+                             "server changes)")
+    parser.add_argument("--clipboard-port", type=int, default=7683,
+                        help="clipboard-upload port on 127.0.0.1 (default 7683 = "
+                             "the live service)")
+    parser.add_argument("--api", default=None,
+                        help="full tmux-api base URL (overrides --tmux-api-port)")
     parser.add_argument("--user", default="alice",
                         help="value for the injected X-Authentik-Username header")
+    parser.add_argument("--delay", action="append", metavar="/PATH=SECS",
+                        help="debug: sleep SECS before proxying requests whose "
+                             "path starts with /PATH (repeatable), e.g. "
+                             "--delay /sessions=20")
     parser.add_argument("--no-ttyd", action="store_true",
                         help="don't spawn ttyd; assume one is already on --ttyd-port")
     parser.add_argument("--kill-session-on-exit", action="store_true",
-                        help="tmux kill-session the --session on shutdown")
+                        help="tmux kill-session the --session on shutdown "
+                             "(scratch mode already kills its whole server)")
     args = parser.parse_args()
 
     if not os.path.isfile(args.index):
         parser.error(f"index file not found: {args.index}")
 
-    ensure_tmux_session(args.session)
+    args.delays = parse_delays(args.delay)
+    args.api_base = (args.api or f"http://127.0.0.1:{args.tmux_api_port}").rstrip("/")
+    args.clipboard_base = f"http://127.0.0.1:{args.clipboard_port}"
+    socket_name = SCRATCH_SOCKET if args.scratch else None
+    if args.session is None:
+        args.session = "main" if args.scratch else "copytest"
+
+    ensure_tmux_session(args.session, socket_name)
 
     ttyd_proc = None
     if not args.no_ttyd:
-        ttyd_proc = start_ttyd(args.ttyd_port, args.index, args.session)
+        index_for_ttyd = build_stamped_index(args.index)
+        ttyd_proc = start_ttyd(args.ttyd_port, index_for_ttyd, args.session,
+                               socket_name)
     wait_for_port(args.ttyd_port)
 
     loop = asyncio.new_event_loop()
@@ -305,7 +414,9 @@ def main() -> None:
 
     app = make_app(args)
     log(f"proxy on http://127.0.0.1:{args.proxy_port}  "
-        f"(index={args.index}, session={args.session}, api={args.api}, "
+        f"(index={args.index}, session={args.session}"
+        f"{f' [scratch -L {SCRATCH_SOCKET}]' if args.scratch else ''}, "
+        f"api={args.api_base}, clipboard={args.clipboard_base}, "
         f"user={args.user})")
     try:
         web.run_app(app, host="127.0.0.1", port=args.proxy_port,
@@ -320,8 +431,16 @@ def main() -> None:
             except subprocess.TimeoutExpired:
                 ttyd_proc.kill()
             log("ttyd child stopped")
-        if args.kill_session_on_exit:
-            subprocess.run(["tmux", "kill-session", "-t", f"={args.session}"],
+        if args.scratch and ttyd_proc is not None:
+            # Scratch teardown: the whole tl-dev server goes away. Only when
+            # this harness spawned the ttyd child — with --no-ttyd the scratch
+            # server may belong to someone else's run.
+            subprocess.run([*tmux_base(SCRATCH_SOCKET), "kill-server"],
+                           capture_output=True)
+            log(f"scratch tmux server '-L {SCRATCH_SOCKET}' killed")
+        elif args.kill_session_on_exit:
+            subprocess.run([*tmux_base(socket_name), "kill-session",
+                            "-t", f"={args.session}"],
                            capture_output=True)
             log(f"tmux session '{args.session}' killed")
 

@@ -215,6 +215,13 @@ For the frontend, there's no build step. The whole UI is a single
 `index.html` with inline CSS + a single `<script>` IIFE. ttyd serves
 it verbatim with `-I`.
 
+For end-to-end frontend work there's a loopback harness:
+`python3 scripts/dev-harness.py` reproduces the production routing
+(auth header injection, prefix-stripped API routes, WS passthrough)
+against an isolated scratch tmux server — see `scripts/dev-harness.md`.
+UI changes are verified against the regression battery in
+`scripts/devserve/BATTERY.md` (red-line checks + per-feature acceptance).
+
 ## Theme
 
 Four themes shipped as CSS variables on `body.theme-{slate,carbon,mono,ink}`.
