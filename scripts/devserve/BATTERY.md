@@ -801,3 +801,25 @@ implements the feature. Format:
   no horizontal scroll. The soft-key toolbar (#soft-keys) is
   UNTOUCHED: its buttons still measure 38px tall with min-height auto
   (the plan's "keeps the existing soft-key toolbar sizing").
+- [Task M.3] Flat iframe history: load the lobby top-level and snapshot
+  `base = history.length` (2 under Playwright — its fresh page starts on
+  about:blank; 1 in a real fresh tab), then attach 3 DIFFERENT sessions
+  by clicking their cards in sequence (attaching real cards is safe —
+  the harness ttyd ignores the URL arg) → `history.length` stays
+  **base** after every swap (pre-M.3 measured 2→3→4: every
+  `frameEl.src` swap after the first pushed a joint entry). Then
+  `page.go_back()` → lands OUTSIDE the app (Playwright's about:blank
+  start page), NEVER on a stale attach, and `page.go_forward()` returns
+  to the untouched outer URL (`#<session>` hash intact, auto-attaches).
+  Real-tab equivalent: base is 1 and back is a no-op — the iOS
+  standalone edge-back-swipe stays disarmed, Android predictive-back
+  minimizes the app. The `about:blank` writer (deactivate has no UI
+  control — it is hash/kill-driven) is exercised via the Task 1.7
+  ACK-fallback bounce: suppress the ACK, switch theme → the iframe
+  reloads (~1s) into the new theme and `history.length` is STILL base
+  (the bounce is two `replace()` navigations now). Guard-read
+  regression: while attached, a theme click still posts `tl-theme` and
+  dispatching `tl-prefs-change` still posts `tl-prefs` + `tl-font-size`
+  into the iframe — their `currentActive && … && contentWindow` guards
+  read the tracked `frameUrl` (`frameEl.src` goes stale under
+  `location.replace()` and must not be reintroduced).
