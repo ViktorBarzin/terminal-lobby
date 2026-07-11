@@ -1879,7 +1879,22 @@
             cursorBlink: true,
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
             fontSize: 15,
+            // Pin both weights to the vendored JetBrains Mono faces (400/700)
+            // so browsers never synthesize a faux bold — or substitute a
+            // different family for it — now that real webfonts are in play.
+            fontWeight: '400',
+            fontWeightBold: '700',
             theme: readTerminalTheme(),
+            // Nudge foreground colors toward WCAG AA (4.5:1) against each
+            // cell's background — VS Code's default. xterm excludes box/block
+            // glyphs from the adjustment (TUI borders keep exact theme colors)
+            // and holds \e[2m dim text to half-ratio, so dim stays visibly
+            // dim while low-contrast pairs (e.g. dark-tuned ANSI colors on
+            // the light ink theme) become readable.
+            minimumContrastRatio: 4.5,
+            // Unfocused terminal renders a hollow outline cursor instead of
+            // a solid block — the standard "keystrokes go elsewhere" cue.
+            cursorInactiveStyle: 'outline',
             // Mac leg of the plain-drag selection reclaim (mousedown
             // interceptor below term.open): the synthetic clones carry
             // altKey, and only this option makes xterm treat Option-clicks
@@ -1984,6 +1999,14 @@
         document.fonts.addEventListener('loadingdone', () => {
             fitAddon.fit();
             term.clearTextureAtlas?.();
+        });
+
+        // Returning from OS sleep or a long-backgrounded tab can leave the
+        // WebGL glyph atlas corrupted (GPU texture invalidated without a
+        // context-loss event, so onContextLoss never fires). Rebuild it on
+        // every return to visibility — near-free when nothing was lost.
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) term.clearTextureAtlas?.();
         });
 
         // 'TL Symbols' — Iosevka-subset fallback face (scripts/build-tl-symbols.sh):

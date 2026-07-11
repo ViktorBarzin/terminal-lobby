@@ -182,3 +182,28 @@ implements the feature. Format:
   likewise). Terminal untouched: in the iframe, `window.__term.options.fontFamily`
   still starts `'JetBrains Mono'` and contains NO DM Sans; #soft-keys and the
   drop overlay stay on `var(--font-mono)`. Screenshot the lobby.
+- [Task 1.3] Dim-text contrast: `window.__term.options.minimumContrastRatio`
+  → `4.5`; on the `ink` (light) theme,
+  `tmux -L tl-dev send-keys -t main "printf '\e[2mdim sample\e[0m normal\n'" Enter`
+  → screenshot: the dim run is READABLE against the light background but
+  still visibly dimmer than the adjacent normal text (xterm holds dim to
+  half-ratio).
+- [Task 1.3] Selected-text readability eyeball on all four themes
+  (carbon/slate/mono/ink): emit colored output
+  (`for i in $(seq 30 37); do printf "\e[${i}mcolor$i \e[0m"; done`), drag a
+  selection across it → glyphs stay legible inside the selection overlay
+  (contrast adjustment interacts with selectionBackground). Box/block glyphs
+  (`│ █ ▓`) keep exact theme colors — excluded from the adjustment.
+- [Task 1.3] Inactive cursor: `window.__term.options.cursorInactiveStyle` →
+  `'outline'`; blur the terminal (focus the lobby sidebar) → cursor renders
+  as a hollow outline, not a solid block; refocus → solid blinking block
+  returns.
+- [Task 1.3] Bold weight: `window.__term.options.fontWeight` → `'400'` and
+  `fontWeightBold` → `'700'`;
+  `tmux -L tl-dev send-keys -t main "printf 'normal \e[1mbold\e[0m\n'" Enter`
+  → screenshot: bold run renders in the real JBM 700 face (heavier, same
+  cell width — no faux-bold smear/overflow).
+- [Task 1.3] Atlas-recovery listener: in the terminal iframe run
+  `document.dispatchEvent(new Event('visibilitychange'))` (document is
+  visible, so the handler calls `clearTextureAtlas`) → no console error and
+  the terminal still renders (screenshot matches pre-dispatch).
