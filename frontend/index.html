@@ -498,25 +498,91 @@
             html, body { height: 100dvh; }
         }
         .hidden { display: none !important; }
+        /* Typed toast stack (Task 2.7). #toast — the single-element toast
+           of old — is now the fixed stack VIEWPORT; each toast renders as
+           a .toast-card child. Position + safe-area offsets kept verbatim
+           (battery 1.12 asserts them):
+           Safe-area offsets (Task 1.12 audit): the page opts into
+           viewport-fit=cover + a translucent status bar, so a bare
+           top:16px toast sits half-under the iOS notch/status bar
+           (~47-59px inset). env() is 0 on desktop.
+           .visible mirrors "has any toast" purely for battery A.3 compat.
+           The empty viewport never eats pointer events over the terminal;
+           cards do (Copy / expand / dismiss are interactive — same class
+           of fixed clickable surface as the floating action buttons). */
         #toast {
             position: fixed; z-index: 9999;
-            /* Safe-area offsets (Task 1.12 audit): the page opts into
-               viewport-fit=cover + a translucent status bar, so a bare
-               top:16px toast sits half-under the iOS notch/status bar
-               (~47-59px inset). Every OTHER floating element already
-               compensates — this one was missed. env() is 0 on desktop. */
             top: calc(16px + env(safe-area-inset-top));
             right: calc(16px + env(safe-area-inset-right));
+            display: flex; flex-direction: column; gap: 10px;
+            width: min(360px, calc(100vw - 32px));
+            pointer-events: none;
+            font-family: var(--font-ui); font-size: 14px;
+        }
+        .toast-card {
+            display: flex; align-items: flex-start; gap: 10px;
             background: var(--bg-card); color: var(--text-primary);
             border: 1px solid var(--border);
             border-radius: calc(var(--radius) - 2px);
-            padding: 10px 18px; font-family: var(--font-ui);
-            font-size: 14px; opacity: 0; transition: opacity 0.3s;
-            pointer-events: none; max-width: 500px; word-break: break-all;
+            padding: 10px 14px;
+            pointer-events: auto;
+            box-shadow: var(--surface-shadow);
+            animation: toast-in 0.18s ease-out;
         }
-        #toast.visible { opacity: 1; }
-        #toast.error { color: var(--danger); border-color: var(--danger); }
-        #toast.success { color: var(--success); border-color: var(--success); }
+        @keyframes toast-in { from { opacity: 0; transform: translateY(-4px); } }
+        .toast-card .t-icon {
+            flex: none; width: 16px; text-align: center;
+            font-size: 13px; line-height: 20px;
+        }
+        .t-error   > .t-icon { color: var(--danger); }
+        .t-success > .t-icon { color: var(--success); }
+        .t-warning > .t-icon { color: #f59e0b; } /* amber — Task 2.4 state palette */
+        .t-info    > .t-icon { color: var(--accent); }
+        .t-loading > .t-icon { /* ring spinner instead of a glyph */
+            width: 12px; height: 12px; margin: 4px 2px 0;
+            border-radius: 50%;
+            border: 2px solid var(--border); border-top-color: var(--accent);
+            animation: toast-spin 0.8s linear infinite;
+        }
+        @keyframes toast-spin { to { transform: rotate(360deg); } }
+        .toast-card .t-body { flex: 1; min-width: 0; }
+        .toast-card .t-title { font-weight: 500; word-break: break-word; }
+        .toast-card .t-desc {
+            margin-top: 2px; font-size: 12px; color: var(--text-muted);
+            word-break: break-word;
+            user-select: text; -webkit-user-select: text;
+        }
+        /* Long bodies (≥180 chars) shorten visually; Copy still gets the
+           full string (T3's error-description clamp). */
+        .toast-card .t-desc.t-clamp {
+            display: -webkit-box; -webkit-box-orient: vertical;
+            -webkit-line-clamp: 4; overflow: hidden;
+        }
+        .toast-card .t-expand {
+            margin-top: 4px; padding: 0; border: 0; background: none;
+            font: 500 12px var(--font-ui); color: var(--text-muted);
+            cursor: pointer;
+        }
+        .toast-card .t-expand:hover { color: var(--text-primary); }
+        .toast-card .t-detail {
+            margin-top: 6px; max-height: 160px; overflow-y: auto;
+            overscroll-behavior: contain;
+            user-select: text; -webkit-user-select: text;
+        }
+        .toast-card .t-detail-row {
+            padding: 4px 0; border-bottom: 1px solid var(--border);
+            font-size: 12px; word-break: break-word;
+        }
+        .toast-card .t-detail-row:last-child { border-bottom: 0; }
+        .toast-card .t-detail-sub {
+            font-size: 10px; color: var(--text-muted); margin-top: 1px;
+        }
+        .toast-card .t-copy, .toast-card .t-x {
+            flex: none; border: 0; background: none; padding: 0 2px;
+            cursor: pointer; color: var(--text-muted);
+            font-size: 13px; line-height: 20px;
+        }
+        .toast-card .t-copy:hover, .toast-card .t-x:hover { color: var(--text-primary); }
         /* Connection pill (Task 2.2): slim non-modal WS status for the
            terminal iframe — top-center so it never covers the floating
            action buttons or the prompt. Pure status surface:
@@ -1441,13 +1507,241 @@
             try { localStorage.setItem(FONT_SIZE_KEY, String(n)); } catch (e) {}
         }
 
+        // ---- typed toast manager (Task 2.7) ---------------------------
+        // T3's toast surface (apps/web ui/toast.tsx) reduced to vanilla
+        // DOM: five types with icons, id-based update-in-place + close,
+        // long descriptions clamp to 4 lines with a Copy button, optional
+        // expandable detail rows. The old single-element #toast div is now
+        // the stack viewport (see the CSS block).
+        const tlToast = (() => {
+            const stack = document.getElementById('toast');
+            const ICONS = { error: '✕', warning: '⚠', success: '✓', info: 'ℹ', loading: '' };
+            const CLAMP_MIN_CHARS = 180; // T3: shorten long bodies visually; Copy keeps the full string
+            const MAX_STACK = 6;
+            const toasts = new Map(); // id → {id, el, opts, timer, expanded}
+            let seq = 0;
+            // "has any toast" marker — battery A.3 asserts #toast.visible.
+            function syncVisible() { stack.classList.toggle('visible', toasts.size > 0); }
+            function render(t) {
+                const o = t.opts;
+                clearChildren(t.el);
+                const type = ICONS.hasOwnProperty(o.type) ? o.type : 'info';
+                t.el.className = 'toast-card t-' + type;
+                const icon = document.createElement('span');
+                icon.className = 't-icon';
+                icon.textContent = ICONS[type];
+                t.el.appendChild(icon);
+                const body = document.createElement('div');
+                body.className = 't-body';
+                const title = document.createElement('div');
+                title.className = 't-title';
+                title.textContent = o.title || '';
+                body.appendChild(title);
+                const desc = typeof o.description === 'string' ? o.description : '';
+                if (desc) {
+                    const d = document.createElement('div');
+                    d.className = 't-desc' + (desc.length >= CLAMP_MIN_CHARS ? ' t-clamp' : '');
+                    d.textContent = desc;
+                    body.appendChild(d);
+                }
+                if (Array.isArray(o.detail) && o.detail.length) {
+                    const labels = o.expandLabels || {};
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 't-expand';
+                    const panel = document.createElement('div');
+                    panel.className = 't-detail';
+                    const paintExpand = () => {
+                        btn.textContent = t.expanded
+                            ? (labels.collapse || 'Hide details') + ' ▴'
+                            : (labels.expand || 'Show details') + ' ▾';
+                        panel.classList.toggle('hidden', !t.expanded);
+                    };
+                    btn.addEventListener('click', () => { t.expanded = !t.expanded; paintExpand(); });
+                    for (const row of o.detail) {
+                        const r = document.createElement('div');
+                        r.className = 't-detail-row';
+                        const main = document.createElement('div');
+                        main.textContent = row.text || '';
+                        r.appendChild(main);
+                        if (row.sub) {
+                            const sub = document.createElement('div');
+                            sub.className = 't-detail-sub';
+                            sub.textContent = row.sub;
+                            r.appendChild(sub);
+                        }
+                        panel.appendChild(r);
+                    }
+                    paintExpand();
+                    body.appendChild(btn);
+                    body.appendChild(panel);
+                }
+                t.el.appendChild(body);
+                if (desc && (type === 'error' || desc.length >= CLAMP_MIN_CHARS)) {
+                    const copy = document.createElement('button');
+                    copy.type = 'button';
+                    copy.className = 't-copy';
+                    copy.title = 'Copy message';
+                    copy.textContent = '⧉';
+                    copy.addEventListener('click', () => {
+                        (navigator.clipboard
+                            ? navigator.clipboard.writeText(desc)
+                            : Promise.reject()
+                        ).then(() => {
+                            copy.textContent = '✓';
+                            setTimeout(() => { copy.textContent = '⧉'; }, 1200);
+                        }).catch(() => {});
+                    });
+                    t.el.appendChild(copy);
+                }
+                const x = document.createElement('button');
+                x.type = 'button';
+                x.className = 't-x';
+                x.title = 'Dismiss';
+                x.textContent = '×';
+                x.addEventListener('click', () => close(t.id));
+                t.el.appendChild(x);
+            }
+            function arm(t) {
+                clearTimeout(t.timer);
+                const ms = t.opts.timeout === undefined ? 3000 : t.opts.timeout;
+                if (ms > 0) t.timer = setTimeout(() => close(t.id), ms); // 0 = sticky
+            }
+            function add(opts) {
+                // Cap the stack: drop the oldest auto-dismiss card first so
+                // a burst can never bury a sticky health toast (the old
+                // single-element toast simply replaced itself).
+                if (toasts.size >= MAX_STACK) {
+                    let victim = null;
+                    for (const t of toasts.values()) { if (t.timer) { victim = t; break; } }
+                    close((victim || toasts.values().next().value).id);
+                }
+                const id = ++seq;
+                const t = { id, el: document.createElement('div'),
+                            opts: opts || {}, timer: null, expanded: false };
+                toasts.set(id, t);
+                render(t);
+                arm(t);
+                stack.appendChild(t.el);
+                syncVisible();
+                return id;
+            }
+            function update(id, opts) {
+                const t = toasts.get(id);
+                if (!t) return;
+                Object.assign(t.opts, opts || {});
+                render(t); // t.expanded survives the re-render
+                arm(t);
+            }
+            function close(id) {
+                const t = toasts.get(id);
+                if (!t) return;
+                clearTimeout(t.timer);
+                toasts.delete(id);
+                t.el.remove();
+                syncVisible();
+            }
+            return { add, update, close };
+        })();
+        window.__tlToast = tlToast; // battery hook
+
+        // Legacy signature kept as a thin wrapper — every pre-existing call
+        // site works unchanged: ''/undefined type → info, `duration || 3000`
+        // matches the old timer default exactly.
         function showToast(msg, type, duration) {
-            const el = document.getElementById('toast');
-            el.textContent = msg;
-            el.className = 'visible' + (type ? ' ' + type : '');
-            clearTimeout(el._timer);
-            el._timer = setTimeout(() => { el.className = ''; }, duration || 3000);
+            tlToast.add({
+                type: type === 'error' || type === 'success' ? type : 'info',
+                title: msg,
+                timeout: duration || 3000
+            });
         }
+
+        // ---- slow-request health toast (Task 2.7) ---------------------
+        // Port of T3's requestLatencyState + SlowRpcRequestToastCoordinator:
+        // every tmux-api/clipboard-upload fetch (and the terminal WS connect,
+        // tracked from the connect path) is "pending" until acknowledged;
+        // anything pending >15s joins ONE self-updating sticky warning toast,
+        // which closes when the last slow item acks. Failures ack too — the
+        // caller's own error handling owns that messaging.
+        const SLOW_ACK_MS = 15000;
+        const slowRequests = (() => {
+            const MAX_TRACKED = 64; // hard cap — a leak must not grow unbounded
+            const pending = new Map(); // id → {tag, startedAtMs, timer}
+            const slow = new Map();    // id → {tag, startedAtMs}
+            let seq = 0;
+            let toastId = null;
+            function repaint() {
+                if (!slow.size) {
+                    if (toastId !== null) { tlToast.close(toastId); toastId = null; }
+                    return;
+                }
+                const list = Array.from(slow.values());
+                const opts = {
+                    type: 'warning',
+                    title: 'Some requests are slow',
+                    description: list.length + ' request' + (list.length === 1 ? '' : 's')
+                        + ' waiting longer than ' + Math.round(SLOW_ACK_MS / 1000) + 's.',
+                    detail: list.map(r => ({
+                        text: r.tag,
+                        sub: 'Started ' + new Date(r.startedAtMs).toLocaleTimeString()
+                    })),
+                    expandLabels: { expand: 'Show requests', collapse: 'Hide requests' },
+                    timeout: 0
+                };
+                if (toastId === null) toastId = tlToast.add(opts);
+                else tlToast.update(toastId, opts);
+            }
+            function track(tag) {
+                if (pending.size + slow.size >= MAX_TRACKED) return 0;
+                const id = ++seq;
+                const startedAtMs = Date.now();
+                pending.set(id, {
+                    tag, startedAtMs,
+                    timer: setTimeout(() => {
+                        pending.delete(id);
+                        slow.set(id, { tag, startedAtMs });
+                        repaint();
+                    }, SLOW_ACK_MS)
+                });
+                return id;
+            }
+            function ack(id) {
+                if (!id) return;
+                const p = pending.get(id);
+                if (p) { clearTimeout(p.timer); pending.delete(id); return; }
+                if (slow.delete(id)) repaint();
+            }
+            return { track, ack };
+        })();
+        window.__tlSlowRequests = slowRequests; // battery hook
+
+        // Wrap fetch so every tmux-api/clipboard-upload call site (present
+        // and future) is tracked without touching the call sites. Anything
+        // else — the stale-tab healer's self-fetch, ttyd's /token, CDN
+        // assets — passes straight through.
+        const tlRealFetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            let u = null;
+            try {
+                u = new URL(
+                    typeof input === 'string' ? input
+                        : (input instanceof URL ? input.href : input.url),
+                    location.href
+                );
+            } catch (e) { /* unparseable → untracked */ }
+            if (!u || u.origin !== location.origin
+                   || !/^\/(api\/sessions|clipboard)\//.test(u.pathname)) {
+                return tlRealFetch(input, init);
+            }
+            const method = ((init && init.method)
+                || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
+            const id = slowRequests.track(method + ' ' + u.pathname);
+            const p = tlRealFetch(input, init);
+            // Ack on headers-arrived or failure; return the ORIGINAL promise
+            // so caller semantics (incl. rejection) are untouched.
+            p.then(() => slowRequests.ack(id), () => slowRequests.ack(id));
+            return p;
+        };
 
         function clearChildren(el) {
             while (el.firstChild) el.removeChild(el.firstChild);
@@ -4298,9 +4592,15 @@
                     const token = tokenData.token || '';
                     ws = new WebSocket(wsUrl, ['tty']);
                     ws.binaryType = 'arraybuffer';
+                    // Task 2.7: WS liveness feeds the slow-request health
+                    // toast — this attempt is "pending" until onopen. The
+                    // onclose ack keeps a failed attempt from lingering as
+                    // slow (the connection pill owns retry messaging).
+                    const wsSlowId = slowRequests.track('WS ' + base + '/ws');
 
                     ws.onopen = () => {
                         console.log('Connected to ttyd (session: ' + validArg + ')');
+                        slowRequests.ack(wsSlowId);
                         hideConnPill();
                         // Ladder reset only after the connection PROVES
                         // stable (30s up) — an instant re-drop keeps the
@@ -4383,6 +4683,7 @@
                     };
 
                     ws.onclose = () => {
+                        slowRequests.ack(wsSlowId); // no-op after onopen's ack
                         // The connection did not survive — stop a pending
                         // stability reset and show status while we decide
                         // whether to reconnect (the existence check below
