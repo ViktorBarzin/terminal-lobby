@@ -214,3 +214,20 @@ implements the feature. Format:
   screenshot: emoji render double-width and the `├──` tree stays aligned
   with tmux's wcwidth — no one-cell drift/overlap after the emoji (the
   built-in Unicode 6 tables count 🙂 as width 1 while tmux counts 2).
+- [Task 1.5] Full ITheme emission: in the terminal iframe
+  `window.__term.options.theme` → carries all 16 `black…brightWhite` keys
+  plus `cursorAccent`, each equal to the active theme's
+  `--terminal-ansi-*` / `--terminal-cursor-accent` computed value; the
+  original `background/foreground/cursor/selectionBackground` values are
+  **byte-identical** to their pre-task values on every theme (red line:
+  selection color untouched).
+- [Task 1.5] ANSI swatches: on EACH of carbon/slate/mono/ink run
+  `tmux -L tl-dev send-keys -t main 'for i in $(seq 30 37) $(seq 90 97); do printf "\e[${i}m█ "; done; printf "\e[0m\n"' Enter`
+  → screenshot: 16 mutually distinguishable swatches in the T3-seeded
+  palette (NOT xterm's stock VGA — stock red is the #cd0000 class), all
+  colors legible against the theme bg. On ink the row renders the dark
+  T3-light-seeded set — colors 30-37/90-97 visible on the light
+  background; the white/bright-white NEUTRALS sit near-bg by design
+  (they are a light theme's "paper" colors, and █ block glyphs are
+  excluded from the minimum-contrast adjustment). Verified 2026-07-11
+  on ink: 14 chromatic swatches + dark black pair all clearly visible.

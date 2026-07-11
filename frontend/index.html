@@ -108,6 +108,29 @@
             --terminal-fg: #e8e3d6;
             --terminal-cursor: #d4a574;
             --terminal-selection: rgba(212,165,116,0.22);
+            /* Text under the block cursor renders in the theme bg (classic
+               inverse); without this xterm defaults it to black, unreadable
+               on light cursors. */
+            --terminal-cursor-accent: #0c0c0a;
+            /* ANSI 16 — T3's hand-tuned dark palette (ThreadTerminalDrawer);
+               black = this theme's elevated card surface so \e[40m panels
+               read as raised surfaces, not voids. */
+            --terminal-ansi-black: #1a1916;
+            --terminal-ansi-red: #ff7a8e;
+            --terminal-ansi-green: #86e795;
+            --terminal-ansi-yellow: #f4cd72;
+            --terminal-ansi-blue: #89beff;
+            --terminal-ansi-magenta: #d0b0ff;
+            --terminal-ansi-cyan: #7ce8ed;
+            --terminal-ansi-white: #d2dae6;
+            --terminal-ansi-bright-black: #6e7888;
+            --terminal-ansi-bright-red: #ffa8b4;
+            --terminal-ansi-bright-green: #b0f5ba;
+            --terminal-ansi-bright-yellow: #ffe095;
+            --terminal-ansi-bright-blue: #aed2ff;
+            --terminal-ansi-bright-magenta: #e5cbff;
+            --terminal-ansi-bright-cyan: #a7f4f7;
+            --terminal-ansi-bright-white: #f4f7fc;
         }
         body.theme-slate {
             --bg-page: #0d1117;
@@ -128,6 +151,24 @@
             --terminal-fg: #e6e8eb;
             --terminal-cursor: #4493f8;
             --terminal-selection: rgba(68,147,248,0.22);
+            --terminal-cursor-accent: #0d1117;
+            /* Same T3 dark ANSI set as carbon; black = slate's card surface. */
+            --terminal-ansi-black: #161b22;
+            --terminal-ansi-red: #ff7a8e;
+            --terminal-ansi-green: #86e795;
+            --terminal-ansi-yellow: #f4cd72;
+            --terminal-ansi-blue: #89beff;
+            --terminal-ansi-magenta: #d0b0ff;
+            --terminal-ansi-cyan: #7ce8ed;
+            --terminal-ansi-white: #d2dae6;
+            --terminal-ansi-bright-black: #6e7888;
+            --terminal-ansi-bright-red: #ffa8b4;
+            --terminal-ansi-bright-green: #b0f5ba;
+            --terminal-ansi-bright-yellow: #ffe095;
+            --terminal-ansi-bright-blue: #aed2ff;
+            --terminal-ansi-bright-magenta: #e5cbff;
+            --terminal-ansi-bright-cyan: #a7f4f7;
+            --terminal-ansi-bright-white: #f4f7fc;
         }
         body.theme-mono {
             --bg-page: #0d0d0d;
@@ -148,6 +189,24 @@
             --terminal-fg: #e0e0e0;
             --terminal-cursor: #e8e8e8;
             --terminal-selection: rgba(255,255,255,0.18);
+            --terminal-cursor-accent: #0d0d0d;
+            /* Same T3 dark ANSI set; black = mono's card surface. */
+            --terminal-ansi-black: #1a1a1a;
+            --terminal-ansi-red: #ff7a8e;
+            --terminal-ansi-green: #86e795;
+            --terminal-ansi-yellow: #f4cd72;
+            --terminal-ansi-blue: #89beff;
+            --terminal-ansi-magenta: #d0b0ff;
+            --terminal-ansi-cyan: #7ce8ed;
+            --terminal-ansi-white: #d2dae6;
+            --terminal-ansi-bright-black: #6e7888;
+            --terminal-ansi-bright-red: #ffa8b4;
+            --terminal-ansi-bright-green: #b0f5ba;
+            --terminal-ansi-bright-yellow: #ffe095;
+            --terminal-ansi-bright-blue: #aed2ff;
+            --terminal-ansi-bright-magenta: #e5cbff;
+            --terminal-ansi-bright-cyan: #a7f4f7;
+            --terminal-ansi-bright-white: #f4f7fc;
         }
         body.theme-ink {
             --bg-page: #faf7f2;
@@ -168,6 +227,26 @@
             --terminal-fg: #1d1b18;
             --terminal-cursor: #b5482d;
             --terminal-selection: rgba(181,72,45,0.18);
+            --terminal-cursor-accent: #faf7f2;
+            /* ANSI 16 — T3's hand-tuned LIGHT palette: dark, desaturated
+               colors that stay legible on paper-white (the stock xterm VGA
+               set is tuned for dark bg and washes out here). */
+            --terminal-ansi-black: #2c3542;
+            --terminal-ansi-red: #bf4657;
+            --terminal-ansi-green: #3c7e56;
+            --terminal-ansi-yellow: #927023;
+            --terminal-ansi-blue: #4866a3;
+            --terminal-ansi-magenta: #845695;
+            --terminal-ansi-cyan: #357f8d;
+            --terminal-ansi-white: #d2d7df;
+            --terminal-ansi-bright-black: #707b8c;
+            --terminal-ansi-bright-red: #d45f70;
+            --terminal-ansi-bright-green: #55946f;
+            --terminal-ansi-bright-yellow: #ad852d;
+            --terminal-ansi-bright-blue: #5b7cc2;
+            --terminal-ansi-bright-magenta: #996bac;
+            --terminal-ansi-bright-cyan: #4695a4;
+            --terminal-ansi-bright-white: #ecf0f6;
         }
 
         html, body {
@@ -791,11 +870,32 @@
         function readTerminalTheme() {
             const cs = getComputedStyle(document.body);
             const v = k => cs.getPropertyValue(k).trim();
+            // Full ITheme: the original four keys keep their hard fallbacks
+            // (slate), cursorAccent inverts to the theme bg, and the 16 ANSI
+            // slots come from the per-theme --terminal-ansi-* vars (fallbacks
+            // = the T3-seeded dark set, matching the slate default).
             return {
                 background: v('--terminal-bg') || '#0d1117',
                 foreground: v('--terminal-fg') || '#e6e8eb',
                 cursor: v('--terminal-cursor') || '#4493f8',
-                selectionBackground: v('--terminal-selection') || 'rgba(68,147,248,0.22)'
+                cursorAccent: v('--terminal-cursor-accent') || v('--terminal-bg') || '#0d1117',
+                selectionBackground: v('--terminal-selection') || 'rgba(68,147,248,0.22)',
+                black: v('--terminal-ansi-black') || '#161b22',
+                red: v('--terminal-ansi-red') || '#ff7a8e',
+                green: v('--terminal-ansi-green') || '#86e795',
+                yellow: v('--terminal-ansi-yellow') || '#f4cd72',
+                blue: v('--terminal-ansi-blue') || '#89beff',
+                magenta: v('--terminal-ansi-magenta') || '#d0b0ff',
+                cyan: v('--terminal-ansi-cyan') || '#7ce8ed',
+                white: v('--terminal-ansi-white') || '#d2dae6',
+                brightBlack: v('--terminal-ansi-bright-black') || '#6e7888',
+                brightRed: v('--terminal-ansi-bright-red') || '#ffa8b4',
+                brightGreen: v('--terminal-ansi-bright-green') || '#b0f5ba',
+                brightYellow: v('--terminal-ansi-bright-yellow') || '#ffe095',
+                brightBlue: v('--terminal-ansi-bright-blue') || '#aed2ff',
+                brightMagenta: v('--terminal-ansi-bright-magenta') || '#e5cbff',
+                brightCyan: v('--terminal-ansi-bright-cyan') || '#a7f4f7',
+                brightWhite: v('--terminal-ansi-bright-white') || '#f4f7fc'
             };
         }
         applyTheme(getTheme());
