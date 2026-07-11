@@ -398,3 +398,17 @@ implements the feature. Format:
   helper textarea focused; `--kb-offset` seeded on
   `documentElement.style`; `has-soft-keys` active under
   pointer:coarse. Default tmux server untouched before/after.
+- [Task 1.13] SRI enforced on all 8 CDN tags (published non-`.min`
+  paths, sha384 + `crossorigin="anonymous"`): full page load → each of
+  xterm.css, xterm.js, addon-{fit,web-links,webgl,clipboard,image,
+  unicode11}.js responds 200 with **zero** integrity console errors;
+  `Terminal` + all six addon globals defined, unicode11 active,
+  xterm.css rules applied, terminal echoes end-to-end. Enforcement
+  proof: serve a copy with ONE flipped hash character on the xterm.js
+  tag (out-of-tree copy — never edit the worktree file) → console
+  logs "Failed to find a valid digest in the 'integrity' attribute"
+  and `typeof Terminal === 'undefined'` (asset blocked); remove the
+  copy. Hash respec rule: any version bump recomputes
+  `curl -s <url> | openssl dgst -sha384 -binary | base64` fresh from
+  the exact URL — never reuse a hash across versions or `.min`/non-min
+  variants (jsdelivr-generated `.min` files are SRI-unsafe).
