@@ -915,6 +915,12 @@
         }
         .restore-btn {
             margin: 10px 0 4px; width: 100%;
+            /* Direct flex child of the #lobby-sidebar column: without
+               flex-shrink:0 the fixed 32px height gets compressed (to
+               ~20px) as soon as the sidebar content overflows the
+               viewport and scrolls — the T3 density metric (Task 2.8)
+               must hold under overflow too. */
+            flex-shrink: 0;
             box-sizing: border-box; height: 32px; padding: 0 11px;
             border-radius: var(--radius);
             border: 1px solid var(--border-strong); background: transparent;
@@ -1150,6 +1156,7 @@
         }
         .new-project-btn {
             margin-top: 10px; width: 100%;
+            flex-shrink: 0;   /* sidebar flex child — see .restore-btn */
             box-sizing: border-box; height: 32px; padding: 0 11px;
             border-radius: var(--radius);
             border: 1px dashed var(--border-strong);

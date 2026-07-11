@@ -714,7 +714,12 @@ implements the feature. Format:
   --workspace-topbar-height); #new-btn, #restore-btn and
   #new-project-btn each measure exactly 32px tall (border-box) with
   computed padding `0px 11px`, border-radius `10px`, font `500 14px`
-  var(--font-ui); #new-name matches at 32px but KEEPS 16px text (iOS
+  var(--font-ui) — measure ALSO with the sidebar content overflowing
+  its viewport (a 720p-or-shorter window with a few cards already
+  overflows): #restore-btn/#new-project-btn are direct flex children
+  of the scrolling sidebar column and must NOT flex-shrink below 32px
+  (regression 2026-07-11: default flex-shrink:1 compressed them to
+  20px under overflow; `flex-shrink: 0` pins them); #new-name matches at 32px but KEEPS 16px text (iOS
   no-zoom rule); #notify-toggle is 32×32 with a 16px glyph at opacity
   0.8 (T3 icon tier); group labels (.theme-picker-label,
   .project-title, .popup-menu .menu-label, .settings-panel .sp-title)
