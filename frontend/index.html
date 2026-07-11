@@ -416,6 +416,22 @@
             --terminal-ansi-bright-white: #bcc0cc;
         }
 
+        /* Scheme-dependent scrollbar tokens (Task 1.10) — dark defaults on
+           body, flipped by the light themes as a GROUP (body.theme-* wins on
+           specificity). A new light theme must join this selector list. The
+           same values feed the xterm ITheme scrollbarSlider* keys via
+           readTerminalTheme(). */
+        body {
+            --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+            --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
+            --scrollbar-thumb-active: rgba(255, 255, 255, 0.22);
+        }
+        body.theme-ink, body.theme-t3-light, body.theme-catppuccin-latte {
+            --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+            --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
+            --scrollbar-thumb-active: rgba(0, 0, 0, 0.3);
+        }
+
         html, body {
             margin: 0; padding: 0; height: 100%; overflow: hidden;
             background: var(--bg-page, #0d1117);
@@ -866,6 +882,35 @@
         .popup-menu button.danger:hover { color: var(--danger); }
         .popup-menu button:disabled { opacity: 0.45; cursor: default; }
 
+        /* Slim scrollbars (Task 1.10) — lobby chrome + gallery scrollables
+           ONLY, listed explicitly. The terminal's .xterm-viewport scrollbar
+           is deliberately absent: styling ANY ::-webkit-scrollbar pseudo
+           flips that scrollbar to custom rendering, which can change the
+           width xterm measured at open() — grid geometry is a red line.
+           (xterm gets themed slider COLORS via readTerminalTheme() instead —
+           inert on 5.5.0, live after the deferred 6.x upgrade.) */
+        #lobby-sidebar::-webkit-scrollbar,
+        #lobby.access-denied::-webkit-scrollbar,
+        #img-gallery .gallery-grid::-webkit-scrollbar,
+        .popup-menu::-webkit-scrollbar { width: 6px; }
+        #lobby-sidebar::-webkit-scrollbar-track,
+        #lobby.access-denied::-webkit-scrollbar-track,
+        #img-gallery .gallery-grid::-webkit-scrollbar-track,
+        .popup-menu::-webkit-scrollbar-track { background: transparent; }
+        #lobby-sidebar::-webkit-scrollbar-thumb,
+        #lobby.access-denied::-webkit-scrollbar-thumb,
+        #img-gallery .gallery-grid::-webkit-scrollbar-thumb,
+        .popup-menu::-webkit-scrollbar-thumb {
+            background: var(--scrollbar-thumb);
+            border-radius: 3px;
+        }
+        #lobby-sidebar::-webkit-scrollbar-thumb:hover,
+        #lobby.access-denied::-webkit-scrollbar-thumb:hover,
+        #img-gallery .gallery-grid::-webkit-scrollbar-thumb:hover,
+        .popup-menu::-webkit-scrollbar-thumb:hover {
+            background: var(--scrollbar-thumb-hover);
+        }
+
         /* Theme picker — sits at the bottom of the sidebar */
         .theme-picker {
             margin-top: auto; padding-top: 14px;
@@ -1184,7 +1229,19 @@
                 brightBlue: v('--terminal-ansi-bright-blue') || '#aed2ff',
                 brightMagenta: v('--terminal-ansi-bright-magenta') || '#e5cbff',
                 brightCyan: v('--terminal-ansi-bright-cyan') || '#a7f4f7',
-                brightWhite: v('--terminal-ansi-bright-white') || '#f4f7fc'
+                brightWhite: v('--terminal-ansi-bright-white') || '#f4f7fc',
+                // Scrollbar slider colors (Task 1.10). INERT on the pinned
+                // xterm 5.5.0 — its ITheme has no scrollbarSlider* keys
+                // (verified against the published typings); unknown keys are
+                // simply never read. The names match the 6.x ITheme exactly,
+                // so the deferred xterm-6 upgrade gets themed scrollbars for
+                // free. Values track the lobby scrollbar tokens.
+                scrollbarSliderBackground:
+                    v('--scrollbar-thumb') || 'rgba(255,255,255,0.1)',
+                scrollbarSliderHoverBackground:
+                    v('--scrollbar-thumb-hover') || 'rgba(255,255,255,0.18)',
+                scrollbarSliderActiveBackground:
+                    v('--scrollbar-thumb-active') || 'rgba(255,255,255,0.22)'
             };
         }
         applyTheme(getTheme());

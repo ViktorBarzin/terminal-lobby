@@ -334,3 +334,22 @@ implements the feature. Format:
   horizontal scroll, and the LAST column is not clipped (echo a
   full-width ruler `printf '%*s' $(tmux -L tl-dev display -p '#{client_width}') '' | tr ' ' '='`
   → screenshot shows the closing `=` inside the padded frame).
+- [Task 1.10] Lobby scrollbars: on a dark theme
+  `getComputedStyle(sidebar, '::-webkit-scrollbar').width` → `6px` for
+  `#lobby-sidebar` (make it scroll first: short window or many
+  sessions), `#img-gallery .gallery-grid` and `.popup-menu`; thumb
+  color = `rgba(255,255,255,0.1)` (hover `.18`), radius 3px,
+  transparent track. Switch to a light theme (ink/t3-light/latte) →
+  thumb flips to `rgba(0,0,0,0.15)`/hover `.25` (the
+  `--scrollbar-thumb*` group override). Screenshot both.
+- [Task 1.10] xterm slider keys (code-level): in the terminal iframe
+  `window.__term.options.theme.scrollbarSliderBackground/
+  HoverBackground/ActiveBackground` equal the theme's
+  `--scrollbar-thumb/-hover/-active` computed values. EXPECTED
+  RENDERING CHANGE ON 5.5.0: **none** — the pinned xterm's ITheme has
+  no scrollbarSlider* keys (verified vs published typings; unknown
+  keys are ignored), they pre-wire the deferred 6.x upgrade. The
+  terminal's own scrollbar must render IDENTICAL to baseline
+  (deliberately excluded from the ::-webkit-scrollbar restyle —
+  custom-scrollbar mode could change the width xterm measured at
+  open, a geometry red line).
