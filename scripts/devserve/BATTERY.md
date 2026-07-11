@@ -381,3 +381,20 @@ implements the feature. Format:
   `--bg-card` with the scheme's `--skeleton-highlight`), then the
   first render replaces them with real cards (skeleton count drops
   to 0; no flash of "No sessions yet" before the response).
+- [Task 1.12] Mobile viewport mechanisms (audit result — three already
+  shipped, two safe-area fills added): viewport meta carries
+  `interactive-widget=resizes-content`; `html, body` carry
+  `overscroll-behavior: none` (every scrollable child — sidebar,
+  gallery grid, popup menus, soft-keys row — chains only into that
+  suppressed viewport); `#toast` computed `top`/`right` and
+  `#lobby-sidebar` computed `padding` resolve to the baseline
+  `16px 16px` / `20px 14px` at env()=0, and under a CDP
+  `Emulation.setSafeAreaInsetsOverride` (top 50/left 40/right 30)
+  grow to exactly `66px/46px` and `70px … 54px` — the toast and the
+  sidebar header clear the notch/status bar; no other rule changes.
+- [Task 1.12] §A.5 (tap-vs-swipe + `--kb-offset`) on BOTH an iOS-class
+  (iPhone 12, 390×844) and an Android-class (Pixel 7) emulated
+  viewport: swipe >6px → tmux copy-mode, no keyboard summon; tap →
+  helper textarea focused; `--kb-offset` seeded on
+  `documentElement.style`; `has-soft-keys` active under
+  pointer:coarse. Default tmux server untouched before/after.

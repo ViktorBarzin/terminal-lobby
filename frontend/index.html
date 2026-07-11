@@ -487,7 +487,14 @@
         }
         .hidden { display: none !important; }
         #toast {
-            position: fixed; top: 16px; right: 16px; z-index: 9999;
+            position: fixed; z-index: 9999;
+            /* Safe-area offsets (Task 1.12 audit): the page opts into
+               viewport-fit=cover + a translucent status bar, so a bare
+               top:16px toast sits half-under the iOS notch/status bar
+               (~47-59px inset). Every OTHER floating element already
+               compensates — this one was missed. env() is 0 on desktop. */
+            top: calc(16px + env(safe-area-inset-top));
+            right: calc(16px + env(safe-area-inset-right));
             background: var(--bg-card); color: var(--text-primary);
             border: 1px solid var(--border);
             border-radius: calc(var(--radius) - 2px);
@@ -667,7 +674,14 @@
         }
         #lobby.sidebar-collapsed #lobby-shell { grid-template-columns: 0 1fr; }
         #lobby-sidebar {
-            padding: 20px 14px; overflow-x: hidden; overflow-y: auto;
+            /* Safe-area (Task 1.12 audit): the sidebar touches the viewport
+               TOP in the stacked <720px layout (portrait standalone: status
+               bar overlaps the header without the top inset) and the LEFT
+               edge in the side-by-side grid (landscape notch). env() is 0
+               where there is no inset, so desktop stays byte-identical. */
+            padding: calc(20px + env(safe-area-inset-top)) 14px
+                     20px calc(14px + env(safe-area-inset-left));
+            overflow-x: hidden; overflow-y: auto;
             border-right: 1px solid var(--border);
             background: var(--bg-sidebar); min-width: 0;
             display: flex; flex-direction: column;
