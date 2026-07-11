@@ -124,6 +124,31 @@ Both attacked the plan independently; findings reconciled into the plan same-day
   robustness incl. Claude workflow floods; risk is mitigated by watchdog+kill-switch+staged
   deploy, and each is one-revert reversible.
 
+## Mobile & gesture analysis round (2026-07-11, workflow `wf_1240b1d6-8f4`)
+
+Viktor's follow-up ask: first-class mobile UX with gestures. 10 agents (4 surveys — current
+touch machinery, T3 native mobile app, industry mobile terminals, code-level feasibility —
++ synthesis + critic + 3 probes). Standout evidence, all live-verified on the production surface:
+- The single-finger touch path SELF-DISARMS on multi-touch (:2227/:2232) → ≥2-finger
+  recognizers are safe-by-construction; horizontal/pinch shapes only (vertical 2-finger leaks
+  finger-stagger scroll).
+- **iOS reserves the entire 3-finger vocabulary** (undo/redo/HUD/copy/paste) whenever a text
+  input is focused — and the helper textarea ≈ always is; opt-out is native-UIKit-only. → 3-finger
+  session swipe ships Android-only; `‹`/`›` soft keys are the universal affordance.
+- **Pinch naive spec falsified by CDP probe** (Pixel-7 emulation): Chrome's cancelable-touchmove
+  window is ~1-3 moves — classify-then-claim always loses to native zoom; one-shot preventDefault
+  doesn't hold. Adopted model: lazily-attached non-passive touchmove consuming EVERY 2-finger
+  move, default OFF pending a real-device probe (probe page committed).
+- **Touch copy probed GREEN end-to-end**: server-side `copy-mode` via tmux-api (rebind-immune —
+  wizard's own prefix remap breaks client-side key synthesis) → soft arrows drive the copy
+  cursor → OSC52 → browser clipboard byte-exact. Critic caught that no row gave touch users ANY
+  copy path; the revision added it.
+- **iframe history leak**: every `frameEl.src=` swap adds a joint history entry that re-arms the
+  iOS standalone edge-back swipe; fix = `location.replace` on the same-origin contentWindow.
+- 23 exclusions recorded (OS edge zones; double-tap/long-press/1-finger-horizontal on the
+  terminal — all provably NOT free inputs; card swipe-kill; VirtualKeyboard API; …).
+Result: plan Wave 5 (Tasks M.1–M.9), folded into Stage B implementation + deploy.
+
 ## Standing constraint (red line)
 
 Nothing may alter mouse/wheel/selection/scroll semantics (Viktor, stored preference; a prior
