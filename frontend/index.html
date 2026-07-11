@@ -86,7 +86,11 @@
             --font-ui: 'DM Sans Variable', 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
         }
 
-        /* Themes — set on <body> as theme-{carbon,slate,mono,ink}. Slate is the default. */
+        /* Themes — set on <body> as theme-{carbon,slate,mono,ink,t3-dark,
+           t3-light,catppuccin-mocha,catppuccin-latte}. Slate is the default.
+           'system' is a picker choice, not a class: the pre-paint boot
+           script (top of <body>) resolves it to t3-dark/t3-light from the
+           OS color scheme. */
         body.theme-carbon {
             --bg-page: #0c0c0a;
             --bg-sidebar: #131311;
@@ -247,6 +251,169 @@
             --terminal-ansi-bright-magenta: #996bac;
             --terminal-ansi-bright-cyan: #4695a4;
             --terminal-ansi-bright-white: #ecf0f6;
+        }
+        /* T3 Code parity pair — surfaces/accents ported from t3code
+           apps/web/src/index.css (oklch/color-mix values resolved to hex),
+           ANSI sets from ThreadTerminalDrawer.tsx. Alpha hairline borders
+           on near-flat surfaces are the T3 signature. */
+        body.theme-t3-dark {
+            --bg-page: #161616;
+            --bg-sidebar: #1b1b1b;
+            --bg-card: #1b1b1b;
+            --bg-card-hover: #242424;
+            --text-primary: #f5f5f5;
+            --text-muted: #818181;
+            --border: rgba(255,255,255,0.06);
+            --border-strong: rgba(255,255,255,0.12);
+            --accent: #366ffb;
+            --danger: #ff6467;
+            --success: #10b981;
+            /* T3's semantic pill trio: sky running / amber awaiting /
+               emerald done. */
+            --state-running: #0ea5e9;
+            --state-awaiting: #f59e0b;
+            --state-done: #10b981;
+            --terminal-bg: #161616;
+            --terminal-fg: #f5f5f5;
+            --terminal-cursor: #b4cbff;
+            --terminal-selection: rgba(54,111,251,0.22);
+            --terminal-cursor-accent: #161616;
+            /* T3 dark ANSI incl. its own elevated black rgb(24,30,38). */
+            --terminal-ansi-black: #181e26;
+            --terminal-ansi-red: #ff7a8e;
+            --terminal-ansi-green: #86e795;
+            --terminal-ansi-yellow: #f4cd72;
+            --terminal-ansi-blue: #89beff;
+            --terminal-ansi-magenta: #d0b0ff;
+            --terminal-ansi-cyan: #7ce8ed;
+            --terminal-ansi-white: #d2dae6;
+            --terminal-ansi-bright-black: #6e7888;
+            --terminal-ansi-bright-red: #ffa8b4;
+            --terminal-ansi-bright-green: #b0f5ba;
+            --terminal-ansi-bright-yellow: #ffe095;
+            --terminal-ansi-bright-blue: #aed2ff;
+            --terminal-ansi-bright-magenta: #e5cbff;
+            --terminal-ansi-bright-cyan: #a7f4f7;
+            --terminal-ansi-bright-white: #f4f7fc;
+        }
+        body.theme-t3-light {
+            --bg-page: #ffffff;
+            --bg-sidebar: #f7f7f7;
+            --bg-card: #ffffff;
+            --bg-card-hover: #f5f5f5;
+            --text-primary: #262626;
+            --text-muted: #676767;
+            --border: rgba(0,0,0,0.08);
+            --border-strong: rgba(0,0,0,0.15);
+            --accent: #1b4ed8;
+            /* Text-red/-green on white: T3 uses the darker *-foreground
+               variants for copy (red-700 / emerald-700). */
+            --danger: #c10007;
+            --success: #047857;
+            --state-running: #0ea5e9;
+            --state-awaiting: #f59e0b;
+            --state-done: #10b981;
+            --terminal-bg: #ffffff;
+            --terminal-fg: #262626;
+            --terminal-cursor: #26384e;
+            --terminal-selection: rgba(27,78,216,0.18);
+            --terminal-cursor-accent: #ffffff;
+            /* T3 light ANSI set (same T3-light palette ink uses). */
+            --terminal-ansi-black: #2c3542;
+            --terminal-ansi-red: #bf4657;
+            --terminal-ansi-green: #3c7e56;
+            --terminal-ansi-yellow: #927023;
+            --terminal-ansi-blue: #4866a3;
+            --terminal-ansi-magenta: #845695;
+            --terminal-ansi-cyan: #357f8d;
+            --terminal-ansi-white: #d2d7df;
+            --terminal-ansi-bright-black: #707b8c;
+            --terminal-ansi-bright-red: #d45f70;
+            --terminal-ansi-bright-green: #55946f;
+            --terminal-ansi-bright-yellow: #ad852d;
+            --terminal-ansi-bright-blue: #5b7cc2;
+            --terminal-ansi-bright-magenta: #996bac;
+            --terminal-ansi-bright-cyan: #4695a4;
+            --terminal-ansi-bright-white: #ecf0f6;
+        }
+        /* Catppuccin pair — colors verbatim from the official palette
+           (github.com/catppuccin/palette): mocha base/mantle/surface/text,
+           latte likewise; ANSI mapping = the official editor-port
+           convention (black/brightBlack from surface2|subtext, brights
+           repeat the normals). Cursor = rosewater, per upstream ports. */
+        body.theme-catppuccin-mocha {
+            --bg-page: #1e1e2e;      /* base */
+            --bg-sidebar: #181825;   /* mantle */
+            --bg-card: #313244;      /* surface0 */
+            --bg-card-hover: #45475a;/* surface1 */
+            --text-primary: #cdd6f4; /* text */
+            --text-muted: #9399b2;   /* overlay2 */
+            --border: #45475a;       /* surface1 */
+            --border-strong: #585b70;/* surface2 */
+            --accent: #cba6f7;       /* mauve */
+            --danger: #f38ba8;       /* red */
+            --success: #a6e3a1;      /* green */
+            --state-running: #89b4fa;  /* blue */
+            --state-awaiting: #fab387; /* peach */
+            --state-done: #a6e3a1;     /* green */
+            --terminal-bg: #1e1e2e;
+            --terminal-fg: #cdd6f4;
+            --terminal-cursor: #f5e0dc; /* rosewater */
+            --terminal-selection: rgba(203,166,247,0.22);
+            --terminal-cursor-accent: #1e1e2e;
+            --terminal-ansi-black: #45475a;
+            --terminal-ansi-red: #f38ba8;
+            --terminal-ansi-green: #a6e3a1;
+            --terminal-ansi-yellow: #f9e2af;
+            --terminal-ansi-blue: #89b4fa;
+            --terminal-ansi-magenta: #f5c2e7;
+            --terminal-ansi-cyan: #94e2d5;
+            --terminal-ansi-white: #bac2de;
+            --terminal-ansi-bright-black: #585b70;
+            --terminal-ansi-bright-red: #f38ba8;
+            --terminal-ansi-bright-green: #a6e3a1;
+            --terminal-ansi-bright-yellow: #f9e2af;
+            --terminal-ansi-bright-blue: #89b4fa;
+            --terminal-ansi-bright-magenta: #f5c2e7;
+            --terminal-ansi-bright-cyan: #94e2d5;
+            --terminal-ansi-bright-white: #a6adc8;
+        }
+        body.theme-catppuccin-latte {
+            --bg-page: #eff1f5;      /* base */
+            --bg-sidebar: #e6e9ef;   /* mantle */
+            --bg-card: #ffffff;
+            --bg-card-hover: #e6e9ef;
+            --text-primary: #4c4f69; /* text */
+            --text-muted: #6c6f85;   /* subtext0 */
+            --border: #ccd0da;       /* surface0 */
+            --border-strong: #bcc0cc;/* surface1 */
+            --accent: #8839ef;       /* mauve */
+            --danger: #d20f39;       /* red */
+            --success: #40a02b;      /* green */
+            --state-running: #1e66f5;  /* blue */
+            --state-awaiting: #df8e1d; /* yellow */
+            --state-done: #40a02b;     /* green */
+            --terminal-bg: #eff1f5;
+            --terminal-fg: #4c4f69;
+            --terminal-cursor: #dc8a78; /* rosewater */
+            --terminal-selection: rgba(136,57,239,0.18);
+            --terminal-cursor-accent: #eff1f5;
+            --terminal-ansi-black: #5c5f77;
+            --terminal-ansi-red: #d20f39;
+            --terminal-ansi-green: #40a02b;
+            --terminal-ansi-yellow: #df8e1d;
+            --terminal-ansi-blue: #1e66f5;
+            --terminal-ansi-magenta: #ea76cb;
+            --terminal-ansi-cyan: #179299;
+            --terminal-ansi-white: #acb0be;
+            --terminal-ansi-bright-black: #6c6f85;
+            --terminal-ansi-bright-red: #d20f39;
+            --terminal-ansi-bright-green: #40a02b;
+            --terminal-ansi-bright-yellow: #df8e1d;
+            --terminal-ansi-bright-blue: #1e66f5;
+            --terminal-ansi-bright-magenta: #ea76cb;
+            --terminal-ansi-bright-cyan: #179299;
+            --terminal-ansi-bright-white: #bcc0cc;
         }
 
         html, body {
@@ -678,9 +845,11 @@
             display: block; margin-bottom: 6px;
             text-transform: uppercase; letter-spacing: 0.06em;
         }
-        .theme-options { display: flex; gap: 4px; }
+        /* Nine choices wrap into rows of three (260px sidebar). */
+        .theme-options { display: flex; flex-wrap: wrap; gap: 4px; }
         .theme-options button {
-            flex: 1; padding: 5px 4px; border-radius: 6px;
+            flex: 1 1 calc(33.33% - 3px); min-width: 0;
+            white-space: nowrap; padding: 5px 4px; border-radius: 6px;
             background: var(--bg-card); color: var(--text-muted);
             border: 1px solid var(--border); font-family: inherit;
             font-size: 11px; cursor: pointer;
@@ -792,6 +961,60 @@
     </style>
 </head>
 <body>
+    <script>
+    /* Pre-paint theme boot — body's FIRST child, executed before any content
+       exists to paint, so the very first frame already carries the right
+       palette and the browser-chrome color (<meta name=theme-color>) is in
+       sync. It cannot live in <head>: every theme selector is body.theme-*
+       and document.body does not exist during <head> parsing. 'system'
+       follows the OS scheme as t3-dark/t3-light (kept live by the change
+       listener); an UNSET choice keeps the historical default (slate) so
+       users who never picked a theme see zero change. The main app script
+       reuses these globals (__tlThemes / __tlApplyTheme). */
+    (function () {
+        var FALLBACK = 'slate';
+        window.__tlThemes = ['carbon', 'slate', 'mono', 'ink', 't3-dark',
+            't3-light', 'catppuccin-mocha', 'catppuccin-latte', 'system'];
+        window.__tlApplyTheme = function (t) {
+            if (window.__tlThemes.indexOf(t) === -1) t = FALLBACK;
+            if (t === 'system') {
+                t = matchMedia('(prefers-color-scheme: dark)').matches
+                    ? 't3-dark' : 't3-light';
+            }
+            var b = document.body;
+            Array.prototype.slice.call(b.classList).forEach(function (c) {
+                if (c.indexOf('theme-') === 0) b.classList.remove(c);
+            });
+            b.classList.add('theme-' + t);
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) {
+                meta.content = getComputedStyle(b)
+                    .getPropertyValue('--bg-page').trim() || '#0d1117';
+            }
+        };
+        function stored() {
+            try { return localStorage.getItem('tmux-theme'); }
+            catch (e) { return null; }
+        }
+        window.__tlApplyTheme(stored() || FALLBACK);
+        try {
+            matchMedia('(prefers-color-scheme: dark)')
+                .addEventListener('change', function () {
+                    if (stored() !== 'system') return;
+                    window.__tlApplyTheme('system');
+                    // xterm bakes its colors at boot: terminal-mode pages
+                    // (valid ?arg=) reload to re-read them — same effect as
+                    // the picker's iframe reload. Task 1.7's live switch
+                    // hooks in via __tlThemeLive and replaces the reload.
+                    if (typeof window.__tlThemeLive === 'function') {
+                        window.__tlThemeLive('system');
+                    } else if (/[?&]arg=/.test(location.search)) {
+                        location.reload();
+                    }
+                });
+        } catch (e) { /* no matchMedia listener — auto-follow stays off */ }
+    })();
+    </script>
     <div id="terminal"></div>
     <div id="lobby">
         <button id="sidebar-toggle" type="button" title="Toggle sidebar" aria-label="Toggle sidebar" aria-expanded="true">‹</button>
@@ -815,6 +1038,12 @@
                         <button type="button" data-theme="slate">Slate</button>
                         <button type="button" data-theme="mono">Mono</button>
                         <button type="button" data-theme="ink">Ink</button>
+                        <button type="button" data-theme="t3-dark">T3 Dark</button>
+                        <button type="button" data-theme="t3-light">T3 Light</button>
+                        <button type="button" data-theme="catppuccin-mocha">Mocha</button>
+                        <button type="button" data-theme="catppuccin-latte">Latte</button>
+                        <button type="button" data-theme="system"
+                                title="Follow the OS light/dark setting (T3 Light / T3 Dark)">System</button>
                     </div>
                 </div>
             </aside>
@@ -854,8 +1083,11 @@
         const rawArg = params.get('arg');
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
 
-        // Theme — shared by lobby + terminal-mode iframe (same-origin localStorage).
-        const THEMES = ['carbon', 'slate', 'mono', 'ink'];
+        // Theme — shared by lobby + terminal-mode iframe (same-origin
+        // localStorage). The canonical name list ('system' included) and the
+        // class+meta applier live in the pre-paint boot script at the top of
+        // <body>, which already painted the first frame before this ran.
+        const THEMES = window.__tlThemes;
         const THEME_KEY = 'tmux-theme';
         function getTheme() {
             try {
@@ -863,10 +1095,7 @@
                 return THEMES.includes(t) ? t : 'slate';
             } catch (e) { return 'slate'; }
         }
-        function applyTheme(t) {
-            THEMES.forEach(x => document.body.classList.remove('theme-' + x));
-            document.body.classList.add('theme-' + t);
-        }
+        const applyTheme = window.__tlApplyTheme;
         function readTerminalTheme() {
             const cs = getComputedStyle(document.body);
             const v = k => cs.getPropertyValue(k).trim();
