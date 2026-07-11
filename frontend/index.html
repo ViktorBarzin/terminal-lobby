@@ -936,6 +936,28 @@
         }
         .session-detail { font-size: 11px; color: var(--text-muted); }
         .session-detail.attached { color: var(--success); }
+        /* Live-command chip (Task 2.5): what the session's active pane is
+           running right now ("claude", "vim", …), off tmux's native
+           pane_current_command tracking. Mono to read as a command. */
+        .cmd-chip {
+            font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 4px);
+            padding: 0 5px; margin-left: auto; flex-shrink: 0;
+            max-width: 96px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap;
+        }
+        /* Inline rename editor (Task 2.5) — sits where the title was, at
+           the title's own metrics so the card doesn't jump. */
+        .session-name input.rename-input {
+            font: inherit; color: var(--text-primary);
+            background: var(--bg-page);
+            border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+            border-radius: calc(var(--radius) - 4px);
+            padding: 0 4px; margin: -1px 0; width: 100%;
+            min-width: 60px; box-sizing: border-box; outline: none;
+        }
         .session-actions { display: flex; gap: 6px; flex-shrink: 0; }
         .session-actions button {
             /* xs buttons sit at radius − 2 (T3's rounded-md tier). */
@@ -1779,6 +1801,89 @@
             return e;
         }
 
+        // ---- right-click context menu (Task 2.5) -----------------------
+        // Promise-based DOM menu, ported from T3's contextMenuFallback.ts
+        // (rAF first-frame dismissal guard + 4px viewport clamping;
+        // submenus dropped — flat items only). Shares the .popup-menu
+        // visual language and item shape ({label, onClick, danger?,
+        // disabled?} / {labelHeading}); resolves with the PICKED ITEM (the
+        // caller runs its onClick), or null on dismissal. Callers attach
+        // `contextmenu` ONLY to lobby session cards and gallery thumbs —
+        // NEVER the xterm surface, which keeps its native browser menu
+        // (red line: no mouse-semantics changes). Dismissal listeners ride
+        // window-capture so they run before any document-level Escape
+        // handlers (gallery/lightbox) — one Escape closes one layer.
+        function showContextMenu(x, y, items) {
+            return new Promise((resolve) => {
+                const menu = document.createElement('div');
+                menu.className = 'popup-menu';
+                let disposed = false;
+                // T3's canDismissFromPointer: the pointer gesture that
+                // OPENED the menu is still dispatching — outside-dismissal
+                // arms one frame later or the menu dies as it is born.
+                let canDismiss = false;
+                const cleanup = (result) => {
+                    if (disposed) return;
+                    disposed = true;
+                    window.removeEventListener('keydown', onKey, true);
+                    window.removeEventListener('pointerdown', onPointer, true);
+                    window.removeEventListener('contextmenu', onCtx, true);
+                    menu.remove();
+                    resolve(result);
+                };
+                const onKey = (e) => {
+                    if (e.key !== 'Escape') return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cleanup(null);
+                };
+                const onPointer = (e) => {
+                    if (!canDismiss || menu.contains(e.target)) return;
+                    cleanup(null);
+                };
+                const onCtx = (e) => {
+                    if (!canDismiss || menu.contains(e.target)) return;
+                    e.preventDefault();   // this right-click dismisses, it doesn't browse
+                    cleanup(null);
+                };
+                for (const it of items) {
+                    if (it.labelHeading) {
+                        const l = document.createElement('div');
+                        l.className = 'menu-label';
+                        l.textContent = it.labelHeading;
+                        menu.appendChild(l);
+                        continue;
+                    }
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.textContent = it.label;
+                    if (it.danger) b.classList.add('danger');
+                    if (it.disabled) b.disabled = true;
+                    b.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        cleanup(it);
+                    });
+                    menu.appendChild(b);
+                }
+                menu.style.left = x + 'px';
+                menu.style.top = y + 'px';
+                document.body.appendChild(menu);
+                requestAnimationFrame(() => {
+                    // 4px viewport clamp (T3's clampMenuPosition), after
+                    // layout so the measured size is real.
+                    const r = menu.getBoundingClientRect();
+                    menu.style.left = Math.min(Math.max(4, x),
+                        Math.max(4, window.innerWidth - r.width - 4)) + 'px';
+                    menu.style.top = Math.min(Math.max(4, y),
+                        Math.max(4, window.innerHeight - r.height - 4)) + 'px';
+                    canDismiss = true;
+                });
+                window.addEventListener('keydown', onKey, true);
+                window.addEventListener('pointerdown', onPointer, true);
+                window.addEventListener('contextmenu', onCtx, true);
+            });
+        }
+
         function showAccessDenied(detail) {
             document.getElementById('terminal').classList.add('hidden');
             document.getElementById('paste-btn').classList.add('hidden');
@@ -2173,8 +2278,17 @@
                 // Bell/output attention (Task 2.1): '● <session>' leads while
                 // latched; cleared the moment the user looks again.
                 const attention = attentionSession ? '● ' + attentionSession + ' ' : '';
+                // While attached, lead with the live command (Task 2.5,
+                // T3's tab titles): "claude — worktree". Falls back to the
+                // historic user/session shape until the poll knows one.
+                const active = currentActive
+                    && lastSessions.find(s => s.name === currentActive);
+                const cmd = active && active.pane_current_command;
                 document.title = attention + badge +
-                    (currentActive ? 'tmux: ' + whoami.osUser + '/' + currentActive : baseTitle);
+                    (currentActive
+                        ? (cmd ? cmd + ' — ' + currentActive
+                               : 'tmux: ' + whoami.osUser + '/' + currentActive)
+                        : baseTitle);
             }
 
             // --- attention system (Task 2.1) -----------------------------
@@ -2432,16 +2546,10 @@
                 }
             }
 
-            async function renameSession(oldName) {
-                if (!NAME_RE.test(oldName)) { showToast('Invalid name', 'error'); return; }
-                const input = prompt('Rename "' + oldName + '" to:', oldName);
-                if (input === null) return;
-                const newName = input.trim();
-                if (!NAME_RE.test(newName)) {
-                    showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
-                    return;
-                }
-                if (newName === oldName) return;
+            // performRename: the network + bookkeeping half, shared by the
+            // prompt flow (⋯ menu / context menu on touch) and the inline
+            // editor (Task 2.5). Returns true on success.
+            async function performRename(oldName, newName) {
                 try {
                     const resp = await fetch(SESSIONS_API + '/' + encodeURIComponent(oldName) + '/rename', {
                         method: 'POST',
@@ -2459,6 +2567,17 @@
                         }
                         const ui = layout.ungrouped.indexOf(oldName);
                         if (ui >= 0) layout.ungrouped[ui] = newName;
+                        // Carry the pills-v2 bookkeeping (Task 2.4) to the
+                        // new key or a done session re-latches as "unseen"
+                        // right after its rename.
+                        for (const key of [VISITS_KEY, STATES_KEY]) {
+                            const store = readStore(key);
+                            if (oldName in store) {
+                                store[newName] = store[oldName];
+                                delete store[oldName];
+                                writeStore(key, store);
+                            }
+                        }
                         showToast('Renamed to ' + newName, 'success');
                         if (currentActive === oldName) {
                             currentActive = newName;
@@ -2467,6 +2586,7 @@
                             updateTitle();
                         }
                         renderLobby();
+                        return true;
                     } else if (resp.status === 404) {
                         showToast('Session not found', 'error');
                     } else if (resp.status === 409) {
@@ -2479,6 +2599,74 @@
                 } catch (err) {
                     showToast('Rename error: ' + err.message, 'error');
                 }
+                return false;
+            }
+
+            async function renameSession(oldName) {
+                if (!NAME_RE.test(oldName)) { showToast('Invalid name', 'error'); return; }
+                const input = prompt('Rename "' + oldName + '" to:', oldName);
+                if (input === null) return;
+                const newName = input.trim();
+                if (!NAME_RE.test(newName)) {
+                    showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                    return;
+                }
+                if (newName === oldName) return;
+                await performRename(oldName, newName);
+            }
+
+            // Inline rename (Task 2.5): double-click a card title → the
+            // name swaps for an input posting to the same rename endpoint.
+            // Enter commits, Escape/blur cancels. The card's drag is
+            // disarmed while editing so selecting text inside the input
+            // can't start a card drag; every key/pointer event stops at
+            // the input (the card beneath activates on click/Enter/Space).
+            function startInlineRename(name) {
+                const card = listEl.querySelector('.session-card[data-name="' + name + '"]');
+                const nameEl = card && card.querySelector('.session-name');
+                if (!nameEl || nameEl.querySelector('input')) return;
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'rename-input';
+                input.value = name;
+                input.maxLength = 32;
+                input.setAttribute('aria-label', 'Rename session ' + name);
+                const wasDraggable = card.draggable;
+                card.draggable = false;
+                clearChildren(nameEl);
+                nameEl.appendChild(input);
+                let settled = false;
+                function finish() {
+                    if (settled) return;
+                    settled = true;
+                    card.draggable = wasDraggable;
+                    nameEl.textContent = name;   // renderLobby repaints after a commit
+                }
+                for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick', 'contextmenu']) {
+                    input.addEventListener(type, (e) => e.stopPropagation());
+                }
+                input.addEventListener('keydown', async (e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        finish();
+                    } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const newName = input.value.trim();
+                        if (newName === name) { finish(); return; }
+                        if (!NAME_RE.test(newName)) {
+                            showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                            return;   // editor stays open for correction
+                        }
+                        settled = true;   // block the blur-cancel during the await
+                        card.draggable = wasDraggable;
+                        const ok = await performRename(name, newName);
+                        if (!ok) nameEl.textContent = name;
+                    }
+                });
+                input.addEventListener('blur', finish);
+                input.focus();
+                input.select();
             }
 
             // --- focus return after overlays (Task 2.3), lobby flavor --------
@@ -2503,6 +2691,10 @@
             // --- popup menu (session ⋯ and project ⋯) -------------------------
 
             let openMenuEl = null;
+            // >0 while a right-click context menu is up — pauses the poll
+            // repaint exactly like openMenuEl (a 5s paint mid-aim would
+            // swap the cards under the pointer).
+            let ctxMenuOpen = 0;
             // refocus=true on user DISMISSALS (Escape, picking an item) —
             // the keyboard goes back to the terminal. Deliberately false
             // when replaced by another openMenu() and on outside-click
@@ -2712,6 +2904,17 @@
                 name.className = 'session-name';
                 name.textContent = s.name;
                 titleRow.appendChild(name);
+                // Live-command chip (Task 2.5): tmux's pane_current_command
+                // for the active pane, straight off the /sessions poll.
+                if (s.pane_current_command) {
+                    const chip = document.createElement('span');
+                    chip.className = 'cmd-chip';
+                    chip.textContent = s.pane_current_command;
+                    chip.title = s.pane_title
+                        ? s.pane_current_command + ' — ' + s.pane_title
+                        : s.pane_current_command;
+                    titleRow.appendChild(chip);
+                }
                 meta.appendChild(titleRow);
                 const detail = document.createElement('div');
                 detail.className = 'session-detail' + (s.attached > 0 ? ' attached' : '');
@@ -2743,12 +2946,54 @@
                 actions.appendChild(menuBtn);
                 card.appendChild(actions);
 
-                card.addEventListener('click', () => activateSession(s.name));
+                card.addEventListener('click', (e) => {
+                    // detail > 1 = second click of a double-click — the
+                    // inline-rename path owns it (Task 2.5 guard).
+                    if (e.detail > 1) return;
+                    activateSession(s.name);
+                });
                 card.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
                         activateSession(s.name);
                     }
+                });
+                // Double-click the TITLE → inline rename (Task 2.5).
+                // Guards per plan: nested buttons/inputs keep their own
+                // double-click, held modifiers mean something else.
+                card.addEventListener('dblclick', (e) => {
+                    if (!e.target.closest('.session-title-row')) return;
+                    if (e.target.closest('button, input')) return;
+                    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+                    e.preventDefault();
+                    startInlineRename(s.name);
+                });
+                // Right-click → the ⋯ menu at the pointer (Task 2.5) — on
+                // CARDS only, never the terminal (red line: the xterm
+                // surface keeps the native browser menu).
+                card.addEventListener('contextmenu', async (e) => {
+                    if (e.target.closest('input')) return;   // native menu inside the rename editor
+                    e.preventDefault();
+                    closeMenu();
+                    ctxMenuOpen++;
+                    let picked = null;
+                    try {
+                        picked = await showContextMenu(e.clientX, e.clientY, [
+                            ...moveMenuItems(s.name),
+                            { labelHeading: 'Session' },
+                            { label: 'Rename', keepFocus: true,
+                              onClick: () => startInlineRename(s.name) },
+                            { label: 'Kill', danger: true, onClick: () => killSession(s.name) }
+                        ]);
+                    } finally {
+                        ctxMenuOpen--;
+                    }
+                    if (!picked) return;
+                    // Picking refocuses the terminal (the openMenu(true)
+                    // contract) — except Rename, whose editor needs the
+                    // keyboard the moment it opens.
+                    if (!picked.keepFocus) requestTerminalFocus();
+                    picked.onClick();
                 });
 
                 card.addEventListener('dragstart', (e) => {
@@ -2961,7 +3206,7 @@
             // paint renders the sidebar from lastSessions + layout. Pure view —
             // no fetching — so layout mutations repaint instantly.
             function paint() {
-                if (isDragging || openMenuEl) return;
+                if (isDragging || openMenuEl || ctxMenuOpen) return;
                 clearChildren(listEl);
                 const liveByName = new Map(lastSessions.map(s => [s.name, s]));
                 const referenced = new Set();
@@ -2990,7 +3235,7 @@
             }
 
             async function renderLobby() {
-                if (isDragging || openMenuEl) return;
+                if (isDragging || openMenuEl || ctxMenuOpen) return;
                 try {
                     const [sessResp, layoutResult] = await Promise.all([
                         fetch(SESSIONS_API, { credentials: 'same-origin' }),
@@ -4435,6 +4680,31 @@
                     // No onClose teardown: the gallery stays mounted
                     // underneath, so closing the lightbox returns to it.
                     openLightbox(img.src, null);
+                });
+                // Right-click on gallery THUMBS only (Task 2.5) — the
+                // xterm surface keeps its native menu untouched (red
+                // line). Insert-path reuses the exact string the upload
+                // flow types into the pty.
+                cell.addEventListener('contextmenu', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const items = [
+                        { label: 'Open', onClick: () => openLightbox(img.src, null) }
+                    ];
+                    if (im.path) {
+                        items.push({ label: 'Insert path into terminal', onClick: () => {
+                            sendInput(im.path);
+                            closeGallery();   // land where the path went
+                        } });
+                    }
+                    items.push({ label: 'Download', onClick: () => {
+                        const a = document.createElement('a');
+                        a.href = img.src;
+                        a.download = im.name;
+                        a.click();
+                    } });
+                    const picked = await showContextMenu(e.clientX, e.clientY, items);
+                    if (picked) picked.onClick();
                 });
                 grid.appendChild(cell);
             }

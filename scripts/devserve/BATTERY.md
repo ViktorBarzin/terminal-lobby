@@ -611,3 +611,48 @@ implements the feature. Format:
   `tl:session-states:v1` keeps the transition timestamp). Cleanup:
   `tmux kill-session -t tl-battery-pills` → after the next poll the
   stores PRUNE the dead name (both keys no longer contain it).
+- [Task 2.5] Go side: `go test ./...` in `tmux-api/` green — incl.
+  `TestParseSessionsPaneCommandAndTitle` (8-field format, pipe-in-title
+  survives, pipe-in-name row dropped, legacy 6-field row skipped) and
+  `TestSessionsJSONShape` (keys `pane_current_command`/`pane_title`,
+  omitted when empty). End-to-end needs a SCRATCH build (the production
+  tmux-api on :7684 predates the fields):
+  `go build -o $SCRATCH/tmux-api-dev ./tmux-api &&
+  TMUX_API_ADDR=127.0.0.1:17684 $SCRATCH/tmux-api-dev &` then run the
+  harness with `--tmux-api-port 17684` → `/api/sessions/sessions` items
+  carry `"pane_current_command"` + `"pane_title"`.
+- [Task 2.5] Live-command chip: `tmux new-session -d -s tl-battery-cmd
+  'cat'` (REAL server, isolation rules — `cat` is the same payload
+  command battery item A.1 uses) → within one poll the card shows
+  `.cmd-chip` with textContent `cat`, computed 11px `var(--font-mono)`
+  (JetBrains Mono first); chip title carries `cat — <pane_title>`.
+  Click the card (attach) → `document.title` becomes
+  `cat — tl-battery-cmd` (plus any state badge prefix).
+- [Task 2.5] Inline rename round-trip: double-click the card TITLE →
+  `.session-name` swaps to a focused, prefilled `input.rename-input`
+  and `card.draggable` flips false; type `tl-battery-cmd2` + Enter →
+  204 from the existing rename endpoint, `tmux list-sessions` shows the
+  new name, the card re-keys, and (if attached) hash + tab title follow.
+  Escape or blur restores the title untouched; an invalid name toasts
+  and keeps the editor open. Guards: single click still activates
+  (only `detail > 1` is suppressed), dblclick with a held modifier or
+  on a nested button does nothing.
+- [Task 2.5] Card context menu (T3 fallback port): right-click a card →
+  ONE `.popup-menu` at the pointer with Move to…/Session/Rename/Kill;
+  the menu survives its own opening gesture (rAF first-frame guard);
+  synthetic `contextmenu` with clientX/Y at the viewport corner → menu
+  rect clamps ≥4px inside every edge; Escape (lobby-focused) and
+  outside pointerdown dismiss with NO action; picking Kill runs the
+  normal confirm() flow. While the menu is open the 5s poll repaint
+  pauses (same contract as the ⋯ menu).
+- [Task 2.5] Gallery-thumb context menu + native menu untouched: upload
+  an image for the session (`curl -F image=@px.png -F
+  session=tl-battery-cmd2 <origin>/clipboard/upload`), open the gallery
+  in the terminal iframe, right-click a cell → menu Open / Insert path
+  into terminal / Download; "Insert path" types the store path into the
+  pty (`tmux -L tl-dev capture-pane -p` shows it) and closes the
+  gallery. Over the terminal itself: dispatch a cancelable
+  `contextmenu` on `.xterm-screen` → `defaultPrevented` is FALSE (no
+  listener anywhere on the xterm surface — the native browser menu
+  still appears; red line). Cleanup: kill the session, `rm -rf
+  /var/lib/clipboard-store/<osUser>/tl-battery-cmd2`.

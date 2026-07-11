@@ -221,13 +221,16 @@ func TestValidateLayoutRejects(t *testing.T) {
 
 // --- session parsing + enrichment -------------------------------------------
 
-func TestParseSessionsSixFields(t *testing.T) {
-	out := []byte("alpha|1|1751800000|1751700000|running|4242\n" +
-		"beta|0|1751800001|1751700001||991\n")
+func TestParseSessionsEightFields(t *testing.T) {
+	// Fixture rows follow tmuxListFmt, which grew pane_current_command +
+	// pane_title in Task 2.5 (6 → 8 fields; the new-field cases live in
+	// sessions_test.go).
+	out := []byte("alpha|1|1751800000|1751700000|running|4242|claude|~/code\n" +
+		"beta|0|1751800001|1751700001||991|zsh|devvm\n")
 	got := parseSessions(out)
 	want := []Session{
-		{Name: "alpha", Attached: 1, LastActivity: 1751800000, Created: 1751700000, State: "running", PanePID: 4242},
-		{Name: "beta", Attached: 0, LastActivity: 1751800001, Created: 1751700001, PanePID: 991},
+		{Name: "alpha", Attached: 1, LastActivity: 1751800000, Created: 1751700000, State: "running", PanePID: 4242, Command: "claude", Title: "~/code"},
+		{Name: "beta", Attached: 0, LastActivity: 1751800001, Created: 1751700001, PanePID: 991, Command: "zsh", Title: "devvm"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parse:\n got %+v\nwant %+v", got, want)
@@ -235,7 +238,7 @@ func TestParseSessionsSixFields(t *testing.T) {
 }
 
 func TestParseSessionsSkipsMalformed(t *testing.T) {
-	out := []byte("only|three|fields\n\nok|0|1|2|done|77\n")
+	out := []byte("only|three|fields\n\nok|0|1|2|done|77|cat|\n")
 	got := parseSessions(out)
 	if len(got) != 1 || got[0].Name != "ok" || got[0].State != "done" {
 		t.Fatalf("malformed handling: %+v", got)
@@ -243,7 +246,7 @@ func TestParseSessionsSkipsMalformed(t *testing.T) {
 }
 
 func TestParseSessionsUnknownStateDropped(t *testing.T) {
-	out := []byte("alpha|0|1|2|banana|77\n")
+	out := []byte("alpha|0|1|2|banana|77|cat|\n")
 	got := parseSessions(out)
 	if got[0].State != "" {
 		t.Fatalf("unknown state value must be dropped, got %q", got[0].State)
