@@ -252,3 +252,26 @@ implements the feature. Format:
   equals the theme's `--bg-page` (#eff1f5). With localStorage UNSET →
   `theme-slate` and meta `#0d1117` (historical default — zero change
   for users who never picked a theme).
+- [Task 1.7] Live switch, no reload: attach `#main`, make output + an
+  ACTIVE drag-selection; click a different theme in the picker →
+  `window.__term.options.theme.background` equals the new theme's
+  `--terminal-bg` computed value, the selection **survives**
+  (`window.__term.hasSelection()` → `true`), and the iframe did NOT
+  reload (instrument before the click:
+  `frameEl.contentWindow.__tlMark = 1` → still `1` after; a reload
+  would wipe it). Then §A.1 (1003h swallow) and §A.2 (alt-screen
+  wheel) pass post-switch.
+- [Task 1.7] Mid-`less` switch: with `less --mouse /etc/services` open
+  and scrolled mid-file, switch theme → colors change live, viewport
+  position unchanged (`tmux -L tl-dev capture-pane -p` before/after
+  identical), no reload (`__tlMark` intact).
+- [Task 1.7] ACK fallback (stale-build path): in the iframe set
+  `window.__tlSuppressThemeAck = true` (battery hook that swallows the
+  ACK), click a theme → after ~1s the iframe reloads into the new theme
+  (old path: `__tlMark` gone, build stamp logged again, terminal
+  reattaches).
+- [Task 1.7] System auto-follow is now live: with `tmux-theme=system`,
+  `page.emulateMedia({colorScheme:...})` flips re-theme the terminal
+  WITHOUT an iframe reload (supersedes the reload expectation recorded
+  in the Task 1.6 line — `__tlThemeLive` replaces it; `__tlMark`
+  survives the flip).
