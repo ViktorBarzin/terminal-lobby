@@ -1,0 +1,16 @@
+# /etc/tmux.conf — system-wide tmux defaults for the terminal-lobby devvm.
+# Installed by scripts/deploy.sh from devvm/tmux.conf.system.
+#
+# Provenance (Task 1.14 truecolor audit, 2026-07-11): ttyd attaches tmux
+# clients with TERM=xterm-256color, which terminfo does not mark RGB-capable,
+# so tmux down-converted 24-bit SGR to the 256-colour cube (a 77-colour test
+# ramp rendered as ~12 hard bands in the lobby) and no user's ~/.tmux.conf
+# enabled RGB either. The lobby's xterm.js client renders 24-bit colour
+# natively — tell tmux so. Matches any xterm-compatible attach, including
+# the read-only ttyd-ro view and SSH clients with an xterm* TERM.
+#
+# This file loads BEFORE per-user ~/.tmux.conf and -a APPENDS to the option,
+# so users can still override or extend it. Already-running tmux servers
+# pick it up at their next server start (tmux reads config when the server
+# spawns, not per client).
+set -as terminal-features 'xterm*:RGB'

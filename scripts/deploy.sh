@@ -58,6 +58,7 @@ scp -o BatchMode=yes \
   devvm/show-image \
   devvm/clipboard-store-clean \
   devvm/ttyd-user-map \
+  devvm/tmux.conf.system \
   devvm/sudoers.d-ttyd-users \
   devvm/ttyd.service \
   devvm/ttyd-ro.service \
@@ -98,6 +99,11 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   sudo install -m 0644 /tmp/icon-192.png             /usr/local/share/ttyd/icon-192.png
   sudo install -m 0644 /tmp/icon-512.png             /usr/local/share/ttyd/icon-512.png
   sudo install -m 0644 /tmp/ttyd-user-map    /etc/ttyd-user-map
+  # System tmux conf: RGB terminal feature for xterm* clients (Task 1.14;
+  # tmux otherwise down-converts 24-bit SGR to 256 colours for the lobby).
+  # Additive — loads before user confs; running servers apply it on their
+  # next server start.
+  sudo install -m 0644 /tmp/tmux.conf.system /etc/tmux.conf
   sudo install -m 0440 -o root -g root /tmp/sudoers.d-ttyd-users /etc/sudoers.d/ttyd-users
   sudo visudo -cf /etc/sudoers.d/ttyd-users
   for u in ttyd ttyd-ro tmux-api clipboard-upload clipboard-cleanup; do
@@ -111,7 +117,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   sudo systemctl enable --now clipboard-cleanup.timer
   rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html
   rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png
-  rm -f /tmp/ttyd-user-map /tmp/sudoers.d-ttyd-users
+  rm -f /tmp/ttyd-user-map /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
   rm -f /tmp/clipboard-upload.service /tmp/clipboard-cleanup.service /tmp/clipboard-cleanup.timer
 REMOTE

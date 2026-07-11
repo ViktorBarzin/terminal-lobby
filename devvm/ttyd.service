@@ -3,6 +3,14 @@ Description=ttyd Terminal Service (multi-session lobby + per-Authentik-user atta
 After=network.target
 
 [Service]
+# Truecolor hint for the spawned tmux client (Task 1.14). INERT on the
+# current tmux 3.4 — upstream only added "Set and check COLORTERM as a
+# hint for RGB colour" in tmux 3.6 — so /etc/tmux.conf (terminal-features
+# 'xterm*:RGB', shipped by deploy.sh) is the operative fix today. Kept so
+# a future OS tmux upgrade gets the hint automatically. Cross-user
+# attaches also lose this to sudo's env_reset; the system tmux.conf
+# covers those users regardless.
+Environment=COLORTERM=truecolor
 ExecStart=/usr/local/bin/ttyd -W -a -H X-authentik-username -t enableClipboard=true -I /usr/local/share/ttyd/index.html -p 7681 /usr/local/bin/tmux-attach.sh
 Restart=always
 User=wizard
