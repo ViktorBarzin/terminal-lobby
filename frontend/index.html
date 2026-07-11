@@ -10,6 +10,11 @@
     <meta name="apple-mobile-web-app-title" content="Terminal">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="/icon-192.png">
+    <!-- Tab icon; the lobby's attention system (Task 2.1) swaps this href to
+         a canvas-rendered data: URL (icon + amber dot) while any session
+         awaits input, and restores it on clear. 404s harmlessly until the
+         PWA asset carve-out ships (the badge renderer has a tile fallback). -->
+    <link rel="icon" type="image/png" href="/icon-192.png">
     <title>Terminal</title>
     <!-- Webfont preload: the boot sequence races document.fonts.load() for 2s
          before xterm measures cell metrics — preloading Regular/Bold makes the
@@ -746,6 +751,27 @@
         #lobby-empty.hidden { display: none; }
 
         .lobby-header { font-size: 18px; color: var(--accent); margin: 0 0 4px 0; font-weight: 600; }
+        /* Header row: title + the notification bell toggle (Task 2.1).
+           padding-right reserves the fixed #sidebar-toggle's footprint
+           (32px + 12px inset, top-right of the sidebar on every layout)
+           so the bell never sits under it. */
+        .lobby-header-row {
+            display: flex; align-items: center; gap: 8px;
+            margin: 0 0 4px 0; padding-right: 44px;
+        }
+        .lobby-header-row .lobby-header { margin: 0; flex: 1 1 auto; min-width: 0; }
+        #notify-toggle {
+            flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
+            border-radius: calc(var(--radius) - 2px);
+            background: var(--bg-card); color: var(--text-muted);
+            border: 1px solid var(--border);
+            font-size: 14px; line-height: 1; cursor: pointer; opacity: 0.65;
+            transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+        }
+        #notify-toggle:hover { background: var(--bg-card-hover); opacity: 1; }
+        #notify-toggle.on {
+            border-color: var(--accent); background: var(--bg-card-hover); opacity: 1;
+        }
         .lobby-sub { color: var(--text-muted); font-size: 12px; margin: 0 0 18px 0; line-height: 1.5; }
         .new-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
         .new-row input {
@@ -1220,7 +1246,11 @@
         <button id="sidebar-toggle" type="button" title="Toggle sidebar" aria-label="Toggle sidebar" aria-expanded="true">‹</button>
         <div id="lobby-shell">
             <aside id="lobby-sidebar">
-                <h1 class="lobby-header">tmux sessions</h1>
+                <div class="lobby-header-row">
+                    <h1 class="lobby-header">tmux sessions</h1>
+                    <button id="notify-toggle" type="button" aria-pressed="false"
+                            title="Notify me when a session needs input">&#128276;</button>
+                </div>
                 <p class="lobby-sub">Pick a session or create one. Sessions persist after you close the tab.</p>
                 <div class="new-row">
                     <input id="new-name" type="text" placeholder="new session name" maxlength="32" autocomplete="off">
@@ -1704,9 +1734,186 @@
             function updateTitle() {
                 const awaiting = lastSessions.filter(s => s.state === 'awaiting').length;
                 const badge = awaiting > 0 ? '(' + awaiting + '●) ' : '';
-                document.title = badge +
+                // Bell/output attention (Task 2.1): '● <session>' leads while
+                // latched; cleared the moment the user looks again.
+                const attention = attentionSession ? '● ' + attentionSession + ' ' : '';
+                document.title = attention + badge +
                     (currentActive ? 'tmux: ' + whoami.osUser + '/' + currentActive : baseTitle);
             }
+
+            // --- attention system (Task 2.1) -----------------------------
+            // Three signals, one owner: this top-level lobby document owns
+            // the tab's favicon and title (the terminal is an iframe INSIDE
+            // it, so anything it did to its own icon/title would be
+            // invisible). Signals:
+            //   1. state=awaiting — from the ADR-0001 hooks via the same
+            //      /sessions polling that paints the cards (no terminal
+            //      output parsing anywhere): badges the favicon while ANY
+            //      session awaits input, and fires the opt-in OS
+            //      notification on each →awaiting transition while hidden.
+            //   2. bell — the iframe forwards term.onBell (tl-attention).
+            //   3. output-while-hidden — iframe-forwarded, title prefix.
+            // Bell/output latch only while the tab is hidden or the window
+            // unfocused (a visible focused tab already shows the terminal;
+            // a badge set then could only clear on the NEXT focus event,
+            // i.e. stick around) and clear on visibility/focus return.
+
+            let attentionSession = null;  // '● <name>' title prefix latch
+            let attentionBell = false;    // favicon badge latched by a bell
+            function away() { return document.hidden || !document.hasFocus(); }
+
+            // Favicon badge: the icon canvas-rendered with an amber dot
+            // top-right (--state-awaiting; the plan's 8px dot scaled to the
+            // 64px favicon raster). Rendered once and cached; while the
+            // icon route 404s (PWA asset carve-out lands in Wave 3) a
+            // theme-colored tile stands in so the dot still shows.
+            const faviconEl = document.querySelector('link[rel="icon"]');
+            const FAVICON_HREF = '/icon-192.png';
+            let faviconBadged = false;
+            let badgedFaviconUrl = null;
+            let badgedFaviconPending = false;
+            function renderBadgedFavicon(done) {
+                const size = 64, r = 13, cx = size - r - 3, cy = r + 3;
+                const css = getComputedStyle(document.body);
+                const amber = css.getPropertyValue('--state-awaiting').trim() || '#f59e0b';
+                const canvas = document.createElement('canvas');
+                canvas.width = canvas.height = size;
+                const ctx = canvas.getContext('2d');
+                const drawDot = () => {
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                    ctx.fillStyle = amber;
+                    ctx.fill();
+                    done(canvas.toDataURL('image/png'));
+                };
+                const img = new Image();
+                img.onload = () => { ctx.drawImage(img, 0, 0, size, size); drawDot(); };
+                img.onerror = () => {
+                    ctx.fillStyle = css.getPropertyValue('--bg-page').trim() || '#0d1117';
+                    ctx.fillRect(0, 0, size, size);
+                    drawDot();
+                };
+                img.src = FAVICON_HREF;
+            }
+            function updateFavicon() {
+                if (!faviconEl) return;
+                const want = attentionBell ||
+                    lastSessions.some(s => s.state === 'awaiting');
+                if (want === faviconBadged) return;
+                faviconBadged = want;
+                if (!want) { faviconEl.href = FAVICON_HREF; return; }
+                if (badgedFaviconUrl) { faviconEl.href = badgedFaviconUrl; return; }
+                if (badgedFaviconPending) return;  // applied when the render lands
+                badgedFaviconPending = true;
+                renderBadgedFavicon((url) => {
+                    badgedFaviconPending = false;
+                    badgedFaviconUrl = url;
+                    if (faviconBadged) faviconEl.href = url;
+                });
+            }
+
+            // Bell / output-while-hidden signals from the session iframe.
+            // Only its window is trusted (source check) — same-origin pages
+            // can't spoof attention into the title from elsewhere.
+            window.addEventListener('message', (e) => {
+                if (e.origin !== location.origin || !e.data || e.data.type !== 'tl-attention') return;
+                if (e.source !== frameEl.contentWindow) return;
+                if (!away()) return;
+                const name = (typeof e.data.session === 'string' && NAME_RE.test(e.data.session))
+                    ? e.data.session : currentActive;
+                if (e.data.kind === 'bell') attentionBell = true;
+                attentionSession = name;
+                updateTitle();
+                updateFavicon();
+            });
+            function clearAttention() {
+                if (!attentionSession && !attentionBell) return;
+                attentionSession = null;
+                attentionBell = false;
+                updateTitle();
+                updateFavicon();
+            }
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) clearAttention();
+            });
+            window.addEventListener('focus', clearAttention);
+
+            // Opt-in OS notifications: fired on a session's transition INTO
+            // awaiting (prev poll ≠ awaiting) while the tab is hidden. The
+            // tag dedupes per session — a re-fire replaces, never stacks.
+            // First poll seeds silently so a (re)loaded background tab
+            // doesn't re-announce a long-standing awaiting state.
+            const NOTIFY_KEY = 'tl:notify:v1';
+            function notifyOptedIn() {
+                try { return localStorage.getItem(NOTIFY_KEY) === '1'; }
+                catch (e) { return false; }
+            }
+            let prevStates = null;  // name → state at the previous poll
+            function notifyTransitions(sessions) {
+                const prev = prevStates;
+                prevStates = new Map(sessions.map(s => [s.name, s.state || '']));
+                if (!prev) return;
+                if (!notifyOptedIn() || typeof Notification === 'undefined' ||
+                    Notification.permission !== 'granted' || !document.hidden) return;
+                for (const s of sessions) {
+                    if (s.state !== 'awaiting') continue;
+                    if (!prev.has(s.name) || prev.get(s.name) === 'awaiting') continue;
+                    try {
+                        const n = new Notification(s.name + ' needs input', {
+                            tag: 'tl-' + s.name,
+                            body: 'Claude is awaiting your input.',
+                            icon: FAVICON_HREF
+                        });
+                        n.onclick = () => {
+                            try { window.focus(); } catch (err) {}
+                            activateSession(s.name);
+                            n.close();
+                        };
+                    } catch (err) { /* constructor can throw on odd platforms */ }
+                }
+            }
+
+            // Bell toggle — the ONLY place notification permission is ever
+            // requested (click = user gesture; never auto-request). Opt-in
+            // is per-browser in localStorage; a browser-level "denied" wins
+            // and is surfaced instead of silently doing nothing.
+            const notifyToggleEl = document.getElementById('notify-toggle');
+            function paintNotifyToggle() {
+                const on = notifyOptedIn() &&
+                    typeof Notification !== 'undefined' &&
+                    Notification.permission === 'granted';
+                notifyToggleEl.classList.toggle('on', on);
+                notifyToggleEl.setAttribute('aria-pressed', on ? 'true' : 'false');
+                notifyToggleEl.title = on
+                    ? 'Notifying when a session needs input (click to disable)'
+                    : 'Notify me when a session needs input';
+            }
+            if (typeof Notification === 'undefined') {
+                // iOS Safari outside an installed PWA has no Notification.
+                notifyToggleEl.style.display = 'none';
+            } else {
+                notifyToggleEl.addEventListener('click', async () => {
+                    if (notifyOptedIn() && Notification.permission === 'granted') {
+                        try { localStorage.setItem(NOTIFY_KEY, '0'); } catch (e) {}
+                        paintNotifyToggle();
+                        return;
+                    }
+                    let perm = Notification.permission;
+                    if (perm === 'default') {
+                        try { perm = await Notification.requestPermission(); }
+                        catch (e) { perm = Notification.permission; }
+                    }
+                    if (perm !== 'granted') {
+                        showToast('Notifications are blocked in the browser settings', 'error', 4000);
+                        paintNotifyToggle();
+                        return;
+                    }
+                    try { localStorage.setItem(NOTIFY_KEY, '1'); } catch (e) {}
+                    paintNotifyToggle();
+                    showToast('You will be notified when a session needs input', 'success', 3000);
+                });
+            }
+            paintNotifyToggle();
 
             function activateSession(name) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
@@ -2319,6 +2526,11 @@
                         deactivateSession();
                     }
                     lastSessions = sessions;
+                    // Attention (Task 2.1): favicon + OS notifications track
+                    // the same poll that paints the cards (title via paint's
+                    // updateTitle).
+                    notifyTransitions(sessions);
+                    updateFavicon();
                     paint();
                 } catch (err) {
                     clearChildren(listEl);
@@ -2691,6 +2903,40 @@
         // every return to visibility — near-free when nothing was lost.
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) term.clearTextureAtlas?.();
+        });
+
+        // ---- attention signals (Task 2.1) --------------------------------
+        // This page normally renders inside the lobby's iframe, and the
+        // TAB's favicon/title belong to the parent document — so attention
+        // is signalled upward over the existing postMessage channel and the
+        // lobby decides what to badge. Two signals, neither parses output:
+        //   bell   — xterm's parser saw BEL (term.onBell);
+        //   output — the fact THAT pty bytes arrived while the tab was
+        //            hidden (latched once per hidden period, re-armed on
+        //            return to visibility, so the hot output path pays one
+        //            boolean check per chunk).
+        // A direct top-level /?arg= tab has no lobby to tell: fall back to
+        // prefixing its own title, cleared on return to visibility.
+        const isFramed = window.parent !== window;
+        let hiddenOutputSignaled = false;
+        function signalAttention(kind) {
+            if (isFramed) {
+                try {
+                    window.parent.postMessage(
+                        { type: 'tl-attention', kind: kind, session: validArg },
+                        location.origin);
+                } catch (e) {}
+            } else if (document.hidden && !document.title.startsWith('● ')) {
+                document.title = '● ' + document.title;
+            }
+        }
+        term.onBell(() => signalAttention('bell'));
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) return;
+            hiddenOutputSignaled = false;
+            if (!isFramed && document.title.startsWith('● ')) {
+                document.title = document.title.slice(2);
+            }
         });
 
         // 'TL Symbols' — Iosevka-subset fallback face (scripts/build-tl-symbols.sh):
@@ -3963,6 +4209,13 @@
                                     if (needsPixelResizeKick) {
                                         needsPixelResizeKick = false;
                                         sendResize();
+                                    }
+                                    // Attention (Task 2.1): note THAT output
+                                    // arrived while hidden — once per hidden
+                                    // period; content is never inspected.
+                                    if (document.hidden && !hiddenOutputSignaled) {
+                                        hiddenOutputSignaled = true;
+                                        signalAttention('output');
                                     }
                                     term.write(payload);
                                     break;

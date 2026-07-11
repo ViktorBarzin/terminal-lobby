@@ -429,3 +429,51 @@ implements the feature. Format:
   COLORTERM=truecolor` on ttyd.service is inert on tmux 3.4 (verified
   empirically + binary strings + upstream CHANGES — the COLORTERM hint
   ships in tmux 3.6); do not count on it in any battery.
+- [Task 2.1] Favicon badge + title on awaiting state (poke = the exact
+  ADR-0001 hook path, a tmux session option on the REAL default server —
+  isolation rules apply). tmux-api's liveness backstop (proc.go
+  clearDeadStates) DROPS any state whose pane has no live process with
+  comm `claude` underneath — a bare set-option is silently blanked
+  (verified 2026-07-11), so fake one first:
+  `tmux new-session -d -s tl-battery-attn`, then
+  `cp /bin/sleep "$SCRATCH/claude" && tmux send-keys -t tl-battery-attn
+  "$SCRATCH/claude 600" Enter`. Load the lobby top-level →
+  `link[rel=icon]` href is `/icon-192.png`. Then
+  `tmux set-option -t tl-battery-attn @claude_state awaiting` → within
+  one poll (≤5 s + ε) the tab title gains the `(1●)` badge AND the
+  favicon href flips to a `data:image/png` URL (canvas badge; in the
+  harness the icon route 404s so the render is the theme-tile fallback —
+  still a data: URL). `tmux set-option -t tl-battery-attn @claude_state
+  done` → title badge drops, href back to `/icon-192.png`. Cleanup:
+  `tmux kill-session -t tl-battery-attn` (the fake claude dies with it).
+- [Task 2.1] Opt-in notification, once per transition: instrument BEFORE
+  the flow with `context.grantPermissions(['notifications'])` + a
+  wrapper around `window.Notification` that counts `(title,
+  options.tag)` and delegates construction (also count
+  `Notification.requestPermission` calls — carry over the static
+  `permission` getter or the page's gates misread). Load the lobby → the
+  requestPermission count is **0** (never auto-requested) and the 🔔
+  toggle shows `aria-pressed="false"`. Click 🔔 → `aria-pressed="true"`
+  + persisted `tl:notify:v1 = 1` + success toast. Hide the tab — in
+  headless Chromium a second page + bringToFront does NOT flip
+  `document.hidden` (verified 2026-07-11; every page is its own
+  window), so use the standard shim:
+  `Object.defineProperty(document, 'hidden', {value:true,
+  configurable:true})` (+ same for `visibilityState`) then dispatch
+  `visibilitychange`. Flip `tl-battery-attn` done→awaiting (fake-claude
+  recipe above) → EXACTLY ONE Notification, title
+  `tl-battery-attn needs input`, tag `tl-tl-battery-attn`; wait ≥2 more
+  poll cycles with the state still `awaiting` → count stays 1
+  (per-transition; the tag replaces rather than stacks on re-fire).
+  Un-shim (`delete document.hidden` etc. + dispatch) → attention
+  clears. Toggle 🔔 off → further transitions notify nothing.
+- [Task 2.1] Bell + output-while-hidden (drive the OUTER page; terminal
+  iframe attached to `#main`): with the tab visible AND focused,
+  `tmux -L tl-dev send-keys -t main "printf '\a'" Enter` → title and
+  favicon change NOTHING (the away() gate: hidden || !hasFocus).
+  Apply the hidden shim above, send the bell again → outer tab title
+  gains the `● main ` prefix AND the favicon href goes `data:` (a bell
+  badges even with no session awaiting; the echoed prompt output also
+  latches the output-while-hidden signal — one postMessage per hidden
+  period, not one per chunk). Un-shim + dispatch `visibilitychange` →
+  prefix AND badge clear (window focus is the other clear trigger).
