@@ -149,6 +149,17 @@ touch machinery, T3 native mobile app, industry mobile terminals, code-level fea
   terminal — all provably NOT free inputs; card swipe-kill; VirtualKeyboard API; …).
 Result: plan Wave 5 (Tasks M.1–M.9), folded into Stage B implementation + deploy.
 
+**Native-input research addendum (2026-07-11, single research agent):** Viktor asked for a
+native text field so mobile keyboards' autocorrect/swipe/dictation work. Verdict = a visible,
+opt-in COMPOSE BAR (Task M.10) sending via `term.paste()` bracketed paste + a SEPARATE trailing
+`\r` for Claude Code submit (a `\r` inside `\x1b[200~…\x1b[201~` is a soft newline — never a
+submit). "Un-suppress the hidden xterm helper textarea" is REJECTED PERMANENTLY: the
+`type=password` trick exists because Gboard predictive text broke terminal input (xterm #2403;
+composition corruption #3600/#675), and a per-keystroke-cleared hidden field cannot host
+suggestion/composition UI. Also rejected: contenteditable (WebKit #112854), raw
+`sendInput(text+'\r')` (unbracketed → N submits), Enter-inside-paste, outer-doc placement,
+CSI-u (= deferred P29).
+
 ## Standing constraint (red line)
 
 Nothing may alter mouse/wheel/selection/scroll semantics (Viktor, stored preference; a prior
