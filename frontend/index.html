@@ -2114,9 +2114,27 @@
             });
             setSidebarCollapsed(getSidebarCollapsed());
 
-            // Theme picker — clicking a swatch swaps body class, persists, and
-            // reloads the iframe so the inner terminal re-themes too.
+            // Theme picker — clicking a swatch swaps body class, persists,
+            // and live-rethemes the inner terminal via postMessage (tl-theme,
+            // same channel as tl-drop-files). The iframe ACKs back; no ACK
+            // within 1s means it runs a stale pre-live-switch build, so fall
+            // back to the old iframe reload (a reload re-reads the theme from
+            // localStorage at boot anyway).
             const themePickerEl = document.getElementById('theme-picker');
+            let themeAckTimer = null;
+            window.addEventListener('message', (e) => {
+                if (e.origin !== location.origin || !e.data || e.data.type !== 'tl-theme-ack') return;
+                clearTimeout(themeAckTimer);
+                themeAckTimer = null;
+            });
+            // A frame that was still LOADING when tl-theme was posted never
+            // saw the message — but its boot paints from localStorage, which
+            // already holds the new theme. Cancel the pending fallback so a
+            // fresh frame isn't pointlessly reloaded a second time.
+            frameEl.addEventListener('load', () => {
+                clearTimeout(themeAckTimer);
+                themeAckTimer = null;
+            });
             function paintThemeButtons() {
                 const active = getTheme();
                 themePickerEl.querySelectorAll('button[data-theme]').forEach(b => {
@@ -2130,11 +2148,19 @@
                     try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
                     applyTheme(t);
                     paintThemeButtons();
-                    if (currentActive && frameEl.src) {
-                        // Reload iframe so xterm picks up the new theme.
-                        const url = frameEl.src;
-                        frameEl.src = 'about:blank';
-                        setTimeout(() => { frameEl.src = url; }, 0);
+                    if (currentActive && frameEl.src && frameEl.contentWindow) {
+                        clearTimeout(themeAckTimer);
+                        themeAckTimer = setTimeout(() => {
+                            themeAckTimer = null;
+                            // No ACK: reload iframe so xterm picks up the new
+                            // theme (re-read src — the session may have
+                            // changed during the wait).
+                            const url = frameEl.src;
+                            if (!url || url === 'about:blank') return;
+                            frameEl.src = 'about:blank';
+                            setTimeout(() => { frameEl.src = url; }, 0);
+                        }, 1000);
+                        frameEl.contentWindow.postMessage({ type: 'tl-theme', name: t }, location.origin);
                     }
                 });
             });
@@ -3398,12 +3424,40 @@
             if (files.length) uploadDroppedFiles(files);
         });
 
-        // The lobby (parent) forwards files dropped on its chrome here via
-        // postMessage, so a drop anywhere in the browser ends up in this session.
+        // Live re-theme without an iframe reload (Task 1.7): hand xterm a
+        // freshly-read ITheme and repaint every row in place. Pure repaint —
+        // selection, scroll position and mouse semantics untouched (red
+        // line). Also exported as __tlThemeLive: the pre-paint boot script's
+        // prefers-color-scheme listener calls it (after swapping the body
+        // class itself) instead of reloading the page when the OS scheme
+        // flips while the stored theme is 'system'.
+        function liveRetheme() {
+            term.options.theme = readTerminalTheme();
+            term.refresh(0, term.rows - 1);
+        }
+        window.__tlThemeLive = liveRetheme;
+
+        // The lobby (parent) drives this page over postMessage: files dropped
+        // on its chrome (tl-drop-files) and live theme switches (tl-theme —
+        // ACKed back, so a lobby talking to a stale build without this branch
+        // knows to fall back to its old iframe reload).
         window.addEventListener('message', (e) => {
-            if (e.origin !== location.origin || !e.data || e.data.type !== 'tl-drop-files') return;
-            const files = Array.isArray(e.data.files) ? e.data.files : [];
-            if (files.length) uploadDroppedFiles(files);
+            if (e.origin !== location.origin || !e.data) return;
+            if (e.data.type === 'tl-drop-files') {
+                const files = Array.isArray(e.data.files) ? e.data.files : [];
+                if (files.length) uploadDroppedFiles(files);
+            } else if (e.data.type === 'tl-theme') {
+                // localStorage (shared same-origin, written by the lobby
+                // before posting) is the source of truth; the message name
+                // is the carrier for the rare failed-write case.
+                applyTheme(THEMES.includes(e.data.name) ? e.data.name : getTheme());
+                liveRetheme();
+                // __tlSuppressThemeAck: battery hook — suppressing the ACK
+                // simulates a stale build so the reload fallback is testable.
+                if (e.source && !window.__tlSuppressThemeAck) {
+                    e.source.postMessage({ type: 'tl-theme-ack', name: e.data.name }, location.origin);
+                }
+            }
         });
 
         async function uploadDroppedFiles(files) {
