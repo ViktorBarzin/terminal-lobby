@@ -19,7 +19,14 @@
          are always CORS-anonymous, and a mismatch double-downloads. -->
     <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/JetBrainsMono-Regular.woff2">
     <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/JetBrainsMono-Bold.woff2">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+    <!-- SRI (Task 1.13): published non-.min paths ONLY — jsdelivr-generated
+         .min variants are re-minified over time and explicitly SRI-unsafe;
+         the npm-published files are immutable for a pinned version. Hashes
+         computed fresh at implementation time:
+         curl -s <url> | openssl dgst -sha384 -binary | base64 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css"
+          integrity="sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP"
+          crossorigin="anonymous">
     <style>
         /* JetBrains Mono 2.304 (OFL-1.1) — vendored in frontend/fonts/, served
            same-origin at /fonts/ (clipboard-upload asset route + public ingress
@@ -1260,15 +1267,31 @@
     <button id="paste-btn" title="Paste from clipboard">&#128203;</button>
     <input type="file" id="img-input" accept="image/*">
 
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.1.0/lib/addon-clipboard.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-image@0.9.0/lib/addon-image.min.js"></script>
-    <!-- Deliberately the published non-.min path: jsdelivr-generated .min
-         files are SRI-unsafe; the .min tags above migrate at the SRI task. -->
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js"></script>
+    <!-- SRI (Task 1.13): published non-.min paths ONLY (jsdelivr-generated
+         .min files are re-minified over time and explicitly SRI-unsafe;
+         a drifted hash would brick the page for every user). Hashes
+         computed fresh at implementation time from each exact URL. -->
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"
+            integrity="sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"
+            integrity="sha384-iF+jqbuti4XlB64clWgFWYEscb+UnSRv3VgVikGYZu+otNFnSHr7y7NcKfBnGizn"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"
+            integrity="sha384-Zb/L38m4THfRbsxxv8gWAi8cQ6xcWQnv0BgR0qwbTDwtBDaPi6pkyfgfBIH6C8ZG"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.js"
+            integrity="sha384-AkzdQDeATxpW8V7I2EPcwg17qAoLQMjEFHb//1QaAAIyIlbDAHGKno5+huH7RKxq"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.1.0/lib/addon-clipboard.js"
+            integrity="sha384-u4EBOaE07GHmKsUXC4q1Q+tB3DztCkgpT0AzFavi1gCO/qQryHvcVVI05jk/B8hG"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-image@0.9.0/lib/addon-image.js"
+            integrity="sha384-A0PSF1Lj/V7OlfamYmcJj3t0ncwvdrr98hHE84Byzdlov+oKltItc43WKEcQZUb5"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js"
+            integrity="sha384-7DkEj65mwuJpyTemyRshYB1TDCUcpXHiCcSt0agkXn8Zz8nOqajgB6EoeULHiS1O"
+            crossorigin="anonymous"></script>
     <script>
     (async function() {
         // Stamped by deploy.sh at install time; 'dev' when served from a checkout.
