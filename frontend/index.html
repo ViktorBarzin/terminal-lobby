@@ -1227,6 +1227,75 @@
             min-width: 2ch; text-align: center; color: var(--text-primary);
         }
 
+        /* Settings popover (Task 2.6) — roaming terminal prefs, opened
+           from the sidebar gear under the theme picker. Same surface
+           language as .popup-menu (hairline border, --radius, elevation
+           drop + scheme bevel). */
+        .settings-row { padding-top: 10px; }
+        #settings-btn {
+            width: 100%; padding: 6px 8px; text-align: left;
+            border-radius: calc(var(--radius) - 2px);
+            background: var(--bg-card); color: var(--text-muted);
+            border: 1px solid var(--border); font-family: inherit;
+            font-size: 11px; cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        #settings-btn:hover {
+            background: var(--bg-card-hover); color: var(--text-primary);
+        }
+        #settings-btn[aria-expanded="true"] {
+            border-color: var(--accent); color: var(--accent);
+            background: var(--bg-card-hover);
+        }
+        .settings-panel {
+            position: fixed; z-index: 10000;
+            width: 240px; padding: 10px 12px 12px;
+            max-height: calc(100vh - 24px); overflow-y: auto;
+            display: flex; flex-direction: column; gap: 9px;
+            background: var(--bg-card);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), var(--surface-shadow);
+            font-family: var(--font-ui); font-size: 12px;
+            color: var(--text-primary);
+        }
+        .settings-panel .sp-title {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-muted); padding-bottom: 1px;
+        }
+        .settings-panel .sp-row { display: flex; align-items: center; gap: 6px; }
+        .settings-panel .sp-row > label {
+            flex: 0 0 auto; width: 82px; color: var(--text-muted); font-size: 11px;
+        }
+        .settings-panel .sp-val {
+            min-width: 4ch; text-align: right; color: var(--text-primary);
+            font-variant-numeric: tabular-nums; font-size: 11px;
+        }
+        .settings-panel input[type="range"] {
+            flex: 1 1 auto; min-width: 0; accent-color: var(--accent);
+        }
+        .settings-panel input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+        .settings-panel .sp-seg { display: flex; gap: 4px; flex: 1 1 auto; }
+        .settings-panel .sp-seg button,
+        .settings-panel .sp-step button {
+            flex: 1 1 0; min-width: 0; padding: 5px 4px; white-space: nowrap;
+            border-radius: calc(var(--radius) - 2px);
+            background: var(--bg-card); color: var(--text-muted);
+            border: 1px solid var(--border); font-family: inherit;
+            font-size: 11px; cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .settings-panel .sp-seg button:hover,
+        .settings-panel .sp-step button:hover {
+            background: var(--bg-card-hover); color: var(--text-primary);
+        }
+        .settings-panel .sp-seg button.active {
+            border-color: var(--accent); color: var(--accent);
+            background: var(--bg-card-hover);
+        }
+        .settings-panel .sp-step { display: flex; gap: 4px; flex: 1 1 auto; align-items: center; }
+        .settings-panel .sp-step button { flex: 0 0 36px; }
+        .settings-panel .sp-step .sp-val { flex: 1 1 auto; text-align: center; }
+
         @media (max-width: 720px) {
             /* Stack sidebar + terminal; let the terminal pane take whatever
                remains after the sidebar so it tracks the soft keyboard via
@@ -1420,6 +1489,10 @@
                     <span id="font-size-value">15</span>
                     <button type="button" id="font-size-inc" title="Larger terminal font (max 22)">A+</button>
                 </div>
+                <div class="settings-row">
+                    <button type="button" id="settings-btn" aria-haspopup="true" aria-expanded="false"
+                            title="Terminal settings — line height, letter spacing, cursor, bold weight (roams across your devices)">&#9881; Terminal settings</button>
+                </div>
             </aside>
             <main id="lobby-content">
                 <div id="lobby-empty">Pick a session, or create one above.</div>
@@ -1553,6 +1626,131 @@
         function setFontSize(n) {
             try { localStorage.setItem(FONT_SIZE_KEY, String(n)); } catch (e) {}
         }
+
+        // ---- roaming terminal prefs (Task 2.6) -------------------------
+        // tl:prefs:v1 — the settings-panel document: fontSize, lineHeight,
+        // letterSpacing, cursorStyle, cursorBlink, fontWeightBold. Every
+        // read passes the validate-or-default wrapper (normalizePrefs), so
+        // garbage in localStorage — or roamed from the server — degrades
+        // per-field to defaults, never a crash. Deliberately ABSENT (red
+        // line): smoothScrollDuration, renderer toggles, and every mouse/
+        // wheel/scroll option.
+        //
+        // fontSize is shared with the Task 1.8 stepper: every change
+        // writes the legacy tl-font-size key too (stale builds and the
+        // 1.8 plumbing read it at boot), and that key seeds the doc while
+        // it has no valid fontSize of its own.
+        //
+        // Roaming: mirrored to tmux-api /prefs per OS user (same whole-
+        // document, last-writer-wins shape as /layout). Boot order:
+        // localStorage applies immediately (the constructor can't wait on
+        // the network); one GET then adopts the server copy — unless the
+        // user already changed something this page-life (prefsDirty), in
+        // which case the local change wins and is pushed up instead.
+        // Every change PUTs (debounced); a failed PUT just leaves
+        // localStorage ahead until the next change or boot.
+        const PREFS_KEY = 'tl:prefs:v1';
+        const PREFS_API = '/api/sessions/prefs';
+        const PREF_DEFAULTS = Object.freeze({
+            fontSize: FONT_SIZE_DEFAULT,
+            lineHeight: 1,          // xterm default
+            letterSpacing: 0,       // px; fractional ok (device-pixel rounding)
+            cursorStyle: 'block',
+            cursorBlink: true,      // the historical constructor value
+            fontWeightBold: '700'   // Task 1.3 pinned the real JBM 700 face
+        });
+        const PREF_VALID = {
+            fontSize: v => Number.isInteger(v) && v >= FONT_SIZE_MIN && v <= FONT_SIZE_MAX,
+            lineHeight: v => Number.isFinite(v) && v >= 1 && v <= 1.4,
+            letterSpacing: v => Number.isFinite(v) && v >= 0 && v <= 1,
+            cursorStyle: v => v === 'block' || v === 'bar' || v === 'underline',
+            cursorBlink: v => typeof v === 'boolean',
+            fontWeightBold: v => v === '600' || v === '700'
+        };
+        function readRawPrefs() {
+            try {
+                const raw = JSON.parse(localStorage.getItem(PREFS_KEY));
+                return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+            } catch (e) { return null; }
+        }
+        // validate-or-default: unknown keys dropped, invalid values → default.
+        function normalizePrefs(raw) {
+            const out = Object.assign({}, PREF_DEFAULTS);
+            if (raw && typeof raw === 'object') {
+                for (const k of Object.keys(PREF_VALID)) {
+                    if (PREF_VALID[k](raw[k])) out[k] = raw[k];
+                }
+            }
+            return out;
+        }
+        function getPrefs() {
+            const raw = readRawPrefs();
+            const p = normalizePrefs(raw);
+            // Doc carries no usable fontSize → the Task 1.8 key seeds it.
+            if (!(raw && PREF_VALID.fontSize(raw.fontSize))) p.fontSize = getFontSize();
+            return p;
+        }
+        let prefsDirty = false;    // a local change happened this page-life
+        let prefsPutTimer = null;
+        function schedulePrefsPut() {
+            clearTimeout(prefsPutTimer);
+            prefsPutTimer = setTimeout(() => {
+                prefsPutTimer = null;
+                fetch(PREFS_API, {
+                    method: 'PUT',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(getPrefs())
+                }).catch(() => { /* offline/api down: localStorage still holds it */ });
+            }, 400);
+        }
+        // Merge a patch in, persist both keys, notify this window (same-tab
+        // CustomEvent — localStorage 'storage' events only fire in OTHER
+        // windows), and sync up. Returns the resulting doc.
+        function setPrefs(patch) {
+            const cur = getPrefs();
+            const next = normalizePrefs(Object.assign({}, cur, patch));
+            if (JSON.stringify(next) === JSON.stringify(cur)) return cur;
+            prefsDirty = true;
+            try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch (e) {}
+            if (next.fontSize !== cur.fontSize) setFontSize(next.fontSize);
+            try { window.dispatchEvent(new CustomEvent('tl-prefs-change', { detail: next })); } catch (e) {}
+            schedulePrefsPut();
+            return next;
+        }
+        // Server copy → local. No PUT-back: adoption is not a user change.
+        // Server fields win; fields the server never saw fall back to the
+        // local doc, then defaults (a partial server doc must not reset
+        // local choices).
+        function adoptPrefs(serverDoc) {
+            const before = JSON.stringify(getPrefs());
+            const remote = (serverDoc && typeof serverDoc === 'object' && !Array.isArray(serverDoc)) ? serverDoc : {};
+            const merged = Object.assign({}, readRawPrefs() || {}, remote);
+            const next = normalizePrefs(merged);
+            if (!PREF_VALID.fontSize(merged.fontSize)) next.fontSize = getFontSize();
+            try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch (e) {}
+            setFontSize(next.fontSize);   // keep the legacy key in step
+            if (JSON.stringify(next) !== before) {
+                try { window.dispatchEvent(new CustomEvent('tl-prefs-change', { detail: next })); } catch (e) {}
+            }
+        }
+        // Boot fetch — fire-and-forget; localStorage wins until the first
+        // successful GET lands. Runs in BOTH modes: the lobby forwards
+        // adopted changes into an open iframe, and a deep-linked terminal
+        // page (?arg= opened directly) still roams on its own.
+        (async function bootSyncPrefs() {
+            let doc = null;
+            try {
+                const resp = await fetch(PREFS_API, { credentials: 'same-origin' });
+                if (!resp.ok) return;              // keep local; next boot retries
+                doc = await resp.json();
+            } catch (e) { return; }
+            if (prefsDirty) { schedulePrefsPut(); return; }  // user moved first — local wins
+            const hasAny = doc && typeof doc === 'object' && !Array.isArray(doc) &&
+                Object.keys(PREF_VALID).some(k => PREF_VALID[k](doc[k]));
+            if (hasAny) adoptPrefs(doc);
+            else if (readRawPrefs()) schedulePrefsPut();     // seed a fresh server doc
+        })();
 
         // ---- typed toast manager (Task 2.7) ---------------------------
         // T3's toast surface (apps/web ui/toast.tsx) reduced to vanilla
@@ -3398,29 +3596,190 @@
             });
             paintThemeButtons();
 
-            // Font-size stepper — persists tl-font-size and live-applies to
-            // the attached terminal over postMessage. No ACK dance needed: a
-            // stale iframe build without the handler still picks the size up
-            // at its next boot (the constructor reads the same key).
+            // Font-size stepper — since Task 2.6 routed through the prefs
+            // layer: setPrefs persists BOTH keys (tl:prefs:v1 + the legacy
+            // tl-font-size), fires tl-prefs-change (→ repaint + live-apply
+            // forward below) and PUTs the roamed doc. A stale iframe build
+            // without any handler still picks the size up at its next boot
+            // (the constructor reads the same keys).
             const fontValEl = document.getElementById('font-size-value');
-            function paintFontSize() { fontValEl.textContent = getFontSize(); }
+            function paintFontSize() { fontValEl.textContent = getPrefs().fontSize; }
             function stepFontSize(delta) {
-                const size = clampFontSize(getFontSize() + delta);
-                setFontSize(size);
-                paintFontSize();
-                if (currentActive && frameEl.contentWindow) {
-                    frameEl.contentWindow.postMessage({ type: 'tl-font-size', size }, location.origin);
-                }
+                setPrefs({ fontSize: clampFontSize(getPrefs().fontSize + delta) });
             }
             document.getElementById('font-size-dec').addEventListener('click', () => stepFontSize(-1));
             document.getElementById('font-size-inc').addEventListener('click', () => stepFontSize(1));
-            // The terminal's floating A−/A+ write the same key; storage
-            // events fire only in windows that did NOT write — i.e. exactly
-            // here — so the sidebar readout tracks in-terminal steps.
+            // The terminal's floating A−/A+ and its prefs writes land in the
+            // same keys; storage events fire only in windows that did NOT
+            // write — i.e. exactly here — so the sidebar readout and the
+            // open panel track in-terminal changes. No forward back into the
+            // iframe: the change originated there and is already applied.
             window.addEventListener('storage', (e) => {
-                if (e.key === FONT_SIZE_KEY) paintFontSize();
+                if (e.key === FONT_SIZE_KEY || e.key === PREFS_KEY) {
+                    paintFontSize();
+                    paintSettingsPanel();
+                }
             });
             paintFontSize();
+
+            // Any prefs change made in THIS window (panel, sidebar stepper,
+            // server-doc adoption at boot) live-applies to the attached
+            // terminal over the same postMessage channel as tl-theme /
+            // tl-drop-files. The extra tl-font-size message keeps pre-2.6
+            // iframe builds in step (they only know that type); a current
+            // build applies both idempotently.
+            window.addEventListener('tl-prefs-change', () => {
+                paintFontSize();
+                paintSettingsPanel();
+                if (currentActive && frameEl.src && frameEl.contentWindow) {
+                    const p = getPrefs();
+                    frameEl.contentWindow.postMessage({ type: 'tl-prefs', prefs: p }, location.origin);
+                    frameEl.contentWindow.postMessage({ type: 'tl-font-size', size: p.fontSize }, location.origin);
+                }
+            });
+
+            // --- settings popover (Task 2.6) ------------------------------
+            // Roaming terminal prefs: fontSize (shared with the stepper),
+            // lineHeight, letterSpacing, cursorStyle, cursorBlink,
+            // fontWeightBold. Deliberately EXCLUDED (red line): smooth-
+            // scroll, renderer toggles, and any mouse/wheel/scroll option.
+            const settingsBtn = document.getElementById('settings-btn');
+            let settingsPanel = null;
+            function paintSettingsPanel() {
+                if (!settingsPanel) return;
+                const p = getPrefs();
+                settingsPanel.querySelector('#sp-font-val').textContent = p.fontSize;
+                const lh = settingsPanel.querySelector('#sp-lh');
+                lh.value = String(p.lineHeight);
+                settingsPanel.querySelector('#sp-lh-val').textContent = p.lineHeight.toFixed(2);
+                const ls = settingsPanel.querySelector('#sp-ls');
+                ls.value = String(p.letterSpacing);
+                settingsPanel.querySelector('#sp-ls-val').textContent = p.letterSpacing.toFixed(1) + 'px';
+                settingsPanel.querySelector('#sp-blink').checked = p.cursorBlink;
+                settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
+                    const val = String(p[seg.dataset.pref]);
+                    seg.querySelectorAll('button').forEach(b => {
+                        b.classList.toggle('active', b.dataset.val === val);
+                    });
+                });
+            }
+            function onSettingsOutside(e) {
+                if (!settingsPanel) return;
+                if (settingsPanel.contains(e.target) || settingsBtn.contains(e.target)) return;
+                closeSettings(false);   // the click picks its own focus target
+            }
+            function onSettingsKey(e) {
+                if (e.key !== 'Escape') return;
+                e.stopPropagation();
+                closeSettings(true);    // Escape = dismissal → terminal refocus
+            }
+            function closeSettings(refocus) {
+                if (!settingsPanel) return;
+                const el = settingsPanel;
+                settingsPanel = null;
+                settingsBtn.setAttribute('aria-expanded', 'false');
+                document.removeEventListener('pointerdown', onSettingsOutside, true);
+                document.removeEventListener('keydown', onSettingsKey, true);
+                if (refocus) closeOverlay(el);   // remove + focus return (Task 2.3)
+                else el.remove();
+            }
+            function openSettings() {
+                const panel = document.createElement('div');
+                panel.className = 'settings-panel';
+                panel.id = 'settings-panel';
+                const title = document.createElement('div');
+                title.className = 'sp-title';
+                title.textContent = 'Terminal settings';
+                panel.appendChild(title);
+
+                function row(labelText) {
+                    const d = document.createElement('div');
+                    d.className = 'sp-row';
+                    const l = document.createElement('label');
+                    l.textContent = labelText;
+                    d.appendChild(l);
+                    panel.appendChild(d);
+                    return d;
+                }
+                function rangeCtl(row_, id, key, min, max, step) {
+                    const input = document.createElement('input');
+                    input.type = 'range';
+                    input.id = id;
+                    input.min = String(min); input.max = String(max); input.step = String(step);
+                    input.addEventListener('input', () => setPrefs({ [key]: Number(input.value) }));
+                    const val = document.createElement('span');
+                    val.className = 'sp-val';
+                    val.id = id + '-val';
+                    row_.appendChild(input);
+                    row_.appendChild(val);
+                }
+                function segCtl(row_, key, values, labels) {
+                    const seg = document.createElement('div');
+                    seg.className = 'sp-seg';
+                    seg.dataset.pref = key;
+                    values.forEach((v, i) => {
+                        const b = document.createElement('button');
+                        b.type = 'button';
+                        b.dataset.val = v;
+                        b.textContent = labels[i];
+                        b.addEventListener('click', () => setPrefs({ [key]: v }));
+                        seg.appendChild(b);
+                    });
+                    row_.appendChild(seg);
+                }
+
+                // Font size — the same store the A−/A+ steppers use.
+                const fs = row('Font size');
+                const step = document.createElement('div');
+                step.className = 'sp-step';
+                const dec = document.createElement('button');
+                dec.type = 'button'; dec.textContent = 'A−';
+                dec.title = 'Smaller terminal font (min ' + FONT_SIZE_MIN + ')';
+                dec.addEventListener('click', () => stepFontSize(-1));
+                const fval = document.createElement('span');
+                fval.className = 'sp-val'; fval.id = 'sp-font-val';
+                const inc = document.createElement('button');
+                inc.type = 'button'; inc.textContent = 'A+';
+                inc.title = 'Larger terminal font (max ' + FONT_SIZE_MAX + ')';
+                inc.addEventListener('click', () => stepFontSize(1));
+                step.appendChild(dec); step.appendChild(fval); step.appendChild(inc);
+                fs.appendChild(step);
+
+                rangeCtl(row('Line height'), 'sp-lh', 'lineHeight', 1, 1.4, 0.05);
+                rangeCtl(row('Letter spacing'), 'sp-ls', 'letterSpacing', 0, 1, 0.5);
+                segCtl(row('Cursor'), 'cursorStyle',
+                       ['block', 'bar', 'underline'], ['Block', 'Bar', 'Under']);
+                const blinkRow = row('Cursor blink');
+                const blink = document.createElement('input');
+                blink.type = 'checkbox';
+                blink.id = 'sp-blink';
+                blink.addEventListener('change', () => setPrefs({ cursorBlink: blink.checked }));
+                blinkRow.appendChild(blink);
+                segCtl(row('Bold weight'), 'fontWeightBold', ['600', '700'], ['600', '700']);
+
+                document.body.appendChild(panel);
+                settingsPanel = panel;
+                paintSettingsPanel();
+                // Anchor above the gear (it sits at the sidebar bottom);
+                // flip below when the button is near the top (<720px
+                // stacked layout puts the sidebar first).
+                const r = settingsBtn.getBoundingClientRect();
+                panel.style.left = Math.max(8, Math.min(r.left, window.innerWidth - panel.offsetWidth - 8)) + 'px';
+                if (r.top > panel.offsetHeight + 14) {
+                    panel.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+                } else {
+                    panel.style.top = Math.min(r.bottom + 6, window.innerHeight - panel.offsetHeight - 8) + 'px';
+                }
+                settingsBtn.setAttribute('aria-expanded', 'true');
+                // The opening click's pointerdown already happened, so
+                // registering now cannot self-dismiss (no rAF guard needed).
+                document.addEventListener('pointerdown', onSettingsOutside, true);
+                document.addEventListener('keydown', onSettingsKey, true);
+            }
+            settingsBtn.addEventListener('click', () => {
+                if (settingsPanel) closeSettings(false);
+                else openSettings();
+            });
 
             // Drops on the terminal are handled inside the iframe. If one lands
             // on the lobby chrome (sidebar) instead, suppress the browser's
@@ -3489,18 +3848,31 @@
             ]);
         } catch (e) { /* face unavailable → OS mono fallback, still functional */ }
 
+        // Boot values for the user-tunable options (Task 2.6): validated
+        // tl:prefs:v1 (roamed via /prefs), every field defaulting to the
+        // historical constructor value when unset. fontSize keeps riding
+        // the Task 1.8 key underneath.
+        const bootPrefs = getPrefs();
         const term = new Terminal({
-            cursorBlink: true,
+            cursorBlink: bootPrefs.cursorBlink,
+            cursorStyle: bootPrefs.cursorStyle,
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
             // User-steppable via A−/A+ (Task 1.8): persisted in
             // tl-font-size, clamped 10-22, default 15 (the historical
             // hardcoded value).
-            fontSize: getFontSize(),
-            // Pin both weights to the vendored JetBrains Mono faces (400/700)
-            // so browsers never synthesize a faux bold — or substitute a
-            // different family for it — now that real webfonts are in play.
+            fontSize: bootPrefs.fontSize,
+            lineHeight: bootPrefs.lineHeight,
+            letterSpacing: bootPrefs.letterSpacing,
+            // Pin both weights to the vendored JetBrains Mono faces so
+            // browsers never synthesize a faux bold — or substitute a
+            // different family for it — now that real webfonts are in
+            // play. Bold weight is user-selectable 600/700 (plan spec);
+            // NOTE with only the 400/700 faces vendored, CSS matching
+            // resolves 600 upward to the Bold face — the choice only
+            // renders differently on fallback stacks (or once a SemiBold
+            // face is vendored). It still roams like every other pref.
             fontWeight: '400',
-            fontWeightBold: '700',
+            fontWeightBold: bootPrefs.fontWeightBold,
             theme: readTerminalTheme(),
             // Nudge foreground colors toward WCAG AA (4.5:1) against each
             // cell's background — VS Code's default. xterm excludes box/block
@@ -4712,25 +5084,49 @@
 
         document.getElementById('gallery-btn').addEventListener('click', openGallery);
 
-        // Font-size stepper (Task 1.8): clamp → persist → live-apply. fit()
-        // routes the change through the exact window-resize path (sendResize
-        // with pixel size) that ADR-0003 already declares safe — no new
-        // scroll/selection semantics.
-        function applyFontSize(n) {
-            const size = clampFontSize(n);
-            setFontSize(size);
-            if (term.options.fontSize !== size) {
-                term.options.fontSize = size;
-                try { fitAddon.fit(); } catch (e) { console.warn('font-size fit failed:', e); }
+        // Apply the validated prefs doc to the live terminal (Task 2.6).
+        // Geometry-affecting options route through fitAddon.fit() — the
+        // exact window-resize path (sendResize with pixel size) that
+        // ADR-0003 already declares safe — and cursor/weight swaps are
+        // pure repaints. Never touches mouse/wheel/scroll options (red
+        // line; smoothScrollDuration stays unset forever).
+        function applyTermPrefs(p) {
+            let needFit = false;
+            if (term.options.fontSize !== p.fontSize) { term.options.fontSize = p.fontSize; needFit = true; }
+            if (term.options.lineHeight !== p.lineHeight) { term.options.lineHeight = p.lineHeight; needFit = true; }
+            if (term.options.letterSpacing !== p.letterSpacing) { term.options.letterSpacing = p.letterSpacing; needFit = true; }
+            if (term.options.cursorStyle !== p.cursorStyle) term.options.cursorStyle = p.cursorStyle;
+            if (term.options.cursorBlink !== p.cursorBlink) term.options.cursorBlink = p.cursorBlink;
+            if (term.options.fontWeightBold !== p.fontWeightBold) term.options.fontWeightBold = p.fontWeightBold;
+            if (needFit) {
+                try { fitAddon.fit(); } catch (e) { console.warn('prefs fit failed:', e); }
             }
-            return size;
+        }
+        // Changes made in THIS window (floating A−/A+, boot adoption of the
+        // server doc) come through the same-tab CustomEvent.
+        window.addEventListener('tl-prefs-change', (e) => {
+            applyTermPrefs(e.detail || getPrefs());
+        });
+        // One-shot reconciliation: if the boot /prefs GET adopted the server
+        // doc BETWEEN the constructor reading bootPrefs and the listener
+        // registration above, that CustomEvent was missed — re-read now
+        // (no-op when nothing changed).
+        applyTermPrefs(getPrefs());
+
+        // Font-size stepper (Task 1.8), since 2.6 routed through the prefs
+        // layer: setPrefs persists both keys + PUTs the roamed doc and
+        // fires tl-prefs-change → applyTermPrefs above; the trailing
+        // direct apply covers the no-change case (already-synced doc).
+        function applyFontSize(n) {
+            setPrefs({ fontSize: clampFontSize(n) });
+            applyTermPrefs(getPrefs());
         }
         document.getElementById('font-dec-btn').addEventListener('click', () => {
-            applyFontSize(getFontSize() - 1);
+            applyFontSize(getPrefs().fontSize - 1);
             term.focus();
         });
         document.getElementById('font-inc-btn').addEventListener('click', () => {
-            applyFontSize(getFontSize() + 1);
+            applyFontSize(getPrefs().fontSize + 1);
             term.focus();
         });
 
@@ -4813,9 +5209,11 @@
         // ACKed back, so a lobby talking to a stale build without this branch
         // knows to fall back to its old iframe reload), font-size steps
         // (tl-font-size — no ACK: a stale build reads the persisted size at
-        // its next boot anyway) and focus re-requests (tl-focus, Task 2.3:
-        // lobby-side overlays live outside this iframe, so their dismissal
-        // hands the keyboard back through here).
+        // its next boot anyway), whole prefs docs (tl-prefs, Task 2.6 —
+        // settings panel changes + boot adoption; no ACK for the same
+        // reason) and focus re-requests (tl-focus, Task 2.3: lobby-side
+        // overlays live outside this iframe, so their dismissal hands the
+        // keyboard back through here).
         window.addEventListener('message', (e) => {
             if (e.origin !== location.origin || !e.data) return;
             if (e.data.type === 'tl-drop-files') {
@@ -4823,6 +5221,12 @@
                 if (files.length) uploadDroppedFiles(files);
             } else if (e.data.type === 'tl-font-size') {
                 applyFontSize(e.data.size);
+            } else if (e.data.type === 'tl-prefs') {
+                // localStorage (shared same-origin, written by the lobby
+                // before posting) is the truth; the payload only covers the
+                // rare failed-write case. Idempotent with the tl-font-size
+                // message the lobby sends alongside for stale builds.
+                applyTermPrefs(readRawPrefs() ? getPrefs() : normalizePrefs(e.data.prefs));
             } else if (e.data.type === 'tl-focus') {
                 requestTerminalFocus();
             } else if (e.data.type === 'tl-theme') {
