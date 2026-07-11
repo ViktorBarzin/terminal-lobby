@@ -176,3 +176,9 @@ implements the feature. Format:
 - [Task 1.1] Box-drawing alignment (`├──` tree, Claude Code box borders)
   intact at fontSize 15 **and** at the stepper extremes 10 and 22 (until
   Task 1.8 lands, drive via `window.__term.options.fontSize = N`).
+- [Task 1.2] Lobby chrome font: `document.fonts.check('14px "DM Sans Variable"')`
+  → `true` and `getComputedStyle(document.getElementById('lobby')).fontFamily`
+  starts with `"DM Sans Variable"` (popup menus + toast + gallery panel
+  likewise). Terminal untouched: in the iframe, `window.__term.options.fontFamily`
+  still starts `'JetBrains Mono'` and contains NO DM Sans; #soft-keys and the
+  drop overlay stay on `var(--font-mono)`. Screenshot the lobby.
