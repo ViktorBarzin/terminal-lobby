@@ -207,3 +207,10 @@ implements the feature. Format:
   `document.dispatchEvent(new Event('visibilitychange'))` (document is
   visible, so the handler calls `clearTextureAtlas`) → no console error and
   the terminal still renders (screenshot matches pre-dispatch).
+- [Task 1.4] Unicode 11 widths: iframe console shows
+  `unicode11 addon loaded (active version 11)` and
+  `window.__term.unicode.activeVersion` → `'11'`. Then
+  `tmux -L tl-dev send-keys -t main "echo '🙂🙂🙂 ├── test'" Enter` →
+  screenshot: emoji render double-width and the `├──` tree stays aligned
+  with tmux's wcwidth — no one-cell drift/overlap after the emoji (the
+  built-in Unicode 6 tables count 🙂 as width 1 while tmux counts 2).
