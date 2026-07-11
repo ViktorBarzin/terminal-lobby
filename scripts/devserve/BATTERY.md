@@ -518,7 +518,13 @@ implements the feature. Format:
   is the bug being guarded), gallery overlay opens; press Escape → it
   closes; type `echo focus-back` + Enter IMMEDIATELY (no click) →
   `tmux -L tl-dev capture-pane -p -t main` shows the command ran
-  (keystrokes reached the pty). Repeat via the lightbox: paste/upload
+  (keystrokes reached the pty). "Immediately" means ROBOT speed — the
+  first keystroke may follow Escape within the same ~16ms frame:
+  closeOverlay focuses xterm SYNCHRONOUSLY before the deferred
+  rAF/50ms re-request (fix 2026-07-11: the deferred race alone left a
+  ~1-frame hole in which the first key still routed to the focused
+  🖼 button — 4/7 robot cycles lost it). Run ≥5 back-to-back
+  Escape→type cycles; every command must execute. Repeat via the lightbox: paste/upload
   an image first, open the gallery, click a thumbnail (lightbox on
   top), Escape → back on the grid, Escape → closed → type → reaches
   the pty. Backdrop-click dismissal refocuses the same way.

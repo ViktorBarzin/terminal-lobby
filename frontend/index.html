@@ -4884,6 +4884,17 @@
         }
         function closeOverlay(el) {
             if (el && el.parentNode) el.remove();
+            // Synchronous first shot: the overlay is out of the DOM
+            // already, so this focus cannot be stolen back by its own
+            // teardown — and it closes the ~1-frame hole where a
+            // keystroke arriving right after Escape still routed to the
+            // launcher button that opened the overlay (#gallery-btn kept
+            // focus the whole time; robot-speed typing <16ms after
+            // Escape lost its first key in about half of battery runs).
+            term.focus();
+            // Deferred re-request kept on top: covers onClose work that
+            // runs after us in the same dismissal tick and could move
+            // focus again (the rAF/50ms race above).
             requestTerminalFocus();
         }
 
