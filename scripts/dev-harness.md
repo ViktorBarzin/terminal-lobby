@@ -32,19 +32,31 @@ the URL arg into a `new-session` shell command.
 ## Start / stop
 
 ```sh
-# defaults: index=frontend/index.html (this worktree), session=copytest,
-#           proxy 7997, ttyd 7996, tmux-api http://127.0.0.1:7684, user vbarzin
+# defaults: index=frontend/index.html (this worktree), SCRATCH tmux server
+#           (-L tl-dev, session main, torn down on exit), proxy 7997,
+#           ttyd 7996, tmux-api :7684, clipboard-upload :7683, user vbarzin
 python3 scripts/dev-harness.py
+
+# attach the REAL default tmux server instead (pre-battery behavior,
+# session copytest):
+python3 scripts/dev-harness.py --no-scratch
 
 # frozen-copy run (recommended while index.html is being edited by others):
 cp frontend/index.html /tmp/proto-index.html
 python3 scripts/dev-harness.py --index /tmp/proto-index.html
 
-# stop: Ctrl+C (or SIGTERM the pid). The ttyd child is killed automatically.
-# add --kill-session-on-exit to also tmux kill-session the test session.
+# stop: Ctrl+C (or SIGTERM the pid). The ttyd child is killed automatically;
+# in scratch mode the tl-dev tmux server is killed with it.
+# add --kill-session-on-exit to also kill the session in --no-scratch mode.
 ```
 
-Open `http://127.0.0.1:7997/?arg=copytest` (terminal) or `/` (lobby).
+The served page is a stamped copy of `--index` (`__TL_BUILD__` →
+`DEV-<git short sha>`, written to `out/index.html`, mirroring deploy.sh), so
+the browser console prints `terminal-lobby build: DEV-…`.
+
+Open `http://127.0.0.1:7997/#main` (lobby, auto-attached — how battery runs
+enter) or `/?arg=main` (bare terminal mode). Regression battery:
+`scripts/devserve/BATTERY.md`.
 Requires: `aiohttp`, `ttyd`, `tmux` on PATH; the live tmux-api on :7684.
 For the paste/gallery flows a local `clipboard-upload` additionally
 wants `/etc/ttyd-user-map` to map `--user` and a writable
@@ -54,13 +66,17 @@ wants `/etc/ttyd-user-map` to map `--user` and a writable
 
 | flag | default | purpose |
 |---|---|---|
-| `--index` | `<repo>/frontend/index.html` | file served by ttyd `-I` |
-| `--session` | `copytest` | tmux session created/attached |
+| `--index` | `<repo>/frontend/index.html` | source for ttyd `-I` (stamped copy → `out/index.html`) |
+| `--scratch` / `--no-scratch` | scratch ON | isolated `tmux -L tl-dev` server vs the REAL default server |
+| `--session` | `main` (scratch) / `copytest` | tmux session created/attached |
 | `--proxy-port` / `--ttyd-port` | 7997 / 7996 | loopback ports |
-| `--api` | `http://127.0.0.1:7684` | tmux-api base |
+| `--tmux-api-port` | 7684 | tmux-api port (point at a scratch `go run .` build to test server changes) |
+| `--clipboard-port` | 7683 | clipboard-upload port (same idea) |
+| `--api` | derived from `--tmux-api-port` | full tmux-api base URL override |
 | `--user` | `vbarzin` | injected `X-Authentik-Username` value |
+| `--delay /PATH=SECS` | none | debug: sleep before proxying matching requests (repeatable; slow-toast battery) |
 | `--no-ttyd` | off | reuse an already-running ttyd on `--ttyd-port` |
-| `--kill-session-on-exit` | off | remove the tmux session on shutdown |
+| `--kill-session-on-exit` | off | remove the tmux session on shutdown (`--no-scratch` runs; scratch kills its server anyway) |
 
 ## Test recipes (used by the feasibility suite)
 
