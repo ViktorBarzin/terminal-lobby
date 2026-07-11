@@ -66,8 +66,129 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
-	log.Printf("Clipboard upload service listening on %s (store=%s files=%s)", listenAddr, storeRoot, fileDir)
-	log.Fatal(http.ListenAndServe(listenAddr, nil))
+	// CLIPBOARD_UPLOAD_ADDR: scratch-build override for the dev harness
+	// (dev-harness.py --clipboard-port documents testing a local build,
+	// which can't bind 7683 while the production service holds it).
+	// The systemd unit sets no environment — production stays :7683.
+	addr := listenAddr
+	if a := os.Getenv("CLIPBOARD_UPLOAD_ADDR"); a != "" {
+		addr = a
+	}
+	log.Printf("Clipboard upload service listening on %s (store=%s files=%s assets=%s)", addr, storeRoot, fileDir, assetDir())
+	// The public-asset dispatcher rides ahead of the mux (see
+	// withPublicAssets); every existing route falls through untouched.
+	log.Fatal(http.ListenAndServe(addr, withPublicAssets(http.DefaultServeMux)))
+}
+
+// --- Public PWA / webfont assets ---------------------------------------------
+//
+// PWA install needs /manifest.webmanifest and the icons fetchable WITHOUT
+// credentials (Android WebAPK / iOS icon fetchers run server-side and carry
+// no session cookies), and the vendored webfonts are self-hosted same-origin.
+// The ingress carves these EXACT paths out of Authentik and routes them to
+// this service with the path unstripped, so they are served unauthenticated
+// by design: fixed public files only (OFL fonts, manifest, icons), no user
+// data, no directory serving.
+
+// defaultAssetDir is deploy.sh's install target: manifest + icons sit next
+// to index.html, the woff2 files under fonts/.
+const defaultAssetDir = "/usr/local/share/ttyd"
+
+// publicAsset describes one servable file — every field fixed at compile time.
+type publicAsset struct {
+	file         string // path relative to assetDir()
+	contentType  string
+	cacheControl string
+}
+
+// publicAssets is the EXACT-path whitelist. A request path is only ever a
+// KEY into this table — never joined into a filesystem path — so traversal
+// is impossible by construction. /icon-512-maskable.png is whitelisted ahead
+// of the file existing (Task M.9 ships it; a 404 until then is harmless).
+// fonts/tl-symbols.woff2 is deliberately NOT listed: the page embeds it as a
+// data: URI and never fetches it by URL. Icons + manifest may change with a
+// deploy (1h cache); the fonts are versioned by content, not path (7d).
+var publicAssets = map[string]publicAsset{
+	"/manifest.webmanifest":  {"manifest.webmanifest", "application/manifest+json", "public,max-age=3600"},
+	"/icon-192.png":          {"icon-192.png", "image/png", "public,max-age=3600"},
+	"/icon-512.png":          {"icon-512.png", "image/png", "public,max-age=3600"},
+	"/icon-512-maskable.png": {"icon-512-maskable.png", "image/png", "public,max-age=3600"},
+
+	"/fonts/JetBrainsMono-Regular.woff2":     {"fonts/JetBrainsMono-Regular.woff2", "font/woff2", "public,max-age=604800"},
+	"/fonts/JetBrainsMono-Bold.woff2":        {"fonts/JetBrainsMono-Bold.woff2", "font/woff2", "public,max-age=604800"},
+	"/fonts/JetBrainsMono-Italic.woff2":      {"fonts/JetBrainsMono-Italic.woff2", "font/woff2", "public,max-age=604800"},
+	"/fonts/JetBrainsMono-BoldItalic.woff2":  {"fonts/JetBrainsMono-BoldItalic.woff2", "font/woff2", "public,max-age=604800"},
+	"/fonts/dm-sans-latin-wght-normal.woff2": {"fonts/dm-sans-latin-wght-normal.woff2", "font/woff2", "public,max-age=604800"},
+}
+
+// assetDir resolves the on-disk root the whitelist reads from.
+// CLIPBOARD_UPLOAD_ASSET_DIR: scratch-build override for the dev harness and
+// tests (point it at the repo's frontend/ — same layout). The systemd unit
+// sets no environment — production stays /usr/local/share/ttyd.
+func assetDir() string {
+	if d := os.Getenv("CLIPBOARD_UPLOAD_ASSET_DIR"); d != "" {
+		return d
+	}
+	return defaultAssetDir
+}
+
+// withPublicAssets routes the public-asset namespace ahead of the mux: the
+// whitelisted paths AND every near-miss inside the namespace (traversal
+// shapes like "/icon-../…" or "/fonts/../../…") reach handleAsset and get
+// its clean 404, instead of ServeMux's canonicalize-and-301 bounce.
+// Everything else falls through to next untouched.
+func withPublicAssets(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if _, listed := publicAssets[p]; listed ||
+			strings.HasPrefix(p, "/fonts/") ||
+			strings.HasPrefix(p, "/icon-") ||
+			strings.HasPrefix(p, "/manifest.") {
+			handleAsset(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleAsset serves one whitelisted public file. GET/HEAD only (the infra
+// acceptance checks and the walloff probe use HEAD `curl -sI`); no auth —
+// these files carry no user data. Anything not in the table 404s, as does a
+// whitelisted path whose file isn't installed (yet).
+func handleAsset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	spec, ok := publicAssets[r.URL.Path]
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	f, err := os.Open(filepath.Join(assetDir(), spec.file))
+	if err != nil {
+		// ErrNotExist is expected for whitelisted-but-not-yet-shipped
+		// files (the maskable icon until Task M.9); anything else is a
+		// deploy gap worth a log line.
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("asset open %s failed: %v", spec.file, err)
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	// Content-Type is fixed by the table; setting it here keeps
+	// ServeContent from sniffing. ServeContent supplies Last-Modified,
+	// conditional-request and HEAD handling.
+	w.Header().Set("Content-Type", spec.contentType)
+	w.Header().Set("Cache-Control", spec.cacheControl)
+	http.ServeContent(w, r, "", info.ModTime(), f)
 }
 
 // loadUserMap reads /etc/ttyd-user-map → map[authentik_local]os_user.

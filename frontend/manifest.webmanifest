@@ -1,7 +1,7 @@
 {
     "name": "Terminal",
     "short_name": "Terminal",
-    "description": "Web tmux sessions, gated by Authentik.",
+    "description": "Web tmux sessions.",
     "start_url": "/",
     "scope": "/",
     "display": "standalone",

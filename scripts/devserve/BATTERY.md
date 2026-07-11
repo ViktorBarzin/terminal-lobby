@@ -823,3 +823,36 @@ implements the feature. Format:
   into the iframe — their `currentActive && … && contentWindow` guards
   read the tracked `frameUrl` (`frameEl.src` goes stale under
   `location.replace()` and must not be reintroduced).
+- [Task 3.1] Go side: `go test ./...` in `clipboard-upload/` green — the
+  public-asset suite (exact-path whitelist incl. the pre-shipped
+  /icon-512-maskable.png entry, content types, cache policies, HEAD
+  support, POST/PUT/DELETE → 405, traversal + tl-symbols + non-listed →
+  404, non-asset routes fall through untouched).
+- [Task 3.1] Public assets end-to-end through devserve (production shape:
+  the harness carve-out forwards ASSET_PATHS to clipboard-upload
+  unstripped, NO auth header). Production :7683 predates the handlers, so
+  run a scratch build serving the repo's own files:
+  `(cd clipboard-upload && go build -o $SCRATCH/clipboard-upload-dev .) &&
+  CLIPBOARD_UPLOAD_ADDR=127.0.0.1:17683
+  CLIPBOARD_UPLOAD_ASSET_DIR=$PWD/frontend
+  $SCRATCH/clipboard-upload-dev &`, harness with `--clipboard-port 17683`.
+  Cookie-less, header-less curls against `http://127.0.0.1:7997`:
+  `/manifest.webmanifest` → 200 `application/manifest+json` +
+  `Cache-Control: public,max-age=3600`, body parses as JSON with
+  description exactly `Web tmux sessions.` (vendor string gone);
+  `/icon-192.png` + `/icon-512.png` → 200 `image/png` (same
+  cache policy); `/icon-512-maskable.png` → 404 (whitelisted now, the
+  file ships with Task M.9); each of the 5 vendored fonts under
+  `/fonts/` → 200 `font/woff2` + `Cache-Control: public,max-age=604800`
+  with `content-length` equal to the repo file
+  (JetBrainsMono-Regular.woff2 = 92164).
+- [Task 3.1] Traversal probes — direct against the scratch service with
+  raw paths (`curl --path-as-is -so /dev/null -w '%{http_code}'
+  http://127.0.0.1:17683/<path>`): `/icon-../etc/passwd` → 404,
+  `/fonts/../../etc/passwd` → 404 (the pre-mux dispatcher answers —
+  no ServeMux canonicalize-and-301), `/fonts/tl-symbols.woff2` → 404
+  (installed for parity but data-URI-embedded, deliberately not
+  whitelisted), `/fonts/does-not-exist.woff2` → 404. POST
+  `/manifest.webmanifest` → 405. Existing routes intact through the
+  harness: `/clipboard/list?session=main` (auth header injected by the
+  proxy) still answers JSON, `/health` direct → `ok`.

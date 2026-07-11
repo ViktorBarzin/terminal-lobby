@@ -51,6 +51,12 @@ scp -o BatchMode=yes \
   frontend/manifest.webmanifest \
   frontend/icon-192.png \
   frontend/icon-512.png \
+  frontend/fonts/JetBrainsMono-Regular.woff2 \
+  frontend/fonts/JetBrainsMono-Bold.woff2 \
+  frontend/fonts/JetBrainsMono-Italic.woff2 \
+  frontend/fonts/JetBrainsMono-BoldItalic.woff2 \
+  frontend/fonts/dm-sans-latin-wght-normal.woff2 \
+  frontend/fonts/tl-symbols.woff2 \
   devvm/tmux-attach.sh \
   devvm/tmux-user-attach \
   devvm/tmux-restore-user \
@@ -98,6 +104,19 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   sudo install -m 0644 /tmp/manifest.webmanifest     /usr/local/share/ttyd/manifest.webmanifest
   sudo install -m 0644 /tmp/icon-192.png             /usr/local/share/ttyd/icon-192.png
   sudo install -m 0644 /tmp/icon-512.png             /usr/local/share/ttyd/icon-512.png
+  # Vendored webfonts (repo frontend/fonts/*.woff2): the SAME files back the
+  # repo's @font-face sources and clipboard-upload's exact-path /fonts/ asset
+  # whitelist (+ the public ingress carve-out). tl-symbols.woff2 ships for
+  # parity but is data-URI-embedded in the page and never served by URL.
+  sudo install -d -m 0755 /usr/local/share/ttyd/fonts
+  sudo install -m 0644 \
+    /tmp/JetBrainsMono-Regular.woff2 \
+    /tmp/JetBrainsMono-Bold.woff2 \
+    /tmp/JetBrainsMono-Italic.woff2 \
+    /tmp/JetBrainsMono-BoldItalic.woff2 \
+    /tmp/dm-sans-latin-wght-normal.woff2 \
+    /tmp/tl-symbols.woff2 \
+    /usr/local/share/ttyd/fonts/
   sudo install -m 0644 /tmp/ttyd-user-map    /etc/ttyd-user-map
   # System tmux conf: RGB terminal feature for xterm* clients (Task 1.14;
   # tmux otherwise down-converts 24-bit SGR to 256 colours for the lobby).
@@ -117,6 +136,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   sudo systemctl enable --now clipboard-cleanup.timer
   rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html
   rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png
+  rm -f /tmp/JetBrainsMono-Regular.woff2 /tmp/JetBrainsMono-Bold.woff2 /tmp/JetBrainsMono-Italic.woff2 /tmp/JetBrainsMono-BoldItalic.woff2 /tmp/dm-sans-latin-wght-normal.woff2 /tmp/tl-symbols.woff2
   rm -f /tmp/ttyd-user-map /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
   rm -f /tmp/clipboard-upload.service /tmp/clipboard-cleanup.service /tmp/clipboard-cleanup.timer
@@ -127,5 +147,6 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" '
   systemctl is-active ttyd ttyd-ro tmux-api clipboard-upload
   curl -sf -H "X-Authentik-Username: alice" http://localhost:7684/whoami >/dev/null && echo "tmux-api OK"
   curl -sf http://localhost:7683/health >/dev/null && echo "clipboard-upload OK"
+  curl -sf http://localhost:7683/manifest.webmanifest >/dev/null && curl -sf http://localhost:7683/fonts/JetBrainsMono-Regular.woff2 >/dev/null && echo "public assets OK"
 '
 echo "==> Done."
