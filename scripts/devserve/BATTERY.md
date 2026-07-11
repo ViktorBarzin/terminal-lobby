@@ -50,7 +50,10 @@ per-user via sudo), so:
 
 - Battery steps MUST NOT create, rename, or kill lobby sessions except with
   names prefixed `tl-battery-` — and MUST clean those up before the run ends
-  (kill button or `DELETE /api/sessions/<name>`).
+  (kill button or `DELETE /api/sessions/sessions/<name>` — the frontend's
+  SESSIONS_API base is `/api/sessions/sessions`: tmux-api's per-name route
+  lives at `/sessions/<name>` UNDER the stripped `/api/sessions` proxy
+  prefix, so the doubled segment is correct, not a typo).
 - Never touch sessions you didn't create. The session cards in the lobby are
   real. (Merely *attaching* a card is safe: the harness ttyd command is fixed,
   ignores the URL arg, and always attaches scratch `main`.)
@@ -64,9 +67,14 @@ a stop-the-line failure.
 
 ### A.1 — 1003h any-motion mode: drag-selection survives buttonless motion
 
-1. `tmux -L tl-dev send-keys -t main "printf '\e[?1003h\e[?1006h'; cat" Enter`
-   (pane now requests all-motion mouse reports, SGR-encoded; `cat` holds the
-   tty).
+1. `tmux -L tl-dev send-keys -t main "stty -icanon -echo -isig min 1 time 0; printf '\e[?1003h\e[?1006h'; cat -v" Enter`
+   (pane requests all-motion SGR mouse reports and echoes every byte it
+   receives as VISIBLE text — the mouse-report leak sensor documented in
+   `scripts/dev-harness.md`. Plain `cat` cannot produce a countable echo:
+   canonical mode buffers input until newline and a raw ESC re-interprets
+   instead of printing, so step 4's `^[` count never moves. `-isig` keeps
+   Ctrl+C from killing `cat` and makes a leaked `^C` visible. Do NOT
+   `clear` first: the drag-select in step 2 needs on-screen text.)
 2. In Playwright, drag-select over visible text on the terminal (mouse down →
    move a few cells → up).
    **Expect:** `window.__term.hasSelection()` → `true`.
@@ -74,16 +82,19 @@ a stop-the-line failure.
    (Playwright `page.mouse.move`), NOT a JS `dispatchEvent` clone: the swallow
    guards `isTrusted` moves only and deliberately passes untrusted clones
    through (they are the frontend's own selection machinery — an untrusted
-   move WILL be reported, `cat` echoes it, and that output clears the
-   selection).
-   **Expect:** the selection **survives** (the xterm#7378 buttonless-motion
-   swallow: no motion report reaches the pane while a selection exists).
+   move WILL be reported, the pane echoes it as visible `^[[<35;…` text, and
+   that output clears the selection).
+   **Expect:** the selection **survives** AND the `^[[<` count in
+   `tmux -L tl-dev capture-pane -p -J -S -400 -t main` is unchanged across
+   the move (the xterm#7378 buttonless-motion swallow: no motion report
+   reaches the pane while a selection exists).
 4. Press Escape.
    **Expect:** selection clears AND the key reaches the app — flow restored
-   (one more `^[` echoed by `cat` than before the keypress).
-5. Cleanup: `tmux -L tl-dev send-keys -t main C-c` (ends `cat`; the plan text
-   said `q`, but `cat` only dies to interrupt), then
-   `tmux -L tl-dev send-keys -t main "printf '\e[?1003l\e[?1006l'" Enter`.
+   (the capture shows one more bare `^[` than before the keypress).
+5. Cleanup: `tmux -L tl-dev respawn-pane -k -t main` (raw `-isig` stty means
+   Ctrl+C cannot end `cat -v`; respawning the scratch pane kills it, resets
+   the tty/mouse modes, and starts a fresh shell — scratch server only,
+   never a real pane).
 
 ### A.2 — Alt-screen wheel scrolling
 
@@ -478,10 +489,18 @@ implements the feature. Format:
   latches the output-while-hidden signal — one postMessage per hidden
   period, not one per chunk). Un-shim + dispatch `visibilitychange` →
   prefix AND badge clear (window focus is the other clear trigger).
-- [Task 2.2] Reconnect ladder + pill (healer untouched): create
-  `tl-battery-conn` via the lobby (REAL server — isolation rules, clean up
-  after) and attach `#tl-battery-conn` (the harness ttyd still puts the pty
-  on scratch `main`; the name only feeds `sessionStillExists`). Pre-set
+- [Task 2.2] Reconnect ladder + pill (healer untouched): create the session
+  OUT-OF-BAND first — `tmux new-session -d -s tl-battery-conn` (REAL default
+  server — isolation rules, clean up after). Creating it "via the lobby" is
+  NOT executable under the harness: Create&Open never calls a create API —
+  in prod the session materializes as a side effect of ttyd running
+  `tmux new-session -A` on WS attach (index.html ≈3597; the button only
+  calls `activateSession`), and the harness ttyd command is FIXED (ignores
+  the URL arg), so a lobby-typed name never reaches the real server and the
+  first ttyd kill would hit `sessionStillExists()` = false → "Session
+  ended." — the retry ladder never engages. With the session pre-created,
+  attach `#tl-battery-conn` (the harness ttyd still puts the pty on scratch
+  `main`; the name only feeds `sessionStillExists`). Pre-set
   `frameEl.contentWindow.__tlMark = 1`. Kill the harness ttyd child
   (`pkill -f 'ttyd.*--port 7996'`). **Expect:** `#conn-pill` in the iframe
   loses `.hidden` reading `Connecting…`, then `Reconnecting… (attempt N)`
@@ -507,7 +526,8 @@ implements the feature. Format:
   a repaint shows `You are offline` + `.offline` class (amber pulse dot
   turns danger-red); delete the shim + fire `online` → reconnects at once.
 - [Task 2.2] Session-ended guard unchanged: with ttyd killed AND
-  `tl-battery-conn` deleted (`DELETE /api/sessions/tl-battery-conn`), the
+  `tl-battery-conn` deleted (`DELETE /api/sessions/sessions/tl-battery-conn`
+  — the doubled segment per the isolation-section note; 204), the
   iframe's next close-check finds the session gone → writes
   `Session ended.`, pill goes `.hidden`, and NO further attempts start for
   ≥20s (a killed session must never be resurrected by the retry loop;
@@ -672,8 +692,10 @@ implements the feature. Format:
   `go build -o $SCRATCH/tmux-api-dev ./tmux-api &&
   TMUX_API_ADDR=127.0.0.1:17684 TMUX_API_PREFS_DIR=$SCRATCH/prefs
   $SCRATCH/tmux-api-dev &`, harness with `--tmux-api-port 17684` →
-  `curl -H 'X-Authentik-Username: wizard' :17684/prefs` → `{}`; PUT
-  `{"cursorStyle":"bar"}` → 204 and GET echoes it back.
+  `curl -H 'X-Authentik-Username: alice' :17684/prefs` → `{}`; PUT
+  `{"cursorStyle":"bar"}` → 204 and GET echoes it back. (The header
+  carries the AUTHENTIK name — `/etc/ttyd-user-map` maps it to the OS
+  user; the OS name `wizard` is unmapped and 403s.)
 - [Task 2.6] Settings popover: click the sidebar `⚙ Terminal settings`
   button → `#settings-panel` opens anchored to it with EXACTLY six
   controls — font-size A−/A+ (same store as the Task 1.8 steppers:
@@ -755,7 +777,11 @@ implements the feature. Format:
   control — buttons + the #new-name input, popup-menu items,
   settings-panel controls — measures ≥44px tall; #sidebar-toggle and
   #notify-toggle square 44×44; standard buttons step to 16px text and
-  the 12px tier to 14px; the rename editor is exempt (no card jump);
+  the 12px tier to 14px — INTERACTIVE controls only (theme options,
+  font-size row, #settings-btn, settings-panel segments/steppers), per
+  the plan's controls-oriented coarse rule: passive text such as
+  `.session-detail` stays 12px; the rename editor is exempt (no card
+  jump);
   no horizontal scroll. The soft-key toolbar (#soft-keys) is
   UNTOUCHED: its buttons still measure 38px tall with min-height auto
   (the plan's "keeps the existing soft-key toolbar sizing").
