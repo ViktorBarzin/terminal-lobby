@@ -96,6 +96,34 @@ allowTransparency/backdrop-blur on canvas (perf), in-page splits (tmux owns layo
 server-side — carve-out is the only correct fix), SRI on `.min` URLs (bricks on jsdelivr
 re-minification).
 
+## Challenge round (2026-07-11, planning.md §2b — two blind disprove-briefed challengers)
+
+Both attacked the plan independently; findings reconciled into the plan same-day:
+- **BLOCKER caught:** Task 4.1's `attachCustomKeyEventHandler` call would have REPLACED the
+  existing handler at `index.html:2503` — the entire ADR-0003 copy/paste/Escape contract.
+  Fixed: merge the chord branch into the existing handler; keybindings layer defaults OFF.
+- **MAJOR:** `#terminal` is content-box → window padding needs `box-sizing: border-box` or it
+  overflows and fights the mobile keyboard height path. Fixed in Task 1.9.
+- **MAJOR:** client flow control was fail-closed (a stuck PAUSE freezes a user's output).
+  Fixed: 4 s watchdog auto-RESUME + localStorage kill-switch + un-paused throughput control in
+  flowprobe. Server patch verified line-exact against real ttyd 1.7.7 source by BOTH challengers
+  (no deadlock; PAUSE cannot affect the app, other clients, or mid-drag selection).
+- **HIGH (reuse):** `scripts/dev-harness.py` already implements the local proxy harness the plan
+  was about to rebuild in Go. Plan now extends it (scratch `tmux -L tl-dev` server, port params).
+- Mobile hardening (P27) was mostly ALREADY implemented (stale analysis claim) → task rewritten
+  as audit-and-fill-gaps. Iosevka TTF must come from the GitHub release ZIP (jsdelivr /gh/ has
+  no built TTFs). Fonts now VENDORED + self-hosted via the same public asset route as the PWA
+  files (jsdelivr kept only as @font-face fallback src). Deploys staged A (Wave 0-2) / B (Wave
+  3-4) with SSH held open as the recovery channel; ttyd binary kept aside as `.prev`.
+- Verified-true (don't re-litigate): rename endpoint exists; /layout is a clean /prefs clone
+  with real tests; ingress_factory strips nothing + full_host trap documented; walloff ordering;
+  ADR-0003 replay math self-corrects under padding; overscroll-behavior can't affect the
+  synthetic-wheel path; live theme switch preserves selection; SRI non-.min URLs 200 + ACAO:*.
+- Challenger dissent NOT adopted (recorded): defer flow-control (3.4/3.5) and the server half of
+  roaming prefs (2.6) as beyond-the-ask. Kept because the stated goal is industry-grade UX
+  robustness incl. Claude workflow floods; risk is mitigated by watchdog+kill-switch+staged
+  deploy, and each is one-revert reversible.
+
 ## Standing constraint (red line)
 
 Nothing may alter mouse/wheel/selection/scroll semantics (Viktor, stored preference; a prior
