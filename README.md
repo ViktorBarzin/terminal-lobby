@@ -127,14 +127,27 @@ SKIP_BUILD=1 ./scripts/deploy.sh         # reuse ./out/ binaries
 
 ### ttyd (patched)
 
-The devvm runs a patched ttyd: stock 1.7.7 reports a 0×0 pixel size to
-the pty, which makes tmux swallow sixel images — the patch forwards
-the browser's pixel size so `viu` & co. render inline (see
-`docs/adr/0004-sixel-images-in-the-terminal.md`). Run
-`./scripts/build-ttyd.sh` once before deploying whenever the ttyd
+The devvm runs a locally-patched ttyd (`devvm/ttyd-local.patch`, two
+fixes):
+
+- **Pixel size → pty (sixel):** stock 1.7.7 reports a 0×0 pixel size to
+  the pty, which makes tmux swallow sixel images — the patch forwards
+  the browser's pixel size so `viu` & co. render inline (see
+  `docs/adr/0004-sixel-images-in-the-terminal.md`).
+- **Client PAUSE honored (flow control):** stock 1.7.7's pause opcode is
+  a no-op (`process->paused` is stuck true from spawn, so `pty_pause`
+  early-returns, and the write pump unconditionally resumes) — under a
+  Claude-style output flood a slow client tab just drowns. The patch
+  makes PAUSE stop pty reads until RESUME; the frontend's flow control
+  rides on it. Verified by `scripts/devserve/flowprobe.py` (red/green +
+  an un-paused throughput control run).
+
+Run `./scripts/build-ttyd.sh` once before deploying whenever the ttyd
 binary needs (re)building — it pins upstream tag 1.7.7, applies
-`devvm/ttyd-pixel-size.patch`, and drops the binary at `out/ttyd`;
-`deploy.sh` ships it only if it exists and says so either way.
+`devvm/ttyd-local.patch`, and drops the binary at `out/ttyd`;
+`deploy.sh` ships it only if it exists and says so either way (and keeps
+the previously installed binary at `/usr/local/bin/ttyd.prev` as the
+fastest rollback). The binary backs both :7681 and the read-only :7682.
 
 ### viu
 
