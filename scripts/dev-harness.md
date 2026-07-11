@@ -70,7 +70,7 @@ wants `/etc/ttyd-user-map` to map `--user` and a writable
 | `--scratch` / `--no-scratch` | scratch ON | isolated `tmux -L tl-dev` server vs the REAL default server |
 | `--session` | `main` (scratch) / `copytest` | tmux session created/attached |
 | `--proxy-port` / `--ttyd-port` | 7997 / 7996 | loopback ports |
-| `--tmux-api-port` | 7684 | tmux-api port (point at a scratch `go run .` build to test server changes) |
+| `--tmux-api-port` | 7684 | tmux-api port (point at a scratch build to test server changes — the binary honors `TMUX_API_ADDR=127.0.0.1:<port>` since Task 2.5, production's fixed :7684 can't be double-bound) |
 | `--clipboard-port` | 7683 | clipboard-upload port (same idea) |
 | `--api` | derived from `--tmux-api-port` | full tmux-api base URL override |
 | `--user` | `alice` | injected `X-Authentik-Username` value |

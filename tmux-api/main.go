@@ -25,10 +25,14 @@ const (
 	// @claude_state is stamped by the claude-tmux-state hook script
 	// (ADR-0001). pane_pid feeds the liveness backstop (proc.go): state
 	// survives only while a claude process is alive under the pane —
-	// catches a claude killed without firing SessionEnd. Both resolve
-	// against the session's active pane, matching the one-claude-per-
-	// session usage pattern.
-	tmuxListFmt = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}|#{@claude_state}|#{pane_pid}"
+	// catches a claude killed without firing SessionEnd. pane_current_
+	// command + pane_title (Task 2.5, live-command chip) come for free
+	// the same way — tmux tracks both natively, zero polling. All four
+	// pane_* fields resolve against the session's active pane, matching
+	// the one-claude-per-session usage pattern. pane_title stays LAST:
+	// applications set it freely (OSC 2) so it may contain '|' — the
+	// parser soaks embedded separators into the trailing field.
+	tmuxListFmt = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}|#{@claude_state}|#{pane_pid}|#{pane_current_command}|#{pane_title}"
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
@@ -64,6 +68,12 @@ type Session struct {
 	// Project the session is assigned to per the user's layout; "" =
 	// ungrouped.
 	Project string `json:"project,omitempty"`
+	// Command/Title mirror the active pane's #{pane_current_command} /
+	// #{pane_title} (Task 2.5): the lobby's live-command chip and the
+	// attached-tab title read them. omitempty keeps the old wire shape
+	// for consumers that predate the fields.
+	Command string `json:"pane_current_command,omitempty"`
+	Title   string `json:"pane_title,omitempty"`
 	// PanePID is the session's active-pane process — internal input to
 	// the claude-liveness backstop (proc.go), never serialized.
 	PanePID int `json:"-"`
@@ -159,8 +169,16 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
-	log.Printf("tmux-api listening on %s (self=%s)", listenAddr, selfUser)
-	log.Fatal(http.ListenAndServe(listenAddr, nil))
+	// TMUX_API_ADDR: scratch-build override for the dev harness
+	// (dev-harness.py --tmux-api-port documents testing a local build,
+	// which can't bind 7684 while the production service holds it).
+	// The systemd unit sets no environment — production stays :7684.
+	addr := listenAddr
+	if a := os.Getenv("TMUX_API_ADDR"); a != "" {
+		addr = a
+	}
+	log.Printf("tmux-api listening on %s (self=%s)", addr, selfUser)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 // /whoami → {authentik, osUser}. Used by the lobby HTML to render the
@@ -282,23 +300,31 @@ func buildSessionsBody(osUser string) []byte {
 	return append(body, '\n')
 }
 
-// parseSessions decodes `tmux list-sessions -F tmuxListFmt` output. Lines
-// with the wrong field count are skipped (a tmux hiccup must not 500 the
-// list). Unknown state values are dropped; whether the claude behind a
-// state is still alive is decided later by clearDeadStates (proc.go).
+// parseSessions decodes `tmux list-sessions -F tmuxListFmt` output. Short
+// lines are skipped (a tmux hiccup must not 500 the list); SplitN keeps a
+// pane_title with embedded '|' intact in the trailing field instead of
+// hiding the whole session. The three numeric columns parse strictly: a
+// pipe smuggled into a SESSION name (possible outside the API's NAME_RE)
+// shifts a non-numeric segment into them, and skipping such a row beats
+// serving a garbage session the UI can't act on. Unknown state values are
+// dropped; whether the claude behind a state is still alive is decided
+// later by clearDeadStates (proc.go).
 func parseSessions(out []byte) []Session {
 	sessions := make([]Session, 0)
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, "|")
-		if len(parts) != 6 {
+		parts := strings.SplitN(line, "|", 8)
+		if len(parts) != 8 {
 			continue
 		}
-		attached, _ := strconv.Atoi(parts[1])
-		activity, _ := strconv.ParseInt(parts[2], 10, 64)
-		created, _ := strconv.ParseInt(parts[3], 10, 64)
+		attached, errA := strconv.Atoi(parts[1])
+		activity, errB := strconv.ParseInt(parts[2], 10, 64)
+		created, errC := strconv.ParseInt(parts[3], 10, 64)
+		if errA != nil || errB != nil || errC != nil {
+			continue
+		}
 		state := parts[4]
 		if !knownStates[state] {
 			state = ""
@@ -311,6 +337,8 @@ func parseSessions(out []byte) []Session {
 			Created:      created,
 			State:        state,
 			PanePID:      panePID,
+			Command:      parts[6],
+			Title:        parts[7],
 		})
 	}
 	return sessions
