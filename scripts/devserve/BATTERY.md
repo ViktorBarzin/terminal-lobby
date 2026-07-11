@@ -704,11 +704,13 @@ implements the feature. Format:
   carries the AUTHENTIK name — `/etc/ttyd-user-map` maps it to the OS
   user; the OS name `wizard` is unmapped and 403s.)
 - [Task 2.6] Settings popover: click the sidebar `⚙ Terminal settings`
-  button → `#settings-panel` opens anchored to it with EXACTLY six
-  controls — font-size A−/A+ (same store as the Task 1.8 steppers:
+  button → `#settings-panel` opens anchored to it with EXACTLY seven
+  controls (six until Task 3.5 added the flow-control checkbox) —
+  font-size A−/A+ (same store as the Task 1.8 steppers:
   panel steps move `#font-size-value` and vice versa), line-height
   range 1–1.4, letter-spacing range 0–1px, cursor Block/Bar/Under
-  segments, cursor-blink checkbox, bold-weight 600/700 segments — and
+  segments, cursor-blink checkbox, bold-weight 600/700 segments,
+  flow-control checkbox (`#sp-flow`, Task 3.5) — and
   NO smooth-scroll / renderer / mouse / wheel / scroll option anywhere
   in it (red line; assert by scanning the panel's text). Escape closes
   it AND the terminal regains the keyboard (type → capture-pane shows
@@ -871,6 +873,57 @@ implements the feature. Format:
   ride the same renamed `devvm/ttyd-local.patch`): still ≥100 distinct
   colors in the image crop (measured 635) and the attached client's
   `#{client_termfeatures}` lists `sixel`.
+- [Task 3.5] Flow control — bounded write queue + responsiveness: harness
+  against the patched binary (`--ttyd-bin out/ttyd`), attach `#main`;
+  instrument every frame with an init script wrapping
+  `WebSocket.prototype.send` to log 1-byte `'2'`/`'3'` frames
+  (`window.__tlFlowFrames`) + the `__term` Proxy recipe; CDP
+  `Emulation.setCPUThrottlingRate` rate 6. Flood
+  `tmux -L tl-dev send-keys -t main 'yes | head -c 20M' Enter` → poll
+  `__term._core._writeBuffer._pendingData` every ~100 ms until the stream
+  quiesces: peak ≤ ~1.2 MB, and an in-page rAF probe's max frame gap
+  < 200 ms (main thread responsive). NOTE tmux frame-skipping collapses
+  the client-visible flood to ~0.13 MiB/s (Task 3.4 instrument note) —
+  an UNthrottled tab never nears the high-water mark; under the 6×
+  throttle xterm's parse rate drops below the arrival rate and the
+  backlog crosses it for real (measured 2026-07-11: peak 1.04-1.15 MB,
+  just over the 11 × 100 KB registration threshold — exactly ONE '2'
+  PAUSE frame sent, max rAF gap 167-183 ms, tail drains after the
+  callback-path RESUME). A Playwright frame-lookup gotcha for all
+  Task 3.5 legs: M.3's `location.replace()` swaps leave Playwright's
+  cached `frame.url` at `about:blank` — find the terminal frame by
+  live content (`frame.evaluate('location.href')`), never by
+  `frame.url`.
+- [Task 3.5] Watchdog fail-open (challenge-round requirement — a stuck
+  PAUSE must never freeze the terminal): same instrumented setup; in the
+  terminal iframe swallow completion callbacks —
+  `const t = window.__term, o = t.write.bind(t); t.write = (d, cb) => o(d)`
+  — then flood 20M (run each leg against a FRESH reload: a paused
+  server + in-flight callbacks from a previous leg poison the
+  counters). Expect, in order: ≥1 `'2'` (PAUSE) frame once ~1.1 MB has
+  arrived (11 × 100 KB registrations, ~7-8 s at the collapsed rate);
+  output goes QUIET (the Task 3.4 server honors it); ≤4 s later the
+  console warns exactly `tl-flow: watchdog resume` and a `'3'` (RESUME)
+  frame follows; new OUTPUT bytes arrive ≤5 s after the quiet point —
+  output never freezes for good (the cycle repeats while the swallow is
+  active; measured 2026-07-11: PAUSE at 1 105 032 flood bytes, watchdog
+  RESUME 4.00 s after it, output growing again 2.6 s after the quiet
+  point, exactly one warn per cycle). Restore `t.write = o` (or reload)
+  after.
+- [Task 3.5] Kill-switch: `localStorage['tl-flow-control'] = 'off'`,
+  reload, re-instrument INCLUDING the leg-2 callback swallow (the exact
+  conditions that trip PAUSE when flow control is on), flood 20M →
+  ZERO 1-byte `'2'`/`'3'` frames for the whole flood (behavior
+  identical to pre-3.5 plain `term.write`), flood renders to completion
+  (measured 2026-07-11: 0 frames over a 1.9 MB collapsed flood).
+  Settings panel: `#sp-flow` is the seventh control, CHECKED by default;
+  untick → the key reads `'off'` (storage event live-disables an
+  attached terminal; if it was paused at that instant it force-resumes,
+  warning `tl-flow: kill-switch resume`); tick → key removed, flow
+  control re-arms at the next connect (onopen re-read).
+- [Task 3.5] Server side unchanged by the client work:
+  `python3 scripts/devserve/flowprobe.py` against the same harness →
+  still `pause_honored: true`, exit 0.
 - [Task 3.1] Traversal probes — direct against the scratch service with
   raw paths (`curl --path-as-is -so /dev/null -w '%{http_code}'
   http://127.0.0.1:17683/<path>`): `/icon-../etc/passwd` → 404,
