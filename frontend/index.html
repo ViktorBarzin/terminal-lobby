@@ -2040,11 +2040,39 @@
                 }
             }
 
+            // --- focus return after overlays (Task 2.3), lobby flavor --------
+            // Overlays here live OUTSIDE the terminal iframe, so "focus the
+            // terminal" is a postMessage hop into it (the iframe's own
+            // requestTerminalFocus rAF-focuses xterm; a stale build without
+            // the tl-focus branch degrades to today's behavior). Future
+            // lobby-side overlays (settings panel, Task 2.6) route their
+            // dismissal through closeOverlay too.
+            function requestTerminalFocus() {
+                if (!currentActive || frameEl.classList.contains('hidden') ||
+                    !frameEl.contentWindow) return;
+                try {
+                    frameEl.contentWindow.postMessage({ type: 'tl-focus' }, location.origin);
+                } catch (e) {}
+            }
+            function closeOverlay(el) {
+                if (el && el.parentNode) el.remove();
+                requestTerminalFocus();
+            }
+
             // --- popup menu (session ⋯ and project ⋯) -------------------------
 
             let openMenuEl = null;
-            function closeMenu() {
-                if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; }
+            // refocus=true on user DISMISSALS (Escape, picking an item) —
+            // the keyboard goes back to the terminal. Deliberately false
+            // when replaced by another openMenu() and on outside-click
+            // dismissal: the click chooses its own focus target (e.g. the
+            // new-session input) and stealing it back would be worse.
+            function closeMenu(refocus) {
+                if (!openMenuEl) return;
+                const el = openMenuEl;
+                openMenuEl = null;
+                if (refocus) closeOverlay(el);
+                else el.remove();
             }
             // items: {label, onClick, danger?, disabled?} or {labelHeading}
             function openMenu(anchor, items) {
@@ -2066,7 +2094,10 @@
                     if (it.disabled) b.disabled = true;
                     b.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        closeMenu();
+                        // refocus rides a rAF, so it lands AFTER any
+                        // synchronous prompt()/confirm() the item opens —
+                        // dialogs hand focus back to the terminal too.
+                        closeMenu(true);
                         it.onClick();
                     });
                     menu.appendChild(b);
@@ -2085,7 +2116,7 @@
                 if (openMenuEl && !openMenuEl.contains(e.target)) closeMenu();
             });
             document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') closeMenu();
+                if (e.key === 'Escape') closeMenu(true);
             });
 
             // --- project CRUD --------------------------------------------------
@@ -3636,6 +3667,37 @@
             preview.timer = setTimeout(destroyImagePreview, PREVIEW_TTL_MS);
         }
 
+        // ---- focus return after overlays (Task 2.3) ----------------------
+        // Central dismissal: every overlay tear-down routes through
+        // closeOverlay() so the terminal reliably gets the keyboard back —
+        // opening via the floating buttons focuses the BUTTON, and without
+        // this the first post-Escape keystrokes went nowhere. The counter is
+        // T3's focusRequestId pattern (ThreadTerminalDrawer.tsx): each
+        // request supersedes any still-scheduled one, and any caller — the
+        // parent lobby included, via the tl-focus message — can re-request
+        // focus at will. rAF defers past the same-tick DOM teardown, but is
+        // RENDER-GATED: an iframe with no pending paint produces no
+        // animation frames (measured in headless Chromium — tl-focus
+        // arriving from the lobby scheduled a rAF that never ran, because
+        // nothing in THIS document changed), so a 50ms timeout races it as
+        // the delivery guarantee; the done flag keeps focus() single-shot.
+        let focusRequestId = 0;
+        function requestTerminalFocus() {
+            const id = ++focusRequestId;
+            let done = false;
+            const fire = () => {
+                if (done || id !== focusRequestId) return;
+                done = true;
+                term.focus();
+            };
+            requestAnimationFrame(fire);
+            setTimeout(fire, 50);
+        }
+        function closeOverlay(el) {
+            if (el && el.parentNode) el.remove();
+            requestTerminalFocus();
+        }
+
         // Shared lightbox: full-screen enlargement of an image URL — an
         // object URL for the paste preview, a /clipboard/img/... URL for
         // the gallery. Click or Escape closes it and then runs onClose:
@@ -3664,7 +3726,7 @@
                 if (closed) return;     // destroy → close → destroy re-entry
                 closed = true;
                 document.removeEventListener('keydown', onKey, true);
-                box.remove();
+                closeOverlay(box);      // remove + focus return (Task 2.3)
                 if (onClose) onClose();
             }
             box.addEventListener('click', close);
@@ -3825,9 +3887,9 @@
         function closeGallery() {
             if (!gallery) return;
             document.removeEventListener('keydown', gallery.onKey, true);
-            gallery.box.remove();
+            const box = gallery.box;
             gallery = null;
-            term.focus();
+            closeOverlay(box);          // remove + focus return (Task 2.3)
         }
 
         async function openGallery() {
@@ -4011,9 +4073,11 @@
         // The lobby (parent) drives this page over postMessage: files dropped
         // on its chrome (tl-drop-files), live theme switches (tl-theme —
         // ACKed back, so a lobby talking to a stale build without this branch
-        // knows to fall back to its old iframe reload) and font-size steps
+        // knows to fall back to its old iframe reload), font-size steps
         // (tl-font-size — no ACK: a stale build reads the persisted size at
-        // its next boot anyway).
+        // its next boot anyway) and focus re-requests (tl-focus, Task 2.3:
+        // lobby-side overlays live outside this iframe, so their dismissal
+        // hands the keyboard back through here).
         window.addEventListener('message', (e) => {
             if (e.origin !== location.origin || !e.data) return;
             if (e.data.type === 'tl-drop-files') {
@@ -4021,6 +4085,8 @@
                 if (files.length) uploadDroppedFiles(files);
             } else if (e.data.type === 'tl-font-size') {
                 applyFontSize(e.data.size);
+            } else if (e.data.type === 'tl-focus') {
+                requestTerminalFocus();
             } else if (e.data.type === 'tl-theme') {
                 // localStorage (shared same-origin, written by the lobby
                 // before posting) is the source of truth; the message name
