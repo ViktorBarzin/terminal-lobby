@@ -517,6 +517,31 @@
         #toast.visible { opacity: 1; }
         #toast.error { color: var(--danger); border-color: var(--danger); }
         #toast.success { color: var(--success); border-color: var(--success); }
+        /* Connection pill (Task 2.2): slim non-modal WS status for the
+           terminal iframe — top-center so it never covers the floating
+           action buttons or the prompt. Pure status surface:
+           pointer-events none keeps every mouse event on the terminal
+           beneath it (red line: mouse semantics untouched). */
+        #conn-pill {
+            position: fixed; z-index: 9998;
+            top: calc(10px + env(safe-area-inset-top));
+            left: 50%; transform: translateX(-50%);
+            display: flex; align-items: center; gap: 7px;
+            background: var(--bg-card); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: 999px;
+            padding: 5px 14px;
+            font-family: var(--font-ui); font-size: 12px; font-weight: 500;
+            pointer-events: none; white-space: nowrap;
+            box-shadow: var(--surface-shadow);
+        }
+        #conn-pill::before {
+            content: ''; width: 7px; height: 7px; border-radius: 50%;
+            flex: none;
+            background: #f59e0b; /* amber — same state color as "awaiting" */
+            animation: conn-pulse 1.2s ease-in-out infinite;
+        }
+        #conn-pill.offline::before { background: var(--danger); animation: none; }
+        @keyframes conn-pulse { 50% { opacity: 0.35; } }
         #paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn {
             position: fixed;
             /* --kb-offset is updated from window.visualViewport on touch
@@ -1290,6 +1315,7 @@
         </div>
     </div>
     <div id="toast"></div>
+    <div id="conn-pill" class="hidden" role="status"></div>
     <button id="font-dec-btn" title="Smaller terminal font">A&#8722;</button>
     <button id="font-inc-btn" title="Larger terminal font">A+</button>
     <button id="gallery-btn" title="Session images">&#128444;&#65039;</button>
@@ -4154,10 +4180,56 @@
             }
         }
 
-        function scheduleReconnect() {
-            term.write('\r\n\x1b[31mDisconnected. Reconnecting...\x1b[0m\r\n');
-            setTimeout(connect, 3000);
+        // ---- reconnect ladder + connection pill (Task 2.2) ---------------
+        // tmux reattach makes aggressive retry lossless, so back off fast:
+        // 1s → 2s → 4s → 8s → 16s, capped. The attempt counter resets only
+        // after a connection has stayed up 30s — a flapping link keeps
+        // escalating instead of hammering the server. Coexists with the
+        // stale-tab healer: onopen still runs reloadIfStale() on every
+        // reconnect, and the sessionStillExists() kill-guard is unchanged.
+        // Status now lives in the #conn-pill overlay instead of red
+        // term.write lines (those stacked up per retry and got overdrawn
+        // by tmux's reattach repaint anyway).
+        const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+        let connAttempts = 0;   // connect()s started since the last stable connection
+        let retryTimer = null;  // pending scheduled connect (null while attempting)
+        let stableTimer = null; // pending "connection survived 30s" ladder reset
+        const connPill = document.getElementById('conn-pill');
+        function paintConnPill(attempt) {
+            connPill.textContent =
+                navigator.onLine === false ? 'You are offline'
+                : attempt <= 1 ? 'Connecting…'
+                : 'Reconnecting… (attempt ' + attempt + ')';
+            connPill.classList.toggle('offline', navigator.onLine === false);
+            connPill.classList.remove('hidden');
         }
+        function hideConnPill() { connPill.classList.add('hidden'); }
+        function scheduleReconnect() {
+            if (retryTimer) return; // one pending attempt at a time
+            const delay = RETRY_DELAYS_MS[Math.min(connAttempts, RETRY_DELAYS_MS.length - 1)];
+            paintConnPill(connAttempts + 1); // the attempt this timer will run
+            retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
+        }
+        // A hidden tab throttles timers and a dead network fails fast — when
+        // either recovers, retry NOW instead of waiting out a 16s rung. Only
+        // while a retry is actually pending: never a second socket during a
+        // live attempt, never a resurrect after "Session ended."
+        function retryNow(why) {
+            if (!retryTimer) return;
+            clearTimeout(retryTimer);
+            retryTimer = null;
+            console.log('reconnect: instant retry (' + why + ')');
+            connect();
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) retryNow('tab visible');
+        });
+        window.addEventListener('online', () => retryNow('back online'));
+        window.addEventListener('offline', () => {
+            // Repaint a waiting pill to "You are offline"; the online
+            // handler above brings the retry forward when service returns.
+            if (retryTimer) paintConnPill(connAttempts + 1);
+        });
 
         // ---- stale-tab self-heal ----------------------------------------
         // Deploys restart ttyd, which only DROPS the WebSocket: the page
@@ -4217,6 +4289,9 @@
             const base = location.pathname.replace(/\/+$/, '');
             const wsUrl = proto + '//' + location.host + base + '/ws' + argSuffix;
 
+            connAttempts++;
+            paintConnPill(connAttempts);
+
             fetch(base + '/token' + argSuffix, { credentials: 'same-origin' })
                 .then(r => r.json())
                 .then(tokenData => {
@@ -4226,6 +4301,12 @@
 
                     ws.onopen = () => {
                         console.log('Connected to ttyd (session: ' + validArg + ')');
+                        hideConnPill();
+                        // Ladder reset only after the connection PROVES
+                        // stable (30s up) — an instant re-drop keeps the
+                        // escalated delay instead of restarting at 1s.
+                        clearTimeout(stableTimer);
+                        stableTimer = setTimeout(() => { connAttempts = 0; }, 30000);
                         const isReconnect = hasConnectedOnce;
                         hasConnectedOnce = true;
                         // A reconnect usually means ttyd restarted — i.e. a
@@ -4302,6 +4383,12 @@
                     };
 
                     ws.onclose = () => {
+                        // The connection did not survive — stop a pending
+                        // stability reset and show status while we decide
+                        // whether to reconnect (the existence check below
+                        // can itself take a moment on a struggling network).
+                        clearTimeout(stableTimer);
+                        paintConnPill(connAttempts + 1);
                         // First connection is the create/attach — always retry it.
                         // After we've connected once, a close may mean the session
                         // was killed (by this or another client); reconnecting would
@@ -4315,6 +4402,7 @@
                             if (exists) {
                                 scheduleReconnect();
                             } else {
+                                hideConnPill();
                                 term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
                             }
                         });
@@ -4323,9 +4411,10 @@
                     ws.onerror = (e) => console.error('WebSocket error:', e);
                 })
                 .catch(err => {
+                    // Token fetch failed = the attempt failed before a
+                    // socket ever existed — same ladder as a WS drop.
                     console.error('Token fetch failed:', err);
-                    term.write('\r\n\x1b[31mFailed to connect. Retrying...\x1b[0m\r\n');
-                    setTimeout(connect, 3000);
+                    scheduleReconnect();
                 });
         }
 
