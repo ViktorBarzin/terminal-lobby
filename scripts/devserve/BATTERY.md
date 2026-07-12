@@ -1239,7 +1239,10 @@ implements the feature. Format:
   `PUT` it back after (standing rule above).
 - [Task M.6] Module isolation (the RL-critical leg): Pixel-7 emulation,
   attach `#main`; in the iframe `window.__tlGestures` exists with
-  `attached === false`, `recognizers === 2`; instrument a capture wheel
+  `attached === false`, `recognizers === 3` (2f-tap + 3f-swipe + the
+  Task M.8 pinch — pinch REGISTERS on any Chromium coarse pointer;
+  its default-OFF flag is read per press, not at registration; was 2
+  before M.8 landed); instrument a capture wheel
   counter on `#terminal`; `multi_swipe(page, [(cx, cy)], dx=0, dy=-60,
   steps=12)` (5 px steps) → copy-mode entered (§A.5 semantics), wheel
   counter counts the delivered moves past the 6 px discriminator
@@ -1384,3 +1387,107 @@ implements the feature. Format:
   the new file adds no directory serving); `go test ./...` in
   `clipboard-upload/` green (the whitelisted-but-not-installed 404
   scenario keeps its regression test).
+- [Task M.8] Pinch-to-font-size — probe instrumentation shared by the
+  legs below (Pixel-7 emulation, attach `#main`): in the terminal
+  iframe, BEFORE dispatching, install a BUBBLE-phase document touchmove
+  probe —
+  `window.__pz={n:0,consumed:[],cancelable:[]}; document.addEventListener('touchmove', e=>{ if(e.touches.length===2){ __pz.n++; __pz.consumed.push(e.defaultPrevented); __pz.cancelable.push(e.cancelable); } }, {passive:true}); true`
+  — bubble on document fires AFTER the module's document-CAPTURE
+  listener, so it observes the recognizer's preventDefault (a
+  pre-registered capture probe would run first and false-red). All
+  dispatches are FINE-step raw CDP via `gestures.py` (plan M.8: coarse
+  dispatch false-greens — it never exercises Chrome's ~1-3-move
+  cancelable-touchmove window; `pinch()` defaults give ≈2.5
+  px/finger/move). Flag legs set the shared-origin localStorage key
+  `tl:gesture-pinch-font:v1`='on' (any window — one store). fontSize
+  isolation: snapshot `tl:prefs:v1`.fontSize + `tl-font-size` before,
+  restore after (pinch steps also PUT the roamed doc — prefs-isolation
+  rule above applies).
+- [Task M.8] Flag-ON diverging pinch (the CLAIM): flag 'on',
+  `pinch(page, cx, cy, span0=80, span1=255, steps=35)` centered on the
+  terminal → `__pz.consumed[0] === true` with
+  `__pz.cancelable[0] === true` (the claim consumes from move 1 — not
+  post-classification) and `__pz.consumed.every(x=>x)` (EVERY
+  delivered 2f move consumed; Chrome coalesces so delivered may be
+  <35, but must be ≥3; measured 35/35 at implementation); at END
+  `window.top.visualViewport.scale === 1` — native zoom never
+  started. Scale is a TOP-window property: the iframe's OWN
+  `visualViewport.scale` reads 1 in Chromium regardless of page zoom
+  (measured — that's why the recognizer's gate reads
+  `window.top.visualViewport.scale` via `pageScale()`). Iframe fontSize
+  stepped ≥2 ABOVE the start value (span ratio 3.19 → clamps to 22
+  from the default 15; steps arrive through the shared applyFontSize,
+  so each commit ticks haptic `5` under the M.7 spy and repaints the
+  grid), `tl-font-size` in step with `tl:prefs:v1`, and `#font-pill`
+  (role=status) showed `Aa NNpx` with `.visible` during the burst,
+  gone ≈220ms after touchend. Converging leg (`span0=255, span1=80`)
+  → fontSize steps DOWN (toward the 10 clamp).
+- [Task M.8] Flag-OFF native-zoom guard (STANDING red-line leg:
+  `#terminal`'s `touch-action: pan-x pan-y pinch-zoom` must never be
+  narrowed): key removed (= production default), same diverging
+  dispatch → ZERO consumed moves and `window.top.visualViewport.scale
+  > 1` (native pinch-zoom reached the compositor; measured 5 = the
+  clamp. The unconsumed stream also shows Chrome's cancelable window
+  live: `__pz.cancelable` = [true, false, false, …] — exactly why the
+  claim must consume from move 1); reset with the CDP session's
+  `Emulation.resetPageScaleFactor` and POLL the top scale back to 1
+  (the reset settles asynchronously, ≈0.5s — a one-shot read
+  false-reds); fontSize UNCHANGED. Repeat with flag 'on' +
+  `tl-gestures`='off' → identical native-zoom result (the master kill
+  stops the module's lazy listener attach itself, so nothing can
+  consume); remove the kill key, reset scale.
+- [Task M.8] Span-constant 2-finger pan (the RELEASE): flag 'on',
+  `multi_swipe(page, [(cx-40,cy),(cx+40,cy)], dx=0, dy=-80, steps=16)`
+  (two fingers, gap pinned at 80px) → consumed moves are EXACTLY the
+  first 3 (`__pz.consumed` = [true,true,true,false,…]:
+  classify-at-move-3 sees |span/span0−1| < 0.05 → RELEASE; the ~7.5px
+  of swallowed centroid is the declared cost), every later move
+  unconsumed (native resumes the pan), fontSize unchanged, no
+  `#font-pill`.
+- [Task M.8] Staggered join (the DECLARED LEAK — panic-zoom mid-scroll
+  must stay native): flag 'on'; compose: `multi_swipe(page, [(cx,
+  cy+40)], dx=0, dy=-80, steps=8, release=False)` (1-finger scroll in
+  flight, finger stays down at (cx, cy−40)), then `pinch(page, cx, cy,
+  span0=80, span1=200, steps=12, angle_deg=90)` — its touchStart
+  continues finger 0 at (cx, cy−40) and JOINS finger 1 at (cx, cy+40),
+  then diverges and releases all → ZERO consumed 2f moves
+  (`__pz.consumed` all false: the join's moves arrive
+  `cancelable === false` — probe legs G/N — and the recognizer
+  RELEASES on the first one instead of fighting the compositor),
+  fontSize unchanged.
+- [Task M.8] 1-finger isolation (module untouched): flag 'on',
+  `multi_swipe(page, [(cx,cy)], dx=0, dy=-60, steps=12)` →
+  `__tlGestures.attached` false throughout, `__pz.n === 0` (no
+  2f moves at all), §A.5 wheel semantics per the M.6 module-isolation
+  leg (which now expects `recognizers === 3`).
+- [Task M.8] Repaint mask (fit-burst dim): attach `#main`; in the
+  iframe fire a stepper burst (3 changed-size `applyFontSize` calls —
+  or A+ taps — ≤120ms apart) and poll
+  `getComputedStyle(document.getElementById('terminal')).opacity`
+  every ~50ms: during the burst it reads <1 (target 0.35 behind an
+  80ms fade), and it returns to exactly `'1'` ≈180+80ms after the last
+  call with the final grid aligned (box-drawing echo screenshot — no
+  half-painted metrics frame). The mask is CONTAINER opacity only: the
+  `.xterm` canvases' own computed opacity stays `'1'` throughout
+  (WebGL contents never touched). The same dim wraps the outer-stepper
+  path (lobby A+ → tl-prefs message → applyTermPrefs needFit) and
+  lineHeight slides; a NO-OP apply (duplicate tl-font-size message)
+  must not flash it.
+- [Task M.8] Settings + defaults: a coarse-pointer Chromium lobby
+  panel renders 'Pinch font size' (`#sp-pinch`), UNCHECKED by default
+  (DEFAULT OFF stands until Viktor's real-device run of
+  `scripts/devserve/pinch-probe.html` — chrome://inspect; the
+  release-resume legs are the hardware-fragile part); ticking writes
+  `tl:gesture-pinch-font:v1`='on' (plain per-browser key, never
+  roamed), unticking REMOVES the key; the row does NOT render on a
+  fine-pointer desktop panel. With the key set, the recognizer arms
+  ONLY at `pageScale() ≤ 1.001` (order matters: REMOVE the flag, zoom
+  in natively via dispatch, THEN set flag 'on' → diverging pinch
+  consumes NOTHING while zoomed — native pinch stays the way back
+  out; reset scale after. Zooming in with the flag already on gets
+  CLAIMED instead and false-reds the leg — bit the implementation
+  smoke).
+- [Task M.8] Red line: §A.5 on both emulated viewports + the standing
+  diff guards (M.1 touch-discriminator block AND the ADR-0003
+  mousedown interceptor byte-identical vs `6773cbd`;
+  `term.attachCustomKeyEventHandler(` exactly once in HEAD).
