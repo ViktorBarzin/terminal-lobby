@@ -7788,17 +7788,22 @@
             // The OPPOSITE of the helper-textarea suppression set — and
             // never a `type` attribute (textareas have none; the helper's
             // type=password trick would kill the suggestion/composition UI
-            // this field exists for). autocomplete=off suppresses only
-            // form-autofill — keyboard-level swipe/suggestions/dictation
-            // stay. IR.1 deltas: autocapitalize off (sentence-caps corrupt
-            // shell commands now that keystrokes stream raw) and
-            // enterkeyhint FIXED 'send' (Enter always streams the line +
-            // \r — no more compose.enterKey arbitration). Inline 16px
-            // blocks iOS Safari's focus auto-zoom.
+            // this field exists for). autocorrect='on' + spellcheck='true'
+            // are the real QuickType controls; the `autocomplete` attribute is
+            // deliberately OMITTED (not 'off'): on iOS — pronounced in the
+            // installed PWA's WKWebView — autocomplete='off' ALSO suppresses
+            // the QuickType predictive/autocorrect bar (a WebKit coupling, not
+            // just form-autofill), so 'off' silently killed suggestions in
+            // this very field (2026-07-12). Omitting it restores the
+            // spec-neutral default; a nameless, form-less textarea has ~nil
+            // autofill risk, so 'off' bought nothing. IR.1 deltas:
+            // autocapitalize off (sentence-caps corrupt shell commands now
+            // that keystrokes stream raw) and enterkeyhint FIXED 'send' (Enter
+            // always streams the line + \r — no more compose.enterKey
+            // arbitration). Inline 16px blocks iOS Safari's focus auto-zoom.
             composeInput.setAttribute('autocapitalize', 'off');
             composeInput.setAttribute('autocorrect', 'on');
             composeInput.setAttribute('spellcheck', 'true');
-            composeInput.setAttribute('autocomplete', 'off');
             composeInput.setAttribute('inputmode', 'text');
             composeInput.setAttribute('enterkeyhint', 'send');
             composeInput.setAttribute('aria-label', 'Compose text to send to the terminal');

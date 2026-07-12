@@ -1529,14 +1529,24 @@ implements the feature. Format:
   ±2px) with `--sk-h` == the toolbar's px height; tap the ✎ soft key →
   `.visible` + `#compose-input` focused; assert on the TEXTAREA:
   `autocapitalize='sentences'`, `autocorrect='on'`, `spellcheck='true'`,
-  `autocomplete='off'` (form-autofill only — keyboard suggestion/swipe/
-  dictation stay), `inputmode='text'`, `hasAttribute('type')===false`
-  (never inherits the helper's type=password trick), aria-label set,
-  computed font-size ≥16px (INLINE — iOS focus-auto-zoom block),
-  `enterkeyhint='enter'` under default prefs. Verified 33/33 at
-  implementation (2026-07-12). **IR.1 delta:** `autocapitalize='off'`
-  and `enterkeyhint='send'` (both FIXED) — the rest of the attribute
-  set is unchanged and still asserted.
+  `hasAttribute('autocomplete')===false` (the attribute is OMITTED, not
+  `'off'` — see the QuickType delta below), `inputmode='text'`,
+  `hasAttribute('type')===false` (never inherits the helper's type=password
+  trick), aria-label set, computed font-size ≥16px (INLINE — iOS
+  focus-auto-zoom block), `enterkeyhint='enter'` under default prefs.
+  Verified 33/33 at implementation (2026-07-12). **IR.1 delta:**
+  `autocapitalize='off'` and `enterkeyhint='send'` (both FIXED) — the rest
+  of the attribute set is unchanged and still asserted. **QuickType delta
+  (2026-07-12):** the `autocomplete` attribute is now ABSENT, not `'off'`.
+  On iOS — pronounced in the installed PWA's WKWebView — `autocomplete='off'`
+  ALSO suppresses the QuickType predictive/autocorrect bar (a WebKit coupling
+  beyond form-autofill; WHATWG defines `off` purely for UA autofill), which
+  silently killed suggestions on Viktor's iPhone even with `autocorrect='on'`.
+  Assert `#compose-input.hasAttribute('autocomplete') === false`;
+  `autocorrect='on'` + `spellcheck='true'` remain the real QuickType controls
+  and a nameless/form-less textarea has ~nil autofill risk. Attribute-absence
+  is harness-assertable; the bar's actual appearance is DEVICE-MANUAL (see the
+  real-device checklist).
 - [Task M.10] ~~Decisive framing leg~~ **SUPERSEDED by [IR.1]** (the ▶
   button, hold-to-stage, and staged sends no longer exist — the field
   is a live mirror; multiline paste keeps the §A.6 bracketed shape via
@@ -1619,10 +1629,15 @@ implements the feature. Format:
   physical devices — first run: Viktor, per the deploy heads-up):
   Gboard swipe typing lands words in the field; iOS dictation runs
   WITHOUT blurring the field; an accepted autocorrect suggestion
-  arrives in the sent paste; the Return key renders per enterkeyhint
-  ('return' vs 'send' key face); focusing the field triggers NO iOS
-  auto-zoom (inline 16px); send → text arrives in Claude Code's
-  composer as one block, Enter-submit only when sent with ▶/Enter-mode.
+  arrives in the sent paste; **iOS QuickType — with `#compose-input`
+  focused the predictive/suggestion bar is VISIBLE, and typing `teh `
+  autocorrects to `the`: the on-device regression guard for dropping
+  `autocomplete='off'` (2026-07-12). The harness checks the attribute is
+  absent; only a real device (or the iPhone rig) shows the bar itself**;
+  the Return key renders per enterkeyhint ('return' vs 'send' key face);
+  focusing the field triggers NO iOS auto-zoom (inline 16px); send → text
+  arrives in Claude Code's composer as one block, Enter-submit only when
+  sent with ▶/Enter-mode.
 
 ### [C4] Theme picker → settings panel (MF-1; Viktor complaint 4: "move the theme in the settings menu")
 
