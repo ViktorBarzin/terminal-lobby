@@ -2031,3 +2031,21 @@ in the coarse compose block) lives OUTSIDE both guarded regions.
   `pause_honored: true` and the `--no-pause` throughput leg streams to
   quiesce with no stall (pixel-size + PAUSE hunks byte-identical to the
   prior verified patch); §A.4 sixel still renders (≥100 colors).
+- [Add-4] Notifications Part 1 — SW delivery + gate + seeding. Serve
+  side: `go test ./...` in clipboard-upload green incl. `/sw.js` served
+  `application/javascript` + `Cache-Control: no-cache` (fixture,
+  served-table and fallthrough=false cases extended); a cookie-less
+  `GET /sw.js` through the harness returns the worker bytes. Frontend:
+  `navigator.serviceWorker.register('/sw.js')` at lobby boot inside a
+  try/catch — a 404 before the infra route lands must NOT break boot
+  (console clean, terminal echoes). notifyTransitions prefers
+  `(await navigator.serviceWorker.ready).showNotification`; the bell
+  toggle toasts "not supported" when NEITHER the SW registration NOR a
+  usable Notification constructor exists. Gate (fake-claude recipe from
+  Task 2.1, scratch `tl-battery-*` names only): with permission granted +
+  opted in, a `running→awaiting` transition fires EXACTLY ONE notification
+  while the window is `away()` — hidden (hidden-shim) OR
+  visible-but-blurred — and NONE while focused+visible (the old
+  `!document.hidden` gate missed the blurred case); tag `tl-<session>`
+  coalesces re-fires. Seeding: a session first seen ALREADY `awaiting` on
+  a LATER poll announces once; the very first poll after load stays silent.
