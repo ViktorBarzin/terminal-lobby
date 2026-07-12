@@ -285,12 +285,18 @@ func (p *pushSender) run(ctx context.Context) {
 	}
 }
 
+// pushSenderInstance is the process-wide sender, set by maybeStartPushSender
+// iff VAPID is configured (nil = push dark). The background loop uses it; the
+// on-demand POST /push/test handler reuses it to fan a test push through the
+// exact same send path.
+var pushSenderInstance *pushSender
+
 // maybeStartPushSender launches the background sender iff a full VAPID config
 // is present in the environment (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY /
 // VAPID_SUBJECT — installed from Vault into /etc/tmux-api/vapid.env at deploy
 // time). Absent or partial config leaves the whole push path dark: GET
-// /push/vapid-public 404s and the frontend falls back to foreground
-// notifications only.
+// /push/vapid-public 404s, POST /push/test 503s, and the frontend falls back
+// to foreground notifications only.
 func maybeStartPushSender() {
 	pub := os.Getenv("VAPID_PUBLIC_KEY")
 	priv := os.Getenv("VAPID_PRIVATE_KEY")
@@ -299,11 +305,11 @@ func maybeStartPushSender() {
 		log.Printf("push sender: VAPID config incomplete — background push disabled")
 		return
 	}
-	sender := newPushSender(pushStoreInstance, prefsStoreInstance, liveStater{}, vapidConfig{
+	pushSenderInstance = newPushSender(pushStoreInstance, prefsStoreInstance, liveStater{}, vapidConfig{
 		publicKey:  pub,
 		privateKey: priv,
 		subject:    subject,
 	})
-	go sender.run(context.Background())
+	go pushSenderInstance.run(context.Background())
 	log.Printf("push sender: started (poll every %s)", pushPollInterval)
 }

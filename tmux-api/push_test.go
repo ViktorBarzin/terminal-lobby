@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -381,5 +382,146 @@ func TestHandleVAPIDPublicRejectsOtherMethods(t *testing.T) {
 	handlePushVAPIDPublic(rec, httptest.NewRequest(http.MethodPost, "/push/vapid-public", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST vapid-public: got %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+// --- /push/test self-diagnosis endpoint -------------------------------------
+
+// swapPushSender points the /push/test handler at a test sender (or nil, to
+// simulate push being dark) for the test's life.
+func swapPushSender(t *testing.T, sender *pushSender) {
+	t.Helper()
+	old := pushSenderInstance
+	pushSenderInstance = sender
+	t.Cleanup(func() { pushSenderInstance = old })
+}
+
+func pushTestReq(authUser string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/push/test", nil)
+	if authUser != "" {
+		r.Header.Set(authHeader, authUser)
+	}
+	return r
+}
+
+func TestHandlePushTestRejectsOtherMethods(t *testing.T) {
+	for _, m := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(m, "/push/test", nil)
+		r.Header.Set(authHeader, "alice")
+		handlePushTest(rec, r)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s /push/test: got %d, want %d", m, rec.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestHandlePushTestRequiresAuth(t *testing.T) {
+	rec := httptest.NewRecorder()
+	handlePushTest(rec, pushTestReq(""))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /push/test without %s: got %d, want %d", authHeader, rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestHandlePushTestUnmappedForbidden(t *testing.T) {
+	withUserMap(t, "# empty\n")
+	swapPushSender(t, newPushSender(newPushStore(t.TempDir()), nil, nil, testVAPID(t)))
+	rec := httptest.NewRecorder()
+	handlePushTest(rec, pushTestReq("stranger"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("POST /push/test as unmapped user: got %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// Push dark (no VAPID config ⇒ no sender constructed) is a 503, not a silent
+// 200: the caller asked to prove delivery and the box cannot.
+func TestHandlePushTestPushDarkReturns503(t *testing.T) {
+	osA, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osA+"\n")
+	swapPushSender(t, nil)
+	rec := httptest.NewRecorder()
+	handlePushTest(rec, pushTestReq("alice"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST /push/test while push dark: got %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// A caller with no stored subscriptions gets {sent:0,pruned:0} at 200 — the
+// honest answer that nothing is registered (the settings panel turns this
+// into "enable the bell on this device first").
+func TestHandlePushTestNoSubsSendsZero(t *testing.T) {
+	osA, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osA+"\n")
+	swapPushSender(t, newPushSender(newPushStore(t.TempDir()), nil, nil, testVAPID(t)))
+	rec := httptest.NewRecorder()
+	handlePushTest(rec, pushTestReq("alice"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /push/test no subs: got %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	var body struct{ Sent, Pruned int }
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (body %q)", err, rec.Body.String())
+	}
+	if body.Sent != 0 || body.Pruned != 0 {
+		t.Fatalf("no subs: got sent=%d pruned=%d, want 0/0", body.Sent, body.Pruned)
+	}
+}
+
+// The real send path runs (webpush encryption + POST to the stub): a live
+// device is counted sent, a 410 Gone device is pruned in place — the same
+// fan-out the background sender uses, exercised on demand.
+func TestHandlePushTestSendsAndPrunes(t *testing.T) {
+	rec2 := &pushRecorder{hits: map[string]int{}}
+	srv := rec2.server(t)
+	rec2.goneAt = "/gone"
+
+	osA, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osA+"\n")
+	store := newPushStore(t.TempDir())
+	if err := store.upsert(osA, pushSubscription{Endpoint: srv.URL + "/live", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert live: %v", err)
+	}
+	if err := store.upsert(osA, pushSubscription{Endpoint: srv.URL + "/gone", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert gone: %v", err)
+	}
+	swapPushSender(t, newPushSender(store, nil, nil, testVAPID(t)))
+
+	rec := httptest.NewRecorder()
+	handlePushTest(rec, pushTestReq("alice"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /push/test: got %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	var body struct{ Sent, Pruned int }
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Sent != 1 || body.Pruned != 1 {
+		t.Fatalf("got sent=%d pruned=%d, want 1/1", body.Sent, body.Pruned)
+	}
+	if rec2.hit("/live") != 1 || rec2.hit("/gone") != 1 {
+		t.Fatalf("stub hits: live=%d gone=%d, want 1/1", rec2.hit("/live"), rec2.hit("/gone"))
+	}
+	subs, _ := store.list(osA)
+	if len(subs) != 1 || subs[0].Endpoint != srv.URL+"/live" {
+		t.Fatalf("after prune: %+v, want only /live", subs)
+	}
+}
+
+// The test payload has the shape sw.js parses and the fixed tl-test tag /
+// device-proof wording, independent of any session.
+func TestBuildTestPayloadMatchesServiceWorker(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal(buildTestPayload(), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	want := map[string]any{
+		"title":   "Test notification",
+		"body":    "If you can read this, push delivery works on this device.",
+		"tag":     "tl-test",
+		"session": "",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("test payload shape drift:\n got %v\nwant %v", got, want)
 	}
 }
