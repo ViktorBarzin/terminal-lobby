@@ -1421,6 +1421,13 @@
         .settings-panel .sp-btn:hover { background: var(--bg-card-hover); }
         .settings-panel .sp-btn.danger { color: var(--danger); border-color: var(--danger); }
         .settings-panel .sp-btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, var(--bg-card)); }
+        /* Notifications section: the two toggle labels are full sentences,
+           so let them use the row width (the fixed 82px label column suits
+           short knob names, not these). */
+        .settings-panel .sp-row.sp-row-wide > label { width: auto; flex: 1 1 auto; }
+        .settings-panel .sp-note {
+            color: var(--text-muted); font-size: 11px; line-height: 1.35;
+        }
 
         /* Bottom-sheet presentation (Task M.5) — coarse-pointer chrome
            for the settings panel + the Task 2.5 context menu. The
@@ -1892,7 +1899,7 @@
                     <button id="reload-toggle" type="button"
                             title="Reload the app">&#10227;</button>
                     <button id="notify-toggle" type="button" aria-pressed="false"
-                            title="Notify me when a session needs input">&#128276;</button>
+                            title="Notify me when Claude finishes or needs input">&#128276;</button>
                 </div>
                 <p class="lobby-sub">Pick a session or create one. Sessions persist after you close the tab.</p>
                 <div class="new-row">
@@ -1960,10 +1967,11 @@
         const RESTORE_API  = '/api/sessions/restore';
         const WHOAMI_API   = '/api/sessions/whoami';
         const LAYOUT_API   = '/api/sessions/layout';
-        // Web Push (Notifications Part 2): both ride the same /api/sessions/
+        // Web Push (Notifications Part 2): all ride the same /api/sessions/
         // tmux-api prefix as /prefs.
         const PUSH_SUBS_API    = '/api/sessions/push-subscriptions';
         const VAPID_PUBLIC_API = '/api/sessions/push/vapid-public';
+        const PUSH_TEST_API    = '/api/sessions/push/test';
         const params = new URLSearchParams(location.search);
         const rawArg = params.get('arg');
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
@@ -4206,6 +4214,24 @@
                     });
                 } catch (e) { /* best-effort; the server prunes dead endpoints on 404/410 */ }
             }
+            // Self-diagnosis (settings Notifications section): is THIS
+            // device/browser actually registered for background push on the
+            // server? Compares this browser's live pushManager endpoint against
+            // the stored list — a subscription the browser silently dropped, or
+            // one that never reached the server, both surface as "no". Returns
+            // 'yes' | 'no' | 'unsupported' (no SW/PushManager here at all).
+            async function deviceSubscriptionState() {
+                try {
+                    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+                    const reg = await navigator.serviceWorker.ready;
+                    const sub = await reg.pushManager.getSubscription();
+                    if (!sub) return 'no';
+                    const resp = await fetch(PUSH_SUBS_API, { credentials: 'same-origin' });
+                    if (!resp.ok) return 'no';
+                    const list = await resp.json();
+                    return (Array.isArray(list) && list.some(s => s.endpoint === sub.endpoint)) ? 'yes' : 'no';
+                } catch (e) { return 'no'; }
+            }
             // kind is 'awaiting' (running→awaiting, "needs input") or 'done'
             // (running→done, "finished"). Both share the tag 'tl-<session>'
             // so a later awaiting alert REPLACES a finished one for the same
@@ -4284,8 +4310,8 @@
                 notifyToggleEl.classList.toggle('on', on);
                 notifyToggleEl.setAttribute('aria-pressed', on ? 'true' : 'false');
                 notifyToggleEl.title = on
-                    ? 'Notifying when a session needs input (click to disable)'
-                    : 'Notify me when a session needs input';
+                    ? 'Notifying you when Claude finishes or needs input on this device (click to disable). Enable on each device you want pushes on.'
+                    : 'Notify me when Claude finishes or needs input. Per device + browser — enable on each device you want pushes on (e.g. also in the installed iPhone app).';
             }
             if (typeof Notification === 'undefined') {
                 // No Notification API here. On iOS this means Safari OUTSIDE an
@@ -5393,6 +5419,26 @@
                 if (ib) ib.checked = p.input.bar !== 'off';    // coarse row only (IR.2 tri-state — 'auto' paints checked)
                 const sr = settingsPanel.querySelector('#sp-reopen');
                 if (sr) sr.checked = p.session.reopenLast;     // coarse-pointer row only (MF-5)
+                // Notifications section — universal (always present). Toggles
+                // reflect the roamed notify.* prefs; the state readout is
+                // per-THIS-device (permission + bell synchronously here, the
+                // server-compared subscription filled by refreshNotifyDeviceState).
+                const nd = settingsPanel.querySelector('#sp-notify-done');
+                if (nd) nd.checked = p.notify.onDone;
+                const na = settingsPanel.querySelector('#sp-notify-awaiting');
+                if (na) na.checked = p.notify.onAwaiting;
+                const nperm = settingsPanel.querySelector('#sp-notify-perm');
+                if (nperm) {
+                    nperm.textContent = (typeof Notification === 'undefined') ? 'unsupported'
+                        : Notification.permission === 'granted' ? 'granted'
+                        : Notification.permission === 'denied' ? 'denied' : 'not set';
+                }
+                const nbell = settingsPanel.querySelector('#sp-notify-bell');
+                if (nbell) {
+                    const bellOn = notifyOptedIn() && typeof Notification !== 'undefined' &&
+                        Notification.permission === 'granted';
+                    nbell.textContent = bellOn ? 'on' : 'off';
+                }
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     // Dotted keys ('input.tapFocus', Task M.10/IR.2)
                     // resolve one level into the nested namespaces; flat
@@ -5409,6 +5455,17 @@
                 settingsPanel.querySelectorAll('#sp-theme button[data-theme]').forEach(b => {
                     b.classList.toggle('active', b.dataset.theme === activeTheme);
                 });
+            }
+            // Fills the "Subscribed here" readout — async because it compares
+            // this browser's live push endpoint against the server's stored
+            // list. Fired once when the panel opens (not on every repaint, so
+            // toggling a pref doesn't re-hit GET /push-subscriptions); re-guards
+            // settingsPanel since the panel may close while we await.
+            async function refreshNotifyDeviceState() {
+                const state = await deviceSubscriptionState();
+                if (!settingsPanel) return;
+                const el = settingsPanel.querySelector('#sp-notify-sub');
+                if (el) el.textContent = state; // 'yes' | 'no' | 'unsupported'
             }
             function onSettingsOutside(e) {
                 if (!settingsPanel) return;
@@ -5638,6 +5695,102 @@
                     syncAltBadges();   // disabling mid-Alt-hold must drop the badges
                 });
                 kbRow.appendChild(kb);
+
+                // Notifications (universal — desktop AND mobile, unlike the
+                // coarse-only gesture rows below). Two roamed toggles gate
+                // which Claude-turn transitions raise an alert — foreground
+                // here AND the background push the server sends, both reading
+                // notify.* — plus a truthful per-THIS-device state readout and
+                // a "Send test notification" button that fans a real push to
+                // every device registered under this account. Subscriptions
+                // are PER DEVICE + BROWSER (the note at the end says so): the
+                // bell must be enabled on each device you want pushes on.
+                const notifTitle = document.createElement('div');
+                notifTitle.className = 'sp-title';
+                notifTitle.textContent = 'Notifications';
+                panel.appendChild(notifTitle);
+
+                const onDoneRow = row('Notify when Claude finishes');
+                onDoneRow.classList.add('sp-row-wide');
+                const onDone = document.createElement('input');
+                onDone.type = 'checkbox';
+                onDone.id = 'sp-notify-done';
+                onDone.title = 'Alert when a session goes from running to finished ("<session> finished").';
+                onDone.addEventListener('change', () => setPrefs({ notify: { onDone: onDone.checked } }));
+                onDoneRow.appendChild(onDone);
+
+                const onAwRow = row('Notify when Claude needs input');
+                onAwRow.classList.add('sp-row-wide');
+                const onAw = document.createElement('input');
+                onAw.type = 'checkbox';
+                onAw.id = 'sp-notify-awaiting';
+                onAw.title = 'Alert when a session needs your input ("<session> needs input").';
+                onAw.addEventListener('change', () => setPrefs({ notify: { onAwaiting: onAw.checked } }));
+                onAwRow.appendChild(onAw);
+
+                // Per-THIS-device truthful state. Permission + bell are read
+                // synchronously in paintSettingsPanel; "Subscribed here"
+                // compares this browser's live push endpoint against the
+                // server's stored list, so it is filled asynchronously.
+                const permRow = row('Permission');
+                permRow.title = 'This browser’s OS notification permission.';
+                const permVal = document.createElement('span');
+                permVal.className = 'sp-val';
+                permVal.id = 'sp-notify-perm';
+                permRow.appendChild(permVal);
+
+                const subRow = row('Subscribed here');
+                subRow.title = 'Whether THIS device + browser is registered for background push on the server.';
+                const subVal = document.createElement('span');
+                subVal.className = 'sp-val';
+                subVal.id = 'sp-notify-sub';
+                subVal.textContent = '…';
+                subRow.appendChild(subVal);
+
+                const bellRow = row('Bell');
+                bellRow.title = 'Whether the header bell opt-in is on in this browser.';
+                const bellVal = document.createElement('span');
+                bellVal.className = 'sp-val';
+                bellVal.id = 'sp-notify-bell';
+                bellRow.appendChild(bellVal);
+
+                const testRow = row('Test notification');
+                testRow.title = 'Send a real push to every device registered under your ' +
+                    'account. If it does not appear on this device, this device is not ' +
+                    'subscribed (enable the bell), or the browser blocked notifications.';
+                const testBtn = document.createElement('button');
+                testBtn.type = 'button';
+                testBtn.className = 'sp-btn';
+                testBtn.id = 'sp-notify-test';
+                testBtn.textContent = 'Send';
+                testBtn.addEventListener('click', async () => {
+                    testBtn.disabled = true;
+                    try {
+                        const resp = await fetch(PUSH_TEST_API, { method: 'POST', credentials: 'same-origin' });
+                        if (!resp.ok) {
+                            showToast('Test push failed (server ' + resp.status + ')', 'error', 4000);
+                            return;
+                        }
+                        const { sent, pruned } = await resp.json();
+                        if (sent > 0) {
+                            showToast('Test sent to ' + sent + ' device' + (sent === 1 ? '' : 's') +
+                                (pruned ? (' — pruned ' + pruned + ' stale') : ''), 'success', 4000);
+                        } else {
+                            showToast('No devices subscribed. Enable the bell on each device you want pushes on.', 'info', 5000);
+                        }
+                    } catch (e) {
+                        showToast('Test push failed — is the app online?', 'error', 4000);
+                    } finally {
+                        testBtn.disabled = false;
+                    }
+                });
+                testRow.appendChild(testBtn);
+
+                const notifNote = document.createElement('div');
+                notifNote.className = 'sp-note';
+                notifNote.textContent = 'Push is per device + browser — enable the bell on each ' +
+                    'device you want notified (e.g. also in the installed iPhone app).';
+                panel.appendChild(notifNote);
 
                 // Task M.1: hold-to-repeat on the soft-key arrows/Tab —
                 // roamed gestures.* namespace (nested deep-merge in
@@ -5897,6 +6050,7 @@
                     });
                     settingsPanel = panel;
                     paintSettingsPanel();
+                    refreshNotifyDeviceState();
                     settingsBtn.setAttribute('aria-expanded', 'true');
                     document.addEventListener('keydown', onSettingsKey, true);
                     return;
@@ -5905,6 +6059,7 @@
                 document.body.appendChild(panel);
                 settingsPanel = panel;
                 paintSettingsPanel();
+                refreshNotifyDeviceState();
                 // Anchor above the gear (it sits at the sidebar bottom);
                 // flip below when the button is near the top (<720px
                 // stacked layout puts the sidebar first).
