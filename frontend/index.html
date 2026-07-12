@@ -6568,6 +6568,24 @@
             // tmux's alt screen — it only matters if alternate-screen were
             // ever disabled.
             scrollback: 10000,
+            // OSC 8 explicit hyperlinks ([links] leg c): the full URI
+            // rides the escape sequence, immune to visual wrapping.
+            // devvm/tmux.conf.system lets OSC 8 through for xterm*
+            // clients (tmux 3.4 strips it otherwise), and WITHOUT this
+            // handler xterm core's OscLinkProvider falls back to a scary
+            // confirm() dialog on click — so this must ship with (or
+            // before) the tmux enablement. Activation mirrors the
+            // web-links addon byte-for-byte via the shared
+            // openDetectedLink; hover shows the copy chip, whose title
+            // reveals the TARGET (visible text can differ — the
+            // anti-phishing affordance). allowNonHttpProtocols stays
+            // unset: xterm then ignores non-http(s) URIs (file:,
+            // javascript:, …) — deliberate.
+            linkHandler: {
+                activate: (e, uri) => openDetectedLink(e, uri),
+                hover: (e, uri, range) => linkChip.show(uri, range),
+                leave: () => linkChip.scheduleHide()
+            },
             allowProposedApi: true
         });
 
