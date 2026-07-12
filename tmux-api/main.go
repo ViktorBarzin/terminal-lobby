@@ -191,6 +191,11 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
+	// Background Web Push sender (Notifications Part 2): a no-op unless a full
+	// VAPID config is in the environment, so a devvm without keys behaves
+	// exactly as before.
+	maybeStartPushSender()
+
 	// TMUX_API_ADDR: scratch-build override for the dev harness
 	// (dev-harness.py --tmux-api-port documents testing a local build,
 	// which can't bind 7684 while the production service holds it).
@@ -291,14 +296,16 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 }
 
-// buildSessionsBody runs `tmux list-sessions` as osUser and returns the
-// JSON body to write on the wire. Mirrors the historic encoder output:
-// success → marshaled slice + trailing newline; tmux error → "[]"
-// without a newline.
-func buildSessionsBody(osUser string) []byte {
+// userSessions runs `tmux list-sessions` as osUser and returns the parsed,
+// liveness-corrected sessions — the shared core behind both GET /sessions
+// (buildSessionsBody) and the background push sender (pushsender.go), so the
+// tmux read + parse + dead-state backstop live in exactly one place. Returns
+// nil when tmux errors (no server / not reachable); a healthy server with no
+// sessions returns a non-nil empty slice.
+func userSessions(osUser string) []Session {
 	out, err := tmuxCmd(osUser, "list-sessions", "-F", tmuxListFmt).Output()
 	if err != nil {
-		return []byte("[]")
+		return nil
 	}
 	sessions := parseSessions(out)
 	// Liveness backstop: drop states whose claude died without a
@@ -307,6 +314,17 @@ func buildSessionsBody(osUser string) []byte {
 		clearDeadStates(sessions, tree)
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
+	}
+	return sessions
+}
+
+// buildSessionsBody returns the JSON body to write on the wire for GET
+// /sessions. Mirrors the historic encoder output: success → marshaled slice +
+// trailing newline; tmux error → "[]" without a newline.
+func buildSessionsBody(osUser string) []byte {
+	sessions := userSessions(osUser)
+	if sessions == nil {
+		return []byte("[]")
 	}
 	// Layout trouble must not take the session list down with it — the
 	// project column just goes empty until the store recovers.

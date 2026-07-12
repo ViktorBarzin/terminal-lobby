@@ -1,0 +1,221 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	webpush "github.com/SherClockHolmes/webpush-go"
+)
+
+const (
+	// pushPollInterval matches the frontend/lobby poll cadence (main.go
+	// sessionsTTL) so the background sender observes the same state edges the
+	// browser would.
+	pushPollInterval = 5 * time.Second
+	// pushTTL: seconds a push service holds an undelivered message. An
+	// "awaiting" prompt is only interesting for a few minutes, and coalescing
+	// is by tag anyway, so a short TTL avoids waking a device to a stale one.
+	pushTTL = 300
+	// pushSendTimeout bounds one SendNotification so a wedged push service
+	// can't stall the synchronous poll loop.
+	pushSendTimeout = 10 * time.Second
+)
+
+// sessionStater reads a user's session name→state map. Abstracted so the
+// sender's transition logic is testable without a live tmux server.
+type sessionStater interface {
+	states(osUser string) map[string]string
+}
+
+// liveStater is the production sessionStater: read-only tmux list-sessions via
+// the shared userSessions machinery (main.go). It mirrors the frontend's
+// prevStates map exactly — every session keyed to its state, "" when no live
+// claude — so the server-side edge rule matches the browser's.
+type liveStater struct{}
+
+func (liveStater) states(osUser string) map[string]string {
+	sessions := userSessions(osUser)
+	m := make(map[string]string, len(sessions))
+	for _, s := range sessions {
+		m[s.Name] = s.State
+	}
+	return m
+}
+
+// vapidConfig is the VAPID keypair + subject the sender signs pushes with.
+type vapidConfig struct {
+	publicKey  string
+	privateKey string
+	subject    string
+}
+
+// pushSender polls the users who hold push subscriptions and fans a Web Push
+// out to each of a user's devices on a session's transition into "awaiting" —
+// the same edge the frontend notifies on. A per-user last-state map makes it
+// fire only on the edge, never repeatedly while a session stays awaiting; the
+// first observation of a user seeds silently (mirrors the frontend's
+// first-poll-after-load rule). It deliberately does NOT gate on window focus:
+// that is the whole point of background push (the tab may be closed), and the
+// shared tag `tl-<session>` coalesces with any foreground notification so the
+// user is alerted at most once.
+type pushSender struct {
+	store  *pushStore
+	stater sessionStater
+	vapid  vapidConfig
+	client webpush.HTTPClient
+	last   map[string]map[string]string
+}
+
+func newPushSender(store *pushStore, stater sessionStater, vapid vapidConfig) *pushSender {
+	return &pushSender{
+		store:  store,
+		stater: stater,
+		vapid:  vapid,
+		client: &http.Client{Timeout: pushSendTimeout},
+		last:   map[string]map[string]string{},
+	}
+}
+
+// pushPayload is the JSON delivered to the browser's service worker. The field
+// names are EXACTLY what frontend/sw.js reads (title, body, tag, session);
+// TestBuildPushPayloadMatchesServiceWorker pins the shape so a drift from
+// sw.js fails loudly instead of silently dropping notifications.
+type pushPayload struct {
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	Tag     string `json:"tag"`
+	Session string `json:"session"`
+}
+
+func buildPushPayload(session string) []byte {
+	b, _ := json.Marshal(pushPayload{
+		Title:   session + " needs input",
+		Body:    "Claude is awaiting your input.",
+		Tag:     "tl-" + session,
+		Session: session,
+	})
+	return b
+}
+
+// tick runs one poll cycle: for every subscribed user, diff the current
+// session states against the previous poll and notify on each →awaiting edge.
+func (p *pushSender) tick() {
+	users, err := p.store.users()
+	if err != nil {
+		log.Printf("push sender: listing subscribed users failed: %v", err)
+		return
+	}
+	seen := make(map[string]bool, len(users))
+	for _, u := range users {
+		seen[u] = true
+		prev := p.last[u]
+		cur := p.stater.states(u)
+		p.last[u] = cur
+		if prev == nil {
+			continue // first observation of this user seeds silently
+		}
+		for name, st := range cur {
+			if st != stateAwaiting {
+				continue
+			}
+			if prev[name] == stateAwaiting {
+				continue // already awaiting last poll — the edge already fired
+			}
+			p.notify(u, name)
+		}
+	}
+	// Drop last-state for users whose last device unsubscribed, so a later
+	// re-subscribe seeds silently again instead of replaying a stale edge.
+	for u := range p.last {
+		if !seen[u] {
+			delete(p.last, u)
+		}
+	}
+}
+
+// notify fans the payload for `session` out to every one of the user's stored
+// devices, pruning any endpoint the push service reports gone (404/410).
+func (p *pushSender) notify(osUser, session string) {
+	subs, err := p.store.list(osUser)
+	if err != nil {
+		log.Printf("push sender: loading subs for %s failed: %v", osUser, err)
+		return
+	}
+	payload := buildPushPayload(session)
+	opts := &webpush.Options{
+		HTTPClient: p.client,
+		// webpush-go re-adds "mailto:" for any non-https subscriber, so a
+		// subject already carrying the prefix would become "mailto:mailto:…".
+		// Strip our canonical prefix and let the library re-apply it (an
+		// https: subject is left untouched by TrimPrefix and by the library).
+		Subscriber:      strings.TrimPrefix(p.vapid.subject, "mailto:"),
+		VAPIDPublicKey:  p.vapid.publicKey,
+		VAPIDPrivateKey: p.vapid.privateKey,
+		TTL:             pushTTL,
+	}
+	for _, sub := range subs {
+		resp, err := webpush.SendNotification(payload, &webpush.Subscription{
+			Endpoint: sub.Endpoint,
+			Keys:     webpush.Keys{P256dh: sub.Keys.P256dh, Auth: sub.Keys.Auth},
+		}, opts)
+		if err != nil {
+			log.Printf("push sender: send for %s failed: %v", osUser, err)
+			continue
+		}
+		status := resp.StatusCode
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if status == http.StatusNotFound || status == http.StatusGone {
+			if _, err := p.store.remove(osUser, sub.Endpoint); err != nil {
+				log.Printf("push sender: pruning a gone endpoint for %s failed: %v", osUser, err)
+			} else {
+				log.Printf("push sender: pruned a gone endpoint for %s (push service returned %d)", osUser, status)
+			}
+		}
+	}
+}
+
+// run drives tick on a ticker until ctx is cancelled. The first tick fires
+// immediately so a restart re-seeds without waiting a whole interval.
+func (p *pushSender) run(ctx context.Context) {
+	t := time.NewTicker(pushPollInterval)
+	defer t.Stop()
+	p.tick()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			p.tick()
+		}
+	}
+}
+
+// maybeStartPushSender launches the background sender iff a full VAPID config
+// is present in the environment (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY /
+// VAPID_SUBJECT — installed from Vault into /etc/tmux-api/vapid.env at deploy
+// time). Absent or partial config leaves the whole push path dark: GET
+// /push/vapid-public 404s and the frontend falls back to foreground
+// notifications only.
+func maybeStartPushSender() {
+	pub := os.Getenv("VAPID_PUBLIC_KEY")
+	priv := os.Getenv("VAPID_PRIVATE_KEY")
+	subject := os.Getenv("VAPID_SUBJECT")
+	if pub == "" || priv == "" || subject == "" {
+		log.Printf("push sender: VAPID config incomplete — background push disabled")
+		return
+	}
+	sender := newPushSender(pushStoreInstance, liveStater{}, vapidConfig{
+		publicKey:  pub,
+		privateKey: priv,
+		subject:    subject,
+	})
+	go sender.run(context.Background())
+	log.Printf("push sender: started (poll every %s)", pushPollInterval)
+}
