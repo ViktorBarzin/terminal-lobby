@@ -6214,17 +6214,58 @@
             console.warn('Unicode11 addon failed:', e);
         }
 
-        term.open(document.getElementById('terminal'));
+        // Item 3(a): on coarse pointers, reserve the 50px soft-key strip
+        // BEFORE the first fit so xterm's initial cell/row measurement
+        // already matches the settled post-toolbar geometry. Without it
+        // the first fit sizes to full height, then the has-soft-keys add
+        // during the toolbar build (later in boot) shrinks #terminal and
+        // the seed fit re-measures — a visible layout shift on phones.
+        // isCoarsePointer isn't declared until the mobile block below, so
+        // probe matchMedia here; the later add is idempotent.
+        if (matchMedia('(pointer: coarse)').matches) {
+            document.body.classList.add('has-soft-keys');
+        }
+
+        // Item 3(b): opacity-hold. Keep the #terminal CONTAINER (never the
+        // WebGL canvas) hidden until boot has BOTH fit to final geometry
+        // AND received the first WS output frame — so phones never flash a
+        // wrong-sized grid that then reflows. Inline opacity is the same
+        // channel maskFitBurst uses; the 80ms CSS transition on #terminal
+        // fades it in. A hard cap from open guarantees the reveal even if
+        // the socket never delivers a frame (a dead network must never
+        // leave the terminal blank forever).
+        const bootTermContainer = document.getElementById('terminal');
+        bootTermContainer.style.opacity = '0';
+        term.open(bootTermContainer);
         fitAddon.fit();
         // Nothing else focuses the terminal on load — without this,
         // keystrokes on desktop are dead until the user clicks.
         term.focus();
 
+        let booted = false;          // set at the boot-end fit (Items 3b/3c)
+        let firstFrameSeen = false;  // first WS output frame arrived (3b)
+        let terminalRevealed = false;
+        function revealTerminal() {
+            if (terminalRevealed) return;
+            terminalRevealed = true;
+            clearTimeout(terminalRevealCap);
+            bootTermContainer.style.opacity = '';   // 80ms CSS fade-in
+        }
+        function maybeRevealTerminal() {
+            if (booted && firstFrameSeen) revealTerminal();
+        }
+        const terminalRevealCap = setTimeout(revealTerminal, 1500);
+
         // Late-arriving faces (a CDN slower than the 2s boot gate; TL Symbols
         // below): refit and rebuild the WebGL glyph atlas so rendering uses
         // the real font, not whatever fallback got measured first.
         document.fonts.addEventListener('loadingdone', () => {
-            fitAddon.fit();
+            // Item 3(c): only refit for late-arriving faces DURING boot.
+            // After the boot-end fit the grid geometry is settled; an
+            // unsolicited fit here just churns tmux (and, before the
+            // opacity reveal, could fight the hold). The atlas rebuild
+            // stays unconditional — a newly-loaded face must repaint.
+            if (!booted) fitAddon.fit();
             term.clearTextureAtlas?.();
         });
 
@@ -7942,6 +7983,11 @@
         // elements and the terminal are sized correctly before any event fires.
         syncViewport();
         try { fitAddon.fit(); } catch (e) {}
+        // Items 3b/3c: the boot-end fit is reached — grid geometry is now
+        // settled. Mark booted (gates the loadingdone refit, 3c) and try
+        // the opacity reveal (3b; still waits on the first WS frame).
+        booted = true;
+        maybeRevealTerminal();
 
         // Layout-proof copy/paste chord matching. e.key follows the keyboard
         // layout — under Cyrillic, Ctrl+C reports 'с'/'ъ'/'ц', an e.key==='c'
@@ -8545,6 +8591,10 @@
         // lobby sends for stale builds) never flash the mask.
         let fitMaskTimer = null;
         function maskFitBurst() {
+            // Item 3(b): during the opacity-hold the container is already
+            // fully hidden (opacity 0), so a burst dim would REVEAL it at
+            // 35% — no-op until the boot reveal fires.
+            if (!terminalRevealed) return;
             terminalEl.style.opacity = '0.35';
             clearTimeout(fitMaskTimer);
             fitMaskTimer = setTimeout(() => {
@@ -9125,6 +9175,16 @@
                                     if (needsPixelResizeKick) {
                                         needsPixelResizeKick = false;
                                         sendResize();
+                                    }
+                                    // Item 3(b): first output frame is the
+                                    // second opacity-reveal gate. Defer via
+                                    // refit's 120ms debounce so the reveal
+                                    // lands after the frame's content + the
+                                    // pixel-resize-kick fit settle, not
+                                    // mid-fit.
+                                    if (!firstFrameSeen) {
+                                        firstFrameSeen = true;
+                                        setTimeout(maybeRevealTerminal, 120);
                                     }
                                     // Attention (Task 2.1): note THAT output
                                     // arrived while hidden — once per hidden

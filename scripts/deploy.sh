@@ -25,7 +25,9 @@ fi
 
 # Locally-patched ttyd (devvm/ttyd-local.patch: pixel size → pty so tmux
 # re-emits sixel, docs/adr/0004-sixel-images-in-the-terminal.md; + honor
-# client PAUSE flow control, upstream no-op) is shipped only when a build
+# client PAUSE flow control, upstream no-op; + serve the -I index with an
+# ETag + Cache-Control: no-cache so boots revalidate instead of
+# re-downloading the ~500 KB frontend) is shipped only when a build
 # exists. Building is scripts/build-ttyd.sh's explicit job; deploy just
 # ships what's there.
 TTYD_BIN=""
@@ -83,8 +85,9 @@ echo "==> Installing on $DEVVM..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<'REMOTE'
   set -euo pipefail
   if [[ "${INCLUDE_TTYD:-}" == "1" ]]; then
-    # Locally-patched ttyd (sixel pixel-size ADR 0004 + PAUSE flow control,
-    # devvm/ttyd-local.patch) — the systemctl restarts below already cover
+    # Locally-patched ttyd (sixel pixel-size ADR 0004 + PAUSE flow control
+    # + -I index ETag/no-cache, devvm/ttyd-local.patch) — the systemctl
+    # restarts below already cover
     # ttyd + ttyd-ro, so no extra restart needed. Keep the previous binary
     # aside first: /usr/local/bin/ttyd.prev is the fastest rollback channel
     # (reinstall it + restart ttyd ttyd-ro — no rebuild needed).
