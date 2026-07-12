@@ -1334,3 +1334,28 @@ implements the feature. Format:
   arrives cleanly everywhere. ANY variant showing a released 3-finger
   vocabulary → re-open the analysis exclusion before considering iOS
   terminal gestures.
+- [Task M.7] Haptic vocabulary (mobile emulation so the soft-key row
+  exists; install the spy in the TERMINAL IFRAME before interacting:
+  `window.__vib=[]; navigator.vibrate=(p)=>{__vib.push(p);return true;}; true`
+  — `haptic()`'s optional call resolves to the own-property spy; the
+  trailing `true` matters: a Playwright `evaluate` whose string RESULT is
+  a function INVOKES it once with `undefined`, ghosting a `[null]`
+  entry): tap a
+  soft key (e.g. `/`) → `__vib` gains `5` (selection grade — every
+  makeBtn tap); hold ↓ past 500 ms → repeat ticks append more `5`s; the
+  M.6 3-finger swipe commit (CDP recipe above, Android UA) and the
+  2-finger toolbar toggle → `15` (impact grade — supersedes M.6's
+  ad-hoc `[10,10]`); `window.__tlToast.add({type:'error',title:'x'})`
+  → `[10,60,10]` (error grade; success/info toasts stay silent).
+  Font-step commit: A+ tap at fontSize 15 → one `5`; at the 22 clamp →
+  NO new entry (only committed steps tick).
+- [Task M.7] Haptics opt-outs, live per call (no reload): set
+  `tl:prefs:v1` `gestures.haptics=false` → the same soft-key tap adds
+  NO `__vib` entry (bytes still reach the pty — the visual/functional
+  path is independent); restore `haptics:true` + set `tl-gestures`='off'
+  → silent again; remove the kill key. Settings: on a coarse-pointer
+  lobby with `'vibrate' in navigator` (Chromium always) the panel
+  renders a "Haptics" row (`#sp-haptics`, checked by default) whose
+  untick writes `gestures.haptics=false` with all sibling flags intact;
+  the row does NOT render on fine-pointer desktop (coarse block) — and
+  never where the API is absent (iOS WebKit: manual checklist).
