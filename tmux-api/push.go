@@ -296,6 +296,48 @@ func handlePushSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// buildTestPayload is the on-demand self-diagnosis push. Its own fixed tag
+// tl-test (never a tl-<session>) keeps it in a separate coalescing lane, and
+// it carries no session — a click just focuses the app. Built directly rather
+// than via marshalPayload, whose tag is derived from the session.
+func buildTestPayload() []byte {
+	b, _ := json.Marshal(pushPayload{
+		Title:   "Test notification",
+		Body:    "If you can read this, push delivery works on this device.",
+		Tag:     "tl-test",
+		Session: "",
+	})
+	return b
+}
+
+// handlePushTest fans a one-off "Test notification" through the REAL sender
+// path to every one of the caller's stored subscriptions and reports how many
+// were accepted and how many stale endpoints were pruned. It is the
+// user-facing half of the self-diagnosis story (the settings "Send test
+// notification" button): a device that never shows the notification has a
+// delivery problem the {sent,pruned} counts plus the sender's per-push log
+// localize — is anything subscribed, did the push service accept it, was the
+// endpoint stale? Push dark (no VAPID) is a 503, not a misleading sent:0.
+func handlePushTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	osUser := resolveOSUser(w, r)
+	if osUser == "" {
+		return
+	}
+	sender := pushSenderInstance
+	if sender == nil {
+		http.Error(w, "push not configured", http.StatusServiceUnavailable)
+		return
+	}
+	sent, pruned := sender.send(osUser, "", buildTestPayload(), kindTest)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]int{"sent": sent, "pruned": pruned})
+}
+
 // handlePushVAPIDPublic serves the server's VAPID public key as text/plain so
 // the frontend can build the applicationServerKey for pushManager.subscribe.
 // The key is not secret (it is handed to every browser and push service). A

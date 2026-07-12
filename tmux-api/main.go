@@ -187,6 +187,7 @@ func main() {
 	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
 	http.HandleFunc("/push/vapid-public", handlePushVAPIDPublic)
+	http.HandleFunc("/push/test", handlePushTest)
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})
