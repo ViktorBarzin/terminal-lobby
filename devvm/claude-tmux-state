@@ -37,20 +37,25 @@ clear)
     tmux set-option -u -t "$TMUX_PANE" @claude_state >/dev/null 2>&1 || true
     ;;
 notify)
-    # Notifications are not all "awaiting input": permission/approval asks
-    # are, unconditionally. The ~60s idle reminder ("waiting for your
-    # input") also fires on a session that finished its turn long ago —
-    # only promote it to awaiting when a turn was mid-flight (state
-    # running = Claude stopped mid-turn to ask something, e.g. a plan
-    # approval or a question). A completed session stays "done".
+    # Notifications are not all "awaiting input". Permission/approval asks
+    # and the idle-reminder wordings ("waiting for your input") ARE, so
+    # match them directly — case-INSENSITIVELY, since Claude's exact
+    # phrasing drifts between versions and a missed match silently drops
+    # the awaiting badge. For any OTHER notify wording, promote only when
+    # a turn was recently active: BOTH running (Claude stopped mid-turn to
+    # ask) AND done (turn just finished, next prompt awaited) now count —
+    # a notify on either means Claude wants the user's attention (the old
+    # code promoted from running only, so a completed session that then
+    # pinged never lit up).
     msg="$(cat 2>/dev/null || true)"
-    case "$msg" in
-    *[Pp]ermission*|*[Aa]pproval*)
+    msg_lc="$(printf '%s' "$msg" | tr '[:upper:]' '[:lower:]')"
+    case "$msg_lc" in
+    *permission*|*approval*|*"waiting for your input"*|*"needs your input"*)
         stamp awaiting
         ;;
     *)
         cur="$(tmux show-option -qv -t "$TMUX_PANE" @claude_state 2>/dev/null || true)"
-        [ "$cur" = "running" ] && stamp awaiting
+        { [ "$cur" = "running" ] || [ "$cur" = "done" ]; } && stamp awaiting
         ;;
     esac
     ;;

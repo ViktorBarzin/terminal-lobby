@@ -2049,3 +2049,10 @@ in the coarse compose block) lives OUTSIDE both guarded regions.
   `!document.hidden` gate missed the blurred case); tag `tl-<session>`
   coalesces re-fires. Seeding: a session first seen ALREADY `awaiting` on
   a LATER poll announces once; the very first poll after load stays silent.
+- [Add-4c] claude-tmux-state notify classification (unit, in isolation —
+  the script no-ops outside tmux): a case-INSENSITIVE match promotes to
+  awaiting for 'PERMISSION'/'approval'/'waiting for your input'/'needs
+  your input' regardless of letter case; a non-matching notify promotes
+  to awaiting from BOTH `@claude_state=running` AND `=done`, but leaves a
+  session with NO prior state untouched. Verified with a `classify()`
+  harness mirroring the case block 2026-07-12 (7/7 rows as expected).
