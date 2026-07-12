@@ -1491,3 +1491,89 @@ implements the feature. Format:
   diff guards (M.1 touch-discriminator block AND the ADR-0003
   mousedown interceptor byte-identical vs `6773cbd`;
   `term.attachCustomKeyEventHandler(` exactly once in HEAD).
+- [Task M.10] Compose bar default state + attributes (Pixel-7 emulation,
+  attach `#main`; the bar is BUILT only on coarse pointers): at boot
+  `#compose-bar` computed display 'none' and terminal height ==
+  `visualViewport.height − #soft-keys.offsetHeight` (baseline formula,
+  ±2px) with `--sk-h` == the toolbar's px height; tap the ✎ soft key →
+  `.visible` + `#compose-input` focused; assert on the TEXTAREA:
+  `autocapitalize='sentences'`, `autocorrect='on'`, `spellcheck='true'`,
+  `autocomplete='off'` (form-autofill only — keyboard suggestion/swipe/
+  dictation stay), `inputmode='text'`, `hasAttribute('type')===false`
+  (never inherits the helper's type=password trick), aria-label set,
+  computed font-size ≥16px (INLINE — iOS focus-auto-zoom block),
+  `enterkeyhint='enter'` under default prefs. Verified 33/33 at
+  implementation (2026-07-12).
+- [Task M.10] Decisive framing leg (byte-exact bracketed-paste send):
+  scratch pane runs
+  `stty -icanon -echo -isig -icrnl min 1 time 0; printf '\e[?2004h'; cat -v`
+  (the A.1 sensor posture; `-icrnl` is LOAD-BEARING — with it on, the
+  tty maps the pasted \r to \n and `cat -v` prints a newline instead of
+  the `^M` this leg asserts on). Type `line1` ⏎ `line2` into the field
+  (default 'newline' mode: Enter stays local, value gains the \n, the
+  bar auto-grows one line, capture-pane UNCHANGED) → tap ▶ →
+  capture shows `^[[200~line1^Mline2^[[201~^M`: ONE paste block, \n
+  normalized to ^M INSIDE the bracket, the submit CR a SEPARATE
+  sendInput('\r') OUTSIDE it; field clears and stays focused
+  (keyboard up). Long-press ▶ (~700ms CDP `long_press` on the button
+  center) with new text → same bracketed block with NO trailing `^M`
+  + 'Staged (no Enter)' toast + field still focused.
+- [Task M.10] enterKey modes are LOCAL to the field: flip the lobby
+  panel's 'Compose Return' seg to Send → `enterkeyhint` flips to
+  'send' live in the iframe (panel setPrefs → tl-prefs postMessage →
+  applyComposePrefs); then Shift+Enter inserts a newline with capture
+  UNCHANGED, and plain Enter submits `^[[200~a^Mb^[[201~^M`. Auto-grow
+  clamps at 5 lines (scrollHeight clamp → overflow-y:auto past that).
+- [Task M.10] Focus routing (guarded focusActiveInput): while the field
+  is focused, tap soft Esc → capture gains exactly `^[` AND focus
+  RETURNS to `#compose-input` (sendInput bypasses DOM focus; makeBtn's
+  post-tap focus routes to the field only while it WAS the active
+  input); soft ↑ (noFocus) → `^[[A`, focus unmoved. Tap the bar's ⌄ →
+  bar hides, helper textarea focused (keyboard handed back), terminal
+  height returns to the baseline formula; the SAME soft-Esc tap now
+  focuses the helper textarea — byte-equivalent to pre-M.10 while the
+  bar is off. Armed-Ctrl/Alt + typed-letter chords need terminal focus
+  (documented limitation — compose is for prose).
+- [Task M.10] Geometry (390×844): bar open ⇒ terminal height ==
+  `vv.height − toolbar.offsetHeight − #compose-bar.offsetHeight` (±2px),
+  bar's bottom edge docked on the toolbar's top edge (`--sk-h`
+  plumbing), no overlap with the terminal; the floating action buttons
+  ride `--cb-h` (72px + cb-h + kb-offset on coarse) so 📋 can never
+  swallow ▶/⌄ taps — with the bar hidden both vars are 0px and every
+  formula is byte-identical to the M.6 baseline. Growing the field
+  refits at most once per height change (growAndRefit gates on
+  offsetHeight delta + the 120ms debounce — no fit thrash).
+- [Task M.10] Prefs + settings: `compose:{autoShow:false,
+  enterKey:'newline'}` defaults in `tl:prefs:v1` (nested namespace,
+  validated like gestures.*): localStorage `{"compose":42}` + dirty
+  stamp + reload → bar hidden, enterkeyhint 'enter' (whole namespace
+  degrades to defaults); `{"compose":{"enterKey":"bogus","autoShow":
+  true}}` → bar OPEN at boot WITHOUT focus (valid subkey kept, no
+  keyboard summon) and enterkeyhint 'enter' (bogus dropped per-field).
+  A manual ✎/⌄ toggle beats autoShow reconciliation for the rest of
+  the page-life (a prefs event after ⌄ must NOT re-open the bar).
+  Coarse lobby panel renders 'Compose bar' (`#sp-compose`, unchecked
+  default) + 'Compose Return' seg (Newline active default); the seg
+  writes the nested pref with gestures.* siblings intact; neither row
+  renders on a fine-pointer desktop panel, and the desktop iframe does
+  not even build `#compose-bar`. Panel flips PUT the roamed doc —
+  snapshot/restore per the isolation rule above (a crashed run roams
+  autoShow:true to real devices; bit the implementation smoke).
+- [Task M.10] Red line: full §A with compose OFF (the default); the
+  standing diff guards extend over the compose surface — the
+  helper-textarea suppression block, `sendInput`, the term.onData
+  wrapper, the M.1 touch-discriminator IIFE and the ADR-0003 mousedown
+  interceptor each BYTE-IDENTICAL to `6773cbd`, and
+  `term.attachCustomKeyEventHandler(` exactly once in HEAD (verified
+  2026-07-12 at implementation); the bar only CALLS the unchanged
+  `term.paste()`/`sendInput()` primitives. 1-finger swipe/tap
+  semantics unchanged with the bar open or closed
+  (`__tlGestures.attached` stays false throughout).
+- [Task M.10] Real-device checklist (MANUAL, mac/Appium iPhone rig or
+  physical devices — first run: Viktor, per the deploy heads-up):
+  Gboard swipe typing lands words in the field; iOS dictation runs
+  WITHOUT blurring the field; an accepted autocorrect suggestion
+  arrives in the sent paste; the Return key renders per enterkeyhint
+  ('return' vs 'send' key face); focusing the field triggers NO iOS
+  auto-zoom (inline 16px); send → text arrives in Claude Code's
+  composer as one block, Enter-submit only when sent with ▶/Enter-mode.
