@@ -1693,3 +1693,34 @@ coexisting with a sibling run (adjust `tmux -L …` accordingly).
   M.10 geometry leg's "floating buttons ride --cb-h" clause is
   SUPERSEDED by this section (coarse no longer renders them); full §A
   rides the MF-6 end-of-pass gate.
+
+### [MF-3] Soft keys tap-commit + flat cycling history (Viktor complaint 1, ranks 2+4: "i dont like the side swipe to open all sessions")
+
+Non-repeat soft keys fire on pointerup behind a <10px same-pointer travel
+guard (was: instantly at touch-down — probe P3 reproduced a row-scroll
+swipe landing on ‹/› flipping the session hash mid-swipe; the same defect
+class fired Tab/Esc/Paste). Repeat keys (M.1 arrows + Tab) keep the
+down-fire path byte-for-byte. Unframed soft-key/gesture session cycling
+navigates via `location.replace` (history stays flat — the iOS
+edge-back-swipe is never re-armed by cycling; palette attach keeps
+`assign`). All legs run green 2026-07-12 at implementation on a sibling
+harness instance — proxy 7967 / ttyd 7966, scratch socket `-L tl-mf3` —
+adjust `tmux -L …` accordingly when repeating that setup.
+
+- [MF-3] Inverted probe P3 (lift from scratchpad/swipe-probe.py): 1-finger
+  80px horizontal swipe STARTING on '›', iPhone-class AND Android
+  emulation → outer hash UNCHANGED, `.sk-row` scrollLeft changed, no
+  iframe swap.
+- [MF-3] Clean tap on '›' → hash cycles exactly as today; '‹' cycles
+  back; 220ms `#session-pill` shows.
+- [MF-3] Swipe starting on Paste → no clipboard read, no toast, no pty
+  bytes; clean tap on Paste still pastes.
+- [MF-3] M.1 repeat legs re-run verbatim: hold soft arrow → repeats;
+  pointercancel mid-hold stops.
+- [MF-3] Focus preservation legs re-run: helper textarea focused → tap
+  Tab → bytes sent + focus retained; (post-MF-6 rerun) compose focused →
+  tap '|' → focusActiveInput returns to compose field.
+- [MF-3] Unframed top-level /?arg= tab: click '›' twice → session changes
+  twice, history.length UNCHANGED (location.replace); palette attach
+  still adds an entry.
+- [MF-3] §A.5 re-run unchanged (terminal surface untouched).
