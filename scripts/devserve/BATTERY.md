@@ -1633,3 +1633,63 @@ to `-L tl-mf1` — to coexist with a concurrent tl-dev run; adjust the
   another same-origin window repaints the open panel via the storage
   listener; the terminal-mode floating A−/A+ cluster is unaffected
   (until MF-2).
+
+### [C3] Floating action cluster off the terminal (MF-2; Viktor complaint 3: "the 5 buttons overlay on top of the terminal box and on mobile it shadows the textbox")
+
+Coarse pointers no longer render the five floating buttons (display:none
+— the elements STAY in the DOM as the function owners; row/palette
+delegates `.click()` them); fine pointers pin the cluster top-right.
+All legs run green 47/47 on 2026-07-12 at implementation, on a second
+harness instance — proxy 7977 / ttyd 7976, scratch socket `-L tl-mf2` —
+coexisting with a sibling run (adjust `tmux -L …` accordingly).
+
+- [MF-2] Coarse geometry matrix (390×844 coarse harness, iframe on
+  `#main`, bottom-anchored TUI mock — input box on the last 4 rows,
+  `scripts/devserve`-style mockbox): in EACH of 4 states — kb closed /
+  kb open (visualViewport shim 336px + `resize` dispatch) × compose
+  hidden / visible (✎) — all five of
+  `#paste-btn/#img-btn/#gallery-btn/#font-inc-btn/#font-dec-btn` have
+  0×0 `getBoundingClientRect`; `#soft-keys` and `#compose-bar` rects do
+  NOT intersect `.xterm-screen`; screenshot shows the mock input box +
+  hint + status rows fully unobscured. Known harness artifact: the
+  kb-open WebGL doubled-glyph paint is a headless vv-shim artifact only
+  — assert DOM geometry, not pixels, there.
+- [MF-2] Row functions: sk-row ends `[..., ‹, ›, 🖼, 📷, A−, A+]` and
+  each delegate fires — 🖼 opens `#img-gallery` (backdrop click closes),
+  📷 clicks `#img-input`, A−/A+ step `__term.options.fontSize` ±1
+  (feedback is the M.7 haptic + the visible refit; the `#font-pill`
+  readout rides ONLY the M.8 pinch path — `showFontPill` is closured in
+  the pinch recognizer, deliberately not rewired). Row Paste with an
+  IMAGE on the clipboard runs the full `#paste-btn` routine —
+  `/clipboard/upload` + 'Pasted: /…' toast + path `sendInput` (assert
+  the capture with ALL whitespace stripped: ZLE soft-wraps typed input
+  via cursor moves, no tmux wrap marker, so `capture-pane -J` cannot
+  join it — bit the implementation smoke).
+- [MF-2] Isolation for the legs above: A−/A+ route through the roamed
+  `/prefs` doc — GET-snapshot before, PUT it back after; uploads key
+  under the hash session, so run paste legs attached to a
+  `tl-battery-mf2` session (create via API, DELETE after; default-server
+  `tmux ls` identical before/after).
+- [MF-2] Desktop 1280×800 fine: all five render 48×48 at
+  `top: calc(16px + safe-area)`, right offsets 24/80/136/192/248
+  unchanged, computed z-index 9990 (< `#toast` 9999 — the toast stack is
+  also top-right and must paint over the cluster); bounding boxes
+  intersect NEITHER the last-3-rows band of `.xterm-screen` NOR any
+  soft-key/compose element (desktop builds neither).
+- [MF-2] `#img-preview` follows its launcher (transient — excluded from
+  the static band assert): fine → top 72 / right 24 / z 9990, spatially
+  BELOW the cluster, never covering it; coarse → parks above the
+  soft-key + compose stack (`8px + --sk-h + --cb-h + --kb-offset +
+  safe-area`; `top: auto` in the coarse override is load-bearing — an
+  over-constrained fixed `<img>` with both edges set keeps `top` and
+  would pin back under the cluster's fine-pointer spot). The retained
+  `--cb-h` term is the MF-6 compose-default interlock.
+- [MF-2] Red line: §A.5 passes unchanged — 1-finger swipe → copy-mode
+  (`pane_in_mode` 0→1) with NO new focus (attach itself focuses the
+  terminal per Task 2.3, so assert the swipe causes no focus CHANGE),
+  tap → helper-textarea focus. No mouse/wheel/selection/scroll,
+  6px-discriminator, or xterm-handler code touched; the change only
+  REMOVES five z-9999 tap interceptors from over the input rows. The
+  M.10 geometry leg's "floating buttons ride --cb-h" clause is
+  SUPERSEDED by this section (coarse no longer renders them); full §A
+  rides the MF-6 end-of-pass gate.

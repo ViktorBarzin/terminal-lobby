@@ -652,10 +652,17 @@
         #session-pill.visible, #font-pill.visible { opacity: 1; }
         #paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn {
             position: fixed;
-            /* --kb-offset is updated from window.visualViewport on touch
-               devices so floating elements lift above the soft keyboard. */
-            bottom: calc(24px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
-            z-index: 9999;
+            /* MF-2 (Viktor: the buttons "overlay on top of the terminal
+               box"): fine pointers pin the cluster TOP-right, clear of
+               the terminal's bottom rows where Claude Code's input box
+               lives. No --kb-offset term — it is only ever non-zero on
+               touch, and coarse pointers don't render the cluster at
+               all (media query below). z-index 9990 keeps the cluster
+               UNDER #toast (z 9999, also top-right and EARLIER in the
+               DOM — at equal z these buttons would paint over toast
+               cards). */
+            top: calc(16px + env(safe-area-inset-top));
+            z-index: 9990;
             width: 48px; height: 48px; border-radius: 12px;
             background: color-mix(in srgb, var(--accent) 22%, transparent);
             border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
@@ -674,16 +681,19 @@
         #font-inc-btn, #font-dec-btn {
             font-family: var(--font-ui); font-size: 15px; font-weight: 600;
         }
-        /* On touch devices the floating buttons would sit on top of the
-           soft-key toolbar — lift them above it. Task M.10: --cb-h (the
-           compose bar's visible height, written by syncViewport; 0 while
-           hidden — i.e. byte-equivalent baseline position) lifts them
-           above the compose bar too, or its ▶/⌄ would sit under these
-           z-index-9999 buttons and lose every tap. */
+        /* MF-2: coarse pointers don't render the cluster AT ALL — on
+           phones five 48px floating buttons shadowed the terminal's
+           input rows however far the old rule lifted them. Their
+           functions live on as delegate keys at the end of the
+           scrolling soft-key row (🖼 📷 A− A+, plus the row's Paste key
+           now running the full image-aware #paste-btn routine). The
+           hidden buttons REMAIN the function owners — the row/palette
+           delegates .click() them — so keep the elements: display:none
+           only unmaps them, and vacates the bottom band for the
+           soft-key + compose stack (MF-6 interlock). */
         @media (pointer: coarse) {
             #paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn {
-                bottom: calc(72px + var(--cb-h, 0px) + var(--kb-offset, 0px)
-                             + env(safe-area-inset-bottom));
+                display: none;
             }
         }
         #paste-btn:hover, #img-btn:hover, #gallery-btn:hover,
@@ -694,15 +704,17 @@
         #font-inc-btn:active, #font-dec-btn:active { transform: scale(0.92); }
         #img-input { display: none; }
 
-        /* Pasted/uploaded image preview — floating thumbnail just above the
-           Paste/Img buttons (terminal mode only, element built from JS).
-           Click opens the #img-lightbox enlargement; closing that removes
-           the preview entirely. */
+        /* Pasted/uploaded image preview — floating thumbnail that follows
+           its launcher (terminal mode only, element built from JS): on
+           fine pointers it hangs just BELOW the top-right cluster
+           (16px + 48px button + 8px gap), z 9990 so #toast (9999)
+           stays on top of it too. Click opens the #img-lightbox
+           enlargement; closing that removes the preview entirely. */
         #img-preview {
             position: fixed;
-            bottom: calc(84px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+            top: calc(72px + env(safe-area-inset-top));
             right: calc(24px + env(safe-area-inset-right));
-            z-index: 9999;
+            z-index: 9990;
             max-width: 220px; max-height: 160px;
             object-fit: contain;
             background: var(--bg-card);
@@ -711,11 +723,20 @@
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
             cursor: zoom-in;
         }
-        /* Track the floating buttons, which sit higher on touch devices
-           (and above the visible compose bar — Task M.10, see --cb-h). */
+        /* MF-2 coarse: the cluster is hidden and its functions live in
+           the soft-key row, so the preview parks just above the
+           soft-key + compose stack instead. --sk-h/--cb-h are written
+           by syncViewport (0 while the toolbar/bar is hidden; --cb-h is
+           the MF-6 compose-default interlock), --kb-offset lifts it
+           above the soft keyboard. top: auto is load-bearing — a fixed
+           <img> with BOTH edges set resolves the over-constraint by
+           keeping top, which would pin it back under the cluster's
+           fine-pointer spot. */
         @media (pointer: coarse) {
             #img-preview {
-                bottom: calc(132px + var(--cb-h, 0px) + var(--kb-offset, 0px)
+                top: auto;
+                bottom: calc(8px + var(--sk-h, 0px) + var(--cb-h, 0px)
+                             + var(--kb-offset, 0px)
                              + env(safe-area-inset-bottom));
             }
         }
@@ -6704,19 +6725,15 @@
                     showToast('Copy failed', 'error', 2500);
                 }
             }));
-            row.appendChild(makeBtn('Paste', async () => {
-                try {
-                    const text = await navigator.clipboard.readText();
-                    if (text) {
-                        // term.paste routes through term.onData — consume any
-                        // armed soft-modifier so it can't remap the first char.
-                        consumeSoftMods();
-                        term.paste(text);
-                    }
-                } catch (err) {
-                    showToast('Clipboard access denied', 'error', 2500);
-                }
-            }));
+            // MF-2: the row's Paste delegates to #paste-btn (display:none
+            // on coarse — the element stays the function owner): the full
+            // IMAGE-aware routine — image on the clipboard →
+            // /clipboard/upload → path sendInput; text → term.paste with
+            // soft-mod disarm. The old readText()-only body here would
+            // have silently dropped image paste on phones once the
+            // floating cluster stopped rendering there.
+            row.appendChild(makeBtn('Paste',
+                () => document.getElementById('paste-btn').click()));
             row.appendChild(makeBtn('Kbd', () => term.focus(),
                 { ariaLabel: 'Show keyboard' }));
             // Task M.10: compose-bar toggle — ✎ opens the native text field
@@ -6752,6 +6769,26 @@
                 { ariaLabel: 'Previous session', noFocus: true }));
             row.appendChild(makeBtn('›', () => postSessionCycle(1),
                 { ariaLabel: 'Next session', noFocus: true }));
+
+            // MF-2: the five floating action buttons are display:none on
+            // coarse pointers (they shadowed Claude Code's input rows),
+            // so their functions fold into the row as thin delegates
+            // onto the SAME hidden elements — .click() fires a
+            // display:none button's handler fine (the palette /
+            // runAppCommand precedent). Paste already delegates above;
+            // noFocus: none of these should summon the keyboard.
+            row.appendChild(makeBtn('🖼',
+                () => document.getElementById('gallery-btn').click(),
+                { ariaLabel: 'Session images', noFocus: true }));
+            row.appendChild(makeBtn('📷',
+                () => document.getElementById('img-btn').click(),
+                { ariaLabel: 'Upload image', noFocus: true }));
+            row.appendChild(makeBtn('A−',
+                () => document.getElementById('font-dec-btn').click(),
+                { ariaLabel: 'Smaller terminal font', noFocus: true }));
+            row.appendChild(makeBtn('A+',
+                () => document.getElementById('font-inc-btn').click(),
+                { ariaLabel: 'Larger terminal font', noFocus: true }));
 
             // Task M.1: keyboard DISMISS — right-pinned OUTSIDE the
             // scrolling row (a direct #soft-keys child, so it can never
