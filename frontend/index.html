@@ -942,7 +942,8 @@
         .lobby-header-row .lobby-header { margin: 0; flex: 1 1 auto; min-width: 0; }
         /* T3 icon-button tier (Task 2.8): 32×32 (size-8), 16px glyph at
            80% resting opacity, button radius. */
-        #notify-toggle {
+        #notify-toggle,
+        #reload-toggle {
             flex: 0 0 auto; width: 32px; height: 32px; padding: 0;
             box-sizing: border-box;
             border-radius: var(--radius);
@@ -951,7 +952,8 @@
             font-size: 16px; line-height: 1; cursor: pointer; opacity: 0.8;
             transition: background 0.15s, border-color 0.15s, opacity 0.15s;
         }
-        #notify-toggle:hover { background: var(--bg-card-hover); opacity: 1; }
+        #notify-toggle:hover,
+        #reload-toggle:hover { background: var(--bg-card-hover); opacity: 1; }
         #notify-toggle.on {
             border-color: var(--accent); background: var(--bg-card-hover); opacity: 1;
         }
@@ -1597,7 +1599,7 @@
                 min-height: 44px;
             }
             /* Square icon buttons stay square at target size. */
-            #sidebar-toggle, #notify-toggle { width: 44px; height: 44px; }
+            #sidebar-toggle, #notify-toggle, #reload-toggle { width: 44px; height: 44px; }
             /* The header row's reserve for the fixed #sidebar-toggle
                grows with it (44px + 12px inset). */
             .lobby-header-row { padding-right: 56px; }
@@ -1825,6 +1827,8 @@
             <aside id="lobby-sidebar">
                 <div class="lobby-header-row">
                     <h1 class="lobby-header">tmux sessions</h1>
+                    <button id="reload-toggle" type="button"
+                            title="Reload the app">&#10227;</button>
                     <button id="notify-toggle" type="button" aria-pressed="false"
                             title="Notify me when a session needs input">&#128276;</button>
                 </div>
@@ -4095,6 +4099,16 @@
             }
             paintNotifyToggle();
 
+            // Item 2: header ⟳ — a plain reload, mirrored by the settings
+            // panel "Reload app" row. Handy in the installed PWA, where
+            // there is no browser chrome / refresh button (and the bell is
+            // hidden entirely when Notification is unavailable, so this
+            // stays a reachable manual-reload affordance).
+            const reloadToggleEl = document.getElementById('reload-toggle');
+            if (reloadToggleEl) {
+                reloadToggleEl.addEventListener('click', () => location.reload());
+            }
+
             function activateSession(name) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
                 if (currentActive === name) { updateActiveCard(); return; }
@@ -5582,6 +5596,18 @@
                     segCtl(ekRow, 'compose.enterKey',
                            ['newline', 'send'], ['Newline', 'Send']);
                 }
+
+                // Reload app (Item 2): a plain location.reload(), mirrored
+                // by the header ⟳ button. Same value in the installed PWA,
+                // where there is no browser refresh control.
+                const reloadRow = row('Reload app');
+                reloadRow.title = 'Reload the terminal-lobby app in this browser.';
+                const reloadBtn = document.createElement('button');
+                reloadBtn.type = 'button';
+                reloadBtn.className = 'sp-btn';
+                reloadBtn.textContent = 'Reload';
+                reloadBtn.addEventListener('click', () => location.reload());
+                reloadRow.appendChild(reloadBtn);
 
                 // Advanced (Item 1): reset this browser to a clean boot.
                 // The opt-in checkbox extends the wipe to the roamed

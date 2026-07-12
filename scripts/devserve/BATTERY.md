@@ -1990,3 +1990,11 @@ in the coarse compose block) lives OUTSIDE both guarded regions.
   normalized defaults lands BEFORE the local wipe (`GET /prefs` echoes
   the defaults doc); a PUT failure toasts the error and still clears
   locally. `tmux ls` (default server) unchanged before/after.
+- [Add-2] Reload action: the lobby header shows a ⟳ button
+  (`#reload-toggle`) beside the 🔔 bell on BOTH fine and coarse pointers
+  (44px square under `pointer:coarse`); clicking it triggers
+  `location.reload()` (stub `location.reload` or watch for a navigation
+  to assert — the build stamp re-logs in the console). The ⚙ settings
+  panel carries a 'Reload app' row (`.sp-btn` labelled 'Reload') that
+  does the same, present in both the popover and the bottom-sheet
+  presentations. Neither control touches localStorage or tmux state.
