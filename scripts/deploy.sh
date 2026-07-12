@@ -52,6 +52,7 @@ scp -o BatchMode=yes \
   frontend/manifest.webmanifest \
   frontend/icon-192.png \
   frontend/icon-512.png \
+  frontend/icon-512-maskable.png \
   frontend/fonts/JetBrainsMono-Regular.woff2 \
   frontend/fonts/JetBrainsMono-Bold.woff2 \
   frontend/fonts/JetBrainsMono-Italic.woff2 \
@@ -111,6 +112,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   sudo install -m 0644 /tmp/manifest.webmanifest     /usr/local/share/ttyd/manifest.webmanifest
   sudo install -m 0644 /tmp/icon-192.png             /usr/local/share/ttyd/icon-192.png
   sudo install -m 0644 /tmp/icon-512.png             /usr/local/share/ttyd/icon-512.png
+  sudo install -m 0644 /tmp/icon-512-maskable.png    /usr/local/share/ttyd/icon-512-maskable.png
   # Vendored webfonts (repo frontend/fonts/*.woff2): the SAME files back the
   # repo's @font-face sources and clipboard-upload's exact-path /fonts/ asset
   # whitelist (+ the public ingress carve-out). tl-symbols.woff2 ships for
@@ -142,7 +144,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
   sudo systemctl enable --now clipboard-cleanup.timer
   rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html
-  rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png
+  rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png /tmp/icon-512-maskable.png
   rm -f /tmp/JetBrainsMono-Regular.woff2 /tmp/JetBrainsMono-Bold.woff2 /tmp/JetBrainsMono-Italic.woff2 /tmp/JetBrainsMono-BoldItalic.woff2 /tmp/dm-sans-latin-wght-normal.woff2 /tmp/tl-symbols.woff2
   rm -f /tmp/ttyd-user-map /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service

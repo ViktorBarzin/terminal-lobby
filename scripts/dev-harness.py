@@ -84,7 +84,6 @@ HOP_BY_HOP = {
 # paths reach clipboard-upload UNSTRIPPED with NO auth header injected, so
 # battery curls without credentials exercise the real Go handlers and the
 # page's same-origin /fonts/ @font-face sources resolve locally.
-# (/icon-512-maskable.png 404s until Task M.9 ships the file — expected.)
 ASSET_PATHS = (
     "/manifest.webmanifest",
     "/icon-192.png",

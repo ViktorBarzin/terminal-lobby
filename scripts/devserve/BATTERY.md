@@ -856,8 +856,10 @@ implements the feature. Format:
   `Cache-Control: public,max-age=3600`, body parses as JSON with
   description exactly `Web tmux sessions.` (vendor string gone);
   `/icon-192.png` + `/icon-512.png` → 200 `image/png` (same
-  cache policy); `/icon-512-maskable.png` → 404 (whitelisted now, the
-  file ships with Task M.9); each of the 5 vendored fonts under
+  cache policy); `/icon-512-maskable.png` → 200 `image/png` since Task
+  M.9 shipped the file (it 404ed between 3.1 and M.9 — the whitelisted-
+  but-not-installed 404 path stays covered by the Go tests); each of the
+  5 vendored fonts under
   `/fonts/` → 200 `font/woff2` + `Cache-Control: public,max-age=604800`
   with `content-length` equal to the repo file
   (JetBrainsMono-Regular.woff2 = 92164).
@@ -1359,3 +1361,26 @@ implements the feature. Format:
   untick writes `gestures.haptics=false` with all sibling flags intact;
   the row does NOT render on fine-pointer desktop (coarse block) — and
   never where the API is absent (iOS WebKit: manual checklist).
+- [Task M.9] Maskable PWA icon serves (scratch clipboard-upload build,
+  Task 3.1 recipe: `CLIPBOARD_UPLOAD_ASSET_DIR=$PWD/frontend` on
+  :17683, harness `--clipboard-port 17683`): cookie-less, header-less
+  `curl -si http://127.0.0.1:7997/icon-512-maskable.png` → 200
+  `image/png` + `Cache-Control: public,max-age=3600`, body bytes ==
+  `frontend/icon-512-maskable.png` (the repo artwork: existing 512
+  glyph inset to the ~80% maskable safe zone — furthest non-bg pixel
+  r≈155px < the 204.8px safe-circle limit — on a #0d1117 field, the
+  icon's own bg AND the manifest background_color/theme_color).
+- [Task M.9] Manifest carries all three icons: in-page
+  `fetch('/manifest.webmanifest').then(r=>r.json())` → `icons.length
+  === 3`; exactly one entry has `purpose: 'maskable'`
+  (`src: '/icon-512-maskable.png'`, `sizes: '512x512'`), the two
+  `purpose: 'any'` entries stay (purpose-any-only letterboxes on
+  Android adaptive launchers; any-only removal would regress iOS/
+  desktop), and `orientation` stays `'any'` (terminals want landscape —
+  T3's portrait lock does not transfer).
+- [Task M.9] Traversal probes still 404 against the same scratch build:
+  `/icon-../etc/passwd`, `/icon-512-maskable.png.bak`,
+  `/fonts/../icon-512-maskable.png` → 404 (exact-path table lookup —
+  the new file adds no directory serving); `go test ./...` in
+  `clipboard-upload/` green (the whitelisted-but-not-installed 404
+  scenario keeps its regression test).
