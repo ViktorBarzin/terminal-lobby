@@ -740,13 +740,18 @@ implements the feature. Format:
   carries the AUTHENTIK name — `/etc/ttyd-user-map` maps it to the OS
   user; the OS name `wizard` is unmapped and 403s.)
 - [Task 2.6] Settings popover: click the sidebar `⚙ Terminal settings`
-  button → `#settings-panel` opens anchored to it with EXACTLY seven
-  controls (six until Task 3.5 added the flow-control checkbox) —
-  font-size A−/A+ (same store as the Task 1.8 steppers:
+  button → `#settings-panel` opens anchored to it with EXACTLY nine
+  top-section controls (six until Task 3.5 added the flow-control
+  checkbox as the seventh; Task 4.1 added App shortcuts as the eighth;
+  [links] added the Link-copy-button checkbox as the ninth — that row
+  renders on hover-capable devices only, so coarse-only contexts count
+  eight) — font-size A−/A+ (same store as the Task 1.8 steppers:
   panel steps move `#font-size-value` and vice versa), line-height
   range 1–1.4, letter-spacing range 0–1px, cursor Block/Bar/Under
   segments, cursor-blink checkbox, bold-weight 600/700 segments,
-  flow-control checkbox (`#sp-flow`, Task 3.5) — and
+  flow-control checkbox (`#sp-flow`, Task 3.5), App-shortcuts checkbox
+  (`#sp-kb`, Task 4.1), Link-copy-button checkbox (`#sp-linkchip`,
+  [links]) — and
   NO smooth-scroll / renderer / mouse / wheel / scroll option anywhere
   in it (red line; assert by scanning the panel's text). Escape closes
   it AND the terminal regains the keyboard (type → capture-pane shows
