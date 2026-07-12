@@ -2313,3 +2313,116 @@ adjust ports/socket when repeating.
 one real phone carrying a pre-deploy roamed doc — confirm the disclosed
 ONE-TIME bar reappearance on a former compose.show:'off' device, hide
 it via settings (or ✎), reload → stays hidden across reloads.
+
+### [IR.3] Soft-key declutter: 8-button primary line + ⋯-toggled overflow row (input-rework; Viktor: "way too many buttons")
+
+The 27-key flat scrolling row becomes TWO tiers: an always-visible
+primary line — Esc ⇧Tab · ↑ ↓ ← → (12px group gap) + pinned ⋯ + pinned
+⌄, EXACTLY 8 buttons, zero scroll at 390px — and a ⋯-toggled overflow
+row (`.sk-row.sk-extra`, stacked ABOVE the line) with 6 hairline-
+separated groups: [Tab·Ctrl·Alt] [Copy·Paste] [/ · - · | · `]
+[Sel·Mark·Yank] [‹·›] [🖼·📷·⌨]. Every key rides the UNCHANGED
+makeBtn/repeat/tap-commit machinery (byte-reuse; only re-parented);
+both pinned keys are direct children of the bottom `.sk-line` so
+neither can scroll out of reach (M.1 lesson). ⋯ is a plain tap-commit
+button (no new gestures — swipe-paging was rejected: P3
+mid-swipe-fire), aria-pressed + sk-mod armed paint, device-local
+persistence `tl:input.keyRowExpanded:v1` ('1'/'0'; absent/garbage →
+collapsed). Height changes ride the SAME measured-offsetHeight →
+`--sk-h` → syncViewport→refit path as the compose bar. ⌨
+(#sk-input-toggle, 'Switch between input field and raw keyboard')
+calls toggleInputBar() and REPLACES both Kbd and ✎ — with the bar
+hidden, a terminal tap already summons the raw keyboard, so Kbd's
+one-shot excursion collapses into ⌨-off + tap. A−/A+ left the toolbar
+ENTIRELY (⚙ settings owns font size via the same store; hidden
+#font-dec-btn/#font-inc-btn delegates stay for desktop).
+
+**Default changes (all disclosed):** visible collapsed buttons 27 → 8
+(25 total across both tiers incl. ⌨); Kbd + ✎ replaced by one ⌨
+overflow toggle; A−/A+ removed from coarse chrome (function survives
+in ⚙ settings, same roamed fontSize store); new device-local key
+tl:input.keyRowExpanded:v1 (collapsed default); collapsed toolbar
+offsetHeight identical to today (51 = 6+6 padding + 38 button + 1
+border); reopen-hint toast + settings 'Input bar' tooltip now name ⌨
+(were ✎); no roamed pref changes — gestures.* and toolbarHidden
+untouched; two-finger toolbar hide still hides BOTH rows and the
+expanded bit survives hide/show.
+
+**SUPERSEDE NOTE for [Task M.1] legs above:** the flat row-order
+census ("Esc Tab ⇧Tab Ctrl Alt …") and the `#soft-keys >
+button.sk-dismiss` direct-child assertion describe the RETIRED
+single-row DOM — ⌄ is now a direct child of `#soft-keys .sk-line`
+(still never scrollable-away); "Kbd re-focuses (inverse)" is void
+(key deleted; ⌨-off + tap is the raw path). The M.1 edge-fade leg
+now applies to `.sk-extra` (and to `.sk-primary` only ≤360px — above
+that the primary line fits by design and drops the mask). [MF-6]/
+[IR.2] mentions of ✎ read as ⌨. Modifier semantics are UNCHANGED
+M.1: a single tap ARMS for DOUBLE_TAP_MS (400ms; consumed by the
+next key or expires to idle), double-tap latches.
+
+Harness as [IR.1]/[IR.2] (dev-harness --scratch fork, 390×844
+Pixel-7-class emulation, outer-page entry `#<session>`,
+Terminal-Proxy `__term` tap) — session `tl-battery-ir3`, plus the
+IR.2-style scratch tmux-api (`TMUX_API_ADDR`/`TMUX_API_PREFS_DIR`)
+now ALSO bridged to the scratch tmux server via `TMUX_TMPDIR` +
+a `default → tl-ir3` socket symlink (and `TMUX` env UNSET — an
+inherited `$TMUX` overrides `TMUX_TMPDIR` and silently retargets the
+REAL server), which lets the copy-mode POSTs run fully isolated —
+the §"PRODUCTION-SERVICE ISOLATION" caveat about tmux-api is hereby
+soluble without code changes. keyRowExpanded itself is
+localStorage-only → no /prefs snapshot dance (the ⚙ regression leg
+writes prefs, hence the scratch prefs dir). All legs green 28/28 on
+2026-07-12 at implementation — proxy 7957 / ttyd 7956 / tmux-api
+7958, scratch socket `-L tl-ir3` — adjust ports/socket when
+repeating.
+
+- [IR.3] COLLAPSED CENSUS — coarse load: .sk-primary EXACTLY
+  Esc,⇧Tab,↑,↓,←,→ in order (textContent sequence); pinned ⋯
+  aria-pressed=false + ⌄ present (both .sk-line children); .sk-extra
+  hidden; visible soft-key buttons = 8; .sk-primary scrollWidth ===
+  clientWidth at 390px; collapsed offsetHeight = 51 (today's); A−/A+/
+  Kbd/✎ absent from the entire toolbar; ⚙ settings still steps font
+  size 15→16 with the roamed doc updated (regression guard).
+- [IR.3] OVERFLOW TOGGLE — tap ⋯ → .sk-extra visible with EXACTLY
+  Tab,Ctrl,Alt,Copy,Paste,/,-,|,`,Sel,Mark,Yank,‹,›,🖼,📷,⌨ in order
+  + 5 .sk-sep; ⋯ aria-pressed=true + armed styling +
+  #soft-keys.expanded; toolbar offsetHeight 51→95, --sk-h follows,
+  tmux client_height SHRINKS via the debounced refit (`tmux -L
+  <scratch> display '#{client_height}'` before/after — 33→31 rows);
+  second tap collapses, grid recovers (31→33), key '0';
+  tl:input.keyRowExpanded:v1='1' after expand; reload boots expanded;
+  garbage in the key → boots collapsed, zero page errors.
+- [IR.3] REPEAT INTACT — §A.1-style sensor (`stty -icanon -echo -isig
+  min 1 time 0; exec cat -vT` — the -T matters: plain cat -v passes
+  TAB through invisibly and false-reds the Tab leg): hold row-1 ↓
+  ≥700ms → ≥3 `^[[B` echoes (measured 7), count FROZEN on release;
+  hold row-2 Tab → ≥3 `^I` (measured 7); a >10px swipe starting on
+  Esc commits NOTHING (MF-3 guard).
+- [IR.3] MOD CROSS-ROW — expand, tap Ctrl → armed paint; collapse +
+  raw 'c' INSIDE the M.1 400ms arm window → exactly one 0x03 (`^C` on
+  the sensor), mod consumed → idle; re-expand fine; a lapsed arm
+  window idles by itself (shipped M.1 expiry, probed).
+- [IR.3] COPY CO-VISIBILITY — expanded: Sel → pane_in_mode=1 → row-1
+  arrows move the copy cursor (copy_cursor_y changes) → Mark → arrows
+  → Yank → clipboard holds the yanked text, mode exits, BOTH rows
+  visible throughout (zero page flips; 25 visible buttons at every
+  step). Needs the bridged scratch tmux-api (above).
+- [IR.3] ⌨ TOGGLE — tap ⌨ → bar hides + tl:input.barHidden:v1='1' +
+  terminal tap summons the RAW keyboard (helper textarea); tap ⌨
+  again → bar returns, focus per input.tapFocus (field);
+  #compose-input empty after the excursion (IR.1 baseline hook).
+- [IR.3] DELEGATES — 🖼 from row 2 opens the gallery and it STAYS
+  open ≥1s (swallowClick); ⌄ with the keyboard up blurs the active
+  input from BOTH row states.
+- [IR.3] RED LINE — §A.5 (tap-vs-swipe + --kb-offset) iPhone- AND
+  Pixel-class: swipe → synthetic wheel → copy-mode with NO keyboard
+  summon; tap → field focus (3b) with ZERO pty bytes; census holds on
+  both device classes; 375-class primary line still fits (34px
+  sk-narrow shave via media query); desktop 1280×800: no #soft-keys
+  built, raw typing intact.
+
+**DEVICE-MANUAL standing checklist (Viktor's pass):** real-phone
+thumb pass on the expanded row (reachability, haptic per tap);
+two-finger toolbar hide/show with the row expanded (both rows drop
+and return, expanded bit survives); primary row fits without scroll
+on the actual devices (390-class and any 375-class).
