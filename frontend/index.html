@@ -5654,9 +5654,81 @@
             row.appendChild(makeBtn('/',  () => sendKey('/')));
             row.appendChild(makeBtn('-',  () => sendKey('-')));
 
+            // Task M.2: touch copy — server-side tmux copy-mode. A touch
+            // drag deliberately scrolls instead of selecting (red line), so
+            // touch users select IN tmux: Sel enters copy-mode (the soft
+            // arrows then move the copy cursor), Mark starts the selection,
+            // Yank copies it and leaves copy-mode — tmux (set-clipboard on)
+            // then emits OSC52 and the clipboard provider lands it on the
+            // browser clipboard with the 'Copied' toast. All three run via
+            // tmux-api because the server commands are binding-table-
+            // independent: synthesizing the prefix key client-side breaks
+            // under prefix remaps (wizard's own prefix is M-x, not C-b).
+            function postCopyMode(command) {
+                const url = SESSIONS_API + '/'
+                    + encodeURIComponent(validArg) + '/copy-mode';
+                return fetch(url, command ? {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: command })
+                } : { method: 'POST', credentials: 'same-origin' });
+            }
+            function copyModeKey(label, command, ariaLabel) {
+                // noFocus: selecting is an arrows workflow — never summon
+                // the keyboard on these taps (same posture as the arrows).
+                return makeBtn(label, async () => {
+                    try {
+                        const resp = await postCopyMode(command);
+                        if (resp.status === 409) {
+                            showToast('Tap Sel first', 'error', 2000);
+                        } else if (!resp.ok) {
+                            showToast(label + ' failed: HTTP ' + resp.status, 'error', 2500);
+                        }
+                    } catch (err) {
+                        showToast(label + ' error: ' + err.message, 'error', 2500);
+                    }
+                }, { ariaLabel: ariaLabel, noFocus: true });
+            }
+            row.appendChild(copyModeKey('Sel', null,
+                'Enter tmux copy mode (select with arrows)'));
+            row.appendChild(copyModeKey('Mark', 'begin-selection',
+                'Start selection at the copy cursor'));
+            row.appendChild(copyModeKey('Yank', 'copy-selection-and-cancel',
+                'Copy selection and leave copy mode'));
+
             row.appendChild(makeBtn('Copy', async () => {
                 const sel = term.getSelection();
-                if (!sel) { showToast('No selection', 'error', 1500); return; }
+                if (!sel) {
+                    // Task M.2: no xterm selection — on touch there never is
+                    // one (drag scrolls by design) — so copy the visible
+                    // screen via GET /capture. clipboard.write() is called
+                    // SYNCHRONOUSLY in the tap gesture and handed the fetch
+                    // as a ClipboardItem PROMISE: iOS Safari only honors
+                    // writes inside the gesture's transient activation,
+                    // which an awaited fetch hop would void.
+                    const captured = fetch(SESSIONS_API + '/'
+                            + encodeURIComponent(validArg) + '/capture',
+                            { credentials: 'same-origin' })
+                        .then((resp) => {
+                            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                            return resp.text();
+                        });
+                    try {
+                        if (navigator.clipboard.write
+                                && typeof ClipboardItem !== 'undefined') {
+                            await navigator.clipboard.write([new ClipboardItem({
+                                'text/plain': captured.then((t) =>
+                                    new Blob([t], { type: 'text/plain' }))
+                            })]);
+                        } else {
+                            await navigator.clipboard.writeText(await captured);
+                        }
+                        showToast('Screen copied', 'success', 1500);
+                    } catch (err) {
+                        showToast('Copy failed', 'error', 2500);
+                    }
+                    return;
+                }
                 try {
                     await navigator.clipboard.writeText(sel);
                     showToast('Copied', 'success', 1500);
