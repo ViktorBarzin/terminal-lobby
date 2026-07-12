@@ -2056,3 +2056,45 @@ in the coarse compose block) lives OUTSIDE both guarded regions.
   to awaiting from BOTH `@claude_state=running` AND `=done`, but leaves a
   session with NO prior state untouched. Verified with a `classify()`
   harness mirroring the case block 2026-07-12 (7/7 rows as expected).
+- [Add-5] Notifications Part 2 — Web Push (background delivery). Serve
+  side: `go test ./...` in tmux-api green incl. push_test.go (subscription
+  store round-trip; UPSERT by endpoint never duplicates + preserves
+  added_at; multi-device; remove is idempotent and deletes the file when
+  the last device goes; per-user isolation; file mode 0600; users()
+  enumerates only subscribed users; validation 400s for bad/endpoint-less/
+  key-less bodies; handler method + auth guards; GET is no-store) and
+  pushsender_test.go (first observation of a user SEEDS silently; a
+  running→awaiting edge fans out to EVERY device through the REAL
+  webpush.SendNotification RFC-8291 encryption + VAPID sign to an httptest
+  push endpoint; a 410 endpoint is pruned; NO re-send while a session stays
+  awaiting; the edge RE-ARMS after awaiting→running→awaiting; a
+  newly-appeared already-awaiting session fires once (frontend seeding-fix
+  parity); the marshaled payload is EXACTLY sw.js's {title,body,tag,session}
+  — pinned so a shape drift fails loudly). Harness (scratch `tmux-api`
+  built to the scratchpad on 127.0.0.1:7995, disposable TMUX_API_PUSH_DIR,
+  session `tl-battery-push`, behind the REAL dev-harness proxy on :7997,
+  clipboard pointed at a dead port; the background sender is kept dark by
+  setting ONLY VAPID_PUBLIC_KEY so it never polls real tmux state):
+  `GET /api/sessions/push/vapid-public` → `200` + the exact key when
+  configured and `404` when the VAPID env is absent (feature-dark);
+  `PUT /api/sessions/push-subscriptions` → `204`, `GET` → the list with a
+  server-stamped `added_at`, `DELETE {endpoint}` → `204` then `GET` → `[]`,
+  invalid body → `400` — proving the multi-segment `.../push/vapid-public`
+  tail and `push-subscriptions` both route through the proxy unchanged (no
+  harness edit needed). Browser (Playwright chromium headless): loading the
+  REAL lobby and clicking the bell runs subscribePush → the subscription
+  PUT lands in the scratch store; a second click runs unsubscribePush →
+  DELETE empties it; zero pageerrors. PushManager / serviceWorker /
+  Notification are STUBBED via addInitScript because Web Push is inert over
+  plain http://localhost (secure-context requirement, memory #9317) — and
+  applicationServerKey needs a REAL base64url VAPID public key (a
+  non-decodable placeholder makes base64urlToUint8Array throw, so
+  subscribePush silently no-ops: test-data gotcha, code correct). Verified
+  2026-07-12. NOT harness-testable → OPERATOR MANUAL DEVICE MATRIX: real
+  encrypted delivery to a live push service + device wake (Android-PWA
+  Chrome, desktop Chrome/Firefox, installed iOS-PWA ≥16.4), the
+  →awaiting background fire while all tabs are CLOSED, tag coalescing with
+  the foreground notification, and the iOS-Safari-non-standalone "Add to
+  Home Screen" bell hint. VAPID provisioning (Vault write) + deploy.sh
+  EnvironmentFile install verified by review + `bash -n` only (never run
+  against prod).
