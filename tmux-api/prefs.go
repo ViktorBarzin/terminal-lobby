@@ -113,6 +113,44 @@ func validatePrefs(raw []byte) ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// notifyPrefs is the SLICE of a user's roamed prefs the push sender needs:
+// which session-state transitions they want a background push for. The
+// server is otherwise deliberately blind to pref fields (validatePrefs only
+// guards the envelope) — this is the one exception, because gating a send
+// per user must happen server-side where the sender runs, not in a browser
+// that may be closed.
+type notifyPrefs struct {
+	onDone     bool
+	onAwaiting bool
+}
+
+// parseNotifyPrefs extracts notify.{onDone,onAwaiting} from a raw prefs
+// document. Both default TRUE (opt-OUT, matching the frontend's
+// PREF_DEFAULTS) whenever the doc, the notify object, or an individual key is
+// absent or the wrong type — so a user who never opened settings, or an older
+// frontend that predates the namespace, still gets both notifications. The
+// pointer fields distinguish "explicitly false" from "absent": absent keeps
+// the default, present overrides it.
+func parseNotifyPrefs(doc []byte) notifyPrefs {
+	np := notifyPrefs{onDone: true, onAwaiting: true}
+	var envelope struct {
+		Notify *struct {
+			OnDone     *bool `json:"onDone"`
+			OnAwaiting *bool `json:"onAwaiting"`
+		} `json:"notify"`
+	}
+	if err := json.Unmarshal(doc, &envelope); err != nil || envelope.Notify == nil {
+		return np
+	}
+	if envelope.Notify.OnDone != nil {
+		np.onDone = *envelope.Notify.OnDone
+	}
+	if envelope.Notify.OnAwaiting != nil {
+		np.onAwaiting = *envelope.Notify.OnAwaiting
+	}
+	return np
+}
+
 // handlePrefs serves GET/PUT /prefs for the calling user. Same no-store
 // rationale as /layout: the browser must not cache what it just changed.
 func handlePrefs(w http.ResponseWriter, r *http.Request) {
