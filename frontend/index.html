@@ -694,6 +694,18 @@
             border-radius: 8px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
         }
+        /* Gallery position chip ('3/12', Task M.4) — rendered only when the
+           lightbox was opened WITH nav (gallery call sites). */
+        #img-lightbox .lb-chip {
+            position: absolute;
+            bottom: calc(18px + env(safe-area-inset-bottom));
+            left: 50%; transform: translateX(-50%);
+            padding: 3px 10px; border-radius: 999px;
+            font-family: var(--font-ui); font-size: 12px; font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            color: #fff; background: rgba(0, 0, 0, 0.55);
+            pointer-events: none;
+        }
 
         /* Session image gallery — overlay grid of everything stored for
            this (user, session); a thumbnail click opens #img-lightbox on
@@ -732,9 +744,14 @@
             position: relative; aspect-ratio: 1 / 1; padding: 0;
             border: 1px solid var(--border); border-radius: 6px;
             overflow: hidden; background: var(--bg-page); cursor: zoom-in;
+            /* Task M.4: thumbs carry the long-press menu — suppress the
+               iOS image callout / selection while pressing. */
+            -webkit-touch-callout: none;
+            user-select: none; -webkit-user-select: none;
         }
         #img-gallery .gallery-cell img {
             width: 100%; height: 100%; object-fit: cover; display: block;
+            -webkit-touch-callout: none;   /* Task M.4 (see .gallery-cell) */
         }
         #img-gallery .gallery-badge {
             position: absolute; top: 4px; right: 4px;
@@ -944,6 +961,11 @@
             padding: 10px 12px; cursor: pointer;
             transition: background 0.15s, border-color 0.15s;
             font-family: inherit; color: var(--text-primary); text-align: left;
+            /* Task M.4: press-and-hold belongs to the long-press recognizer
+               on touch — suppress text selection and the iOS callout so the
+               OS doesn't fight it. */
+            user-select: none; -webkit-user-select: none;
+            -webkit-touch-callout: none;
         }
         .session-card:hover { background: var(--bg-card-hover); }
         .session-card:focus-visible {
@@ -989,6 +1011,9 @@
             border-radius: calc(var(--radius) - 4px);
             padding: 0 4px; margin: -1px 0; width: 100%;
             min-width: 60px; box-sizing: border-box; outline: none;
+            /* Editing needs selection back (the card is user-select:none
+               for the Task M.4 long-press). */
+            user-select: text; -webkit-user-select: text;
         }
         .session-actions { display: flex; gap: 6px; flex-shrink: 0; }
         .session-actions button {
@@ -1852,7 +1877,9 @@
             // adoptPrefs deep-merge them so a patch or a partial server
             // doc touching one flag never resets its siblings.
             gestures: Object.freeze({
-                keyRepeat: true     // Task M.1: hold-to-repeat on soft arrows/Tab
+                keyRepeat: true,      // Task M.1: hold-to-repeat on soft arrows/Tab
+                cardLongPress: true,  // Task M.4: long-press menu (cards + gallery thumbs)
+                overlaySwipe: true    // Task M.4: lightbox swipe-dismiss + swipe-nav
             })
         });
         const PREF_VALID = {
@@ -1865,7 +1892,9 @@
             // A namespace validator is an OBJECT of per-subkey validators;
             // normalizePrefs/prefFieldOk recurse exactly one level.
             gestures: {
-                keyRepeat: v => typeof v === 'boolean'
+                keyRepeat: v => typeof v === 'boolean',
+                cardLongPress: v => typeof v === 'boolean',
+                overlaySwipe: v => typeof v === 'boolean'
             }
         };
         function readRawPrefs() {
@@ -2813,6 +2842,153 @@
             });
         }
 
+        // ---- long-press → context menu (Task M.4) ----------------------
+        // Shared recognizer for lobby session cards + gallery thumbs —
+        // OVERLAY/LOBBY chrome only, NEVER the xterm surface (red line:
+        // the terminal keeps its native browser menu and untouched touch
+        // path). Two detectors, deduped per press:
+        //   1. `contextmenu` — desktop right-click, and Android synthesizes
+        //      it ~400-500 ms into a touch hold (free, OS-timed). This is
+        //      the same handler Task 2.5 installed, now owned here; it is
+        //      pre-Wave-5 behavior and stays live even with gestures
+        //      opted out.
+        //   2. a 500 ms pointerdown timer — iOS Safari never fires
+        //      contextmenu for touch. Timer path ONLY is the Wave-5
+        //      addition: gated per press (live, no reload) by the
+        //      tl-gestures master kill + tl:prefs:v1
+        //      gestures.cardLongPress (one flag governs cards AND thumbs);
+        //      cancels on >10 px travel, lift, pointercancel, pointerleave
+        //      or a second touch; vibrates on fire.
+        // Dedupe: whichever detector fires first stamps lastFire; the
+        // other is a no-op for LONG_PRESS_DEDUPE_MS unless a new
+        // pointerdown started a new press (so desktop double-right-click
+        // still relocates the menu exactly as before).
+        // Opt-out semantics: with the gesture off, TOUCH-derived
+        // contextmenu is silenced too (preventDefault, no menu) — "long-
+        // press does nothing" must hold on Android or the opt-out is
+        // meaningless exactly where gestures live; the master-kill
+        // comment above promises the same. Touch-derived is detected via
+        // the tracked press, Chromium's sourceCapabilities, or a recent
+        // touch pointerdown on the element. MOUSE right-click (and
+        // keyboard menu) stays unconditional — that is the Task 2.5
+        // contract, not a gesture.
+        // Trailing-event swallow (one-shot window-capture flags, armed
+        // just BEFORE the menu opens so they register AHEAD of
+        // showContextMenu's own window-capture dismissal listeners; both
+        // disarm at the next pointerdown so real gestures are untouched):
+        //   - click: the finger-lift after a timer fire still synthesizes
+        //     a click that would activate the card/thumb underneath;
+        //   - contextmenu (timer path only): on Android whose long-press
+        //     timeout is >500 ms our timer wins the race and the OS
+        //     contextmenu lands AFTER the menu opened — unswallowed it
+        //     would instantly dismiss it (onCtx) and double-fire (el
+        //     listener).
+        // opts: { skip(e), onActive(bool) } — onActive marks a pending
+        // press (the lobby parks its 5 s poll repaint on it, the
+        // isDragging precedent, so paint() can't detach a mid-press card).
+        const LONG_PRESS_MS = 500;
+        const LONG_PRESS_TRAVEL_PX = 10;
+        const LONG_PRESS_DEDUPE_MS = 700;
+        function attachLongPress(el, fn, opts) {
+            opts = opts || {};
+            const onActive = opts.onActive || (() => {});
+            let lastFire = 0;   // dedupe stamp; reset by each new pointerdown
+            let timer = null;
+            let pid = null;     // tracked primary-touch pointerId
+            let lastTouchDown = 0;   // any touch press on el, flag-independent
+            let sx = 0, sy = 0, lx = 0, ly = 0;
+
+            let swClick = null, swCtx = null, swDisarm = null;
+            function disarmSwallowers() {
+                if (swClick)  { window.removeEventListener('click', swClick, true); swClick = null; }
+                if (swCtx)    { window.removeEventListener('contextmenu', swCtx, true); swCtx = null; }
+                if (swDisarm) { window.removeEventListener('pointerdown', swDisarm, true); swDisarm = null; }
+            }
+            function armSwallowers(alsoCtx) {
+                disarmSwallowers();
+                swClick = (e) => {
+                    if (e.detail === 0) return;   // keyboard activation, not our tap
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    disarmSwallowers();
+                };
+                window.addEventListener('click', swClick, true);
+                if (alsoCtx) {
+                    swCtx = (e) => {
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                        window.removeEventListener('contextmenu', swCtx, true);
+                        swCtx = null;
+                    };
+                    window.addEventListener('contextmenu', swCtx, true);
+                }
+                swDisarm = () => disarmSwallowers();
+                window.addEventListener('pointerdown', swDisarm, true);
+            }
+
+            function fire(x, y, fromTouch, alsoCtxSwallow) {
+                if (Date.now() - lastFire < LONG_PRESS_DEDUPE_MS) return;
+                lastFire = Date.now();
+                if (fromTouch) {
+                    armSwallowers(alsoCtxSwallow);
+                    navigator.vibrate?.(10);
+                }
+                fn(x, y);
+            }
+            function cancelPress() {
+                if (timer !== null) { clearTimeout(timer); timer = null; }
+                if (pid !== null) { pid = null; onActive(false); }
+            }
+
+            el.addEventListener('contextmenu', (e) => {
+                if (opts.skip && opts.skip(e)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const fromTouch = pid !== null ||   // arrived mid-tracked-press
+                    !!(e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) ||
+                    Date.now() - lastTouchDown < 1500;
+                cancelPress();
+                if (fromTouch && !(gesturesEnabled() && getPrefs().gestures.cardLongPress)) {
+                    // Opted out: an OS-recognized touch-hold does NOTHING —
+                    // swallow the trailing click too, or the hold would
+                    // "tap" the card on lift (observed in the harness:
+                    // Chrome synthesizes a click after a preventDefaulted
+                    // contextmenu).
+                    armSwallowers(false);
+                    return;
+                }
+                fire(e.clientX, e.clientY, fromTouch, false);
+            });
+            el.addEventListener('pointerdown', (e) => {
+                lastFire = 0;                     // new press = new dedupe window
+                if (e.pointerType !== 'touch' || !e.isPrimary) { cancelPress(); return; }
+                lastTouchDown = Date.now();
+                if (opts.skip && opts.skip(e)) return;
+                if (pid !== null) { cancelPress(); return; }   // second pointer
+                if (!(gesturesEnabled() && getPrefs().gestures.cardLongPress)) return;
+                pid = e.pointerId;
+                sx = lx = e.clientX; sy = ly = e.clientY;
+                onActive(true);
+                timer = setTimeout(() => {
+                    timer = null;
+                    if (pid === null) return;
+                    pid = null;
+                    onActive(false);
+                    fire(lx, ly, true, true);
+                }, LONG_PRESS_MS);
+            });
+            el.addEventListener('pointermove', (e) => {
+                if (e.pointerId !== pid) return;
+                lx = e.clientX; ly = e.clientY;
+                if (Math.hypot(lx - sx, ly - sy) > LONG_PRESS_TRAVEL_PX) cancelPress();
+            });
+            el.addEventListener('pointerup', (e) => { if (e.pointerId === pid) cancelPress(); });
+            el.addEventListener('pointercancel', (e) => { if (e.pointerId === pid) cancelPress(); });
+            // M.1 precedent: a press drifting off the element cancels too
+            // (covers <10 px starts near the edge without pointer capture).
+            el.addEventListener('pointerleave', () => { if (pid !== null) cancelPress(); });
+        }
+
         function showAccessDenied(detail) {
             document.getElementById('terminal').classList.add('hidden');
             document.getElementById('paste-btn').classList.add('hidden');
@@ -2933,6 +3109,16 @@
             // exclusive with dragSrcCard (a drag is one or the other).
             let dragSrcGroup = null;
             let isDragging = false;
+            // Task M.4: true while a long-press is PENDING on a card (finger
+            // down, 500 ms timer running). Joins isDragging in the repaint
+            // guards so the 5 s poll can't detach the card mid-press (the
+            // recognizer's cancel listeners live on that very element).
+            let gestureActive = false;
+            // Task M.4: coarse pointers get long-press instead of HTML5 DnD
+            // (which never fires from touch on Android anyway; iPadOS long-
+            // press-drag WOULD fight the 500 ms timer). Touch reorder stays
+            // via the ⋯ Move up/down items.
+            const isCoarsePointer = matchMedia('(pointer: coarse)').matches;
             // Legacy per-browser drag-order; used once to seed the server-side
             // layout, then left alone.
             const ORDER_KEY = 'tmux-session-order-' + whoami.osUser;
@@ -3855,7 +4041,7 @@
                 card.setAttribute('role', 'button');
                 card.setAttribute('tabindex', '0');
                 card.setAttribute('aria-label', 'Activate session ' + s.name);
-                card.draggable = true;
+                card.draggable = !isCoarsePointer;   // Task M.4 (see isCoarsePointer above)
                 if (s.name === currentActive) card.classList.add('active');
 
                 const meta = document.createElement('div');
@@ -3932,17 +4118,18 @@
                     e.preventDefault();
                     startInlineRename(s.name);
                 });
-                // Right-click → the ⋯ menu at the pointer (Task 2.5) — on
-                // CARDS only, never the terminal (red line: the xterm
-                // surface keeps the native browser menu).
-                card.addEventListener('contextmenu', async (e) => {
-                    if (e.target.closest('input')) return;   // native menu inside the rename editor
-                    e.preventDefault();
+                // Right-click / long-press → the ⋯ menu at the pointer
+                // (Tasks 2.5 + M.4) — on CARDS only, never the terminal
+                // (red line: the xterm surface keeps the native browser
+                // menu). attachLongPress owns BOTH detectors: contextmenu
+                // (desktop right-click, Android touch-hold) and the 500 ms
+                // pointer timer (iOS, which never fires contextmenu).
+                async function openCardCtxMenu(x, y) {
                     closeMenu();
                     ctxMenuOpen++;
                     let picked = null;
                     try {
-                        picked = await showContextMenu(e.clientX, e.clientY, [
+                        picked = await showContextMenu(x, y, [
                             ...moveMenuItems(s.name),
                             { labelHeading: 'Session' },
                             { label: 'Rename', keepFocus: true,
@@ -3958,6 +4145,11 @@
                     // keyboard the moment it opens.
                     if (!picked.keepFocus) requestTerminalFocus();
                     picked.onClick();
+                }
+                attachLongPress(card, openCardCtxMenu, {
+                    // native menu inside the rename editor
+                    skip: (e) => !!e.target.closest('input'),
+                    onActive: (v) => { gestureActive = v; }
                 });
 
                 card.addEventListener('dragstart', (e) => {
@@ -4170,7 +4362,7 @@
             // paint renders the sidebar from lastSessions + layout. Pure view —
             // no fetching — so layout mutations repaint instantly.
             function paint() {
-                if (isDragging || openMenuEl || ctxMenuOpen || renameEditing) return;
+                if (isDragging || gestureActive || openMenuEl || ctxMenuOpen || renameEditing) return;
                 clearChildren(listEl);
                 const liveByName = new Map(lastSessions.map(s => [s.name, s]));
                 const referenced = new Set();
@@ -4202,7 +4394,7 @@
             }
 
             async function renderLobby() {
-                if (isDragging || openMenuEl || ctxMenuOpen || renameEditing) return;
+                if (isDragging || gestureActive || openMenuEl || ctxMenuOpen || renameEditing) return;
                 try {
                     const [sessResp, layoutResult] = await Promise.all([
                         fetch(SESSIONS_API, { credentials: 'same-origin' }),
@@ -4432,6 +4624,10 @@
                 settingsPanel.querySelector('#sp-kb').checked = tlKb.enabled();
                 const rep = settingsPanel.querySelector('#sp-repeat');
                 if (rep) rep.checked = p.gestures.keyRepeat;   // coarse-pointer row only
+                const lp = settingsPanel.querySelector('#sp-longpress');
+                if (lp) lp.checked = p.gestures.cardLongPress; // coarse-pointer row only (M.4)
+                const os = settingsPanel.querySelector('#sp-overlayswipe');
+                if (os) os.checked = p.gestures.overlaySwipe;  // coarse-pointer row only (M.4)
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     const val = String(p[seg.dataset.pref]);
                     seg.querySelectorAll('button').forEach(b => {
@@ -4573,7 +4769,8 @@
                 // roamed gestures.* namespace (nested deep-merge in
                 // setPrefs; the attached terminal reads it live per press).
                 // Rendered on coarse-pointer devices only: it governs the
-                // soft-key toolbar, which only exists there.
+                // soft-key toolbar, which only exists there. Task M.4 rides
+                // the same block: its two gestures are touch-only too.
                 if (matchMedia('(pointer: coarse)').matches) {
                     const repRow = row('Key repeat');
                     const rep = document.createElement('input');
@@ -4584,6 +4781,32 @@
                     rep.addEventListener('change',
                         () => setPrefs({ gestures: { keyRepeat: rep.checked } }));
                     repRow.appendChild(rep);
+
+                    // Task M.4: long-press menus (session cards + gallery
+                    // thumbs). Governs only the Wave-5 timer path — desktop
+                    // right-click and Android's native contextmenu hold
+                    // keep the Task 2.5 menu regardless.
+                    const lpRow = row('Card long-press');
+                    const lp = document.createElement('input');
+                    lp.type = 'checkbox';
+                    lp.id = 'sp-longpress';
+                    lp.title = 'Press and hold a session card or gallery ' +
+                        'thumbnail (500 ms) to open its actions menu.';
+                    lp.addEventListener('change',
+                        () => setPrefs({ gestures: { cardLongPress: lp.checked } }));
+                    lpRow.appendChild(lp);
+
+                    // Task M.4: lightbox swipe-down dismiss + horizontal
+                    // gallery navigation (overlay-only recognizer).
+                    const osRow = row('Overlay swipes');
+                    const os = document.createElement('input');
+                    os.type = 'checkbox';
+                    os.id = 'sp-overlayswipe';
+                    os.title = 'Swipe down on an enlarged image to dismiss ' +
+                        'it; swipe sideways to flip through the gallery.';
+                    os.addEventListener('change',
+                        () => setPrefs({ gestures: { overlaySwipe: os.checked } }));
+                    osRow.appendChild(os);
                 }
 
                 document.body.appendChild(panel);
@@ -6013,13 +6236,35 @@
         // object URL), the gallery flow just lands back on the grid. The
         // Escape listener exists only while the box is open (capture +
         // stopPropagation, so xterm never sees that Escape).
-        function openLightbox(url, onClose) {
+        function openLightbox(url, onClose, nav) {
             const box = document.createElement('div');
             box.id = 'img-lightbox';
             const img = document.createElement('img');
             img.src = url;
             img.alt = 'image';
             box.appendChild(img);
+            // Gallery nav (Task M.4): optional {urls, index} — only the
+            // gallery call sites pass it. Enables horizontal swipe-nav and
+            // the '3/12' position chip; the paste-preview lightbox stays
+            // dismiss-only.
+            const navUrls = (nav && Array.isArray(nav.urls) && nav.urls.length > 1 &&
+                Number.isInteger(nav.index) &&
+                nav.index >= 0 && nav.index < nav.urls.length) ? nav.urls : null;
+            let navIndex = navUrls ? nav.index : -1;
+            let chip = null;
+            function preloadNeighbors() {
+                if (!navUrls) return;
+                for (const i of [navIndex - 1, navIndex + 1]) {
+                    if (i >= 0 && i < navUrls.length) new Image().src = navUrls[i];
+                }
+            }
+            if (navUrls) {
+                chip = document.createElement('div');
+                chip.className = 'lb-chip';
+                chip.textContent = (navIndex + 1) + '/' + navUrls.length;
+                box.appendChild(chip);
+                preloadNeighbors();
+            }
             // Keep xterm focused: swallow the focus-stealing mousedown but
             // let the click through (same trick as the preview thumbnail).
             box.addEventListener('mousedown', (e) => e.preventDefault());
@@ -6037,8 +6282,141 @@
                 closeOverlay(box);      // remove + focus return (Task 2.3)
                 if (onClose) onClose();
             }
-            box.addEventListener('click', close);
+            // A claimed swipe (>12 px) normally never synthesizes a click,
+            // but belt-and-braces: the tap-to-close listener skips exactly
+            // one click after a claim (reset at each new touchstart).
+            let suppressClick = false;
+            box.addEventListener('click', () => {
+                if (suppressClick) { suppressClick = false; return; }
+                close();
+            });
             document.addEventListener('keydown', onKey, true);
+
+            // ---- overlay swipe recognizer (Task M.4) --------------------
+            // Per-open, on THIS overlay only — never the terminal surface
+            // (red line; the M.6 lazy-document-listener doctrine is about
+            // standing terminal listeners, not per-open overlay ones; the
+            // plan explicitly allows {passive:false} touchmove on the box).
+            // One axis claim per 1-finger gesture, gated live per gesture
+            // by the tl-gestures master kill + gestures.overlaySwipe:
+            //   vertical  = swipe-down dismiss — claim |dy|>12 && >1.5|dx|,
+            //               follow translateY at 0.85× (0.25× rubber
+            //               upward), backdrop fades 1−(dy/400); release
+            //               ≥96 px down or fling >0.5 px/ms → close()
+            //               (through Task 2.3 closeOverlay → term.focus()),
+            //               else 180 ms spring-back;
+            //   horizontal = gallery nav (nav call sites only) — claim
+            //               |dx|>12 && >1.5|dy|, follow-finger, release
+            //               |dx|≥50 px → preloaded neighbor, rubber-band
+            //               (0.3×) at the ends.
+            // A second finger abandons the claim so native pinch-zoom keeps
+            // working; the :mousedown focus guard above stays untouched (a
+            // gesture must not collapse the keyboard).
+            (() => {
+                let tracking = false, tid = null, axis = null;
+                let x0 = 0, y0 = 0, dx = 0, dy = 0;
+                let lastT = 0, lastY = 0, prevT = 0, prevY = 0;
+                function clearFollow(animate) {
+                    if (animate) {
+                        img.style.transition = 'transform 180ms cubic-bezier(0.2, 0.8, 0.3, 1)';
+                        box.style.transition = 'background-color 180ms linear';
+                        setTimeout(() => {
+                            img.style.transition = '';
+                            box.style.transition = '';
+                        }, 200);
+                    }
+                    img.style.transform = '';
+                    box.style.backgroundColor = '';
+                }
+                function resetGesture() {
+                    tracking = false; tid = null; axis = null; dx = dy = 0;
+                }
+                box.addEventListener('touchstart', (e) => {
+                    suppressClick = false;
+                    if (e.touches.length !== 1) {
+                        // Second finger: abandon any claim; native
+                        // pinch-zoom owns the rest of the sequence.
+                        if (axis) { clearFollow(true); suppressClick = true; }
+                        resetGesture();
+                        return;
+                    }
+                    if (!(gesturesEnabled() && getPrefs().gestures.overlaySwipe)) return;
+                    const t = e.touches[0];
+                    tracking = true; tid = t.identifier; axis = null;
+                    x0 = t.clientX; y0 = t.clientY; dx = dy = 0;
+                    lastT = prevT = e.timeStamp; lastY = prevY = t.clientY;
+                }, { passive: true });
+                box.addEventListener('touchmove', (e) => {
+                    if (!tracking || e.touches.length !== 1) return;
+                    const t = e.touches[0];
+                    if (t.identifier !== tid) return;
+                    dx = t.clientX - x0;
+                    dy = t.clientY - y0;
+                    prevT = lastT; prevY = lastY;
+                    lastT = e.timeStamp; lastY = t.clientY;
+                    if (!axis) {
+                        if (Math.abs(dy) > 12 && Math.abs(dy) > 1.5 * Math.abs(dx)) {
+                            axis = 'y';
+                        } else if (navUrls && Math.abs(dx) > 12 &&
+                                   Math.abs(dx) > 1.5 * Math.abs(dy)) {
+                            axis = 'x';
+                        }
+                        if (!axis) return;
+                        suppressClick = true;
+                        img.style.transition = '';
+                        box.style.transition = '';
+                    }
+                    e.preventDefault();   // claimed: consume every move
+                    if (axis === 'y') {
+                        const follow = dy >= 0 ? dy * 0.85 : dy * 0.25;
+                        img.style.transform = 'translateY(' + follow.toFixed(1) + 'px)';
+                        const f = Math.max(0, Math.min(1, 1 - dy / 400));
+                        box.style.backgroundColor =
+                            'rgba(0, 0, 0, ' + (0.65 * f).toFixed(3) + ')';
+                    } else {
+                        const hasNeighbor = dx < 0
+                            ? navIndex < navUrls.length - 1 : navIndex > 0;
+                        const follow = hasNeighbor ? dx : dx * 0.3;   // end rubber-band
+                        img.style.transform = 'translateX(' + follow.toFixed(1) + 'px)';
+                    }
+                }, { passive: false });
+                function endGesture(e) {
+                    if (!tracking) return;
+                    let ended = e.type === 'touchcancel';
+                    for (const t of Array.from(e.changedTouches)) {
+                        if (t.identifier === tid) ended = true;
+                    }
+                    if (!ended) return;
+                    const claimed = axis;
+                    const fdx = dx, fdy = dy;
+                    const vy = (lastY - prevY) / Math.max(1, lastT - prevT);
+                    resetGesture();
+                    if (!claimed) return;
+                    if (e.type === 'touchcancel') { clearFollow(true); return; }
+                    if (claimed === 'y') {
+                        if (fdy >= 96 || (fdy > 12 && vy > 0.5)) {
+                            close();   // Task 2.3 closeOverlay → term.focus()
+                        } else {
+                            clearFollow(true);   // 180 ms spring-back
+                        }
+                        return;
+                    }
+                    const dir = fdx < 0 ? 1 : -1;
+                    const target = navIndex + dir;
+                    if (Math.abs(fdx) >= 50 && target >= 0 && target < navUrls.length) {
+                        navIndex = target;
+                        img.style.transform = '';
+                        img.src = navUrls[navIndex];
+                        chip.textContent = (navIndex + 1) + '/' + navUrls.length;
+                        preloadNeighbors();
+                        return;
+                    }
+                    clearFollow(true);   // spring-back / end rubber-band
+                }
+                box.addEventListener('touchend', endGesture, { passive: true });
+                box.addEventListener('touchcancel', endGesture, { passive: true });
+            })();
+
             document.body.appendChild(box);
             return { close };
         }
@@ -6255,7 +6633,12 @@
                 return;
             }
             clearChildren(grid);
-            for (const im of images) {   // server orders mtime-desc = newest first
+            // Task M.4: grid-order URL list — handed to the lightbox as
+            // nav so horizontal swipes walk neighbors + the position chip
+            // can render.
+            const navUrls = images.map(im =>
+                '/clipboard/img/' + encodeURIComponent(validArg) + '/' + encodeURIComponent(im.name));
+            for (const [idx, im] of images.entries()) {   // server orders mtime-desc = newest first
                 const cell = document.createElement('button');
                 cell.type = 'button';
                 cell.className = 'gallery-cell';
@@ -6263,7 +6646,7 @@
                 const img = document.createElement('img');
                 img.loading = 'lazy';
                 img.alt = im.name;
-                img.src = '/clipboard/img/' + encodeURIComponent(validArg) + '/' + encodeURIComponent(im.name);
+                img.src = navUrls[idx];
                 cell.appendChild(img);
                 if (im.kind === 'displayed') {
                     const badge = document.createElement('span');
@@ -6274,17 +6657,16 @@
                 cell.addEventListener('click', () => {
                     // No onClose teardown: the gallery stays mounted
                     // underneath, so closing the lightbox returns to it.
-                    openLightbox(img.src, null);
+                    openLightbox(img.src, null, { urls: navUrls, index: idx });
                 });
-                // Right-click on gallery THUMBS only (Task 2.5) — the
-                // xterm surface keeps its native menu untouched (red
-                // line). Insert-path reuses the exact string the upload
-                // flow types into the pty.
-                cell.addEventListener('contextmenu', async (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
+                // Right-click / long-press on gallery THUMBS only (Tasks
+                // 2.5 + M.4) — the xterm surface keeps its native menu
+                // untouched (red line). Insert-path reuses the exact
+                // string the upload flow types into the pty.
+                async function openThumbMenu(x, y) {
                     const items = [
-                        { label: 'Open', onClick: () => openLightbox(img.src, null) }
+                        { label: 'Open', onClick: () =>
+                            openLightbox(img.src, null, { urls: navUrls, index: idx }) }
                     ];
                     if (im.path) {
                         items.push({ label: 'Insert path into terminal', onClick: () => {
@@ -6298,9 +6680,10 @@
                         a.download = im.name;
                         a.click();
                     } });
-                    const picked = await showContextMenu(e.clientX, e.clientY, items);
+                    const picked = await showContextMenu(x, y, items);
                     if (picked) picked.onClick();
-                });
+                }
+                attachLongPress(cell, openThumbMenu);
                 grid.appendChild(cell);
             }
         }
