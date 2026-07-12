@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<!--
+  ios-3finger-probe.html — STANDING MANUAL device checklist (Task M.6).
+
+  WHY THIS PAGE EXISTS
+  The terminal's 3-finger session swipe registers on Android ONLY, because
+  iOS reserves the entire 3-finger vocabulary (undo/redo gesture HUD, copy/
+  paste) whenever a text input is focused — and xterm's helper textarea is
+  focused almost always (analysis exclusion #1, 2026-07-11). That exclusion
+  is an OS-behavior CLAIM, so it must be re-verified on real hardware:
+
+    * per major iOS release, and
+    * before ANY deploy that touches terminal touch handlers.
+
+  Run it on a real iPhone in BOTH shells: a Safari tab AND the installed
+  PWA (standalone). Variants A/B/C reproduce the three focus states the
+  terminal page can be in. If any variant shows iOS RELEASING the 3-finger
+  vocabulary to the page, re-open exclusion #1 in
+  docs/plans/2026-07-11-t3-ux-parity-analysis.md before considering iOS
+  terminal gestures — do not just flip the Android gate.
+
+  HOW TO SERVE: any static origin works (the page is fully self-contained;
+  file:// works too, but PWA-standalone needs http[s]). From the repo:
+      python3 -m http.server 8123 --directory scripts/devserve
+  then open http://<devvm-lan-ip>:8123/ios-3finger-probe.html on the phone.
+
+  Checklist state persists in localStorage (per browser shell) under
+  tl:ios3f:v1 — the Reset button clears it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>iOS 3-finger reservation probe (terminal-lobby M.6)</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 12px calc(12px + env(safe-area-inset-right))
+                 calc(24px + env(safe-area-inset-bottom))
+                 calc(12px + env(safe-area-inset-left));
+    font: 15px/1.45 -apple-system, system-ui, sans-serif;
+    overscroll-behavior: none;
+  }
+  h1 { font-size: 18px; margin: 8px 0; }
+  h2 { font-size: 15px; margin: 18px 0 6px; }
+  p, li { max-width: 46em; }
+  .muted { opacity: .7; font-size: 13px; }
+  #env {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    background: rgba(127,127,127,.12); border-radius: 8px; padding: 8px;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  #pad {
+    height: 240px; border: 2px dashed rgba(127,127,127,.55);
+    border-radius: 12px; display: flex; align-items: center;
+    justify-content: center; text-align: center; user-select: none;
+    -webkit-user-select: none; margin: 8px 0; font-weight: 600;
+  }
+  #pad.active { border-color: #0a84ff; }
+  #verdict {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    background: rgba(10,132,255,.10); border-radius: 8px; padding: 8px;
+    min-height: 3.5em; white-space: pre-wrap;
+  }
+  #log {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    background: rgba(127,127,127,.12); border-radius: 8px; padding: 8px;
+    height: 120px; overflow-y: auto; white-space: pre;
+  }
+  button {
+    font: inherit; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid rgba(127,127,127,.5); background: none; margin: 2px;
+  }
+  button.on { background: #0a84ff; color: #fff; border-color: #0a84ff; }
+  label.chk { display: block; margin: 6px 0; }
+  label.chk input { margin-right: 8px; transform: scale(1.2); }
+  /* Variant A: a clone of xterm's helper textarea — visually hidden the
+     same way (tiny, transparent, absolutely placed), NOT display:none
+     (which would make it unfocusable). */
+  #helperA {
+    position: absolute; opacity: 0; left: -9999px; top: 0;
+    width: 0; height: 0; z-index: -5; white-space: nowrap; overflow: hidden;
+    font-size: 16px;
+  }
+  #composeB { width: 100%; box-sizing: border-box; font-size: 16px;
+    padding: 8px; border-radius: 8px; margin: 4px 0; }
+  .expect { border-left: 3px solid rgba(127,127,127,.5); padding-left: 10px; }
+</style>
+</head>
+<body>
+<h1>iOS 3-finger reservation probe</h1>
+<p class="muted">terminal-lobby Task M.6 · run per major iOS release and
+before any deploy touching terminal touch handlers · walk ALL variants in a
+Safari tab AND in the installed PWA. Tick what you observe; the page logs
+what JS receives.</p>
+<div id="env">loading…</div>
+
+<h2>Variant switch</h2>
+<p>
+  <button id="btnA">A: hidden helper focused</button>
+  <button id="btnB">B: visible textarea focused</button>
+  <button id="btnC">C: nothing focused</button>
+</p>
+<p class="muted">A = production shape: xterm's helper textarea
+(type=password, autocorrect/autocapitalize/spellcheck off, 16px) focused —
+the keyboard should rise. B = compose-bar shape (plain textarea, M.10).
+C = blurred (keyboard down). The active variant re-asserts focus if iOS
+drops it.</p>
+
+<textarea id="helperA" type="password" autocorrect="off" autocapitalize="off"
+  autocomplete="off" spellcheck="false" aria-label="hidden helper clone"
+  rows="1"></textarea>
+<textarea id="composeB" rows="2"
+  placeholder="Variant B textarea (visible, autocorrect on)"></textarea>
+
+<h2>Touch pad</h2>
+<div id="pad">3-finger swipe LEFT and RIGHT here<br>(then 2-finger single
+tap, then 3-finger press-and-HOLD)</div>
+<div id="verdict">no gesture seen yet</div>
+<h2>Raw event log</h2>
+<div id="log"></div>
+<p><button id="btnClear">Clear log</button>
+   <button id="btnReset">Reset checklist</button></p>
+
+<h2>Checklist — per shell (Safari tab / PWA), per variant</h2>
+<p class="expect muted">Expected on current iOS (the exclusion HOLDING):
+in A and B the OS owns 3-finger — the undo/redo HUD or text-edit gesture
+fires, and the log shows <b>touchcancel</b> or a starved gesture (&lt;3
+usable moves, verdict "OS-claimed"). The 2-finger tap should reach the page
+cleanly in every variant. C (no focus) may or may not deliver 3-finger
+moves — record it either way; it changes nothing unless A/B ALSO release.</p>
+
+<div id="checks"></div>
+
+<script>
+(() => {
+  'use strict';
+  const LS_KEY = 'tl:ios3f:v1';
+  const env = document.getElementById('env');
+  const pad = document.getElementById('pad');
+  const logEl = document.getElementById('log');
+  const verdictEl = document.getElementById('verdict');
+  const helperA = document.getElementById('helperA');
+  const composeB = document.getElementById('composeB');
+  // The 'type' attribute is ignored on <textarea>; set it like xterm does
+  // (it carries the Gboard/iOS "no smart features" heuristics anyway).
+  helperA.setAttribute('type', 'password');
+
+  const standalone = (navigator.standalone === true) ||
+      matchMedia('(display-mode: standalone)').matches;
+  env.textContent =
+      'shell: ' + (standalone ? 'standalone PWA' : 'browser tab') +
+      '\nUA: ' + navigator.userAgent +
+      '\nmaxTouchPoints: ' + navigator.maxTouchPoints +
+      '\npointer coarse: ' + matchMedia('(pointer: coarse)').matches;
+
+  // ---- variant management -------------------------------------------
+  let variant = 'C';
+  const btns = { A: btnA, B: btnB, C: btnC };
+  function setVariant(v) {
+    variant = v;
+    for (const k of Object.keys(btns)) btns[k].classList.toggle('on', k === v);
+    if (v === 'A') helperA.focus();
+    else if (v === 'B') composeB.focus();
+    else {
+      helperA.blur(); composeB.blur();
+      if (document.activeElement) document.activeElement.blur();
+    }
+    log('variant ' + v + ' (activeElement=' +
+        (document.activeElement && document.activeElement.id || 'body') + ')');
+  }
+  btnA.onclick = () => setVariant('A');
+  btnB.onclick = () => setVariant('B');
+  btnC.onclick = () => setVariant('C');
+  // iOS drops focus on system-gesture interference — re-assert per touch
+  // start so the variant under test stays true.
+  function reassertFocus() {
+    if (variant === 'A' && document.activeElement !== helperA) helperA.focus();
+    if (variant === 'B' && document.activeElement !== composeB) composeB.focus();
+  }
+
+  // ---- logging + per-gesture verdict --------------------------------
+  const t0 = performance.now();
+  function log(msg) {
+    logEl.textContent += ((performance.now() - t0) / 1000).toFixed(2) +
+        's ' + msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  btnClear.onclick = () => { logEl.textContent = ''; };
+
+  let g = null; // {maxTouches, moves3, moves2, canceled, start, sx, sy}
+  function verdict() {
+    if (!g) return;
+    const dur = Math.round(performance.now() - g.start);
+    let shape = g.maxTouches + '-finger, ' + dur + 'ms, ' +
+        g.moves3 + '×3f-moves, ' + g.moves2 + '×2f-moves' +
+        (g.canceled ? ', TOUCHCANCEL' : '');
+    let call;
+    if (g.maxTouches >= 3) {
+      call = (g.canceled || g.moves3 < 3)
+          ? 'OS-CLAIMED (exclusion holds for this shape)'
+          : 'PAGE RECEIVED a usable 3-finger stream (' + g.moves3 +
+            ' moves' + (g.dx3 !== null ? ', mean dx ' + Math.round(g.dx3) + 'px' : '') +
+            ') — if the OS HUD did NOT fire, record this variant as RELEASED';
+    } else if (g.maxTouches === 2) {
+      call = (g.canceled || (dur < 300 && g.moves2 <= 4))
+          ? (g.canceled ? 'OS-claimed 2-finger' : 'clean 2-finger tap delivered')
+          : '2-finger stream delivered';
+    } else {
+      call = '1-finger (not under test)';
+    }
+    verdictEl.textContent = 'variant ' + variant + ' · ' + shape + '\n' + call;
+    log('gesture: ' + shape + ' -> ' + call.split(' (')[0]);
+  }
+  pad.addEventListener('touchstart', (e) => {
+    reassertFocus();
+    pad.classList.add('active');
+    if (!g || e.touches.length <= 1) {
+      g = { maxTouches: 0, moves3: 0, moves2: 0, canceled: false,
+            start: performance.now(), sx: null, sy: null, dx3: null };
+    }
+    g.maxTouches = Math.max(g.maxTouches, e.touches.length);
+    if (e.touches.length === 3 && g.sx === null) {
+      g.sx = (e.touches[0].clientX + e.touches[1].clientX + e.touches[2].clientX) / 3;
+    }
+  }, { passive: true });
+  pad.addEventListener('touchmove', (e) => {
+    if (!g) return;
+    g.maxTouches = Math.max(g.maxTouches, e.touches.length);
+    if (e.touches.length === 3) {
+      g.moves3++;
+      if (g.sx !== null) {
+        g.dx3 = (e.touches[0].clientX + e.touches[1].clientX +
+                 e.touches[2].clientX) / 3 - g.sx;
+      }
+    }
+    if (e.touches.length === 2) g.moves2++;
+  }, { passive: true });
+  pad.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) { pad.classList.remove('active'); verdict(); g = null; }
+  }, { passive: true });
+  pad.addEventListener('touchcancel', (e) => {
+    if (g) g.canceled = true;
+    if (e.touches.length === 0) { pad.classList.remove('active'); verdict(); g = null; }
+  }, { passive: true });
+
+  // ---- persisted checklist -------------------------------------------
+  const ITEMS = [];
+  for (const v of ['A', 'B', 'C']) {
+    ITEMS.push(
+      [v + '1', v + ': 3-finger swipe → iOS text-edit HUD / undo-redo fired (OS owns it)'],
+      [v + '2', v + ': log shows touchcancel or <3 usable 3f-moves (page starved)'],
+      [v + '3', v + ': 2-finger single tap delivered cleanly (down+up, no cancel)'],
+      [v + '4', v + ': 3-finger press-and-HOLD ≥1s → no page-visible move stream']
+    );
+  }
+  ITEMS.push(['S1', 'Ran in Safari tab'], ['S2', 'Ran in installed PWA (standalone)']);
+  let state = {};
+  try { state = JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) {}
+  const checks = document.getElementById('checks');
+  for (const [id, text] of ITEMS) {
+    const l = document.createElement('label');
+    l.className = 'chk';
+    const c = document.createElement('input');
+    c.type = 'checkbox';
+    c.checked = !!state[id];
+    c.onchange = () => {
+      state[id] = c.checked;
+      try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {}
+    };
+    l.appendChild(c);
+    l.appendChild(document.createTextNode(text));
+    checks.appendChild(l);
+  }
+  btnReset.onclick = () => {
+    state = {};
+    try { localStorage.removeItem(LS_KEY); } catch (e) {}
+    checks.querySelectorAll('input').forEach(c => { c.checked = false; });
+  };
+
+  setVariant('C');
+})();
+</script>
+</body>
+</html>
