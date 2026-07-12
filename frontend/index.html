@@ -6567,6 +6567,34 @@
                 }, REPEAT_DELAY_MS);
             }
 
+            // MF-3 (Viktor complaint 1): soft keys fire on TAP-COMMIT, not
+            // touch-down. Two wiring disciplines, split on opts.repeat:
+            //
+            //  - repeat keys (the M.1 arrows + Tab) keep the original
+            //    down-fire path byte-for-byte — haptic + onTap + startRepeat
+            //    at pointerdown; pointerup/pointercancel/pointerleave
+            //    stopRepeat — because hold-to-repeat NEEDS the initial send
+            //    at finger-down.
+            //  - every OTHER key records {pointerId, clientX, clientY} at
+            //    pointerdown and commits at pointerup ONLY if the SAME
+            //    pointer travelled < 10px: a horizontal row-scroll swipe
+            //    that happens to start on ‹/› must scroll the row, never
+            //    switch sessions (probe P3 reproduced the hash flipping
+            //    mid-swipe on iPhone-class AND Android emulation; the same
+            //    defect class fired Tab/Esc/Paste mid-scroll). A row-scroll
+            //    takeover delivers pointercancel, which clears the pending
+            //    tap; the pointerleave clear is belt-and-braces for engines
+            //    that don't. haptic + the focus re-arm move WITH the action
+            //    to the commit point, so an aborted swipe produces no tick
+            //    and no keyboard summon. pointerup is still a
+            //    user-activation context, so clipboard read (Paste),
+            //    term.focus() (Kbd) and compose focus keep working on iOS.
+            //
+            // BOTH paths preventDefault() at pointerdown: stop the button
+            // from taking focus away from the helper textarea (which would
+            // collapse the soft keyboard between keystrokes) — the M.10
+            // focus-preservation contract, unchanged for ALL keys.
+            const TAP_COMMIT_MAX_TRAVEL_PX = 10;
             function makeBtn(label, onTap, opts) {
                 const b = document.createElement('button');
                 b.type = 'button';
@@ -6574,27 +6602,22 @@
                 if (opts && opts.cls)     b.classList.add(opts.cls);
                 if (opts && opts.dataMod) b.setAttribute('data-mod', opts.dataMod);
                 if (opts && opts.ariaLabel) b.setAttribute('aria-label', opts.ariaLabel);
-                // pointerdown + preventDefault: stop the button from taking
-                // focus away from the helper textarea (which would collapse
-                // the soft keyboard between keystrokes).
-                b.addEventListener('pointerdown', (ev) => {
-                    ev.preventDefault();
-                    haptic('selection');   // Task M.7: every soft-key tap
-                    try { onTap(); } catch (err) { console.error(err); }
-                    // Task M.1: arm hold-to-repeat (arrows + Tab) after the
-                    // initial send above.
-                    if (opts && opts.repeat) startRepeat(onTap);
-                    // Re-arm the active input for the next physical
-                    // keystroke — the compose field while the user was
-                    // composing (Task M.10; byte-equivalent term.focus()
-                    // otherwise) — but skip on modifiers and arrows so
-                    // tapping a navigation key doesn't summon the keyboard
-                    // if it wasn't already up.
-                    const skipFocus = b.classList.contains('sk-mod')
-                                   || (opts && opts.noFocus);
-                    if (!skipFocus) focusActiveInput();
-                });
                 if (opts && opts.repeat) {
+                    b.addEventListener('pointerdown', (ev) => {
+                        ev.preventDefault();
+                        haptic('selection');   // Task M.7: every soft-key tap
+                        try { onTap(); } catch (err) { console.error(err); }
+                        // Task M.1: arm hold-to-repeat (arrows + Tab) after
+                        // the initial send above.
+                        startRepeat(onTap);
+                        // Re-arm the active input for the next physical
+                        // keystroke — but skip on arrows (noFocus) so
+                        // tapping a navigation key doesn't summon the
+                        // keyboard if it wasn't already up.
+                        const skipFocus = b.classList.contains('sk-mod')
+                                       || (opts && opts.noFocus);
+                        if (!skipFocus) focusActiveInput();
+                    });
                     // BOTH cancel events are wired: an OS gesture interrupt
                     // (notification shade, app switch) delivers pointercancel
                     // with NO pointerup — missing either would leave the key
@@ -6605,6 +6628,35 @@
                     b.addEventListener('pointerup', stopRepeat);
                     b.addEventListener('pointercancel', stopRepeat);
                     b.addEventListener('pointerleave', stopRepeat);
+                } else {
+                    // Tap-commit path (see the block comment above).
+                    let pending = null;   // {pointerId, clientX, clientY}
+                    b.addEventListener('pointerdown', (ev) => {
+                        ev.preventDefault();
+                        pending = { pointerId: ev.pointerId,
+                                    clientX: ev.clientX, clientY: ev.clientY };
+                    });
+                    b.addEventListener('pointerup', (ev) => {
+                        if (!pending || ev.pointerId !== pending.pointerId) return;
+                        const travel = Math.hypot(ev.clientX - pending.clientX,
+                                                  ev.clientY - pending.clientY);
+                        pending = null;
+                        if (travel >= TAP_COMMIT_MAX_TRAVEL_PX) return;   // a swipe, not a tap
+                        haptic('selection');   // Task M.7: every soft-key tap
+                        try { onTap(); } catch (err) { console.error(err); }
+                        // Re-arm the active input for the next physical
+                        // keystroke — the compose field while the user was
+                        // composing (Task M.10; byte-equivalent term.focus()
+                        // otherwise) — but skip on modifiers and arrows so
+                        // tapping a navigation key doesn't summon the
+                        // keyboard if it wasn't already up.
+                        const skipFocus = b.classList.contains('sk-mod')
+                                       || (opts && opts.noFocus);
+                        if (!skipFocus) focusActiveInput();
+                    });
+                    const clearPending = () => { pending = null; };
+                    b.addEventListener('pointercancel', clearPending);
+                    b.addEventListener('pointerleave', clearPending);
                 }
                 return b;
             }
@@ -8305,8 +8357,19 @@
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             return resp.json();
         }
-        function gotoSession(name) {
-            if (name && name !== validArg) location.assign('/?arg=' + encodeURIComponent(name));
+        // MF-3 (Viktor complaint 1, rank 4): gesture/soft-key session
+        // CYCLING must not re-arm the iOS edge-back-swipe — every assign()
+        // grows a history chain behind the page and Safari then dedicates
+        // the screen edge to back-navigation (flat-history doctrine, M.3),
+        // so cycling callers pass {replace:true}. Deliberate jumps (the
+        // palette attach binding, Alt+N via the ATTACH_PREFIX branch) keep
+        // the assign default: those stay back-walkable on desktop.
+        function gotoSession(name, opts) {
+            if (name && name !== validArg) {
+                const url = '/?arg=' + encodeURIComponent(name);
+                if (opts && opts.replace) location.replace(url);
+                else location.assign(url);
+            }
         }
         function promptNewSession() {
             const input = prompt('New session name:');
@@ -8364,9 +8427,12 @@
                 return;
             }
             const i = names.indexOf(validArg);
+            // {replace:true}: ‹/› soft keys and the 3-finger swipe route
+            // here — cycling must keep history flat (see gotoSession).
             gotoSession(cmd === 'session.next'
                 ? (i < 0 ? names[0] : names[(i + 1) % names.length])
-                : (i < 0 ? names[names.length - 1] : names[(i - 1 + names.length) % names.length]));
+                : (i < 0 ? names[names.length - 1] : names[(i - 1 + names.length) % names.length]),
+                { replace: true });
         }
         const palette = isFramed ? null : tlKb.createPalette({
             sessions: fetchSessionList,
