@@ -299,6 +299,17 @@ implements the feature. Format:
   WITHOUT an iframe reload (supersedes the reload expectation recorded
   in the Task 1.6 line — `__tlThemeLive` replaces it; `__tlMark`
   survives the flip).
+- **[SUPERSEDE NOTE for the Task 1.5-1.8 lines above — MF-1,
+  2026-07-12]** Since the MF-1 commit ("theme picker moved into the
+  settings panel") the picker lives in the ⚙ settings panel as the
+  `#sp-theme` grid: read every "click … in the picker" above as "click …
+  in the settings-panel theme grid" (open ⚙ first — same
+  selectTheme/tl-theme path, all assertions unchanged).
+  `.theme-picker-label` is gone — the T3 group-label metric (10px
+  uppercase .08em, Task 2.8) now applies to the panel's `.sp-title`. The
+  sidebar `A−`/`A+` font row is gone too: the Task 1.8 "sidebar `A+`"
+  steps now mean the settings-panel Font size `A−`/`A+` (same
+  stepFontSize/prefs path). Acceptance for the move itself: [C4].
 - [Task 1.8] Stepper shrinks the grid: attach `#main`, record
   `tmux -L tl-dev display -p '#{client_width}x#{client_height}'`; click
   the sidebar `A+` TWICE (15→17) → `window.__term.options.fontSize`
@@ -1577,3 +1588,48 @@ implements the feature. Format:
   ('return' vs 'send' key face); focusing the field triggers NO iOS
   auto-zoom (inline 16px); send → text arrives in Claude Code's
   composer as one block, Enter-submit only when sent with ▶/Enter-mode.
+
+### [C4] Theme picker → settings panel (MF-1; Viktor complaint 4: "move the theme in the settings menu")
+
+All six legs run green 2026-07-12 at implementation (45 checks; run on a
+second harness instance — proxy 7987 / ttyd 7986, scratch socket renamed
+to `-L tl-mf1` — to coexist with a concurrent tl-dev run; adjust the
+`tmux -L …` commands accordingly when repeating that setup).
+
+- [C4] Panel grid + live apply: fresh context (clean localStorage), attach
+  `#main`, make output + an ACTIVE drag-selection; open ⚙ → the panel's
+  Theme grid (`#sp-theme`) renders 9 buttons with Slate active (the
+  getTheme default); click Mocha → body class `theme-catppuccin-mocha`,
+  `meta[name=theme-color]` = `#1e1e2e`, iframe
+  `window.__term.options.theme.background` equals the new `--terminal-bg`
+  computed value, the drag-selection **survives** (`hasSelection()` →
+  `true`), the iframe did NOT reload (`__tlMark` intact — the Task 1.7
+  live-retheme contract, now driven from the panel), and Mocha carries
+  `.active` in the grid; reload the page → theme persists pre-paint (body
+  already `theme-catppuccin-mocha` at `DOMContentLoaded`, no flash).
+- [C4] System follow from the panel: click System → localStorage
+  `tmux-theme` = `system`; `page.emulateMedia({colorScheme:'light'})` →
+  body `theme-t3-light` + meta `#ffffff`; flip to `dark` →
+  `theme-t3-dark` + meta `#161616`; both flips live (`__tlMark` intact).
+- [C4] ACK fallback from the panel: in the iframe set
+  `window.__tlSuppressThemeAck = true` → click a theme in the panel →
+  after ~1s the iframe reloads into the new theme (stale-build fallback
+  path preserved).
+- [C4] Old picker gone: `#theme-picker` / `.theme-picker` /
+  `.theme-picker-label` / `.font-size-row` / `#font-size-value` /
+  `#font-size-dec` / `#font-size-inc` absent from the DOM AND from
+  `frontend/index.html` source (grep → 0 hits; `.theme-options` renders
+  only inside `#settings-panel`); the sidebar bottom is the lone ⚙
+  Settings button pinned by `.settings-row`'s `margin-top:auto` +
+  hairline `border-top`; zero console errors at boot and across settings
+  open/close.
+- [C4] Sheet mode (coarse pointer, M.5 default-on): the theme buttons are
+  ≥44px targets at 14px type (the pointer-coarse `:where(.settings-panel)`
+  rule + `.theme-options button` type step); a theme tap applies live
+  WITHOUT dismissing the sheet; grabber drag-dismiss afterwards still
+  refocuses the terminal (Task 2.3 contract).
+- [C4] Font consolidation: the panel A−/A+ row steps 10-22 live (now the
+  only lobby stepper — the sidebar row is removed); a prefs write from
+  another same-origin window repaints the open panel via the storage
+  listener; the terminal-mode floating A−/A+ cluster is unaffected
+  (until MF-2).

@@ -1292,19 +1292,9 @@
             background: var(--scrollbar-thumb-hover);
         }
 
-        /* Theme picker — sits at the bottom of the sidebar */
-        .theme-picker {
-            margin-top: auto; padding-top: 14px;
-            border-top: 1px solid var(--border);
-            font-size: 12px; color: var(--text-muted);
-        }
-        .theme-picker-label {
-            display: block; margin-bottom: 6px;
-            /* T3 group-label type (Task 2.8): 10px uppercase .08em. */
-            font-size: 10px;
-            text-transform: uppercase; letter-spacing: 0.08em;
-        }
-        /* Nine choices wrap into rows of three (260px sidebar). */
+        /* Theme grid — since MF-1 it renders inside the ⚙ settings panel
+           (#sp-theme); the standalone sidebar picker is gone.
+           Nine choices wrap into rows of three (240px popover / sheet). */
         .theme-options { display: flex; flex-wrap: wrap; gap: 4px; }
         .theme-options button {
             flex: 1 1 calc(33.33% - 3px); min-width: 0;
@@ -1323,33 +1313,16 @@
             background: var(--bg-card-hover);
         }
 
-        /* Font-size stepper — sits under the theme picker (Task 1.8).
-           Steps the TERMINAL font (xterm fontSize), not lobby chrome. */
-        .font-size-row {
-            display: flex; align-items: center; gap: 6px;
-            padding-top: 10px; font-size: 12px; color: var(--text-muted);
-        }
-        .font-size-row .theme-picker-label { display: inline; margin: 0 auto 0 0; }
-        .font-size-row button {
-            width: 36px; padding: 5px 0;
-            border-radius: calc(var(--radius) - 2px);
-            background: var(--bg-card); color: var(--text-muted);
-            border: 1px solid var(--border); font-family: inherit;
-            font-size: 12px; font-weight: 500; cursor: pointer;
-            transition: background 0.15s, color 0.15s, border-color 0.15s;
-        }
-        .font-size-row button:hover {
-            background: var(--bg-card-hover); color: var(--text-primary);
-        }
-        #font-size-value {
-            min-width: 2ch; text-align: center; color: var(--text-primary);
-        }
-
         /* Settings popover (Task 2.6) — roaming terminal prefs, opened
-           from the sidebar gear under the theme picker. Same surface
+           from the gear pinned at the sidebar bottom (the row inherited
+           the old theme picker's margin-top:auto pinning + hairline when
+           the picker moved into the panel, MF-1). Same surface
            language as .popup-menu (hairline border, --radius, elevation
            drop + scheme bevel). */
-        .settings-row { padding-top: 10px; }
+        .settings-row {
+            margin-top: auto; padding-top: 14px;
+            border-top: 1px solid var(--border);
+        }
         #settings-btn {
             width: 100%; padding: 6px 8px; text-align: left;
             border-radius: calc(var(--radius) - 2px);
@@ -1595,12 +1568,11 @@
             /* The header row's reserve for the fixed #sidebar-toggle
                grows with it (44px + 12px inset). */
             .lobby-header-row { padding-right: 56px; }
-            .font-size-row button { width: 44px; }
             .settings-panel .sp-step button { flex-basis: 44px; }
             /* Type steps: standard buttons 14→16, 12px tier →14. */
             .new-row button, .restore-btn, .new-project-btn,
             .popup-menu button { font-size: 16px; }
-            .theme-options button, .font-size-row button, #settings-btn,
+            .theme-options button, #settings-btn,
             .settings-panel .sp-seg button, .settings-panel .sp-step button {
                 font-size: 14px;
             }
@@ -1832,30 +1804,9 @@
                         title="Create an empty project folder to group sessions into">+ Project</button>
                 <button id="restore-btn" class="restore-btn" type="button"
                         title="Recreate your saved sessions that aren't currently running (e.g. after an OOM), resuming each Claude conversation">&#8635; Restore saved sessions</button>
-                <div id="theme-picker" class="theme-picker">
-                    <span class="theme-picker-label">Theme</span>
-                    <div class="theme-options">
-                        <button type="button" data-theme="carbon">Carbon</button>
-                        <button type="button" data-theme="slate">Slate</button>
-                        <button type="button" data-theme="mono">Mono</button>
-                        <button type="button" data-theme="ink">Ink</button>
-                        <button type="button" data-theme="t3-dark">T3 Dark</button>
-                        <button type="button" data-theme="t3-light">T3 Light</button>
-                        <button type="button" data-theme="catppuccin-mocha">Mocha</button>
-                        <button type="button" data-theme="catppuccin-latte">Latte</button>
-                        <button type="button" data-theme="system"
-                                title="Follow the OS light/dark setting (T3 Light / T3 Dark)">System</button>
-                    </div>
-                </div>
-                <div class="font-size-row">
-                    <span class="theme-picker-label">Font size</span>
-                    <button type="button" id="font-size-dec" title="Smaller terminal font (min 10)">A&#8722;</button>
-                    <span id="font-size-value">15</span>
-                    <button type="button" id="font-size-inc" title="Larger terminal font (max 22)">A+</button>
-                </div>
                 <div class="settings-row">
                     <button type="button" id="settings-btn" aria-haspopup="true" aria-expanded="false"
-                            title="Terminal settings — line height, letter spacing, cursor, bold weight (roams across your devices)">&#9881; Terminal settings</button>
+                            title="Settings — theme, font size, line height, letter spacing, cursor, bold weight (prefs roam across your devices; theme stays per device)">&#9881; Settings</button>
                 </div>
             </aside>
             <main id="lobby-content">
@@ -4946,13 +4897,14 @@
             });
             setSidebarCollapsed(getSidebarCollapsed());
 
-            // Theme picker — clicking a swatch swaps body class, persists,
-            // and live-rethemes the inner terminal via postMessage (tl-theme,
-            // same channel as tl-drop-files). The iframe ACKs back; no ACK
-            // within 1s means it runs a stale pre-live-switch build, so fall
-            // back to the old iframe reload (a reload re-reads the theme from
-            // localStorage at boot anyway).
-            const themePickerEl = document.getElementById('theme-picker');
+            // Theme selection — the grid lives in the ⚙ settings panel
+            // (#sp-theme, MF-1; formerly a standalone sidebar picker).
+            // Picking a swatch swaps body class, persists, and live-rethemes
+            // the inner terminal via postMessage (tl-theme, same channel as
+            // tl-drop-files). The iframe ACKs back; no ACK within 1s means
+            // it runs a stale pre-live-switch build, so fall back to the old
+            // iframe reload (a reload re-reads the theme from localStorage
+            // at boot anyway).
             let themeAckTimer = null;
             window.addEventListener('message', (e) => {
                 if (e.origin !== location.origin || !e.data || e.data.type !== 'tl-theme-ack') return;
@@ -4967,76 +4919,61 @@
                 clearTimeout(themeAckTimer);
                 themeAckTimer = null;
             });
-            function paintThemeButtons() {
-                const active = getTheme();
-                themePickerEl.querySelectorAll('button[data-theme]').forEach(b => {
-                    b.classList.toggle('active', b.dataset.theme === active);
-                });
+            function selectTheme(t) {
+                if (!THEMES.includes(t)) return;
+                try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+                applyTheme(t);
+                paintSettingsPanel();
+                if (currentActive && frameUrl && frameEl.contentWindow) {
+                    clearTimeout(themeAckTimer);
+                    themeAckTimer = setTimeout(() => {
+                        themeAckTimer = null;
+                        // No ACK: reload iframe so xterm picks up the new
+                        // theme (re-read the tracked frameUrl — the
+                        // session may have changed during the wait).
+                        const url = frameUrl;
+                        if (!url || url === 'about:blank') return;
+                        setFrameUrl('about:blank');
+                        setTimeout(() => { setFrameUrl(url); }, 0);
+                    }, 1000);
+                    frameEl.contentWindow.postMessage({ type: 'tl-theme', name: t }, location.origin);
+                }
             }
-            themePickerEl.querySelectorAll('button[data-theme]').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const t = btn.dataset.theme;
-                    if (!THEMES.includes(t)) return;
-                    try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
-                    applyTheme(t);
-                    paintThemeButtons();
-                    if (currentActive && frameUrl && frameEl.contentWindow) {
-                        clearTimeout(themeAckTimer);
-                        themeAckTimer = setTimeout(() => {
-                            themeAckTimer = null;
-                            // No ACK: reload iframe so xterm picks up the new
-                            // theme (re-read the tracked frameUrl — the
-                            // session may have changed during the wait).
-                            const url = frameUrl;
-                            if (!url || url === 'about:blank') return;
-                            setFrameUrl('about:blank');
-                            setTimeout(() => { setFrameUrl(url); }, 0);
-                        }, 1000);
-                        frameEl.contentWindow.postMessage({ type: 'tl-theme', name: t }, location.origin);
-                    }
-                });
-            });
-            paintThemeButtons();
 
-            // Font-size stepper — since Task 2.6 routed through the prefs
+            // Font-size stepping — since Task 2.6 routed through the prefs
             // layer: setPrefs persists BOTH keys (tl:prefs:v1 + the legacy
             // tl-font-size), fires tl-prefs-change (→ repaint + live-apply
             // forward below) and PUTs the roamed doc. A stale iframe build
             // without any handler still picks the size up at its next boot
-            // (the constructor reads the same keys).
-            const fontValEl = document.getElementById('font-size-value');
-            function paintFontSize() { fontValEl.textContent = getPrefs().fontSize; }
+            // (the constructor reads the same keys). Since MF-1 the panel's
+            // A−/A+ row is the only lobby stepper (the duplicate sidebar
+            // row was folded into it).
             function stepFontSize(delta) {
                 const before = getPrefs().fontSize;
                 const next = setPrefs({ fontSize: clampFontSize(before + delta) });
                 // Task M.7: tick only when the step actually committed.
                 if (next.fontSize !== before) haptic('selection');
             }
-            document.getElementById('font-size-dec').addEventListener('click', () => stepFontSize(-1));
-            document.getElementById('font-size-inc').addEventListener('click', () => stepFontSize(1));
             // The terminal's floating A−/A+ and its prefs writes land in the
             // same keys; storage events fire only in windows that did NOT
-            // write — i.e. exactly here — so the sidebar readout and the
-            // open panel track in-terminal changes. No forward back into the
+            // write — i.e. exactly here — so the open panel tracks
+            // in-terminal changes. No forward back into the
             // iframe: the change originated there and is already applied.
             window.addEventListener('storage', (e) => {
                 if (e.key === FONT_SIZE_KEY || e.key === PREFS_KEY ||
                     e.key === FLOW_KILL_KEY || e.key === tlKb.KEY ||
                     e.key === PINCH_FONT_KEY) {
-                    paintFontSize();
                     paintSettingsPanel();
                 }
             });
-            paintFontSize();
 
-            // Any prefs change made in THIS window (panel, sidebar stepper,
+            // Any prefs change made in THIS window (panel controls,
             // server-doc adoption at boot) live-applies to the attached
             // terminal over the same postMessage channel as tl-theme /
             // tl-drop-files. The extra tl-font-size message keeps pre-2.6
             // iframe builds in step (they only know that type); a current
             // build applies both idempotently.
             window.addEventListener('tl-prefs-change', () => {
-                paintFontSize();
                 paintSettingsPanel();
                 if (currentActive && frameUrl && frameEl.contentWindow) {
                     const p = getPrefs();
@@ -5046,12 +4983,16 @@
             });
 
             // --- settings popover (Task 2.6) ------------------------------
-            // Roaming terminal prefs: fontSize (shared with the stepper),
-            // lineHeight, letterSpacing, cursorStyle, cursorBlink,
-            // fontWeightBold. Deliberately EXCLUDED (red line): smooth-
-            // scroll, renderer toggles, and any mouse/wheel/scroll option.
-            // Plus one NON-roaming control: the Task 3.5 flow-control
-            // kill-switch (plain tl-flow-control localStorage key).
+            // Roaming terminal prefs: fontSize (the A−/A+ steppers — the
+            // sidebar row was folded in here, MF-1), lineHeight,
+            // letterSpacing, cursorStyle, cursorBlink, fontWeightBold.
+            // Deliberately EXCLUDED (red line): smooth-scroll, renderer
+            // toggles, and any mouse/wheel/scroll option. Plus two
+            // NON-roaming controls: the Task 3.5 flow-control kill-switch
+            // (plain tl-flow-control localStorage key) and the theme grid
+            // (#sp-theme, MF-1 — moved from the sidebar picker): per-device
+            // localStorage 'tmux-theme', NEVER roamed (a 9-way grid doesn't
+            // fit segCtl, and theme is per-device by design).
             const settingsBtn = document.getElementById('settings-btn');
             let settingsPanel = null;
             let settingsSheet = null;   // Task M.5: non-null while presented as a bottom sheet
@@ -5096,6 +5037,12 @@
                         b.classList.toggle('active', b.dataset.val === val);
                     });
                 });
+                // Theme grid (MF-1): same active semantics as the old
+                // sidebar picker — getTheme() defaults to 'slate'.
+                const activeTheme = getTheme();
+                settingsPanel.querySelectorAll('#sp-theme button[data-theme]').forEach(b => {
+                    b.classList.toggle('active', b.dataset.theme === activeTheme);
+                });
             }
             function onSettingsOutside(e) {
                 if (!settingsPanel) return;
@@ -5136,9 +5083,36 @@
                     // (a drag surface); popover mode keeps it in-panel.
                     const title = document.createElement('div');
                     title.className = 'sp-title';
-                    title.textContent = 'Terminal settings';
+                    title.textContent = 'Settings';
                     panel.appendChild(title);
                 }
+
+                // Theme grid (MF-1, complaint 4: "move the theme in the
+                // settings menu") — 9 presets applied live via selectTheme.
+                // Per-device localStorage 'tmux-theme'; deliberately NOT a
+                // roamed setPrefs/segCtl row.
+                const themeTitle = document.createElement('div');
+                themeTitle.className = 'sp-title';
+                themeTitle.textContent = 'Theme';
+                panel.appendChild(themeTitle);
+                const themeGrid = document.createElement('div');
+                themeGrid.className = 'theme-options';
+                themeGrid.id = 'sp-theme';
+                [['carbon', 'Carbon'], ['slate', 'Slate'], ['mono', 'Mono'],
+                 ['ink', 'Ink'], ['t3-dark', 'T3 Dark'], ['t3-light', 'T3 Light'],
+                 ['catppuccin-mocha', 'Mocha'], ['catppuccin-latte', 'Latte'],
+                 ['system', 'System']].forEach(([id, label]) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.dataset.theme = id;
+                    b.textContent = label;
+                    if (id === 'system') {
+                        b.title = 'Follow the OS light/dark setting (T3 Light / T3 Dark)';
+                    }
+                    b.addEventListener('click', () => selectTheme(id));
+                    themeGrid.appendChild(b);
+                });
+                panel.appendChild(themeGrid);
 
                 function row(labelText) {
                     const d = document.createElement('div');
@@ -5421,7 +5395,7 @@
                     // document-level outside-dismiss listener is not
                     // registered: the backdrop is modal and owns "outside".
                     settingsSheet = presentBottomSheet(panel, {
-                        title: 'Terminal settings',
+                        title: 'Settings',
                         detents: true,
                         onDismiss: () => closeSettings(true)
                     });

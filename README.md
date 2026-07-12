@@ -237,10 +237,16 @@ UI changes are verified against the regression battery in
 
 ## Theme
 
-Four themes shipped as CSS variables on `body.theme-{slate,carbon,mono,ink}`.
-Slate is the default. Picker lives at the bottom of the sidebar; choice
-persists in `localStorage` (`tmux-theme`). The iframe re-mounts on
-theme change so the inner xterm re-reads CSS vars.
+Nine presets shipped as CSS variables on `body.theme-*`: `carbon`, `slate`
+(default), `mono`, `ink`, `t3-dark`, `t3-light`, `catppuccin-mocha`,
+`catppuccin-latte`, plus `system`, which follows the OS light/dark setting
+(as T3 Light / T3 Dark, tracking scheme changes live). The picker is a
+9-button grid in the ⚙ Settings panel. Choice persists per device in
+`localStorage` (`tmux-theme`) — deliberately not part of the roamed prefs
+doc. Switches apply live: the lobby posts `tl-theme` to the attached
+terminal iframe, which re-reads the CSS vars and repaints xterm without a
+reload; a stale iframe build that doesn't ACK gets the old full-reload
+fallback after ~1s.
 
 ## Mobile
 
