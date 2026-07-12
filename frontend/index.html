@@ -740,6 +740,28 @@
                              + env(safe-area-inset-bottom));
             }
         }
+        /* '⧉ Copy link' hover chip ([links] fix) — terminal mode only,
+           built from JS on first link hover. Deliberately at BODY level,
+           never inside .xterm/.xterm-screen: the mousedown interceptor
+           and the A.1 buttonless-motion swallow key off .xterm-screen
+           containment, and xterm's Linkifier listens on .xterm — so chip
+           events can never reach a terminal input path (red line).
+           z 10002: above #toast (9999) — tiny, transient, and must stay
+           clickable while hovered. */
+        #link-chip {
+            position: fixed; z-index: 10002;
+            padding: 3px 10px;
+            font: 500 12px var(--font-ui);
+            color: var(--text-primary);
+            background: var(--bg-card);
+            border: 1px solid var(--border-strong);
+            border-radius: 999px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        #link-chip:hover { border-color: var(--accent); }
+        #link-chip[hidden] { display: none; }
         #img-lightbox {
             position: fixed; inset: 0; z-index: 10000;
             display: flex; align-items: center; justify-content: center;
@@ -2174,6 +2196,15 @@
             notify: Object.freeze({
                 onDone: true,
                 onAwaiting: true
+            }),
+            // [links] wrapped-URL fix: the hover '⧉ Copy link' chip on
+            // detected links (terminal mode, hover-capable pointers
+            // only — touch copy stays Sel/Mark/Yank + the Copy button).
+            // NEW namespace (MF-5 pattern): pre-existing roamed docs
+            // lack the key entirely, so normalizePrefs serves this code
+            // default everywhere — no re-key dance needed.
+            links: Object.freeze({
+                copyChip: true
             })
         });
         const PREF_VALID = {
@@ -2205,6 +2236,9 @@
             notify: {
                 onDone: v => typeof v === 'boolean',
                 onAwaiting: v => typeof v === 'boolean'
+            },
+            links: {
+                copyChip: v => typeof v === 'boolean'
             }
         };
         function readRawPrefs() {
@@ -5399,6 +5433,8 @@
                 settingsPanel.querySelector('#sp-blink').checked = p.cursorBlink;
                 settingsPanel.querySelector('#sp-flow').checked = flowControlWanted();
                 settingsPanel.querySelector('#sp-kb').checked = tlKb.enabled();
+                const lcp = settingsPanel.querySelector('#sp-linkchip');
+                if (lcp) lcp.checked = p.links.copyChip;       // hover-pointer row only ([links])
                 const rep = settingsPanel.querySelector('#sp-repeat');
                 if (rep) rep.checked = p.gestures.keyRepeat;   // coarse-pointer row only
                 const lp = settingsPanel.querySelector('#sp-longpress');
@@ -5695,6 +5731,22 @@
                     syncAltBadges();   // disabling mid-Alt-hold must drop the badges
                 });
                 kbRow.appendChild(kb);
+
+                // [links]: the hover '⧉ Copy link' chip on detected links.
+                // Roamed links.* namespace; rendered on hover-capable
+                // devices only — the chip itself never registers on touch
+                // (mobile copy stays Sel/Mark/Yank + the Copy button).
+                if (matchMedia('(hover: hover)').matches) {
+                    const lcRow = row('Link copy button');
+                    const lc = document.createElement('input');
+                    lc.type = 'checkbox';
+                    lc.id = 'sp-linkchip';
+                    lc.title = 'Show a small "⧉ Copy link" button when hovering a ' +
+                        'detected link. It copies the full URL — the reliable way ' +
+                        'to copy a link whose text wraps across rows.';
+                    lc.addEventListener('change', () => setPrefs({ links: { copyChip: lc.checked } }));
+                    lcRow.appendChild(lc);
+                }
 
                 // Notifications (universal — desktop AND mobile, unlike the
                 // coarse-only gesture rows below). Two roamed toggles gate
@@ -6737,7 +6789,16 @@
                             start: { x: start.x + 1, y: start.y + 1 },
                             end: { x: end.x + end.w, y: end.y + 1 }
                         };
-                        links.push({ range: range, text: text, activate: openDetectedLink });
+                        links.push({
+                            range: range,
+                            text: text,
+                            activate: openDetectedLink,
+                            // Additive ([links] chip): surface the copy
+                            // affordance on hover; underline/pointer
+                            // decorations stay stock.
+                            hover: (e, uri) => linkChip.show(uri, range),
+                            leave: () => linkChip.scheduleHide()
+                        });
                     }
                     callback(links);
                 }
@@ -6746,9 +6807,13 @@
 
         const fitAddon = new FitAddon.FitAddon();
         // Fallback for positions the join provider yields nothing at —
-        // constructed with the SAME shared handler, so where only the
-        // addon matches, behavior degrades to exactly today's.
-        const webLinksAddon = new WebLinksAddon.WebLinksAddon(openDetectedLink);
+        // constructed with the SAME shared handler and chip hooks, so
+        // where only the addon matches, behavior degrades to exactly
+        // today's opening semantics with the same copy affordance.
+        const webLinksAddon = new WebLinksAddon.WebLinksAddon(openDetectedLink, {
+            hover: (e, uri, range) => linkChip.show(uri, range),
+            leave: () => linkChip.scheduleHide()
+        });
         term.loadAddon(fitAddon);
         // Priority is registration order in xterm's Linkifier: the join
         // provider must outrank the addon's, so register it BEFORE
@@ -6757,6 +6822,99 @@
         // listener on any terminal input path.
         term.registerLinkProvider(makeTmuxJoinLinkProvider(term));
         term.loadAddon(webLinksAddon);
+
+        // ---- '⧉ Copy link' hover chip ([links] fix, additive) ---------
+        // Hovering a detected link shows one small body-level button that
+        // copies the FULL resolved target — the reliable copy affordance
+        // for URLs that visually wrap (drag-copy across a TUI hard split
+        // yields indent + injected newline + padding BY DESIGN: selection
+        // semantics are red-line frozen). Body-level placement is the
+        // red-line-clean choice: the document-capture mousedown
+        // interceptor and the A.1 motion swallow key off .xterm-screen
+        // containment, and the Linkifier listens on .xterm, so chip
+        // events never touch a terminal input path. Gated on the roamed
+        // links.copyChip pref, hover-capable pointers (touch copy stays
+        // Sel/Mark/Yank + /capture -J), and the absence of a selection
+        // (also closes the theoretical A.1 interaction where a trusted
+        // move over the chip would bypass the motion swallow). Its title
+        // carries the target URI — the hover reveal for an OSC 8 link
+        // whose visible text differs from where it points. Known bounded
+        // nuance: a wheel tick exactly over the ~90×24px chip targets the
+        // chip (hides it) instead of scrolling that tick — transient by
+        // design, NO re-dispatch (that would touch wheel semantics).
+        const linkChip = (() => {
+            let el = null;
+            let hideTimer = null;
+            let uri = '';
+            function ensure() {
+                if (el) return el;
+                el = document.createElement('button');
+                el.type = 'button';
+                el.id = 'link-chip';
+                el.textContent = '⧉ Copy link';
+                el.hidden = true;
+                // Keep xterm focused: swallow the focus-stealing mousedown
+                // but let the click through (same trick as #img-preview).
+                el.addEventListener('mousedown', (e) => e.preventDefault());
+                el.addEventListener('pointerenter', () => { clearTimeout(hideTimer); hideTimer = null; });
+                el.addEventListener('pointerleave', scheduleHide);
+                el.addEventListener('click', () => {
+                    const u = uri;
+                    navigator.clipboard.writeText(u).then(() => {
+                        showToast('Link copied', 'success', 1500);
+                    }).catch(() => {
+                        showToast('Copy failed — clipboard unavailable', 'error', 3000);
+                    });
+                    tel('link-copy', { len: u.length });
+                    hideNow();
+                });
+                document.body.appendChild(el);
+                return el;
+            }
+            function hideNow() {
+                clearTimeout(hideTimer); hideTimer = null;
+                if (el) el.hidden = true;
+            }
+            // 300 ms grace after leaving the link so the pointer can
+            // travel onto the chip; entering the chip cancels it.
+            function scheduleHide() {
+                clearTimeout(hideTimer);
+                hideTimer = setTimeout(hideNow, 300);
+            }
+            function show(linkUri, range) {
+                if (!getPrefs().links.copyChip) return;
+                if (!matchMedia('(hover: hover)').matches) return;
+                if (term.hasSelection()) return;
+                const scr = document.querySelector('.xterm-screen');
+                if (!scr) return;
+                const rect = scr.getBoundingClientRect();
+                const cellW = rect.width / term.cols;
+                const cellH = rect.height / term.rows;
+                // range y is 1-based ABSOLUTE buffer coords (both the join
+                // provider's and xterm's OSC 8 ranges).
+                const vRow = range.start.y - 1 - term.buffer.active.viewportY;
+                if (vRow < 0 || vRow >= term.rows) return;
+                const c = ensure();
+                uri = linkUri;
+                c.title = linkUri;
+                clearTimeout(hideTimer); hideTimer = null;
+                c.hidden = false;              // unhide first: offset* need layout
+                const left = rect.left + (range.start.x - 1) * cellW;
+                let top = rect.top + vRow * cellH - c.offsetHeight - 4;
+                if (top < 4) top = rect.top + (vRow + 1) * cellH + 4;  // top row → below the link
+                c.style.left = Math.max(4, Math.min(left, window.innerWidth - c.offsetWidth - 4)) + 'px';
+                c.style.top = Math.min(top, window.innerHeight - c.offsetHeight - 4) + 'px';
+            }
+            // Immediate dismissals — all passive observers; none touch the
+            // machinery they watch: wheel anywhere (capture + passive, the
+            // same shape as the telemetry listener), Escape, a selection
+            // appearing, window blur.
+            window.addEventListener('wheel', hideNow, { capture: true, passive: true });
+            window.addEventListener('blur', hideNow);
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideNow(); }, true);
+            term.onSelectionChange(() => { if (term.hasSelection()) hideNow(); });
+            return { show: show, scheduleHide: scheduleHide, hideNow: hideNow };
+        })();
 
         try {
             const webglAddon = new WebglAddon.WebglAddon();
