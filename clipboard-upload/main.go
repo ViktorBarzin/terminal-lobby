@@ -109,11 +109,15 @@ type publicAsset struct {
 // fonts/tl-symbols.woff2 is deliberately NOT listed: the page embeds it as a
 // data: URI and never fetches it by URL. Icons + manifest may change with a
 // deploy (1h cache); the fonts are versioned by content, not path (7d).
+// sw.js (the push service worker) is served no-cache: the browser re-fetches
+// the worker bytes on every update check, so a deploy must never be masked
+// by a cached copy.
 var publicAssets = map[string]publicAsset{
 	"/manifest.webmanifest":  {"manifest.webmanifest", "application/manifest+json", "public,max-age=3600"},
 	"/icon-192.png":          {"icon-192.png", "image/png", "public,max-age=3600"},
 	"/icon-512.png":          {"icon-512.png", "image/png", "public,max-age=3600"},
 	"/icon-512-maskable.png": {"icon-512-maskable.png", "image/png", "public,max-age=3600"},
+	"/sw.js":                 {"sw.js", "application/javascript", "no-cache"},
 
 	"/fonts/JetBrainsMono-Regular.woff2":     {"fonts/JetBrainsMono-Regular.woff2", "font/woff2", "public,max-age=604800"},
 	"/fonts/JetBrainsMono-Bold.woff2":        {"fonts/JetBrainsMono-Bold.woff2", "font/woff2", "public,max-age=604800"},

@@ -4032,28 +4032,79 @@
                 try { return localStorage.getItem(NOTIFY_KEY) === '1'; }
                 catch (e) { return false; }
             }
+            // Item 4: register the push service worker. Failure must NEVER
+            // break boot — /sw.js 404s until the infra asset carve-out
+            // lands (fine and silent) and some browsers lack SWs entirely.
+            // notifyTransitions prefers this registration's
+            // showNotification, which works where the bare Notification
+            // constructor throws (Android Chrome requires SW-backed
+            // notifications — the old code's constructor throw was
+            // swallowed, so Android never showed anything).
+            let swRegistration = null;
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => { swRegistration = reg; })
+                    .catch(() => { /* unsupported, or route not live yet */ });
+            }
+            // A usable Notification CONSTRUCTOR is the desktop fallback.
+            // The probe (new Notification('')) is the task-specified
+            // feature test; it only runs when there is NO service worker
+            // (so it never fires on Android/desktop-with-SW), and is
+            // closed immediately.
+            function notifyConstructorUsable() {
+                if (typeof Notification === 'undefined') return false;
+                try { new Notification('').close(); return true; }
+                catch (e) { return false; }
+            }
+            function notifyDeliverable() {
+                return !!swRegistration || notifyConstructorUsable();
+            }
+            async function fireNotification(session) {
+                const title = session + ' needs input';
+                const opts = {
+                    tag: 'tl-' + session,
+                    body: 'Claude is awaiting your input.',
+                    icon: FAVICON_HREF,
+                    data: { session }
+                };
+                // Prefer the SW registration (Android + desktop); its
+                // notificationclick routing lives in sw.js.
+                if (swRegistration) {
+                    try {
+                        const reg = await navigator.serviceWorker.ready;
+                        await reg.showNotification(title, opts);
+                        return;
+                    } catch (e) { /* fall through to the constructor */ }
+                }
+                try {
+                    const n = new Notification(title, opts);
+                    n.onclick = () => {
+                        try { window.focus(); } catch (err) {}
+                        activateSession(session);
+                        n.close();
+                    };
+                } catch (e) { /* no usable delivery mechanism here */ }
+            }
             let prevStates = null;  // name → state at the previous poll
             function notifyTransitions(sessions) {
                 const prev = prevStates;
                 prevStates = new Map(sessions.map(s => [s.name, s.state || '']));
-                if (!prev) return;
+                if (!prev) return;   // first poll after load seeds quietly
+                // Gate on away() (hidden OR unfocused), not just hidden — a
+                // visible-but-unfocused window (another app on top, a
+                // second monitor) should still notify.
                 if (!notifyOptedIn() || typeof Notification === 'undefined' ||
-                    Notification.permission !== 'granted' || !document.hidden) return;
+                    Notification.permission !== 'granted' || !away()) return;
                 for (const s of sessions) {
                     if (s.state !== 'awaiting') continue;
-                    if (!prev.has(s.name) || prev.get(s.name) === 'awaiting') continue;
-                    try {
-                        const n = new Notification(s.name + ' needs input', {
-                            tag: 'tl-' + s.name,
-                            body: 'Claude is awaiting your input.',
-                            icon: FAVICON_HREF
-                        });
-                        n.onclick = () => {
-                            try { window.focus(); } catch (err) {}
-                            activateSession(s.name);
-                            n.close();
-                        };
-                    } catch (err) { /* constructor can throw on odd platforms */ }
+                    // Seeding fix (Item 4): a session first seen (absent
+                    // from prev) that is ALREADY awaiting counts as a
+                    // transition and is announced — only the very first
+                    // poll after load stays quiet (the `if (!prev) return`
+                    // above). Skip only when it was awaiting LAST poll too
+                    // (no transition — the tag would merely re-fire).
+                    if (prev.get(s.name) === 'awaiting') continue;
+                    fireNotification(s.name);
                 }
             }
 
@@ -4089,6 +4140,16 @@
                     }
                     if (perm !== 'granted') {
                         showToast('Notifications are blocked in the browser settings', 'error', 4000);
+                        paintNotifyToggle();
+                        return;
+                    }
+                    // Item 4: permission granted — confirm SOMETHING can
+                    // actually deliver (the SW registration, or a usable
+                    // Notification constructor) before enabling a toggle
+                    // that would otherwise show nothing (e.g. Android
+                    // before the /sw.js route lands).
+                    if (!notifyDeliverable()) {
+                        showToast('Notifications are not supported in this browser', 'error', 4000);
                         paintNotifyToggle();
                         return;
                     }

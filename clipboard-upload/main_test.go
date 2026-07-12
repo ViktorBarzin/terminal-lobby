@@ -26,6 +26,7 @@ func fixtureAssetDir(t *testing.T) string {
 		"manifest.webmanifest":                  `{"name":"Terminal","description":"Web tmux sessions."}`,
 		"icon-192.png":                          "png-192-bytes",
 		"icon-512.png":                          "png-512-bytes",
+		"sw.js":                                 "sw-js-bytes",
 		"fonts/JetBrainsMono-Regular.woff2":     "woff2-regular",
 		"fonts/JetBrainsMono-Bold.woff2":        "woff2-bold",
 		"fonts/JetBrainsMono-Italic.woff2":      "woff2-italic",
@@ -75,6 +76,7 @@ func TestPublicAssetsServedWithoutAuth(t *testing.T) {
 		{"/fonts/JetBrainsMono-Italic.woff2", "font/woff2", "public,max-age=604800", "woff2-italic"},
 		{"/fonts/JetBrainsMono-BoldItalic.woff2", "font/woff2", "public,max-age=604800", "woff2-bolditalic"},
 		{"/fonts/dm-sans-latin-wght-normal.woff2", "font/woff2", "public,max-age=604800", "woff2-dmsans"},
+		{"/sw.js", "application/javascript", "no-cache", "sw-js-bytes"},
 	}
 	for _, c := range cases {
 		t.Run(c.path, func(t *testing.T) {
@@ -199,6 +201,7 @@ func TestPublicAssetsFallthrough(t *testing.T) {
 		{http.MethodPost, "/telemetry", true},
 		{http.MethodGet, "/manifest.webmanifest", false},
 		{http.MethodGet, "/fonts/JetBrainsMono-Bold.woff2", false},
+		{http.MethodGet, "/sw.js", false},
 	} {
 		called := false
 		next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
