@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<!--
+  pinch-probe.html — STANDING MANUAL device probe (Task M.8).
+
+  WHY THIS PAGE EXISTS
+  The terminal's pinch-to-font-size ships DEFAULT OFF (tl:gesture-pinch-font:v1)
+  because its claim model, while CDP-probe-verified under Pixel-7 emulation,
+  has two hardware-fragile legs that no emulated dispatch can settle:
+
+    1. CLAIM HOLD — consuming EVERY 2-finger touchmove from move 1 must keep
+       the whole stream cancelable for the full gesture on real hardware
+       (Chrome's cancelable window is only ~1-3 moves when you DON'T consume);
+    2. RELEASE-RESUME — when the recognizer releases at move 3 (span-constant
+       2-finger pan), native pan/zoom must actually RESUME mid-gesture on the
+       device, not leave a dead sequence.
+
+  Flipping the default to ON needs Viktor's run of this page on real Android
+  hardware (the devvm has no adb): walk every leg below in portrait AND
+  landscape, in a Chrome tab and (optionally) the installed PWA. Any leg
+  failing → the default stays OFF; record the result in the analysis doc
+  (docs/plans/2026-07-11-t3-ux-parity-analysis.md).
+
+  The model here is a byte-faithful standalone copy of the recognizer in
+  frontend/index.html (Task M.8): standing PASSIVE touchstart/touchend/
+  touchcancel; a {capture:true,passive:false} document touchmove LAZILY
+  attached at the 2nd touch and detached at the last touchend/touchcancel;
+  consume every 2-finger move from move 1; classify at move 3
+  (|span/span0-1| >= 0.05); claimed -> +/-1 simulated font step per +/-7%
+  cumulative span ratio (clamp 10-22); released/non-cancelable -> dead until
+  all fingers lift. Constants MUST stay in sync with index.html
+  (PINCH_CLASSIFY_MOVE=3, PINCH_CLASSIFY_RATIO=0.05, PINCH_STEP_RATIO=0.07,
+  scale gate 1.001). The pad carries the production #terminal value
+  touch-action: pan-x pan-y pinch-zoom.
+
+  HOW TO SERVE: any static origin (self-contained; file:// works, remote
+  debugging via chrome://inspect wants http[s]). From the repo:
+      python3 -m http.server 8123 --directory scripts/devserve
+  then open http://<devvm-lan-ip>:8123/pinch-probe.html on the phone, or
+  forward it through chrome://inspect from a machine with adb.
+
+  Checklist state persists in localStorage under tl:pinchprobe:v1 — the
+  Reset button clears it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- No user-scalable/maximum-scale restrictions: the OFF-baseline and
+     release-resume legs NEED native pinch-zoom to be possible, exactly like
+     the production page. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pinch-to-font claim probe (terminal-lobby M.8)</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 12px calc(12px + env(safe-area-inset-right))
+                 calc(24px + env(safe-area-inset-bottom))
+                 calc(12px + env(safe-area-inset-left));
+    font: 15px/1.45 -apple-system, system-ui, sans-serif;
+    /* Deliberately NO overscroll-behavior:none and a tall page: the
+       staggered-join leg needs a real 1-finger scroll in flight. */
+  }
+  h1 { font-size: 18px; margin: 8px 0; }
+  h2 { font-size: 15px; margin: 18px 0 6px; }
+  p, li { max-width: 46em; }
+  .muted { opacity: .7; font-size: 13px; }
+  #env, #verdict {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    border-radius: 8px; padding: 8px; white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #env { background: rgba(127,127,127,.12); }
+  #verdict { background: rgba(10,132,255,.10); min-height: 4.5em; }
+  #pad {
+    height: 300px; border: 2px dashed rgba(127,127,127,.55);
+    border-radius: 12px; display: flex; align-items: center;
+    justify-content: center; text-align: center; user-select: none;
+    -webkit-user-select: none; margin: 8px 0; font-weight: 600;
+    /* PRODUCTION value — #terminal ships exactly this (index.html). */
+    touch-action: pan-x pan-y pinch-zoom;
+  }
+  #pad.armed { border-color: #f59e0b; }
+  #pad.claimed { border-color: #0a84ff; }
+  #aa { font-family: ui-monospace, Menlo, monospace; }
+  #log {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    background: rgba(127,127,127,.12); border-radius: 8px; padding: 8px;
+    height: 140px; overflow-y: auto; white-space: pre;
+  }
+  button {
+    font: inherit; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid rgba(127,127,127,.5); background: none; margin: 2px;
+  }
+  button.on { background: #0a84ff; color: #fff; border-color: #0a84ff; }
+  label.chk { display: block; margin: 6px 0; }
+  label.chk input { margin-right: 8px; transform: scale(1.2); }
+  .expect { border-left: 3px solid rgba(127,127,127,.5); padding-left: 10px; }
+  #tail { height: 60vh; display: flex; align-items: center;
+    justify-content: center; opacity: .4; }
+</style>
+</head>
+<body>
+<h1>Pinch-to-font claim probe</h1>
+<p class="muted">terminal-lobby Task M.8 · gates the default-ON decision for
+<code>tl:gesture-pinch-font:v1</code> · run on REAL Android hardware, portrait
+and landscape. The pad mirrors the terminal's model exactly; the page logs
+what JS receives and what the model did.</p>
+<div id="env">loading…</div>
+
+<h2>Model switch</h2>
+<p>
+  <button id="btnOn">Model ON (flag 'on')</button>
+  <button id="btnOff">Model OFF (production default)</button>
+</p>
+
+<h2>Touch pad <span class="muted">(live: <span id="scale">scale 1.00</span>)</span></h2>
+<div id="pad"><span>pinch / 2-finger-pan / scroll-then-join here<br>
+<span id="aa">Aa 15px</span></span></div>
+<div id="verdict">no gesture seen yet</div>
+<h2>Raw event log</h2>
+<div id="log"></div>
+<p><button id="btnClear">Clear log</button>
+   <button id="btnReset">Reset checklist</button></p>
+
+<h2>Legs — per orientation (portrait / landscape)</h2>
+<p class="expect muted">Expected for default-ON to become arguable: 1-4 all
+green. Leg 2 (release-resume) and leg 1's late moves are the parts emulation
+cannot prove — watch them closely. After any leg that zooms, pinch back out
+to scale 1.00 (the model never arms while zoomed, so native always works).</p>
+<ol>
+  <li><b>Claim hold</b> — model ON, deliberate 2-finger pinch: every 2f move
+    logs <code>c=1 pd=1</code>, scale STAYS 1.00 for the whole gesture, Aa
+    steps follow the pinch (grow/shrink), verdict "CLAIMED".</li>
+  <li><b>Release-resume</b> — model ON, 2-finger PAN (constant gap): verdict
+    "RELEASED at move 3"; then WITHOUT lifting, pinch outward — native zoom
+    must RESUME mid-gesture (scale climbs past 1.0). If the sequence is dead
+    until you lift, the leg FAILS.</li>
+  <li><b>Staggered join</b> — model ON, scroll the page with 1 finger, join a
+    2nd finger mid-scroll and pinch: 2f moves log <code>c=0</code> (zero
+    consumed — declared leak), native panic-zoom works.</li>
+  <li><b>Scale gate</b> — model ON while zoomed in (scale &gt; 1.001): the
+    model never arms (verdict "not armed (scale&gt;1.001)"), native pinch-out
+    returns to 1.00.</li>
+  <li><b>OFF baseline</b> — model OFF, same pinch: zero consumed, native zoom
+    as on any web page.</li>
+</ol>
+
+<div id="checks"></div>
+
+<div id="tail">scroll runway for the staggered-join leg</div>
+
+<script>
+(() => {
+  'use strict';
+  const LS_KEY = 'tl:pinchprobe:v1';
+  // MUST match frontend/index.html (Task M.8) — the model under test.
+  const PINCH_CLASSIFY_MOVE = 3;
+  const PINCH_CLASSIFY_RATIO = 0.05;
+  const PINCH_STEP_RATIO = 0.07;
+  const SCALE_ARM_MAX = 1.001;
+  const FONT_MIN = 10, FONT_MAX = 22;
+
+  const pad = document.getElementById('pad');
+  const aa = document.getElementById('aa');
+  const logEl = document.getElementById('log');
+  const verdictEl = document.getElementById('verdict');
+  const scaleEl = document.getElementById('scale');
+  const env = document.getElementById('env');
+
+  const chromium = !!navigator.userAgentData ||
+      /\b(?:HeadlessChrome|Chromium|Chrome)\/\d/.test(navigator.userAgent);
+  env.textContent =
+      'UA: ' + navigator.userAgent +
+      '\nChromium-family: ' + chromium + ' (recognizer registers only here)' +
+      '\nmaxTouchPoints: ' + navigator.maxTouchPoints +
+      '\npointer coarse: ' + matchMedia('(pointer: coarse)').matches +
+      '\nvisualViewport: ' + !!window.visualViewport;
+
+  const t0 = performance.now();
+  function log(msg) {
+    logEl.textContent += ((performance.now() - t0) / 1000).toFixed(2) +
+        's ' + msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  btnClear.onclick = () => { logEl.textContent = ''; };
+
+  function scale() {
+    return window.visualViewport ? window.visualViewport.scale : 1;
+  }
+  function paintScale() {
+    scaleEl.textContent = 'scale ' + scale().toFixed(2);
+  }
+  if (window.visualViewport) {
+    visualViewport.addEventListener('resize', paintScale);
+    visualViewport.addEventListener('scroll', paintScale);
+  }
+  paintScale();
+
+  // ---- model switch ---------------------------------------------------
+  let modelOn = true;
+  function setModel(on) {
+    modelOn = on;
+    btnOn.classList.toggle('on', on);
+    btnOff.classList.toggle('on', !on);
+    log('model ' + (on ? 'ON' : 'OFF (production default)'));
+  }
+  btnOn.onclick = () => setModel(true);
+  btnOff.onclick = () => setModel(false);
+
+  // ---- simulated font size (what applyFontSize would do) ---------------
+  let fontSize = 15;
+  function paintAa() {
+    aa.textContent = 'Aa ' + fontSize + 'px';
+    aa.style.fontSize = fontSize + 'px';
+  }
+  paintAa();
+
+  // ---- the module + recognizer, byte-faithful to index.html ------------
+  let moveAttached = false;
+  let pz = null;  // {ids, span0, moves, claimed, dead, baseFont, lastTarget}
+  let g = null;   // per-gesture telemetry {moves2, consumed, nonCancelable,
+                  //  released, claimed, notArmed, steps, scale0}
+  function pinchSpan(ts) {
+    return Math.max(1, Math.hypot(
+        ts[0].clientX - ts[1].clientX,
+        ts[0].clientY - ts[1].clientY));
+  }
+  function onDocTouchMove(e) {
+    if (e.touches.length === 2 && g) {
+      g.moves2++;
+      const beforePd = e.defaultPrevented;
+      recognizerMove(e);
+      const line = 'move ' + g.moves2 + ' c=' + (e.cancelable ? 1 : 0) +
+          ' pd=' + (e.defaultPrevented ? 1 : 0) +
+          ' span/span0=' + (pz ? (pinchSpan(e.touches) / pz.span0).toFixed(3) : '-');
+      if (e.defaultPrevented && !beforePd) g.consumed++;
+      if (!e.cancelable) g.nonCancelable++;
+      // Log the decisive early moves + every 10th (60-120Hz would flood).
+      if (g.moves2 <= 5 || g.moves2 % 10 === 0) log(line);
+    } else if (g) {
+      recognizerMove(e);
+    }
+  }
+  function attachMove() {
+    if (moveAttached) return;
+    moveAttached = true;
+    document.addEventListener('touchmove', onDocTouchMove,
+        { capture: true, passive: false });
+  }
+  function detachMove() {
+    if (!moveAttached) return;
+    moveAttached = false;
+    document.removeEventListener('touchmove', onDocTouchMove,
+        { capture: true });
+  }
+
+  function recognizerStart(e) {
+    if (pz) { pz.dead = true; return; }
+    if (e.touches.length !== 2) return;
+    if (!modelOn) return;                       // = flag unset (default OFF)
+    if (!(window.visualViewport && scale() <= SCALE_ARM_MAX)) {
+      if (g) g.notArmed = true;
+      return;
+    }
+    const a = e.touches[0], b = e.touches[1];
+    if (!(pad.contains(a.target) && pad.contains(b.target))) return;
+    pz = {
+      ids: [a.identifier, b.identifier],
+      span0: pinchSpan(e.touches),
+      moves: 0, claimed: false, dead: false,
+      baseFont: fontSize,
+      lastTarget: null
+    };
+    pad.classList.add('armed');
+  }
+  function recognizerMove(e) {
+    if (!pz || pz.dead) return;
+    if (e.touches.length !== 2 ||
+        e.touches[0].identifier !== pz.ids[0] ||
+        e.touches[1].identifier !== pz.ids[1]) {
+      pz.dead = true;
+      return;
+    }
+    if (!e.cancelable) { pz.dead = true; if (g) g.released = 'non-cancelable'; return; }
+    e.preventDefault();
+    pz.moves++;
+    const ratio = pinchSpan(e.touches) / pz.span0;
+    if (!pz.claimed) {
+      if (pz.moves < PINCH_CLASSIFY_MOVE) return;
+      if (Math.abs(ratio - 1) < PINCH_CLASSIFY_RATIO) {
+        pz.dead = true;
+        if (g) g.released = 'span-constant at move ' + pz.moves;
+        return;
+      }
+      pz.claimed = true;
+      if (g) g.claimed = true;
+      pad.classList.add('claimed');
+    }
+    const target = Math.min(FONT_MAX, Math.max(FONT_MIN,
+        pz.baseFont + Math.trunc((ratio - 1) / PINCH_STEP_RATIO)));
+    if (target !== pz.lastTarget) {
+      pz.lastTarget = target;
+      if (target !== fontSize) {
+        fontSize = target;
+        if (g) g.steps++;
+        paintAa();
+        if (navigator.vibrate) navigator.vibrate(5);
+      }
+    }
+  }
+  function recognizerEnd(e) {
+    if (pz && e.touches.length < 2) pz = null;
+  }
+
+  function verdict() {
+    if (!g) return;
+    const parts = [];
+    parts.push(g.moves2 + '×2f-moves, ' + g.consumed + ' consumed, ' +
+        g.nonCancelable + ' non-cancelable');
+    if (g.claimed) parts.push('CLAIMED, ' + g.steps + ' font steps → ' + fontSize + 'px');
+    else if (g.released) parts.push('RELEASED (' + g.released + ') — native should have resumed');
+    else if (g.notArmed) parts.push('not armed (scale>' + SCALE_ARM_MAX + ')');
+    else if (!modelOn) parts.push('model OFF — pure native');
+    else parts.push('not armed / not a 2f gesture');
+    parts.push('scale ' + g.scale0.toFixed(2) + ' → ' + scale().toFixed(2));
+    verdictEl.textContent = parts.join('\n');
+    log('gesture: ' + parts.join(' | '));
+  }
+
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1 || !g) {
+      g = { moves2: 0, consumed: 0, nonCancelable: 0, released: null,
+            claimed: false, notArmed: false, steps: 0, scale0: scale() };
+    }
+    if (e.touches.length >= 2) attachMove();
+    recognizerStart(e);
+  }, { capture: true, passive: true });
+  function endOrCancel(e) {
+    if (e.touches.length === 0) {
+      detachMove();
+      pad.classList.remove('armed', 'claimed');
+      // Let a released gesture's native zoom settle into visualViewport
+      // before reading the final scale.
+      const gg = g; g = null;
+      setTimeout(() => { g = gg; verdict(); g = null; paintScale(); }, 120);
+    }
+    recognizerEnd(e);
+  }
+  document.addEventListener('touchend', endOrCancel, { capture: true, passive: true });
+  document.addEventListener('touchcancel', endOrCancel, { capture: true, passive: true });
+  window.addEventListener('pagehide', () => { detachMove(); pz = null; });
+
+  // ---- persisted checklist ---------------------------------------------
+  const ITEMS = [];
+  for (const o of [['P', 'portrait'], ['L', 'landscape']]) {
+    ITEMS.push(
+      [o[0] + '1', o[1] + ': claim hold — full pinch consumed (c=1 pd=1 throughout), scale stayed 1.00, Aa stepped'],
+      [o[0] + '2', o[1] + ': release-resume — pan released at move 3, then native zoom RESUMED without lifting'],
+      [o[0] + '3', o[1] + ': staggered join — 2f moves c=0, zero consumed, panic-zoom worked'],
+      [o[0] + '4', o[1] + ': scale gate — never armed while zoomed, native pinch-out returned to 1.00'],
+      [o[0] + '5', o[1] + ': OFF baseline — zero consumed, native zoom normal']
+    );
+  }
+  ITEMS.push(['S1', 'Ran in a Chrome tab'], ['S2', 'Ran in the installed PWA (optional)']);
+  let state = {};
+  try { state = JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) {}
+  const checks = document.getElementById('checks');
+  for (const [id, text] of ITEMS) {
+    const l = document.createElement('label');
+    l.className = 'chk';
+    const c = document.createElement('input');
+    c.type = 'checkbox';
+    c.checked = !!state[id];
+    c.onchange = () => {
+      state[id] = c.checked;
+      try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {}
+    };
+    l.appendChild(c);
+    l.appendChild(document.createTextNode(text));
+    checks.appendChild(l);
+  }
+  btnReset.onclick = () => {
+    state = {};
+    try { localStorage.removeItem(LS_KEY); } catch (e) {}
+    checks.querySelectorAll('input').forEach(c => { c.checked = false; });
+  };
+
+  setModel(true);
+})();
+</script>
+</body>
+</html>

@@ -489,8 +489,17 @@
                below/right of .xterm) so the frame reads as one surface —
                Ghostty's window-padding-color=background. */
             background: var(--terminal-bg);
-            /* Allow scroll + pinch-zoom (accessibility); kill double-tap zoom. */
+            /* Allow scroll + pinch-zoom (accessibility); kill double-tap zoom.
+               Task M.8 keeps this line UNTOUCHED (standing regression guard:
+               with the pinch-font flag OFF — the default — a 2-finger pinch
+               must still reach the compositor and native-zoom the page). */
             touch-action: pan-x pan-y pinch-zoom;
+            /* Task M.8 repaint mask: applyTermPrefs dims this CONTAINER to
+               .35 during font-metric fit bursts (pinch steps, A−/A+ taps,
+               lineHeight/letterSpacing slides) and restores 180ms after the
+               last fit; this 80ms fade covers the re-rasterize tear. Never
+               applied to the WebGL canvases themselves. */
+            transition: opacity 80ms linear;
         }
         /* Window padding (Task 1.9): 8×10px grid inset. The .xterm element
            is the ONE padding location addon-fit@0.10.0 actually subtracts
@@ -623,8 +632,12 @@
            3-finger swipe). It must live in the lobby document — the switch
            replaces the terminal iframe's URL, so anything shown inside the
            iframe dies mid-animation. Same non-modal posture as #conn-pill:
-           pointer-events none, top-center, never over the prompt. */
-        #session-pill {
+           pointer-events none, top-center, never over the prompt.
+           #font-pill (Task M.8) shares the look: the INNER-document
+           'Aa 15px' readout while a claimed pinch steps the font size —
+           nothing outlives the gesture there, so it lives beside the
+           terminal it describes. */
+        #session-pill, #font-pill {
             position: fixed; z-index: 10001;
             top: calc(10px + env(safe-area-inset-top));
             left: 50%; transform: translateX(-50%);
@@ -636,7 +649,7 @@
             box-shadow: var(--surface-shadow);
             opacity: 0; transition: opacity 0.15s;
         }
-        #session-pill.visible { opacity: 1; }
+        #session-pill.visible, #font-pill.visible { opacity: 1; }
         #paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn {
             position: fixed;
             /* --kb-offset is updated from window.visualViewport on touch
@@ -2164,6 +2177,30 @@
         function gesturesEnabled() {
             try { return localStorage.getItem(GESTURES_KILL_KEY) !== 'off'; } catch (e) { return true; }
         }
+
+        // Task M.8 pinch-to-font opt-IN — tl:gesture-pinch-font:v1, a
+        // plain per-browser localStorage key: 'on' enables, anything else
+        // (or unset) = OFF. DEFAULT OFF, and deliberately NOT roamed via
+        // tl:prefs:v1 (same posture as tl:keybindings:v1): claiming the
+        // native pinch-zoom stream is per-DEVICE trust, pending Viktor's
+        // real-device probe run (scripts/devserve/pinch-probe.html via
+        // chrome://inspect — the devvm has no adb, and the release-resume
+        // legs are the hardware-fragile part). Read per-press by the
+        // terminal-iframe recognizer; written by the settings toggle
+        // (#sp-pinch). The tl-gestures master kill above applies on top.
+        const PINCH_FONT_KEY = 'tl:gesture-pinch-font:v1';
+        function pinchFontWanted() {
+            try { return localStorage.getItem(PINCH_FONT_KEY) === 'on'; } catch (e) { return false; }
+        }
+        // Chromium-family gate for the pinch recognizer + its settings row
+        // (plan M.8: the consume-every-2f-move claim model is probed
+        // against Chrome's cancelable-touchmove pipeline ONLY; WebKit and
+        // Gecko schedule touchmove cancelability differently and iOS
+        // browsers are all WebKit). navigator.userAgentData ships in every
+        // Chromium and, in 2026, only there; the UA sniff is a fallback
+        // for Chromium builds with the API disabled.
+        const isChromiumFamily = !!navigator.userAgentData ||
+            /\b(?:HeadlessChrome|Chromium|Chrome)\/\d/.test(navigator.userAgent);
 
         // ---- haptic vocabulary (Task M.7) ------------------------------
         // ONE helper, three grades — every touch/gesture call site routes
@@ -4904,7 +4941,8 @@
             // iframe: the change originated there and is already applied.
             window.addEventListener('storage', (e) => {
                 if (e.key === FONT_SIZE_KEY || e.key === PREFS_KEY ||
-                    e.key === FLOW_KILL_KEY || e.key === tlKb.KEY) {
+                    e.key === FLOW_KILL_KEY || e.key === tlKb.KEY ||
+                    e.key === PINCH_FONT_KEY) {
                     paintFontSize();
                     paintSettingsPanel();
                 }
@@ -4964,6 +5002,8 @@
                 if (tf) tf.checked = p.gestures.twoFingerTap;  // coarse-pointer row only (M.6)
                 const hp = settingsPanel.querySelector('#sp-haptics');
                 if (hp) hp.checked = p.gestures.haptics;       // coarse row, vibrate-capable only (M.7)
+                const pf = settingsPanel.querySelector('#sp-pinch');
+                if (pf) pf.checked = pinchFontWanted();        // coarse Chromium row only (M.8)
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     const val = String(p[seg.dataset.pref]);
                     seg.querySelectorAll('button').forEach(b => {
@@ -5217,6 +5257,37 @@
                         hp.addEventListener('change',
                             () => setPrefs({ gestures: { haptics: hp.checked } }));
                         hpRow.appendChild(hp);
+                    }
+
+                    // Task M.8: pinch-to-font-size — DEFAULT OFF, plain
+                    // per-browser tl:gesture-pinch-font:v1 key (never
+                    // roamed; posture of the App-shortcuts opt-in above):
+                    // it claims the native pinch-zoom stream over the
+                    // terminal, so each DEVICE opts in — and the default
+                    // stays off until Viktor's real-device probe run
+                    // (scripts/devserve/pinch-probe.html). Rendered only
+                    // where the recognizer can register (Chromium-family
+                    // coarse pointers — the claim model is probed against
+                    // Chrome's touch pipeline; on iOS/WebKit the row would
+                    // govern nothing, same posture as the Android-only
+                    // swipe row). The attached terminal reads the key per
+                    // gesture, so the flip is live — no reload.
+                    if (isChromiumFamily) {
+                        const pfRow = row('Pinch font size');
+                        const pf = document.createElement('input');
+                        pf.type = 'checkbox';
+                        pf.id = 'sp-pinch';
+                        pf.title = 'Pinch with two fingers over the ' +
+                            'terminal to step the font size (experimental). ' +
+                            'Off (default): a two-finger pinch keeps native ' +
+                            'browser zoom.';
+                        pf.addEventListener('change', () => {
+                            try {
+                                if (pf.checked) localStorage.setItem(PINCH_FONT_KEY, 'on');
+                                else localStorage.removeItem(PINCH_FONT_KEY);
+                            } catch (e) {}
+                        });
+                        pfRow.appendChild(pf);
                     }
                 }
 
@@ -6792,6 +6863,153 @@
                     reset() { sw = null; }
                 });
             }
+
+            // ---- Task M.8: 2-finger pinch → font size (DEFAULT OFF) ----
+            // The respec is probe-derived — do NOT simplify it back
+            // (analysis 2026-07-11: BOTH naive models were falsified on
+            // the production surface. Chrome's cancelable-touchmove window
+            // is ~1-3 moves, so classify-at-12%-THEN-claim never lands;
+            // and a one-shot first-move preventDefault doesn't hold —
+            // native zoom resumes the moment consumption stops). A claim
+            // therefore means CONTINUOUS consumption of EVERY 2-finger
+            // touchmove from move 1, via the module's lazily-attached
+            // non-passive listener, with classification deferred to
+            // 2f-move 3:
+            //   |span/span0 − 1| ≥ 0.05 → CLAIMED: keep consuming; step
+            //     the font ±1 per ±7% cumulative span ratio through the
+            //     shared applyFontSize (clamp 10-22, persist, fit — the
+            //     exact stepper path; it carries the M.7 selection haptic
+            //     per committed step) with an 'Aa 15px' pill readout;
+            //   else → RELEASE (dead until all fingers lift): native
+            //     resumes, having lost only ~7.5px of centroid travel
+            //     (3 moves × ~2.5px).
+            // Gates: tl:gesture-pinch-font:v1 opt-in, read per press —
+            // DEFAULT OFF pending Viktor's real-device probe
+            // (scripts/devserve/pinch-probe.html; the release-resume legs
+            // are the hardware-fragile part and the devvm has no adb) —
+            // plus the tl-gestures master kill (module-level); Chromium-
+            // family only (the model is probed against Chrome's touch
+            // pipeline); armed only while visualViewport.scale ≤ 1.001 —
+            // an already-zoomed page keeps native pinch as its only way
+            // back out. Declared displacement while ON: a deliberate
+            // pinch OVER THE TERMINAL font-resizes instead of native-
+            // zooming. Mid-scroll finger-joins stay native BY PLATFORM
+            // LIMIT (their moves arrive cancelable=false — probe legs
+            // G/N: panic-zoom mid-scroll always works), so the first
+            // non-cancelable move RELEASES instead of fighting the
+            // compositor. #terminal's touch-action (pan-x pan-y
+            // pinch-zoom) stays untouched — the flag-OFF battery leg
+            // (native zoom must still reach scale>1) is the standing
+            // regression guard.
+            if (isChromiumFamily) {
+                const PINCH_CLASSIFY_MOVE = 3;     // classify at 2f-move 3
+                const PINCH_CLASSIFY_RATIO = 0.05; // |span/span0−1| ≥ 5% = pinch
+                const PINCH_STEP_RATIO = 0.07;     // ±1 font step per ±7% span
+                let pz = null;  // {ids, span0, moves, claimed, dead, baseFont, lastTarget}
+                let fontPillEl = null, fontPillTimer = null;
+                // Pinch-zoom scale is a TOP-LEVEL page property (the tab
+                // zooms, not the iframe): this document usually runs as
+                // the lobby's same-origin session iframe, whose OWN
+                // visualViewport.scale stays 1 in Chromium regardless of
+                // page zoom — so read the top window's. Deep-linked
+                // terminal pages (top === self) read their own; a
+                // cross-origin top (never the case here) falls back to
+                // the local value.
+                function pageScale() {
+                    try {
+                        if (window.top.visualViewport) return window.top.visualViewport.scale;
+                    } catch (e) { /* cross-origin top: local fallback */ }
+                    return window.visualViewport ? window.visualViewport.scale : 1;
+                }
+                function pinchSpan(ts) {
+                    return Math.max(1, Math.hypot(
+                        ts[0].clientX - ts[1].clientX,
+                        ts[0].clientY - ts[1].clientY));
+                }
+                function showFontPill(size) {
+                    if (!fontPillEl) {
+                        fontPillEl = document.createElement('div');
+                        fontPillEl.id = 'font-pill';
+                        fontPillEl.setAttribute('role', 'status');
+                        document.body.appendChild(fontPillEl);
+                    }
+                    clearTimeout(fontPillTimer);
+                    fontPillTimer = null;
+                    fontPillEl.textContent = 'Aa ' + size + 'px';
+                    fontPillEl.classList.add('visible');
+                }
+                function hideFontPillSoon() {
+                    if (!fontPillEl || fontPillTimer) return;
+                    fontPillTimer = setTimeout(() => {
+                        fontPillTimer = null;
+                        fontPillEl.classList.remove('visible');
+                    }, 220);
+                }
+                multiTouch.add({
+                    start(e) {
+                        if (pz) {   // 3rd finger mid-pinch: abort, never resume
+                            pz.dead = true;
+                            return;
+                        }
+                        if (e.touches.length !== 2) return;
+                        if (!pinchFontWanted()) return;   // per-press: DEFAULT OFF
+                        if (pageScale() > 1.001) return;  // zoomed page: native only
+                        const a = e.touches[0], b = e.touches[1];
+                        if (!(terminalEl.contains(a.target) && terminalEl.contains(b.target))) return;
+                        pz = {
+                            ids: [a.identifier, b.identifier],
+                            span0: pinchSpan(e.touches),
+                            moves: 0, claimed: false, dead: false,
+                            baseFont: getPrefs().fontSize,
+                            lastTarget: null
+                        };
+                    },
+                    move(e) {
+                        if (!pz || pz.dead) return;
+                        if (e.touches.length !== 2 ||
+                                e.touches[0].identifier !== pz.ids[0] ||
+                                e.touches[1].identifier !== pz.ids[1]) {
+                            pz.dead = true;   // finger substituted
+                            return;
+                        }
+                        // Native already owns this stream (mid-scroll join
+                        // etc.) — the DECLARED leak. Never fight it, and
+                        // never preventDefault a non-cancelable event
+                        // (no-op + console intervention warning).
+                        if (!e.cancelable) { pz.dead = true; return; }
+                        e.preventDefault();   // consume from move 1 — the claim
+                        pz.moves++;
+                        const ratio = pinchSpan(e.touches) / pz.span0;
+                        if (!pz.claimed) {
+                            if (pz.moves < PINCH_CLASSIFY_MOVE) return;
+                            if (Math.abs(ratio - 1) < PINCH_CLASSIFY_RATIO) {
+                                pz.dead = true;   // RELEASE: span-constant = 2f pan
+                                return;
+                            }
+                            pz.claimed = true;
+                            showFontPill(getPrefs().fontSize);   // readout from claim
+                        }
+                        const target = clampFontSize(
+                            pz.baseFont + Math.trunc((ratio - 1) / PINCH_STEP_RATIO));
+                        if (target !== pz.lastTarget) {
+                            pz.lastTarget = target;
+                            if (target !== getPrefs().fontSize) applyFontSize(target);
+                            showFontPill(target);
+                        }
+                    },
+                    end(e) {
+                        if (!pz) return;
+                        if (e.touches.length < 2) {   // pinch needs both fingers
+                            pz = null;
+                            hideFontPillSoon();
+                        }
+                    },
+                    reset() {
+                        pz = null;
+                        hideFontPillSoon();
+                    }
+                });
+            }
         }
 
         function sendInput(data) {
@@ -7503,6 +7721,27 @@
 
         document.getElementById('gallery-btn').addEventListener('click', openGallery);
 
+        // Task M.8 repaint mask: a font-metric change re-rasterizes the
+        // whole grid at new cell sizes — mid-burst (pinch steps arriving
+        // every few frames, rapid A−/A+ taps) that reads as tearing. Dim
+        // the CONTAINER to .35 before each fit (80ms CSS fade on
+        // #terminal — container opacity only, never the WebGL canvas
+        // contents) and restore 180ms after the LAST fit in the burst:
+        // every step extends the timer, the same debounce posture as
+        // refit()'s 120ms fitTimer. applyFontSize routes through
+        // applyTermPrefs, so pinch/stepper/panel changes all wrap here —
+        // and no-op applies (e.g. the duplicate tl-font-size message the
+        // lobby sends for stale builds) never flash the mask.
+        let fitMaskTimer = null;
+        function maskFitBurst() {
+            terminalEl.style.opacity = '0.35';
+            clearTimeout(fitMaskTimer);
+            fitMaskTimer = setTimeout(() => {
+                fitMaskTimer = null;
+                terminalEl.style.opacity = '';
+            }, 180);
+        }
+
         // Apply the validated prefs doc to the live terminal (Task 2.6).
         // Geometry-affecting options route through fitAddon.fit() — the
         // exact window-resize path (sendResize with pixel size) that
@@ -7518,6 +7757,7 @@
             if (term.options.cursorBlink !== p.cursorBlink) term.options.cursorBlink = p.cursorBlink;
             if (term.options.fontWeightBold !== p.fontWeightBold) term.options.fontWeightBold = p.fontWeightBold;
             if (needFit) {
+                maskFitBurst();   // Task M.8: dim the container through the metric swap
                 try { fitAddon.fit(); } catch (e) { console.warn('prefs fit failed:', e); }
             }
             // Task M.6: toolbar visibility rides the same prefs plumbing
