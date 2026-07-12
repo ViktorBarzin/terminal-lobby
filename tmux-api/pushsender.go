@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -22,9 +23,13 @@ const (
 	// "awaiting" prompt is only interesting for a few minutes, and coalescing
 	// is by tag anyway, so a short TTL avoids waking a device to a stale one.
 	pushTTL = 300
-	// pushSendTimeout bounds one SendNotification so a wedged push service
-	// can't stall the synchronous poll loop.
-	pushSendTimeout = 10 * time.Second
+	// pushDialTimeout bounds the TCP dial of one push POST. The push client
+	// forces IPv4 (see newPushHTTPClient), so this is a v4-connect budget.
+	pushDialTimeout = 10 * time.Second
+	// pushClientTimeout bounds one whole SendNotification (dial + TLS +
+	// request/response) so a wedged push service can't stall the synchronous
+	// poll loop. Larger than pushDialTimeout to leave room after connect.
+	pushClientTimeout = 15 * time.Second
 )
 
 // Notification kinds — which session-state edge produced a push. Threaded
@@ -90,13 +95,43 @@ type pushSender struct {
 	last   map[string]map[string]string
 }
 
+// forceTCP4 wraps a DialContext-shaped dial func, substituting network "tcp4"
+// for whatever network the caller (an http.Transport) requests, so every push
+// connection goes over IPv4. See newPushHTTPClient for why.
+func forceTCP4(dial func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, _, addr string) (net.Conn, error) {
+		return dial(ctx, "tcp4", addr)
+	}
+}
+
+// newPushHTTPClient builds the *http.Client every Web Push send shares (both
+// the background sender and the on-demand POST /push/test go through
+// pushSender.send, the single webpush.SendNotification call site). It clones
+// the stdlib default transport — preserving HTTP/2, proxy and idle-conn
+// behaviour — and overrides only the dialer to force IPv4.
+//
+// devvm v6 path to Apple's push range (2620:149::/32) blackholes after connect
+// (2026-07-12): the TCP handshake completes but no response headers arrive, so
+// a v6 send hangs until pushClientTimeout and Viktor's iPhone never gets the
+// push; v4 to Apple answers in ~165ms. Forcing tcp4 is the service-level fix —
+// remove it if the site's IPv6 path to Apple is ever fixed.
+func newPushHTTPClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	d := &net.Dialer{Timeout: pushDialTimeout}
+	tr.DialContext = forceTCP4(d.DialContext)
+	return &http.Client{
+		Timeout:   pushClientTimeout,
+		Transport: tr,
+	}
+}
+
 func newPushSender(store *pushStore, prefs prefsLoader, stater sessionStater, vapid vapidConfig) *pushSender {
 	return &pushSender{
 		store:  store,
 		prefs:  prefs,
 		stater: stater,
 		vapid:  vapid,
-		client: &http.Client{Timeout: pushSendTimeout},
+		client: newPushHTTPClient(),
 		last:   map[string]map[string]string{},
 	}
 }
