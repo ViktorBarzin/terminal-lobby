@@ -2188,22 +2188,10 @@ tap for emitted-bytes assertions). CDP legs:
   `--sk-h`/`--cb-h`, no overlap, no fit thrash (M.10 formulas
   unchanged).
 
-**DEVICE-MANUAL standing checklist (Viktor's pass; expected outcomes):**
-
-- Gboard: swipe-type a sentence → streams per word-commit (composition
-  streams through; the TUI lags at most the in-flight word); tap a
-  suggestion mid-word → field and TUI line converge (ordinary diff);
-  autocorrect accept then backspace-revert → diff + revert both land;
-  voice-typing burst → streams, no double-send.
-- iOS: post-space autocorrect swap lands as a diff; swap-vs-Enter
-  ordering — expected: swap first; acceptable worst case: the last
-  word submits uncorrected (degradation, never corruption); QuickType
-  suggestion tap → converges; dictation incl. a 'new line' phrase →
-  expected: submits (the field never holds \n); shake-to-undo →
-  ordinary diff; trackpad-mode caret move then edit → tail-retype.
-- Both: NO double-send anywhere (an unchanged value diffs to nothing);
-  password prompts via the raw keyboard (Kbd) — the mirror field is
-  visible text.
+**DEVICE-MANUAL standing checklist — [FOLDED by IR.4 into the single
+consolidated §DEVICE-MANUAL section at the end of this file; run that
+one]** (historical per-task list, superseded — the consolidated section
+carries every item below with its expected outcome, in ⌨ vocabulary).
 
 ### [IR.2] Prefs re-key compose.* → input.* + honest settings rows + device-local bar toggle (input-rework; burned-keys discipline)
 
@@ -2309,10 +2297,9 @@ adjust ports/socket when repeating.
   plumbing present. Desktop 1280×800: no bar built, no input rows, no
   'Compose Return', raw typing intact.
 
-**DEVICE-MANUAL (Viktor's pass, per the standing deploy heads-up):**
-one real phone carrying a pre-deploy roamed doc — confirm the disclosed
-ONE-TIME bar reappearance on a former compose.show:'off' device, hide
-it via settings (or ✎), reload → stays hidden across reloads.
+**DEVICE-MANUAL — [FOLDED by IR.4 into the consolidated §DEVICE-MANUAL
+section at the end of this file; run that one]** (historical: the
+one-time-reappearance item now lives there, in ⌨ vocabulary).
 
 ### [IR.3] Soft-key declutter: 8-button primary line + ⋯-toggled overflow row (input-rework; Viktor: "way too many buttons")
 
@@ -2421,8 +2408,154 @@ repeating.
   sk-narrow shave via media query); desktop 1280×800: no #soft-keys
   built, raw typing intact.
 
-**DEVICE-MANUAL standing checklist (Viktor's pass):** real-phone
-thumb pass on the expanded row (reachability, haptic per tap);
-two-finger toolbar hide/show with the row expanded (both rows drop
-and return, expanded bit survives); primary row fits without scroll
-on the actual devices (390-class and any 375-class).
+**DEVICE-MANUAL standing checklist — [FOLDED by IR.4 into the
+consolidated §DEVICE-MANUAL section at the end of this file; run that
+one]** (historical: thumb-pass/haptics, two-finger hide with the row
+expanded, and the real-device fit items now live there).
+
+### [IR.4] Integration gate — assembled `wizard/input-rework` branch (run 2026-07-12, all green)
+
+The run itself is the battery: the whole IR.1+IR.2+IR.3 diff verified
+as ONE branch before landing. Stack: the dev-harness fork on its own
+ports/socket (proxy 7967 / ttyd 7966 / scratch tmux-api 7968,
+`tmux -L tl-ir4`, session `tl-battery-ir4`, disposable
+`TMUX_API_PREFS_DIR` + `TMUX_TMPDIR` socket bridge for the copy-mode
+POSTs) — zero contact with live services, the live roamed /prefs doc,
+or the real tmux server (session census identical before/after).
+
+**Static red-line verification vs master `eddc822` — 21/21 PASS**
+(guard_check.py, mechanical extraction from `git show`):
+- helper-textarea suppression block byte-identical (HEAD == master ==
+  `6773cbd`); `sendInput` byte-identical (all three); every
+  MSG_INPUT-referencing line identical; `term.onBinary` byte-identical.
+- Mouse/wheel/selection/scroll paths ZERO-DIFF vs master: M.1 touch
+  IIFE (37 lines), ADR-0003 mousedown interceptor (79 lines),
+  `dispatchSelectionClone`, the full listener census
+  (wheel/mousemove/mouseup/touchstart/touchmove/touchend/touchcancel —
+  site-for-site identical), the attachCustomKeyEventHandler block
+  (36 lines), `smoothScrollDuration` never set. Provenance vs
+  `6773cbd`: IIFE + interceptor still EXACTLY the three MF-6
+  `term.focus()`→`tapFocus()` token swaps.
+- term.onData wrapper differs from master by EXACTLY ONE added first
+  line — `if (!mirrorEmitting) mirrorLineReset();` — the IR.1-declared
+  delta; the guard was re-baselined exactly ONCE (the [IR.1] section);
+  `term.attachCustomKeyEventHandler(` appears exactly once.
+
+**§A red-line suite — 157/157 PASS** across a fine-pointer desktop
+pass + the full coarse matrix (Pixel-7-class AND iPhone-class × bar
+visible/hidden × key row collapsed/expanded — all four UI states):
+- Desktop 1280×800 (bar/row states don't exist on fine pointers):
+  A.1 complete (1003h drag-selection, trusted buttonless-motion
+  swallow with zero new reports, Escape clears + reaches the app),
+  A.2 both halves, A.3 (chord → toast + clipboard), A.4 (1597 distinct
+  sixel colors), A.6, negative census (no #soft-keys / #compose-bar),
+  zero console errors.
+- Each of the 8 coarse configs: state census (bar display + 8/25
+  visible keys + expanded class actually match the seeded state);
+  A.1-INVERTED (below); A.1 Escape-reaches-app; A.2 both halves;
+  A.4 sixel; A.5 swipe→synthetic-wheel→copy-mode with NO keyboard
+  summon + tap sub-leg per bar state (3b field-focus with capture-pane
+  unchanged + swipe-still-wheels-while-field-focused, or 3a helper
+  textarea + zero bytes) + `--kb-offset` seeded + has-soft-keys;
+  A.6 multiline paste = ONE block, no intermediate execution, field
+  untouched when the bar intercepts; zero console errors. §A.5 3c
+  (tapFocus:'terminal' → helper textarea, bar open) once per device.
+- **Coarse §A composition note (probe-verified, probe_drag_baseline.py):
+  mouse drag-selection under coarse-pointer emulation creates NO xterm
+  selection on master `eddc822` AND on this branch identically** — the
+  documented M.2 inverted guard ("touch can never create an xterm
+  selection"); Playwright's touch emulation converts the CDP mouse drag
+  into the M.1 touch path on both builds, while the identical desktop
+  drag selects on both. The §A.1/§A.3 drag-selection legs therefore run
+  FULL on desktop, and every coarse config asserts the inverted shape:
+  drag → hasSelection false (== master) + buttonless 1003h motion still
+  reports (no selection to swallow for). Future §A runs on coarse
+  emulation must use this composition — a coarse "drag-select fails"
+  is the BASELINE, not a regression.
+
+**IR §B leg unions re-executed on the assembled branch — 62/62 PASS:**
+- [IR.1] 13/13 (S0, STREAM, COMPOSITION-REPLACE, AUTOCORRECT-SWAP,
+  MID-STRING, EMOJI/NUKE dual-receiver, OOB RESET, EMPTY-BACKSPACE,
+  KBD-EXCURSION, PASTE multiline+single, GEOMETRY, DESKTOP, zero
+  errors). One leg adapted to IR.3 vocabulary: KBD-EXCURSION reaches
+  the onData reset via `term.focus()` + raw typing — the Kbd button no
+  longer exists (⌨-off + tap is the raw path, exercised by the IR.3
+  union leg 6).
+- [IR.2] 21/21 (burned-keys ignored incl. no-write-back + next-write
+  re-mint, validation, tapFocus routing, settings surface, checkbox
+  off/on live, device override + garbage, coach, §A.5 Pixel + iPhone,
+  desktop negative, zero errors). One leg adapted: the override toggle
+  is now ⌨ (`#sk-input-toggle`, in the ⋯ overflow row) — ✎ was
+  replaced by IR.3; reopen-hint copy still matches.
+- [IR.3] 28/28 verbatim (census, overflow toggle + persistence +
+  garbage, repeat, mod cross-row, copy co-visibility, ⌨ toggle,
+  delegates, §A.5 both device classes, 375 fit, desktop negative,
+  zero errors).
+
+**Geometry sweep — 17/17 PASS:** 390×844 BINDING (primary line fits
+zero-scroll 294<=294, mask absent >360, collapsed height 51, stack
+terminal|bar|toolbar no overlap ±2px, terminal height accounts for
+bar+toolbar ±4px, no page h-scroll, pinned ⋯/⌄ in-viewport; expanded:
+25 buttons, formulas hold); 375×812 graceful-but-fits (sk-narrow 34px,
+283<=283); 360×800 graceful degradation (edge-fade mask PRESENT on the
+primary line, row scrolls 272>268 with NO page h-scroll, stack/height
+formulas hold, pinned keys never scrollable-away, last key reachable
+by scrolling).
+
+**Regressions found: NONE** — no fix commits, no new battery lines
+beyond this section. Repro scripts (session scratchpad, ir4/):
+guard_check.py, bat_ir4_a.py, union_ir{1,2,3}.py, bat_ir4_geo.py,
+probe_drag_baseline.py.
+
+## DEVICE-MANUAL — consolidated standing real-phone checklist (input rework)
+
+THE single list for Viktor's real-device pass (deploy heads-up item).
+Union of the IR.1/IR.2/IR.3 per-task lists (those now point here);
+vocabulary is the shipped IR.3 surface (⌨ replaced Kbd/✎). Every item
+carries its expected outcome — a deviation is a finding to report, not
+necessarily a stop-the-line (the acceptable-worst-case items say so).
+
+**Gboard (Android):**
+- Swipe-type a sentence → streams per word-commit (composition streams
+  through; the TUI lags at most the in-flight word), field == TUI line
+  after each word.
+- Tap a suggestion mid-word → field and TUI line converge (ordinary
+  value diff).
+- Autocorrect accept, then backspace-revert → both the swap and the
+  revert land in the TUI (diff + revert).
+- Voice-typing burst → streams as it commits; NO double-send.
+
+**iOS (Safari / installed PWA):**
+- Post-space autocorrect swap → lands as a diff (TUI line converges to
+  the corrected text).
+- Swap-vs-Enter ordering — expected: swap first, corrected line
+  submits; acceptable worst case: the last word submits uncorrected
+  (degradation, never corruption).
+- QuickType suggestion tap → converges.
+- Dictation, including a spoken 'new line' → expected: submits (the
+  field never holds \n; a literal newline insertion behaves as Enter).
+- Shake-to-undo → ordinary diff (field and TUI stay converged).
+- Trackpad-mode caret move + mid-string edit → backspace-to-common-
+  prefix + tail retype; the edited line executes whole on Enter.
+
+**Both platforms:**
+- NO double-send anywhere (an unchanged value diffs to nothing — this
+  is by construction; report ANY duplicate byte as a finding).
+- Password prompt: switch to the raw keyboard (⋯ → ⌨ off, then tap the
+  terminal) — the mirror field is VISIBLE text and must not be used
+  for secrets.
+- Coach hint 'Type here — the terminal mirrors you. Enter sends.'
+  appears EXACTLY ONCE per device (fresh tl-input-hint:v1 key), never
+  again on reload; a hidden bar never coaches.
+- Former hidden-bar users (pre-rework compose.show:'off'): the bar
+  reappears ONCE after the deploy (retired key ignored); hide it via
+  ⌨ or Settings → 'Input bar' → it stays hidden across reloads and
+  roams.
+- Expanded-row (⋯) thumb pass: every second-tier key reachable
+  one-handed, haptic tick per tap (Android), tap-commit — a swipe
+  starting on a key commits nothing.
+- Two-finger toolbar hide/show with the row expanded → BOTH tiers drop
+  and return; the expanded bit survives the round-trip.
+- Primary line fits without horizontal scroll on the real 390-class
+  and 375-class devices (binding at 390; ≤360 gracefully fades+scrolls
+  with ⋯/⌄ pinned).
