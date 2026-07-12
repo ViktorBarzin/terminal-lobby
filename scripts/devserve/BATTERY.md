@@ -156,8 +156,19 @@ contract:
    **Expect:** the tap-vs-swipe logic converts motion to synthetic wheel
    events — tmux scrolls (`tmux -L tl-dev display -p -t main '#{pane_in_mode}'`
    → `1`, copy-mode entered) and the swipe does NOT focus/summon the keyboard.
-3. Dispatch a tap (touchstart → touchend, ΔY ≤ 6 px).
-   **Expect:** the terminal focuses (helper textarea → soft keyboard path).
+3. Dispatch a tap (touchstart → touchend, ΔY ≤ 6 px). Three sub-legs
+   since M.11 (tap FOCUS routes per `compose.tapFocus`; tap byte
+   semantics — no pty bytes, no scroll — identical in all three):
+   - **3a** bar hidden (`compose.show:'off'` seeded, or after ⌄):
+     **Expect:** the terminal focuses (helper textarea → soft keyboard
+     path) — verbatim the pre-M.11 leg.
+   - **3b** bar visible + defaults (`show:'auto'`, `tapFocus:'compose'`):
+     **Expect:** `#compose-input` becomes the activeElement, capture-pane
+     UNCHANGED (the tap sends no bytes); a >6px swipe in the same state
+     still wheels (copy-mode scrolls) with NO focus change.
+   - **3c** bar visible + `tapFocus:'terminal'`:
+     **Expect:** the helper textarea focuses — 3a behavior with the bar
+     open.
 4. Code-inspect the loaded page: the `--kb-offset` visualViewport plumbing is
    present and wired (syncViewport updates
    `documentElement.style --kb-offset` from `window.visualViewport`).
@@ -1082,7 +1093,9 @@ implements the feature. Format:
   diff guard holds — the touch-discriminator IIFE (`// Touch behaviour on
   the terminal canvas:` through its `})();`) is BYTE-IDENTICAL to the
   Stage-A deploy (`git show 6773cbd:frontend/index.html` extract == HEAD
-  extract). The modifier state machine (softMods/tapMod/paintMod) is
+  extract). *(Guard re-baselined by M.11 — one declared
+  `term.focus()`→`tapFocus()` token swap in this block; see [MF-6].)*
+  The modifier state machine (softMods/tapMod/paintMod) is
   likewise untouched.
 - [Task M.2] Go side: `go test ./...` in `tmux-api/` green — incl. the
   copy-mode/capture table suite (POST `/sessions/{name}/copy-mode` entry +
@@ -1338,7 +1351,9 @@ implements the feature. Format:
   hijack/ghost machinery, original :2043-2121) must be BYTE-IDENTICAL to
   the Stage-A deploy (`git show 6773cbd:frontend/index.html` extract ==
   HEAD extract), and `term.attachCustomKeyEventHandler(` appears exactly
-  ONCE in HEAD. Verified 2026-07-12 at implementation time.
+  ONCE in HEAD. Verified 2026-07-12 at implementation time. *(Guard
+  re-baselined by M.11 — two declared `term.focus()`→`tapFocus()` token
+  swaps in this block; see [MF-6].)*
 - [Task M.6] iOS 3-finger reservation probe (MANUAL, standing pre-deploy
   item for ANY change to terminal touch handlers + per major iOS
   release; first run: Viktor, noted in the deploy heads-up): open
@@ -1500,11 +1515,15 @@ implements the feature. Format:
   smoke).
 - [Task M.8] Red line: §A.5 on both emulated viewports + the standing
   diff guards (M.1 touch-discriminator block AND the ADR-0003
-  mousedown interceptor byte-identical vs `6773cbd`;
+  mousedown interceptor byte-identical vs `6773cbd` *(re-baselined by
+  M.11: three declared token swaps — see [MF-6])*;
   `term.attachCustomKeyEventHandler(` exactly once in HEAD).
 - [Task M.10] Compose bar default state + attributes (Pixel-7 emulation,
-  attach `#main`; the bar is BUILT only on coarse pointers): at boot
-  `#compose-bar` computed display 'none' and terminal height ==
+  attach `#main`; the bar is BUILT only on coarse pointers). **M.11
+  re-based the default:** under DEFAULTS the bar is now VISIBLE at boot
+  (see [MF-6]); this leg's hidden-at-boot baseline runs with
+  `compose.show:'off'` seeded (or after the bar's ⌄): then `#compose-bar`
+  computed display 'none' and terminal height ==
   `visualViewport.height − #soft-keys.offsetHeight` (baseline formula,
   ±2px) with `--sk-h` == the toolbar's px height; tap the ✎ soft key →
   `.visible` + `#compose-input` focused; assert on the TEXTAREA:
@@ -1554,27 +1573,35 @@ implements the feature. Format:
   formula is byte-identical to the M.6 baseline. Growing the field
   refits at most once per height change (growAndRefit gates on
   offsetHeight delta + the 120ms debounce — no fit thrash).
-- [Task M.10] Prefs + settings: `compose:{autoShow:false,
-  enterKey:'newline'}` defaults in `tl:prefs:v1` (nested namespace,
-  validated like gestures.*): localStorage `{"compose":42}` + dirty
-  stamp + reload → bar hidden, enterkeyhint 'enter' (whole namespace
-  degrades to defaults); `{"compose":{"enterKey":"bogus","autoShow":
-  true}}` → bar OPEN at boot WITHOUT focus (valid subkey kept, no
-  keyboard summon) and enterkeyhint 'enter' (bogus dropped per-field).
-  A manual ✎/⌄ toggle beats autoShow reconciliation for the rest of
-  the page-life (a prefs event after ⌄ must NOT re-open the bar).
-  Coarse lobby panel renders 'Compose bar' (`#sp-compose`, unchecked
-  default) + 'Compose Return' seg (Newline active default); the seg
-  writes the nested pref with gestures.* siblings intact; neither row
-  renders on a fine-pointer desktop panel, and the desktop iframe does
-  not even build `#compose-bar`. Panel flips PUT the roamed doc —
+- [Task M.10] Prefs + settings (values re-keyed by M.11 to TRI-STATE —
+  see [MF-6] for the migration matrix): `compose:{show:'auto',
+  tapFocus:'compose', enterKey:'newline'}` defaults in `tl:prefs:v1`
+  (nested namespace, validated like gestures.*): localStorage
+  `{"compose":42}` + dirty stamp + reload → whole namespace degrades to
+  defaults (bar VISIBLE on coarse — 'auto' resolves per-device),
+  enterkeyhint 'enter'; `{"compose":{"enterKey":"bogus","show":"off"}}`
+  → bar hidden (valid subkey kept) and enterkeyhint 'enter' (bogus
+  dropped per-field). Auto-open never focuses (no keyboard summon). A
+  manual ✎/⌄ toggle beats show-reconciliation for the rest of the
+  page-life (a prefs event after ⌄ must NOT re-open the bar). Coarse
+  lobby panel renders 'Compose bar' (`#sp-compose`, CHECKED default —
+  binary checkbox over the tri-state: paints `show !== 'off'`, writes
+  only 'on'/'off') + 'Terminal tap' seg (Compose active default, M.11)
+  + 'Compose Return' seg (Newline active default); the segs write the
+  nested pref with siblings intact; none of these rows render on a
+  fine-pointer desktop panel, and the desktop iframe does not even
+  build `#compose-bar`. Panel flips PUT the roamed doc —
   snapshot/restore per the isolation rule above (a crashed run roams
-  autoShow:true to real devices; bit the implementation smoke).
-- [Task M.10] Red line: full §A with compose OFF (the default); the
-  standing diff guards extend over the compose surface — the
-  helper-textarea suppression block, `sendInput`, the term.onData
-  wrapper, the M.1 touch-discriminator IIFE and the ADR-0003 mousedown
-  interceptor each BYTE-IDENTICAL to `6773cbd`, and
+  e.g. show:'off' to real devices; bit the implementation smoke).
+- [Task M.10] Red line: full §A with compose OFF (`show:'off'` since
+  M.11 — was the default); the standing diff guards extend over the
+  compose surface — the helper-textarea suppression block, `sendInput`,
+  the term.onData wrapper each BYTE-IDENTICAL to `6773cbd`, and the M.1
+  touch-discriminator IIFE and the ADR-0003 mousedown interceptor
+  **RE-BASELINED by M.11** (was: byte-identical to `6773cbd`; now:
+  extract vs `6773cbd` differs by EXACTLY the three declared
+  `term.focus()`→`tapFocus()` token swaps, all other bytes identical —
+  full guard statement in [MF-6]), and
   `term.attachCustomKeyEventHandler(` exactly once in HEAD (verified
   2026-07-12 at implementation); the bar only CALLS the unchanged
   `term.paste()`/`sendInput()` primitives. 1-finger swipe/tap
@@ -1780,7 +1807,8 @@ invert it).
   wheel/selection semantics untouched — the M.1 + M.6 standing diff
   guards (touch-discriminator IIFE + ADR-0003 mousedown interceptor
   byte-identical vs `6773cbd`, `term.attachCustomKeyEventHandler(`
-  exactly once) verified 2026-07-12 at implementation time.
+  exactly once) verified 2026-07-12 at implementation time. *(Guards
+  since re-baselined by M.11 — see [MF-6].)*
 
 ### [MF-5] Hashless coarse-pointer boot reattaches the last session (Viktor complaint 1, rank 1: "i dont like the side swipe to open all sessions")
 
@@ -1840,3 +1868,111 @@ iPhone UA.
   ATTACHED to the previous session; installed PWA after an in-shell
   re-auth hop: same; after an explicit in-app detach: edge-back reland
   shows the LIST (marker cleared).
+
+### [MF-6 / Task M.11] Compose-first mobile input (Viktor complaint 2: "the terminal isnt a textbox so i cant use autocorrect and other native keyboard features")
+
+The M.10 bar existed but was opt-in and undiscovered. M.11 makes it the
+DEFAULT phone experience: bar visible at session entry on coarse
+pointers, terminal tap focuses the compose field (native keyboard),
+schema re-keyed `compose.autoShow`(bool) → `compose.show`
+('auto'|'on'|'off') with read-side coercion true→'on', false/absent→
+'auto' — a bare default flip would have been inert: Viktor's roamed doc
+serializes `autoShow:false`, indistinguishable from "never touched".
+'auto' resolves per-device at apply time (coarse shows, fine ignores);
+'on'/'off' are written only by the settings checkbox. New
+`compose.tapFocus` ('compose' default | 'terminal') routes the tap; new
+'Terminal tap' settings row; toolbar ⌄ now blurs whichever input is
+active (pre-existing helper-only bug, default-path now); Kbd relabeled
+'Raw terminal keyboard'; one-time coach toast (device-local
+`tl-compose-hint:v1`) + once-per-page-life ✎ reopen hint. Reversible:
+`show:'off'` restores the hidden bar; `tapFocus:'terminal'` restores
+shipped tap focus; bar hidden = byte-equivalent shipped behavior.
+enterKey default stays 'newline'. Fine pointers: unchanged in every
+respect.
+
+**MANDATORY isolation: snapshot+restore the live `/prefs` doc around
+EVERY run** (GET before, byte-compare, PUT back if drifted — the
+inverse of the documented M.10 incident: a crashed run must not roam
+`show:'off'` to Viktor's phone).
+
+**Standing diff guards — RE-BASELINED HERE (2026-07-12).** The M.1
+touch-discriminator IIFE (`// Touch behaviour on the terminal canvas:`
+through its `})();`) and the ADR-0003 mousedown interceptor
+(`document.addEventListener('mousedown', (e) => {` through its
+hijack/ghost machinery `}, true);`) are no longer byte-identical to
+`6773cbd`. Declared delta — the ONLY permitted difference: **three
+`term.focus()`→`tapFocus()` token swaps, all other bytes identical**
+(IIFE: the `if (!moved && startY !== null)` touchend tap branch;
+interceptor: the no-selection path after `dispatchSelectionClone(e)`
+and the selection-held path's trailing `// we swallowed xterm's focus
+click` line). Guard procedure from the MF-6 landing commit onward:
+extract both blocks from `git show 6773cbd:frontend/index.html` and
+from HEAD; `diff` must show EXACTLY those three one-line substitutions
+and nothing else (verified mechanically at implementation). The
+`tapFocus` seam itself (declaration above the interceptor, reassignment
+in the coarse compose block) lives OUTSIDE both guarded regions.
+`term.attachCustomKeyEventHandler(` still exactly once in HEAD.
+
+- [MF-6] RED-LINE GATE (this task changes tap semantics on the terminal
+  surface): FULL §A pass (A.1 selection, A.2 alt-screen, A.5, A.6) run
+  TWICE — once with `compose.show:'off'` seeded (byte-equivalent
+  baseline) and once under DEFAULTS (bar visible) — plus desktop
+  fine-pointer legs (1280×800) proving the seam is behavior-identical
+  there: tapFocus is never reassigned, click/drag/selection/focus per
+  §A.1, no compose bar built, roamed compose.* ignored. §A.5 leg 3 runs
+  as its 3a/3b/3c split (defined in §A.5).
+- [MF-6] MIGRATION MATRIX (each seed: write `tl:prefs:v1`, reload, NO
+  dirty stamp): seed `{"compose":{"autoShow":false}}` → bar VISIBLE at
+  boot, `#compose-input` NOT focused, keyboard closed (auto-show never
+  focuses); seed `{"compose":{"autoShow":true}}` → behaves as 'on' and
+  the next natural setPrefs (flip any panel pref) persists a doc with
+  `show:'on'` and NO `autoShow` key; seed `{"compose":{"show":"off"}}`
+  → bar hidden + baseline tap (helper textarea focus). Unit-level
+  matrix (14 cases incl. both-keys idempotence, garbage degradation,
+  raw-input immutability) verified against the extracted
+  normalizePrefs at implementation.
+- [MF-6] RAW EXCURSION: defaults, bar visible → tap Kbd → helper
+  textarea focused (aria-label/title 'Raw terminal keyboard') →
+  soft-Esc → pty capture gains `^[` → tap the terminal → compose field
+  focused again (one-shot excursion, no sticky mode).
+- [MF-6] DISMISS: focus the compose field → tap toolbar ⌄ →
+  `document.activeElement` blurred (keyboard drops) while the bar keeps
+  `.visible`; with the bar hidden and helper focused, ⌄ still blurs the
+  helper (pre-M.11 behavior intact).
+- [MF-6] TOAST: fresh profile (no `tl-compose-hint:v1`) → coach toast
+  exactly once ('Type in the bar below…', top-of-viewport, never
+  overlapping the bottom bar) + the key set; second reload → silent;
+  seeded `show:'on'` on a fresh profile → NO toast (only the 'auto'
+  transition coaches); first ✎/⌄ collapse per page-life → '✎ brings the
+  compose bar back' once (second collapse silent; new page-life hints
+  again).
+- [MF-6] STATUS ROW: compose mode (bar visible, field focused), tmux
+  mouse mode on → tap the tmux status line → window switches (SGR
+  replay lands) AND focus follows the routing (tapFocus →
+  `#compose-input` under defaults) — the interceptor's status-row
+  branch is byte-untouched; only the focus sites route.
+- [MF-6] SETTINGS: coarse panel — 'Compose bar' CHECKED under defaults;
+  uncheck → persisted doc carries `show:'off'` (no `autoShow` key) →
+  reload → bar hidden, tap → helper textarea; re-check → `show:'on'`,
+  bar reopens. 'Terminal tap' seg (Compose|Keyboard) → Keyboard →
+  `tapFocus:'terminal'` roams and a terminal tap focuses the helper
+  with the bar open (leg 3c). 'Compose Return' row unchanged. Desktop
+  fine-pointer panel: NO compose rows; a roamed compose.* doc is
+  ignored on fine (no bar, no routing).
+- [MF-6] GEOMETRY re-runs: the M.10 geometry leg (390×844) in the NEW
+  default state — bar open at boot ⇒ terminal height ==
+  `vv.height − toolbar.offsetHeight − #compose-bar.offsetHeight` (±2px),
+  no overlap (syncViewport already subtracts `--cb-h`; no new
+  geometry); MF-2's cluster leg re-run in compose-VISIBLE state
+  (`#img-preview` rides `--cb-h` above the bar; floating cluster still
+  display:none on coarse).
+- [MF-6] Mixed-build LWW window (documented, accepted): an OLD-build tab
+  re-serializes `autoShow` and drops `show` on its next write — the
+  M.*-class whole-doc clobber, healed by the stale-tab reloader within
+  minutes of deploy; noted in the deploy heads-up.
+- [MF-6] REAL-DEVICE additions to the standing iOS checklist (first
+  pass: Viktor, per the standing deploy heads-up): auto-shown bar does
+  NOT raise the keyboard at session entry; a terminal tap opens the
+  keyboard WITH the suggestion strip (compose field); Kbd opens it
+  WITHOUT (helper textarea); dictation and swipe-typing work in the
+  bar; the coach toast reads correctly on a 390pt viewport.

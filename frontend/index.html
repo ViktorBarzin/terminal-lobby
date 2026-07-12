@@ -1678,11 +1678,12 @@
             margin-left: 4px;
             font-weight: 700;
         }
-        /* Task M.10: native compose bar — a VISIBLE, opt-in sibling of the
+        /* Task M.10/M.11: native compose bar — a VISIBLE sibling of the
            soft-key toolbar hosting full-fidelity mobile text input
            (autocorrect / swipe typing / dictation), delivered to the pty as
            ONE bracketed paste via term.paste(). display:none until the ✎
-           soft key (or compose.autoShow) adds .visible; the element is only
+           soft key (or compose.show resolving visible — the M.11 coarse
+           default) adds .visible; the element is only
            built on coarse pointers. Docked directly ABOVE the toolbar: the
            same --kb-offset keyboard plumbing as #soft-keys plus --sk-h (the
            toolbar's measured height, written by syncViewport — 0 while the
@@ -2035,13 +2036,22 @@
                 toolbarHidden: false, // Task M.6: soft-key toolbar currently hidden
                 haptics: true         // Task M.7: vibration cues (Android-only API)
             }),
-            // Task M.10: native compose bar (coarse pointers). autoShow
-            // opens it on load — OFF by default, the ✎ soft key is the
-            // ad-hoc toggle. enterKey is LOCAL to the field: 'newline'
-            // (default — mobile-messaging convention, ▶ sends) or 'send'
-            // (Enter submits, Shift+Enter inserts the newline).
+            // Task M.10/M.11: native compose bar (coarse pointers). show
+            // replaced the M.10 boolean autoShow (2026-07-12, complaint 2
+            // "the terminal isnt a textbox"): tri-state 'auto'|'on'|'off'
+            // where 'auto' is the never-touched marker that resolves
+            // per-device at apply time (coarse pointers show the bar, fine
+            // pointers ignore it — the roamed doc stays device-neutral);
+            // 'on'/'off' are only ever written by the settings UI.
+            // tapFocus routes a terminal tap while the bar is visible:
+            // 'compose' (default — the native-keyboard field) or
+            // 'terminal' (raw helper textarea, the shipped M.10 tap).
+            // enterKey is LOCAL to the field: 'newline' (default —
+            // mobile-messaging convention, ▶ sends) or 'send' (Enter
+            // submits, Shift+Enter inserts the newline).
             compose: Object.freeze({
-                autoShow: false,
+                show: 'auto',
+                tapFocus: 'compose',
                 enterKey: 'newline'
             }),
             // Task MF-5 (complaint 1): session-attach behavior. reopenLast
@@ -2074,7 +2084,8 @@
                 haptics: v => typeof v === 'boolean'
             },
             compose: {
-                autoShow: v => typeof v === 'boolean',
+                show: v => v === 'auto' || v === 'on' || v === 'off',
+                tapFocus: v => v === 'compose' || v === 'terminal',
                 enterKey: v => v === 'newline' || v === 'send'
             },
             session: {
@@ -2093,7 +2104,26 @@
         // subkey (garbage like {"gestures":42} degrades to the defaults).
         function normalizePrefs(raw) {
             const out = Object.assign({}, PREF_DEFAULTS);
-            const src = (raw && typeof raw === 'object') ? raw : {};
+            let src = (raw && typeof raw === 'object') ? raw : {};
+            // M.10→M.11 read-side migration: compose.autoShow (boolean) →
+            // compose.show (tri-state). Stored false is indistinguishable
+            // from the serialized pre-flip default; coerced to 'auto'
+            // (2026-07-12); a genuine opt-out re-taps Compose bar→off once
+            // and is durable. true→'on' preserves a real opt-in. The
+            // !PREF_VALID.compose.show guard keeps a doc carrying BOTH
+            // keys idempotent (a valid show always wins). Deliberately NO
+            // eager boot write-back (it would stamp prefsDirty and race
+            // bootSyncPrefs); the next natural setPrefs persists the new
+            // shape and drops autoShow (unknown keys never survive
+            // normalization).
+            const rc = src.compose;
+            if (rc && typeof rc === 'object' && !Array.isArray(rc) &&
+                    !PREF_VALID.compose.show(rc.show) &&
+                    typeof rc.autoShow === 'boolean') {
+                src = Object.assign({}, src, {
+                    compose: Object.assign({}, rc, { show: rc.autoShow ? 'on' : 'auto' })
+                });
+            }
             for (const k of Object.keys(PREF_VALID)) {
                 if (typeof PREF_VALID[k] === 'object') {
                     const sub = Object.assign({}, PREF_DEFAULTS[k]);
@@ -2273,6 +2303,13 @@
         function pinchFontWanted() {
             try { return localStorage.getItem(PINCH_FONT_KEY) === 'on'; } catch (e) { return false; }
         }
+
+        // Task M.11 coach-mark memory — set the first time the auto-shown
+        // compose bar appears (show === 'auto' only). Device-local ON
+        // PURPOSE, never roamed via tl:prefs:v1: a coach mark must not
+        // resurrect on every device via a stale server doc, nor be
+        // pre-suppressed on a NEW device by a roamed flag.
+        const COMPOSE_HINT_KEY = 'tl-compose-hint:v1';
         // Chromium-family gate for the pinch recognizer + its settings row
         // (plan M.8: the consume-every-2f-move claim model is probed
         // against Chrome's cancelable-touchmove pipeline ONLY; WebKit and
@@ -5082,7 +5119,7 @@
                 const pf = settingsPanel.querySelector('#sp-pinch');
                 if (pf) pf.checked = pinchFontWanted();        // coarse Chromium row only (M.8)
                 const cm = settingsPanel.querySelector('#sp-compose');
-                if (cm) cm.checked = p.compose.autoShow;       // coarse-pointer row only (M.10)
+                if (cm) cm.checked = p.compose.show !== 'off'; // coarse row only (M.10; M.11 tri-state — 'auto' paints checked)
                 const sr = settingsPanel.querySelector('#sp-reopen');
                 if (sr) sr.checked = p.session.reopenLast;     // coarse-pointer row only (MF-5)
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
@@ -5439,10 +5476,14 @@
                         pfRow.appendChild(pf);
                     }
 
-                    // Task M.10: native compose bar — two roamed compose.*
-                    // options (nested namespace like gestures.*). autoShow
-                    // opens the bar on session load (OFF by default; the ✎
-                    // soft key toggles it ad-hoc regardless); the Return-
+                    // Task M.10/M.11: native compose bar — roamed compose.*
+                    // options (nested namespace like gestures.*). The bar
+                    // is the DEFAULT phone experience since M.11
+                    // (complaint 2): compose.show is tri-state ('auto' =
+                    // never-touched default, resolves visible on coarse
+                    // pointers) but the checkbox stays BINARY — it only
+                    // ever writes 'on'/'off', so an untouched doc keeps
+                    // 'auto' and keeps resolving per-device. The Return-
                     // key mode is LOCAL to the field — 'newline' default
                     // matches the T3/mobile-messaging convention and avoids
                     // accidental submits, 'send' gives desktop Enter=submit
@@ -5451,13 +5492,26 @@
                     const cm = document.createElement('input');
                     cm.type = 'checkbox';
                     cm.id = 'sp-compose';
-                    cm.title = 'Open the compose bar automatically: a native ' +
-                        'text field (autocorrect, swipe typing, dictation) ' +
-                        'that sends to the terminal as one paste. The ✎ ' +
-                        'soft key toggles it any time.';
+                    cm.title = 'Show the compose bar: a native text field ' +
+                        '(autocorrect, swipe typing, dictation) that sends ' +
+                        'to the terminal as one paste. On by default on ' +
+                        'phones; the ✎ soft key hides/shows it for the ' +
+                        'session.';
                     cm.addEventListener('change',
-                        () => setPrefs({ compose: { autoShow: cm.checked } }));
+                        () => setPrefs({ compose: { show: cm.checked ? 'on' : 'off' } }));
                     cmRow.appendChild(cm);
+
+                    // Task M.11: tap routing while the bar is open — the
+                    // segCtl writes the dotted nested key (deep-merge keeps
+                    // show/enterKey siblings intact). 'terminal' restores
+                    // the shipped M.10 tap byte-for-byte.
+                    const tapRow = row('Terminal tap');
+                    tapRow.title = 'Where a tap on the terminal puts the ' +
+                        'cursor while the compose bar is open: the compose ' +
+                        'field (native keyboard) or the raw terminal ' +
+                        'keyboard.';
+                    segCtl(tapRow, 'compose.tapFocus',
+                           ['compose', 'terminal'], ['Compose', 'Keyboard']);
 
                     const ekRow = row('Compose Return');
                     ekRow.title = 'What Return does in the compose field: ' +
@@ -6117,6 +6171,21 @@
             console.log('TL Symbols fallback face loaded');
         } catch (e) { console.warn('TL Symbols face failed:', e); }
 
+        // Task M.11 tap-focus routing seam. Terminal-tap focus has THREE
+        // sources: the M.1 touch discriminator's touchend tap branch below,
+        // and the ADR-0003 interceptor's two term.focus() sites — a tap
+        // also produces a browser-SYNTHESIZED compat mousedown that runs
+        // the interceptor, so routing only touchend would be defeated by
+        // the interceptor's own focus call. All three sites call this
+        // indirection instead (the ONLY delta inside those two guarded
+        // blocks — three token swaps, re-baselined in BATTERY.md [MF-6]).
+        // The coarse compose block reassigns it: compose field while the
+        // bar is visible and compose.tapFocus === 'compose', else the
+        // terminal — stateless and deterministic, so the tap double-fire
+        // degrades to a harmless double focus() on the same element. Fine
+        // pointers never reassign: byte-equivalent shipped behavior.
+        let tapFocus = () => term.focus();
+
         const isMacLike = ['Macintosh', 'MacIntel', 'MacPPC', 'Mac68K'].includes(navigator.platform);
         // Reclaim plain left-drag for NATIVE selection. tmux — and Claude Code
         // inside it — keep the terminal in mouse-report mode, so xterm.js only
@@ -6327,7 +6396,7 @@
             if (!term.hasSelection() || e.detail > 1) {
                 if (e.detail > 1) clearSelectionBecause('double-click replace');
                 dispatchSelectionClone(e);
-                term.focus();
+                tapFocus();
                 return;
             }
             // Selection exists + single press: hold it back until it proves
@@ -6349,7 +6418,7 @@
             }
             document.addEventListener('mousemove', onMove, true);
             document.addEventListener('mouseup', onUp, true);
-            term.focus();                                    // we swallowed xterm's focus click
+            tapFocus();                                    // we swallowed xterm's focus click
         }, true);
         // Mode-1003 panes (Claude Code, t3) get EVERY pointer motion
         // reported; the TUI hover-repaints in response and that output
@@ -6445,10 +6514,10 @@
         // the coarse-pointer block below; called from applyTermPrefs so
         // panel changes / roamed docs / the master kill apply live).
         let applyToolbarPrefs = () => {};
-        // Task M.10: reconciles the compose bar with prefs (assigned in the
-        // coarse-pointer block below; called from applyTermPrefs) —
-        // enterkeyhint follows compose.enterKey live, compose.autoShow
-        // opens the bar until the user toggles it manually.
+        // Task M.10/M.11: reconciles the compose bar with prefs (assigned
+        // in the coarse-pointer block below; called from applyTermPrefs) —
+        // enterkeyhint follows compose.enterKey live; compose.show !==
+        // 'off' opens the bar until the user toggles it manually.
         let applyComposePrefs = () => {};
 
         // ---- Task M.6: shared multi-touch module -------------------------
@@ -6575,7 +6644,7 @@
                     }));
                 }, { passive: true });
                 terminalEl.addEventListener('touchend', () => {
-                    if (!moved && startY !== null) term.focus();
+                    if (!moved && startY !== null) tapFocus();
                     startY = lastY = null;
                     moved = false;
                 }, { passive: true });
@@ -6875,8 +6944,14 @@
             // floating cluster stopped rendering there.
             row.appendChild(makeBtn('Paste',
                 () => document.getElementById('paste-btn').click()));
-            row.appendChild(makeBtn('Kbd', () => term.focus(),
-                { ariaLabel: 'Show keyboard' }));
+            // M.11: Kbd is the deliberate RAW keyboard (helper textarea) —
+            // a one-shot excursion while composing: the next terminal tap
+            // routes back to the compose field (tapFocus). Deliberately
+            // term.focus(), never tapFocus().
+            const kbdBtn = makeBtn('Kbd', () => term.focus(),
+                { ariaLabel: 'Raw terminal keyboard' });
+            kbdBtn.title = 'Raw terminal keyboard';
+            row.appendChild(kbdBtn);
             // Task M.10: compose-bar toggle — ✎ opens the native text field
             // (focus lands in it, keyboard comes up); a second tap or the
             // bar's own ⌄ collapses it back to raw terminal typing.
@@ -6937,7 +7012,16 @@
             // the soft keyboard; noFocus keeps makeBtn from immediately
             // re-summoning it. 'Kbd' above is the inverse.
             toolbar.appendChild(makeBtn('⌄', () => {
-                if (helperTextarea) helperTextarea.blur();
+                // M.11 fix (pre-existing bug, default-path now): in compose
+                // mode the active input is #compose-input, not the helper —
+                // blur whichever input actually holds the keyboard. Lazy
+                // activeElement lookup: this key is built BEFORE the
+                // compose block, so composeInput is not in scope here. Bar
+                // VISIBILITY is untouched by dismiss (⌄ here drops the
+                // keyboard; the bar's own ⌄ collapses the bar).
+                const ae = document.activeElement;
+                if (ae === helperTextarea || (ae && ae.id === 'compose-input')) ae.blur();
+                else if (helperTextarea) helperTextarea.blur();
             }, { ariaLabel: 'Hide keyboard', noFocus: true, cls: 'sk-dismiss' }));
 
             document.body.appendChild(toolbar);
@@ -6992,7 +7076,7 @@
             document.body.appendChild(composeBar);
 
             let composeVisible = false;
-            let composeUserToggled = false;   // a manual ✎/⌄ beats autoShow for this page-life
+            let composeUserToggled = false;   // a manual ✎/⌄ beats compose.show for this page-life
 
             // Auto-grow to 5 lines (scrollHeight clamp), internal scroll
             // past that. All heights derive from the computed style so a
@@ -7092,11 +7176,12 @@
             composeHide.addEventListener('pointerdown', (ev) => {
                 ev.preventDefault();
                 haptic('selection');
-                // A manual collapse must beat autoShow's reconciliation for
-                // the rest of the page-life (same as the ✎ toggle) — or the
-                // next prefs event would immediately re-open the bar.
+                // A manual collapse must beat compose.show's reconciliation
+                // for the rest of the page-life (same as the ✎ toggle) — or
+                // the next prefs event would immediately re-open the bar.
                 composeUserToggled = true;
                 setComposeVisible(false, false);
+                noteComposeCollapse();
             });
 
             // Show/hide. Showing re-measures the field (it may carry kept
@@ -7116,7 +7201,18 @@
             }
             function toggleCompose() {
                 composeUserToggled = true;
-                setComposeVisible(!composeVisible, true);
+                const showing = !composeVisible;
+                setComposeVisible(showing, true);
+                if (!showing) noteComposeCollapse();
+            }
+            // M.11 page-life reopen hint (toolbarHintShown precedent): the
+            // FIRST ✎/⌄ collapse per page-life names the way back. Once —
+            // repeat collapses are a chosen workflow, not a discovery gap.
+            let composeReopenHintShown = false;
+            function noteComposeCollapse() {
+                if (composeReopenHintShown) return;
+                composeReopenHintShown = true;
+                showToast('✎ brings the compose bar back', 'info', 2500);
             }
 
             // Focus routing (guarded — byte-equivalent while the field is
@@ -7136,18 +7232,54 @@
                 }
             }
 
+            // M.11 terminal-tap routing (complaint 2): while the bar is
+            // visible, a tap on the terminal puts the cursor in the compose
+            // field — the native keyboard with autocorrect/dictation is the
+            // default phone experience, not a hidden mode. Reassigned ONLY
+            // here (coarse block): fine pointers keep the boot arrow
+            // byte-equivalent. Stateless + deterministic — the touchend tap
+            // branch AND the synthesized-mousedown interceptor path both
+            // land here, so the double-fire is a harmless double .focus()
+            // on the same element. tapFocus:'terminal' (settings 'Terminal
+            // tap' → Keyboard) or a hidden bar = shipped raw-tap behavior.
+            // Kbd stays a one-shot raw excursion: it calls term.focus()
+            // directly; the NEXT tap routes back to compose.
+            tapFocus = () => {
+                if (composeVisible && getPrefs().compose.tapFocus === 'compose') composeInput.focus();
+                else term.focus();
+            };
+
             // Prefs reconciliation — called from applyTermPrefs (panel
             // changes arriving over tl-prefs, roamed-doc adoption, and the
-            // boot one-shot, which is also what applies autoShow).
-            // enterkeyhint tracks the mode live; autoShow only ever OPENS
-            // the bar (it is an option, not roamed visibility state) and
-            // defers to an explicit ✎/⌄ for the rest of the page-life.
+            // boot one-shot, which is also what applies compose.show).
+            // enterkeyhint tracks the mode live; show !== 'off' only ever
+            // OPENS the bar (an option, not roamed visibility state) and
+            // defers to an explicit ✎/⌄ for the rest of the page-life —
+            // the M.10 contract, only the condition changed (M.11:
+            // autoShow boolean → show tri-state; this block runs on
+            // coarse pointers only, which is what makes 'auto' resolve
+            // per-device).
+            let composeHintShown = false;   // coach toast once per page-life
             applyComposePrefs = function () {
                 const c = getPrefs().compose;
                 composeInput.enterKeyHint = c.enterKey === 'send' ? 'send' : 'enter';
-                if (c.autoShow && !composeUserToggled && !composeVisible) {
+                if (c.show !== 'off' && !composeUserToggled && !composeVisible) {
                     // No focus: booting must not summon the keyboard.
                     setComposeVisible(true, false);
+                    // M.11 one-time coach toast — only on the 'auto'
+                    // (never-configured) transition to visible, gated by
+                    // the device-local COMPOSE_HINT_KEY: a user who SET
+                    // show:'on' knows the bar; toasts render top-of-
+                    // viewport, never overlapping the bottom bar.
+                    if (c.show === 'auto' && !composeHintShown) {
+                        composeHintShown = true;
+                        let seen = null;
+                        try { seen = localStorage.getItem(COMPOSE_HINT_KEY); } catch (e) {}
+                        if (seen === null) {
+                            try { localStorage.setItem(COMPOSE_HINT_KEY, '1'); } catch (e) {}
+                            showToast('Type in the bar below — autocorrect and dictation work there. Kbd = raw keys, ⌄ hides it', 'info', 6000);
+                        }
+                    }
                 }
             };
 
@@ -8272,8 +8404,8 @@
             // (gestures.toolbarHidden / gestures.twoFingerTap) — a no-op
             // stub on fine pointers.
             applyToolbarPrefs();
-            // Task M.10: compose bar rides it too (enterkeyhint mode +
-            // autoShow) — a no-op stub on fine pointers.
+            // Task M.10/M.11: compose bar rides it too (enterkeyhint mode
+            // + compose.show) — a no-op stub on fine pointers.
             applyComposePrefs();
         }
         // Changes made in THIS window (floating A−/A+, boot adoption of the
