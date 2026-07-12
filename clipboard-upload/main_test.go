@@ -13,10 +13,12 @@ import (
 
 // fixtureAssetDir builds an on-disk mirror of deploy.sh's install layout
 // (/usr/local/share/ttyd): manifest + icons at the root, woff2 files under
-// fonts/. icon-512-maskable.png is deliberately ABSENT — Task M.9 ships it;
-// until then the whitelisted path must 404. tl-symbols.woff2 IS installed
-// (deploy.sh ships every repo woff2) but must never be served: the page
-// embeds it as a data: URI, and it is not in the public whitelist.
+// fonts/. icon-512-maskable.png is deliberately ABSENT — the whitelisted-
+// but-not-installed scenario (it rode the whitelist one task ahead of M.9
+// shipping the file, and a fresh host sees the same shape) must 404
+// cleanly. tl-symbols.woff2 IS installed (deploy.sh ships every repo
+// woff2) but must never be served: the page embeds it as a data: URI, and
+// it is not in the public whitelist.
 func fixtureAssetDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -106,8 +108,9 @@ func TestPublicAssetsIgnoreAuthHeader(t *testing.T) {
 	}
 }
 
-// /icon-512-maskable.png is whitelisted NOW; the file ships with Task M.9.
-// Until then: clean 404. Once the file exists: 200 with no code change.
+// /icon-512-maskable.png entered the whitelist one task before M.9 shipped
+// the file: a whitelisted path with no installed file must 404 cleanly,
+// then serve 200 with no code change once the file lands.
 func TestPublicAssetMaskableIconPreShipped(t *testing.T) {
 	dir := fixtureAssetDir(t)
 

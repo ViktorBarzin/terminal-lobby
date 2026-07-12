@@ -103,8 +103,9 @@ type publicAsset struct {
 
 // publicAssets is the EXACT-path whitelist. A request path is only ever a
 // KEY into this table — never joined into a filesystem path — so traversal
-// is impossible by construction. /icon-512-maskable.png is whitelisted ahead
-// of the file existing (Task M.9 ships it; a 404 until then is harmless).
+// is impossible by construction. A whitelisted path whose file isn't
+// installed degrades to a clean 404 (how /icon-512-maskable.png rode the
+// whitelist one task ahead of M.9 shipping the artwork).
 // fonts/tl-symbols.woff2 is deliberately NOT listed: the page embeds it as a
 // data: URI and never fetches it by URL. Icons + manifest may change with a
 // deploy (1h cache); the fonts are versioned by content, not path (7d).
@@ -168,9 +169,9 @@ func handleAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(filepath.Join(assetDir(), spec.file))
 	if err != nil {
-		// ErrNotExist is expected for whitelisted-but-not-yet-shipped
-		// files (the maskable icon until Task M.9); anything else is a
-		// deploy gap worth a log line.
+		// ErrNotExist is expected for whitelisted-but-not-installed
+		// files (a fresh host before deploy.sh copies them); anything
+		// else is a deploy gap worth a log line.
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Printf("asset open %s failed: %v", spec.file, err)
 		}
