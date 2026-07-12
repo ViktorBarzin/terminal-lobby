@@ -1375,6 +1375,60 @@
         .settings-panel .sp-step button { flex: 0 0 36px; }
         .settings-panel .sp-step .sp-val { flex: 1 1 auto; text-align: center; }
 
+        /* Bottom-sheet presentation (Task M.5) — coarse-pointer chrome
+           for the settings panel + the Task 2.5 context menu. The
+           backdrop div is the ROOT (modal shade, tap = dismiss; its
+           background-color is what fades, so the sheet child never
+           inherits an opacity ramp); the sheet rides the SAME
+           --kb-offset + safe-area plumbing as the soft-key toolbar so
+           it lifts above the soft keyboard in the terminal iframe
+           (0px fallback in the lobby). Drag affordances (grip zone +
+           header) are touch-action:none pointer surfaces; the CONTENT
+           area keeps native scrolling — no scroll-vs-drag ambiguity
+           by construction, and zero touch listeners anywhere. */
+        .tl-sheet-backdrop {
+            position: fixed; inset: 0; z-index: 10000;
+            background: rgba(0, 0, 0, 0.35);
+            touch-action: none;
+        }
+        .tl-sheet {
+            position: absolute; left: 0; right: 0;
+            bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+            display: flex; flex-direction: column;
+            background: var(--bg-card);
+            border: 1px solid var(--border); border-bottom: 0;
+            border-radius: 14px 14px 0 0;
+            box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.4), var(--surface-shadow);
+            font-family: var(--font-ui);
+            will-change: transform, height;
+        }
+        .tl-sheet .tl-sheet-grip-zone {
+            flex: 0 0 auto; padding: 8px 0 6px;
+            touch-action: none; cursor: grab;
+        }
+        .tl-sheet .tl-sheet-grip {
+            width: 32px; height: 4px; border-radius: 2px; margin: 0 auto;
+            background: var(--border-strong);
+        }
+        .tl-sheet .tl-sheet-header {
+            flex: 0 0 auto; padding: 0 16px 8px;
+            font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--text-muted);
+            touch-action: none;
+        }
+        /* The wrapped surface becomes the sheet's scrollable content —
+           shed its popover chrome (fixed position/size/border/shadow),
+           keep its innards untouched. */
+        .tl-sheet .settings-panel,
+        .tl-sheet .popup-menu {
+            position: static; width: auto; max-width: none; max-height: none;
+            flex: 1 1 auto; min-height: 0; overflow-y: auto;
+            border: 0; border-radius: 0; box-shadow: none;
+            background: transparent;
+            overscroll-behavior: contain;
+            padding-bottom: 12px;
+        }
+
         /* Command palette (Task 4.1) — opt-in keybinding layer. Same
            surface language as .settings-panel; sits above every other
            overlay tier (they are all ≤10000, appended-later wins ties). */
@@ -1879,7 +1933,8 @@
             gestures: Object.freeze({
                 keyRepeat: true,      // Task M.1: hold-to-repeat on soft arrows/Tab
                 cardLongPress: true,  // Task M.4: long-press menu (cards + gallery thumbs)
-                overlaySwipe: true    // Task M.4: lightbox swipe-dismiss + swipe-nav
+                overlaySwipe: true,   // Task M.4: lightbox swipe-dismiss + swipe-nav
+                bottomSheet: true     // Task M.5: settings/menu bottom sheets (coarse pointers)
             })
         });
         const PREF_VALID = {
@@ -1894,7 +1949,8 @@
             gestures: {
                 keyRepeat: v => typeof v === 'boolean',
                 cardLongPress: v => typeof v === 'boolean',
-                overlaySwipe: v => typeof v === 'boolean'
+                overlaySwipe: v => typeof v === 'boolean',
+                bottomSheet: v => typeof v === 'boolean'
             }
         };
         function readRawPrefs() {
@@ -2759,6 +2815,176 @@
             return e;
         }
 
+        // ---- bottom-sheet presenter (Task M.5) --------------------------
+        // Coarse-pointer presentation for the settings panel and the Task
+        // 2.5 context menu — presentation ONLY, callers keep their own
+        // semantics. A fixed bottom sheet with a 32×4 grabber; pointer-
+        // drag lives on the grabber/header ONLY, so the content area
+        // scrolls natively (no scroll-vs-drag ambiguity) and NO touch
+        // listener exists anywhere in this module (pointer events +
+        // CSS touch-action on the handle elements, per-open, removed
+        // with the sheet — nothing standing, nothing near the terminal
+        // surface; red line untouched).
+        //   Detents (opts.detents, the settings panel): opens at 55% of
+        //   the visualViewport height, grabber-drag snaps 55%⇄92%.
+        //   Menus (no detents): content-sized, CAPPED at the 55% detent
+        //   (there is nothing to reveal past the content, so an up-drag
+        //   rubber-bands and springs back).
+        //   Dismiss: downward drag >25% of the sheet's height at drag
+        //   start (from the 92% detent additionally "below the 55%
+        //   detent", so 92→55 snaps stay reachable) or a backdrop tap —
+        //   both fire opts.onDismiss; the CALLER owns the close path
+        //   (settings routes through closeOverlay for the Task 2.3
+        //   focus return; the menu resolves its promise exactly like a
+        //   popover dismissal).
+        //   Bottom offset rides the EXISTING --kb-offset + safe-area
+        //   CSS plumbing (written by the terminal's syncViewport; 0px
+        //   fallback in the lobby) — deliberately NO new visualViewport
+        //   listeners: detents are measured at open and per drag.
+        // Returns { root, panel, close(done) }: close() slides out and
+        // then calls done() (which removes root, e.g. via closeOverlay).
+        function presentBottomSheet(contentEl, opts) {
+            opts = opts || {};
+            const vvH = () => (window.visualViewport
+                ? window.visualViewport.height : window.innerHeight);
+            const d55 = () => Math.round(vvH() * 0.55);
+            const d92 = () => Math.round(vvH() * 0.92);
+
+            const root = document.createElement('div');
+            root.className = 'tl-sheet-backdrop';
+            const panel = document.createElement('div');
+            panel.className = 'tl-sheet';
+            panel.setAttribute('role', 'dialog');
+            panel.setAttribute('aria-modal', 'true');
+            panel.setAttribute('aria-label', opts.title || 'Menu');
+            const grip = document.createElement('div');
+            grip.className = 'tl-sheet-grip-zone';
+            const bar = document.createElement('div');
+            bar.className = 'tl-sheet-grip';
+            grip.appendChild(bar);
+            panel.appendChild(grip);
+            let header = null;
+            if (opts.title) {
+                header = document.createElement('div');
+                header.className = 'tl-sheet-header';
+                header.textContent = opts.title;
+                panel.appendChild(header);
+            }
+            contentEl.classList.add('tl-sheet-content');
+            panel.appendChild(contentEl);
+            root.appendChild(panel);
+
+            // Height is set SYNCHRONOUSLY (only the slide-in animates), so
+            // callers and the battery can measure the detent immediately.
+            if (opts.detents) panel.style.height = d55() + 'px';
+            else panel.style.maxHeight = d55() + 'px';
+
+            panel.style.transform = 'translateY(105%)';
+            root.style.backgroundColor = 'rgba(0,0,0,0)';
+            document.body.appendChild(root);
+            requestAnimationFrame(() => {
+                panel.style.transition = 'transform 0.22s ease-out';
+                root.style.transition = 'background-color 0.2s ease-out';
+                panel.style.transform = '';
+                root.style.backgroundColor = '';
+            });
+
+            let closed = false;
+            function close(done) {
+                if (closed) { if (done) done(); return; }
+                closed = true;
+                // The exit animation must not eat taps meant for what's
+                // underneath (or a fast re-open of the gear button).
+                root.style.pointerEvents = 'none';
+                panel.style.transition = 'transform 0.18s ease-in';
+                root.style.transition = 'background-color 0.18s ease-in';
+                panel.style.transform = 'translateY(105%)';
+                root.style.backgroundColor = 'rgba(0,0,0,0)';
+                setTimeout(() => { if (done) done(); }, 190);
+            }
+
+            // Backdrop tap → dismiss. click, not pointerdown, so the M.4
+            // trailing-click swallower (window capture, armed before a
+            // long-press menu opens) still eats the opening press's lift.
+            root.addEventListener('click', (e) => {
+                if (e.target === root && !closed && opts.onDismiss) opts.onDismiss();
+            });
+
+            // Grabber/header drag. Pointer capture keeps the stream while
+            // the finger wanders; preventDefault on pointerdown because the
+            // handle is pure chrome — it must never steal focus (in the
+            // terminal iframe a focus flip would collapse the soft
+            // keyboard mid-gesture).
+            let drag = null;   // { id, y0, h0 }
+            const curH = () => panel.getBoundingClientRect().height;
+            function onDown(e) {
+                if (drag || closed || (e.button !== undefined && e.button !== 0)) return;
+                drag = { id: e.pointerId, y0: e.clientY, h0: curH() };
+                panel.style.transition = 'none';
+                root.style.transition = 'none';
+                if (!opts.detents) panel.style.maxHeight = 'none';   // let the rubber overshoot render
+                try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+                e.preventDefault();
+            }
+            function onMove(e) {
+                if (!drag || e.pointerId !== drag.id) return;
+                const dy = e.clientY - drag.y0;              // >0 = downward
+                const hi = opts.detents ? d92() : drag.h0;
+                let h = drag.h0 - dy;
+                if (h > hi) h = hi + (h - hi) * 0.15;        // rubber past the top
+                if (h < 0) h = 0;
+                panel.style.height = h + 'px';
+                const drop = Math.max(0, dy);                // fade shade on the way down
+                root.style.backgroundColor =
+                    'rgba(0,0,0,' + (0.35 * Math.max(0.3, 1 - drop / (drag.h0 * 1.33))).toFixed(3) + ')';
+            }
+            function settle(snapH, clearH) {
+                panel.style.transition = 'height 0.2s ease, transform 0.2s ease';
+                root.style.transition = 'background-color 0.2s ease';
+                root.style.backgroundColor = '';
+                panel.style.height = snapH + 'px';
+                if (clearH) setTimeout(() => {
+                    if (!closed && !drag) {
+                        panel.style.height = '';
+                        panel.style.maxHeight = d55() + 'px';
+                    }
+                }, 210);
+            }
+            function endDrag(e, cancelled) {
+                if (!drag || e.pointerId !== drag.id) return;
+                const dy = e.clientY - drag.y0;
+                const h0 = drag.h0;
+                drag = null;
+                const h = curH();
+                if (opts.detents) {
+                    const dismiss = !cancelled && dy > h0 * 0.25 && h < d55();
+                    if (dismiss) { if (opts.onDismiss) opts.onDismiss(); return; }
+                    settle(h > (d55() + d92()) / 2 ? d92() : d55(), false);
+                } else {
+                    const dismiss = !cancelled && dy > h0 * 0.25;
+                    if (dismiss) { if (opts.onDismiss) opts.onDismiss(); return; }
+                    settle(h0, true);                        // spring back, then height:auto again
+                }
+            }
+            for (const el of (header ? [grip, header] : [grip])) {
+                el.addEventListener('pointerdown', onDown);
+                el.addEventListener('pointermove', onMove);
+                el.addEventListener('pointerup', (e) => endDrag(e, false));
+                el.addEventListener('pointercancel', (e) => endDrag(e, true));
+            }
+            return { root, panel, close };
+        }
+        // Sheet presentation gate: coarse primary pointer AND the Wave-5
+        // tl-gestures master kill AND the roamed per-feature flag
+        // (gestures.bottomSheet, default on). Evaluated at every open —
+        // a flip applies to the NEXT open, no reload.
+        function sheetPresentationWanted() {
+            try {
+                return matchMedia('(pointer: coarse)').matches &&
+                    gesturesEnabled() && getPrefs().gestures.bottomSheet;
+            } catch (e) { return false; }
+        }
+
         // ---- right-click context menu (Task 2.5) -----------------------
         // Promise-based DOM menu, ported from T3's contextMenuFallback.ts
         // (rAF first-frame dismissal guard + 4px viewport clamping;
@@ -2775,6 +3001,13 @@
             return new Promise((resolve) => {
                 const menu = document.createElement('div');
                 menu.className = 'popup-menu';
+                // Task M.5: on coarse pointers (flags permitting) the same
+                // menu presents as a bottom sheet instead of an at-pointer
+                // popup — presentation ONLY: items, the promise shape,
+                // Escape/outside dismissal and the M.4 swallower interplay
+                // are unchanged.
+                const asSheet = sheetPresentationWanted();
+                let sheet = null;
                 let disposed = false;
                 // T3's canDismissFromPointer: the pointer gesture that
                 // OPENED the menu is still dispatching — outside-dismissal
@@ -2786,9 +3019,19 @@
                     window.removeEventListener('keydown', onKey, true);
                     window.removeEventListener('pointerdown', onPointer, true);
                     window.removeEventListener('contextmenu', onCtx, true);
-                    menu.remove();
+                    if (sheet) sheet.close(() => sheet.root.remove());
+                    else menu.remove();
                     resolve(result);
                 };
+                // Outside-dismissal must ignore the sheet's own chrome
+                // (grabber drags start there): "inside" is the sheet PANEL
+                // when presented as a sheet. The BACKDROP is special-cased
+                // too — dismissing it on pointerdown would remove the shade
+                // before the tap's trailing CLICK hit-tests, letting that
+                // click fall through onto whatever sits underneath (a card
+                // tap-through, observed in the harness); the backdrop's own
+                // click listener dismisses instead, consuming the tap.
+                const within = (t) => (sheet ? sheet.panel : menu).contains(t);
                 const onKey = (e) => {
                     if (e.key !== 'Escape') return;
                     e.preventDefault();
@@ -2796,12 +3039,14 @@
                     cleanup(null);
                 };
                 const onPointer = (e) => {
-                    if (!canDismiss || menu.contains(e.target)) return;
+                    if (!canDismiss || within(e.target)) return;
+                    if (sheet && e.target === sheet.root) return;   // backdrop: its click dismisses
                     cleanup(null);
                 };
                 const onCtx = (e) => {
-                    if (!canDismiss || menu.contains(e.target)) return;
+                    if (!canDismiss || within(e.target)) return;
                     e.preventDefault();   // this right-click dismisses, it doesn't browse
+                    if (sheet && e.target === sheet.root) return;   // hold on backdrop: lift-click dismisses
                     cleanup(null);
                 };
                 for (const it of items) {
@@ -2823,19 +3068,30 @@
                     });
                     menu.appendChild(b);
                 }
-                menu.style.left = x + 'px';
-                menu.style.top = y + 'px';
-                document.body.appendChild(menu);
-                requestAnimationFrame(() => {
-                    // 4px viewport clamp (T3's clampMenuPosition), after
-                    // layout so the measured size is real.
-                    const r = menu.getBoundingClientRect();
-                    menu.style.left = Math.min(Math.max(4, x),
-                        Math.max(4, window.innerWidth - r.width - 4)) + 'px';
-                    menu.style.top = Math.min(Math.max(4, y),
-                        Math.max(4, window.innerHeight - r.height - 4)) + 'px';
-                    canDismiss = true;
-                });
+                if (asSheet) {
+                    // Sheet presentation ignores the anchor point (the
+                    // sheet is bottom-fixed); backdrop tap and >25% grabber
+                    // drag-down resolve null — the popover's dismissal
+                    // contract, so callers keep their focus semantics.
+                    sheet = presentBottomSheet(menu, {
+                        onDismiss: () => cleanup(null)
+                    });
+                    requestAnimationFrame(() => { canDismiss = true; });
+                } else {
+                    menu.style.left = x + 'px';
+                    menu.style.top = y + 'px';
+                    document.body.appendChild(menu);
+                    requestAnimationFrame(() => {
+                        // 4px viewport clamp (T3's clampMenuPosition), after
+                        // layout so the measured size is real.
+                        const r = menu.getBoundingClientRect();
+                        menu.style.left = Math.min(Math.max(4, x),
+                            Math.max(4, window.innerWidth - r.width - 4)) + 'px';
+                        menu.style.top = Math.min(Math.max(4, y),
+                            Math.max(4, window.innerHeight - r.height - 4)) + 'px';
+                        canDismiss = true;
+                    });
+                }
                 window.addEventListener('keydown', onKey, true);
                 window.addEventListener('pointerdown', onPointer, true);
                 window.addEventListener('contextmenu', onCtx, true);
@@ -4609,6 +4865,7 @@
             // kill-switch (plain tl-flow-control localStorage key).
             const settingsBtn = document.getElementById('settings-btn');
             let settingsPanel = null;
+            let settingsSheet = null;   // Task M.5: non-null while presented as a bottom sheet
             function paintSettingsPanel() {
                 if (!settingsPanel) return;
                 const p = getPrefs();
@@ -4628,6 +4885,8 @@
                 if (lp) lp.checked = p.gestures.cardLongPress; // coarse-pointer row only (M.4)
                 const os = settingsPanel.querySelector('#sp-overlayswipe');
                 if (os) os.checked = p.gestures.overlaySwipe;  // coarse-pointer row only (M.4)
+                const bs = settingsPanel.querySelector('#sp-sheet');
+                if (bs) bs.checked = p.gestures.bottomSheet;   // coarse-pointer row only (M.5)
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     const val = String(p[seg.dataset.pref]);
                     seg.querySelectorAll('button').forEach(b => {
@@ -4648,21 +4907,35 @@
             function closeSettings(refocus) {
                 if (!settingsPanel) return;
                 const el = settingsPanel;
+                const sheet = settingsSheet;
                 settingsPanel = null;
+                settingsSheet = null;
                 settingsBtn.setAttribute('aria-expanded', 'false');
                 document.removeEventListener('pointerdown', onSettingsOutside, true);
                 document.removeEventListener('keydown', onSettingsKey, true);
-                if (refocus) closeOverlay(el);   // remove + focus return (Task 2.3)
+                if (sheet) {
+                    // Task M.5: slide out, then remove the whole sheet root.
+                    // Dismissals keep the Task 2.3 focus-return contract.
+                    sheet.close(() => {
+                        if (refocus) closeOverlay(sheet.root);
+                        else sheet.root.remove();
+                    });
+                } else if (refocus) closeOverlay(el);   // remove + focus return (Task 2.3)
                 else el.remove();
             }
             function openSettings() {
+                const asSheet = sheetPresentationWanted();   // Task M.5
                 const panel = document.createElement('div');
                 panel.className = 'settings-panel';
                 panel.id = 'settings-panel';
-                const title = document.createElement('div');
-                title.className = 'sp-title';
-                title.textContent = 'Terminal settings';
-                panel.appendChild(title);
+                if (!asSheet) {
+                    // Sheet mode hoists the title into the sheet header
+                    // (a drag surface); popover mode keeps it in-panel.
+                    const title = document.createElement('div');
+                    title.className = 'sp-title';
+                    title.textContent = 'Terminal settings';
+                    panel.appendChild(title);
+                }
 
                 function row(labelText) {
                     const d = document.createElement('div');
@@ -4807,6 +5080,40 @@
                     os.addEventListener('change',
                         () => setPrefs({ gestures: { overlaySwipe: os.checked } }));
                     osRow.appendChild(os);
+
+                    // Task M.5: bottom-sheet presentation for this panel +
+                    // the card/thumb context menu. Off = the desktop-style
+                    // anchored popover / at-pointer menu. Applies at the
+                    // NEXT open (this one keeps its presentation).
+                    const bsRow = row('Bottom sheets');
+                    const bs = document.createElement('input');
+                    bs.type = 'checkbox';
+                    bs.id = 'sp-sheet';
+                    bs.title = 'Present settings and long-press menus as a ' +
+                        'draggable bottom sheet. Off: desktop-style popups.';
+                    bs.addEventListener('change',
+                        () => setPrefs({ gestures: { bottomSheet: bs.checked } }));
+                    bsRow.appendChild(bs);
+                }
+
+                if (asSheet) {
+                    // Task M.5: coarse-pointer presentation — bottom sheet
+                    // with 55%/92% visualViewport detents. Backdrop tap and
+                    // >25% grabber drag-down are DISMISSALS: they route
+                    // through closeSettings(true) → closeOverlay so the
+                    // terminal gets the keyboard back (Task 2.3). The
+                    // document-level outside-dismiss listener is not
+                    // registered: the backdrop is modal and owns "outside".
+                    settingsSheet = presentBottomSheet(panel, {
+                        title: 'Terminal settings',
+                        detents: true,
+                        onDismiss: () => closeSettings(true)
+                    });
+                    settingsPanel = panel;
+                    paintSettingsPanel();
+                    settingsBtn.setAttribute('aria-expanded', 'true');
+                    document.addEventListener('keydown', onSettingsKey, true);
+                    return;
                 }
 
                 document.body.appendChild(panel);

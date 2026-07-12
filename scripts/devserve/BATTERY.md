@@ -59,6 +59,12 @@ per-user via sudo), so:
   ignores the URL arg, and always attaches scratch `main`.)
 - Before/after every battery run: `tmux ls` (default server) must list the
   same session names.
+- Settings-panel changes PUT the **live roamed `/prefs` doc** for `--user`
+  (400 ms debounce) — an aborted run leaves e.g. `gestures.bottomSheet=false`
+  roaming to the user's real devices (bit us 2026-07-12). Any battery leg
+  that flips panel toggles must `GET /prefs` (header
+  `X-Authentik-Username: <user>`) before the run and `PUT` the snapshot back
+  after — or point the harness at a scratch tmux-api (Task 2.6 recipe).
 
 ## A. Red-line battery (run after EVERY wave and before deploy)
 
@@ -1116,8 +1122,11 @@ implements the feature. Format:
 - [Task M.4] Card long-press (raw CDP `Input.dispatchTouchEvent`,
   Pixel-7-class coarse emulation; create `tl-battery-m4` on the REAL
   server first — isolation rules): touchStart at the card center, hold
-  600 ms, touchEnd → ONE `.popup-menu` at the touch point with
-  Move to…/Session/Rename/Kill (the same Task 2.5 menu as right-click),
+  600 ms, touchEnd → ONE `.popup-menu` with
+  Move to…/Session/Rename/Kill (the same Task 2.5 menu as right-click)
+  — since Task M.5 it arrives WRAPPED in a `.tl-sheet` bottom sheet on
+  coarse pointers (assert the menu + items, not the position; with
+  `gestures.bottomSheet=false` it is the original at-pointer popup) —
   the press does NOT attach (`location.hash` unchanged — the trailing
   lift-click is swallowed by the one-shot capture flag), Escape
   dismisses. Cards report `draggable === false` under `pointer: coarse`
@@ -1173,3 +1182,39 @@ implements the feature. Format:
   holds (touch-discriminator IIFE byte-identical to the Stage-A deploy,
   re-checked 2026-07-12). Cleanup: kill the battery session +
   `rm -rf /var/lib/clipboard-store/<osUser>/tl-battery-m4`.
+- [Task M.5] Settings bottom sheet (390×844 coarse emulation; drags are
+  raw CDP `Input.dispatchTouchEvent` with FINE steps on the grabber —
+  coarse dispatch false-greens, plan M.8): tap the sidebar ⚙ →
+  `#settings-panel` arrives inside a `.tl-sheet` (32×4 px
+  `.tl-sheet-grip`, 'Terminal settings' `.tl-sheet-header`, modal
+  `.tl-sheet-backdrop`) whose rect height ==
+  `round(0.55 × visualViewport.height)` ±1 (55% detent) and whose CSS
+  `bottom` is the `calc(var(--kb-offset, 0px) +
+  env(safe-area-inset-bottom))` plumbing (NO new visualViewport
+  listener anywhere — code-inspect); every Task 2.6/3.5/4.1/M.x control
+  is present and live (A+ still moves `#font-size-value`), and a
+  touch-drag on the CONTENT rows scrolls them natively without moving
+  the sheet (drag surfaces are grabber/header ONLY). Grabber-drag UP
+  past the 55/92 midpoint → height snaps to `round(0.92 × vvH)` ±1;
+  grabber-drag DOWN >25% of the sheet height → sheet closes through
+  closeSettings(true) → closeOverlay: type immediately → keystrokes
+  land in the pty (`tmux -L tl-dev capture-pane -p -t main` shows the
+  command). A sub-25% drag springs back (still open, same detent);
+  backdrop tap and Escape close the same way; reopen → 55% again (the
+  detent is per-open, not persisted).
+- [Task M.5] Menu-as-sheet + opt-outs: long-press a session card (M.4
+  recipe) → the SAME Task 2.5 items now inside a `.tl-sheet` (content-
+  sized, CAPPED at the 55% detent — an up-drag rubber-bands back);
+  tapping an item acts (and Rename keeps its keepFocus contract);
+  backdrop tap resolves null with NO action; the M.4 trailing-click
+  swallow still holds (the opening press never attaches). Gallery-thumb
+  long-press inside the terminal iframe → same sheet presentation
+  (Open / Insert path / Download). Opt-outs, live at the NEXT open (no
+  reload): untick `#sp-sheet` (writes `gestures.bottomSheet=false`) or
+  set `tl-gestures`='off' → settings reopens as the anchored popover
+  and long-press yields the at-pointer `.popup-menu` again; desktop
+  fine-pointer contexts NEVER see a sheet (popover/at-pointer always).
+  Red line: presentation-only — zero terminal-surface listeners, zero
+  touch\* listeners (grabber/header are per-open pointer-event
+  surfaces with CSS touch-action:none; content scrolls natively), §A.5
+  passes unchanged after a sheet open/dismiss cycle.
