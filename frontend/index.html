@@ -1963,7 +1963,8 @@
                 // reclaimed ~50px survives reloads.
                 swipeSession: true,   // Task M.6: 3-finger horizontal swipe cycles sessions
                 twoFingerTap: true,   // Task M.6: 2-finger tap toggles the soft-key toolbar
-                toolbarHidden: false  // Task M.6: soft-key toolbar currently hidden
+                toolbarHidden: false, // Task M.6: soft-key toolbar currently hidden
+                haptics: true         // Task M.7: vibration cues (Android-only API)
             })
         });
         const PREF_VALID = {
@@ -1982,7 +1983,8 @@
                 bottomSheet: v => typeof v === 'boolean',
                 swipeSession: v => typeof v === 'boolean',
                 twoFingerTap: v => typeof v === 'boolean',
-                toolbarHidden: v => typeof v === 'boolean'
+                toolbarHidden: v => typeof v === 'boolean',
+                haptics: v => typeof v === 'boolean'
             }
         };
         function readRawPrefs() {
@@ -2161,6 +2163,35 @@
         const GESTURES_KILL_KEY = 'tl-gestures';
         function gesturesEnabled() {
             try { return localStorage.getItem(GESTURES_KILL_KEY) !== 'off'; } catch (e) { return true; }
+        }
+
+        // ---- haptic vocabulary (Task M.7) ------------------------------
+        // ONE helper, three grades — every touch/gesture call site routes
+        // through it instead of ad-hoc navigator.vibrate patterns:
+        //   selection (5ms)        soft-key taps, hold-to-repeat ticks,
+        //                          font-size step commits, Copy/Sel success
+        //   impact    (15ms)       long-press menu open, session-switch
+        //                          commit, toolbar toggle
+        //   error     (10,60,10)   error toasts
+        // Android-only progressive enhancement: iOS ships NO web vibration
+        // API (2026), so the optional call is a safe no-op there — which is
+        // why every call site pairs the pulse with a visual cue (pressed
+        // button, menu, pill, toast) and loses nothing without it. Works
+        // from the terminal iframe too (same-origin, unsandboxed: the
+        // in-flight touch supplies user activation; pre-activation calls —
+        // e.g. a boot-time error toast — just return false). Gated per
+        // call (live, no reload) by the tl-gestures master kill + roamed
+        // tl:prefs:v1 gestures.haptics; the settings row renders only
+        // where 'vibrate' in navigator.
+        const HAPTIC_PATTERNS = Object.freeze({
+            selection: 5,
+            impact: 15,
+            error: Object.freeze([10, 60, 10])
+        });
+        function haptic(kind) {
+            if (!HAPTIC_PATTERNS.hasOwnProperty(kind)) return;
+            if (!(gesturesEnabled() && getPrefs().gestures.haptics)) return;
+            navigator.vibrate?.(HAPTIC_PATTERNS[kind]);
         }
 
         // ---- keybinding layer + command palette (Task 4.1) -------------
@@ -2717,14 +2748,19 @@
                 arm(t);
                 stack.appendChild(t.el);
                 syncVisible();
+                if (t.opts.type === 'error') haptic('error');   // Task M.7
                 return id;
             }
             function update(id, opts) {
                 const t = toasts.get(id);
                 if (!t) return;
+                const wasError = t.opts.type === 'error';
                 Object.assign(t.opts, opts || {});
                 render(t); // t.expanded survives the re-render
                 arm(t);
+                // Task M.7: a toast TURNING into an error buzzes like a new
+                // one; re-rendering an already-error toast stays silent.
+                if (t.opts.type === 'error' && !wasError) haptic('error');
             }
             function close(id) {
                 const t = toasts.get(id);
@@ -3219,7 +3255,7 @@
                 lastFire = Date.now();
                 if (fromTouch) {
                     armSwallowers(alsoCtxSwallow);
-                    navigator.vibrate?.(10);
+                    haptic('impact');   // Task M.7 vocabulary (menu open)
                 }
                 fn(x, y);
             }
@@ -4854,7 +4890,10 @@
             const fontValEl = document.getElementById('font-size-value');
             function paintFontSize() { fontValEl.textContent = getPrefs().fontSize; }
             function stepFontSize(delta) {
-                setPrefs({ fontSize: clampFontSize(getPrefs().fontSize + delta) });
+                const before = getPrefs().fontSize;
+                const next = setPrefs({ fontSize: clampFontSize(before + delta) });
+                // Task M.7: tick only when the step actually committed.
+                if (next.fontSize !== before) haptic('selection');
             }
             document.getElementById('font-size-dec').addEventListener('click', () => stepFontSize(-1));
             document.getElementById('font-size-inc').addEventListener('click', () => stepFontSize(1));
@@ -4923,6 +4962,8 @@
                 if (sw) sw.checked = p.gestures.swipeSession;  // Android coarse row only (M.6)
                 const tf = settingsPanel.querySelector('#sp-twofinger');
                 if (tf) tf.checked = p.gestures.twoFingerTap;  // coarse-pointer row only (M.6)
+                const hp = settingsPanel.querySelector('#sp-haptics');
+                if (hp) hp.checked = p.gestures.haptics;       // coarse row, vibrate-capable only (M.7)
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     const val = String(p[seg.dataset.pref]);
                     seg.querySelectorAll('button').forEach(b => {
@@ -5161,6 +5202,22 @@
                     tf.addEventListener('change',
                         () => setPrefs({ gestures: { twoFingerTap: tf.checked } }));
                     tfRow.appendChild(tf);
+
+                    // Task M.7: haptic cues — rendered ONLY where the
+                    // vibration API exists (Android/Chromium; iOS ships
+                    // none, so a toggle there would govern nothing —
+                    // same posture as the Android-only swipe row).
+                    if ('vibrate' in navigator) {
+                        const hpRow = row('Haptics');
+                        const hp = document.createElement('input');
+                        hp.type = 'checkbox';
+                        hp.id = 'sp-haptics';
+                        hp.title = 'Vibrate briefly on soft-key taps, ' +
+                            'gesture commits and error toasts.';
+                        hp.addEventListener('change',
+                            () => setPrefs({ gestures: { haptics: hp.checked } }));
+                        hpRow.appendChild(hp);
+                    }
                 }
 
                 if (asSheet) {
@@ -6296,8 +6353,8 @@
             // key repeats at a time (pressing another repeat key takes the
             // slot over). The initial send fires on pointerdown like any
             // key; REPEAT_DELAY_MS later the action re-fires every
-            // REPEAT_INTERVAL_MS with a vibrate(5) tick until the hold
-            // ends. Opt-outs, both read per press (no reload needed):
+            // REPEAT_INTERVAL_MS with a haptic('selection') tick until the
+            // hold ends. Opt-outs, both read per press (no reload needed):
             // tl:prefs:v1 gestures.keyRepeat (roamed, settings panel) and
             // the tl-gestures master kill.
             const REPEAT_DELAY_MS = 500, REPEAT_INTERVAL_MS = 60;
@@ -6313,7 +6370,7 @@
                 repeatDelayTimer = setTimeout(() => {
                     repeatTicker = setInterval(() => {
                         try { fire(); } catch (err) { console.error(err); }
-                        navigator.vibrate?.(5);
+                        haptic('selection');   // Task M.7 vocabulary
                     }, REPEAT_INTERVAL_MS);
                 }, REPEAT_DELAY_MS);
             }
@@ -6330,6 +6387,7 @@
                 // the soft keyboard between keystrokes).
                 b.addEventListener('pointerdown', (ev) => {
                     ev.preventDefault();
+                    haptic('selection');   // Task M.7: every soft-key tap
                     try { onTap(); } catch (err) { console.error(err); }
                     // Task M.1: arm hold-to-repeat (arrows + Tab) after the
                     // initial send above.
@@ -6415,6 +6473,8 @@
                             showToast('Tap Sel first', 'error', 2000);
                         } else if (!resp.ok) {
                             showToast(label + ' failed: HTTP ' + resp.status, 'error', 2500);
+                        } else {
+                            haptic('selection');   // Task M.7: Sel/Mark/Yank landed
                         }
                     } catch (err) {
                         showToast(label + ' error: ' + err.message, 'error', 2500);
@@ -6456,6 +6516,7 @@
                             await navigator.clipboard.writeText(await captured);
                         }
                         showToast('Screen copied', 'success', 1500);
+                        haptic('selection');   // Task M.7: copy success
                     } catch (err) {
                         showToast('Copy failed', 'error', 2500);
                     }
@@ -6464,6 +6525,7 @@
                 try {
                     await navigator.clipboard.writeText(sel);
                     showToast('Copied', 'success', 1500);
+                    haptic('selection');   // Task M.7: copy success
                 } catch (err) {
                     showToast('Copy failed', 'error', 2500);
                 }
@@ -6617,6 +6679,7 @@
                     tap = null;
                     if (!ok) return;
                     setToolbarHidden(!toolbarHidden, true);
+                    haptic('impact');   // Task M.7 vocabulary (toolbar toggle)
                     if (toolbarHidden && !toolbarHintShown) {
                         toolbarHintShown = true;
                         showToast('Two-finger tap to restore keys', 'info', 2500);
@@ -6715,7 +6778,9 @@
                                 Math.abs(meanDx) >= SWIPE_COMMIT_PX &&
                                 Math.abs(meanDx) > 2 * Math.abs(meanDy)) {
                             sw.committed = true;
-                            navigator.vibrate?.([10, 10]);
+                            // Task M.7 vocabulary: session-switch commit =
+                            // impact (supersedes M.6's ad-hoc [10,10]).
+                            haptic('impact');
                             postSessionCycle(meanDx < 0 ? 1 : -1);
                         }
                     },
@@ -7476,7 +7541,12 @@
         // fires tl-prefs-change → applyTermPrefs above; the trailing
         // direct apply covers the no-change case (already-synced doc).
         function applyFontSize(n) {
-            setPrefs({ fontSize: clampFontSize(n) });
+            const before = getPrefs().fontSize;
+            const next = setPrefs({ fontSize: clampFontSize(n) });
+            // Task M.7: selection-grade tick per COMMITTED step (clamped
+            // no-ops at 10/22 stay silent). Pinch steps (M.8) ride this
+            // same shared fn.
+            if (next.fontSize !== before) haptic('selection');
             applyTermPrefs(getPrefs());
         }
         document.getElementById('font-dec-btn').addEventListener('click', () => {
