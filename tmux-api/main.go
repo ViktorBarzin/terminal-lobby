@@ -18,7 +18,6 @@ import (
 const (
 	listenAddr     = "0.0.0.0:7684"
 	authHeader     = "X-Authentik-Username"
-	tmuxBinary     = "/usr/bin/tmux"
 	sudoBinary     = "/usr/bin/sudo"
 	restoreWrapper = "/usr/local/bin/tmux-restore-user"
 	// @claude_state is stamped by the claude-tmux-state hook script
@@ -50,6 +49,12 @@ var sessionsCacheInstance = newSessionsCache(sessionsTTL)
 // (not const) purely as a test seam: handler tests point it at a fixture
 // so the real header→user path runs hermetically (see prefs_test.go).
 var mapPath = "/etc/ttyd-user-map"
+
+// tmuxBinary is a var (not const) for the same reason as mapPath: endpoint
+// tests swap it for a stub that records its argv and mimics tmux exit
+// codes/stderr, so the full HTTP→tmuxCmd path runs hermetically without a
+// live tmux server (see copymode_test.go). Production never reassigns it.
+var tmuxBinary = "/usr/bin/tmux"
 
 var sessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
@@ -407,6 +412,22 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		renameSession(w, r, osUser, name)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "copy-mode" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		copyModeSession(w, r, osUser, name)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "capture" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		captureSession(w, osUser, name)
 		return
 	}
 	http.Error(w, "not found", http.StatusNotFound)

@@ -1058,3 +1058,58 @@ implements the feature. Format:
   Stage-A deploy (`git show 6773cbd:frontend/index.html` extract == HEAD
   extract). The modifier state machine (softMods/tapMod/paintMod) is
   likewise untouched.
+- [Task M.2] Go side: `go test ./...` in `tmux-api/` green — incl. the
+  copy-mode/capture table suite (POST `/sessions/{name}/copy-mode` entry +
+  whitelisted Mark/Yank `-X` relay with exact tmux argv asserted via the
+  stub seam, `can't find pane` → 404, non-whitelisted command / bad JSON →
+  400, `not in a mode` → 409, wrong method → 405, no header → 401 /
+  unmapped user → 403 with tmux NEVER invoked, and GET capture body =
+  tmux stdout VERBATIM — stderr excluded). End-to-end needs a SCRATCH
+  build (production tmux-api predates the endpoints): the Task 2.6 recipe
+  (`TMUX_API_ADDR=127.0.0.1:17684 TMUX_API_PREFS_DIR=$SCRATCH/prefs`,
+  harness `--tmux-api-port 17684`).
+- [Task M.2] Endpoint wiring leg — HARNESS SPLIT-BRAIN NOTE: tmux-api
+  operates the REAL default server while the pty the browser renders is
+  scratch `main`, so the flow verifies in two halves (in production they
+  are the same session and the taps compose into one end-to-end flow,
+  probe-proven 2026-07-11: clipboard == show-buffer == 'ALPHA BRAVO').
+  (a) Wiring: `tmux new-session -d -s tl-battery-copy` (REAL server —
+  isolation rules; give it screen content), coarse-pointer emulation
+  (Pixel-7 class), attach `#tl-battery-copy`; tap `Sel` (scroll the
+  sk-row) → `tmux display -p -t tl-battery-copy '#{pane_in_mode}'` → `1`;
+  tap `Mark` → `#{selection_present}` → `1`; tap `Yank` →
+  `#{pane_in_mode}` → `0` AND `tmux show-buffer` holds the selected text
+  (no OSC52 reaches the browser in THIS leg — nothing is attached to
+  tl-battery-copy in the harness; the browser-clipboard half is leg (b)).
+  409 guard: with the pane OUT of copy-mode, tap `Mark` or `Yank` →
+  'Tap Sel first' toast, pane state unchanged.
+- [Task M.2] (b) In-terminal copy flow — the proven ~30 s probe sequence
+  on the scratch pty (copy-mode entered CLI-side because tmux-api cannot
+  target `-L tl-dev`; the tap→endpoint hop is leg (a)): make scrollback
+  (`seq 1 40`), `tmux -L tl-dev copy-mode -t main`; tap soft `↑` twice →
+  `#{copy_cursor_line}`/`#{copy_cursor_y}` change (arrows drive the copy
+  cursor through the normal WS input path);
+  `tmux -L tl-dev send-keys -t main -X begin-selection` (CLI stand-in for
+  Mark) + more arrows → `#{selection_present}` → `1` and the selection
+  grows; press Enter (the keyboard path; Yank is the binding-independent
+  server equivalent) → copy-mode exits, 'Copied' toast (the OSC52
+  provider) and `clipboard.readText()` == `tmux -L tl-dev show-buffer`.
+- [Task M.2] Copy screen-capture fallback: attached to `#tl-battery-copy`
+  with NO xterm selection (`window.__term.hasSelection()` → `false`), tap
+  `Copy` → 'Screen copied' toast and `clipboard.readText()` ==
+  `tmux capture-pane -p -J -t tl-battery-copy` output (REAL server;
+  trailing blank screen rows included). The write hands the fetch to
+  `navigator.clipboard.write` as a ClipboardItem PROMISE synchronously in
+  the tap gesture (iOS transient-activation wrapper — an awaited fetch
+  hop would void it); contexts without ClipboardItem fall back to
+  `writeText(await …)`. Desktop unchanged: with an xterm selection
+  present, Copy writes the SELECTION and toasts 'Copied' (the fallback
+  fires only on empty).
+- [Task M.2] INVERTED guard stays: a single-finger vertical drag over the
+  terminal still wheels (§A.5 — scratch `main` scrolls/enters copy-mode)
+  and `term.hasSelection()` stays `false` — touch can never create an
+  xterm selection; that is WHY the copy path is server-side. Soft-key row
+  order now: Esc Tab ⇧Tab Ctrl Alt ↑↓←→ | ` / - Sel Mark Yank Copy Paste
+  Kbd. Red line: the touch-discriminator IIFE + modifier machine stay
+  byte-identical (M.1 standing diff guard). Cleanup:
+  `tmux kill-session -t tl-battery-copy`.
