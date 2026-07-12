@@ -1898,6 +1898,10 @@
         const RESTORE_API  = '/api/sessions/restore';
         const WHOAMI_API   = '/api/sessions/whoami';
         const LAYOUT_API   = '/api/sessions/layout';
+        // Web Push (Notifications Part 2): both ride the same /api/sessions/
+        // tmux-api prefix as /prefs.
+        const PUSH_SUBS_API    = '/api/sessions/push-subscriptions';
+        const VAPID_PUBLIC_API = '/api/sessions/push/vapid-public';
         const params = new URLSearchParams(location.search);
         const rawArg = params.get('arg');
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
@@ -4059,6 +4063,62 @@
             function notifyDeliverable() {
                 return !!swRegistration || notifyConstructorUsable();
             }
+
+            // --- background Web Push (Notifications Part 2) ----------------
+            // Layered ON TOP of the foreground path above: subscribing lets
+            // the server (tmux-api pushsender.go) notify even when no tab is
+            // open. Everything here is BEST-EFFORT — if the server has no
+            // VAPID key (vapid-public 404s), the browser lacks PushManager,
+            // or subscribe() is refused, we silently stay foreground-only.
+            // The shared tag 'tl-<session>' coalesces a background push with
+            // any foreground notification, so the user is alerted at most once.
+            function base64urlToUint8Array(base64url) {
+                const pad = '='.repeat((4 - (base64url.length % 4)) % 4);
+                const b64 = (base64url + pad).replace(/-/g, '+').replace(/_/g, '/');
+                const raw = atob(b64);
+                const out = new Uint8Array(raw.length);
+                for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+                return out;
+            }
+            async function subscribePush() {
+                try {
+                    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+                    const reg = await navigator.serviceWorker.ready;
+                    const resp = await fetch(VAPID_PUBLIC_API, { credentials: 'same-origin' });
+                    if (!resp.ok) return;            // 404 → push dark server-side
+                    const key = (await resp.text()).trim();
+                    if (!key) return;
+                    let sub = await reg.pushManager.getSubscription();
+                    if (!sub) {
+                        sub = await reg.pushManager.subscribe({
+                            userVisibleOnly: true,
+                            applicationServerKey: base64urlToUint8Array(key)
+                        });
+                    }
+                    await fetch(PUSH_SUBS_API, {
+                        method: 'PUT',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(sub.toJSON ? sub.toJSON() : sub)
+                    });
+                } catch (e) { /* enhancement only — foreground path still delivers */ }
+            }
+            async function unsubscribePush() {
+                try {
+                    if (!('serviceWorker' in navigator)) return;
+                    const reg = await navigator.serviceWorker.ready;
+                    const sub = await reg.pushManager.getSubscription();
+                    if (!sub) return;
+                    const endpoint = sub.endpoint;
+                    await sub.unsubscribe();
+                    await fetch(PUSH_SUBS_API, {
+                        method: 'DELETE',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ endpoint })
+                    });
+                } catch (e) { /* best-effort; the server prunes dead endpoints on 404/410 */ }
+            }
             async function fireNotification(session) {
                 const title = session + ' needs input';
                 const opts = {
@@ -4124,13 +4184,30 @@
                     : 'Notify me when a session needs input';
             }
             if (typeof Notification === 'undefined') {
-                // iOS Safari outside an installed PWA has no Notification.
-                notifyToggleEl.style.display = 'none';
+                // No Notification API here. On iOS this means Safari OUTSIDE an
+                // installed PWA: Apple allows web push only from a Home-Screen
+                // app, so keep the bell visible and, on tap, tell the user how
+                // to enable it (PushManager is likewise absent until then).
+                // Everywhere else it is genuinely unsupported → hide the bell.
+                const iOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+                    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                    window.navigator.standalone === true;
+                if (iOS && !standalone && !('PushManager' in window)) {
+                    notifyToggleEl.title = 'Install to Home Screen for notifications';
+                    notifyToggleEl.addEventListener('click', () => {
+                        showToast('On iPhone/iPad: tap Share, then "Add to Home Screen", ' +
+                            'open the installed app, and enable notifications there.', 'info', 6000);
+                    });
+                } else {
+                    notifyToggleEl.style.display = 'none';
+                }
             } else {
                 notifyToggleEl.addEventListener('click', async () => {
                     if (notifyOptedIn() && Notification.permission === 'granted') {
                         try { localStorage.setItem(NOTIFY_KEY, '0'); } catch (e) {}
                         paintNotifyToggle();
+                        unsubscribePush();  // drop this device's background push too
                         return;
                     }
                     let perm = Notification.permission;
@@ -4156,6 +4233,9 @@
                     try { localStorage.setItem(NOTIFY_KEY, '1'); } catch (e) {}
                     paintNotifyToggle();
                     showToast('You will be notified when a session needs input', 'success', 3000);
+                    // Also register for BACKGROUND push (works when no tab is
+                    // open); best-effort, foreground already works without it.
+                    subscribePush();
                 });
             }
             paintNotifyToggle();
