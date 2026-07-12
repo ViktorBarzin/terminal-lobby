@@ -6519,9 +6519,243 @@
             allowProposedApi: true
         });
 
+        // ---- Wrapped-URL link detection ([links] fix) -----------------
+        // tmux redraws TUI-repainted rows — above all Claude Code's ink
+        // output — as INDEPENDENT lines: a long URL arrives hard-split at
+        // the pane edge with the continuation on its own written row, so
+        // xterm's isWrapped stays false at the seam and the stock
+        // web-links addon saw only the row-1 fragment (click opened a
+        // truncated, invalid target; the continuation row was dead).
+        // Naturally-streamed shell output is NOT affected — tmux re-flows
+        // lines it knows are wrapped, isWrapped arrives true, and the
+        // addon already joins those. Fix: a custom link provider that
+        // reproduces the addon's detection verbatim (regex, URL gate,
+        // native-wrap windowing, activation) and ADDS a bounded join
+        // heuristic at seams the buffer does not mark wrapped. Registered
+        // BEFORE the web-links addon — xterm's Linkifier gives the
+        // first-registered provider priority wherever both match (core's
+        // OSC 8 provider stays ranked above both) — with the addon kept
+        // loaded as a pure fallback. Detection-quality only: activation
+        // stays plain-click (mouseup on the same link the mousedown
+        // started on, exactly the addon's semantics); the selection/copy
+        // machinery is untouched (red line).
+
+        // Verbatim from @xterm/addon-web-links 0.11.0 (MIT, (c) 2019 The
+        // xterm.js authors) — regex and URL gate must stay byte-identical
+        // so detection semantics never drift from stock.
+        const TL_URL_REGEX = /(https?|HTTPS?):[/]{2}[^\s"'!*(){}|\\\^<>`]*[^\s"':,.!?{}|\\\^~\[\]`()<>]/;
+        function tlIsUrl(urlString) {
+            try {
+                const url = new URL(urlString);
+                const parsedBase = url.password && url.username
+                    ? url.protocol + '//' + url.username + ':' + url.password + '@' + url.host
+                    : url.username
+                        ? url.protocol + '//' + url.username + '@' + url.host
+                        : url.protocol + '//' + url.host;
+                return urlString.toLocaleLowerCase().startsWith(parsedBase.toLocaleLowerCase());
+            } catch (e) {
+                return false;
+            }
+        }
+        // Parity clone of the addon's default handleLink — shared by the
+        // join provider, the fallback addon and the OSC 8 linkHandler so
+        // every link class opens identically (plain unmodified click,
+        // window.open with the opener nulled).
+        function openDetectedLink(event, uri) {
+            const newWindow = window.open();
+            if (newWindow) {
+                try { newWindow.opener = null; } catch (e) { /* no-op */ }
+                newWindow.location.href = uri;
+            } else {
+                console.warn('Opening link blocked as opener could not be cleared');
+            }
+        }
+        function makeTmuxJoinLinkProvider(terminal) {
+            // A row seam the buffer does NOT mark wrapped joins when it
+            // looks like a TUI hard split: the upper row's content —
+            // JS-rtrimmed, because WRITTEN pad spaces count as content in
+            // translateToString(true) — reaches within EDGE_SLACK cells of
+            // the right edge, both seam-adjacent chars are URL-plausible
+            // ASCII, and the lower row starts with at most MAX_INDENT
+            // spaces (Claude Code indents continuations by 2). The char
+            // class is deliberately ASCII-only RFC 3986 vocabulary: CC's
+            // '⏺'/'⎿' transcript prefixes and TUI box glyphs must fail it
+            // so adjacent transcript lines never join (the addon regex's
+            // negated body class would admit them). Native isWrapped
+            // joins keep stock's exact gates, budgets and raw strings
+            // (_getWindowedLineStrings parity).
+            const EDGE_SLACK = 2;
+            const MAX_INDENT = 8;
+            const MAX_WINDOW_ROWS = 8;   // heuristic windows: total row cap
+            const MAX_LEN = 2048;        // stock's char budget, shared
+            const BOUNDARY = /[A-Za-z0-9\-._~:\/?#\[\]@!$&'*+,;=%()]/;
+            const LEAD_SPACES = /^ */;
+            const TRAIL_SPACES = / +$/;
+
+            // Heuristic seam test (upper row flows into lower row). Texts
+            // are the CURRENT segment strings — earlier trims never touch
+            // the seam-adjacent chars this inspects; upperLead keeps the
+            // right-edge test a true CELL position for trimmed segments.
+            function seamJoins(upperText, upperLead, lowerText) {
+                const u = upperText.replace(TRAIL_SPACES, '');
+                if (!u || upperLead + u.length < terminal.cols - EDGE_SLACK) return false;
+                const lead = LEAD_SPACES.exec(lowerText)[0].length;
+                if (lead > MAX_INDENT) return false;
+                const l = lowerText.slice(lead);
+                if (!l) return false;
+                return BOUNDARY.test(u[u.length - 1]) && BOUNDARY.test(l[0]);
+            }
+
+            // Joined window around 0-based buffer row L. Segments
+            // {y, lead, text}: lead = spaces a heuristic join stripped off
+            // the row start (spaces are width-1 single-char cells, so lead
+            // chars == lead cells for the cell walk); text = the exact
+            // chars the regex runs over for that row.
+            function buildWindow(L) {
+                const buf = terminal.buffer.active;
+                const originLine = buf.getLine(L);
+                if (!originLine) return null;
+                const originRaw = originLine.translateToString(true);
+                const segs = [{ y: L, lead: 0, text: originRaw }];
+                let totalLen = originRaw.length;
+
+                // -- upward. Native ascent gates exactly like stock:
+                // engage only when the lower row isWrapped (and, at the
+                // origin, doesn't start with a space); push raw rows until
+                // an unwrapped head or a row containing a space (stock's
+                // sufficient-window stops) under stock's separate top
+                // budget. Wherever the native branch is off, try one
+                // heuristic join; a joined row re-arms the native rules
+                // for the seam above it (mixed chains).
+                let nativeUp = originLine.isWrapped && originRaw.charAt(0) !== ' ';
+                let upAcc = 0;
+                while (segs[0].y > 0) {
+                    const top = segs[0];
+                    const aboveLine = buf.getLine(top.y - 1);
+                    if (!aboveLine) break;
+                    const aboveRaw = aboveLine.translateToString(true);
+                    if (nativeUp && upAcc < MAX_LEN) {
+                        upAcc += aboveRaw.length;
+                        totalLen += aboveRaw.length;
+                        segs.unshift({ y: top.y - 1, lead: 0, text: aboveRaw });
+                        nativeUp = aboveLine.isWrapped && aboveRaw.indexOf(' ') === -1;
+                        continue;
+                    }
+                    if (segs.length >= MAX_WINDOW_ROWS || totalLen >= MAX_LEN) break;
+                    if (!seamJoins(aboveRaw, 0, top.text)) break;
+                    const lead = LEAD_SPACES.exec(top.text)[0].length;
+                    top.lead += lead;
+                    top.text = top.text.slice(lead);
+                    totalLen -= lead;
+                    const aboveTrimmed = aboveRaw.replace(TRAIL_SPACES, '');
+                    upAcc += aboveTrimmed.length;
+                    totalLen += aboveTrimmed.length;
+                    segs.unshift({ y: top.y - 1, lead: 0, text: aboveTrimmed });
+                    nativeUp = aboveLine.isWrapped && aboveTrimmed.indexOf(' ') === -1;
+                }
+
+                // -- downward. Stock: descend while the next line
+                // isWrapped, unconditionally from the origin, then only
+                // past pushed rows containing no space; heuristic seams
+                // extend where the buffer flag is absent.
+                let nativeDown = true;
+                let downAcc = 0;
+                while (true) {
+                    const bottom = segs[segs.length - 1];
+                    const belowLine = buf.getLine(bottom.y + 1);
+                    if (!belowLine) break;
+                    const belowRaw = belowLine.translateToString(true);
+                    if (nativeDown && belowLine.isWrapped && downAcc < MAX_LEN) {
+                        downAcc += belowRaw.length;
+                        totalLen += belowRaw.length;
+                        segs.push({ y: bottom.y + 1, lead: 0, text: belowRaw });
+                        nativeDown = belowRaw.indexOf(' ') === -1;
+                        continue;
+                    }
+                    if (segs.length >= MAX_WINDOW_ROWS || totalLen >= MAX_LEN) break;
+                    if (!seamJoins(bottom.text, bottom.lead, belowRaw)) break;
+                    const upperTrimmed = bottom.text.replace(TRAIL_SPACES, '');
+                    totalLen -= (bottom.text.length - upperTrimmed.length);
+                    bottom.text = upperTrimmed;
+                    const lead = LEAD_SPACES.exec(belowRaw)[0].length;
+                    const belowText = belowRaw.slice(lead);
+                    downAcc += belowText.length;
+                    totalLen += belowText.length;
+                    segs.push({ y: bottom.y + 1, lead: lead, text: belowText });
+                    nativeDown = belowText.indexOf(' ') === -1;
+                }
+                return segs;
+            }
+
+            // Map a char index in the joined string to its buffer cell.
+            // Per-segment cell walk (stock's _mapStrIdx accounting: width-0
+            // wide-char tails skipped, each width>0 cell consumes
+            // chars.length||1) — segments never overrun their row, so
+            // stock's early-wrapped-wide-char correction is unnecessary by
+            // construction. Returns 0-based {y, x, w} of the char's cell.
+            function mapCharToCell(buf, segs, gIdx, cell) {
+                let acc = 0;
+                for (let s = 0; s < segs.length; s++) {
+                    const seg = segs[s];
+                    if (gIdx >= acc + seg.text.length) { acc += seg.text.length; continue; }
+                    const local = gIdx - acc;
+                    const line = buf.getLine(seg.y);
+                    if (!line) return null;
+                    let consumed = 0;
+                    for (let i = seg.lead; i < line.length; i++) {
+                        line.getCell(i, cell);
+                        const width = cell.getWidth();
+                        if (!width) continue;
+                        consumed += cell.getChars().length || 1;
+                        if (consumed > local) return { y: seg.y, x: i, w: width };
+                    }
+                    return null;
+                }
+                return null;
+            }
+
+            return {
+                provideLinks(y, callback) {
+                    const buf = terminal.buffer.active;
+                    const segs = buildWindow(y - 1);
+                    if (!segs) { callback(undefined); return; }
+                    const joined = segs.map(s => s.text).join('');
+                    const rex = new RegExp(TL_URL_REGEX.source, (TL_URL_REGEX.flags || '') + 'g');
+                    const cell = buf.getNullCell();
+                    const links = [];
+                    let match;
+                    while ((match = rex.exec(joined)) !== null) {
+                        const text = match[0];
+                        if (!tlIsUrl(text)) continue;
+                        const start = mapCharToCell(buf, segs, match.index, cell);
+                        const end = mapCharToCell(buf, segs, match.index + text.length - 1, cell);
+                        if (!start || !end) continue;
+                        // 1-based, end-inclusive — the exact shape stock
+                        // emits (its end lands on the cell after the last
+                        // char, x deliberately un-bumped).
+                        const range = {
+                            start: { x: start.x + 1, y: start.y + 1 },
+                            end: { x: end.x + end.w, y: end.y + 1 }
+                        };
+                        links.push({ range: range, text: text, activate: openDetectedLink });
+                    }
+                    callback(links);
+                }
+            };
+        }
+
         const fitAddon = new FitAddon.FitAddon();
-        const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+        // Fallback for positions the join provider yields nothing at —
+        // constructed with the SAME shared handler, so where only the
+        // addon matches, behavior degrades to exactly today's.
+        const webLinksAddon = new WebLinksAddon.WebLinksAddon(openDetectedLink);
         term.loadAddon(fitAddon);
+        // Priority is registration order in xterm's Linkifier: the join
+        // provider must outrank the addon's, so register it BEFORE
+        // loadAddon(webLinksAddon) (which registers its provider inside
+        // activate()). Registration is a rendering/decoration API — not a
+        // listener on any terminal input path.
+        term.registerLinkProvider(makeTmuxJoinLinkProvider(term));
         term.loadAddon(webLinksAddon);
 
         try {
