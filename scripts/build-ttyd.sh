@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the locally-patched ttyd reproducibly into ./out/ttyd.
 #
-# Why a patched ttyd at all — devvm/ttyd-local.patch carries two fixes:
+# Why a patched ttyd at all — devvm/ttyd-local.patch carries three fixes:
 # 1. Pixel size → pty (sixel): tmux only re-emits sixel images to clients
 #    whose pty reports a pixel size via TIOCGWINSZ, and stock ttyd 1.7.7
 #    hardcodes ws_xpixel/ws_ypixel to 0 on every resize (src/pty.c). The
@@ -12,6 +12,12 @@
 #    1.7.7's pause is a no-op (pty_spawn leaves process->paused stuck true
 #    so pty_pause early-returns, and the writeable pump unconditionally
 #    resumes). Verified red/green by scripts/devserve/flowprobe.py.
+# 3. Index caching (plan Task 3d): the custom -I index (the ~500 KB
+#    single-file frontend) was served by lws_serve_http_file as no-store,
+#    so every boot re-downloaded it. src/http.c now serves it with a
+#    strong ETag + Cache-Control: no-cache and honors If-None-Match with a
+#    304, so the browser revalidates cheaply (compression is handled at
+#    the Traefik ingress, not ttyd).
 # Upstream PRs planned; until they land we pin tag 1.7.7 and apply the
 # patch on top.
 #

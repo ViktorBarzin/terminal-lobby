@@ -1998,3 +1998,36 @@ in the coarse compose block) lives OUTSIDE both guarded regions.
   panel carries a 'Reload app' row (`.sp-btn` labelled 'Reload') that
   does the same, present in both the popover and the bottom-sheet
   presentations. Neither control touches localStorage or tmux state.
+- [Add-3a] Soft-key strip pre-fit: at a 390×844 coarse viewport, attach
+  `#main` and record `window.__term` cols×rows immediately at boot, then
+  again after ≥2s (past the toolbar build) → IDENTICAL (no post-toolbar
+  reflow). `document.body.classList.contains('has-soft-keys')` is true
+  from boot, BEFORE `#soft-keys` exists in the DOM (assert the class
+  while `document.getElementById('soft-keys')` is still null on a slowed
+  boot, or code-inspect: the matchMedia add sits before `term.open`).
+  On a fine-pointer viewport the class is absent (desktop unaffected).
+- [Add-3b] Opacity-hold: `#terminal` boots at inline `opacity:0` and is
+  revealed (inline opacity cleared → computed `1`, 80ms fade) only after
+  BOTH the boot-end fit AND the first WS output frame (first frame
+  reveals ~120ms later). After a normal attach settles,
+  `getComputedStyle(document.getElementById('terminal')).opacity` → `1`.
+  Hard cap: block WS output (harness delay / no frames) → the terminal
+  still reveals within ~1.5s of open (never hangs blank). maskFitBurst
+  is a NO-OP while hidden (a pinch/stepper fit during the hold does not
+  flash the container to 0.35 — assert opacity stays 0 until reveal).
+- [Add-3c] loadingdone fit gate: after boot (booted=true) dispatch
+  `document.fonts` `loadingdone` in the terminal iframe → NO tmux resize
+  (`tmux -L tl-dev display -p '#{client_width}x#{client_height}'`
+  unchanged) but the terminal still renders (clearTextureAtlas ran
+  unconditionally — screenshot matches pre-dispatch). Before the
+  boot-end fit the same event DOES refit (code-inspect the `!booted`
+  gate; the pre-boot late-face refit path is preserved).
+- [Add-3d] ttyd -I index caching (verified 2026-07-12 on the rebuilt
+  out/ttyd): first `GET /` → `HTTP 200` + `Cache-Control: no-cache` +
+  strong `ETag: "<hexsize>-<hexmtime>"` + Content-Length; a conditional
+  `GET /` with `If-None-Match: <that etag>` → `HTTP 304 Not Modified`
+  (same ETag + Cache-Control, no body); a stale If-None-Match → `200`.
+  Regression guards on the SAME binary: `flowprobe.py` PAUSE leg →
+  `pause_honored: true` and the `--no-pause` throughput leg streams to
+  quiesce with no stall (pixel-size + PAUSE hunks byte-identical to the
+  prior verified patch); §A.4 sixel still renders (≥100 colors).

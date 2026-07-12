@@ -1,7 +1,7 @@
 Local ttyd 1.7.7 patch for terminal-lobby (applied by scripts/build-ttyd.sh
 on top of upstream tag 1.7.7; leading text is ignored by `git apply`).
 
-Two independent fixes, one binary:
+Three independent fixes, one binary:
 
 1. Pixel size → pty (sixel; docs/adr/0004-sixel-images-in-the-terminal.md):
    stock ttyd hardcodes ws_xpixel/ws_ypixel to 0 on every resize, and tmux
@@ -24,6 +24,18 @@ Two independent fixes, one binary:
    and the client RESUME opcode stay unconditional, so a paused connection
    can always be revived — no deadlock (challenge-verified line-exact by two
    independent reviewers, 2026-07-11).
+
+3. Index caching (terminal-lobby plan Task 3d): the custom -I index — the
+   ~500 KB single-file frontend — was served by lws_serve_http_file, which
+   tags the response Cache-Control: no-store, so every boot re-downloaded
+   the whole file. callback_http now serves the -I index itself with a
+   strong ETag (hex "size-mtime") + Cache-Control: no-cache and honors
+   If-None-Match with a 304 (headers only, no body), so the browser
+   revalidates cheaply on each navigation instead of re-fetching. Any
+   stat()/fopen() failure falls back to the stock lws_serve_http_file, so
+   the happy path can never regress. Response compression is handled at the
+   Traefik ingress (compress middleware), not here — ttyd serves the raw
+   bytes that the ETag is computed over.
 
 diff --git a/src/protocol.c b/src/protocol.c
 index 53e65d4..bc8e912 100644
@@ -95,3 +107,79 @@ index c3f761c..265903b 100644
  #ifdef _WIN32
    STARTUPINFOEXW si;
    HPCON pty;
+diff --git a/src/http.c b/src/http.c
+index eea62af..eec3f7a 100644
+--- a/src/http.c
++++ b/src/http.c
+@@ -1,6 +1,8 @@
+ #include <libwebsockets.h>
+ #include <string.h>
+ #include <zlib.h>
++#include <stdio.h>
++#include <sys/stat.h>
+ 
+ #include "html.h"
+ #include "server.h"
+@@ -148,8 +150,60 @@ int callback_http(struct lws *wsi, enum lws_callback_reasons reason, void *user,
+ 
+       const char *content_type = "text/html";
+       if (server->index != NULL) {
+-        int n = lws_serve_http_file(wsi, server->index, content_type, NULL, 0);
+-        if (n < 0 || (n > 0 && lws_http_transaction_completed(wsi))) return 1;
++        // terminal-lobby (plan Task 3d): serve the custom -I index with a
++        // strong ETag (size-mtime) + Cache-Control: no-cache, and honor
++        // If-None-Match with a 304. The single-file frontend is ~500 KB;
++        // stock lws_serve_http_file tagged it no-store, so every boot
++        // re-downloaded it. no-cache lets the browser revalidate cheaply
++        // (304, no body) instead. Any stat/open failure falls back to the
++        // stock file server, so this can never regress the happy path.
++        struct stat st;
++        FILE *fp;
++        if (stat(server->index, &st) == 0 && (fp = fopen(server->index, "rb")) != NULL) {
++          char etag[64], inm[64];
++          int etag_len = snprintf(etag, sizeof(etag), "\"%llx-%llx\"",
++                                  (unsigned long long)st.st_size,
++                                  (unsigned long long)st.st_mtime);
++          if (lws_hdr_copy(wsi, inm, sizeof(inm), WSI_TOKEN_HTTP_IF_NONE_MATCH) > 0 &&
++              strcmp(inm, etag) == 0) {
++            fclose(fp);
++            if (lws_add_http_header_status(wsi, HTTP_STATUS_NOT_MODIFIED, &p, end) ||
++                lws_add_http_header_by_name(wsi, (unsigned char *)"cache-control:",
++                                            (unsigned char *)"no-cache", 8, &p, end) ||
++                lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_ETAG,
++                                             (unsigned char *)etag, etag_len, &p, end) ||
++                lws_finalize_http_header(wsi, &p, end) ||
++                lws_write(wsi, buffer + LWS_PRE, p - (buffer + LWS_PRE), LWS_WRITE_HTTP_HEADERS) < 0)
++              return 1;
++            goto try_to_reuse;
++          }
++          char *body = xmalloc((size_t)st.st_size);
++          size_t got = fread(body, 1, (size_t)st.st_size, fp);
++          fclose(fp);
++          if (got != (size_t)st.st_size) {
++            free(body);
++            return 1;
++          }
++          if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end) ||
++              lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
++                                           (const unsigned char *)content_type, 9, &p, end) ||
++              lws_add_http_header_by_name(wsi, (unsigned char *)"cache-control:",
++                                          (unsigned char *)"no-cache", 8, &p, end) ||
++              lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_ETAG,
++                                           (unsigned char *)etag, etag_len, &p, end) ||
++              lws_add_http_header_content_length(wsi, (unsigned long)st.st_size, &p, end) ||
++              lws_finalize_http_header(wsi, &p, end) ||
++              lws_write(wsi, buffer + LWS_PRE, p - (buffer + LWS_PRE), LWS_WRITE_HTTP_HEADERS) < 0) {
++            free(body);
++            return 1;
++          }
++          pss->buffer = pss->ptr = body;
++          pss->len = (size_t)st.st_size;
++          lws_callback_on_writable(wsi);
++        } else {
++          int n = lws_serve_http_file(wsi, server->index, content_type, NULL, 0);
++          if (n < 0 || (n > 0 && lws_http_transaction_completed(wsi))) return 1;
++        }
+       } else {
+         char *output = (char *)index_html;
+         size_t output_len = index_html_len;
