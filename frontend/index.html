@@ -2153,6 +2153,19 @@
             // this code default everywhere — no re-key dance needed.
             session: Object.freeze({
                 reopenLast: true
+            }),
+            // Notifications: which Claude-turn transitions raise an OS
+            // notification (foreground path here + the background push the
+            // server sends per tmux-api parseNotifyPrefs — the two read the
+            // SAME roamed keys so a toggle governs both). onDone fires on
+            // running→done ("<session> finished"), onAwaiting on
+            // running→awaiting ("<session> needs input"). Both DEFAULT TRUE
+            // (opt-out) and it is a NEW namespace, so pre-existing roamed
+            // docs materialize both true with no re-key. The bell opt-in +
+            // OS permission still gate everything ON TOP of these.
+            notify: Object.freeze({
+                onDone: true,
+                onAwaiting: true
             })
         });
         const PREF_VALID = {
@@ -2180,6 +2193,10 @@
             },
             session: {
                 reopenLast: v => typeof v === 'boolean'
+            },
+            notify: {
+                onDone: v => typeof v === 'boolean',
+                onAwaiting: v => typeof v === 'boolean'
             }
         };
         function readRawPrefs() {
@@ -4189,11 +4206,17 @@
                     });
                 } catch (e) { /* best-effort; the server prunes dead endpoints on 404/410 */ }
             }
-            async function fireNotification(session) {
-                const title = session + ' needs input';
+            // kind is 'awaiting' (running→awaiting, "needs input") or 'done'
+            // (running→done, "finished"). Both share the tag 'tl-<session>'
+            // so a later awaiting alert REPLACES a finished one for the same
+            // session (coalesce by tag; sw.js omits renotify) — identical to
+            // the server payloads (tmux-api buildDonePayload/buildPushPayload).
+            async function fireNotification(session, kind) {
+                const finished = kind === 'done';
+                const title = session + (finished ? ' finished' : ' needs input');
                 const opts = {
                     tag: 'tl-' + session,
-                    body: 'Claude is awaiting your input.',
+                    body: finished ? 'Claude finished its turn.' : 'Claude is awaiting your input.',
                     icon: FAVICON_HREF,
                     data: { session }
                 };
@@ -4225,16 +4248,27 @@
                 // second monitor) should still notify.
                 if (!notifyOptedIn() || typeof Notification === 'undefined' ||
                     Notification.permission !== 'granted' || !away()) return;
+                // Per-user roamed gate (mirrors the server's parseNotifyPrefs):
+                // onAwaiting/onDone default true, so an untouched doc notifies
+                // on both — the bell opt-in + permission above still gate on top.
+                const np = getPrefs().notify;
                 for (const s of sessions) {
-                    if (s.state !== 'awaiting') continue;
-                    // Seeding fix (Item 4): a session first seen (absent
-                    // from prev) that is ALREADY awaiting counts as a
-                    // transition and is announced — only the very first
-                    // poll after load stays quiet (the `if (!prev) return`
-                    // above). Skip only when it was awaiting LAST poll too
-                    // (no transition — the tag would merely re-fire).
-                    if (prev.get(s.name) === 'awaiting') continue;
-                    fireNotification(s.name);
+                    const was = prev.get(s.name);
+                    if (s.state === 'awaiting' && was !== 'awaiting') {
+                        // Seeding fix (Item 4): a session first seen (absent
+                        // from prev) that is ALREADY awaiting counts as a
+                        // transition and is announced — only the very first
+                        // poll after load stays quiet (the `if (!prev) return`
+                        // above). Skip only when it was awaiting LAST poll too
+                        // (no transition — the tag would merely re-fire).
+                        if (np.onAwaiting) fireNotification(s.name, 'awaiting');
+                    } else if (s.state === 'done' && was === 'running') {
+                        // Finished edge — deliberately STRICTER than awaiting:
+                        // only a genuine running→done turn completion fires, so
+                        // a freshly-seen done session (was undefined) and a
+                        // SessionStart→done never announce (matches the server).
+                        if (np.onDone) fireNotification(s.name, 'done');
+                    }
                 }
             }
 
