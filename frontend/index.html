@@ -2006,14 +2006,23 @@
                 cardLongPress: true,  // Task M.4: long-press menu (cards + gallery thumbs)
                 overlaySwipe: true,   // Task M.4: lightbox swipe-dismiss + swipe-nav
                 bottomSheet: true,    // Task M.5: settings/menu bottom sheets (coarse pointers)
-                // Task M.6. swipeSession defaults true but the recognizer
-                // REGISTERS only on Android coarse-pointer UAs (iOS: the OS
-                // owns the whole 3-finger vocabulary while a text input is
-                // focused — analysis exclusion #1); twoFingerTap registers
-                // on any coarse pointer. toolbarHidden is roamed STATE, not
-                // an option: the 2-finger tap toggle persists it so the
-                // reclaimed ~50px survives reloads.
-                swipeSession: true,   // Task M.6: 3-finger horizontal swipe cycles sessions
+                // Task M.6, default flipped true→false 2026-07-12 per
+                // Viktor ("i dont like the side swipe" — complaint 1): the
+                // 3-finger session swipe is now OPT-IN. Deliberately
+                // RE-KEYED swipeSession → swipeSessionOptIn at the same
+                // time: pre-existing roamed /prefs docs materialize
+                // swipeSession:true, and a plain default flip would leave
+                // the gesture alive on those devices — the unknown legacy
+                // key is instead dropped by normalizePrefs on every read
+                // (and omitted from the next whole-doc write), so only an
+                // explicit re-enable writes the new key. The recognizer
+                // still REGISTERS only on Android coarse-pointer UAs (iOS:
+                // the OS owns the whole 3-finger vocabulary while a text
+                // input is focused — analysis exclusion #1); twoFingerTap
+                // registers on any coarse pointer. toolbarHidden is roamed
+                // STATE, not an option: the 2-finger tap toggle persists it
+                // so the reclaimed ~50px survives reloads.
+                swipeSessionOptIn: false, // Task M.6 + complaint 1: 3-finger swipe cycles sessions — OPT-IN
                 twoFingerTap: true,   // Task M.6: 2-finger tap toggles the soft-key toolbar
                 toolbarHidden: false, // Task M.6: soft-key toolbar currently hidden
                 haptics: true         // Task M.7: vibration cues (Android-only API)
@@ -2042,7 +2051,7 @@
                 cardLongPress: v => typeof v === 'boolean',
                 overlaySwipe: v => typeof v === 'boolean',
                 bottomSheet: v => typeof v === 'boolean',
-                swipeSession: v => typeof v === 'boolean',
+                swipeSessionOptIn: v => typeof v === 'boolean',
                 twoFingerTap: v => typeof v === 'boolean',
                 toolbarHidden: v => typeof v === 'boolean',
                 haptics: v => typeof v === 'boolean'
@@ -5039,7 +5048,7 @@
                 const bs = settingsPanel.querySelector('#sp-sheet');
                 if (bs) bs.checked = p.gestures.bottomSheet;   // coarse-pointer row only (M.5)
                 const sw = settingsPanel.querySelector('#sp-swipe');
-                if (sw) sw.checked = p.gestures.swipeSession;  // Android coarse row only (M.6)
+                if (sw) sw.checked = p.gestures.swipeSessionOptIn; // Android coarse row only (M.6)
                 const tf = settingsPanel.querySelector('#sp-twofinger');
                 if (tf) tf.checked = p.gestures.twoFingerTap;  // coarse-pointer row only (M.6)
                 const hp = settingsPanel.querySelector('#sp-haptics');
@@ -5306,15 +5315,18 @@
                     // pointers; iOS reserves the 3-finger vocabulary, so a
                     // toggle there would govern nothing). The ‹/› soft keys
                     // are the universal affordance and have no flag.
+                    // Default OFF since 2026-07-12 (complaint 1) — this
+                    // row IS the opt-in.
                     if (/android/i.test(navigator.userAgent)) {
                         const swRow = row('3-finger swipe');
                         const sw = document.createElement('input');
                         sw.type = 'checkbox';
                         sw.id = 'sp-swipe';
                         sw.title = 'Swipe horizontally with three fingers ' +
-                            'over the terminal to switch sessions.';
+                            'over the terminal to switch sessions. ' +
+                            'Off by default.';
                         sw.addEventListener('change',
-                            () => setPrefs({ gestures: { swipeSession: sw.checked } }));
+                            () => setPrefs({ gestures: { swipeSessionOptIn: sw.checked } }));
                         swRow.appendChild(sw);
                     }
 
@@ -7194,7 +7206,7 @@
                             return;
                         }
                         if (e.touches.length !== 3) return;
-                        if (!getPrefs().gestures.swipeSession) return;   // per-press
+                        if (!getPrefs().gestures.swipeSessionOptIn) return;   // per-press (OPT-IN, default false)
                         const pts = new Map();
                         let meanX = 0, meanY = 0;
                         for (const t of e.touches) {

@@ -1724,3 +1724,60 @@ adjust `tmux -L …` accordingly when repeating that setup.
   twice, history.length UNCHANGED (location.replace); palette attach
   still adds an entry.
 - [MF-3] §A.5 re-run unchanged (terminal surface untouched).
+
+### [MF-4] 3-finger session swipe DEFAULT-OFF via pref re-key (Viktor complaint 1, rank 3: "i dont like the side swipe to open all sessions")
+
+`gestures.swipeSession` → `gestures.swipeSessionOptIn`, default **false**.
+Re-key, not a plain default flip: pre-existing roamed /prefs docs
+materialize `swipeSession:true` (Viktor's live doc verified carrying it),
+and normalizePrefs drops unknown keys — so the stale value is structurally
+ignored on every read and omitted from the next whole-doc write. No
+migration write-back: default-false + dropped legacy key IS the disable; a
+user re-enabling writes the new key durably. Recognizer registration block
+untouched (per-press gate only — the settings toggle stays live without
+re-registering); `tl-gestures` master-kill semantics unchanged; ‹/› soft
+keys remain the universal session-cycling affordance (guarded by MF-3).
+**SUPERSEDE NOTE for the [Task M.6] lines above:** the "3-finger swipe
+(Android accelerator)" leg now requires `swipeSessionOptIn:true` pre-set
+(seed prefs or check the row first), and in the "Swipe opt-outs" leg read
+"`gestures.swipeSession=false`" as "`gestures.swipeSessionOptIn=false`"
+and "both checked by default" as "#sp-twofinger checked, #sp-swipe
+UNCHECKED by default". All legs run green 15/15 on 2026-07-12 at
+implementation on a sibling harness instance — proxy 7957 / ttyd 7956,
+scratch socket `-L tl-mf4` — adjust `tmux -L …` when repeating.
+**SNAPSHOT+RESTORE the live /prefs doc around the whole run** (it is
+Viktor's real roamed document, and legs 2-3 rewrite it): `GET /prefs`
+(header `X-Authentik-Username: <user>`) before, byte-compare a `PUT` of
+the snapshot after. Android legs = Pixel-7-class emulation; lift the P1
+3-point dispatch and P2 iPhone re-run from `scratchpad/swipe-probe.py`
+(P1 asserted the SHIPPED default-on behavior — expectations below
+invert it).
+
+- [MF-4] Fresh profile (clean localStorage): dispatch the P1 3-finger
+  horizontal swipe over the terminal → outer hash UNCHANGED (inert by
+  default) and `__tlGestures.recognizers` still 3 (registration
+  unchanged); the 2-finger-tap toolbar toggle and the flag-off pinch
+  legs still pass (module intact — only the per-press gate expression
+  changed inside it).
+- [MF-4] Legacy roamed doc ignored: seed localStorage `tl:prefs:v1` =
+  `{"gestures":{"swipeSession":true}}` (Viktor's roamed shape — stamp
+  `tl:prefs-dirty:v1` too, else the boot /prefs GET adopts the server
+  doc over the seed) → reload → P1 swipe STILL inert; trigger any
+  setPrefs (e.g. sk-row A+) → the persisted doc (localStorage AND the
+  server doc after the debounced PUT) contains
+  `gestures.swipeSessionOptIn:false` and NO `swipeSession` key.
+- [MF-4] Settings opt-in: Android-UA panel shows the '3-finger swipe'
+  row (`#sp-swipe`) UNCHECKED by default; check it → doc has
+  `swipeSessionOptIn:true` → P1 swipe fires (hash cycles to the
+  neighbor card + 220ms `#session-pill`); uncheck → inert again (live,
+  no reload — per-press gate).
+- [MF-4] iPhone-class UA: recognizer not registered, row not rendered
+  (P2 re-run: `recognizers === 2`, the 3-finger dispatch is inert,
+  `#sp-swipe` absent from the panel).
+- [MF-4] Desktop fine-pointer panel: no gesture row rendered (existing
+  assertion, unchanged).
+- [MF-4] Red line: single-finger terminal path, 6px discriminator,
+  wheel/selection semantics untouched — the M.1 + M.6 standing diff
+  guards (touch-discriminator IIFE + ADR-0003 mousedown interceptor
+  byte-identical vs `6773cbd`, `term.attachCustomKeyEventHandler(`
+  exactly once) verified 2026-07-12 at implementation time.
