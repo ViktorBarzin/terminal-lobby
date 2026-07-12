@@ -11,7 +11,7 @@ Makes the REAL page fully functional on loopback without Authentik/nginx:
                    │                      — paste-upload + session-gallery E2E; run
                    │                      `cd clipboard-upload && go run .` locally)
                    ├── PWA/font assets  → http://127.0.0.1:7683    (clipboard-upload,
-                   │                      the 9 EXACT paths in ASSET_PATHS, kept
+                   │                      the 10 EXACT paths in ASSET_PATHS, kept
                    │                      UNSTRIPPED and with NO auth header —
                    │                      mirrors the public auth="none" ingress
                    │                      carve-out, plan Tasks 3.1/3.2)
@@ -94,6 +94,7 @@ ASSET_PATHS = (
     "/fonts/JetBrainsMono-Italic.woff2",
     "/fonts/JetBrainsMono-BoldItalic.woff2",
     "/fonts/dm-sans-latin-wght-normal.woff2",
+    "/sw.js",
 )
 
 
