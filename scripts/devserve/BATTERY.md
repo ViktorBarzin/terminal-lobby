@@ -2605,6 +2605,100 @@ the bell is enabled (incl. the installed iPhone app — enable it there
 separately). Headless can't exercise a real push service; this is the
 one leg the automated smoke stubs out.
 
+### [links] Wrapped-URL links: tmux-aware join provider + '⧉ Copy link' chip + OSC 8
+
+Viktor: "the links cutoff if the text is multi line. this means we only
+copy parts of the link and it makes it invalid." Root cause:
+TUI-repainted output (above all Claude Code's ink transcript) writes
+each visual row as its own line — URL hard-split at ~cols-3 with a
+WRITTEN trailing space, continuation indented 2 and space-padded to full
+width — so xterm rows arrive isWrapped=false and the stock web-links
+addon detected only the row-1 fragment; tmux's own model doesn't
+consider these rows wrapped either (capture-pane -J does NOT join them),
+so no server-side join can ever fix CC links. Naturally-streamed shell
+output was always fine (isWrapped=true, the addon joins). Three strands:
+(1) a custom term.registerLinkProvider registered BEFORE the web-links
+addon (first-registered wins in xterm 5.5.0's Linkifier; core OSC 8
+stays above both) reproducing the addon's regex/isUrl/activation
+byte-for-byte plus a bounded tmux-aware join heuristic — rtrimmed upper
+row reaches within 2 cells of the right edge (written pad spaces COUNT
+as content in translateToString(true), hence JS trims), seam-adjacent
+chars URL-plausible ASCII (CC's '⏺'/'⎿' prefixes fail the class),
+continuation indent ≤8 spaces, ≤8 rows/2048 chars; native isWrapped
+joins kept stock; the addon stays loaded as fallback. (2) An additive
+'⧉ Copy link' hover chip (#link-chip — body-level fixed overlay OUTSIDE
+.xterm-screen so no terminal listener ever sees its events; roamed pref
+links.copyChip default ON; #sp-linkchip settings row on hover-capable
+devices) that copies the FULL joined URL — drag-copy semantics stay
+red-line frozen (a CC-seam drag still yields indent + \n + padding BY
+DESIGN). (3) OSC 8: devvm/tmux.conf.system gains `set -as
+terminal-features 'xterm*:hyperlinks'` (applies at each user's next tmux
+server start) and the Terminal constructor a linkHandler mirroring the
+addon's open behavior — without it xterm core answers OSC 8 clicks with
+a confirm() dialog. Claude Code does NOT emit OSC 8; that leg serves
+rg --hyperlink/eza/gh-class output. Known gap kept open deliberately:
+MOBILE copy of a CC-shape wrapped URL still yields split text (tmux has
+no wrap flag there, /capture -J can't join; fixing it would change
+copy-path semantics — excluded).
+
+Harness recipe (all legs): scratch mode, drive http://127.0.0.1:7997/#main
+top-level, __term via the init-script Proxy recipe, window.open stubbed
+via init-script recording BOTH window.open(u) args AND location.href
+setter assignments (the addon opens via the setter path), clipboard
+perms granted. Run drag legs LAST or Escape-clear between legs: an
+active selection arms the A.1 motion swallow, which eats trusted mouse
+moves and silently breaks link hover for every later leg (bit this
+run). All legs green 2026-07-12 at implementation; drag baselines
+byte-diffed against a master-build harness run (`--index` a master
+copy) with identical content and coordinates.
+
+- [links.1] Detection: cols=C from __term (140 in the run); url C+74
+  chars; row1='  '+url[:C-3]+' '; row2=('  '+url[C-3:]).ljust(C) printed
+  via a pane script → click mid row1 AND mid row2 → the open stub
+  receives the FULL url both times (master baseline: row1 opened the
+  truncated C-3-char fragment — invalid target — and row2 opened
+  NOTHING); `echo <C+40-char url>` (natural wrap, isWrapped=true) → FULL
+  url from both rows, unchanged from stock.
+- [links.2] Caps: a 9-row synthetic CC chain stops at 8 rows — clicking
+  row1 opens exactly the first-8-rows reconstruction; clicking row 9
+  opens nothing (its 8-row window holds no scheme — bounded by design).
+- [links.3] No false join: full-width URL row followed by a '⏺ Done' row
+  → click opens the row-1 url EXACTLY (the '⏺' fails the ASCII boundary
+  class, nothing absorbed); full-width non-URL row with a URL on the
+  next row → clicking the filler row opens nothing and the URL row opens
+  its own URL only (no seam-spanning link).
+- [links.4] Chip: hover a detected link → #link-chip visible near the
+  range start, title = full url, element NOT inside .xterm-screen; click
+  it → clipboard === full url + 'Link copied' toast + chip hides +
+  nothing opens; hides on wheel / Escape / ~300 ms leave-grace; never
+  shows while a selection exists; ⚙ panel #sp-linkchip untick → no chip
+  on hover, retick → chip back (GET /prefs snapshot before the run, PUT
+  it back after — roamed-prefs isolation rule; verified restored).
+- [links.5] Red-line copy baseline: CC-shape drag row1-col0 → row2 past
+  the url end + Ctrl+C chord → selection AND clipboard bytes
+  BYTE-IDENTICAL to the master-build run of the same drag ('  …fragment
+  \n  rest…   ' — indent, written trailing space, injected \n, padding
+  all preserved); natural-wrap drag → joined, NO \n (also
+  byte-identical); then §A.1 and §A.3 verbatim — green.
+- [links.6] OSC 8: fresh scratch server (client_termfeatures WITHOUT
+  'hyperlinks') + OSC 8 printf probe → NO link, no chip; after
+  `tmux -L tl-dev set -as terminal-features 'xterm*:hyperlinks'` + page
+  reload (fresh client attach) + re-print → clicking the visible text
+  opens the FULL target with ZERO confirm dialogs (dialog handler
+  registered, stayed empty); hover → chip title = TARGET and chip click
+  copies the TARGET uri.
+- [links.7] Activation parity: plain unmodified click opens; a drag
+  beginning on a link and ending elsewhere opens NOTHING
+  (openedDuringDrag [] in every leg, master AND fixed builds).
+
+§A re-run after the full [links] wiring (2026-07-12): A.1 motion
+swallow, A.2 both wheel halves, A.3 OSC52 chord + toast, A.4 sixel
+(≥100 distinct colors), A.5 tap-vs-swipe (finger-DOWN swipe wheels into
+copy-mode with no keyboard summon — remember wheel-down over a
+non-mouse pane is a no-op by design, so a finger-UP swipe proves
+nothing; tap → 3b compose-input focus; --kb-offset plumbing present),
+A.6 bracketed paste — all green on the [links] build.
+
 ## DEVICE-MANUAL — consolidated standing real-phone checklist (input rework)
 
 THE single list for Viktor's real-device pass (deploy heads-up item).
