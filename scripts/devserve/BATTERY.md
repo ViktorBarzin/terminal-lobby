@@ -1113,3 +1113,63 @@ implements the feature. Format:
   Kbd. Red line: the touch-discriminator IIFE + modifier machine stay
   byte-identical (M.1 standing diff guard). Cleanup:
   `tmux kill-session -t tl-battery-copy`.
+- [Task M.4] Card long-press (raw CDP `Input.dispatchTouchEvent`,
+  Pixel-7-class coarse emulation; create `tl-battery-m4` on the REAL
+  server first — isolation rules): touchStart at the card center, hold
+  600 ms, touchEnd → ONE `.popup-menu` at the touch point with
+  Move to…/Session/Rename/Kill (the same Task 2.5 menu as right-click),
+  the press does NOT attach (`location.hash` unchanged — the trailing
+  lift-click is swallowed by the one-shot capture flag), Escape
+  dismisses. Cards report `draggable === false` under `pointer: coarse`
+  (HTML5 DnD stays desktop-only; touch reorder remains ⋯ Move up/down).
+- [Task M.4] Cancel paths: the same press with ~15 px of FINE touchMove
+  travel before 500 ms → NO menu (>10 px cancel); a second touch point
+  joining mid-hold → NO menu; a clean plain tap (<100 ms) still attaches
+  the session. Repaint guard: start a press just before a 5 s poll
+  boundary and hold through it → the pressed card element stays
+  CONNECTED (gestureActive joins isDragging/renameEditing in
+  paint()/renderLobby) and the menu still opens at ~500 ms.
+- [Task M.4] Long-press opt-outs, live per press (no reload):
+  `tl-gestures`='off' → a touch hold does NOTHING (no menu AND no card
+  activation on lift; Android's native touch-derived `contextmenu` is
+  silenced too) — remove the key after; `tl:prefs:v1`
+  gestures.cardLongPress=false → same. Desktop MOUSE right-click keeps
+  the Task 2.5 menu in BOTH states (the flag governs touch only, and
+  the rename editor still gets the native input menu via the skip).
+  Settings: the coarse-pointer panel shows "Card long-press"
+  (`#sp-longpress`) and "Overlay swipes" (`#sp-overlayswipe`), both
+  checked by default; neither renders on a fine-pointer panel. Gallery
+  thumbs share the recognizer: long-press a `.gallery-cell` → the
+  Open / Insert path / Download menu (actions covered by the Task 2.5
+  thumb line).
+- [Task M.4] Lightbox swipe-nav (upload 3 images for the battery session
+  first — Task 2.5 curl recipe — then attach, open the gallery, tap the
+  first thumb): `#img-lightbox` shows `.lb-chip` `1/3`; FINE-step
+  horizontal drag left ≥50 px (axis lock |dx|>12 && >1.5|dy|; coarse
+  dispatch false-greens — plan M.8) → chip `2/3` AND `img.src` swaps to
+  the next grid-order URL (neighbors preloaded via `new Image()`),
+  lightbox stays open; drag left again at `3/3` → rubber-band (0.3×
+  follow) — chip/src unchanged, `img.style.transform` springs back to
+  `''` within ~200 ms. The paste-preview lightbox (no nav) renders NO
+  chip and never swipe-navigates.
+- [Task M.4] Lightbox swipe-down dismiss: FINE-step vertical drag down
+  ≥96 px (or a short fling >0.5 px/ms) → the box closes through the
+  Task 2.3 closeOverlay (iframe `document.activeElement` is the
+  `.xterm-helper-textarea` again) with the gallery grid still mounted
+  underneath; a sub-96 px slow drag springs back (still open, backdrop
+  alpha restores to 0.65). During a claimed drag the image
+  follow-translates (0.85× down, 0.25× rubber up) and the backdrop
+  fades 1−(dy/400). `gestures.overlaySwipe=false` (or the master kill)
+  → the same drag is IGNORED (no follow, no dismiss; tap-to-close
+  unaffected). Verified 2026-07-12 on the harness: 24/24 smoke legs
+  green (long-press A/B/H, tap-attach, chip nav 1/3→3/3, rubber-band,
+  dismiss+focus, opt-outs, settings rows).
+- [Task M.4] Red line: §A.5 unchanged — the recognizers live on lobby
+  cards, gallery cells and the per-open lightbox overlay ONLY (zero
+  listeners added to the terminal surface or its document; the
+  lightbox's `{passive:false}` touchmove is per-open on the OVERLAY box,
+  removed with it — explicitly allowed by the plan, distinct from the
+  M.6 standing-listener doctrine) — and the M.1 standing diff guard
+  holds (touch-discriminator IIFE byte-identical to the Stage-A deploy,
+  re-checked 2026-07-12). Cleanup: kill the battery session +
+  `rm -rf /var/lib/clipboard-store/<osUser>/tl-battery-m4`.
