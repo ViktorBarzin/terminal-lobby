@@ -675,10 +675,15 @@
             font-family: var(--font-ui); font-size: 15px; font-weight: 600;
         }
         /* On touch devices the floating buttons would sit on top of the
-           soft-key toolbar — lift them above it. */
+           soft-key toolbar — lift them above it. Task M.10: --cb-h (the
+           compose bar's visible height, written by syncViewport; 0 while
+           hidden — i.e. byte-equivalent baseline position) lifts them
+           above the compose bar too, or its ▶/⌄ would sit under these
+           z-index-9999 buttons and lose every tap. */
         @media (pointer: coarse) {
             #paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn {
-                bottom: calc(72px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+                bottom: calc(72px + var(--cb-h, 0px) + var(--kb-offset, 0px)
+                             + env(safe-area-inset-bottom));
             }
         }
         #paste-btn:hover, #img-btn:hover, #gallery-btn:hover,
@@ -706,10 +711,12 @@
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
             cursor: zoom-in;
         }
-        /* Track the floating buttons, which sit higher on touch devices. */
+        /* Track the floating buttons, which sit higher on touch devices
+           (and above the visible compose bar — Task M.10, see --cb-h). */
         @media (pointer: coarse) {
             #img-preview {
-                bottom: calc(132px + var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+                bottom: calc(132px + var(--cb-h, 0px) + var(--kb-offset, 0px)
+                             + env(safe-area-inset-bottom));
             }
         }
         #img-lightbox {
@@ -1678,6 +1685,66 @@
             margin-left: 4px;
             font-weight: 700;
         }
+        /* Task M.10: native compose bar — a VISIBLE, opt-in sibling of the
+           soft-key toolbar hosting full-fidelity mobile text input
+           (autocorrect / swipe typing / dictation), delivered to the pty as
+           ONE bracketed paste via term.paste(). display:none until the ✎
+           soft key (or compose.autoShow) adds .visible; the element is only
+           built on coarse pointers. Docked directly ABOVE the toolbar: the
+           same --kb-offset keyboard plumbing as #soft-keys plus --sk-h (the
+           toolbar's measured height, written by syncViewport — 0 while the
+           M.6 two-finger toggle hides the toolbar). */
+        #compose-bar {
+            display: none;
+            position: fixed;
+            left: 0; right: 0;
+            bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom)
+                         + var(--sk-h, 0px));
+            z-index: 9998;
+            box-sizing: border-box;
+            padding: 6px calc(6px + env(safe-area-inset-left))
+                     6px calc(6px + env(safe-area-inset-right));
+            background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+            border-top: 1px solid var(--border-strong);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            gap: 6px;
+            align-items: flex-end;   /* buttons hug the bottom as the field grows */
+        }
+        #compose-bar.visible { display: flex; }
+        #compose-input {
+            flex: 1 1 auto;
+            min-width: 0;
+            box-sizing: border-box;
+            resize: none;
+            overflow-y: hidden;      /* auto-grow to 5 lines; JS flips to auto past that */
+            border: 1px solid var(--border-strong);
+            border-radius: 8px;
+            background: var(--bg-page);
+            color: var(--text-primary);
+            font-family: var(--font-ui);
+            /* font-size is set INLINE (16px): the iOS no-focus-auto-zoom
+               guarantee must not depend on a stylesheet rule surviving. */
+            line-height: 1.3;
+            padding: 8px 10px;
+        }
+        #compose-bar button {
+            flex: 0 0 auto;
+            min-width: 38px; height: 38px;
+            padding: 0 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-strong);
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            font-family: var(--font-mono); font-size: 14px;
+            cursor: pointer;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+        #compose-bar button:active {
+            background: color-mix(in srgb, var(--accent) 25%, var(--bg-card-hover));
+        }
         @media (pointer: coarse) {
             #soft-keys { display: flex; }
             /* Shrink the terminal container so its bottom edge meets the
@@ -1927,8 +1994,8 @@
         // ---- roaming terminal prefs (Task 2.6) -------------------------
         // tl:prefs:v1 — the settings-panel document: fontSize, lineHeight,
         // letterSpacing, cursorStyle, cursorBlink, fontWeightBold, plus
-        // one-level nested namespaces (Wave 5: gestures.*, later
-        // compose.*) for the mobile/gesture opt-outs. Every
+        // one-level nested namespaces (Wave 5: gestures.* opt-outs,
+        // compose.* — Task M.10). Every
         // read passes the validate-or-default wrapper (normalizePrefs), so
         // garbage in localStorage — or roamed from the server — degrades
         // per-field to defaults, never a crash. Deliberately ABSENT (red
@@ -1958,7 +2025,7 @@
             cursorStyle: 'block',
             cursorBlink: true,      // the historical constructor value
             fontWeightBold: '700',  // Task 1.3 pinned the real JBM 700 face
-            // Nested namespaces (Wave 5: gestures.*, later compose.*).
+            // Nested namespaces (Wave 5: gestures.*, compose.* — M.10).
             // Exactly ONE level deep, validated per-subkey; setPrefs and
             // adoptPrefs deep-merge them so a patch or a partial server
             // doc touching one flag never resets its siblings.
@@ -1978,6 +2045,15 @@
                 twoFingerTap: true,   // Task M.6: 2-finger tap toggles the soft-key toolbar
                 toolbarHidden: false, // Task M.6: soft-key toolbar currently hidden
                 haptics: true         // Task M.7: vibration cues (Android-only API)
+            }),
+            // Task M.10: native compose bar (coarse pointers). autoShow
+            // opens it on load — OFF by default, the ✎ soft key is the
+            // ad-hoc toggle. enterKey is LOCAL to the field: 'newline'
+            // (default — mobile-messaging convention, ▶ sends) or 'send'
+            // (Enter submits, Shift+Enter inserts the newline).
+            compose: Object.freeze({
+                autoShow: false,
+                enterKey: 'newline'
             })
         });
         const PREF_VALID = {
@@ -1998,6 +2074,10 @@
                 twoFingerTap: v => typeof v === 'boolean',
                 toolbarHidden: v => typeof v === 'boolean',
                 haptics: v => typeof v === 'boolean'
+            },
+            compose: {
+                autoShow: v => typeof v === 'boolean',
+                enterKey: v => v === 'newline' || v === 'send'
             }
         };
         function readRawPrefs() {
@@ -5004,8 +5084,14 @@
                 if (hp) hp.checked = p.gestures.haptics;       // coarse row, vibrate-capable only (M.7)
                 const pf = settingsPanel.querySelector('#sp-pinch');
                 if (pf) pf.checked = pinchFontWanted();        // coarse Chromium row only (M.8)
+                const cm = settingsPanel.querySelector('#sp-compose');
+                if (cm) cm.checked = p.compose.autoShow;       // coarse-pointer row only (M.10)
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
-                    const val = String(p[seg.dataset.pref]);
+                    // Dotted keys ('compose.enterKey', Task M.10) resolve
+                    // one level into the nested namespaces; flat keys read
+                    // exactly as before.
+                    const val = String(seg.dataset.pref.split('.')
+                        .reduce((o, k) => (o || {})[k], p));
                     seg.querySelectorAll('button').forEach(b => {
                         b.classList.toggle('active', b.dataset.val === val);
                     });
@@ -5084,7 +5170,15 @@
                         b.type = 'button';
                         b.dataset.val = v;
                         b.textContent = labels[i];
-                        b.addEventListener('click', () => setPrefs({ [key]: v }));
+                        // Dotted keys ('compose.enterKey', Task M.10) write
+                        // through the nested namespace — setPrefs deep-
+                        // merges one level, so sibling flags survive. Flat
+                        // keys patch exactly as before.
+                        b.addEventListener('click', () => {
+                            const dot = key.indexOf('.');
+                            setPrefs(dot === -1 ? { [key]: v }
+                                : { [key.slice(0, dot)]: { [key.slice(dot + 1)]: v } });
+                        });
                         seg.appendChild(b);
                     });
                     row_.appendChild(seg);
@@ -5289,6 +5383,33 @@
                         });
                         pfRow.appendChild(pf);
                     }
+
+                    // Task M.10: native compose bar — two roamed compose.*
+                    // options (nested namespace like gestures.*). autoShow
+                    // opens the bar on session load (OFF by default; the ✎
+                    // soft key toggles it ad-hoc regardless); the Return-
+                    // key mode is LOCAL to the field — 'newline' default
+                    // matches the T3/mobile-messaging convention and avoids
+                    // accidental submits, 'send' gives desktop Enter=submit
+                    // muscle memory (Shift+Enter for a newline).
+                    const cmRow = row('Compose bar');
+                    const cm = document.createElement('input');
+                    cm.type = 'checkbox';
+                    cm.id = 'sp-compose';
+                    cm.title = 'Open the compose bar automatically: a native ' +
+                        'text field (autocorrect, swipe typing, dictation) ' +
+                        'that sends to the terminal as one paste. The ✎ ' +
+                        'soft key toggles it any time.';
+                    cm.addEventListener('change',
+                        () => setPrefs({ compose: { autoShow: cm.checked } }));
+                    cmRow.appendChild(cm);
+
+                    const ekRow = row('Compose Return');
+                    ekRow.title = 'What Return does in the compose field: ' +
+                        'insert a newline (send with ▶), or send ' +
+                        'immediately (Shift+Return inserts a newline).';
+                    segCtl(ekRow, 'compose.enterKey',
+                           ['newline', 'send'], ['Newline', 'Send']);
                 }
 
                 if (asSheet) {
@@ -6240,6 +6361,11 @@
         // the coarse-pointer block below; called from applyTermPrefs so
         // panel changes / roamed docs / the master kill apply live).
         let applyToolbarPrefs = () => {};
+        // Task M.10: reconciles the compose bar with prefs (assigned in the
+        // coarse-pointer block below; called from applyTermPrefs) —
+        // enterkeyhint follows compose.enterKey live, compose.autoShow
+        // opens the bar until the user toggles it manually.
+        let applyComposePrefs = () => {};
 
         // ---- Task M.6: shared multi-touch module -------------------------
         // The ONLY sanctioned home for ≥2-finger recognizers on the
@@ -6463,12 +6589,15 @@
                     // Task M.1: arm hold-to-repeat (arrows + Tab) after the
                     // initial send above.
                     if (opts && opts.repeat) startRepeat(onTap);
-                    // Re-arm helper textarea for the next physical keystroke —
-                    // but skip on modifiers and arrows so tapping a navigation
-                    // key doesn't summon the keyboard if it wasn't already up.
+                    // Re-arm the active input for the next physical
+                    // keystroke — the compose field while the user was
+                    // composing (Task M.10; byte-equivalent term.focus()
+                    // otherwise) — but skip on modifiers and arrows so
+                    // tapping a navigation key doesn't summon the keyboard
+                    // if it wasn't already up.
                     const skipFocus = b.classList.contains('sk-mod')
                                    || (opts && opts.noFocus);
-                    if (!skipFocus) term.focus();
+                    if (!skipFocus) focusActiveInput();
                 });
                 if (opts && opts.repeat) {
                     // BOTH cancel events are wired: an OS gesture interrupt
@@ -6616,6 +6745,12 @@
             }));
             row.appendChild(makeBtn('Kbd', () => term.focus(),
                 { ariaLabel: 'Show keyboard' }));
+            // Task M.10: compose-bar toggle — ✎ opens the native text field
+            // (focus lands in it, keyboard comes up); a second tap or the
+            // bar's own ⌄ collapses it back to raw terminal typing.
+            // noFocus: toggleCompose does its own focus handling.
+            row.appendChild(makeBtn('✎', () => toggleCompose(),
+                { ariaLabel: 'Toggle compose bar', noFocus: true }));
 
             // Task M.6: session prev/next. The buttons are the PRIMARY
             // affordance — they work on iOS (where the OS reserves every
@@ -6655,6 +6790,214 @@
 
             document.body.appendChild(toolbar);
             document.body.classList.add('has-soft-keys');
+
+            // ---- Task M.10: native compose bar (opt-in) -----------------
+            // Full-fidelity mobile text input. The hidden xterm helper
+            // textarea is deliberately SUPPRESSED (type=password — Gboard
+            // predictive text corrupted terminal input: xterm #2403,
+            // composition #3600/#675) and that block stays byte-untouched;
+            // autocorrect / swipe typing / dictation therefore need this
+            // separate, VISIBLE field. Everything below only CALLS the
+            // existing primitives — term.paste() → the proven bracketed-
+            // paste path through the untouched onData wrapper → sendInput;
+            // a submit is a SEPARATE trailing \r AFTER \x1b[201~ (a \r
+            // INSIDE the bracket is a soft newline to Claude Code — never
+            // a submit).
+            const composeBar = document.createElement('div');
+            composeBar.id = 'compose-bar';
+            const composeInput = document.createElement('textarea');
+            composeInput.id = 'compose-input';
+            composeInput.rows = 1;
+            // The OPPOSITE of the helper-textarea suppression set — and
+            // never a `type` attribute (textareas have none; the helper's
+            // type=password trick would kill the suggestion/composition UI
+            // this field exists for). autocomplete=off suppresses only
+            // form-autofill — keyboard-level swipe/suggestions/dictation
+            // stay. enterkeyhint is dynamic (applyComposePrefs). Inline
+            // 16px blocks iOS Safari's focus auto-zoom.
+            composeInput.setAttribute('autocapitalize', 'sentences');
+            composeInput.setAttribute('autocorrect', 'on');
+            composeInput.setAttribute('spellcheck', 'true');
+            composeInput.setAttribute('autocomplete', 'off');
+            composeInput.setAttribute('inputmode', 'text');
+            composeInput.setAttribute('enterkeyhint', 'enter');
+            composeInput.setAttribute('aria-label', 'Compose text to send to the terminal');
+            composeInput.placeholder = 'Compose…';
+            composeInput.style.fontSize = '16px';
+            const composeSend = document.createElement('button');
+            composeSend.type = 'button';
+            composeSend.id = 'compose-send';
+            composeSend.textContent = '▶';
+            composeSend.setAttribute('aria-label', 'Send (hold to stage without Enter)');
+            const composeHide = document.createElement('button');
+            composeHide.type = 'button';
+            composeHide.id = 'compose-hide';
+            composeHide.textContent = '⌄';
+            composeHide.setAttribute('aria-label', 'Hide compose bar');
+            composeBar.appendChild(composeInput);
+            composeBar.appendChild(composeSend);
+            composeBar.appendChild(composeHide);
+            document.body.appendChild(composeBar);
+
+            let composeVisible = false;
+            let composeUserToggled = false;   // a manual ✎/⌄ beats autoShow for this page-life
+
+            // Auto-grow to 5 lines (scrollHeight clamp), internal scroll
+            // past that. All heights derive from the computed style so a
+            // CSS tweak cannot desync the clamp.
+            function autoGrowCompose() {
+                const cs = getComputedStyle(composeInput);
+                const border = (parseFloat(cs.borderTopWidth) || 0)
+                             + (parseFloat(cs.borderBottomWidth) || 0);
+                const pad = (parseFloat(cs.paddingTop) || 0)
+                          + (parseFloat(cs.paddingBottom) || 0);
+                const line = parseFloat(cs.lineHeight) || 21;
+                const maxH = Math.ceil(5 * line + pad + border);
+                composeInput.style.height = 'auto';
+                const want = composeInput.scrollHeight + border;   // border-box height
+                composeInput.style.height = Math.min(want, maxH) + 'px';
+                composeInput.style.overflowY = want > maxH ? 'auto' : 'hidden';
+            }
+            // Bar height changed (line added/removed) → the terminal gives
+            // the pixels back: syncViewport subtracts the bar's live
+            // offsetHeight and refit() debounces the actual tmux resize, so
+            // a typing burst costs ONE fit — never one per keystroke.
+            function growAndRefit() {
+                const h0 = composeBar.offsetHeight;
+                autoGrowCompose();
+                if (composeBar.offsetHeight !== h0) refit();
+            }
+            composeInput.addEventListener('input', growAndRefit);
+
+            // Send path — byte-exact contract (do not reorder):
+            //   1. consumeSoftMods(): an armed Ctrl/Alt must not remap the
+            //      paste's first char (same posture as the Paste key);
+            //   2. term.paste(text): \r?\n→\r, wrapped \x1b[200~…\x1b[201~
+            //      while the pane has DECSET 2004 (Claude Code always
+            //      does), through the EXISTING onData→sendInput→ws path;
+            //   3. iff withEnter: a SEPARATE sendInput('\r') lands AFTER
+            //      \x1b[201~ → Claude Code submits.
+            // Returns whether anything was sent — empty/whitespace-only
+            // stays local; the raw text goes out unmodified (trim() is
+            // only the emptiness guard).
+            function doSend(withEnter) {
+                const text = composeInput.value;
+                if (!text.trim()) return false;
+                consumeSoftMods();
+                term.paste(text);
+                if (withEnter) sendInput('\r');
+                composeInput.value = '';
+                growAndRefit();
+                composeInput.focus();   // keyboard stays up for the next message
+                haptic('selection');
+                return true;
+            }
+
+            // Return-key modes — LOCAL to this field, no pty encoding
+            // change (extended-keys/CSI-u is deferred P29):
+            //   'newline' (default): Return inserts a newline natively —
+            //     nothing to intercept, and with no surrounding <form>
+            //     nothing can ever submit; ▶ sends.
+            //   'send': Enter sends (preventDefault); Shift+Enter falls
+            //     through to the native newline.
+            // e.isComposing: an IME confirming its composition with Enter
+            // owns that keystroke — never send on it (this bar exists FOR
+            // composition UIs).
+            composeInput.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+                if (getPrefs().compose.enterKey !== 'send') return;
+                e.preventDefault();
+                doSend(true);
+            });
+
+            // ▶ tap = send with Enter; hold ~500ms = doSend(false) — stage
+            // the block into Claude Code's composer WITHOUT submitting.
+            // pointerdown preventDefault keeps focus in the field (makeBtn
+            // posture); BOTH cancel events are wired like the M.1 repeat
+            // engine (an OS gesture interrupt delivers pointercancel with
+            // no pointerup — either alone would fire a stray send or leak
+            // the timer).
+            const SEND_HOLD_MS = 500;
+            let sendHoldTimer = null, sendHeld = false;
+            composeSend.addEventListener('pointerdown', (ev) => {
+                ev.preventDefault();
+                sendHeld = false;
+                clearTimeout(sendHoldTimer);
+                sendHoldTimer = setTimeout(() => {
+                    sendHeld = true;
+                    if (doSend(false)) showToast('Staged (no Enter)', 'info', 2000);
+                }, SEND_HOLD_MS);
+            });
+            composeSend.addEventListener('pointerup', () => {
+                clearTimeout(sendHoldTimer);
+                if (!sendHeld) doSend(true);
+                sendHeld = false;
+            });
+            const cancelSendHold = () => { clearTimeout(sendHoldTimer); sendHeld = false; };
+            composeSend.addEventListener('pointercancel', cancelSendHold);
+            composeSend.addEventListener('pointerleave', cancelSendHold);
+
+            composeHide.addEventListener('pointerdown', (ev) => {
+                ev.preventDefault();
+                haptic('selection');
+                // A manual collapse must beat autoShow's reconciliation for
+                // the rest of the page-life (same as the ✎ toggle) — or the
+                // next prefs event would immediately re-open the bar.
+                composeUserToggled = true;
+                setComposeVisible(false, false);
+            });
+
+            // Show/hide. Showing re-measures the field (it may carry kept
+            // text); hiding hands the keyboard back to the terminal (the
+            // Task 2.3 focus-return posture — the user is returning to raw
+            // typing, not leaving). Never called before refit()'s timer
+            // bindings exist: tap-time, or applyComposePrefs via the boot
+            // applyTermPrefs one-shot (same TDZ posture as
+            // applyToolbarPrefs).
+            function setComposeVisible(show, focus) {
+                composeVisible = show;
+                composeBar.classList.toggle('visible', show);
+                if (show) autoGrowCompose();
+                refit();
+                if (show && focus) composeInput.focus();
+                if (!show) term.focus();
+            }
+            function toggleCompose() {
+                composeUserToggled = true;
+                setComposeVisible(!composeVisible, true);
+            }
+
+            // Focus routing (guarded — byte-equivalent while the field is
+            // not in use): a soft-key tap re-arms the COMPOSE field only
+            // when it was the focused input (makeBtn's pointerdown
+            // preventDefault keeps activeElement stable through the tap),
+            // else the helper textarea exactly as before. Soft keys keep
+            // reaching the pty while the field is focused — sendInput
+            // writes to the socket regardless of DOM focus. Documented
+            // limitation: armed-Ctrl/Alt + typed-letter chords need
+            // terminal focus (compose is for prose, not chords).
+            function focusActiveInput() {
+                if (composeVisible && document.activeElement === composeInput) {
+                    composeInput.focus();
+                } else {
+                    term.focus();
+                }
+            }
+
+            // Prefs reconciliation — called from applyTermPrefs (panel
+            // changes arriving over tl-prefs, roamed-doc adoption, and the
+            // boot one-shot, which is also what applies autoShow).
+            // enterkeyhint tracks the mode live; autoShow only ever OPENS
+            // the bar (it is an option, not roamed visibility state) and
+            // defers to an explicit ✎/⌄ for the rest of the page-life.
+            applyComposePrefs = function () {
+                const c = getPrefs().compose;
+                composeInput.enterKeyHint = c.enterKey === 'send' ? 'send' : 'enter';
+                if (c.autoShow && !composeUserToggled && !composeVisible) {
+                    // No focus: booting must not summon the keyboard.
+                    setComposeVisible(true, false);
+                }
+            };
 
             // ---- Task M.6: 2-finger tap → toolbar toggle ----------------
             // Reclaims the toolbar's ~50px for the terminal. Persisted as
@@ -7106,7 +7449,20 @@
             if (isCoarsePointer) {
                 const tb = document.getElementById('soft-keys');
                 const tbH = tb ? tb.offsetHeight : 0;
-                terminalEl.style.height = Math.max(0, vv.height - tbH) + 'px';
+                // Task M.10: --sk-h parks the compose bar directly above
+                // the toolbar (0 while the M.6 toggle hides it — the bar
+                // then sits on the keyboard/safe-area edge itself); --cb-h
+                // lifts the floating action buttons above the visible bar
+                // (their z-index 9999 beats the bar's 9998 — unlifted they
+                // would swallow ▶/⌄ taps); and the VISIBLE bar's height
+                // comes out of the terminal too. Compose hidden ⇒
+                // offsetHeight 0 ⇒ every formula is identical to the
+                // pre-M.10 baseline.
+                document.documentElement.style.setProperty('--sk-h', tbH + 'px');
+                const cb = document.getElementById('compose-bar');
+                const cbH = cb ? cb.offsetHeight : 0;
+                document.documentElement.style.setProperty('--cb-h', cbH + 'px');
+                terminalEl.style.height = Math.max(0, vv.height - tbH - cbH) + 'px';
             }
         }
         let kbRafScheduled = false;
@@ -7764,6 +8120,9 @@
             // (gestures.toolbarHidden / gestures.twoFingerTap) — a no-op
             // stub on fine pointers.
             applyToolbarPrefs();
+            // Task M.10: compose bar rides it too (enterkeyhint mode +
+            // autoShow) — a no-op stub on fine pointers.
+            applyComposePrefs();
         }
         // Changes made in THIS window (floating A−/A+, boot adoption of the
         // server doc) come through the same-tab CustomEvent.
