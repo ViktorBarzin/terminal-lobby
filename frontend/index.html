@@ -1509,15 +1509,30 @@
             border-top: 1px solid var(--border-strong);
             backdrop-filter: blur(6px);
             -webkit-backdrop-filter: blur(6px);
+            /* Task M.1: the toolbar is now a flex row of
+               [ scrolling .sk-row | pinned ⌄ dismiss ] — the horizontal
+               scrolling moved INTO .sk-row so the dismiss key can never
+               scroll out of reach. */
+            gap: 6px;
+            align-items: center;
+            font-family: var(--font-mono);
+        }
+        #soft-keys .sk-row {
+            display: flex; gap: 6px; align-items: center;
+            flex: 1 1 auto;
+            min-width: 0;
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
             white-space: nowrap;
-            font-family: var(--font-mono);
+            /* Task M.1: edge fade — the row scrolls horizontally; fading
+               edges are the scroll affordance (static two-sided mask, no
+               scroll-position JS). */
+            -webkit-mask-image: linear-gradient(to right,
+                transparent, #000 16px, #000 calc(100% - 16px), transparent);
+            mask-image: linear-gradient(to right,
+                transparent, #000 16px, #000 calc(100% - 16px), transparent);
         }
-        #soft-keys::-webkit-scrollbar { height: 0; }
-        #soft-keys .sk-row {
-            display: inline-flex; gap: 6px; align-items: center;
-        }
+        #soft-keys .sk-row::-webkit-scrollbar { height: 0; }
         #soft-keys button {
             flex: 0 0 auto;
             min-width: 38px; height: 38px;
@@ -1800,7 +1815,9 @@
 
         // ---- roaming terminal prefs (Task 2.6) -------------------------
         // tl:prefs:v1 — the settings-panel document: fontSize, lineHeight,
-        // letterSpacing, cursorStyle, cursorBlink, fontWeightBold. Every
+        // letterSpacing, cursorStyle, cursorBlink, fontWeightBold, plus
+        // one-level nested namespaces (Wave 5: gestures.*, later
+        // compose.*) for the mobile/gesture opt-outs. Every
         // read passes the validate-or-default wrapper (normalizePrefs), so
         // garbage in localStorage — or roamed from the server — degrades
         // per-field to defaults, never a crash. Deliberately ABSENT (red
@@ -1829,7 +1846,14 @@
             letterSpacing: 0,       // px; fractional ok (device-pixel rounding)
             cursorStyle: 'block',
             cursorBlink: true,      // the historical constructor value
-            fontWeightBold: '700'   // Task 1.3 pinned the real JBM 700 face
+            fontWeightBold: '700',  // Task 1.3 pinned the real JBM 700 face
+            // Nested namespaces (Wave 5: gestures.*, later compose.*).
+            // Exactly ONE level deep, validated per-subkey; setPrefs and
+            // adoptPrefs deep-merge them so a patch or a partial server
+            // doc touching one flag never resets its siblings.
+            gestures: Object.freeze({
+                keyRepeat: true     // Task M.1: hold-to-repeat on soft arrows/Tab
+            })
         });
         const PREF_VALID = {
             fontSize: v => Number.isInteger(v) && v >= FONT_SIZE_MIN && v <= FONT_SIZE_MAX,
@@ -1837,7 +1861,12 @@
             letterSpacing: v => Number.isFinite(v) && v >= 0 && v <= 1,
             cursorStyle: v => v === 'block' || v === 'bar' || v === 'underline',
             cursorBlink: v => typeof v === 'boolean',
-            fontWeightBold: v => v === '600' || v === '700'
+            fontWeightBold: v => v === '600' || v === '700',
+            // A namespace validator is an OBJECT of per-subkey validators;
+            // normalizePrefs/prefFieldOk recurse exactly one level.
+            gestures: {
+                keyRepeat: v => typeof v === 'boolean'
+            }
         };
         function readRawPrefs() {
             try {
@@ -1846,14 +1875,36 @@
             } catch (e) { return null; }
         }
         // validate-or-default: unknown keys dropped, invalid values → default.
+        // Namespace keys (object validators) get the same treatment one
+        // level down — always emitted as a FRESH object carrying every
+        // subkey (garbage like {"gestures":42} degrades to the defaults).
         function normalizePrefs(raw) {
             const out = Object.assign({}, PREF_DEFAULTS);
-            if (raw && typeof raw === 'object') {
-                for (const k of Object.keys(PREF_VALID)) {
-                    if (PREF_VALID[k](raw[k])) out[k] = raw[k];
+            const src = (raw && typeof raw === 'object') ? raw : {};
+            for (const k of Object.keys(PREF_VALID)) {
+                if (typeof PREF_VALID[k] === 'object') {
+                    const sub = Object.assign({}, PREF_DEFAULTS[k]);
+                    const rawSub = src[k];
+                    if (rawSub && typeof rawSub === 'object' && !Array.isArray(rawSub)) {
+                        for (const s of Object.keys(PREF_VALID[k])) {
+                            if (PREF_VALID[k][s](rawSub[s])) sub[s] = rawSub[s];
+                        }
+                    }
+                    out[k] = sub;
+                } else if (PREF_VALID[k](src[k])) {
+                    out[k] = src[k];
                 }
             }
             return out;
+        }
+        // Does a (raw) doc carry a usable value for pref key k? A namespace
+        // counts as soon as ANY of its subkeys validates.
+        function prefFieldOk(k, v) {
+            if (typeof PREF_VALID[k] === 'object') {
+                return !!v && typeof v === 'object' && !Array.isArray(v) &&
+                    Object.keys(PREF_VALID[k]).some(s => PREF_VALID[k][s](v[s]));
+            }
+            return PREF_VALID[k](v);
         }
         function getPrefs() {
             const raw = readRawPrefs();
@@ -1902,7 +1953,17 @@
         // windows), and sync up. Returns the resulting doc.
         function setPrefs(patch) {
             const cur = getPrefs();
-            const next = normalizePrefs(Object.assign({}, cur, patch));
+            const merged = Object.assign({}, cur, patch);
+            // Deep-merge nested namespaces (one level): a patch like
+            // {gestures:{keyRepeat:false}} must keep cur's other flags in
+            // that namespace instead of resetting them to defaults.
+            for (const k of Object.keys(PREF_VALID)) {
+                if (typeof PREF_VALID[k] === 'object' && patch &&
+                        patch[k] && typeof patch[k] === 'object' && !Array.isArray(patch[k])) {
+                    merged[k] = Object.assign({}, cur[k], patch[k]);
+                }
+            }
+            const next = normalizePrefs(merged);
             if (JSON.stringify(next) === JSON.stringify(cur)) return cur;
             prefsDirty = true;
             try { localStorage.setItem(PREFS_DIRTY_KEY, String(Date.now())); } catch (e) {}
@@ -1919,7 +1980,16 @@
         function adoptPrefs(serverDoc) {
             const before = JSON.stringify(getPrefs());
             const remote = (serverDoc && typeof serverDoc === 'object' && !Array.isArray(serverDoc)) ? serverDoc : {};
-            const merged = Object.assign({}, readRawPrefs() || {}, remote);
+            const local = readRawPrefs() || {};
+            const merged = Object.assign({}, local, remote);
+            // Same per-subkey posture for nested namespaces: remote subkeys
+            // win, subkeys the server never saw keep their local value.
+            for (const k of Object.keys(PREF_VALID)) {
+                if (typeof PREF_VALID[k] !== 'object') continue;
+                const l = (local[k] && typeof local[k] === 'object' && !Array.isArray(local[k])) ? local[k] : {};
+                const r = (remote[k] && typeof remote[k] === 'object' && !Array.isArray(remote[k])) ? remote[k] : {};
+                merged[k] = Object.assign({}, l, r);
+            }
             const next = normalizePrefs(merged);
             if (!PREF_VALID.fontSize(merged.fontSize)) next.fontSize = getFontSize();
             try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch (e) {}
@@ -1944,7 +2014,7 @@
             // PUT is pending) and unacked changes from a previous page-life.
             if (prefsDirty || prefsDirtyMark() !== null) { schedulePrefsPut(); return; }
             const hasAny = doc && typeof doc === 'object' && !Array.isArray(doc) &&
-                Object.keys(PREF_VALID).some(k => PREF_VALID[k](doc[k]));
+                Object.keys(PREF_VALID).some(k => prefFieldOk(k, doc[k]));
             if (hasAny) adoptPrefs(doc);
             else if (readRawPrefs()) schedulePrefsPut();     // seed a fresh server doc
         })();
@@ -1960,6 +2030,20 @@
         const FLOW_KILL_KEY = 'tl-flow-control';
         function flowControlWanted() {
             try { return localStorage.getItem(FLOW_KILL_KEY) !== 'off'; } catch (e) { return true; }
+        }
+
+        // Wave 5 gestures master kill — tl-gestures, a PLAIN per-browser
+        // localStorage key with the same posture as tl-flow-control: set
+        // to 'off' to disable every Wave-5 touch/gesture enhancement
+        // (hold-to-repeat, long-press, swipes, pinch, …) in this browser
+        // without a redeploy, even when the prefs machinery is broken.
+        // Anything else (or unset) = enabled. Per-feature opt-outs live
+        // under tl:prefs:v1 gestures.* and are checked IN ADDITION to
+        // this. Shared scope: gesture code runs in both the lobby (card
+        // long-press) and the terminal iframe (soft keys, multi-touch).
+        const GESTURES_KILL_KEY = 'tl-gestures';
+        function gesturesEnabled() {
+            try { return localStorage.getItem(GESTURES_KILL_KEY) !== 'off'; } catch (e) { return true; }
         }
 
         // ---- keybinding layer + command palette (Task 4.1) -------------
@@ -4346,6 +4430,8 @@
                 settingsPanel.querySelector('#sp-blink').checked = p.cursorBlink;
                 settingsPanel.querySelector('#sp-flow').checked = flowControlWanted();
                 settingsPanel.querySelector('#sp-kb').checked = tlKb.enabled();
+                const rep = settingsPanel.querySelector('#sp-repeat');
+                if (rep) rep.checked = p.gestures.keyRepeat;   // coarse-pointer row only
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     const val = String(p[seg.dataset.pref]);
                     seg.querySelectorAll('button').forEach(b => {
@@ -4482,6 +4568,23 @@
                     syncAltBadges();   // disabling mid-Alt-hold must drop the badges
                 });
                 kbRow.appendChild(kb);
+
+                // Task M.1: hold-to-repeat on the soft-key arrows/Tab —
+                // roamed gestures.* namespace (nested deep-merge in
+                // setPrefs; the attached terminal reads it live per press).
+                // Rendered on coarse-pointer devices only: it governs the
+                // soft-key toolbar, which only exists there.
+                if (matchMedia('(pointer: coarse)').matches) {
+                    const repRow = row('Key repeat');
+                    const rep = document.createElement('input');
+                    rep.type = 'checkbox';
+                    rep.id = 'sp-repeat';
+                    rep.title = 'Hold a soft-key arrow or Tab to auto-repeat it ' +
+                        '(500 ms delay, then ~16 keys/s).';
+                    rep.addEventListener('change',
+                        () => setPrefs({ gestures: { keyRepeat: rep.checked } }));
+                    repRow.appendChild(rep);
+                }
 
                 document.body.appendChild(panel);
                 settingsPanel = panel;
@@ -5457,6 +5560,32 @@
                 }
             };
 
+            // Task M.1 hold-to-repeat engine — a single slot: at most one
+            // key repeats at a time (pressing another repeat key takes the
+            // slot over). The initial send fires on pointerdown like any
+            // key; REPEAT_DELAY_MS later the action re-fires every
+            // REPEAT_INTERVAL_MS with a vibrate(5) tick until the hold
+            // ends. Opt-outs, both read per press (no reload needed):
+            // tl:prefs:v1 gestures.keyRepeat (roamed, settings panel) and
+            // the tl-gestures master kill.
+            const REPEAT_DELAY_MS = 500, REPEAT_INTERVAL_MS = 60;
+            let repeatDelayTimer = null, repeatTicker = null;
+            function stopRepeat() {
+                clearTimeout(repeatDelayTimer);
+                clearInterval(repeatTicker);
+                repeatDelayTimer = repeatTicker = null;
+            }
+            function startRepeat(fire) {
+                stopRepeat();
+                if (!(gesturesEnabled() && getPrefs().gestures.keyRepeat)) return;
+                repeatDelayTimer = setTimeout(() => {
+                    repeatTicker = setInterval(() => {
+                        try { fire(); } catch (err) { console.error(err); }
+                        navigator.vibrate?.(5);
+                    }, REPEAT_INTERVAL_MS);
+                }, REPEAT_DELAY_MS);
+            }
+
             function makeBtn(label, onTap, opts) {
                 const b = document.createElement('button');
                 b.type = 'button';
@@ -5470,6 +5599,9 @@
                 b.addEventListener('pointerdown', (ev) => {
                     ev.preventDefault();
                     try { onTap(); } catch (err) { console.error(err); }
+                    // Task M.1: arm hold-to-repeat (arrows + Tab) after the
+                    // initial send above.
+                    if (opts && opts.repeat) startRepeat(onTap);
                     // Re-arm helper textarea for the next physical keystroke —
                     // but skip on modifiers and arrows so tapping a navigation
                     // key doesn't summon the keyboard if it wasn't already up.
@@ -5477,6 +5609,18 @@
                                    || (opts && opts.noFocus);
                     if (!skipFocus) term.focus();
                 });
+                if (opts && opts.repeat) {
+                    // BOTH cancel events are wired: an OS gesture interrupt
+                    // (notification shade, app switch) delivers pointercancel
+                    // with NO pointerup — missing either would leave the key
+                    // machine-gunning. pointerleave covers mouse holds
+                    // dragged off the button (touch pointers are implicitly
+                    // captured, so their hold always ends in up/cancel on
+                    // the button itself).
+                    b.addEventListener('pointerup', stopRepeat);
+                    b.addEventListener('pointercancel', stopRepeat);
+                    b.addEventListener('pointerleave', stopRepeat);
+                }
                 return b;
             }
 
@@ -5491,17 +5635,24 @@
             }
 
             row.appendChild(makeBtn('Esc',  () => sendKey('\x1b')));
-            row.appendChild(makeBtn('Tab',  () => sendKey('\t')));
+            row.appendChild(makeBtn('Tab',  () => sendKey('\t'), { repeat: true }));
+            // Task M.1: back-tab (CSI Z) — Claude Code's mode cycle; mobile
+            // soft keyboards have no way at all to send Shift+Tab.
+            row.appendChild(makeBtn('⇧Tab', () => sendKey('\x1b[Z'),
+                { ariaLabel: 'Shift+Tab (back-tab)' }));
             row.appendChild(makeBtn('Ctrl', () => tapMod('ctrl'),
                 { cls: 'sk-mod', dataMod: 'ctrl', ariaLabel: 'Ctrl modifier' }));
             row.appendChild(makeBtn('Alt',  () => tapMod('alt'),
                 { cls: 'sk-mod', dataMod: 'alt',  ariaLabel: 'Alt modifier' }));
-            row.appendChild(makeBtn('↑', () => sendKey('\x1b[A'), { ariaLabel: 'Up arrow',    noFocus: true }));
-            row.appendChild(makeBtn('↓', () => sendKey('\x1b[B'), { ariaLabel: 'Down arrow',  noFocus: true }));
-            row.appendChild(makeBtn('←', () => sendKey('\x1b[D'), { ariaLabel: 'Left arrow',  noFocus: true }));
-            row.appendChild(makeBtn('→', () => sendKey('\x1b[C'), { ariaLabel: 'Right arrow', noFocus: true }));
+            row.appendChild(makeBtn('↑', () => sendKey('\x1b[A'), { ariaLabel: 'Up arrow',    noFocus: true, repeat: true }));
+            row.appendChild(makeBtn('↓', () => sendKey('\x1b[B'), { ariaLabel: 'Down arrow',  noFocus: true, repeat: true }));
+            row.appendChild(makeBtn('←', () => sendKey('\x1b[D'), { ariaLabel: 'Left arrow',  noFocus: true, repeat: true }));
+            row.appendChild(makeBtn('→', () => sendKey('\x1b[C'), { ariaLabel: 'Right arrow', noFocus: true, repeat: true }));
             row.appendChild(makeBtn('|',  () => sendKey('|')));
             row.appendChild(makeBtn('`',  () => sendKey('`')));
+            // Task M.1: slash-commands and CLI flags.
+            row.appendChild(makeBtn('/',  () => sendKey('/')));
+            row.appendChild(makeBtn('-',  () => sendKey('-')));
 
             row.appendChild(makeBtn('Copy', async () => {
                 const sel = term.getSelection();
@@ -5528,6 +5679,15 @@
             }));
             row.appendChild(makeBtn('Kbd', () => term.focus(),
                 { ariaLabel: 'Show keyboard' }));
+
+            // Task M.1: keyboard DISMISS — right-pinned OUTSIDE the
+            // scrolling row (a direct #soft-keys child, so it can never
+            // scroll out of reach). Blurring the helper textarea collapses
+            // the soft keyboard; noFocus keeps makeBtn from immediately
+            // re-summoning it. 'Kbd' above is the inverse.
+            toolbar.appendChild(makeBtn('⌄', () => {
+                if (helperTextarea) helperTextarea.blur();
+            }, { ariaLabel: 'Hide keyboard', noFocus: true, cls: 'sk-dismiss' }));
 
             document.body.appendChild(toolbar);
             document.body.classList.add('has-soft-keys');

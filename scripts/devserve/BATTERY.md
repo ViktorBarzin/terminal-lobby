@@ -1013,3 +1013,48 @@ implements the feature. Format:
 - [Task 4.1] Live-disable: untick #sp-kb while attached → doc reads
   `{"enabled":false,...}`; Alt+1 in the terminal no longer attaches and
   `^[1` reaches the pty again (storage event flipped the iframe live).
+- [Task M.1] New soft keys send bytes: mobile emulation (390×844, touch),
+  attach `#main`, arm `tmux -L tl-dev send-keys -t main 'cat -v' Enter`;
+  tap `⇧Tab`, `/`, `-` in the soft-key row → `capture-pane -p -J` shows the
+  contiguous run `^[[Z/-`. Row order: Esc Tab ⇧Tab Ctrl Alt ↑↓←→ | ` / -
+  Copy Paste Kbd.
+- [Task M.1] Hold-to-repeat (raw CDP `Input.dispatchTouchEvent` — the row
+  SCROLLS horizontally, so `scroll_into_view_if_needed()` the target first;
+  Playwright's tap-only touchscreen can't hold): touchStart on ↓, hold
+  1.2 s, touchEnd → **≥10** `^[[B` in capture-pane (measured 11: initial
+  send + 500 ms delay + 60 ms ticks), and the count is UNCHANGED 0.5 s
+  after release (cancel on pointerup; pointercancel/pointerleave are wired
+  for OS gesture interrupts + mouse holds dragged off the button).
+- [Task M.1] Repeat opt-outs, both live per press (no reload): write
+  `tl:prefs:v1` `gestures.keyRepeat=false` → same 1.0 s hold sends exactly
+  **1** byte-run; restore `keyRepeat:true` + set `tl-gestures`='off'
+  (master kill, same `!== 'off'` posture as `tl-flow-control`) → exactly
+  **1** again; remove the kill key afterwards.
+- [Task M.1] `⌄` dismiss: tap the terminal (helper textarea focused —
+  `document.activeElement.className` contains `helper-textarea`), tap the
+  `⌄` button → activeElement is NOT the helper textarea (keyboard
+  collapse), and `⌄` is a DIRECT child `#soft-keys > button.sk-dismiss`
+  (right-pinned outside the scrolling row — never scrolls out of reach).
+  `Kbd` re-focuses (inverse).
+- [Task M.1] Edge fade: `getComputedStyle` of `.sk-row` has a
+  `linear-gradient` mask-image (scroll affordance); the row (not
+  `#soft-keys`) is the horizontal scroller.
+- [Task M.1] Settings: on a coarse-pointer lobby (un-collapse the sidebar
+  at 390 px first) the panel shows a "Key repeat" row (`#sp-repeat`,
+  checked by default); untick → `tl:prefs:v1.gestures.keyRepeat === false`
+  with ALL sibling top-level fields intact (nested deep-merge) and the
+  debounced PUT roams the doc (server copy gains `gestures`). On a
+  fine-pointer (desktop) context `#sp-repeat` does NOT render.
+- [Task M.1] Nested-prefs robustness (normalizePrefs generalization —
+  M.10's compose.* rides the same mechanism): corrupt `gestures` in
+  localStorage (e.g. `42`, `{"keyRepeat":"yes"}`, `[1,2]`) → fresh page
+  boots with NO pageerror and `getPrefs().gestures` degrades per-subkey to
+  defaults; a `setPrefs({gestures:{…}})` patch never resets sibling
+  namespace flags.
+- [Task M.1] Red line: §A.5 legs (single-finger swipe → synthetic wheel →
+  copy-mode scroll; tap → keyboard focus) pass unchanged, and the standing
+  diff guard holds — the touch-discriminator IIFE (`// Touch behaviour on
+  the terminal canvas:` through its `})();`) is BYTE-IDENTICAL to the
+  Stage-A deploy (`git show 6773cbd:frontend/index.html` extract == HEAD
+  extract). The modifier state machine (softMods/tapMod/paintMod) is
+  likewise untouched.
