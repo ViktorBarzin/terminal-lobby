@@ -27,10 +27,26 @@ const (
 	pushSendTimeout = 10 * time.Second
 )
 
+// Notification kinds — which session-state edge produced a push. Threaded
+// through the send path so the observability line and the per-user prefs gate
+// can name it (and so the payload builder picks the right wording).
+const (
+	kindAwaiting = "awaiting"
+	kindDone     = "done"
+	kindTest     = "test" // the on-demand /push/test self-diagnosis send
+)
+
 // sessionStater reads a user's session name→state map. Abstracted so the
 // sender's transition logic is testable without a live tmux server.
 type sessionStater interface {
 	states(osUser string) map[string]string
+}
+
+// prefsLoader reads a user's raw roamed prefs document. *prefsStore satisfies
+// it; the sender uses it to gate done/awaiting sends per user (parseNotifyPrefs).
+// Abstracted so a sender test can supply gating without a prefs store on disk.
+type prefsLoader interface {
+	load(osUser string) ([]byte, error)
 }
 
 // liveStater is the production sessionStater: read-only tmux list-sessions via
@@ -56,25 +72,28 @@ type vapidConfig struct {
 }
 
 // pushSender polls the users who hold push subscriptions and fans a Web Push
-// out to each of a user's devices on a session's transition into "awaiting" —
-// the same edge the frontend notifies on. A per-user last-state map makes it
-// fire only on the edge, never repeatedly while a session stays awaiting; the
-// first observation of a user seeds silently (mirrors the frontend's
-// first-poll-after-load rule). It deliberately does NOT gate on window focus:
-// that is the whole point of background push (the tab may be closed), and the
-// shared tag `tl-<session>` coalesces with any foreground notification so the
-// user is alerted at most once.
+// out to each of a user's devices on a session's transition into "awaiting"
+// (needs input) or "done" (finished) — the same edges the frontend notifies
+// on — gated by that user's roamed notify prefs. A per-user last-state map
+// makes it fire only on the edge, never repeatedly while a session holds a
+// state; the first observation of a user seeds silently (mirrors the
+// frontend's first-poll-after-load rule). It deliberately does NOT gate on
+// window focus: that is the whole point of background push (the tab may be
+// closed), and the shared tag `tl-<session>` coalesces with any foreground
+// notification so the user is alerted at most once.
 type pushSender struct {
 	store  *pushStore
+	prefs  prefsLoader
 	stater sessionStater
 	vapid  vapidConfig
 	client webpush.HTTPClient
 	last   map[string]map[string]string
 }
 
-func newPushSender(store *pushStore, stater sessionStater, vapid vapidConfig) *pushSender {
+func newPushSender(store *pushStore, prefs prefsLoader, stater sessionStater, vapid vapidConfig) *pushSender {
 	return &pushSender{
 		store:  store,
+		prefs:  prefs,
 		stater: stater,
 		vapid:  vapid,
 		client: &http.Client{Timeout: pushSendTimeout},
@@ -82,10 +101,27 @@ func newPushSender(store *pushStore, stater sessionStater, vapid vapidConfig) *p
 	}
 }
 
+// notifyPrefsFor reads and parses the caller's roamed notify prefs ONCE per
+// tick (the tick loop calls this once per user, then gates all that user's
+// sessions with the result). A missing/unreadable doc — or no prefs loader
+// wired — defaults both kinds on (opt-out), matching parseNotifyPrefs.
+func (p *pushSender) notifyPrefsFor(osUser string) notifyPrefs {
+	if p.prefs == nil {
+		return notifyPrefs{onDone: true, onAwaiting: true}
+	}
+	doc, err := p.prefs.load(osUser)
+	if err != nil {
+		log.Printf("push sender: loading prefs for %s failed: %v — notifications default on", osUser, err)
+		return notifyPrefs{onDone: true, onAwaiting: true}
+	}
+	return parseNotifyPrefs(doc)
+}
+
 // pushPayload is the JSON delivered to the browser's service worker. The field
 // names are EXACTLY what frontend/sw.js reads (title, body, tag, session);
-// TestBuildPushPayloadMatchesServiceWorker pins the shape so a drift from
-// sw.js fails loudly instead of silently dropping notifications.
+// TestBuildPushPayloadMatchesServiceWorker / TestBuildDonePayloadMatchesServiceWorker
+// pin the shape so a drift from sw.js fails loudly instead of silently
+// dropping notifications.
 type pushPayload struct {
 	Title   string `json:"title"`
 	Body    string `json:"body"`
@@ -93,18 +129,36 @@ type pushPayload struct {
 	Session string `json:"session"`
 }
 
-func buildPushPayload(session string) []byte {
+// marshalPayload builds the SW payload for one session. Both wordings share
+// the tag `tl-<session>`: coalescing is by tag only (sw.js omits renotify),
+// so a later awaiting push REPLACES a finished one for the same session
+// rather than stacking a second alert.
+func marshalPayload(title, body, session string) []byte {
 	b, _ := json.Marshal(pushPayload{
-		Title:   session + " needs input",
-		Body:    "Claude is awaiting your input.",
+		Title:   title,
+		Body:    body,
 		Tag:     "tl-" + session,
 		Session: session,
 	})
 	return b
 }
 
+// buildPushPayload is the running→awaiting "needs input" wording.
+func buildPushPayload(session string) []byte {
+	return marshalPayload(session+" needs input", "Claude is awaiting your input.", session)
+}
+
+// buildDonePayload is the running→done "finished" wording — the first-class
+// notification for a turn completing. Same tag as the awaiting payload (see
+// marshalPayload): a subsequent awaiting alert supersedes it.
+func buildDonePayload(session string) []byte {
+	return marshalPayload(session+" finished", "Claude finished its turn.", session)
+}
+
 // tick runs one poll cycle: for every subscribed user, diff the current
-// session states against the previous poll and notify on each →awaiting edge.
+// session states against the previous poll and notify on each edge of
+// interest — running→awaiting ("needs input") and running→done ("finished")
+// — gated by the user's roamed notify prefs.
 func (p *pushSender) tick() {
 	users, err := p.store.users()
 	if err != nil {
@@ -120,14 +174,24 @@ func (p *pushSender) tick() {
 		if prev == nil {
 			continue // first observation of this user seeds silently
 		}
+		np := p.notifyPrefsFor(u) // one prefs read per user per tick
 		for name, st := range cur {
-			if st != stateAwaiting {
-				continue
+			was := prev[name] // "" when the session was absent last poll
+			switch {
+			case st == stateAwaiting && was != stateAwaiting:
+				// running→awaiting (and any non-awaiting→awaiting, incl. a
+				// newly-appeared already-awaiting session — unchanged edge).
+				if np.onAwaiting {
+					p.notify(u, name, kindAwaiting)
+				}
+			case st == stateDone && was == stateRunning:
+				// running→done ONLY. A session first seen already done
+				// (was=="") or any non-running→done stays silent, so a
+				// SessionStart hook stamping "done" never fires.
+				if np.onDone {
+					p.notify(u, name, kindDone)
+				}
 			}
-			if prev[name] == stateAwaiting {
-				continue // already awaiting last poll — the edge already fired
-			}
-			p.notify(u, name)
 		}
 	}
 	// Drop last-state for users whose last device unsubscribed, so a later
@@ -139,15 +203,31 @@ func (p *pushSender) tick() {
 	}
 }
 
-// notify fans the payload for `session` out to every one of the user's stored
-// devices, pruning any endpoint the push service reports gone (404/410).
-func (p *pushSender) notify(osUser, session string) {
+// notify builds the payload for `session` of the given kind and fans it out
+// to the user's devices. The wording comes from the kind; the tag is shared
+// across kinds so a later push for the same session coalesces (send()).
+func (p *pushSender) notify(osUser, session, kind string) {
+	var payload []byte
+	if kind == kindDone {
+		payload = buildDonePayload(session)
+	} else {
+		payload = buildPushPayload(session)
+	}
+	p.send(osUser, session, payload, kind)
+}
+
+// send fans `payload` out to every one of the user's stored devices, pruning
+// any endpoint the push service reports gone (404/410) and logging one
+// observability line per ACCEPTED push (os user, session, kind, HTTP status)
+// — the operator's proof a push actually left the box, the forensics gap that
+// made "notifications don't work" un-diagnosable. Returns the count accepted
+// and the count pruned; the on-demand /push/test endpoint reads them back.
+func (p *pushSender) send(osUser, session string, payload []byte, kind string) (sent, pruned int) {
 	subs, err := p.store.list(osUser)
 	if err != nil {
 		log.Printf("push sender: loading subs for %s failed: %v", osUser, err)
-		return
+		return 0, 0
 	}
-	payload := buildPushPayload(session)
 	opts := &webpush.Options{
 		HTTPClient: p.client,
 		// webpush-go re-adds "mailto:" for any non-https subscriber, so a
@@ -171,14 +251,22 @@ func (p *pushSender) notify(osUser, session string) {
 		status := resp.StatusCode
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
-		if status == http.StatusNotFound || status == http.StatusGone {
+		switch {
+		case status == http.StatusNotFound || status == http.StatusGone:
 			if _, err := p.store.remove(osUser, sub.Endpoint); err != nil {
 				log.Printf("push sender: pruning a gone endpoint for %s failed: %v", osUser, err)
 			} else {
+				pruned++
 				log.Printf("push sender: pruned a gone endpoint for %s (push service returned %d)", osUser, status)
 			}
+		case status >= 200 && status < 300:
+			sent++
+			log.Printf("push sender: sent %s to %s (session=%s, status=%d)", kind, osUser, session, status)
+		default:
+			log.Printf("push sender: unexpected status sending %s to %s (session=%s, status=%d)", kind, osUser, session, status)
 		}
 	}
+	return sent, pruned
 }
 
 // run drives tick on a ticker until ctx is cancelled. The first tick fires
@@ -211,7 +299,7 @@ func maybeStartPushSender() {
 		log.Printf("push sender: VAPID config incomplete — background push disabled")
 		return
 	}
-	sender := newPushSender(pushStoreInstance, liveStater{}, vapidConfig{
+	sender := newPushSender(pushStoreInstance, prefsStoreInstance, liveStater{}, vapidConfig{
 		publicKey:  pub,
 		privateKey: priv,
 		subject:    subject,

@@ -1,18 +1,45 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
+
+// stubPrefs is a prefsLoader returning a fixed prefs document (empty ⇒ "{}",
+// i.e. the server defaults, both notify kinds on). Lets a sender test choose
+// the caller's notify gating without a real prefs store on disk.
+type stubPrefs struct{ doc string }
+
+func (s stubPrefs) load(string) ([]byte, error) {
+	if s.doc == "" {
+		return []byte("{}"), nil
+	}
+	return []byte(s.doc), nil
+}
+
+// captureLog redirects the standard logger to a buffer for fn's duration and
+// returns everything it wrote — the observability lines are plain log.Printf.
+func captureLog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+	fn()
+	return buf.String()
+}
 
 // genSubKeys produces a VALID browser keypair so webpush-go's RFC-8291
 // encryption succeeds and the POST actually reaches the stub endpoint — an
@@ -126,7 +153,7 @@ func TestPushSenderEdgeFanoutPruneRearm(t *testing.T) {
 	}
 
 	stub := &stubStater{}
-	sender := newPushSender(store, stub, testVAPID(t))
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
 
 	// tick 1 — first observation of alice: seed, send nothing.
 	stub.set(map[string]string{"main": stateRunning})
@@ -176,7 +203,7 @@ func TestPushSenderNewlyAppearedAwaitingFires(t *testing.T) {
 	_ = store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)})
 
 	stub := &stubStater{}
-	sender := newPushSender(store, stub, testVAPID(t))
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
 
 	// Seed with an unrelated running session.
 	stub.set(map[string]string{"other": stateRunning})
@@ -197,7 +224,7 @@ func TestPushSenderNewlyAppearedAwaitingFires(t *testing.T) {
 func TestPushSenderIgnoresUsersWithoutSubs(t *testing.T) {
 	store := newPushStore(t.TempDir())
 	stub := &stubStater{m: map[string]string{"main": stateAwaiting}}
-	sender := newPushSender(store, stub, testVAPID(t))
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
 	sender.tick() // must not panic; nobody subscribed
 }
 
@@ -217,5 +244,139 @@ func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("push payload shape drift:\n got %v\nwant %v", got, want)
+	}
+}
+
+// The running→done "finished" payload has the same shape sw.js parses
+// (title/body/tag/session), the finished wording, AND — critically — the
+// SAME tag as the awaiting payload for a session, so a later awaiting push
+// replaces a finished one instead of stacking (coalesce by tag; sw.js omits
+// renotify).
+func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal(buildDonePayload("worktree"), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	want := map[string]any{
+		"title":   "worktree finished",
+		"body":    "Claude finished its turn.",
+		"tag":     "tl-worktree",
+		"session": "worktree",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("done payload shape drift:\n got %v\nwant %v", got, want)
+	}
+	var aw map[string]any
+	_ = json.Unmarshal(buildPushPayload("worktree"), &aw)
+	if got["tag"] != aw["tag"] {
+		t.Fatalf("done tag %q != awaiting tag %q — coalescing would break", got["tag"], aw["tag"])
+	}
+}
+
+// The running→done edge fires the finished push to every device exactly once,
+// with the done KIND (asserted via the observability line). Seeding stays
+// silent in every guise: the user's first observation, a session first SEEN
+// already done (prev absent — SessionStart→done must not fire), and a
+// done→done re-poll all send nothing; only a genuine running→done turn
+// completion fires.
+func TestPushSenderDoneEdgeFiresAndSeedsSilently(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	_ = store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)})
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	// tick 1 — first observation of alice, with a session ALREADY done:
+	// whole-user seed, silent.
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if rec.total() != 0 {
+		t.Fatalf("seed tick sent %d, want 0", rec.total())
+	}
+
+	// tick 2 — a fresh session appears already done (prev[name]=="", not
+	// running): the done edge requires prev==running, so it stays silent.
+	stub.set(map[string]string{"main": stateDone, "fresh": stateDone})
+	sender.tick()
+	if rec.total() != 0 {
+		t.Fatalf("newly-appeared done fired %d, want 0 (prev not running)", rec.total())
+	}
+
+	// tick 3 — main goes done→running: not the done edge (cur is running).
+	stub.set(map[string]string{"main": stateRunning, "fresh": stateDone})
+	sender.tick()
+	if rec.total() != 0 {
+		t.Fatalf("done→running fired %d, want 0", rec.total())
+	}
+
+	// tick 4 — running→done: THE edge. Fires once, logs kind=done.
+	stub.set(map[string]string{"main": stateDone, "fresh": stateDone})
+	out := captureLog(t, sender.tick)
+	if rec.hit("/d") != 1 {
+		t.Fatalf("running→done edge: got %d, want 1", rec.hit("/d"))
+	}
+	if !strings.Contains(out, "sent done to alice") {
+		t.Fatalf("observability line missing done kind:\n%s", out)
+	}
+
+	// tick 5 — still done: done→done is silent (no re-fire).
+	sender.tick()
+	if rec.hit("/d") != 1 {
+		t.Fatalf("done→done re-fired: got %d, want 1", rec.hit("/d"))
+	}
+}
+
+// The two notification kinds gate INDEPENDENTLY on the caller's roamed notify
+// prefs: onDone=false suppresses the done push but leaves awaiting alone, and
+// onAwaiting=false does the mirror. Each leg is a single-session run so the
+// endpoint hit count is exactly whether that kind fired.
+func TestPushSenderPrefsGateKindsIndependently(t *testing.T) {
+	fire := func(t *testing.T, prefsDoc, fromState, toState string) int {
+		rec := &pushRecorder{hits: map[string]int{}}
+		srv := rec.server(t)
+		store := newPushStore(t.TempDir())
+		_ = store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)})
+		stub := &stubStater{}
+		sender := newPushSender(store, stubPrefs{doc: prefsDoc}, stub, testVAPID(t))
+		stub.set(map[string]string{"s": fromState})
+		sender.tick() // seed
+		stub.set(map[string]string{"s": toState})
+		sender.tick() // edge under test
+		return rec.hit("/d")
+	}
+	if got := fire(t, `{"notify":{"onDone":false}}`, stateRunning, stateDone); got != 0 {
+		t.Fatalf("onDone=false but done fired %d, want 0", got)
+	}
+	if got := fire(t, `{"notify":{"onDone":false}}`, stateRunning, stateAwaiting); got != 1 {
+		t.Fatalf("onDone=false must not touch awaiting: got %d, want 1", got)
+	}
+	if got := fire(t, `{"notify":{"onAwaiting":false}}`, stateRunning, stateAwaiting); got != 0 {
+		t.Fatalf("onAwaiting=false but awaiting fired %d, want 0", got)
+	}
+	if got := fire(t, `{"notify":{"onAwaiting":false}}`, stateRunning, stateDone); got != 1 {
+		t.Fatalf("onAwaiting=false must not touch done: got %d, want 1", got)
+	}
+}
+
+// Every accepted push logs exactly one observability line naming the OS user,
+// session, kind and HTTP status — the operator's proof a push left the box
+// (the forensics gap that made "notifications don't work" un-diagnosable).
+func TestPushSenderLogsAcceptedSends(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	_ = store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/live", Keys: genSubKeys(t)})
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick() // seed
+	stub.set(map[string]string{"main": stateAwaiting})
+	out := captureLog(t, sender.tick)
+	if !strings.Contains(out, "sent awaiting to alice") ||
+		!strings.Contains(out, "session=main") ||
+		!strings.Contains(out, "status=201") {
+		t.Fatalf("awaiting observability line missing/wrong:\n%s", out)
 	}
 }

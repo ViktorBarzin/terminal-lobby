@@ -328,7 +328,7 @@ func TestParseNotifyPrefsRoundtrip(t *testing.T) {
 		{`{"notify":{"onDone":true,"onAwaiting":false}}`, true, false},
 		{`{"notify":{"onDone":false,"onAwaiting":false}}`, false, false},
 		{`{"notify":{"onDone":true,"onAwaiting":true}}`, true, true},
-		{`{"notify":{"onDone":false}}`, false, true},  // absent onAwaiting keeps default true
+		{`{"notify":{"onDone":false}}`, false, true}, // absent onAwaiting keeps default true
 		{`{"notify":{"onAwaiting":false}}`, true, false},
 		{`{"fontSize":15,"notify":{"onDone":false},"cursorStyle":"bar"}`, false, true}, // siblings ignored
 	}
