@@ -43,11 +43,33 @@ REV=$(git -C "$ROOT" rev-parse --short HEAD)
 mkdir -p out
 sed "s/__TL_BUILD__/${REV}/" frontend/index.html > out/index.html
 
+# Web Push VAPID keypair (Notifications Part 2): fetched from Vault at deploy
+# time and installed as a systemd EnvironmentFile, so the private key never
+# lives in the repo or an image. Absent secret → Web Push stays dark (GET
+# /push/vapid-public 404s and the frontend falls back to foreground-only
+# notifications) and the deploy still succeeds. $VAPID_ENV rides the scp list
+# unquoted (empty = zero words = skipped), mirroring $TTYD_BIN.
+echo "==> Fetching VAPID keys from Vault..."
+VAPID_ENV=""
+if vault kv get secret/terminal-lobby/vapid >/dev/null 2>&1; then
+  {
+    printf 'VAPID_PUBLIC_KEY=%s\n'  "$(vault kv get -field=public_key  secret/terminal-lobby/vapid)"
+    printf 'VAPID_PRIVATE_KEY=%s\n' "$(vault kv get -field=private_key secret/terminal-lobby/vapid)"
+    printf 'VAPID_SUBJECT=%s\n'     "$(vault kv get -field=subject     secret/terminal-lobby/vapid)"
+  } > out/vapid.env
+  chmod 600 out/vapid.env
+  VAPID_ENV="out/vapid.env"
+  echo "==> VAPID keys staged (out/vapid.env) — Web Push enabled"
+else
+  echo "==> No secret/terminal-lobby/vapid in Vault — Web Push disabled (foreground notifications unaffected)"
+fi
+
 echo "==> Staging files on $DEVVM..."
 # $TTYD_BIN is intentionally unquoted: empty expands to zero words
 # (file skipped), non-empty is a single shell-safe path.
 scp -o BatchMode=yes \
   $TTYD_BIN \
+  $VAPID_ENV \
   out/tmux-api \
   out/clipboard-upload \
   out/index.html \
@@ -83,7 +105,7 @@ echo "==> Installing on $DEVVM..."
 # INCLUDE_TTYD rides the remote command line (the heredoc is quoted, so
 # it can't interpolate); guarding on the flag rather than on a /tmp/ttyd
 # stat means a stale binary from an aborted earlier run is never installed.
-ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<'REMOTE'
+ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=${VAPID_ENV:+1} bash -se" <<'REMOTE'
   set -euo pipefail
   if [[ "${INCLUDE_TTYD:-}" == "1" ]]; then
     # Locally-patched ttyd (sixel pixel-size ADR 0004 + PAUSE flow control
@@ -145,6 +167,15 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
     sudo install -m 0644 /tmp/$u.service /etc/systemd/system/$u.service
   done
   sudo install -m 0644 /tmp/clipboard-cleanup.timer /etc/systemd/system/clipboard-cleanup.timer
+  # VAPID EnvironmentFile for tmux-api (Web Push, Notifications Part 2).
+  # Root-owned 0600: systemd reads it before dropping to User=wizard, so the
+  # private key isn't readable by the service user. Absent → the unit's
+  # EnvironmentFile=- makes it optional (push stays dark).
+  sudo install -d -m 0755 /etc/tmux-api
+  if [[ "${STAGE_VAPID:-}" == "1" ]]; then
+    sudo install -m 0600 -o root -g root /tmp/vapid.env /etc/tmux-api/vapid.env
+    rm -f /tmp/vapid.env
+  fi
   # daemon-reload can transiently time out when the devvm is under heavy
   # interactive load (D-Bus slow to answer); retry once before giving up.
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
@@ -153,7 +184,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} bash -se" <<
   rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html /tmp/sw.js
   rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png /tmp/icon-512-maskable.png
   rm -f /tmp/JetBrainsMono-Regular.woff2 /tmp/JetBrainsMono-Bold.woff2 /tmp/JetBrainsMono-Italic.woff2 /tmp/JetBrainsMono-BoldItalic.woff2 /tmp/dm-sans-latin-wght-normal.woff2 /tmp/tl-symbols.woff2
-  rm -f /tmp/ttyd-user-map /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users
+  rm -f /tmp/ttyd-user-map /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users /tmp/vapid.env
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
   rm -f /tmp/clipboard-upload.service /tmp/clipboard-cleanup.service /tmp/clipboard-cleanup.timer
 REMOTE
@@ -162,6 +193,7 @@ echo "==> Verifying..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" '
   systemctl is-active ttyd ttyd-ro tmux-api clipboard-upload
   curl -sf -H "X-Authentik-Username: alice" http://localhost:7684/whoami >/dev/null && echo "tmux-api OK"
+  curl -sf http://localhost:7684/push/vapid-public >/dev/null && echo "Web Push VAPID endpoint OK" || echo "Web Push dark (no VAPID key configured)"
   curl -sf http://localhost:7683/health >/dev/null && echo "clipboard-upload OK"
   curl -sf http://localhost:7683/manifest.webmanifest >/dev/null && curl -sf http://localhost:7683/fonts/JetBrainsMono-Regular.woff2 >/dev/null && curl -sf http://localhost:7683/sw.js >/dev/null && echo "public assets OK"
 '
