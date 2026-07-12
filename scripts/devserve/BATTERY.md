@@ -157,16 +157,17 @@ contract:
    events — tmux scrolls (`tmux -L tl-dev display -p -t main '#{pane_in_mode}'`
    → `1`, copy-mode entered) and the swipe does NOT focus/summon the keyboard.
 3. Dispatch a tap (touchstart → touchend, ΔY ≤ 6 px). Three sub-legs
-   since M.11 (tap FOCUS routes per `compose.tapFocus`; tap byte
-   semantics — no pty bytes, no scroll — identical in all three):
-   - **3a** bar hidden (`compose.show:'off'` seeded, or after ⌄):
+   since M.11 (tap FOCUS routes per `input.tapFocus` — pref re-keyed by
+   IR.2, routing identical; tap byte semantics — no pty bytes, no
+   scroll — identical in all three):
+   - **3a** bar hidden (`input.bar:'off'` seeded, or after ✎/⌄):
      **Expect:** the terminal focuses (helper textarea → soft keyboard
      path) — verbatim the pre-M.11 leg.
-   - **3b** bar visible + defaults (`show:'auto'`, `tapFocus:'compose'`):
+   - **3b** bar visible + defaults (`bar:'auto'`, `tapFocus:'field'`):
      **Expect:** `#compose-input` becomes the activeElement, capture-pane
      UNCHANGED (the tap sends no bytes); a >6px swipe in the same state
      still wheels (copy-mode scrolls) with NO focus change.
-   - **3c** bar visible + `tapFocus:'terminal'`:
+   - **3c** bar visible + `input.tapFocus:'terminal'`:
      **Expect:** the helper textarea focuses — 3a behavior with the bar
      open.
 4. Code-inspect the loaded page: the `--kb-offset` visualViewport plumbing is
@@ -2203,3 +2204,112 @@ tap for emitted-bytes assertions). CDP legs:
 - Both: NO double-send anywhere (an unchanged value diffs to nothing);
   password prompts via the raw keyboard (Kbd) — the mirror field is
   visible text.
+
+### [IR.2] Prefs re-key compose.* → input.* + honest settings rows + device-local bar toggle (input-rework; burned-keys discipline)
+
+IR.1 changed the bar's MODEL (staging composer → live mirror) but left
+it riding the compose.* prefs. Those shipped defaults live serialized
+in pre-existing roamed /prefs docs, so IR.2 retires the namespace
+wholesale instead of flipping any default (the MF-4 re-key discipline):
+fresh keys `input.bar` ('auto'|'on'|'off', default 'auto' —
+device-neutral: coarse shows, fine ignores) and `input.tapFocus`
+('field'|'terminal', default 'field' — fresh vocabulary; the burned key
+said 'compose'). NO input.enterKey successor — Enter semantics are
+fixed by the mirror. normalizePrefs structurally drops roamed compose.*
+on every read and omits it from the next whole-doc write; the M.10→M.11
+autoShow migration block died with the namespace; NO migration
+write-back. Settings rows: 'Compose bar' → 'Input bar' checkbox
+(`#sp-inputbar`) writing input.bar 'on'/'off' ('auto' paints checked on
+coarse; checking ON also clears the quick-toggle override — explicit
+settings intent wins); 'Terminal tap' seg now Field|Keyboard writing
+input.tapFocus; the 'Compose Return' row is DELETED. ✎ (and the bar's
+own ⌄) now flip a DEVICE-LOCAL override `tl:input.barHidden:v1` ('1' =
+suppressed; '0'/absent/garbage = follow the roamed posture, never a
+crash) and visibility reconciles BOTH directions on every prefs apply:
+effective = (input.bar==='on' || (==='auto' && coarse)) &&
+override!=='1'. Renames: applyComposePrefs→applyInputPrefs,
+toggleCompose→toggleInputBar (no compose-named pref identifiers
+remain). Coach hint re-keyed tl-compose-hint:v1 → tl-input-hint:v1
+(old key never read again; stale entry left inert), copy: 'Type here —
+the terminal mirrors you. Enter sends.'
+
+**Default changes (all disclosed):** compose.show / compose.tapFocus /
+compose.enterKey retired — roamed values ignored and dropped from the
+next prefs write (a former compose.show:'off' user sees the bar ONCE
+and re-hides it durably — deploy heads-up item). Fresh input.bar 'auto'
+/ input.tapFocus 'field' are posture-preserving. New device-local key
+tl:input.barHidden:v1. A manual ✎/⌄ hide now PERSISTS on that device
+(was page-life; under a roamed input.bar:'off' the ✎ toggle is inert —
+the settings row is the way back). The reopen-hint toast now names the
+'input bar'. The coach hint shows once more on every device (fresh
+key). 'Compose Return' setting removed (Enter is fixed).
+
+**SUPERSEDE NOTE for [MF-6] / §A.5 / [IR.1] vocabulary above:** read
+`compose.show` as `input.bar`, `tapFocus:'compose'` as
+`input.tapFocus:'field'`, `#sp-compose` as `#sp-inputbar`,
+`tl-compose-hint:v1` as `tl-input-hint:v1`; [IR.1]'s fallback line
+`compose.show:'off'` reads `input.bar:'off'`. The [MF-6] MIGRATION
+MATRIX (autoShow coercion) and SETTINGS legs describe the RETIRED
+schema — historical, do not run; the [MF-6] "'Compose Return' row
+unchanged" clause is void (row deleted), and the M.10/M.11 "manual
+collapse reopens next page-life" phrasing is void (device-persistent
+now).
+
+**Standing diff guards: NO new deltas.** Verified mechanically at
+implementation vs `6773cbd`: M.1 IIFE + ADR-0003 interceptor still
+exactly the three MF-6 `term.focus()`→`tapFocus()` token swaps (IR.2
+swapped only which PREF the reassigned tapFocus READS — that
+reassignment lives outside both guarded blocks); onData wrapper still
+exactly the one declared IR.1 line; helper-textarea suppression
+byte-identical; `term.attachCustomKeyEventHandler(` exactly once.
+
+Harness as [IR.1] (dev-harness --scratch fork, 390×844 Pixel-7-class
+emulation, outer-page entry `#main`, Terminal-Proxy `__term` tap) —
+plus a SCRATCH tmux-api (`TMUX_API_ADDR` + disposable
+`TMUX_API_PREFS_DIR`) so the prefs legs never touch the live roamed
+doc (the /prefs snapshot dance applies only when running against the
+real :7684). All legs green 21/21 on 2026-07-12 at implementation —
+proxy 7937 / ttyd 7936 / tmux-api 7938, scratch socket `-L tl-ir2` —
+adjust ports/socket when repeating.
+
+- [IR.2] BURNED-KEYS IGNORED: boot with a roamed doc
+  `{"fontSize":15,"compose":{"show":"off","tapFocus":"terminal","enterKey":"newline"}}`
+  → bar SHOWS (input.bar 'auto' on coarse), terminal tap focuses the
+  FIELD, Enter streams (line executes, field clears); boot adoption
+  leaves the server doc byte-untouched (NO write-back); the next
+  natural whole-doc write (settings A+) omits every compose.* key and
+  carries `input:{bar:'auto',tapFocus:'field'}` (snapshot
+  before/after).
+- [IR.2] VALIDATION: the settings checkbox writes input.bar 'on'/'off';
+  a roamed `{"input":{"bar":"banana","tapFocus":7}}` → normalizePrefs
+  coerces to defaults ('auto'/'field'), bar visible, zero page errors.
+- [IR.2] TAPFOCUS ROUTING: input.tapFocus='terminal' → a terminal tap
+  focuses the helper textarea (raw keyboard summoned), field NOT
+  focused; ='field' → field focused; both directions live via the
+  settings seg with no reload (applyInputPrefs plumbing).
+- [IR.2] SETTINGS SURFACE: coarse ⚙ panel shows 'Input bar' +
+  'Terminal tap'; NO 'Compose Return' row / `#sp-compose` /
+  compose.*-keyed segs anywhere in the DOM; checkbox off → bar hides
+  LIVE, roamed doc carries 'off', hidden across reload, tap = raw
+  (3a); re-check → bar shows live.
+- [IR.2] DEVICE OVERRIDE: ✎ hides the bar + writes
+  tl:input.barHidden:v1='1' + reopen hint ('✎ brings the input bar
+  back'); reload → still hidden while roamed says 'auto' (and a
+  suppressed bar never coaches); settings checkbox ON → override key
+  cleared, bar shows; 'banana'/'0' in the key → treated as absent
+  (bar follows the roamed posture).
+- [IR.2] COACH: fresh profile → 'Type here — the terminal mirrors
+  you. Enter sends.' toast exactly once, sets tl-input-hint:v1;
+  planting tl-compose-hint:v1 beforehand does NOT suppress it (old key
+  never read); next load silent.
+- [IR.2] RED LINE: §A.5 re-run (the tap-routing pref READ was edited),
+  Pixel- AND iPhone-class emulation: 1-finger swipe → synthetic wheel →
+  copy-mode, summons NO keyboard; tap → field focus (3b) with ZERO pty
+  bytes; 3a/3c shapes driven via the settings rows; --kb-offset
+  plumbing present. Desktop 1280×800: no bar built, no input rows, no
+  'Compose Return', raw typing intact.
+
+**DEVICE-MANUAL (Viktor's pass, per the standing deploy heads-up):**
+one real phone carrying a pre-deploy roamed doc — confirm the disclosed
+ONE-TIME bar reappearance on a former compose.show:'off' device, hide
+it via settings (or ✎), reload → stays hidden across reloads.
