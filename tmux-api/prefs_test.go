@@ -286,6 +286,61 @@ func TestHandlePrefsInvalidBodyBadRequest(t *testing.T) {
 	}
 }
 
+// --- notify prefs (Notifications: done + awaiting gating) -------------------
+
+// The push sender reads notify.{onDone,onAwaiting} out of a user's roamed
+// prefs doc to gate which transitions get a background push. Both default
+// TRUE (opt-out) whenever the doc, the notify object, or an individual key is
+// absent or malformed — a user who never opened settings, or an older
+// frontend that never wrote the namespace, still gets both notifications.
+func TestParseNotifyPrefsDefaultsTrueWhenAbsent(t *testing.T) {
+	cases := []struct {
+		name string
+		doc  string
+	}{
+		{"empty object", `{}`},
+		{"no notify key", `{"fontSize":18}`},
+		{"notify not an object", `{"notify":42}`},
+		{"notify null", `{"notify":null}`},
+		{"notify empty object", `{"notify":{}}`},
+		{"keys wrong type", `{"notify":{"onDone":"yes","onAwaiting":1}}`},
+		{"corrupt doc", `{nope`},
+		{"empty bytes", ``},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			np := parseNotifyPrefs([]byte(c.doc))
+			if !np.onDone || !np.onAwaiting {
+				t.Fatalf("%s: got %+v, want both true (opt-out default)", c.name, np)
+			}
+		})
+	}
+}
+
+// A present boolean wins over the default in either direction, independently
+// per key (onDone:false must not drag onAwaiting down, and vice versa).
+func TestParseNotifyPrefsRoundtrip(t *testing.T) {
+	cases := []struct {
+		doc              string
+		wantDone, wantAw bool
+	}{
+		{`{"notify":{"onDone":false,"onAwaiting":true}}`, false, true},
+		{`{"notify":{"onDone":true,"onAwaiting":false}}`, true, false},
+		{`{"notify":{"onDone":false,"onAwaiting":false}}`, false, false},
+		{`{"notify":{"onDone":true,"onAwaiting":true}}`, true, true},
+		{`{"notify":{"onDone":false}}`, false, true},  // absent onAwaiting keeps default true
+		{`{"notify":{"onAwaiting":false}}`, true, false},
+		{`{"fontSize":15,"notify":{"onDone":false},"cursorStyle":"bar"}`, false, true}, // siblings ignored
+	}
+	for _, c := range cases {
+		np := parseNotifyPrefs([]byte(c.doc))
+		if np.onDone != c.wantDone || np.onAwaiting != c.wantAw {
+			t.Fatalf("parseNotifyPrefs(%s) = %+v, want {onDone:%v onAwaiting:%v}",
+				c.doc, np, c.wantDone, c.wantAw)
+		}
+	}
+}
+
 // assertSameJSON compares two JSON documents semantically (key order and
 // whitespace independent).
 func assertSameJSON(t *testing.T, got, want []byte) {
