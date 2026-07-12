@@ -935,6 +935,7 @@
         .session-list { display: flex; flex-direction: column; gap: 6px; }
         .session-card {
             display: flex; align-items: center; justify-content: space-between;
+            position: relative;  /* .kb-badge anchor (Task 4.1) — no visual change */
             background: var(--bg-card); border: 1px solid var(--border);
             border-left: 3px solid transparent;
             border-radius: calc(var(--radius) + 8px);
@@ -1348,6 +1349,72 @@
         .settings-panel .sp-step { display: flex; gap: 4px; flex: 1 1 auto; align-items: center; }
         .settings-panel .sp-step button { flex: 0 0 36px; }
         .settings-panel .sp-step .sp-val { flex: 1 1 auto; text-align: center; }
+
+        /* Command palette (Task 4.1) — opt-in keybinding layer. Same
+           surface language as .settings-panel; sits above every other
+           overlay tier (they are all ≤10000, appended-later wins ties). */
+        .cmd-palette-backdrop {
+            position: fixed; inset: 0; z-index: 10000;
+            background: rgba(0, 0, 0, 0.35);
+        }
+        .cmd-palette {
+            position: fixed; z-index: 10001;
+            top: 12vh; left: 50%; transform: translateX(-50%);
+            width: min(560px, calc(100vw - 32px));
+            max-height: 62vh; display: flex; flex-direction: column;
+            background: var(--bg-card);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), var(--surface-shadow);
+            font-family: var(--font-ui); font-size: 13px;
+            color: var(--text-primary); overflow: hidden;
+        }
+        .cmd-palette input {
+            font: inherit; color: var(--text-primary);
+            background: transparent; border: 0; outline: none;
+            border-bottom: 1px solid var(--border);
+            padding: 11px 14px; width: 100%; box-sizing: border-box;
+        }
+        .cmd-palette input::placeholder { color: var(--text-muted); }
+        .cmd-palette .cp-list { overflow-y: auto; padding: 5px; }
+        .cmd-palette .cp-list::-webkit-scrollbar { width: 6px; }
+        .cmd-palette .cp-list::-webkit-scrollbar-track { background: transparent; }
+        .cmd-palette .cp-list::-webkit-scrollbar-thumb {
+            background: var(--scrollbar-thumb); border-radius: 3px;
+        }
+        .cmd-palette .cp-group-label {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--text-muted); padding: 6px 9px 3px;
+        }
+        .cmd-palette .cp-note {
+            padding: 6px 9px; color: var(--text-muted); font-size: 12px;
+        }
+        .cmd-palette .cp-item {
+            display: flex; align-items: center; gap: 8px;
+            padding: 7px 9px; border-radius: calc(var(--radius) - 2px);
+            cursor: pointer;
+        }
+        .cmd-palette .cp-item.sel { background: var(--hover-tint); }
+        .cmd-palette .cp-item .cp-title {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .cmd-palette .cp-item.danger .cp-title { color: var(--danger); }
+        .cmd-palette .cp-item .cp-meta {
+            margin-left: auto; flex-shrink: 0;
+            font-size: 11px; color: var(--text-muted);
+        }
+
+        /* Alt-held session-jump badges (Task 4.1): numbered chips on the
+           first nine sidebar cards while Alt is held ≥100 ms and the
+           keybinding layer is enabled — they label the Alt+1..9 targets.
+           .session-card is position:relative purely as their anchor. */
+        .kb-badge {
+            position: absolute; top: -6px; right: -4px; z-index: 2;
+            min-width: 16px; height: 16px; line-height: 16px;
+            text-align: center; border-radius: 8px; padding: 0 3px;
+            background: var(--accent); color: var(--bg-page);
+            font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+            pointer-events: none;
+        }
 
         /* ——— Chrome density pass (Task 2.8, T3 metrics) ———
            Focus treatment: 2px var(--ring) at 1px offset, keyboard-only
@@ -1894,6 +1961,443 @@
         function flowControlWanted() {
             try { return localStorage.getItem(FLOW_KILL_KEY) !== 'off'; } catch (e) { return true; }
         }
+
+        // ---- keybinding layer + command palette (Task 4.1) -------------
+        // Ports of T3's shortcut machinery (apps/web keybindings.ts:
+        // resolveEventKeys/matchesShortcutModifiers; shortcutModifierState.ts:
+        // keydown/keyup tracker + window-blur reset; CommandPalette.logic.ts:
+        // '>' action filter + exact=3/prefix=2/substring=1 ranking), reduced
+        // to vanilla DOM. The layer ships DEFAULT OFF (tl:keybindings:v1 =
+        // {enabled:false}, per-browser, never roamed — chords steal keys from
+        // the pty, so every browser opts in via the settings panel; users who
+        // never opt in see zero change, Alt+digit stays readline meta-N).
+        //
+        // Two cooperating halves, per the challenge-round blocker finding:
+        //   1. ONE capture-phase window keydown per document (registered in
+        //      init below) preventDefault()s ONLY on an exact chord match
+        //      while enabled, and runs the command;
+        //   2. in terminal mode a matchesAppChord branch MERGED INTO the
+        //      existing attachCustomKeyEventHandler returns false so the
+        //      matched chord never reaches the pty. xterm stores exactly ONE
+        //      such handler — attachCustomKeyEventHandler is never called a
+        //      second time (that would silently replace the entire ADR-0003
+        //      copy/paste/Escape contract).
+        //
+        // Overrides: tl:keybindings:v1.overrides = {<command>: '<chord>'}
+        // (e.g. {"palette.toggle":"ctrl+shift+p"}); unknown commands and
+        // unparseable chords are dropped on read.
+        const VISITS_KEY = 'tl:session-visits:v1';   // owner: Task 2.4 (lobby pills); read here for recents-first
+        const tlKb = (() => {
+            const KB_KEY = 'tl:keybindings:v1';
+            // Declarative bindings. `when` is evaluated against the mode's
+            // context {terminalFocus, lobbyOpen, galleryOpen}: while the
+            // gallery modal is up its own key handling owns the keyboard,
+            // so chords fall through exactly as if the layer were off.
+            // Chord choices follow the plan: Ctrl+Shift+K avoids TUI-owned
+            // Ctrl+K/Ctrl+F; Alt+Shift+[ ] avoids browser tab chords.
+            const KB_DEFAULT_BINDINGS = [
+                { key: 'ctrl+shift+k', command: 'palette.toggle', when: '!galleryOpen' },
+                { key: 'alt+1', command: 'session.attach.1', when: '!galleryOpen' },
+                { key: 'alt+2', command: 'session.attach.2', when: '!galleryOpen' },
+                { key: 'alt+3', command: 'session.attach.3', when: '!galleryOpen' },
+                { key: 'alt+4', command: 'session.attach.4', when: '!galleryOpen' },
+                { key: 'alt+5', command: 'session.attach.5', when: '!galleryOpen' },
+                { key: 'alt+6', command: 'session.attach.6', when: '!galleryOpen' },
+                { key: 'alt+7', command: 'session.attach.7', when: '!galleryOpen' },
+                { key: 'alt+8', command: 'session.attach.8', when: '!galleryOpen' },
+                { key: 'alt+9', command: 'session.attach.9', when: '!galleryOpen' },
+                { key: 'alt+shift+[', command: 'session.prev', when: '!galleryOpen' },
+                { key: 'alt+shift+]', command: 'session.next', when: '!galleryOpen' }
+            ];
+            const KB_COMMANDS = new Set(KB_DEFAULT_BINDINGS.map(b => b.command));
+            const MOD_WORDS = ['ctrl', 'control', 'shift', 'alt', 'option', 'meta', 'cmd', 'super'];
+
+            // 'alt+shift+[' → {ctrl,shift,alt,meta,key} — or null when the
+            // string is not a usable chord (overrides validate through this).
+            function parseChord(s) {
+                if (typeof s !== 'string') return null;
+                const parts = s.split('+').map(p => p.trim().toLowerCase()).filter(Boolean);
+                if (!parts.length) return null;
+                const c = { ctrl: false, shift: false, alt: false, meta: false, key: '' };
+                for (let i = 0; i < parts.length; i++) {
+                    const p = parts[i];
+                    if (p === 'ctrl' || p === 'control') c.ctrl = true;
+                    else if (p === 'shift') c.shift = true;
+                    else if (p === 'alt' || p === 'option') c.alt = true;
+                    else if (p === 'meta' || p === 'cmd' || p === 'super') c.meta = true;
+                    else if (i === parts.length - 1) c.key = p;
+                    else return null;
+                }
+                if (!c.key || MOD_WORDS.includes(c.key)) return null;
+                if (!c.ctrl && !c.alt && !c.meta) return null;   // bare keys must keep reaching the pty
+                return c;
+            }
+
+            function readKbRaw() {
+                try {
+                    const raw = JSON.parse(localStorage.getItem(KB_KEY));
+                    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+                } catch (e) { return null; }
+            }
+            // validate-or-default, same posture as normalizePrefs: garbage
+            // degrades to {enabled:false, overrides:{}} — never a crash, and
+            // never an accidentally-enabled layer.
+            function normalizeKeybindings(raw) {
+                const out = { enabled: false, overrides: {} };
+                if (raw && typeof raw === 'object') {
+                    if (raw.enabled === true) out.enabled = true;
+                    const ov = raw.overrides;
+                    if (ov && typeof ov === 'object' && !Array.isArray(ov)) {
+                        for (const k of Object.keys(ov)) {
+                            if (KB_COMMANDS.has(k) && parseChord(ov[k])) out.overrides[k] = ov[k];
+                        }
+                    }
+                }
+                return out;
+            }
+            let kbDoc = normalizeKeybindings(readKbRaw());
+            function resolveBindings() {
+                return KB_DEFAULT_BINDINGS.map(b => ({
+                    command: b.command,
+                    when: b.when,
+                    chord: parseChord(kbDoc.overrides[b.command] || b.key)
+                }));
+            }
+            let kbResolved = resolveBindings();
+            function refreshKb() {
+                kbDoc = normalizeKeybindings(readKbRaw());
+                kbResolved = resolveBindings();
+            }
+            // Cross-window flips (the settings toggle lives in the lobby;
+            // the terminal iframe must follow live): storage events fire
+            // only in windows that did NOT write. Same-window writes go
+            // through setEnabled, which refreshes directly.
+            window.addEventListener('storage', (e) => { if (e.key === KB_KEY) refreshKb(); });
+            function kbEnabled() { return kbDoc.enabled; }
+            function setKbEnabled(on) {
+                const next = normalizeKeybindings(Object.assign({}, readKbRaw() || {}, { enabled: !!on }));
+                try { localStorage.setItem(KB_KEY, JSON.stringify(next)); } catch (e) {}
+                refreshKb();
+            }
+
+            // Layout-proof key identity (keybindings.ts resolveEventKeys):
+            // e.key first (lowercased — CapsLock/Shift), plus the physical
+            // e.code aliases for letters, digits and the two brackets, so
+            // Alt+1 works on AZERTY ('&') and Alt+Shift+[ works when the
+            // layout shifts '[' to '{'.
+            function eventChordKeys(e) {
+                const keys = new Set();
+                if (typeof e.key === 'string' && e.key) {
+                    const k = e.key.toLowerCase();
+                    keys.add(k === 'esc' ? 'escape' : k);
+                }
+                const code = e.code || '';
+                const m = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(code);
+                if (m) keys.add((m[1] || m[2]).toLowerCase());
+                if (code === 'BracketLeft') keys.add('[');
+                if (code === 'BracketRight') keys.add(']');
+                return keys;
+            }
+            // Exact modifier match (matchesShortcutModifiers): every one of
+            // ctrl/shift/alt/meta must equal the chord's expectation — so
+            // AltGr typing (Ctrl+Alt) can never trip an alt-only binding.
+            function eventMatchesChord(e, c) {
+                return !!c &&
+                    e.ctrlKey === c.ctrl && e.metaKey === c.meta &&
+                    e.shiftKey === c.shift && e.altKey === c.alt &&
+                    eventChordKeys(e).has(c.key);
+            }
+            // Tiny when-clause evaluator: identifiers, '!', '&&', '||'
+            // (no parens — the binding table above needs no more).
+            function evalWhen(expr, ctx) {
+                if (!expr) return true;
+                return expr.split('||').some(disj =>
+                    disj.split('&&').every(f => {
+                        f = f.trim();
+                        let neg = false;
+                        while (f.startsWith('!')) { neg = !neg; f = f.slice(1).trim(); }
+                        const v = !!ctx[f];
+                        return neg ? !v : v;
+                    }));
+            }
+
+            let getContextFn = null;
+            let runCommandFn = null;
+            let onAltChangeFn = null;
+
+            // The single decision point, shared by the window keydown
+            // listener AND the merged attachCustomKeyEventHandler branch:
+            // returns the matched binding, or null when the layer is
+            // disabled / the event is not an exact enabled-chord match.
+            function matchesAppChord(e) {
+                if (!kbDoc.enabled) return null;
+                if (e.type && e.type !== 'keydown') return null;
+                const ctx = getContextFn ? getContextFn() : {};
+                for (const b of kbResolved) {
+                    if (!b.chord) continue;
+                    if (b.when && !evalWhen(b.when, ctx)) continue;
+                    if (eventMatchesChord(e, b.chord)) return b;
+                }
+                return null;
+            }
+
+            // Alt tracker (shortcutModifierState.ts:29-96 reduced to the one
+            // modifier the badge overlay needs): modifier keydown/keyup flips
+            // it, any other key re-syncs from the live altKey bit, window
+            // blur resets — Alt+Tab away can never wedge the badges on.
+            let altDown = false;
+            function setAltDown(v) {
+                if (v === altDown) return;
+                altDown = v;
+                if (onAltChangeFn) onAltChangeFn(v);
+            }
+            function trackAlt(e) {
+                if (!kbDoc.enabled) { setAltDown(false); return; }
+                if (e.key === 'Alt') setAltDown(e.type === 'keydown');
+                else setAltDown(!!e.altKey);
+            }
+
+            // Per-document wiring. Registers the ONE capture-phase window
+            // keydown of the plan (chord match → preventDefault + run the
+            // command; it doesn't stopPropagation — in terminal mode the
+            // event must still reach xterm so the merged handler branch can
+            // return false and keep the chord out of the pty) plus the
+            // tracker's keyup/blur legs.
+            function init(opts) {
+                getContextFn = opts.getContext;
+                runCommandFn = opts.runCommand;
+                onAltChangeFn = opts.onAltChange || null;
+                window.addEventListener('keydown', (e) => {
+                    trackAlt(e);
+                    const b = matchesAppChord(e);
+                    if (!b) return;
+                    e.preventDefault();   // ONLY on an exact chord match while enabled
+                    runCommandFn(b.command);
+                }, true);
+                window.addEventListener('keyup', trackAlt, true);
+                window.addEventListener('blur', () => setAltDown(false));
+            }
+
+            // ---- command palette (CommandPalette.logic.ts ports) --------
+            function normalizeSearchText(s) { return String(s).toLowerCase().trim(); }
+            function readVisitTimes() {
+                try {
+                    const obj = JSON.parse(localStorage.getItem(VISITS_KEY));
+                    return (obj && typeof obj === 'object') ? obj : {};
+                } catch (e) { return {}; }
+            }
+            // Recents-first: last-attach epoch desc (tl:session-visits:v1),
+            // never-visited keep the input (tmux/sidebar) order — sort is
+            // stable.
+            function recentsFirst(sessions) {
+                const v = readVisitTimes();
+                return sessions.slice().sort((a, b) => (v[b.name] || 0) - (v[a.name] || 0));
+            }
+            // rankSearchFieldMatch port: exact=3, prefix=2, substring=1.
+            function rankField(field, q) {
+                const f = normalizeSearchText(field);
+                if (!f.length || !f.includes(q)) return -Infinity;
+                if (f === q) return 3;
+                if (f.startsWith(q)) return 2;
+                return 1;
+            }
+            // rankCommandPaletteItemMatch port: first matching term wins,
+            // earlier terms outrank later ones.
+            function rankItem(item, q) {
+                const terms = item.terms.filter(t => t.length > 0);
+                if (!terms.length) return 0;
+                for (let i = 0; i < terms.length; i++) {
+                    const r = rankField(terms[i], q);
+                    if (r !== -Infinity) return 1000 - i * 100 + r;
+                }
+                return 0;
+            }
+
+            // env: { sessions: () => Promise<[{name,state}]>, current: () =>
+            // name|null, attach(name), actions() => [{label, hint?, danger?,
+            // keepFocus?, run}], refocus() }. One instance per document that
+            // owns a palette (the lobby; a deep-linked terminal tab).
+            function createPalette(env) {
+                let backdrop = null, inputEl = null, listBox = null;
+                let flatItems = [], selIdx = 0, sessionsCache = null, openSeq = 0;
+
+                function isOpen() { return !!backdrop; }
+                function close(refocus) {
+                    if (!backdrop) return;
+                    const el = backdrop;
+                    backdrop = null; inputEl = null; listBox = null;
+                    flatItems = []; sessionsCache = null; openSeq++;
+                    el.remove();
+                    if (refocus) env.refocus();   // Task 2.3: keyboard back to the terminal
+                }
+                function toggle() { if (backdrop) close(true); else open(); }
+
+                function sessionItems() {
+                    if (!sessionsCache) return [];
+                    return recentsFirst(sessionsCache).map(s => ({
+                        title: s.name,
+                        terms: [s.name],
+                        meta: s.name === env.current() ? 'current' : (s.state || ''),
+                        run: () => env.attach(s.name)
+                    }));
+                }
+                function actionItems() {
+                    return env.actions().map(a => ({
+                        title: a.label,
+                        terms: [a.label],
+                        meta: a.hint || '',
+                        danger: !!a.danger,
+                        keepFocus: !!a.keepFocus,
+                        run: a.run
+                    }));
+                }
+                // filterCommandPaletteGroups port: '>' prefix = actions
+                // only; empty query keeps natural order; otherwise filter
+                // on the joined terms and sort rank desc / index asc.
+                function buildGroups(query) {
+                    const isActions = query.startsWith('>');
+                    const q = normalizeSearchText(isActions ? query.slice(1) : query);
+                    const groups = [];
+                    if (!isActions) {
+                        groups.push({ label: 'Sessions', items: sessionItems(),
+                                      note: sessionsCache ? null : 'Loading sessions…' });
+                    }
+                    groups.push({ label: 'Actions', items: actionItems(), note: null });
+                    if (!q.length) return groups;
+                    return groups.map(g => ({
+                        label: g.label,
+                        note: null,
+                        items: g.items
+                            .map((item, index) => ({ item, index, rank: rankItem(item, q) }))
+                            .filter(en => normalizeSearchText(en.item.terms.join(' ')).includes(q))
+                            .sort((a, b) => b.rank - a.rank || a.index - b.index)
+                            .map(en => en.item)
+                    })).filter(g => g.items.length || g.note);
+                }
+                function setSel(i) {
+                    if (!flatItems.length) { selIdx = 0; return; }
+                    selIdx = Math.max(0, Math.min(i, flatItems.length - 1));
+                    flatItems.forEach((f, j) => f.el.classList.toggle('sel', j === selIdx));
+                    try { flatItems[selIdx].el.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+                }
+                function runItem(item) {
+                    // keepFocus items pick their own focus target (e.g. the
+                    // new-session name box) — mirroring the ⋯ menu's flag;
+                    // everything else hands the keyboard back (the deferred
+                    // refocus lands after any sync prompt/confirm the item
+                    // opens, same trick as closeMenu(true)).
+                    close(!item.keepFocus);
+                    item.run();
+                }
+                function render() {
+                    if (!backdrop) return;
+                    const groups = buildGroups(inputEl.value);
+                    clearChildren(listBox);
+                    flatItems = [];
+                    for (const g of groups) {
+                        const lab = document.createElement('div');
+                        lab.className = 'cp-group-label';
+                        lab.textContent = g.label;
+                        listBox.appendChild(lab);
+                        if (g.note) {
+                            const n = document.createElement('div');
+                            n.className = 'cp-note';
+                            n.textContent = g.note;
+                            listBox.appendChild(n);
+                        }
+                        for (const item of g.items) {
+                            const row = document.createElement('div');
+                            row.className = 'cp-item' + (item.danger ? ' danger' : '');
+                            const t = document.createElement('span');
+                            t.className = 'cp-title';
+                            t.textContent = item.title;
+                            row.appendChild(t);
+                            if (item.meta) {
+                                const m = document.createElement('span');
+                                m.className = 'cp-meta';
+                                m.textContent = item.meta;
+                                row.appendChild(m);
+                            }
+                            const idx = flatItems.length;
+                            // Keep the query input focused: swallow the
+                            // focus-stealing mousedown, let the click fire.
+                            row.addEventListener('mousedown', (e) => e.preventDefault());
+                            row.addEventListener('mouseenter', () => setSel(idx));
+                            row.addEventListener('click', () => runItem(item));
+                            listBox.appendChild(row);
+                            flatItems.push({ item, el: row });
+                        }
+                    }
+                    if (!flatItems.length && sessionsCache) {
+                        const n = document.createElement('div');
+                        n.className = 'cp-note';
+                        n.textContent = 'No matches';
+                        listBox.appendChild(n);
+                    }
+                    setSel(0);
+                }
+                function onKey(e) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault(); e.stopPropagation();
+                        close(true);
+                    } else if (e.key === 'ArrowDown') {
+                        e.preventDefault(); e.stopPropagation();
+                        setSel(selIdx + 1);
+                    } else if (e.key === 'ArrowUp') {
+                        e.preventDefault(); e.stopPropagation();
+                        setSel(selIdx - 1);
+                    } else if (e.key === 'Enter') {
+                        e.preventDefault(); e.stopPropagation();
+                        if (flatItems[selIdx]) runItem(flatItems[selIdx].item);
+                    }
+                }
+                function open() {
+                    if (backdrop) return;
+                    backdrop = document.createElement('div');
+                    backdrop.className = 'cmd-palette-backdrop';
+                    const panel = document.createElement('div');
+                    panel.className = 'cmd-palette';
+                    inputEl = document.createElement('input');
+                    inputEl.type = 'text';
+                    inputEl.placeholder = 'Search sessions…  (start with > for actions)';
+                    inputEl.setAttribute('aria-label', 'Command palette');
+                    listBox = document.createElement('div');
+                    listBox.className = 'cp-list';
+                    panel.appendChild(inputEl);
+                    panel.appendChild(listBox);
+                    backdrop.appendChild(panel);
+                    backdrop.addEventListener('click', (e) => {
+                        if (e.target === backdrop) close(true);
+                    });
+                    backdrop.addEventListener('keydown', onKey);
+                    inputEl.addEventListener('input', render);
+                    document.body.appendChild(backdrop);
+                    inputEl.focus();
+                    const seq = ++openSeq;
+                    render();   // paints 'Loading sessions…' + actions immediately
+                    Promise.resolve().then(() => env.sessions()).then((list) => {
+                        if (seq !== openSeq || !backdrop) return;
+                        sessionsCache = Array.isArray(list) ? list : [];
+                        render();
+                    }).catch(() => {
+                        if (seq !== openSeq || !backdrop) return;
+                        sessionsCache = [];
+                        render();
+                    });
+                }
+                return { toggle, open, close, isOpen };
+            }
+
+            return {
+                KEY: KB_KEY,
+                init,
+                matchesAppChord,
+                enabled: kbEnabled,
+                setEnabled: setKbEnabled,
+                createPalette,
+                recentsFirst
+            };
+        })();
 
         // ---- typed toast manager (Task 2.7) ---------------------------
         // T3's toast surface (apps/web ui/toast.tsx) reduced to vanilla
@@ -2550,8 +3054,10 @@
             // persisted per-browser so reloads keep both the emerald latch
             // and the working timer's start:
             //   tl:session-visits:v1  name → epoch-ms of the last attach
+            //                          (VISITS_KEY — declared in the shared
+            //                          section since Task 4.1: the palette's
+            //                          recents-first sort reads it too)
             //   tl:session-states:v1  name → {state, at} as of the last poll
-            const VISITS_KEY = 'tl:session-visits:v1';
             const STATES_KEY = 'tl:session-states:v1';
             function readStore(key) {
                 try {
@@ -3606,6 +4112,9 @@
                     listEl.appendChild(emptyState('No sessions yet.'));
                 }
                 updateTitle();
+                // Task 4.1: a repaint mid-Alt-hold rebuilds the cards —
+                // re-overlay the jump badges (no-op unless showing).
+                applyAltBadges();
             }
 
             async function renderLobby() {
@@ -3791,7 +4300,8 @@
             // open panel track in-terminal changes. No forward back into the
             // iframe: the change originated there and is already applied.
             window.addEventListener('storage', (e) => {
-                if (e.key === FONT_SIZE_KEY || e.key === PREFS_KEY || e.key === FLOW_KILL_KEY) {
+                if (e.key === FONT_SIZE_KEY || e.key === PREFS_KEY ||
+                    e.key === FLOW_KILL_KEY || e.key === tlKb.KEY) {
                     paintFontSize();
                     paintSettingsPanel();
                 }
@@ -3835,6 +4345,7 @@
                 settingsPanel.querySelector('#sp-ls-val').textContent = p.letterSpacing.toFixed(1) + 'px';
                 settingsPanel.querySelector('#sp-blink').checked = p.cursorBlink;
                 settingsPanel.querySelector('#sp-flow').checked = flowControlWanted();
+                settingsPanel.querySelector('#sp-kb').checked = tlKb.enabled();
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     const val = String(p[seg.dataset.pref]);
                     seg.querySelectorAll('button').forEach(b => {
@@ -3953,6 +4464,25 @@
                 });
                 flowRow.appendChild(flow);
 
+                // Task 4.1: "App shortcuts" opt-in — the keybinding layer +
+                // command palette. Plain per-browser tl:keybindings:v1 key
+                // (never roamed): chords steal keys from the pty, so each
+                // browser opts in explicitly; DEFAULT OFF. The attached
+                // terminal follows live via the storage event.
+                const kbRow = row('App shortcuts');
+                const kb = document.createElement('input');
+                kb.type = 'checkbox';
+                kb.id = 'sp-kb';
+                kb.title = 'Enable app keyboard shortcuts in this browser: ' +
+                    'Ctrl+Shift+K command palette, Alt+1..9 attach Nth session, ' +
+                    'Alt+Shift+[ / ] cycle sessions. Off (default): every key ' +
+                    'reaches the terminal exactly as before.';
+                kb.addEventListener('change', () => {
+                    tlKb.setEnabled(kb.checked);
+                    syncAltBadges();   // disabling mid-Alt-hold must drop the badges
+                });
+                kbRow.appendChild(kb);
+
                 document.body.appendChild(panel);
                 settingsPanel = panel;
                 paintSettingsPanel();
@@ -3975,6 +4505,158 @@
             settingsBtn.addEventListener('click', () => {
                 if (settingsPanel) closeSettings(false);
                 else openSettings();
+            });
+
+            // ---- keybinding layer + palette (Task 4.1), lobby side -------
+            // The lobby owns the sidebar, so it executes every session
+            // command — both from its own capture-phase keydown (focus in
+            // the lobby chrome) and forwarded up from the terminal iframe
+            // over tl-command (focus in xterm, the common case). Alt+N /
+            // badge order is the VISIBLE sidebar order (paint order — the
+            // same cards the badges land on), not recents.
+            function orderedSessionNames() {
+                return Array.from(listEl.querySelectorAll('.session-card'))
+                    .map(c => c.dataset.name).filter(Boolean);
+            }
+            const palette = tlKb.createPalette({
+                // lastSessions is the poll the cards are painted from —
+                // ≤5s stale, instantly available (no fetch on open).
+                sessions: () => Promise.resolve(lastSessions),
+                current: () => currentActive,
+                attach: (name) => {
+                    if (currentActive === name) requestTerminalFocus();
+                    else activateSession(name);
+                },
+                refocus: () => requestTerminalFocus(),
+                actions: () => {
+                    const acts = [{ label: 'New session', hint: 'name box',
+                                    keepFocus: true, run: () => runAppCommand('session.new') }];
+                    if (currentActive) {
+                        acts.push(
+                            { label: 'Rename current session', hint: currentActive,
+                              run: () => runAppCommand('session.rename.current') },
+                            { label: 'Open image gallery', hint: currentActive,
+                              run: () => runAppCommand('gallery.open') },
+                            { label: 'Paste into terminal', hint: currentActive,
+                              run: () => runAppCommand('terminal.paste') },
+                            { label: 'Kill current session', hint: currentActive,
+                              danger: true, run: () => runAppCommand('session.kill.current') }
+                        );
+                    }
+                    return acts;
+                }
+            });
+            const ATTACH_PREFIX = 'session.attach.';
+            function runAppCommand(cmd) {
+                if (cmd === 'palette.toggle') { palette.toggle(); return; }
+                // Any other command closes an open palette first (its own
+                // items already closed it in runItem; this covers chords
+                // fired while the palette is up).
+                if (palette.isOpen()) palette.close(false);
+                if (cmd.startsWith(ATTACH_PREFIX)) {
+                    const name = orderedSessionNames()[Number(cmd.slice(ATTACH_PREFIX.length)) - 1];
+                    if (!name) return;                    // fewer cards than N
+                    if (currentActive === name) { requestTerminalFocus(); return; }
+                    activateSession(name);                // fresh iframe self-focuses at boot
+                    return;
+                }
+                if (cmd === 'session.next' || cmd === 'session.prev') {
+                    const names = orderedSessionNames();
+                    if (!names.length) return;
+                    const i = names.indexOf(currentActive);
+                    const target = cmd === 'session.next'
+                        ? (i < 0 ? names[0] : names[(i + 1) % names.length])
+                        : (i < 0 ? names[names.length - 1] : names[(i - 1 + names.length) % names.length]);
+                    if (target === currentActive) return; // single session: no-op
+                    activateSession(target);
+                    return;
+                }
+                if (cmd === 'session.new') {
+                    setSidebarCollapsed(false);           // the box lives in the sidebar
+                    newNameEl.focus();
+                    return;
+                }
+                if (cmd === 'session.kill.current') {
+                    if (currentActive) killSession(currentActive);
+                    return;
+                }
+                if (cmd === 'session.rename.current') {
+                    if (currentActive) renameSession(currentActive);
+                    return;
+                }
+                if (cmd === 'gallery.open' || cmd === 'terminal.paste') {
+                    // These live in the terminal document — forward down.
+                    if (currentActive && frameEl.contentWindow) {
+                        try {
+                            frameEl.contentWindow.postMessage(
+                                { type: 'tl-command', command: cmd }, location.origin);
+                        } catch (e) {}
+                    } else {
+                        showToast('Open a session first', 'error', 2500);
+                    }
+                    return;
+                }
+            }
+
+            // Alt-held session-jump badges: numbered chips on the first
+            // nine cards after Alt has been down 100 ms (plan spec), from
+            // EITHER document — the iframe forwards its own tracker over
+            // tl-kb-alt, since its keydowns never reach this window.
+            let lobbyAltDown = false, frameAltDown = false;
+            let altBadgeTimer = null, altBadgesOn = false;
+            function applyAltBadges() {
+                listEl.querySelectorAll('.kb-badge').forEach(el => el.remove());
+                if (!altBadgesOn) return;
+                Array.from(listEl.querySelectorAll('.session-card'))
+                    .slice(0, 9)
+                    .forEach((card, i) => {
+                        const b = document.createElement('span');
+                        b.className = 'kb-badge';
+                        b.textContent = String(i + 1);
+                        b.setAttribute('aria-hidden', 'true');
+                        card.appendChild(b);
+                    });
+            }
+            function syncAltBadges() {
+                const want = tlKb.enabled() && (lobbyAltDown || frameAltDown);
+                if (want) {
+                    if (altBadgesOn || altBadgeTimer) return;
+                    altBadgeTimer = setTimeout(() => {
+                        altBadgeTimer = null;
+                        if (tlKb.enabled() && (lobbyAltDown || frameAltDown)) {
+                            altBadgesOn = true;
+                            applyAltBadges();
+                        }
+                    }, 100);
+                } else {
+                    clearTimeout(altBadgeTimer);
+                    altBadgeTimer = null;
+                    if (altBadgesOn) { altBadgesOn = false; applyAltBadges(); }
+                }
+            }
+            // An iframe swap mid-hold loses the keyup — reset its half.
+            frameEl.addEventListener('load', () => { frameAltDown = false; syncAltBadges(); });
+
+            // Commands + Alt state forwarded up by the terminal iframe.
+            // Same trust model as tl-attention: only OUR iframe's window.
+            window.addEventListener('message', (e) => {
+                if (e.origin !== location.origin || !e.data) return;
+                if (e.source !== frameEl.contentWindow) return;
+                if (e.data.type === 'tl-command') {
+                    if (typeof e.data.command === 'string') runAppCommand(e.data.command);
+                } else if (e.data.type === 'tl-kb-alt') {
+                    frameAltDown = !!e.data.alt;
+                    syncAltBadges();
+                }
+            });
+
+            tlKb.init({
+                // Keydowns landing in THIS window are never terminal input
+                // (the iframe is a separate document), and the gallery only
+                // exists inside the terminal document.
+                getContext: () => ({ terminalFocus: false, lobbyOpen: true, galleryOpen: false }),
+                runCommand: runAppCommand,
+                onAltChange: (down) => { lobbyAltDown = down; syncAltBadges(); }
             });
 
             // Drops on the terminal are handled inside the iframe. If one lands
@@ -4979,6 +5661,15 @@
         }
         term.attachCustomKeyEventHandler((e) => {
             if (e.type !== 'keydown') return true;           // also consulted on keyup
+            // Task 4.1 keybinding layer, MERGED into this handler (xterm
+            // stores exactly one; a second attachCustomKeyEventHandler call
+            // would silently replace the whole ADR-0003 contract below).
+            // An exact app-chord match while the layer is enabled must not
+            // reach the pty — tlKb's capture-phase window listener already
+            // ran the command before xterm consulted us. Evaluated BEFORE
+            // the copy/paste branches; layer disabled (the default) →
+            // matchesAppChord is null for every event and nothing changes.
+            if (tlKb.matchesAppChord(e)) return false;
             if (e.key === 'Escape' && term.hasSelection()) {
                 clearSelectionBecause('Escape');             // contract: Esc clears...
                 return true;                                 // ...and still reaches the app
@@ -5539,6 +6230,150 @@
                 // simulates a stale build so the reload fallback is testable.
                 if (e.source && !window.__tlSuppressThemeAck) {
                     e.source.postMessage({ type: 'tl-theme-ack', name: e.data.name }, location.origin);
+                }
+            } else if (e.data.type === 'tl-command') {
+                // Task 4.1: lobby palette actions that live in THIS
+                // document. Restricted to the two terminal-local commands
+                // so a session command can never ping-pong between frames.
+                if (e.source === window.parent &&
+                        (e.data.command === 'gallery.open' ||
+                         e.data.command === 'terminal.paste')) {
+                    runAppCommand(e.data.command);
+                }
+            }
+        });
+
+        // ---- keybinding layer + palette (Task 4.1), terminal side --------
+        // Chords are executed by tlKb's single capture-phase window keydown
+        // (init below); the matchesAppChord branch merged into the
+        // attachCustomKeyEventHandler above is what keeps a matched chord
+        // out of the pty. Framed (the normal case): every session command
+        // is forwarded UP — the lobby owns the sidebar, the palette and
+        // session switching. A deep-linked top-level ?arg= tab has no
+        // lobby: it gets a local palette over the same factory, with
+        // real navigation standing in for iframe swaps.
+        const ATTACH_PREFIX = 'session.attach.';
+        async function fetchSessionList() {
+            const resp = await fetch(SESSIONS_API, { credentials: 'same-origin' });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.json();
+        }
+        function gotoSession(name) {
+            if (name && name !== validArg) location.assign('/?arg=' + encodeURIComponent(name));
+        }
+        function promptNewSession() {
+            const input = prompt('New session name:');
+            if (input === null) return;
+            const name = input.trim();
+            if (!NAME_RE.test(name)) {
+                showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                return;
+            }
+            location.assign('/?arg=' + encodeURIComponent(name));
+        }
+        async function killCurrentSession() {
+            if (!confirm('Kill tmux session "' + validArg + '"? Any running processes inside it will be terminated.')) return;
+            try {
+                const resp = await fetch(SESSIONS_API + '/' + encodeURIComponent(validArg), {
+                    method: 'DELETE', credentials: 'same-origin'
+                });
+                if (resp.ok) location.assign('/');
+                else showToast('Kill failed: HTTP ' + resp.status, 'error');
+            } catch (err) {
+                showToast('Kill error: ' + err.message, 'error');
+            }
+        }
+        async function renameCurrentSession() {
+            const input = prompt('Rename "' + validArg + '" to:', validArg);
+            if (input === null) return;
+            const newName = input.trim();
+            if (!NAME_RE.test(newName)) {
+                showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                return;
+            }
+            if (newName === validArg) return;
+            try {
+                const resp = await fetch(SESSIONS_API + '/' + encodeURIComponent(validArg) + '/rename', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
+                if (resp.status === 204) location.replace('/?arg=' + encodeURIComponent(newName));
+                else showToast('Rename failed: HTTP ' + resp.status, 'error');
+            } catch (err) {
+                showToast('Rename error: ' + err.message, 'error');
+            }
+        }
+        // Unframed Alt+N / cycling works over the live /sessions order
+        // (no sidebar here to define a visual order).
+        async function unframedJump(cmd) {
+            let list;
+            try { list = await fetchSessionList(); } catch (e) { return; }
+            const names = list.map(s => s.name);
+            if (!names.length) return;
+            if (cmd.startsWith(ATTACH_PREFIX)) {
+                gotoSession(names[Number(cmd.slice(ATTACH_PREFIX.length)) - 1]);
+                return;
+            }
+            const i = names.indexOf(validArg);
+            gotoSession(cmd === 'session.next'
+                ? (i < 0 ? names[0] : names[(i + 1) % names.length])
+                : (i < 0 ? names[names.length - 1] : names[(i - 1 + names.length) % names.length]));
+        }
+        const palette = isFramed ? null : tlKb.createPalette({
+            sessions: fetchSessionList,
+            current: () => validArg,
+            attach: gotoSession,
+            refocus: () => requestTerminalFocus(),
+            actions: () => [
+                { label: 'New session', run: promptNewSession },
+                { label: 'Rename current session', hint: validArg, run: renameCurrentSession },
+                { label: 'Open image gallery', hint: validArg, run: () => openGallery() },
+                { label: 'Paste into terminal', hint: validArg,
+                  run: () => document.getElementById('paste-btn').click() },
+                { label: 'Kill current session', hint: validArg, danger: true,
+                  run: killCurrentSession }
+            ]
+        });
+        function runAppCommand(cmd) {
+            if (cmd === 'gallery.open') { openGallery(); return; }
+            if (cmd === 'terminal.paste') {
+                // The floating paste button's routine: clipboard read
+                // (image → upload + path, text → term.paste) + refocus.
+                document.getElementById('paste-btn').click();
+                return;
+            }
+            if (isFramed) {
+                try {
+                    window.parent.postMessage({ type: 'tl-command', command: cmd }, location.origin);
+                } catch (e) {}
+                return;
+            }
+            if (cmd === 'palette.toggle') { palette.toggle(); return; }
+            if (palette.isOpen()) palette.close(false);
+            if (cmd.startsWith(ATTACH_PREFIX) || cmd === 'session.next' || cmd === 'session.prev') {
+                unframedJump(cmd);
+            }
+        }
+        tlKb.init({
+            // terminalFocus ≈ this document holds the keyboard (it IS the
+            // focus surface — keydowns land here only while it does), minus
+            // the gallery modal, which owns its own keys.
+            getContext: () => ({
+                terminalFocus: !gallery,
+                lobbyOpen: isFramed,
+                galleryOpen: !!gallery
+            }),
+            runCommand: runAppCommand,
+            // Badges render on the lobby's session cards; forward this
+            // document's Alt state up (keydowns here never reach the
+            // parent window). Blur resets the tracker → forwards false.
+            onAltChange: (down) => {
+                if (isFramed) {
+                    try {
+                        window.parent.postMessage({ type: 'tl-kb-alt', alt: down }, location.origin);
+                    } catch (e) {}
                 }
             }
         });

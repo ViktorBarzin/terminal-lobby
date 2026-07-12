@@ -961,3 +961,55 @@ implements the feature. Format:
   name/cwd/claude-uuid and sessions are recreated via `claude
   --resume`; the ONLY capture→pty replay route in the stack is
   tmux-resurrect's pane-contents `cat`, covered above.
+- [Task 4.1] Merged-handler guard (challenge-round blocker): the served page
+  contains exactly ONE `attachCustomKeyEventHandler(` call site (grep), with
+  the `tlKb.matchesAppChord` branch INSIDE it, after the keydown-type check
+  and BEFORE the copy/paste branches. Never add a second call — xterm stores
+  one handler and a second call silently replaces the ADR-0003 contract.
+- [Task 4.1] Default OFF (zero change for non-opted browsers): with NO
+  `tl:keybindings:v1` in localStorage, arm the key sensor
+  (`tmux -L tl-dev send-keys -t main "stty -icanon -echo -isig min 1 time 0; cat -v" Enter`),
+  focus the terminal, press Alt+1 / Alt+Shift+] / Ctrl+Shift+K →
+  capture-pane shows `^[1` and `^[}` (chords reached the pty unchanged;
+  Ctrl+Shift+K emits nothing — stock xterm behavior, pre-existing), and NO
+  `.cmd-palette` exists in the lobby document or the iframe. Settings panel:
+  "App shortcuts" is the eighth control, UNCHECKED.
+- [Task 4.1] ADR-0003 key contract runs IDENTICALLY with the layer ON and
+  OFF (execute this whole line twice, once per state): drag-select echoed
+  text → Ctrl+C → clipboard holds the selection + "Copied" toast + NO `^C`
+  in the pane + selection survives; output-cleared selection then Ctrl+C
+  ≤15 s → "Copied (recovered)"; Escape with a selection → selection clears
+  AND `^[` appears in the pane; Ctrl+C with no selection → `^C` (SIGINT);
+  Ctrl+V with multi-line clipboard → one bracketed paste (§A.6 shape).
+  Verified 2026-07-12 both states on the harness (byte-identical pane log).
+  GOTCHA for the recovered leg: the stash lives 15 s from selection — run
+  select → output-clear (type `seq 1 40` + Enter into the pane; the scroll
+  clears the highlight WITHOUT nulling the stash) → Ctrl+C inside ONE
+  scripted sequence. Spreading it across slow tool/protocol round-trips
+  expires the window and the chord correctly falls through as SIGINT
+  (looks like a false FAIL — it isn't; exit 130 at the shell is the
+  designed >15 s path, layer state irrelevant).
+- [Task 4.1] Enabled chords act and never reach the pty: tick #sp-kb (writes
+  `tl:keybindings:v1 = {"enabled":true,"overrides":{}}`; the iframe follows
+  via the storage event, no reload), focus the terminal, then: Ctrl+Shift+K →
+  palette opens in the LOBBY document with its input focused; Alt+2 → the
+  2nd sidebar card attaches (frame `?arg=`, `#hash`, `.active` card all
+  agree) and typing immediately lands in the new session (keyboard-only
+  switch); Alt+Shift+] then Alt+Shift+[ cycle next/prev with wrap;
+  capture-pane gained NO `^[<digit>`/`^[}`/`^[{` bytes for any of it.
+- [Task 4.1] Palette behavior: sessions list recents-first (attach two
+  sessions, reopen → they lead; `tl:session-visits:v1` order), current
+  session tagged; query filters (exact=3 > prefix=2 > substring=1 — query a
+  full session name → it ranks first); `>` prefix shows the Actions group
+  only (New/Rename/Gallery/Paste/Kill); ArrowDown/ArrowUp move the `.sel`
+  row, Enter runs it (session row → attach + palette closes), Escape and
+  backdrop-click close with terminal refocus (helper textarea is
+  activeElement again).
+- [Task 4.1] Alt-held jump badges: with the layer on, hold Alt (keydown
+  only) with focus INSIDE the terminal → after ~100 ms (not at 60 ms)
+  numbered `.kb-badge` chips overlay the first ≤9 session cards in sidebar
+  order; Alt release → gone; re-hold then window blur → gone (tracker
+  reset). Layer off → badges never appear.
+- [Task 4.1] Live-disable: untick #sp-kb while attached → doc reads
+  `{"enabled":false,...}`; Alt+1 in the terminal no longer attaches and
+  `^[1` reaches the pty again (storage event flipped the iframe live).
