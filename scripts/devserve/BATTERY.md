@@ -35,6 +35,13 @@ python3 scripts/dev-harness.py        # scratch mode is the default
   recipe in `scripts/dev-harness.md` (captures it as `window.__term` in the
   terminal iframe). Grant `clipboard-read` + `clipboard-write` in the test
   context.
+- **Finding the terminal iframe (M.6 lesson):** since Task M.3 the lobby
+  swaps sessions via `contentWindow.location.replace`, and Playwright's
+  `frame.url` cache can stay stale (`about:blank`) across those swaps —
+  identify the frame by CONTENT
+  (`frame.evaluate("location.search.includes('arg=')")` + a readiness
+  probe), never by `frame.url`, and re-acquire the handle after every
+  session switch (the swap destroys the old execution context).
 - **Golden baseline** (unmodified frontend, captured at Task 0.1):
   screenshots in `scripts/devserve/baseline/` (gitignored, local-only —
   re-capture by running §A on a clean master checkout if missing). Compare
@@ -1218,3 +1225,112 @@ implements the feature. Format:
   touch\* listeners (grabber/header are per-open pointer-event
   surfaces with CSS touch-action:none; content scrolls natively), §A.5
   passes unchanged after a sheet open/dismiss cycle.
+- [Task M.6] Gesture legs from here on dispatch through
+  `scripts/devserve/gestures.py` (raw CDP `Input.dispatchTouchEvent`;
+  Playwright's touchscreen is tap-only and coarse dispatch false-greens —
+  FINE steps per plan M.8). Contexts: `p.devices['Pixel 7']` for
+  Android-gated legs, `p.devices['iPhone 13']` for the iOS-negative leg
+  (the recognizer gates on `navigator.userAgent`, so a real device
+  descriptor is required, not just `has_touch`). Coordinates are OUTER-page
+  viewport px (`#session-frame` bounding box + inner offset). Prefs
+  isolation: legs below flip `gestures.*` — snapshot `GET /prefs` before,
+  `PUT` it back after (standing rule above).
+- [Task M.6] Module isolation (the RL-critical leg): Pixel-7 emulation,
+  attach `#main`; in the iframe `window.__tlGestures` exists with
+  `attached === false`, `recognizers === 2`; instrument a capture wheel
+  counter on `#terminal`; `multi_swipe(page, [(cx, cy)], dx=0, dy=-60,
+  steps=12)` (5 px steps) → copy-mode entered (§A.5 semantics), wheel
+  counter counts the delivered moves past the 6 px discriminator
+  threshold (Chrome COALESCES dispatched moves — measured 9 of 12
+  delivered locally; the assert is EQUALITY with the same dispatch on a
+  pre-M.6 build, floor ≥8), and `__tlGestures.attached` stayed `false`
+  throughout (poll during dispatch) — 1-finger sequences traverse ZERO blocking listeners: the
+  standing module listeners are capture+PASSIVE
+  touchstart/touchend/touchcancel ONLY; the `{capture:true,passive:false}`
+  document touchmove attaches at the 2nd touch and detaches at last
+  touchend/touchcancel/pagehide. During any 2-finger sequence the module
+  must never `preventDefault` (observe `defaultPrevented === false` from a
+  later-registered document capture listener) — native pinch-zoom stays
+  intact (M.8's flag-OFF leg re-asserts scale>1).
+- [Task M.6] `‹`/`›` soft keys (universal affordance, engine-independent):
+  two battery sessions `tl-battery-m6a`/`tl-battery-m6b` on the REAL
+  server (isolation rules), attach `#tl-battery-m6a`; tap `›` → outer
+  `location.hash` flips to the NEXT painted card name
+  (`.session-card` DOM order — the same ring the Task 4.1 chords walk),
+  `#session-pill` (role=status) flashes the target name for ~220 ms, and
+  the scratch pane's `capture-pane -p` is UNCHANGED with
+  `#{pane_in_mode}` still 0 (a session switch leaks no bytes/scroll into
+  the pty); `‹` cycles back. Identical under iPhone emulation (the
+  buttons are the iOS affordance; TalkBack-ready aria-labels
+  'Previous session'/'Next session'). Row order now: Esc Tab ⇧Tab Ctrl
+  Alt ↑↓←→ | ` / - Sel Mark Yank Copy Paste Kbd ‹ › (+ pinned ⌄).
+- [Task M.6] 3-finger swipe (Android accelerator): Pixel-7 emulation,
+  `multi_swipe(page, [3 points ≥32 px from side edges, inside the
+  terminal], dx=-120, steps=12)` → hash flips to the NEXT card + pill,
+  scratch capture-pane unchanged, `#{pane_in_mode}` 0; `dx=+120` → the
+  PREVIOUS card. Threshold rejects (each → hash unchanged): same dispatch
+  with `dy=60` (fails |dx|>2|dy| and the 24 px cumulative-|dy| gate); one
+  start point at x=16 (32 px edge dead-zone — the OS back-gesture zones
+  stay unfought); `hold_ms=450` before moving (>350 ms rest = the OEM
+  partial-screenshot hold → abort); 2-point and 4-point dispatches (arm
+  is EXACTLY 3). iPhone emulation: the same 3-point dispatch NEVER flips
+  (recognizer not registered — iOS owns the 3-finger vocabulary while a
+  text input is focused; exclusion #1).
+- [Task M.6] Swipe opt-outs, live per gesture (no reload):
+  `gestures.swipeSession=false` → 3-point dispatch does nothing; restore,
+  then `tl-gestures`='off' → nothing (and `__tlGestures.attached` stays
+  false even during the 3-finger sequence — the master kill also stops
+  the lazy attach); remove the key → works again. Settings: an
+  Android-UA coarse lobby panel shows '3-finger swipe' (`#sp-swipe`) and
+  '2-finger tap' (`#sp-twofinger`), both checked by default; `#sp-swipe`
+  does NOT render under iPhone emulation (gesture can't exist there) and
+  neither row renders on a desktop fine-pointer panel.
+- [Task M.6] 2-finger tap toolbar toggle: Pixel-7 emulation, attach
+  `#main`; `two_finger_tap(page, cx, cy)` over the terminal →
+  `body.has-soft-keys` drops, `#soft-keys` computed display 'none',
+  'Two-finger tap to restore keys' toast (first hide per page-life),
+  `tl:prefs:v1` `gestures.toolbarHidden === true`, and after the
+  debounced refit the client rows GROW — read via
+  `tmux -L tl-dev list-clients -F '#{client_height}'` (`display -p`
+  resolves NO client from a script and prints empty; list-clients may
+  also be transiently empty during an iframe swap — settle first);
+  second tap → class + toolbar back, rows shrink, `toolbarHidden ===
+  false`. Reject legs
+  (each → no toggle): `travel_px=15` (>10 px per-finger travel);
+  `span_delta_px=10` at `gap_px=60` (≥8% span delta = pinch start — and
+  the dispatch still native-zooms nothing because the recognizer only
+  observes); `hold_ms=300` (>220 ms). A 2-finger tap on the toolbar
+  itself (not the terminal) does nothing.
+- [Task M.6] toolbarHidden roams + anti-stuck: reload with
+  `gestures.toolbarHidden=true` in `tl:prefs:v1` (a DIRECT localStorage
+  write must also stamp `tl:prefs-dirty:v1`, or the next boot's /prefs
+  GET adopts the server doc back over it — setPrefs stamps it for real
+  users) → boots hidden
+  (client_height at the grown value); with `tl-gestures`='off' OR
+  `gestures.twoFingerTap=false` the SAME doc boots VISIBLE, and flipping
+  either while hidden restores the toolbar live (tl-prefs message /
+  storage event → applyToolbarPrefs) — the hidden state is honored only
+  while its restore gesture exists, so a roamed doc can never strand a
+  device. syncViewport's height branch now gates on `isCoarsePointer`
+  (byte-equivalent while the toolbar is visible; hidden toolbar reads
+  `offsetHeight` 0 → full-viewport terminal that still tracks the iOS
+  keyboard).
+- [Task M.6] Red line: §A.5 passes on BOTH emulated viewports, and the
+  standing diff guard EXTENDS to a second block — besides the M.1
+  touch-discriminator IIFE, the ADR-0003 drag-selection interceptor
+  (`document.addEventListener('mousedown', (e) => {` through its
+  hijack/ghost machinery, original :2043-2121) must be BYTE-IDENTICAL to
+  the Stage-A deploy (`git show 6773cbd:frontend/index.html` extract ==
+  HEAD extract), and `term.attachCustomKeyEventHandler(` appears exactly
+  ONCE in HEAD. Verified 2026-07-12 at implementation time.
+- [Task M.6] iOS 3-finger reservation probe (MANUAL, standing pre-deploy
+  item for ANY change to terminal touch handlers + per major iOS
+  release; first run: Viktor, noted in the deploy heads-up): open
+  `scripts/devserve/ios-3finger-probe.html` on a real iPhone — Safari
+  tab AND installed PWA — and walk variants A (hidden helper focused,
+  production shape), B (visible textarea), C (blurred). Expected while
+  exclusion #1 holds: A/B show the OS text-edit HUD and the page logs
+  touchcancel / a starved (<3 moves) 3-finger stream; the 2-finger tap
+  arrives cleanly everywhere. ANY variant showing a released 3-finger
+  vocabulary → re-open the analysis exclusion before considering iOS
+  terminal gestures.

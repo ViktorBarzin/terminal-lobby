@@ -618,6 +618,25 @@
         }
         #conn-pill.offline::before { background: var(--danger); animation: none; }
         @keyframes conn-pulse { 50% { opacity: 0.35; } }
+        /* Session-switch pill (Task M.6): OUTER-document flash naming the
+           target of a gesture-driven session cycle (‹/› soft keys, Android
+           3-finger swipe). It must live in the lobby document — the switch
+           replaces the terminal iframe's URL, so anything shown inside the
+           iframe dies mid-animation. Same non-modal posture as #conn-pill:
+           pointer-events none, top-center, never over the prompt. */
+        #session-pill {
+            position: fixed; z-index: 10001;
+            top: calc(10px + env(safe-area-inset-top));
+            left: 50%; transform: translateX(-50%);
+            background: var(--bg-card); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: 999px;
+            padding: 5px 14px;
+            font-family: var(--font-ui); font-size: 12px; font-weight: 500;
+            pointer-events: none; white-space: nowrap;
+            box-shadow: var(--surface-shadow);
+            opacity: 0; transition: opacity 0.15s;
+        }
+        #session-pill.visible { opacity: 1; }
         #paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn {
             position: fixed;
             /* --kb-offset is updated from window.visualViewport on touch
@@ -1934,7 +1953,17 @@
                 keyRepeat: true,      // Task M.1: hold-to-repeat on soft arrows/Tab
                 cardLongPress: true,  // Task M.4: long-press menu (cards + gallery thumbs)
                 overlaySwipe: true,   // Task M.4: lightbox swipe-dismiss + swipe-nav
-                bottomSheet: true     // Task M.5: settings/menu bottom sheets (coarse pointers)
+                bottomSheet: true,    // Task M.5: settings/menu bottom sheets (coarse pointers)
+                // Task M.6. swipeSession defaults true but the recognizer
+                // REGISTERS only on Android coarse-pointer UAs (iOS: the OS
+                // owns the whole 3-finger vocabulary while a text input is
+                // focused — analysis exclusion #1); twoFingerTap registers
+                // on any coarse pointer. toolbarHidden is roamed STATE, not
+                // an option: the 2-finger tap toggle persists it so the
+                // reclaimed ~50px survives reloads.
+                swipeSession: true,   // Task M.6: 3-finger horizontal swipe cycles sessions
+                twoFingerTap: true,   // Task M.6: 2-finger tap toggles the soft-key toolbar
+                toolbarHidden: false  // Task M.6: soft-key toolbar currently hidden
             })
         });
         const PREF_VALID = {
@@ -1950,7 +1979,10 @@
                 keyRepeat: v => typeof v === 'boolean',
                 cardLongPress: v => typeof v === 'boolean',
                 overlaySwipe: v => typeof v === 'boolean',
-                bottomSheet: v => typeof v === 'boolean'
+                bottomSheet: v => typeof v === 'boolean',
+                swipeSession: v => typeof v === 'boolean',
+                twoFingerTap: v => typeof v === 'boolean',
+                toolbarHidden: v => typeof v === 'boolean'
             }
         };
         function readRawPrefs() {
@@ -4887,6 +4919,10 @@
                 if (os) os.checked = p.gestures.overlaySwipe;  // coarse-pointer row only (M.4)
                 const bs = settingsPanel.querySelector('#sp-sheet');
                 if (bs) bs.checked = p.gestures.bottomSheet;   // coarse-pointer row only (M.5)
+                const sw = settingsPanel.querySelector('#sp-swipe');
+                if (sw) sw.checked = p.gestures.swipeSession;  // Android coarse row only (M.6)
+                const tf = settingsPanel.querySelector('#sp-twofinger');
+                if (tf) tf.checked = p.gestures.twoFingerTap;  // coarse-pointer row only (M.6)
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     const val = String(p[seg.dataset.pref]);
                     seg.querySelectorAll('button').forEach(b => {
@@ -5094,6 +5130,37 @@
                     bs.addEventListener('change',
                         () => setPrefs({ gestures: { bottomSheet: bs.checked } }));
                     bsRow.appendChild(bs);
+
+                    // Task M.6: 3-finger session swipe — rendered ONLY where
+                    // the recognizer actually registers (Android coarse
+                    // pointers; iOS reserves the 3-finger vocabulary, so a
+                    // toggle there would govern nothing). The ‹/› soft keys
+                    // are the universal affordance and have no flag.
+                    if (/android/i.test(navigator.userAgent)) {
+                        const swRow = row('3-finger swipe');
+                        const sw = document.createElement('input');
+                        sw.type = 'checkbox';
+                        sw.id = 'sp-swipe';
+                        sw.title = 'Swipe horizontally with three fingers ' +
+                            'over the terminal to switch sessions.';
+                        sw.addEventListener('change',
+                            () => setPrefs({ gestures: { swipeSession: sw.checked } }));
+                        swRow.appendChild(sw);
+                    }
+
+                    // Task M.6: 2-finger tap → hide/show the soft-key
+                    // toolbar (reclaims ~50px of terminal). Turning it OFF
+                    // also forces the toolbar visible — the hidden state is
+                    // only honored while its restore gesture exists.
+                    const tfRow = row('2-finger tap');
+                    const tf = document.createElement('input');
+                    tf.type = 'checkbox';
+                    tf.id = 'sp-twofinger';
+                    tf.title = 'Tap the terminal with two fingers to hide ' +
+                        'or show the key toolbar.';
+                    tf.addEventListener('change',
+                        () => setPrefs({ gestures: { twoFingerTap: tf.checked } }));
+                    tfRow.appendChild(tf);
                 }
 
                 if (asSheet) {
@@ -5179,6 +5246,42 @@
                     return acts;
                 }
             });
+            // Task M.6: ONE cycle function shared by the Task 4.1 chords
+            // (Alt+Shift+[ / ]), the ‹/› soft keys and the Android 3-finger
+            // swipe (both arrive as tl-gesture messages). The order is the
+            // PAINTED card order — lastSessions merged with the roamed
+            // layout — i.e. exactly what the user sees in the sidebar, so
+            // every cycling affordance walks the same ring. announce=true
+            // (gesture callers only) flashes the 220ms #session-pill naming
+            // the target: mid-swipe the toolbar/sidebar may be off-screen
+            // and the iframe is about to be replaced, so the OUTER pill is
+            // the only feedback that can survive the switch. Chord calls
+            // keep their pre-M.6 pill-less behavior.
+            let sessionPillEl = null, sessionPillTimer = null;
+            function flashSessionPill(name, dir) {
+                if (!sessionPillEl) {
+                    sessionPillEl = document.createElement('div');
+                    sessionPillEl.id = 'session-pill';
+                    sessionPillEl.setAttribute('role', 'status');
+                    document.body.appendChild(sessionPillEl);
+                }
+                sessionPillEl.textContent = dir > 0 ? name + ' ›' : '‹ ' + name;
+                sessionPillEl.classList.add('visible');
+                clearTimeout(sessionPillTimer);
+                sessionPillTimer = setTimeout(
+                    () => sessionPillEl.classList.remove('visible'), 220);
+            }
+            function cycleSession(dir, announce) {
+                const names = orderedSessionNames();
+                if (!names.length) return;
+                const i = names.indexOf(currentActive);
+                const target = dir > 0
+                    ? (i < 0 ? names[0] : names[(i + 1) % names.length])
+                    : (i < 0 ? names[names.length - 1] : names[(i - 1 + names.length) % names.length]);
+                if (target === currentActive) return;     // single session: no-op
+                if (announce) flashSessionPill(target, dir);
+                activateSession(target);
+            }
             const ATTACH_PREFIX = 'session.attach.';
             function runAppCommand(cmd) {
                 if (cmd === 'palette.toggle') { palette.toggle(); return; }
@@ -5194,14 +5297,7 @@
                     return;
                 }
                 if (cmd === 'session.next' || cmd === 'session.prev') {
-                    const names = orderedSessionNames();
-                    if (!names.length) return;
-                    const i = names.indexOf(currentActive);
-                    const target = cmd === 'session.next'
-                        ? (i < 0 ? names[0] : names[(i + 1) % names.length])
-                        : (i < 0 ? names[names.length - 1] : names[(i - 1 + names.length) % names.length]);
-                    if (target === currentActive) return; // single session: no-op
-                    activateSession(target);
+                    cycleSession(cmd === 'session.next' ? 1 : -1, false);
                     return;
                 }
                 if (cmd === 'session.new') {
@@ -5277,6 +5373,17 @@
                 if (e.source !== frameEl.contentWindow) return;
                 if (e.data.type === 'tl-command') {
                     if (typeof e.data.command === 'string') runAppCommand(e.data.command);
+                } else if (e.data.type === 'tl-gesture') {
+                    // Task M.6: touch affordances forwarded up by the
+                    // terminal iframe — the ‹/› soft keys and the Android
+                    // 3-finger swipe. Only cycle-session exists; dir is
+                    // validated to ±1 (origin + source checked above —
+                    // strictly stronger than the tl-theme-ack pattern this
+                    // listener mirrors).
+                    if (e.data.gesture === 'cycle-session' &&
+                            (e.data.dir === 1 || e.data.dir === -1)) {
+                        cycleSession(e.data.dir, true);
+                    }
                 } else if (e.data.type === 'tl-kb-alt') {
                     frameAltDown = !!e.data.alt;
                     syncAltBadges();
@@ -6001,6 +6108,101 @@
         // touch devices). Reads in the term.onData wrapper below.
         let softMods = null;
         let consumeSoftMods = () => {};
+        // Task M.6: reconciles toolbar visibility with prefs (assigned in
+        // the coarse-pointer block below; called from applyTermPrefs so
+        // panel changes / roamed docs / the master kill apply live).
+        let applyToolbarPrefs = () => {};
+
+        // ---- Task M.6: shared multi-touch module -------------------------
+        // The ONLY sanctioned home for ≥2-finger recognizers on the
+        // terminal surface (M.6 swipe + tap; M.8 pinch rides the same
+        // registration). Probe-validated event model, NOT negotiable:
+        //   - STANDING listeners are capture+PASSIVE touchstart/touchend/
+        //     touchcancel only. A standing non-passive listener would tax
+        //     every single-finger scroll's latency (probe leg H) — so the
+        //     {capture:true, passive:false} document touchmove is LAZILY
+        //     attached when the 2nd finger lands and detached at the last
+        //     touchend/touchcancel and on pagehide. One-finger sequences
+        //     therefore traverse ZERO blocking listeners, ever.
+        //   - The single-finger discriminator above/below self-disarms on
+        //     multi-touch (its touchstart resets on touches.length !== 1),
+        //     which is what makes ≥2-finger shapes safe-by-construction
+        //     (red line: the 1-finger tap/swipe path is untouchable).
+        //   - Recognizers register via add() and receive every start/move/
+        //     end; each gates itself on its tl:prefs:v1 gestures.* flag.
+        //     The tl-gestures master kill is enforced here at gesture
+        //     start: killed → no recognizer runs AND the non-passive
+        //     listener never attaches. With zero recognizers registered
+        //     (fine-pointer contexts) the move listener never attaches
+        //     either — touch-capable desktops keep native 2-finger
+        //     scrolling latency-free.
+        // window.__tlGestures is the battery hook: .attached mirrors the
+        // lazy listener's state (must stay false through any 1-finger
+        // sequence), .recognizers counts registrations.
+        const multiTouch = (() => {
+            const recognizers = [];
+            let moveAttached = false;
+            function onDocTouchMove(e) {
+                for (const r of recognizers) {
+                    try { r.move(e); } catch (err) { console.error(err); }
+                }
+            }
+            function attachMove() {
+                if (moveAttached) return;
+                moveAttached = true;
+                document.addEventListener('touchmove', onDocTouchMove,
+                    { capture: true, passive: false });
+            }
+            function detachMove() {
+                if (!moveAttached) return;
+                moveAttached = false;
+                document.removeEventListener('touchmove', onDocTouchMove,
+                    { capture: true });
+            }
+            function onDocTouchStart(e) {
+                if (!recognizers.length || !gesturesEnabled()) return;
+                if (e.touches.length >= 2) attachMove();
+                for (const r of recognizers) {
+                    try { r.start(e); } catch (err) { console.error(err); }
+                }
+            }
+            function onDocTouchEndOrCancel(e) {
+                // NOT gated on the master kill: a kill flipped mid-gesture
+                // must still detach the move listener and reset state.
+                if (e.touches.length === 0) detachMove();
+                for (const r of recognizers) {
+                    try { r.end(e); } catch (err) { console.error(err); }
+                }
+            }
+            function resetAll() {
+                detachMove();
+                for (const r of recognizers) {
+                    try { r.reset(); } catch (err) { console.error(err); }
+                }
+            }
+            document.addEventListener('touchstart', onDocTouchStart,
+                { capture: true, passive: true });
+            document.addEventListener('touchend', onDocTouchEndOrCancel,
+                { capture: true, passive: true });
+            document.addEventListener('touchcancel', onDocTouchEndOrCancel,
+                { capture: true, passive: true });
+            window.addEventListener('pagehide', resetAll);
+            window.__tlGestures = {
+                get attached() { return moveAttached; },
+                get recognizers() { return recognizers.length; }
+            };
+            const noop = () => {};
+            return {
+                add(r) {
+                    recognizers.push({
+                        start: r.start || noop,
+                        move: r.move || noop,
+                        end: r.end || noop,
+                        reset: r.reset || noop
+                    });
+                }
+            };
+        })();
 
         if (isCoarsePointer) {
             // Touch behaviour on the terminal canvas:
@@ -6282,6 +6484,33 @@
             row.appendChild(makeBtn('Kbd', () => term.focus(),
                 { ariaLabel: 'Show keyboard' }));
 
+            // Task M.6: session prev/next. The buttons are the PRIMARY
+            // affordance — they work on iOS (where the OS reserves every
+            // 3-finger shape), on Android, and under TalkBack (plain
+            // buttons with aria-labels); the 3-finger swipe below is only
+            // an Android accelerator onto the same path. Framed (the
+            // normal case) the request goes UP over the NEW tl-gesture
+            // postMessage — the lobby owns the sidebar order and the
+            // iframe swap, and shows the 220ms pill naming the target. A
+            // deep-linked top-level tab (?arg= with no lobby) falls back
+            // to the Task 4.1 unframed jump (real navigation). noFocus:
+            // switching sessions must not summon the keyboard.
+            function postSessionCycle(dir) {
+                if (window.parent !== window) {
+                    try {
+                        window.parent.postMessage(
+                            { type: 'tl-gesture', gesture: 'cycle-session', dir: dir },
+                            location.origin);
+                    } catch (e) {}
+                    return;
+                }
+                runAppCommand(dir > 0 ? 'session.next' : 'session.prev');
+            }
+            row.appendChild(makeBtn('‹', () => postSessionCycle(-1),
+                { ariaLabel: 'Previous session', noFocus: true }));
+            row.appendChild(makeBtn('›', () => postSessionCycle(1),
+                { ariaLabel: 'Next session', noFocus: true }));
+
             // Task M.1: keyboard DISMISS — right-pinned OUTSIDE the
             // scrolling row (a direct #soft-keys child, so it can never
             // scroll out of reach). Blurring the helper textarea collapses
@@ -6293,6 +6522,211 @@
 
             document.body.appendChild(toolbar);
             document.body.classList.add('has-soft-keys');
+
+            // ---- Task M.6: 2-finger tap → toolbar toggle ----------------
+            // Reclaims the toolbar's ~50px for the terminal. Persisted as
+            // roamed STATE (gestures.toolbarHidden) — but honored only
+            // while its restore gesture exists (master kill on and
+            // gestures.twoFingerTap true): a roamed hidden toolbar must
+            // never strand a device that cannot two-finger-tap it back.
+            let toolbarHidden = false;
+            let toolbarHintShown = false;   // one hint per page-life
+            function setToolbarHidden(hidden, persist) {
+                toolbarHidden = hidden;
+                // Inline display beats the @media(pointer:coarse) flex;
+                // has-soft-keys drops with it so the CSS height fallback
+                // reverts to 100% and syncViewport sees offsetHeight 0.
+                toolbar.style.display = hidden ? 'none' : '';
+                document.body.classList.toggle('has-soft-keys', !hidden);
+                syncViewport();
+                refit();
+                if (persist) setPrefs({ gestures: { toolbarHidden: hidden } });
+            }
+            applyToolbarPrefs = function () {
+                const p = getPrefs();
+                const wantHidden = p.gestures.toolbarHidden &&
+                    gesturesEnabled() && p.gestures.twoFingerTap;
+                if (wantHidden !== toolbarHidden) setToolbarHidden(wantHidden, false);
+            };
+            // Boot application arrives via applyTermPrefs' one-shot
+            // reconciliation below — NOT an eager call here: refit() reads
+            // let-bindings (kbRafScheduled/fitTimer) that only initialize
+            // after this block, so a boot-hidden toolbar would throw a TDZ
+            // ReferenceError and kill the rest of the script (caught by the
+            // M.6 smoke). The stretch from here to that call is synchronous,
+            // so a persisted hidden state still applies before first paint.
+            // The master kill is a plain localStorage key with no
+            // postMessage channel — a flip from the lobby (another window)
+            // arrives as a storage event; reconcile visibility then.
+            window.addEventListener('storage', (e) => {
+                if (e.key === GESTURES_KILL_KEY) applyToolbarPrefs();
+            });
+
+            // Recognizer: 2 fingers down+up within 220ms, per-finger travel
+            // <10px, inter-touch span delta <8% (rejects pinch STARTS —
+            // and it only ever observes: no preventDefault anywhere, so
+            // native 2-finger pinch-zoom is untouched). Sequential lifts
+            // within the window still count (real fingers rarely lift in
+            // one event). NEVER bound to 2-finger double-tap (Safari smart
+            // zoom owns that shape). iPadOS caveat (manual checklist): OS
+            // word-select may co-fire over the helper textarea — UX-only,
+            // xterm's insertText filter keeps the pty clean.
+            const TAP_MAX_MS = 220, TAP_MAX_TRAVEL_PX = 10, TAP_MAX_SPAN_DELTA = 0.08;
+            let tap = null;   // {start: Map(id→{x,y}), t0, span0, dead}
+            function tapSpan(t0, t1) {
+                return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+            }
+            multiTouch.add({
+                start(e) {
+                    if (e.touches.length > 2) { if (tap) tap.dead = true; return; }
+                    if (e.touches.length !== 2 || tap) return;
+                    if (!getPrefs().gestures.twoFingerTap) return;   // per-press
+                    const a = e.touches[0], b = e.touches[1];
+                    if (!(terminalEl.contains(a.target) && terminalEl.contains(b.target))) return;
+                    tap = {
+                        start: new Map([
+                            [a.identifier, { x: a.clientX, y: a.clientY }],
+                            [b.identifier, { x: b.clientX, y: b.clientY }]
+                        ]),
+                        t0: performance.now(),
+                        span0: Math.max(1, tapSpan(a, b)),
+                        dead: false
+                    };
+                },
+                move(e) {
+                    if (!tap || tap.dead) return;
+                    for (const t of e.touches) {
+                        const s = tap.start.get(t.identifier);
+                        if (!s) { tap.dead = true; return; }   // finger substituted
+                        if (Math.hypot(t.clientX - s.x, t.clientY - s.y) > TAP_MAX_TRAVEL_PX) {
+                            tap.dead = true;
+                            return;
+                        }
+                    }
+                    if (e.touches.length === 2 &&
+                            Math.abs(tapSpan(e.touches[0], e.touches[1]) / tap.span0 - 1)
+                                >= TAP_MAX_SPAN_DELTA) {
+                        tap.dead = true;   // diverging/converging = pinch start
+                    }
+                },
+                end(e) {
+                    if (!tap) return;
+                    if (e.touches.length > 0) return;   // first of two lifts
+                    const ok = !tap.dead &&
+                        performance.now() - tap.t0 <= TAP_MAX_MS;
+                    tap = null;
+                    if (!ok) return;
+                    setToolbarHidden(!toolbarHidden, true);
+                    if (toolbarHidden && !toolbarHintShown) {
+                        toolbarHintShown = true;
+                        showToast('Two-finger tap to restore keys', 'info', 2500);
+                    }
+                },
+                reset() { tap = null; }
+            });
+
+            // ---- Task M.6: 3-finger horizontal swipe → session cycle ----
+            // ANDROID COARSE ONLY. iOS reserves the entire 3-finger
+            // vocabulary (undo/redo/HUD/copy/paste) whenever a text input
+            // is focused — and the helper textarea almost always is — so
+            // the recognizer must NEVER register there (analysis exclusion
+            // #1; the ‹/› soft keys are the iOS affordance). Arm at
+            // exactly 3 touches inside terminalEl, none within 32px of the
+            // screen's side edges (the OS back-gesture zones stay
+            // unfought). Commit inside 600ms at mean dx ≥80px with
+            // |dx|>2|dy|, all fingers moving the SAME direction and under
+            // 24px of cumulative vertical wiggle; resting >350ms aborts
+            // (that shape is the OEM partial-screenshot hold). While armed
+            // every 3-finger touchmove is consumed via the module's lazy
+            // non-passive listener — the probe-derived claim model (a
+            // classify-then-claim always loses to the native gesture
+            // pipeline); 3-finger motion has no in-page meaning here, and
+            // 1/2-finger sequences are never touched. Swipe LEFT → next
+            // session, RIGHT → previous (content follows the finger).
+            if (/android/i.test(navigator.userAgent)) {
+                const SWIPE_EDGE_PX = 32, SWIPE_COMMIT_PX = 80;
+                const SWIPE_MAX_CUM_DY = 24, SWIPE_MAX_MS = 600, SWIPE_REST_MS = 350;
+                let sw = null;   // {start: Map(id→{x,y}), t0, lastMeanX/Y, cumDY, lastProgressT, dead, committed}
+                multiTouch.add({
+                    start(e) {
+                        if (sw) {   // 4th finger (or any re-add mid-gesture): abort
+                            if (!sw.committed) sw.dead = true;
+                            return;
+                        }
+                        if (e.touches.length !== 3) return;
+                        if (!getPrefs().gestures.swipeSession) return;   // per-press
+                        const pts = new Map();
+                        let meanX = 0, meanY = 0;
+                        for (const t of e.touches) {
+                            if (!terminalEl.contains(t.target) ||
+                                    t.clientX < SWIPE_EDGE_PX ||
+                                    t.clientX > window.innerWidth - SWIPE_EDGE_PX) {
+                                return;   // outside the terminal / in an edge dead-zone
+                            }
+                            pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+                            meanX += t.clientX / 3;
+                            meanY += t.clientY / 3;
+                        }
+                        const now = performance.now();
+                        sw = {
+                            start: pts, t0: now,
+                            lastMeanX: meanX, lastMeanY: meanY,
+                            cumDY: 0, lastProgressT: now,
+                            dead: false, committed: false
+                        };
+                    },
+                    move(e) {
+                        if (!sw || sw.dead || sw.committed) return;
+                        if (e.touches.length !== 3) { sw.dead = true; return; }
+                        let meanX = 0, meanY = 0, dxSum = 0, dySum = 0;
+                        let pos = 0, neg = 0;
+                        for (const t of e.touches) {
+                            const s = sw.start.get(t.identifier);
+                            if (!s) { sw.dead = true; return; }   // finger substituted
+                            const dx = t.clientX - s.x;
+                            if (dx > 0) pos++; else if (dx < 0) neg++;
+                            dxSum += dx;
+                            dySum += t.clientY - s.y;
+                            meanX += t.clientX / 3;
+                            meanY += t.clientY / 3;
+                        }
+                        // Claim: consume every armed 3-finger move (no-op on
+                        // cancelable=false moves — the declared platform leak).
+                        e.preventDefault();
+                        const now = performance.now();
+                        const stepX = meanX - sw.lastMeanX;
+                        const stepY = meanY - sw.lastMeanY;
+                        sw.cumDY += Math.abs(stepY);
+                        if (Math.abs(stepX) > 2 || Math.abs(stepY) > 2) {
+                            if (now - sw.lastProgressT > SWIPE_REST_MS) {
+                                sw.dead = true;   // rested, then moved: OEM-hold abort
+                                return;
+                            }
+                            sw.lastProgressT = now;
+                        }
+                        sw.lastMeanX = meanX;
+                        sw.lastMeanY = meanY;
+                        if (now - sw.t0 > SWIPE_MAX_MS || sw.cumDY >= SWIPE_MAX_CUM_DY) {
+                            sw.dead = true;   // too slow / too much vertical wiggle
+                            return;
+                        }
+                        const meanDx = dxSum / 3, meanDy = dySum / 3;
+                        if ((pos === 3 || neg === 3) &&
+                                Math.abs(meanDx) >= SWIPE_COMMIT_PX &&
+                                Math.abs(meanDx) > 2 * Math.abs(meanDy)) {
+                            sw.committed = true;
+                            navigator.vibrate?.([10, 10]);
+                            postSessionCycle(meanDx < 0 ? 1 : -1);
+                        }
+                    },
+                    end(e) {
+                        if (!sw) return;
+                        if (e.touches.length === 0) sw = null;         // gesture over
+                        else if (!sw.committed) sw.dead = true;        // finger lifted mid-arm
+                    },
+                    reset() { sw = null; }
+                });
+            }
         }
 
         function sendInput(data) {
@@ -6379,7 +6813,14 @@
             const vv = window.visualViewport;
             const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
             document.documentElement.style.setProperty('--kb-offset', kb + 'px');
-            if (document.body.classList.contains('has-soft-keys')) {
+            // Gate on the pointer type, not body.has-soft-keys: since Task
+            // M.6 the toolbar can be HIDDEN (2-finger tap drops the class),
+            // but the terminal height must keep tracking visualViewport or
+            // the prompt slides behind the iOS keyboard. Byte-equivalent
+            // while the toolbar is visible (coarse pointers always carried
+            // the class before M.6); a display:none toolbar reads
+            // offsetHeight 0, so the terminal gets the full viewport.
+            if (isCoarsePointer) {
                 const tb = document.getElementById('soft-keys');
                 const tbH = tb ? tb.offsetHeight : 0;
                 terminalEl.style.height = Math.max(0, vv.height - tbH) + 'px';
@@ -7014,6 +7455,10 @@
             if (needFit) {
                 try { fitAddon.fit(); } catch (e) { console.warn('prefs fit failed:', e); }
             }
+            // Task M.6: toolbar visibility rides the same prefs plumbing
+            // (gestures.toolbarHidden / gestures.twoFingerTap) — a no-op
+            // stub on fine pointers.
+            applyToolbarPrefs();
         }
         // Changes made in THIS window (floating A−/A+, boot adoption of the
         // server doc) come through the same-tab CustomEvent.
