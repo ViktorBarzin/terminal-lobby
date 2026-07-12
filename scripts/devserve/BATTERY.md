@@ -1781,3 +1781,62 @@ invert it).
   guards (touch-discriminator IIFE + ADR-0003 mousedown interceptor
   byte-identical vs `6773cbd`, `term.attachCustomKeyEventHandler(`
   exactly once) verified 2026-07-12 at implementation time.
+
+### [MF-5] Hashless coarse-pointer boot reattaches the last session (Viktor complaint 1, rank 1: "i dont like the side swipe to open all sessions")
+
+The iOS edge-back-swipe traverses to the pre-app (Authentik) history
+entry, which redirects back to `/` WITHOUT the `#session` hash — the
+lobby booted session-less onto the full list. The gesture can't be
+removed; MF-5 fixes the LANDING: on coarse pointers a hashless boot with
+the device-local marker `tl:last-active:v1` set (written by
+activateSession, cleared by deactivateSession) re-fetches the sessions
+list and reattaches the marked session if it still exists. Gated by the
+NEW roamed pref `session.reopenLast` (default **true**; fresh namespace —
+pre-existing roamed docs lack the key, so the code default applies
+everywhere, no re-key dance). BOOT-ONLY: never wired to hashchange — the
+hashchange→deactivateSession path stays the explicit in-app detach and
+clears the marker. Reattach rides activateSession's existing
+`history.replaceState` (history stays flat); the pushState-sentinel
+approach is documented as REJECTED in-code (it would re-arm the gesture
+M.3 disarmed). Desktop/fine pointers: unchanged (no auto-attach, no
+settings row). **SNAPSHOT+RESTORE the live /prefs doc around the run**
+(GET before, byte-compare, PUT back only if drifted — leg 3 seeds
+localStorage prefs; never stamp `tl:prefs-dirty:v1`, that would PUSH the
+seed onto the real roamed doc). All legs run green 20/20 on 2026-07-12
+at implementation on a sibling harness instance — proxy 7947 / ttyd
+7946, scratch socket `-L tl-mf5`, card sessions `tl-battery-mf5a/b`
+pre-created on the real default server (isolation rules; killed after,
+`tmux ls` byte-identical before/after) — adjust `tmux -L …` when
+repeating. Harness coarse emulation = 390×844, `isMobile` + `hasTouch`,
+iPhone UA.
+
+- [MF-5] Attach a scratch card (`tl-battery-mf5a`) via card click →
+  localStorage `tl:last-active:v1` = the session name. Open a NEW tab in
+  the same context at `/` with NO hash (fresh load, marker seeded) →
+  session AUTO-attached (hash becomes `#tl-battery-mf5a`, iframe
+  visible), hash set via replaceState: `history.length` unchanged vs the
+  post-goto baseline (fresh-tab shape: about:blank + goto = 2; any
+  pushState would push past it) — the P4 flat-history re-assert.
+- [MF-5] Seed the marker with a nonexistent name (`tl-battery-ghost`) →
+  hashless boot → clean 'Pick a session' lobby (`#lobby-empty` visible,
+  hash stays empty), marker CLEARED, zero console errors.
+- [MF-5] Seed prefs `session.reopenLast:false` (+ marker) → hashless
+  boot → list shown (switch honored), marker survives (switch-off is not
+  a detach); coarse settings panel shows the 'Reopen last session' row
+  (`#sp-reopen`) UNCHECKED.
+- [MF-5] In-app detach (clear the hash → hashchange →
+  deactivateSession) → marker cleared; reload hashless → list shown.
+- [MF-5] Fine pointer 1280×800, marker seeded → hashless boot → list
+  (desktop unchanged, marker untouched); desktop settings panel shows NO
+  'Reopen last session' row.
+- [MF-5] Existing M.3 flat-history leg re-run: `history.length` constant
+  across 3 card attaches (post-attach the iframe overlays the collapsed
+  mobile sidebar, so dispatch the card clicks via JS `el.click()` — same
+  activateSession path; hit-testing is not under test).
+- [MF-5] MANUAL (real device, Viktor's first pass per the standing
+  deploy heads-up): the three iOS edge-back legs E1-E3 added to
+  `scripts/devserve/ios-3finger-probe.html` — Safari tab post-Authentik
+  login: edge-back-swipe → bounces through the flow page → relands
+  ATTACHED to the previous session; installed PWA after an in-shell
+  re-auth hop: same; after an explicit in-app detach: edge-back reland
+  shows the LIST (marker cleared).
