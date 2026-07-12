@@ -6919,7 +6919,16 @@
                 c.hidden = false;              // unhide first: offset* need layout
                 const left = rect.left + (range.start.x - 1) * cellW;
                 let top = rect.top + vRow * cellH - c.offsetHeight - 4;
-                if (top < 4) top = rect.top + (vRow + 1) * cellH + 4;  // top row → below the link
+                if (top < 4) {
+                    // No room above → flip below the link's LAST row (a
+                    // joined link spans rows; parking below the FIRST row
+                    // would sit the chip on the continuation row and
+                    // steal clicks meant for the link itself).
+                    const endVRow = Math.min(
+                        range.end.y - 1 - term.buffer.active.viewportY,
+                        term.rows - 1);
+                    top = rect.top + (endVRow + 1) * cellH + 4;
+                }
                 c.style.left = Math.max(4, Math.min(left, window.innerWidth - c.offsetWidth - 4)) + 'px';
                 c.style.top = Math.min(top, window.innerHeight - c.offsetHeight - 4) + 'px';
             }
