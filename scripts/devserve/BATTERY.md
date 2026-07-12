@@ -1533,8 +1533,13 @@ implements the feature. Format:
   (never inherits the helper's type=password trick), aria-label set,
   computed font-size ≥16px (INLINE — iOS focus-auto-zoom block),
   `enterkeyhint='enter'` under default prefs. Verified 33/33 at
-  implementation (2026-07-12).
-- [Task M.10] Decisive framing leg (byte-exact bracketed-paste send):
+  implementation (2026-07-12). **IR.1 delta:** `autocapitalize='off'`
+  and `enterkeyhint='send'` (both FIXED) — the rest of the attribute
+  set is unchanged and still asserted.
+- [Task M.10] ~~Decisive framing leg~~ **SUPERSEDED by [IR.1]** (the ▶
+  button, hold-to-stage, and staged sends no longer exist — the field
+  is a live mirror; multiline paste keeps the §A.6 bracketed shape via
+  the [IR.1] MULTILINE-PASTE leg). Historical text (do not run):
   scratch pane runs
   `stty -icanon -echo -isig -icrnl min 1 time 0; printf '\e[?2004h'; cat -v`
   (the A.1 sensor posture; `-icrnl` is LOAD-BEARING — with it on, the
@@ -1548,17 +1553,17 @@ implements the feature. Format:
   (keyboard up). Long-press ▶ (~700ms CDP `long_press` on the button
   center) with new text → same bracketed block with NO trailing `^M`
   + 'Staged (no Enter)' toast + field still focused.
-- [Task M.10] enterKey modes are LOCAL to the field: flip the lobby
-  panel's 'Compose Return' seg to Send → `enterkeyhint` flips to
-  'send' live in the iframe (panel setPrefs → tl-prefs postMessage →
-  applyComposePrefs); then Shift+Enter inserts a newline with capture
-  UNCHANGED, and plain Enter submits `^[[200~a^Mb^[[201~^M`. Auto-grow
-  clamps at 5 lines (scrollHeight clamp → overflow-y:auto past that).
+- [Task M.10] ~~enterKey modes~~ **SUPERSEDED by [IR.1]** (Enter always
+  streams the line + `\r`; `compose.enterKey` is no longer read —
+  schema entry dies in IR.2; `enterkeyhint` fixed 'send'). Auto-grow
+  still clamps at 5 lines (wrap-growth only — the field never contains
+  \n since IR.1).
 - [Task M.10] Focus routing (guarded focusActiveInput): while the field
   is focused, tap soft Esc → capture gains exactly `^[` AND focus
   RETURNS to `#compose-input` (sendInput bypasses DOM focus; makeBtn's
   post-tap focus routes to the field only while it WAS the active
-  input); soft ↑ (noFocus) → `^[[A`, focus unmoved. Tap the bar's ⌄ →
+  input; IR.1: the tap ALSO clears the field — out-of-band reset);
+  soft ↑ (noFocus) → `^[[A`, focus unmoved. Tap the bar's ⌄ →
   bar hides, helper textarea focused (keyboard handed back), terminal
   height returns to the baseline formula; the SAME soft-Esc tap now
   focuses the helper textarea — byte-equivalent to pre-M.10 while the
@@ -1569,7 +1574,7 @@ implements the feature. Format:
   bar's bottom edge docked on the toolbar's top edge (`--sk-h`
   plumbing), no overlap with the terminal; the floating action buttons
   ride `--cb-h` (72px + cb-h + kb-offset on coarse) so 📋 can never
-  swallow ▶/⌄ taps — with the bar hidden both vars are 0px and every
+  swallow field/⌄ taps — with the bar hidden both vars are 0px and every
   formula is byte-identical to the M.6 baseline. Growing the field
   refits at most once per height change (growAndRefit gates on
   offsetHeight delta + the 120ms debounce — no fit thrash).
@@ -1595,8 +1600,10 @@ implements the feature. Format:
   e.g. show:'off' to real devices; bit the implementation smoke).
 - [Task M.10] Red line: full §A with compose OFF (`show:'off'` since
   M.11 — was the default); the standing diff guards extend over the
-  compose surface — the helper-textarea suppression block, `sendInput`,
-  the term.onData wrapper each BYTE-IDENTICAL to `6773cbd`, and the M.1
+  compose surface — the helper-textarea suppression block, `sendInput`
+  each BYTE-IDENTICAL to `6773cbd`, the term.onData wrapper
+  **RE-BASELINED by IR.1** (was: byte-identical; now: exactly ONE added
+  first line — the mirror out-of-band reset hook; see [IR.1]), and the M.1
   touch-discriminator IIFE and the ADR-0003 mousedown interceptor
   **RE-BASELINED by M.11** (was: byte-identical to `6773cbd`; now:
   extract vs `6773cbd` differs by EXACTLY the three declared
@@ -2098,3 +2105,101 @@ in the coarse compose block) lives OUTSIDE both guarded regions.
   Home Screen" bell hint. VAPID provisioning (Vault write) + deploy.sh
   EnvironmentFile install verified by review + `bash -n` only (never run
   against prod).
+
+### [IR.1] Compose bar → transparent live pty mirror (input-rework; Viktor: "the composer tab shouldnt be additive — we either mirror the terminal … or dont at all")
+
+The compose field no longer stages text: it is a live MIRROR of the pty
+input line. Every field edit streams immediately — insertions as bytes,
+deletions as DELs (common-prefix diff, grapheme-aware three-branch
+rule), Enter as the pending diff + a separate `\r` frame, field cleared.
+Deleted: the ▶ Send button, hold-to-stage, `doSend()`, all
+`compose.enterKey` reads (the settings row + schema entry die in IR.2).
+Bar DOM = field + ⌄ only. Emission goes EXCLUSIVELY through
+`term.input()` → the existing onData wrapper → `sendInput` → ws (zero
+new socket paths); `term.paste` survives only on the Paste soft key and
+the multiline-paste-into-field branch.
+
+**Default changes (all additive/reversible):** Enter in the bar streams
+the line and submits immediately (was: stage + ▶ / compose.enterKey
+arbitration); ▶ and hold-to-stage removed; field
+`autocapitalize` sentences→off (sentence-caps corrupt shell commands);
+`enterkeyhint` fixed 'send' (was dynamic). No pref keys touched by IR.1
+(compose.show / compose.tapFocus reads unchanged; re-key is IR.2).
+Fallback: `compose.show:'off'` hides the bar = byte-equivalent raw
+behavior.
+
+**Standing diff guards — term.onData wrapper RE-BASELINED HERE.** The
+wrapper is no longer byte-identical to `6773cbd`: the ONLY permitted
+delta is EXACTLY ONE added first line —
+`if (!mirrorEmitting) mirrorLineReset();` (the mirror out-of-band reset
+hook) — all other bytes identical (verified mechanically at
+implementation, alongside: helper-textarea suppression + `sendInput`
+still byte-identical, M.1 IIFE + ADR-0003 interceptor still exactly the
+three MF-6 token swaps, `term.attachCustomKeyEventHandler(` exactly
+once). Declared UNGUARDED additions (the spec's onData-only catch-list
+was factually short — `sendKey` and the upload path-sends call
+`sendInput` directly and never pass onData): `mirrorLineReset()` at the
+top of `sendKey` and before each of the 5 upload/gallery/drop
+`sendInput(path)` sites; a capture-paste deferral in the document paste
+handler (text-only pastes targeting `#compose-input` return early so
+the field receives them natively — image pastes keep the upload
+routine). Copy-mode keys (tmux-api POSTs, no client bytes) do NOT
+reset — mirror + copy-mode simultaneously is out of scope.
+
+Harness: `scripts/dev-harness.py --scratch` (tl-battery-* names only,
+kill own PIDs), 390×844 coarse emulation (full Pixel-7-class
+descriptor), outer-page entry (`#main`), frame-by-content, the
+Terminal-Proxy init script for `window.__term` (plus a `term.input`
+tap for emitted-bytes assertions). CDP legs:
+
+- [IR.1] STREAM: terminal tap focuses the field (tapFocus default),
+  `Input.insertText` 'echo mirror-ok', keyboard Enter → capture-pane
+  shows the executed line, field EMPTY, emitted history == the text
+  then `\r` as its own frame.
+- [IR.1] COMPOSITION-REPLACE: `Input.imeSetComposition` 't','te','teh'
+  then `Input.insertText` 'the ' (commit ≠ composition) → pane
+  converges to 'the '.
+- [IR.1] AUTOCORRECT-SWAP: insertText 'teh', `setSelectionRange(0,3)`,
+  insertText 'the' (value-replace, the Gboard autocorrect shape) →
+  pane 'the'.
+- [IR.1] MID-STRING: insertText a sentence, caret back, insert a word →
+  pane == field (backspace-to-common-prefix + tail retype); Enter →
+  the EDITED line executes (whole-value submit, caret-independent).
+- [IR.1] DUAL-RECEIVER EMOJI: `bash --norc` leg — 2-codepoint emoji
+  (U+1F44D U+1F3FD) + one field backspace → post-submit echo proves
+  exact codepoint removal; composer-context leg — assert NUKE branch
+  bytes == DEL×codepoints(lastValue) + full retype (receiver classes
+  delete different units; DEL-past-empty is a verified no-op on both).
+- [IR.1] OOB RESET: text in field, tap soft ↑ → field cleared, baseline
+  cleared, NO stray pane bytes, history recall works (E8 shape; this
+  exercises the `sendKey` reset — soft keys never pass onData).
+- [IR.1] MULTILINE PASTE: clipboard 'one\ntwo', Ctrl+V in the field
+  over a DECSET-2004 `cat -v` pane → `^[[200~one^Mtwo^[[201~`, field
+  unchanged (beforeinput intercepts; single-line pastes stream).
+- [IR.1] EMPTY-BACKSPACE: empty field, Backspace → pane line loses its
+  last char (transparent erase of TUI-side text).
+- [IR.1] KBD-EXCURSION RESET: text in field, tap Kbd → raw-type one
+  char → field + baseline cleared (the onData hook catches
+  helper-textarea bytes).
+- [IR.1] RED LINE: full BATTERY.md §A with the bar VISIBLE and HIDDEN;
+  diff guards re-baselined with the one onData line declared (above).
+- [IR.1] GEOMETRY: 390×844 — bar sits above the soft-key row via
+  `--sk-h`/`--cb-h`, no overlap, no fit thrash (M.10 formulas
+  unchanged).
+
+**DEVICE-MANUAL standing checklist (Viktor's pass; expected outcomes):**
+
+- Gboard: swipe-type a sentence → streams per word-commit (composition
+  streams through; the TUI lags at most the in-flight word); tap a
+  suggestion mid-word → field and TUI line converge (ordinary diff);
+  autocorrect accept then backspace-revert → diff + revert both land;
+  voice-typing burst → streams, no double-send.
+- iOS: post-space autocorrect swap lands as a diff; swap-vs-Enter
+  ordering — expected: swap first; acceptable worst case: the last
+  word submits uncorrected (degradation, never corruption); QuickType
+  suggestion tap → converges; dictation incl. a 'new line' phrase →
+  expected: submits (the field never holds \n); shake-to-undo →
+  ordinary diff; trackpad-mode caret move then edit → tail-retype.
+- Both: NO double-send anywhere (an unchanged value diffs to nothing);
+  password prompts via the raw keyboard (Kbd) — the mirror field is
+  visible text.

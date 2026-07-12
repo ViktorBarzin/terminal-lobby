@@ -1692,10 +1692,13 @@
             margin-left: 4px;
             font-weight: 700;
         }
-        /* Task M.10/M.11: native compose bar — a VISIBLE sibling of the
-           soft-key toolbar hosting full-fidelity mobile text input
-           (autocorrect / swipe typing / dictation), delivered to the pty as
-           ONE bracketed paste via term.paste(). display:none until the ✎
+        /* Task M.10/M.11/IR.1: native compose bar — a VISIBLE sibling of
+           the soft-key toolbar hosting full-fidelity mobile text input
+           (autocorrect / swipe typing / dictation). Since IR.1 the field
+           is a transparent live MIRROR of the pty input line — every edit
+           streams immediately through the differ in the coarse compose
+           block; no Send button, no staging (the bar is field + ⌄ only).
+           display:none until the ✎
            soft key (or compose.show resolving visible — the M.11 coarse
            default) adds .visible; the element is only
            built on coarse pointers. Docked directly ABOVE the toolbar: the
@@ -6815,9 +6818,19 @@
         let applyToolbarPrefs = () => {};
         // Task M.10/M.11: reconciles the compose bar with prefs (assigned
         // in the coarse-pointer block below; called from applyTermPrefs) —
-        // enterkeyhint follows compose.enterKey live; compose.show !==
-        // 'off' opens the bar until the user toggles it manually.
+        // compose.show !== 'off' opens the bar until the user toggles it
+        // manually (IR.1: enterkeyhint is fixed 'send', no longer prefs).
         let applyComposePrefs = () => {};
+        // Task IR.1: compose-mirror seams (assigned in the coarse-pointer
+        // block below; both stay inert no-ops on fine pointers).
+        // mirrorEmitting marks bytes the compose mirror itself feeds
+        // through term.input() so the onData out-of-band hook can tell
+        // them from everything else; mirrorLineReset drops the mirror's
+        // field content + diff baseline (with NO emission) whenever bytes
+        // reach the pty from ANY other path — soft keys, Paste, raw Kbd
+        // typing, upload path-sends, a fresh ws attach.
+        let mirrorEmitting = false;
+        let mirrorLineReset = () => {};
 
         // ---- Task M.6: shared multi-touch module -------------------------
         // The ONLY sanctioned home for ≥2-finger recognizers on the
@@ -7175,6 +7188,11 @@
             // transform on toolbar keys — that only makes sense for letters
             // typed on the system soft keyboard).
             function sendKey(bytes) {
+                // IR.1: pre-baked key bytes go straight to sendInput and
+                // never pass term.onData — reset the compose-mirror
+                // baseline here or a soft arrow/Esc would silently desync
+                // the field from the pty line it claims to mirror.
+                mirrorLineReset();
                 sendInput(bytes);
                 consumeSoftMods();
             }
@@ -7380,18 +7398,23 @@
             document.body.appendChild(toolbar);
             document.body.classList.add('has-soft-keys');
 
-            // ---- Task M.10: native compose bar (opt-in) -----------------
+            // ---- Task M.10/IR.1: native compose bar = live pty mirror ---
             // Full-fidelity mobile text input. The hidden xterm helper
             // textarea is deliberately SUPPRESSED (type=password — Gboard
             // predictive text corrupted terminal input: xterm #2403,
             // composition #3600/#675) and that block stays byte-untouched;
             // autocorrect / swipe typing / dictation therefore need this
-            // separate, VISIBLE field. Everything below only CALLS the
-            // existing primitives — term.paste() → the proven bracketed-
-            // paste path through the untouched onData wrapper → sendInput;
-            // a submit is a SEPARATE trailing \r AFTER \x1b[201~ (a \r
-            // INSIDE the bracket is a soft newline to Claude Code — never
-            // a submit).
+            // separate, VISIBLE field. Since IR.1 the field is a
+            // TRANSPARENT MIRROR of the pty input line, not a staged
+            // composer (Viktor: a second composer in front of Claude
+            // Code's own input box is bad UX — "we either mirror the
+            // terminal … or dont at all"): every field edit streams to the
+            // pty immediately, so the TUI's own input box always shows
+            // exactly what the field holds. Emission goes EXCLUSIVELY
+            // through term.input() → the EXISTING onData wrapper
+            // (soft-mod remap) → sendInput → ws — zero new socket paths;
+            // term.paste survives only for multiline pastes (bracketed,
+            // §A.6 shape).
             const composeBar = document.createElement('div');
             composeBar.id = 'compose-bar';
             const composeInput = document.createElement('textarea');
@@ -7402,29 +7425,26 @@
             // type=password trick would kill the suggestion/composition UI
             // this field exists for). autocomplete=off suppresses only
             // form-autofill — keyboard-level swipe/suggestions/dictation
-            // stay. enterkeyhint is dynamic (applyComposePrefs). Inline
-            // 16px blocks iOS Safari's focus auto-zoom.
-            composeInput.setAttribute('autocapitalize', 'sentences');
+            // stay. IR.1 deltas: autocapitalize off (sentence-caps corrupt
+            // shell commands now that keystrokes stream raw) and
+            // enterkeyhint FIXED 'send' (Enter always streams the line +
+            // \r — no more compose.enterKey arbitration). Inline 16px
+            // blocks iOS Safari's focus auto-zoom.
+            composeInput.setAttribute('autocapitalize', 'off');
             composeInput.setAttribute('autocorrect', 'on');
             composeInput.setAttribute('spellcheck', 'true');
             composeInput.setAttribute('autocomplete', 'off');
             composeInput.setAttribute('inputmode', 'text');
-            composeInput.setAttribute('enterkeyhint', 'enter');
+            composeInput.setAttribute('enterkeyhint', 'send');
             composeInput.setAttribute('aria-label', 'Compose text to send to the terminal');
             composeInput.placeholder = 'Compose…';
             composeInput.style.fontSize = '16px';
-            const composeSend = document.createElement('button');
-            composeSend.type = 'button';
-            composeSend.id = 'compose-send';
-            composeSend.textContent = '▶';
-            composeSend.setAttribute('aria-label', 'Send (hold to stage without Enter)');
             const composeHide = document.createElement('button');
             composeHide.type = 'button';
             composeHide.id = 'compose-hide';
             composeHide.textContent = '⌄';
             composeHide.setAttribute('aria-label', 'Hide compose bar');
             composeBar.appendChild(composeInput);
-            composeBar.appendChild(composeSend);
             composeBar.appendChild(composeHide);
             document.body.appendChild(composeBar);
 
@@ -7458,73 +7478,154 @@
             }
             composeInput.addEventListener('input', growAndRefit);
 
-            // Send path — byte-exact contract (do not reorder):
-            //   1. consumeSoftMods(): an armed Ctrl/Alt must not remap the
-            //      paste's first char (same posture as the Paste key);
-            //   2. term.paste(text): \r?\n→\r, wrapped \x1b[200~…\x1b[201~
-            //      while the pane has DECSET 2004 (Claude Code always
-            //      does), through the EXISTING onData→sendInput→ws path;
-            //   3. iff withEnter: a SEPARATE sendInput('\r') lands AFTER
-            //      \x1b[201~ → Claude Code submits.
-            // Returns whether anything was sent — empty/whitespace-only
-            // stays local; the raw text goes out unmodified (trim() is
-            // only the emptiness guard).
-            function doSend(withEnter) {
-                const text = composeInput.value;
-                if (!text.trim()) return false;
-                consumeSoftMods();
-                term.paste(text);
-                if (withEnter) sendInput('\r');
-                composeInput.value = '';
-                growAndRefit();
-                composeInput.focus();   // keyboard stays up for the next message
-                haptic('selection');
-                return true;
+            // ---- IR.1 mirror engine -------------------------------------
+            // lastValue is the pty input line as this mirror shaped it;
+            // reconcile() diffs field.value against it after every input
+            // event and emits the byte delta. The DOM fires 'input' AFTER
+            // the mutation regardless of HOW the text changed (typing,
+            // composition updates, autocorrect replaces, suggestion taps,
+            // dictation bursts, select-all overwrites, shake-to-undo), so
+            // the differ is event-shape-agnostic — the Gboard
+            // event-interpretation failure class that killed helper-
+            // textarea typing (xterm #2403/#3600/#675) cannot reach it,
+            // and an unchanged value diffs to nothing (double-sends are
+            // impossible by construction). V1 constraints (E2E-decided, do
+            // not re-litigate without new evidence): no pty cursor
+            // tracking / no arrow repositioning — mid-string edits are
+            // backspace-to-common-prefix + tail retype; composition
+            // streams through (holding to compositionend would lag the
+            // TUI one word behind on every Gboard commit); Enter always
+            // submits (multiline authoring = bracketed paste or Claude
+            // Code backslash-continuation); the field never contains \n;
+            // ONE line mirrored — no draft persistence, no history.
+            let lastValue = '';        // pty-mirrored line
+            let suppress = false;      // marks programmatic field mutations
+
+            // Delete units differ per receiver: Claude Code's composer
+            // deletes one GRAPHEME per DEL, readline / kernel canonical
+            // mode delete one CODEPOINT (both measured through the real
+            // ws→ttyd→tmux stack). They only disagree when a grapheme
+            // spans >1 codepoint (emoji/ZWJ/combining) — the three-branch
+            // rule in reconcile() keys on exactly that. Intl.Segmenter is
+            // the grapheme authority; Array.from (codepoints) is the
+            // fallback where it is absent.
+            const graphemeSeg = (typeof Intl !== 'undefined' && Intl.Segmenter)
+                ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+                : null;
+            const codepointCount = (s) => Array.from(s).length;
+            const graphemeCount = (s) => graphemeSeg
+                ? [...graphemeSeg.segment(s)].length
+                : codepointCount(s);
+            // Common code-unit prefix, snapped out of a split surrogate
+            // pair and back onto a grapheme boundary of `a` (= lastValue)
+            // so the deletion suffix is countable in whole units.
+            function mirrorCommonPrefix(a, b) {
+                let p = 0;
+                const m = Math.min(a.length, b.length);
+                while (p < m && a.charCodeAt(p) === b.charCodeAt(p)) p++;
+                if (p > 0) {
+                    const c = a.charCodeAt(p - 1);
+                    if (c >= 0xD800 && c <= 0xDBFF) p--;   // split surrogate pair
+                }
+                if (p > 0 && p < a.length && graphemeSeg) {
+                    let floor = 0;                          // grapheme floor of p
+                    for (const seg of graphemeSeg.segment(a)) {
+                        const end = seg.index + seg.segment.length;
+                        if (end > p) break;
+                        floor = end;
+                    }
+                    p = floor;
+                }
+                return p;
             }
+            // Every mirror byte leaves through term.input() (xterm 5.5.0
+            // public API): onData → soft-mod wrapper → sendInput → ws —
+            // the EXISTING socket path, nothing new. mirrorEmitting marks
+            // our own traffic so the onData out-of-band reset hook
+            // ignores it.
+            function emit(bytes) {
+                if (!bytes) return;
+                mirrorEmitting = true;
+                try { term.input(bytes, true); } finally { mirrorEmitting = false; }
+            }
+            // Three-branch differ (receiver-agnostic delete rule):
+            //   1. nothing deleted → stream the insertion;
+            //   2. deletion counts agree in graphemes and codepoints
+            //      (plain text) → one DEL per unit + retype the tail;
+            //   3. counts disagree (emoji/ZWJ/combining) → NUKE: DEL past
+            //      empty — a verified no-op on both receiver classes —
+            //      and retype the whole line. Over-deleting from a KNOWN
+            //      state (empty) sidesteps the receivers' delete-unit
+            //      disagreement entirely.
+            function reconcile(cur) {
+                if (cur === lastValue) return;
+                const p = mirrorCommonPrefix(lastValue, cur);
+                const del = lastValue.slice(p);
+                const ins = cur.slice(p);
+                if (!del) {
+                    emit(ins);
+                } else if (graphemeCount(del) === codepointCount(del)) {
+                    emit('\x7f'.repeat(codepointCount(del)) + ins);
+                } else {
+                    emit('\x7f'.repeat(codepointCount(lastValue)) + cur);
+                }
+                lastValue = cur;
+            }
+            // Out-of-band reset (assigned onto the top-level seam): bytes
+            // reaching the pty from ANY non-mirror path — soft keys,
+            // Paste, raw Kbd typing, upload path-sends, a fresh ws attach
+            // — invalidate the baseline: drop field + baseline with NO
+            // emission. The early-out keeps raw-typing bursts (Kbd
+            // excursion fires this once per keystroke via onData) at zero
+            // layout cost.
+            mirrorLineReset = function () {
+                if (!composeInput.value && !lastValue) return;
+                suppress = true;
+                composeInput.value = '';
+                suppress = false;
+                lastValue = '';
+                growAndRefit();
+            };
 
-            // Return-key modes — LOCAL to this field, no pty encoding
-            // change (extended-keys/CSI-u is deferred P29):
-            //   'newline' (default): Return inserts a newline natively —
-            //     nothing to intercept, and with no surrounding <form>
-            //     nothing can ever submit; ▶ sends.
-            //   'send': Enter sends (preventDefault); Shift+Enter falls
-            //     through to the native newline.
-            // e.isComposing: an IME confirming its composition with Enter
-            // owns that keystroke — never send on it (this bar exists FOR
-            // composition UIs).
+            composeInput.addEventListener('input', () => {
+                if (suppress) return;
+                const v = composeInput.value;
+                if (v.includes('\n')) {
+                    // Enter (the soft keyboard's 'send' key inserts \n):
+                    // terminal semantics — reconcile and submit the WHOLE
+                    // value regardless of caret position (E2E-proven
+                    // necessary: a mid-string Enter must not split the
+                    // line), the \r as its own sendInput frame, then clear
+                    // — the pty line restarts empty.
+                    reconcile(v.replace(/\n/g, ''));
+                    emit('\r');
+                    mirrorLineReset();
+                    return;
+                }
+                reconcile(v);
+            });
+            // Multiline paste keeps the proven bracketed-paste path (§A.6
+            // shape): preventDefault (the block never enters the one-line
+            // field), disarm soft-mods (they would remap the paste's
+            // first char), term.paste — the resulting onData traffic is
+            // out-of-band and resets the baseline. Single-line pastes
+            // fall through, insert natively, and stream like typing (the
+            // document-level capture paste handler defers text pastes
+            // targeting this field — see its IR.1 guard).
+            composeInput.addEventListener('beforeinput', (e) => {
+                if (e.inputType === 'insertFromPaste' && e.data && e.data.includes('\n')) {
+                    e.preventDefault();
+                    consumeSoftMods();
+                    term.paste(e.data);
+                }
+            });
+            // Backspace past an empty field erases pty-side text the
+            // mirror does not hold (leftovers after an out-of-band reset)
+            // — transparent erase. e.isComposing: an IME owns its own
+            // backspaces mid-composition.
             composeInput.addEventListener('keydown', (e) => {
-                if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
-                if (getPrefs().compose.enterKey !== 'send') return;
-                e.preventDefault();
-                doSend(true);
+                if (e.key === 'Backspace' && composeInput.value === '' && !e.isComposing) emit('\x7f');
             });
-
-            // ▶ tap = send with Enter; hold ~500ms = doSend(false) — stage
-            // the block into Claude Code's composer WITHOUT submitting.
-            // pointerdown preventDefault keeps focus in the field (makeBtn
-            // posture); BOTH cancel events are wired like the M.1 repeat
-            // engine (an OS gesture interrupt delivers pointercancel with
-            // no pointerup — either alone would fire a stray send or leak
-            // the timer).
-            const SEND_HOLD_MS = 500;
-            let sendHoldTimer = null, sendHeld = false;
-            composeSend.addEventListener('pointerdown', (ev) => {
-                ev.preventDefault();
-                sendHeld = false;
-                clearTimeout(sendHoldTimer);
-                sendHoldTimer = setTimeout(() => {
-                    sendHeld = true;
-                    if (doSend(false)) showToast('Staged (no Enter)', 'info', 2000);
-                }, SEND_HOLD_MS);
-            });
-            composeSend.addEventListener('pointerup', () => {
-                clearTimeout(sendHoldTimer);
-                if (!sendHeld) doSend(true);
-                sendHeld = false;
-            });
-            const cancelSendHold = () => { clearTimeout(sendHoldTimer); sendHeld = false; };
-            composeSend.addEventListener('pointercancel', cancelSendHold);
-            composeSend.addEventListener('pointerleave', cancelSendHold);
 
             composeHide.addEventListener('pointerdown', (ev) => {
                 ev.preventDefault();
@@ -7605,17 +7706,17 @@
             // Prefs reconciliation — called from applyTermPrefs (panel
             // changes arriving over tl-prefs, roamed-doc adoption, and the
             // boot one-shot, which is also what applies compose.show).
-            // enterkeyhint tracks the mode live; show !== 'off' only ever
-            // OPENS the bar (an option, not roamed visibility state) and
-            // defers to an explicit ✎/⌄ for the rest of the page-life —
-            // the M.10 contract, only the condition changed (M.11:
-            // autoShow boolean → show tri-state; this block runs on
-            // coarse pointers only, which is what makes 'auto' resolve
-            // per-device).
+            // show !== 'off' only ever OPENS the bar (an option, not
+            // roamed visibility state) and defers to an explicit ✎/⌄ for
+            // the rest of the page-life — the M.10 contract, only the
+            // condition changed (M.11: autoShow boolean → show tri-state;
+            // this block runs on coarse pointers only, which is what
+            // makes 'auto' resolve per-device). IR.1: enterkeyhint is no
+            // longer reconciled here — it is FIXED 'send' at creation
+            // (compose.enterKey is dead; Enter always submits).
             let composeHintShown = false;   // coach toast once per page-life
             applyComposePrefs = function () {
                 const c = getPrefs().compose;
-                composeInput.enterKeyHint = c.enterKey === 'send' ? 'send' : 'enter';
                 if (c.show !== 'off' && !composeUserToggled && !composeVisible) {
                     // No focus: booting must not summon the keyboard.
                     setComposeVisible(true, false);
@@ -8028,6 +8129,7 @@
         // remap the first char (Ctrl-letter or Alt-prefix) before sending.
         // On desktop softMods stays null and this falls through to sendInput.
         term.onData((data) => {
+            if (!mirrorEmitting) mirrorLineReset();   // Task IR.1: out-of-band bytes invalidate the compose-mirror baseline (the ONE declared guard delta)
             if (softMods && data) {
                 const ctrlActive = softMods.ctrl !== 'idle';
                 const altActive  = softMods.alt  !== 'idle';
@@ -8091,7 +8193,7 @@
                 // then sits on the keyboard/safe-area edge itself); --cb-h
                 // lifts the floating action buttons above the visible bar
                 // (their z-index 9999 beats the bar's 9998 — unlifted they
-                // would swallow ▶/⌄ taps); and the VISIBLE bar's height
+                // would swallow field/⌄ taps); and the VISIBLE bar's height
                 // comes out of the terminal too. Compose hidden ⇒
                 // offsetHeight 0 ⇒ every formula is identical to the
                 // pre-M.10 baseline.
@@ -8481,6 +8583,19 @@
             const items = e.clipboardData?.items;
             if (!items) return;
 
+            // Task IR.1: a TEXT paste aimed at the compose mirror belongs
+            // to the FIELD — native insertion streams it through the
+            // differ like typing (multiline: the field's own beforeinput
+            // brackets it via term.paste), keeping the field-shows-line
+            // invariant. Without this deferral the capture-phase swallow
+            // below would route the text straight to the pty and blank
+            // the mirror. IMAGE pastes keep the upload routine below even
+            // while the field is focused.
+            if (e.target && e.target.id === 'compose-input'
+                    && !Array.from(items).some(it => it.type.startsWith('image/'))) {
+                return;
+            }
+
             for (const item of items) {
                 if (item.type.startsWith('image/')) {
                     e.preventDefault();
@@ -8498,6 +8613,7 @@
                         const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
                         if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
                         const { path } = await resp.json();
+                        mirrorLineReset();   // IR.1: path-send bypasses onData
                         sendInput(path);
                         showToast('Pasted: ' + path, 'success', 4000);
                     } catch (err) {
@@ -8538,6 +8654,7 @@
                             const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
                             if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
                             const { path } = await resp.json();
+                            mirrorLineReset();   // IR.1: path-send bypasses onData
                             sendInput(path);
                             showToast('Pasted: ' + path, 'success', 4000);
                             return;
@@ -8578,6 +8695,7 @@
                 const resp = await fetch('/clipboard/upload', { method: 'POST', body: formData });
                 if (!resp.ok) { showToast('Upload failed: ' + await resp.text(), 'error', 5000); return; }
                 const { path } = await resp.json();
+                mirrorLineReset();   // IR.1: path-send bypasses onData
                 sendInput(path);
                 showToast('Pasted: ' + path, 'success', 4000);
             } catch (err) {
@@ -8699,6 +8817,7 @@
                     ];
                     if (im.path) {
                         items.push({ label: 'Insert path into terminal', onClick: () => {
+                            mirrorLineReset();   // IR.1: path-send bypasses onData
                             sendInput(im.path);
                             closeGallery();   // land where the path went
                         } });
@@ -8766,8 +8885,8 @@
             // (gestures.toolbarHidden / gestures.twoFingerTap) — a no-op
             // stub on fine pointers.
             applyToolbarPrefs();
-            // Task M.10/M.11: compose bar rides it too (enterkeyhint mode
-            // + compose.show) — a no-op stub on fine pointers.
+            // Task M.10/M.11: compose bar rides it too (compose.show) —
+            // a no-op stub on fine pointers.
             applyComposePrefs();
         }
         // Changes made in THIS window (floating A−/A+, boot adoption of the
@@ -9106,6 +9225,7 @@
             if (paths.length) {
                 // Saved names are sanitized (no spaces/shell specials), so paths
                 // are safe to insert verbatim, space-separated.
+                mirrorLineReset();   // IR.1: path-send bypasses onData
                 sendInput(paths.join(' '));
                 showToast('Added ' + paths.length + ' path' + (paths.length > 1 ? 's' : ''), 'success', 4000);
             }
@@ -9261,6 +9381,10 @@
                         // event) applies from this connection on.
                         flowOn = flowControlWanted();
                         flowReset();
+                        // Task IR.1: a (re)attach starts a fresh pty input
+                        // line — the compose mirror's diff baseline is
+                        // stale; drop it (no-op on fine pointers).
+                        mirrorLineReset();
                         hideConnPill();
                         // Ladder reset only after the connection PROVES
                         // stable (30s up) — an instant re-drop keeps the
