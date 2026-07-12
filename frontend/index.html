@@ -6753,6 +6753,52 @@
             // collapse the soft keyboard between keystrokes) — the M.10
             // focus-preservation contract, unchanged for ALL keys.
             const TAP_COMMIT_MAX_TRAVEL_PX = 10;
+
+            // MF-2 fix (round 2): a committed tap whose action synchronously
+            // opens a full-viewport overlay (🖼 → #img-gallery) mutates the
+            // hit-test tree UNDER the still-lifting finger. pointerdown's
+            // preventDefault suppresses the compat mousedown/mouseup but NOT
+            // the tap-synthesized TRUSTED click, which the browser then
+            // targets at the just-opened backdrop — whose click handler
+            // closes it. Net effect on real phone taps: the gallery opened
+            // for ~3ms and vanished (programmatic .click() drives don't
+            // synthesize the trailing click, which false-greened round 1).
+            // Overlay-opening keys therefore pass opts.swallowClick, and the
+            // commit arms a ONE-SHOT window-capture click swallower — the
+            // M.4 armSwallowers precedent — with two deliberate deviations:
+            //  - discriminate on e.isTrusted, NOT M.4's detail===0 skip:
+            //    the tap-synthesized trusted click measures detail 0 here
+            //    (instrumented under CDP touch), so a detail gate would
+            //    pass the very click we must swallow. Untrusted clicks
+            //    (the row delegates' .click(), dispatched MouseEvents)
+            //    always pass through.
+            //  - a 700ms safety timeout bounds the armed window: engines
+            //    may skip the synthesized click entirely when the content
+            //    under the finger changed, and a stale armed flag must
+            //    never outlive the tap that armed it (the measured gap is
+            //    ~4ms; legacy iOS click delay was 300ms — 700 is margin).
+            // The next pointerdown also disarms (M.4 parity), so the
+            // backdrop tap that CLOSES the gallery is never affected.
+            let skSwallowClick = null, skSwallowDisarm = null, skSwallowTimer = null;
+            function disarmTrailingClickSwallow() {
+                if (skSwallowClick)  { window.removeEventListener('click', skSwallowClick, true); skSwallowClick = null; }
+                if (skSwallowDisarm) { window.removeEventListener('pointerdown', skSwallowDisarm, true); skSwallowDisarm = null; }
+                if (skSwallowTimer)  { clearTimeout(skSwallowTimer); skSwallowTimer = null; }
+            }
+            function armTrailingClickSwallow() {
+                disarmTrailingClickSwallow();
+                skSwallowClick = (e) => {
+                    if (!e.isTrusted) return;   // delegate/battery clicks pass
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    disarmTrailingClickSwallow();
+                };
+                window.addEventListener('click', skSwallowClick, true);
+                skSwallowDisarm = () => disarmTrailingClickSwallow();
+                window.addEventListener('pointerdown', skSwallowDisarm, true);
+                skSwallowTimer = setTimeout(disarmTrailingClickSwallow, 700);
+            }
+
             function makeBtn(label, onTap, opts) {
                 const b = document.createElement('button');
                 b.type = 'button';
@@ -6802,6 +6848,11 @@
                         if (travel >= TAP_COMMIT_MAX_TRAVEL_PX) return;   // a swipe, not a tap
                         haptic('selection');   // Task M.7: every soft-key tap
                         try { onTap(); } catch (err) { console.error(err); }
+                        // Armed AFTER onTap so the delegate's programmatic
+                        // .click() inside it never races the swallower (it
+                        // would pass the isTrusted gate anyway; see the
+                        // helper's block comment).
+                        if (opts && opts.swallowClick) armTrailingClickSwallow();
                         // Re-arm the active input for the next physical
                         // keystroke — the compose field while the user was
                         // composing (Task M.10; byte-equivalent term.focus()
@@ -6995,7 +7046,10 @@
             // noFocus: none of these should summon the keyboard.
             row.appendChild(makeBtn('🖼',
                 () => document.getElementById('gallery-btn').click(),
-                { ariaLabel: 'Session images', noFocus: true }));
+                // swallowClick: the gallery overlay opens under the lifting
+                // finger — without it the tap's trailing trusted click lands
+                // on the backdrop and instantly closes it (MF-2 round 2).
+                { ariaLabel: 'Session images', noFocus: true, swallowClick: true }));
             row.appendChild(makeBtn('📷',
                 () => document.getElementById('img-btn').click(),
                 { ariaLabel: 'Upload image', noFocus: true }));
