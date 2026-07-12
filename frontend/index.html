@@ -1898,6 +1898,14 @@
             } catch (e) { return 'slate'; }
         }
         const applyTheme = window.__tlApplyTheme;
+        // Task MF-5 (complaint 1): the session this DEVICE last had
+        // attached — device-scoped like the pinch-font key, deliberately
+        // OUTSIDE tl:prefs:v1 (a phone's last session must NOT roam to
+        // desktop). Written by activateSession, cleared by
+        // deactivateSession (an explicit detach means the user chose the
+        // list); read ONCE at a hashless coarse-pointer lobby boot, gated
+        // by the roamed session.reopenLast pref.
+        const LAST_ACTIVE_KEY = 'tl:last-active:v1';
         function readTerminalTheme() {
             const cs = getComputedStyle(document.body);
             const v = k => cs.getPropertyValue(k).trim();
@@ -2035,6 +2043,15 @@
             compose: Object.freeze({
                 autoShow: false,
                 enterKey: 'newline'
+            }),
+            // Task MF-5 (complaint 1): session-attach behavior. reopenLast
+            // — a hashless coarse-pointer lobby boot reattaches the
+            // device's last active session (tl:last-active:v1) instead of
+            // landing on the full list. NEW namespace: pre-existing roamed
+            // /prefs docs lack the key entirely, so normalizePrefs serves
+            // this code default everywhere — no re-key dance needed.
+            session: Object.freeze({
+                reopenLast: true
             })
         });
         const PREF_VALID = {
@@ -2059,6 +2076,9 @@
             compose: {
                 autoShow: v => typeof v === 'boolean',
                 enterKey: v => v === 'newline' || v === 'send'
+            },
+            session: {
+                reopenLast: v => typeof v === 'boolean'
             }
         };
         function readRawPrefs() {
@@ -4030,6 +4050,9 @@
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
                 if (currentActive === name) { updateActiveCard(); return; }
                 currentActive = name;
+                // Task MF-5: remember this device's last attached session
+                // for the hashless coarse-pointer reland (edge-back swipe).
+                try { localStorage.setItem(LAST_ACTIVE_KEY, name); } catch (e) {}
                 activeConfirmed = false;
                 emptyEl.classList.add('hidden');
                 frameEl.classList.remove('hidden');
@@ -4051,6 +4074,9 @@
             function deactivateSession() {
                 if (!currentActive && frameEl.classList.contains('hidden')) return;
                 currentActive = null;
+                // Task MF-5: a detach means the user chose the list (or the
+                // session died) — a later hashless boot must honor that.
+                try { localStorage.removeItem(LAST_ACTIVE_KEY); } catch (e) {}
                 activeConfirmed = false;
                 frameEl.classList.add('hidden');
                 emptyEl.classList.remove('hidden');
@@ -5057,6 +5083,8 @@
                 if (pf) pf.checked = pinchFontWanted();        // coarse Chromium row only (M.8)
                 const cm = settingsPanel.querySelector('#sp-compose');
                 if (cm) cm.checked = p.compose.autoShow;       // coarse-pointer row only (M.10)
+                const sr = settingsPanel.querySelector('#sp-reopen');
+                if (sr) sr.checked = p.session.reopenLast;     // coarse-pointer row only (MF-5)
                 settingsPanel.querySelectorAll('.sp-seg').forEach(seg => {
                     // Dotted keys ('compose.enterKey', Task M.10) resolve
                     // one level into the nested namespaces; flat keys read
@@ -5359,6 +5387,26 @@
                             () => setPrefs({ gestures: { haptics: hp.checked } }));
                         hpRow.appendChild(hp);
                     }
+
+                    // Task MF-5 (complaint 1): hashless-boot reattach of
+                    // the device's last session — the landing fix for the
+                    // iOS edge-back-swipe (it bounces through the sign-in
+                    // history entry and relands at '/' with no hash).
+                    // Coarse-only row: fine pointers keep the list landing
+                    // and never render this. Roamed session.* pref; the
+                    // marker itself (tl:last-active:v1) stays per-device.
+                    const srRow = row('Reopen last session');
+                    const sr = document.createElement('input');
+                    sr.type = 'checkbox';
+                    sr.id = 'sp-reopen';
+                    sr.title = 'When the lobby opens without a session in ' +
+                        'the address (for example after the iPhone back ' +
+                        'swipe bounces through the sign-in page), reattach ' +
+                        'the session you last had open instead of showing ' +
+                        'the list.';
+                    sr.addEventListener('change',
+                        () => setPrefs({ session: { reopenLast: sr.checked } }));
+                    srRow.appendChild(sr);
 
                     // Task M.8: pinch-to-font-size — DEFAULT OFF, plain
                     // per-browser tl:gesture-pinch-font:v1 key (never
@@ -5682,6 +5730,35 @@
             const initialHash = location.hash.slice(1);
             if (initialHash && NAME_RE.test(initialHash)) {
                 activateSession(initialHash);
+            } else if (!initialHash && isCoarsePointer && getPrefs().session.reopenLast) {
+                // Task MF-5 (complaint 1: "side swipe opens all sessions").
+                // The iOS edge-back-swipe traverses to the pre-app
+                // (Authentik) history entry, which redirects back to '/'
+                // WITHOUT the #session hash — so the lobby booted onto the
+                // full list. The gesture itself can't be removed; fix the
+                // LANDING: reattach the session this device last had open
+                // (also fixes cold PWA relaunch at start_url '/').
+                // BOOT-ONLY by design — never wired to hashchange: the
+                // hashchange→deactivateSession path stays the explicit
+                // in-app detach, and deactivateSession clears the marker,
+                // so a user who chose the list keeps the list. Reattach
+                // rides activateSession's existing history.replaceState —
+                // history stays flat. REJECTED (audit): a pushState
+                // sentinel to absorb the swipe — it would re-arm the very
+                // gesture the M.3 flat-history work disarmed.
+                let last = null;
+                try { last = localStorage.getItem(LAST_ACTIVE_KEY); } catch (e) {}
+                if (last && NAME_RE.test(last)) {
+                    fetch(SESSIONS_API, { credentials: 'same-origin' })
+                        .then(r => r.ok ? r.json()
+                                        : Promise.reject(new Error('HTTP ' + r.status)))
+                        .then(list => {
+                            if (currentActive) return; // user already picked a card during the fetch
+                            if (list.some(s => s.name === last)) activateSession(last);
+                            else try { localStorage.removeItem(LAST_ACTIVE_KEY); } catch (e) {}
+                        })
+                        .catch(() => {});
+                }
             }
             return;
         }

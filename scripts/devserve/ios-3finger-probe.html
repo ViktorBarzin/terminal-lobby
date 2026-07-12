@@ -26,6 +26,10 @@
 
   Checklist state persists in localStorage (per browser shell) under
   tl:ios3f:v1 — the Reset button clears it.
+
+  MF-5 (2026-07-12) added the E1-E3 edge-back legs: they are run against the
+  REAL app (terminal.viktorbarzin.me), not this page's touch pad — this page
+  just hosts the persisted tick-boxes for the standing manual pass.
 -->
 <html lang="en">
 <head>
@@ -254,6 +258,18 @@ moves — record it either way; it changes nothing unless A/B ALSO release.</p>
       [v + '4', v + ': 3-finger press-and-HOLD ≥1s → no page-visible move stream']
     );
   }
+  // MF-5 edge-back legs — run on the REAL app (terminal.viktorbarzin.me),
+  // with a session attached, 'Reopen last session' at its default (on):
+  ITEMS.push(
+    ['E1', 'EDGE-BACK, Safari tab: after Authentik login + session attached, ' +
+           'edge-back-swipe → bounces through the sign-in flow page → ' +
+           'RELANDS ATTACHED to the previous session (no list flash-then-stay)'],
+    ['E2', 'EDGE-BACK, installed PWA: after an in-shell re-auth hop, ' +
+           'edge-back-swipe → relands attached to the previous session'],
+    ['E3', 'EDGE-BACK after explicit in-app detach (leave the session so the ' +
+           'lobby list shows): edge-back reland shows the LIST — marker ' +
+           'cleared, no forced reattach']
+  );
   ITEMS.push(['S1', 'Ran in Safari tab'], ['S2', 'Ran in installed PWA (standalone)']);
   let state = {};
   try { state = JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) {}
