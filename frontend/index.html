@@ -1692,15 +1692,74 @@
             margin-left: 4px;
             font-weight: 700;
         }
+        /* Task IR.3 (Viktor: "way too many buttons") — the toolbar
+           declutters into TWO tiers and every rule below is ADDITIVE (the
+           M.1 row/button/mod rules above are byte-untouched and keep
+           styling both tiers). #soft-keys becomes a flex COLUMN of
+           [.sk-row.sk-extra — the ⋯-toggled overflow tier, display:none
+           unless #soft-keys.expanded, stacked ABOVE] then [.sk-line — the
+           always-visible bottom line = scrolling .sk-row.sk-primary
+           (Esc ⇧Tab · arrows) + pinned ⋯ + pinned ⌄]. Both pinned keys
+           are direct children of the bottom line so neither can ever
+           scroll out of reach (the M.1 dismiss lesson). .sk-extra is
+           still an .sk-row, so it inherits the overflow-x scroll, hidden
+           scrollbar and 16px two-edge mask fade for free. Collapsed
+           height is identical to the old single-row toolbar (the static
+           50px terminal-height fallback below still covers the pre-JS
+           boot state). */
+        #soft-keys {
+            flex-direction: column;
+            /* Column axis flip: the base align-items:center would
+               shrink-wrap the tiers; stretch keeps them full-width
+               exactly like the old single row. */
+            align-items: stretch;
+        }
+        #soft-keys .sk-line {
+            display: flex; gap: 6px; align-items: center;
+            min-width: 0;
+        }
+        #soft-keys .sk-row.sk-extra { display: none; }
+        #soft-keys.expanded .sk-row.sk-extra { display: flex; }
+        #soft-keys .sk-group { display: flex; gap: 6px; }
+        /* Hairline separator between row-2 key groups. */
+        #soft-keys .sk-sep {
+            flex: 0 0 1px;
+            align-self: stretch;
+            margin: 6px 5px;
+            background: var(--border-strong);
+            opacity: 0.6;
+        }
+        /* Single-glyph keys (arrows, ‹ › ⌄ ⋯ and the row-2 glyphs) shave
+           width so the primary line fits 390px-class screens with ZERO
+           scroll (binding IR.3 fit assertion). */
+        #soft-keys button.sk-narrow { min-width: 36px; padding: 0 8px; }
+        /* The primary pair reads as two groups — the row's own gap IS the
+           12px group gap; the in-group gap stays 6px via .sk-group. */
+        #soft-keys .sk-row.sk-primary { gap: 12px; }
+        /* 375px-class: measured at 375 CSS px the primary line misses the
+           fit by ~4px at 36px min-width — shave the glyph keys to 34px
+           (spec'd allowance). ≤360px degrades to the M.1 fade+scroll. */
+        @media (max-width: 375px) {
+            #soft-keys button.sk-narrow { min-width: 34px; }
+        }
+        /* The primary line FITS by design above 360px, where the M.1
+           scroll-affordance edge fade would only dim Esc/→ — drop it
+           there; ≤360px keeps the fade+scroll degradation. */
+        @media (min-width: 361px) {
+            #soft-keys .sk-row.sk-primary {
+                -webkit-mask-image: none;
+                mask-image: none;
+            }
+        }
         /* Task M.10/M.11/IR.1: native compose bar — a VISIBLE sibling of
            the soft-key toolbar hosting full-fidelity mobile text input
            (autocorrect / swipe typing / dictation). Since IR.1 the field
            is a transparent live MIRROR of the pty input line — every edit
            streams immediately through the differ in the coarse compose
            block; no Send button, no staging (the bar is field + ⌄ only).
-           display:none until the ✎
-           soft key (or input.bar resolving visible — the IR.2 re-keyed
-           coarse default) adds .visible; the element is only
+           display:none until the ⌨
+           soft key (IR.3; was ✎) or input.bar resolving visible — the
+           IR.2 re-keyed coarse default — adds .visible; the element is only
            built on coarse pointers. Docked directly ABOVE the toolbar: the
            same --kb-offset keyboard plumbing as #soft-keys plus --sk-h (the
            toolbar's measured height, written by syncViewport — 0 while the
@@ -2332,8 +2391,8 @@
         const INPUT_HINT_KEY = 'tl-input-hint:v1';
         // Task IR.2 quick-toggle override — '1' = the input bar is
         // suppressed on THIS device; '0'/absent/garbage = follow the
-        // roamed input.bar posture. Written by the ✎ soft key and the
-        // bar's own ⌄, cleared by checking the settings 'Input bar' row
+        // roamed input.bar posture. Written by the ⌨ soft key (IR.3; was
+        // ✎) and the bar's own ⌄, cleared by checking the settings 'Input bar' row
         // ON (explicit settings intent beats the quick toggle).
         // Device-local ON PURPOSE, never roamed: hiding the bar on the
         // phone must not hide it on the tablet.
@@ -5716,7 +5775,7 @@
                     // per-device. Checking it ON also clears the
                     // device-local quick-toggle suppression
                     // (tl:input.barHidden:v1): explicit settings intent
-                    // beats the ✎ toggle.
+                    // beats the ⌨ toggle (IR.3; was ✎).
                     const ibRow = row('Input bar');
                     const ib = document.createElement('input');
                     ib.type = 'checkbox';
@@ -5724,7 +5783,7 @@
                     ib.title = 'Show the input bar: a native text field ' +
                         '(autocorrect, swipe typing, dictation) that ' +
                         'mirrors into the terminal as you type. On by ' +
-                        'default on phones; the ✎ soft key hides/shows ' +
+                        'default on phones; the ⌨ soft key hides/shows ' +
                         'it on this device.';
                     ib.addEventListener('change', () => {
                         if (ib.checked) {
@@ -6827,7 +6886,7 @@
         // Task M.10/IR.2: reconciles the input bar with prefs (assigned
         // in the coarse-pointer block below; called from applyTermPrefs).
         // IR.2: visibility = roamed input.bar posture gated by the
-        // device-local ✎ override, reconciled BOTH directions (IR.1:
+        // device-local ⌨ override, reconciled BOTH directions (IR.1:
         // enterkeyhint is fixed 'send', no longer prefs).
         let applyInputPrefs = () => {};
         // Task IR.1: compose-mirror seams (assigned in the coarse-pointer
@@ -6836,8 +6895,8 @@
         // through term.input() so the onData out-of-band hook can tell
         // them from everything else; mirrorLineReset drops the mirror's
         // field content + diff baseline (with NO emission) whenever bytes
-        // reach the pty from ANY other path — soft keys, Paste, raw Kbd
-        // typing, upload path-sends, a fresh ws attach.
+        // reach the pty from ANY other path — soft keys, Paste, raw
+        // keyboard typing, upload path-sends, a fresh ws attach.
         let mirrorEmitting = false;
         let mirrorLineReset = () => {};
 
@@ -6980,9 +7039,40 @@
             toolbar.id = 'soft-keys';
             toolbar.setAttribute('role', 'toolbar');
             toolbar.setAttribute('aria-label', 'Terminal keys');
+            // Task IR.3 (Viktor: "way too many buttons"): two-tier layout.
+            // DOM order [.sk-row.sk-extra, .sk-line] + the column flex =
+            // the overflow tier stacks ABOVE the always-visible line.
+            // `row` (the primary tier) keeps its name — Esc ⇧Tab and the
+            // arrows live there; everything else moves to `extraRow`,
+            // revealed by the pinned ⋯ toggle.
+            const extraRow = document.createElement('div');
+            extraRow.className = 'sk-row sk-extra';
+            const line = document.createElement('div');
+            line.className = 'sk-line';
             const row = document.createElement('div');
-            row.className = 'sk-row';
-            toolbar.appendChild(row);
+            row.className = 'sk-row sk-primary';
+            toolbar.appendChild(extraRow);
+            toolbar.appendChild(line);
+            line.appendChild(row);
+            // Group/separator chrome (IR.3): .sk-group batches related
+            // keys (6px in-group gap); .sk-sep is the hairline between
+            // row-2 groups; sk-narrow shaves single-glyph keys so the
+            // primary line fits 390px-class screens without scrolling.
+            function skGroup(parent) {
+                const g = document.createElement('div');
+                g.className = 'sk-group';
+                parent.appendChild(g);
+                return g;
+            }
+            function skSep(parent) {
+                const s = document.createElement('div');
+                s.className = 'sk-sep';
+                parent.appendChild(s);
+            }
+            function skNarrow(b) {
+                b.classList.add('sk-narrow');
+                return b;
+            }
 
             function paintMod(name) {
                 const btn = toolbar.querySelector('[data-mod="' + name + '"]');
@@ -7206,25 +7296,56 @@
                 consumeSoftMods();
             }
 
-            row.appendChild(makeBtn('Esc',  () => sendKey('\x1b')));
-            row.appendChild(makeBtn('Tab',  () => sendKey('\t'), { repeat: true }));
+            // ---- Row 1 (.sk-primary, always visible): the essentials —
+            // Esc + ⇧Tab, then the four arrows. Every makeBtn call in
+            // both tiers is byte-carried from the flat M.1 row: same
+            // labels, bytes and opts (repeat 500ms/60ms on Tab+arrows,
+            // noFocus, aria) — IR.3 only re-parents the buttons.
+            const grpEsc = skGroup(row);
+            grpEsc.appendChild(makeBtn('Esc',  () => sendKey('\x1b')));
             // Task M.1: back-tab (CSI Z) — Claude Code's mode cycle; mobile
             // soft keyboards have no way at all to send Shift+Tab.
-            row.appendChild(makeBtn('⇧Tab', () => sendKey('\x1b[Z'),
+            grpEsc.appendChild(makeBtn('⇧Tab', () => sendKey('\x1b[Z'),
                 { ariaLabel: 'Shift+Tab (back-tab)' }));
-            row.appendChild(makeBtn('Ctrl', () => tapMod('ctrl'),
+            const grpArrows = skGroup(row);
+            grpArrows.appendChild(skNarrow(makeBtn('↑', () => sendKey('\x1b[A'), { ariaLabel: 'Up arrow',    noFocus: true, repeat: true })));
+            grpArrows.appendChild(skNarrow(makeBtn('↓', () => sendKey('\x1b[B'), { ariaLabel: 'Down arrow',  noFocus: true, repeat: true })));
+            grpArrows.appendChild(skNarrow(makeBtn('←', () => sendKey('\x1b[D'), { ariaLabel: 'Left arrow',  noFocus: true, repeat: true })));
+            grpArrows.appendChild(skNarrow(makeBtn('→', () => sendKey('\x1b[C'), { ariaLabel: 'Right arrow', noFocus: true, repeat: true })));
+
+            // ---- Row 2 (.sk-extra, ⋯-toggled overflow): six hairline-
+            // separated groups. Group 1: Tab + the modifiers — arm/latch
+            // is page-global state, so arming Ctrl here and collapsing
+            // the row still remaps the next raw keystroke (paintMod and
+            // consumeSoftMods find the buttons by data-mod from either
+            // row).
+            const grpTabMods = skGroup(extraRow);
+            grpTabMods.appendChild(makeBtn('Tab',  () => sendKey('\t'), { repeat: true }));
+            grpTabMods.appendChild(makeBtn('Ctrl', () => tapMod('ctrl'),
                 { cls: 'sk-mod', dataMod: 'ctrl', ariaLabel: 'Ctrl modifier' }));
-            row.appendChild(makeBtn('Alt',  () => tapMod('alt'),
+            grpTabMods.appendChild(makeBtn('Alt',  () => tapMod('alt'),
                 { cls: 'sk-mod', dataMod: 'alt',  ariaLabel: 'Alt modifier' }));
-            row.appendChild(makeBtn('↑', () => sendKey('\x1b[A'), { ariaLabel: 'Up arrow',    noFocus: true, repeat: true }));
-            row.appendChild(makeBtn('↓', () => sendKey('\x1b[B'), { ariaLabel: 'Down arrow',  noFocus: true, repeat: true }));
-            row.appendChild(makeBtn('←', () => sendKey('\x1b[D'), { ariaLabel: 'Left arrow',  noFocus: true, repeat: true }));
-            row.appendChild(makeBtn('→', () => sendKey('\x1b[C'), { ariaLabel: 'Right arrow', noFocus: true, repeat: true }));
-            row.appendChild(makeBtn('|',  () => sendKey('|')));
-            row.appendChild(makeBtn('`',  () => sendKey('`')));
-            // Task M.1: slash-commands and CLI flags.
-            row.appendChild(makeBtn('/',  () => sendKey('/')));
-            row.appendChild(makeBtn('-',  () => sendKey('-')));
+            skSep(extraRow);
+            // Groups 2-6 are created upfront IN DISPLAY ORDER (a skGroup
+            // call appends its group immediately), so the code blocks
+            // below keep their historical order while the rendered row
+            // reads: [Tab·Ctrl·Alt] [Copy·Paste] [slash minus pipe
+            // backtick] [Sel·Mark·Yank] [‹·›] [🖼·📷·⌨].
+            const grpCopyPaste = skGroup(extraRow);
+            skSep(extraRow);
+            const grpGlyphs = skGroup(extraRow);
+            skSep(extraRow);
+            const grpCopyMode = skGroup(extraRow);
+            skSep(extraRow);
+            const grpCycle = skGroup(extraRow);
+            skSep(extraRow);
+            const grpMedia = skGroup(extraRow);
+
+            // Task M.1: slash-commands and CLI flags, plus shell glyphs.
+            grpGlyphs.appendChild(skNarrow(makeBtn('/',  () => sendKey('/'))));
+            grpGlyphs.appendChild(skNarrow(makeBtn('-',  () => sendKey('-'))));
+            grpGlyphs.appendChild(skNarrow(makeBtn('|',  () => sendKey('|'))));
+            grpGlyphs.appendChild(skNarrow(makeBtn('`',  () => sendKey('`'))));
 
             // Task M.2: touch copy — server-side tmux copy-mode. A touch
             // drag deliberately scrolls instead of selecting (red line), so
@@ -7263,14 +7384,14 @@
                     }
                 }, { ariaLabel: ariaLabel, noFocus: true });
             }
-            row.appendChild(copyModeKey('Sel', null,
+            grpCopyMode.appendChild(copyModeKey('Sel', null,
                 'Enter tmux copy mode (select with arrows)'));
-            row.appendChild(copyModeKey('Mark', 'begin-selection',
+            grpCopyMode.appendChild(copyModeKey('Mark', 'begin-selection',
                 'Start selection at the copy cursor'));
-            row.appendChild(copyModeKey('Yank', 'copy-selection-and-cancel',
+            grpCopyMode.appendChild(copyModeKey('Yank', 'copy-selection-and-cancel',
                 'Copy selection and leave copy mode'));
 
-            row.appendChild(makeBtn('Copy', async () => {
+            grpCopyPaste.appendChild(makeBtn('Copy', async () => {
                 const sel = term.getSelection();
                 if (!sel) {
                     // Task M.2: no xterm selection — on touch there never is
@@ -7319,22 +7440,8 @@
             // soft-mod disarm. The old readText()-only body here would
             // have silently dropped image paste on phones once the
             // floating cluster stopped rendering there.
-            row.appendChild(makeBtn('Paste',
+            grpCopyPaste.appendChild(makeBtn('Paste',
                 () => document.getElementById('paste-btn').click()));
-            // M.11: Kbd is the deliberate RAW keyboard (helper textarea) —
-            // a one-shot excursion while composing: the next terminal tap
-            // routes back to the compose field (tapFocus). Deliberately
-            // term.focus(), never tapFocus().
-            const kbdBtn = makeBtn('Kbd', () => term.focus(),
-                { ariaLabel: 'Raw terminal keyboard' });
-            kbdBtn.title = 'Raw terminal keyboard';
-            row.appendChild(kbdBtn);
-            // Task M.10: input-bar toggle — ✎ opens the native text field
-            // (focus lands in it, keyboard comes up); a second tap or the
-            // bar's own ⌄ collapses it back to raw terminal typing.
-            // noFocus: toggleInputBar does its own focus handling.
-            row.appendChild(makeBtn('✎', () => toggleInputBar(),
-                { ariaLabel: 'Toggle compose bar', noFocus: true }));
 
             // Task M.6: session prev/next. The buttons are the PRIMARY
             // affordance — they work on iOS (where the OS reserves every
@@ -7358,40 +7465,100 @@
                 }
                 runAppCommand(dir > 0 ? 'session.next' : 'session.prev');
             }
-            row.appendChild(makeBtn('‹', () => postSessionCycle(-1),
-                { ariaLabel: 'Previous session', noFocus: true }));
-            row.appendChild(makeBtn('›', () => postSessionCycle(1),
-                { ariaLabel: 'Next session', noFocus: true }));
+            grpCycle.appendChild(skNarrow(makeBtn('‹', () => postSessionCycle(-1),
+                { ariaLabel: 'Previous session', noFocus: true })));
+            grpCycle.appendChild(skNarrow(makeBtn('›', () => postSessionCycle(1),
+                { ariaLabel: 'Next session', noFocus: true })));
 
-            // MF-2: the five floating action buttons are display:none on
+            // MF-2: the floating action buttons are display:none on
             // coarse pointers (they shadowed Claude Code's input rows),
             // so their functions fold into the row as thin delegates
             // onto the SAME hidden elements — .click() fires a
             // display:none button's handler fine (the palette /
             // runAppCommand precedent). Paste already delegates above;
             // noFocus: none of these should summon the keyboard.
-            row.appendChild(makeBtn('🖼',
+            // IR.3: A−/A+ left the toolbar ENTIRELY (Viktor: "way too
+            // many buttons") — font size lives in the ⚙ settings panel,
+            // which writes the SAME roamed pref; the hidden
+            // #font-dec-btn/#font-inc-btn elements stay as the desktop
+            // floating cluster.
+            grpMedia.appendChild(skNarrow(makeBtn('🖼',
                 () => document.getElementById('gallery-btn').click(),
                 // swallowClick: the gallery overlay opens under the lifting
                 // finger — without it the tap's trailing trusted click lands
                 // on the backdrop and instantly closes it (MF-2 round 2).
-                { ariaLabel: 'Session images', noFocus: true, swallowClick: true }));
-            row.appendChild(makeBtn('📷',
+                { ariaLabel: 'Session images', noFocus: true, swallowClick: true })));
+            grpMedia.appendChild(skNarrow(makeBtn('📷',
                 () => document.getElementById('img-btn').click(),
-                { ariaLabel: 'Upload image', noFocus: true }));
-            row.appendChild(makeBtn('A−',
-                () => document.getElementById('font-dec-btn').click(),
-                { ariaLabel: 'Smaller terminal font', noFocus: true }));
-            row.appendChild(makeBtn('A+',
-                () => document.getElementById('font-inc-btn').click(),
-                { ariaLabel: 'Larger terminal font', noFocus: true }));
+                { ariaLabel: 'Upload image', noFocus: true })));
+            // IR.3: ⌨ — ONE input-mode toggle, replacing BOTH the M.11
+            // 'Kbd' raw-keyboard key and the M.10 '✎' bar toggle. It
+            // flips the input bar via toggleInputBar() (IR.2: the
+            // device-local tl:input.barHidden:v1 override + focus
+            // handoff): bar visible = the native mirror field is the
+            // typing surface; bar hidden = a terminal tap already
+            // summons the RAW keyboard (tapFocus routes to the terminal
+            // whenever the bar is away), so Kbd's one-shot raw excursion
+            // collapses into ⌨-off + tap. noFocus: toggleInputBar does
+            // its own focus handling.
+            const inputToggleBtn = skNarrow(makeBtn('⌨', () => toggleInputBar(),
+                { ariaLabel: 'Switch between input field and raw keyboard',
+                  noFocus: true }));
+            inputToggleBtn.id = 'sk-input-toggle';
+            inputToggleBtn.title = 'Switch between input field and raw keyboard';
+            grpMedia.appendChild(inputToggleBtn);
+
+            // Task IR.3: ⋯ — the overflow-row toggle, pinned on the
+            // bottom line next to ⌄. A PLAIN tap-commit button in the
+            // row's own territory (swipe-paging was rejected: the P3
+            // mid-swipe-fire class — no new gestures), never repeats,
+            // noFocus (a chrome toggle must not summon the keyboard).
+            // aria-pressed + the sk-mod 'armed' paint carry the expanded
+            // state (the button has NO data-mod, so the Ctrl/Alt state
+            // machinery never sees it — sk-mod is borrowed purely for
+            // the armed styling vocabulary). The expanded bit is
+            // DEVICE-LOCAL: tl:input.keyRowExpanded:v1, '1'/'0'; absent
+            // or garbage boots collapsed. The height change rides the
+            // SAME measured-offsetHeight geometry as the M.6 toolbar
+            // toggle and the compose bar — syncViewport re-measures
+            // #soft-keys into --sk-h + the terminal pixel height, refit
+            // debounces the actual tmux resize (one resize per toggle,
+            // and the bar/terminal move in the same frame).
+            const KEY_ROW_EXPANDED_KEY = 'tl:input.keyRowExpanded:v1';
+            let keyRowExpanded = false;
+            try { keyRowExpanded = localStorage.getItem(KEY_ROW_EXPANDED_KEY) === '1'; } catch (e) {}
+            const moreBtn = skNarrow(makeBtn('⋯', () => setKeyRowExpanded(!keyRowExpanded),
+                { cls: 'sk-mod', ariaLabel: 'More keys', noFocus: true }));
+            moreBtn.classList.add('sk-more');
+            moreBtn.title = 'More keys';
+            function paintKeyRowExpanded() {
+                toolbar.classList.toggle('expanded', keyRowExpanded);
+                moreBtn.classList.toggle('armed', keyRowExpanded);
+                moreBtn.setAttribute('aria-pressed', keyRowExpanded ? 'true' : 'false');
+            }
+            function setKeyRowExpanded(want) {
+                keyRowExpanded = want;
+                paintKeyRowExpanded();
+                try { localStorage.setItem(KEY_ROW_EXPANDED_KEY, want ? '1' : '0'); } catch (e) {}
+                // Tap-time only — never called at build: refit reads
+                // let-bindings that initialize after this block (the M.6
+                // TDZ posture). A boot-expanded toolbar is measured by
+                // the boot-end syncViewport instead; until then the
+                // static 50px CSS fallback covers the collapsed shape.
+                syncViewport();
+                refit();
+            }
+            paintKeyRowExpanded();   // boot state from the persisted bit
+            line.appendChild(moreBtn);
 
             // Task M.1: keyboard DISMISS — right-pinned OUTSIDE the
-            // scrolling row (a direct #soft-keys child, so it can never
-            // scroll out of reach). Blurring the helper textarea collapses
-            // the soft keyboard; noFocus keeps makeBtn from immediately
-            // re-summoning it. 'Kbd' above is the inverse.
-            toolbar.appendChild(makeBtn('⌄', () => {
+            // scrolling row (since IR.3 a direct child of the bottom
+            // .sk-line, so it can never scroll out of reach). Blurring
+            // the helper textarea collapses the soft keyboard; noFocus
+            // keeps makeBtn from immediately re-summoning it. The way
+            // back is a terminal tap (raw keyboard or mirror field, per
+            // input.tapFocus).
+            line.appendChild(skNarrow(makeBtn('⌄', () => {
                 // M.11 fix (pre-existing bug, default-path now): in compose
                 // mode the active input is #compose-input, not the helper —
                 // blur whichever input actually holds the keyboard. Lazy
@@ -7402,7 +7569,7 @@
                 const ae = document.activeElement;
                 if (ae === helperTextarea || (ae && ae.id === 'compose-input')) ae.blur();
                 else if (helperTextarea) helperTextarea.blur();
-            }, { ariaLabel: 'Hide keyboard', noFocus: true, cls: 'sk-dismiss' }));
+            }, { ariaLabel: 'Hide keyboard', noFocus: true, cls: 'sk-dismiss' })));
 
             document.body.appendChild(toolbar);
             document.body.classList.add('has-soft-keys');
@@ -7459,9 +7626,9 @@
 
             let composeVisible = false;
             // (IR.2: the old page-life composeUserToggled flag is gone —
-            // a manual ✎/⌄ now persists as the DEVICE-LOCAL suppression
-            // key instead, because visibility reconciles against prefs
-            // both directions on every apply.)
+            // a manual ⌨/⌄ hide now persists as the DEVICE-LOCAL
+            // suppression key instead, because visibility reconciles
+            // against prefs both directions on every apply.)
 
             // Auto-grow to 5 lines (scrollHeight clamp), internal scroll
             // past that. All heights derive from the computed style so a
@@ -7643,7 +7810,7 @@
                 ev.preventDefault();
                 haptic('selection');
                 // A manual collapse persists as the DEVICE-LOCAL override
-                // (IR.2, same key as the ✎ toggle) — visibility reconciles
+                // (IR.2, same key as the ⌨ toggle) — visibility reconciles
                 // against prefs on every apply now, so an unpersisted
                 // collapse would be undone by the next prefs event. The
                 // roamed input.bar posture is never written here.
@@ -7669,7 +7836,8 @@
                 if (show && focus) composeInput.focus();
                 if (!show && focus) term.focus();
             }
-            // Task IR.2 quick toggle (✎ soft key): flips the DEVICE-LOCAL
+            // Task IR.2 quick toggle (the ⌨ soft key since IR.3; was ✎):
+            // flips the DEVICE-LOCAL
             // suppression override and reconciles through the same
             // effective-visibility rule as applyInputPrefs. The roamed
             // input.bar posture is never written here (that is the
@@ -7692,14 +7860,14 @@
                 if (hiding) noteComposeCollapse();
             }
             // Page-life reopen hint (M.11, toolbarHintShown precedent):
-            // the FIRST ✎/⌄ collapse per page-life names the way back.
+            // the FIRST ⌨/⌄ collapse per page-life names the way back.
             // Once — repeat collapses are a chosen workflow, not a
             // discovery gap.
             let composeReopenHintShown = false;
             function noteComposeCollapse() {
                 if (composeReopenHintShown) return;
                 composeReopenHintShown = true;
-                showToast('✎ brings the input bar back', 'info', 2500);
+                showToast('⌨ brings the input bar back', 'info', 2500);
             }
 
             // Focus routing (guarded — byte-equivalent while the field is
@@ -7730,8 +7898,9 @@
             // land here, so the double-fire is a harmless double .focus()
             // on the same element. input.tapFocus:'terminal' (settings
             // 'Terminal tap' → Keyboard) or a hidden bar = shipped raw-tap
-            // behavior. Kbd stays a one-shot raw excursion: it calls
-            // term.focus() directly; the NEXT tap routes back to the field.
+            // behavior. IR.3: the M.11 'Kbd' one-shot excursion key is
+            // gone — the deliberate raw keyboard is ⌨-off (bar hidden)
+            // + terminal tap, which lands in the helper textarea here.
             tapFocus = () => {
                 if (composeVisible && getPrefs().input.tapFocus === 'field') composeInput.focus();
                 else term.focus();
@@ -8922,7 +9091,7 @@
             // stub on fine pointers.
             applyToolbarPrefs();
             // Task M.10/IR.2: input bar rides it too (input.bar × the
-            // device-local ✎ override) — a no-op stub on fine pointers.
+            // device-local ⌨ override) — a no-op stub on fine pointers.
             applyInputPrefs();
         }
         // Changes made in THIS window (floating A−/A+, boot adoption of the
