@@ -14,3 +14,13 @@
 # pick it up at their next server start (tmux reads config when the server
 # spawns, not per client).
 set -as terminal-features 'xterm*:RGB'
+
+# Provenance ([links] wrapped-URL fix, 2026-07-12): tmux 3.4 STRIPS OSC 8
+# hyperlinks from output unless the attaching client's termfeatures include
+# 'hyperlinks' (TERM=xterm-256color terminfo doesn't advertise it). The
+# lobby's xterm.js handles OSC 8 natively (linkHandler in
+# frontend/index.html) and the escape carries the FULL URI — immune to
+# visual wrapping — so let it through for xterm-compatible attaches
+# (rg --hyperlink, eza, gh & friends; Claude Code does not emit OSC 8).
+# Same semantics as the RGB line: applies at each tmux server's next start.
+set -as terminal-features 'xterm*:hyperlinks'
