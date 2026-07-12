@@ -6,6 +6,11 @@ After=network.target
 ExecStart=/usr/local/bin/tmux-api
 Restart=always
 User=wizard
+# Web Push VAPID keypair (Notifications Part 2), installed from Vault by
+# deploy.sh. The leading '-' keeps the service booting when the file is absent
+# (push simply stays dark). Read by systemd as root before the User=wizard
+# drop, so the private key need not be readable by the service user.
+EnvironmentFile=-/etc/tmux-api/vapid.env
 
 [Install]
 WantedBy=multi-user.target
