@@ -1407,6 +1407,18 @@
         .settings-panel .sp-step { display: flex; gap: 4px; flex: 1 1 auto; align-items: center; }
         .settings-panel .sp-step button { flex: 0 0 36px; }
         .settings-panel .sp-step .sp-val { flex: 1 1 auto; text-align: center; }
+        /* Plain action button inside a panel row (Advanced → Clear local
+           data; Reload app). Fills the row like a segmented control does. */
+        .settings-panel .sp-btn {
+            flex: 1 1 auto; padding: 6px 10px;
+            border: 1px solid var(--border); border-radius: 8px;
+            background: var(--bg-card); color: var(--text-primary);
+            font: inherit; font-size: 12px; cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .settings-panel .sp-btn:hover { background: var(--bg-card-hover); }
+        .settings-panel .sp-btn.danger { color: var(--danger); border-color: var(--danger); }
+        .settings-panel .sp-btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, var(--bg-card)); }
 
         /* Bottom-sheet presentation (Task M.5) — coarse-pointer chrome
            for the settings panel + the Task 2.5 context menu. The
@@ -5168,6 +5180,56 @@
                 } else if (refocus) closeOverlay(el);   // remove + focus return (Task 2.3)
                 else el.remove();
             }
+            // Advanced → Clear local data: wipe THIS browser's saved
+            // terminal-lobby state and boot fresh. Enumerate-and-remove
+            // every app key — a prefix sweep over tl:*, tl-* and the tmux-*
+            // family is the only COMPLETE enumeration, because the session
+            // order/collapse keys are suffixed with the OS user
+            // (tmux-session-order-<user>, tmux-collapsed-<user>) and can't
+            // be listed by a fixed name. sessionStorage too. Then
+            // location.replace(pathname) for a clean boot with no #session
+            // hash (the index is served no-store/no-cache, so no
+            // cache-buster is needed). alsoRoamed first resets the
+            // server-side /prefs doc so the reset reaches the user's OTHER
+            // devices — /prefs is GET/PUT only (no DELETE verb), so PUT the
+            // normalized defaults. tmux sessions are untouched throughout.
+            async function clearLocalData(alsoRoamed) {
+                if (!confirm('Clear this browser’s terminal-lobby data ' +
+                    '(theme, font size, sidebar layout, gestures, ' +
+                    'notification opt-in)' +
+                    (alsoRoamed ? ' AND reset the settings that roam to your '
+                        + 'other devices' : '') +
+                    ', then reload?\n\nYour tmux sessions are not affected.')) {
+                    return;
+                }
+                if (alsoRoamed) {
+                    try {
+                        const resp = await fetch(PREFS_API, {
+                            method: 'PUT',
+                            credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(normalizePrefs({}))
+                        });
+                        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                        showToast('Roamed settings reset on the server', 'success', 2000);
+                    } catch (e) {
+                        showToast('Could not reset roamed settings (' + e.message +
+                            ') — clearing this browser only', 'error', 4000);
+                    }
+                }
+                try {
+                    const doomed = [];
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const k = localStorage.key(i);
+                        if (k && (k.indexOf('tl:') === 0 || k.indexOf('tl-') === 0 ||
+                                  k.indexOf('tmux-') === 0)) doomed.push(k);
+                    }
+                    doomed.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+                } catch (e) {}
+                try { sessionStorage.clear(); } catch (e) {}
+                showToast('Local data cleared — reloading', 'success', 1500);
+                setTimeout(() => location.replace(location.pathname), 300);
+            }
             function openSettings() {
                 const asSheet = sheetPresentationWanted();   // Task M.5
                 const panel = document.createElement('div');
@@ -5520,6 +5582,35 @@
                     segCtl(ekRow, 'compose.enterKey',
                            ['newline', 'send'], ['Newline', 'Send']);
                 }
+
+                // Advanced (Item 1): reset this browser to a clean boot.
+                // The opt-in checkbox extends the wipe to the roamed
+                // /prefs doc so it reaches the user's other devices.
+                const advTitle = document.createElement('div');
+                advTitle.className = 'sp-title';
+                advTitle.textContent = 'Advanced';
+                panel.appendChild(advTitle);
+
+                const roamRow = row('Also reset roamed settings');
+                roamRow.title = 'When clearing, also reset the settings that ' +
+                    'roam across your devices (font, cursor, gestures, …) on ' +
+                    'the server — not just this browser.';
+                const roam = document.createElement('input');
+                roam.type = 'checkbox';
+                roam.id = 'sp-clear-roamed';
+                roamRow.appendChild(roam);
+
+                const clearRow = row('Clear local data');
+                clearRow.title = 'Remove this browser’s saved terminal-lobby ' +
+                    'data (theme, font size, sidebar layout, gestures, ' +
+                    'notification opt-in) and reload. Your tmux sessions are ' +
+                    'NOT affected.';
+                const clearBtn = document.createElement('button');
+                clearBtn.type = 'button';
+                clearBtn.className = 'sp-btn danger';
+                clearBtn.textContent = 'Clear';
+                clearBtn.addEventListener('click', () => clearLocalData(roam.checked));
+                clearRow.appendChild(clearBtn);
 
                 if (asSheet) {
                     // Task M.5: coarse-pointer presentation — bottom sheet

@@ -1976,3 +1976,17 @@ in the coarse compose block) lives OUTSIDE both guarded regions.
   keyboard WITH the suggestion strip (compose field); Kbd opens it
   WITHOUT (helper textarea); dictation and swipe-typing work in the
   bar; the coach toast reads correctly on a 390pt viewport.
+- [Add-1] Advanced → Clear local data: open ⚙ → an 'Advanced' group
+  holds 'Also reset roamed settings' (`#sp-clear-roamed`, unchecked)
+  and a 'Clear' danger button. Seed several app keys (e.g. `tmux-theme`,
+  `tl-font-size`, `tl:prefs:v1`, `tl:notify:v1`, `tmux-sidebar-collapsed`,
+  a user-suffixed `tmux-collapsed-<user>`) plus a `sessionStorage`
+  entry; click Clear and accept the `confirm()` → localStorage holds
+  ZERO `tl:*`/`tl-*`/`tmux-*` keys, `sessionStorage` is empty, a success
+  toast shows, and the page `location.replace()`s to `location.pathname`
+  (no `#hash`, no `?query`). With 'Also reset roamed settings' CHECKED,
+  point the harness at a SCRATCH tmux-api (`--tmux-api-port`, disposable
+  `TMUX_API_PREFS_DIR` — never the live `/prefs`): a `PUT /prefs` of the
+  normalized defaults lands BEFORE the local wipe (`GET /prefs` echoes
+  the defaults doc); a PUT failure toasts the error and still clears
+  locally. `tmux ls` (default server) unchanged before/after.
