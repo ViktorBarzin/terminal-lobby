@@ -2507,6 +2507,84 @@ beyond this section. Repro scripts (session scratchpad, ir4/):
 guard_check.py, bat_ir4_a.py, union_ir{1,2,3}.py, bat_ir4_geo.py,
 probe_drag_baseline.py.
 
+### [NOTIF] First-class "finished" notification + notify prefs gate + self-diagnosis (notifications fix batch)
+
+Forensics proved the Web Push transport works (real 201s), so this batch
+closes a DESIGN gap plus observability + self-diagnosis, NOT a transport
+bug. Three strands: (1) a first-class running→done "finished"
+notification alongside the existing running→awaiting "needs input" one,
+both foreground (frontend `notifyTransitions` → kind-parameterized
+`fireNotification`) and background (tmux-api `pushsender.tick` →
+`buildDonePayload`), sharing the tag `tl-<session>` so a later awaiting
+alert REPLACES a finished one (sw.js omits renotify). The done edge is
+STRICTER than awaiting — it requires prev==running, so a SessionStart
+hook stamping "done", a freshly-seen done session, and done→done all stay
+silent. (2) A roamed `notify.{onDone,onAwaiting}` prefs namespace (NEW,
+default true = opt-out, no re-key) read by BOTH the frontend foreground
+path and the server (`parseNotifyPrefs`, per user per tick) so one toggle
+governs both; two settings checkboxes ('Notify when Claude finishes' /
+'…needs input'). (3) Self-diagnosis: sender logs one observability line
+per accepted push (osUser, session, kind, HTTP status); an authed POST
+/push/test fans a real push to every stored sub and returns {sent,pruned};
+a settings Notifications section shows per-THIS-device state (permission,
+subscribed-here compared endpoint-vs-server-list, bell) + a 'Send test
+notification' button; the bell tooltip and a section note state plainly
+that push is PER DEVICE + BROWSER.
+
+Go suites (unit, red→green at implementation): `go test ./...` in
+tmux-api — parseNotifyPrefs default-true/roundtrip, buildDonePayload
+shape + shared-tag vs sw.js, done-edge fire + seed-silent + done→done,
+prefs gate kinds-independently, accepted-send observability line, and
+POST /push/test (auth, method, push-dark 503, no-subs sent:0, 201 +
+410-prune). All green.
+
+**Frontend harness (SCRATCH services only — zero production contact):**
+scratch tmux-api (`TMUX_API_ADDR` + disposable
+`TMUX_API_PREFS_DIR`/`TMUX_API_PUSH_DIR` + a throwaway VAPID keypair) on
+:17684, dev-harness `--api` pointed at it (proxy 17997 / ttyd 17996,
+`--user vbarzin` → wizard, `--session tl-battery-notiffix`), Playwright
+(1.61.1, chromium 1228) driving the OUTER lobby `#main`. `/sessions` +
+`/layout` are ROUTED in-browser so state transitions are controllable
+and no production tmux is touched; the scratch push store stays empty so
+the background sender makes zero tmux calls. Stubs (addInitScript):
+`navigator.serviceWorker`/`pushManager` (controls subscribed-here +
+captures `showNotification`), `Notification` with permission='granted'
+(headless Chrome reports 'denied' even after grantPermissions),
+`document.hasFocus` (drives `away()`), and setInterval 5000→200 (fast
+polls). Repro: session scratchpad `run-smoke.sh` + `notif-smoke.js`
+(adjust ports if repeating). All legs green 24/24 on 2026-07-12 at
+implementation.
+
+- [NOTIF] SETTINGS RENDER + TRUTHFUL STATE: ⚙ panel shows a
+  'Notifications' section; both toggles (`#sp-notify-done` /
+  `#sp-notify-awaiting`) render and default CHECKED (opt-out); permission
+  reads 'granted', bell reads 'on' (opted-in + granted); test button +
+  per-device note present; 'Subscribed here' reads 'no' when the browser
+  has no push endpoint and 'yes' when its endpoint is in the server list.
+- [NOTIF] TEST BUTTON: 'Send test notification' POSTs
+  /api/sessions/push/test (200), and with an empty store returns
+  {sent:0,pruned:0} and toasts 'No devices subscribed…'.
+- [NOTIF] DONE-EDGE FOREGROUND: with the bell opted-in + permission
+  granted + window AWAY, running→done fires '<session> finished';
+  done→done does NOT re-fire; a fresh load already-done is SILENT (not on
+  seed); a FOCUSED window (away()==false) suppresses the fire; the
+  awaiting edge still fires '<session> needs input'.
+- [NOTIF] PREFS ROUND-TRIP + GATE: unchecking 'Notify when Claude
+  finishes' PUTs /prefs; a fresh GET shows `notify.onDone:false` with
+  `onAwaiting:true` untouched (per-key independence); a reload reflects
+  the toggle unchecked (roamed); with onDone=false, running→done is
+  SUPPRESSED while running→awaiting still fires.
+
+**DEVICE-MANUAL — [NOTIF]:** on Viktor's real subscribed device(s),
+confirm a genuine BACKGROUND done-push arrives when a Claude turn
+finishes with no tab focused (title '<session> finished', body 'Claude
+finished its turn.'), that a later 'needs input' for the same session
+REPLACES it (no second buzz — shared tag, no renotify), and that the
+settings 'Send test notification' button delivers to each device where
+the bell is enabled (incl. the installed iPhone app — enable it there
+separately). Headless can't exercise a real push service; this is the
+one leg the automated smoke stubs out.
+
 ## DEVICE-MANUAL — consolidated standing real-phone checklist (input rework)
 
 THE single list for Viktor's real-device pass (deploy heads-up item).
