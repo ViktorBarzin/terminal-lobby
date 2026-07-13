@@ -2699,6 +2699,95 @@ non-mouse pane is a no-op by design, so a finger-UP swipe proves
 nothing; tap → 3b compose-input focus; --kb-offset plumbing present),
 A.6 bracketed paste — all green on the [links] build.
 
+### [toolbar-fix] Soft-key-row hidden-state re-keyed device-local + 'Show key row' settings restore + boot hint (toolbar roaming trap)
+
+The 2-finger-tap soft-key-row toggle persisted its hidden-STATE into the
+ROAMED `gestures.toolbarHidden`, so an accidental tap on one device hid the
+row on ALL devices; the receiver got no restore hint (the one-shot toast
+fired only where the hide happened) and there was no settings toggle (Viktor
+lost his row this way, restored manually server-side). Fix, honouring the
+burned-key discipline (the `swipeSession`/`compose.*` re-key precedent —
+mem 9642):
+
+1. **RE-KEY device-local.** The hidden-state moves to `tl:input.toolbarHidden:v1`
+   (device-local, the `tl:input.barHidden:v1` posture — `'1'`=hidden on this
+   device, `'0'`/absent/garbage=shown, never a crash). Roamed
+   `gestures.toolbarHidden` is RETIRED — removed from `PREF_DEFAULTS` +
+   `PREF_VALID`, so `normalizePrefs` ignores it on read and omits it from the
+   next whole-doc write (NO migration write-back). The 2-finger tap toggles
+   ONLY the device-local key (the sanctioned `setToolbarHidden` persist line).
+   `gestures.twoFingerTap` STAYS roamed (a genuine per-account gesture
+   enable/disable). `applyToolbarPrefs` no longer gates visibility on the
+   roamed `twoFingerTap` — that coupling WAS the bug class (a roamed flag
+   could force-show/hide on every device); it now reads the device-local key
+   × the device-local master kill only.
+2. **SETTINGS row** `'Show key row'` (`#sp-showrow`, coarse pointers) bound to
+   the device-local key — the always-available restore path that does not
+   require knowing the gesture. It lives in the LOBBY; its write reaches the
+   terminal iframe as a `storage` event (the master-kill channel), and
+   `applyToolbarPrefs` reconciles.
+3. **BOOT hint.** A coarse device that BOOTS with the row hidden (its OWN
+   device-local key) shows the one-shot `'Two-finger tap to restore keys'`
+   toast ONCE per device (`tl-toolbar-hint:v1`, the `tl-input-hint:v1`
+   precedent), gated on `gestures.twoFingerTap` (else the hint would lie — the
+   settings row is the way back there). A live in-session hide keeps its
+   existing page-life gesture-time hint (shared `toolbarHintShown` flag, so a
+   session toasts the restore hint at most once).
+
+**Default changes (disclosed):** roamed `gestures.toolbarHidden` retired —
+pre-existing roamed docs that carry it (Viktor's live doc had
+`toolbarHidden:false`) have it ignored on read and dropped on the next
+whole-doc write, NO write-back. New device-local keys
+`tl:input.toolbarHidden:v1` + `tl-toolbar-hint:v1`. A hidden row NO LONGER
+roams (per-device now). Turning the 2-finger tap OFF no longer force-shows a
+hidden row (the settings row is the restore path). New coarse settings row
+`'Show key row'`.
+
+**Standing diff guards: NO new deltas to the touch recognizers.** Verified by
+sha1 vs `origin/master`: the 2-finger tap recognizer (`const TAP_MAX_MS=220 …
+reset(){ tap = null; }`) and the §A.5 single-finger swipe→`WheelEvent` IIFE
+are BYTE-IDENTICAL; the M.1 discriminator, ADR-0003 interceptor and
+`syncViewport` `--kb-offset` plumbing are untouched (none appear in the diff).
+The gesture handler was touched at the persistence line ONLY (the device-local
+write inside `setToolbarHidden`) — tap classification thresholds byte-unchanged.
+
+Harness: `dev-harness --scratch` (Pixel-7 390×844 coarse emulation, outer-page
+`#main`). Toolbar legs 21/21 green + `/prefs`-mocked read-ignore/write-drop
+10/10 green (2026-07-13, proxy 7987 / ttyd 7986 / scratch `-L tl-dev`). The
+`/prefs` legs MOCK `/api/sessions/prefs` (GET serves the burned key, PUT
+captured, never forwarded) so the live roamed doc on :7684 is never touched.
+
+- [toolbar-fix] GESTURE ROUNDTRIP: fresh device, coarse; a 2-finger tap on
+  `#terminal` (document-level touch, ≤220 ms, no travel/span change) HIDES
+  `#soft-keys` (`display:none`) and writes `tl:input.toolbarHidden:v1`=`'1'`
+  with the roamed `tl:prefs:v1` carrying NO `gestures.toolbarHidden`; a second
+  tap SHOWS it and clears the device-local key. (Recognizer classification is
+  byte-identical — the diff touches only the persist target.)
+- [toolbar-fix] SETTINGS ROW: coarse ⚙ panel shows `'Show key row'`
+  (`#sp-showrow`), checked == row visible; unchecking writes the device-local
+  key `'1'` and the attached iframe HIDES the row live (lobby write → iframe
+  `storage` event → `applyToolbarPrefs`); re-checking clears the key and SHOWS
+  it live. A raw top-page `localStorage` write of the key propagates the same
+  way (the core cross-frame integration).
+- [toolbar-fix] BOOT HINT: seed `tl:input.toolbarHidden:v1`=`'1'`, clear
+  `tl-toolbar-hint:v1`, boot → `#soft-keys` hidden AND a `'Two-finger tap to
+  restore keys'` toast, `tl-toolbar-hint:v1` set; a second boot (still hidden,
+  marker present) → row hidden, NO toast.
+- [toolbar-fix] BURNED KEY IGNORED ON READ: a roamed doc
+  `{gestures:{twoFingerTap:true,toolbarHidden:true}}` (device-local key
+  absent) → row VISIBLE (roamed hidden-state ignored); the adopted/stored
+  `tl:prefs:v1` drops `gestures.toolbarHidden` and keeps `twoFingerTap`.
+- [toolbar-fix] BURNED KEY DROPPED ON WRITE: from that state, a settings
+  toggle (`setPrefs`) fires a whole-doc PUT whose body OMITS
+  `gestures.toolbarHidden`, keeps the `gestures.*` siblings, and carries the
+  change — no migration write-back.
+- [toolbar-fix] RED LINE: §A.5 code unchanged (both touch recognizers
+  sha1-identical to `origin/master`; `--kb-offset` plumbing present, not in
+  the diff), so tap-vs-swipe → synthetic-wheel → copy-mode with no keyboard
+  summon is preserved by construction; boot with ZERO JS/console errors (a
+  settings-row `const` collision would fail the whole-script parse — caught by
+  the boot leg and fixed pre-commit).
+
 ## DEVICE-MANUAL — consolidated standing real-phone checklist (input rework)
 
 THE single list for Viktor's real-device pass (deploy heads-up item).
