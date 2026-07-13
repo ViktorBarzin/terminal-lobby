@@ -46,16 +46,25 @@ fi
 name="${1:-$os_user}"
 [[ "$name" =~ $NAME_RE ]] || name="$os_user"
 
+# Optional command KEY from the second ?arg= (lobby "new session runs"
+# dropdown). A whitelisted token, never a raw command line — the
+# key→command mapping happens AS THE TARGET USER in tmux-user-attach
+# (builtins + ~/.config/terminal-lobby/commands). Invalid → empty →
+# today's behavior. tmux -A means the key is inert for existing sessions.
+CMD_RE='^[a-z0-9_-]{1,16}$'
+cmd_key="${2:-}"
+[[ "$cmd_key" =~ $CMD_RE ]] || cmd_key=""
+
 home_dir=$(getent passwd "$os_user" | cut -d: -f6)
 home_dir="${home_dir:-/}"
 
-logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$home_dir' self='$(id -un)'"
+logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$home_dir' cmd='${cmd_key:-<none>}' self='$(id -un)'"
 
 # Launch via tmux-user-attach so the tmux *server* is parented to the OS
 # user's own systemd manager (user@<uid>.service), not the ttyd.service
 # cgroup. Without this, a `systemctl restart ttyd` kills every session.
 if [[ "$os_user" == "$(id -un)" ]]; then
-    exec /usr/local/bin/tmux-user-attach "$name" "$home_dir"
+    exec /usr/local/bin/tmux-user-attach "$name" "$home_dir" "$cmd_key"
 else
-    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach "$name" "$home_dir"
+    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach "$name" "$home_dir" "$cmd_key"
 fi
