@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,10 +42,15 @@ const (
 	kindTest     = "test" // the on-demand /push/test self-diagnosis send
 )
 
-// sessionStater reads a user's session name→state map. Abstracted so the
+// sessionStater reads a user's session name→state map plus the latest
+// client-activity (user keystroke) time per session. Abstracted so the
 // sender's transition logic is testable without a live tmux server.
 type sessionStater interface {
 	states(osUser string) map[string]string
+	// activity maps session name → unix time of the newest input from any
+	// tmux client attached to it. Sessions with no attached client are
+	// simply absent — the sender remembers the max it has ever seen.
+	activity(osUser string) map[string]int64
 }
 
 // prefsLoader reads a user's raw roamed prefs document. *prefsStore satisfies
@@ -65,6 +71,34 @@ func (liveStater) states(osUser string) map[string]string {
 	m := make(map[string]string, len(sessions))
 	for _, s := range sessions {
 		m[s.Name] = s.State
+	}
+	return m
+}
+
+// activity shells one read-only `tmux list-clients` per user per tick and
+// keeps the NEWEST client_activity per session. client_activity moves on
+// client INPUT (keystrokes through ttyd), not on pane output, which is what
+// makes it usable as a "the human touched this session" signal. tmux errors
+// (no server) or absent clients return an empty map — the gate then has no
+// data and fails open.
+func (liveStater) activity(osUser string) map[string]int64 {
+	out, err := tmuxCmd(osUser, "list-clients", "-F", "#{session_name}\t#{client_activity}").Output()
+	if err != nil {
+		return nil
+	}
+	m := map[string]int64{}
+	for _, line := range strings.Split(string(out), "\n") {
+		name, ts, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
+		if !ok || name == "" {
+			continue
+		}
+		v, err := strconv.ParseInt(ts, 10, 64)
+		if err != nil {
+			continue
+		}
+		if v > m[name] {
+			m[name] = v
+		}
 	}
 	return m
 }
@@ -93,6 +127,13 @@ type pushSender struct {
 	vapid  vapidConfig
 	client webpush.HTTPClient
 	last   map[string]map[string]string
+	// seenAct is the newest client-activity time ever observed per
+	// user/session (remembered across polls, so a prompt typed just before
+	// the tab closed still counts). pushedAct is seenAct's value at the
+	// moment we last pushed for that session — the watermark of the
+	// user-activity gate (see tick).
+	seenAct   map[string]map[string]int64
+	pushedAct map[string]map[string]int64
 }
 
 // newPushHTTPClient builds the *http.Client every Web Push send shares (both
@@ -125,8 +166,10 @@ func newPushSender(store *pushStore, prefs prefsLoader, stater sessionStater, va
 		prefs:  prefs,
 		stater: stater,
 		vapid:  vapid,
-		client: newPushHTTPClient(),
-		last:   map[string]map[string]string{},
+		client:    newPushHTTPClient(),
+		last:      map[string]map[string]string{},
+		seenAct:   map[string]map[string]int64{},
+		pushedAct: map[string]map[string]int64{},
 	}
 }
 
@@ -187,7 +230,19 @@ func buildDonePayload(session string) []byte {
 // tick runs one poll cycle: for every subscribed user, diff the current
 // session states against the previous poll and notify on each edge of
 // interest — running→awaiting ("needs input") and running→done ("finished")
-// — gated by the user's roamed notify prefs.
+// — gated by the user's roamed notify prefs AND the user-activity gate.
+//
+// The user-activity gate (Viktor, 2026-07-13: "send only once the turn
+// completes, not when any subagent completes"): the @claude_state hooks stamp
+// done on EVERY Stop, and in an agent-orchestration session Stop fires at
+// every internal turn boundary — scheduled wakeups and subagent reports each
+// end a turn — so one human prompt used to spray a dozen "finished" pushes.
+// tmux's client_activity moves only on human keystrokes, so: once we have any
+// activity reading for a session, an edge pushes ONLY if the user typed into
+// it since our previous push (one push per human interaction; a permission
+// approval is itself typed input and re-arms the next completion). Sessions
+// we've never seen activity for fail OPEN — legacy behaviour, nothing goes
+// silently un-notified for lack of data.
 func (p *pushSender) tick() {
 	users, err := p.store.users()
 	if err != nil {
@@ -200,6 +255,7 @@ func (p *pushSender) tick() {
 		prev := p.last[u]
 		cur := p.stater.states(u)
 		p.last[u] = cur
+		p.observeActivity(u)
 		if prev == nil {
 			continue // first observation of this user seeds silently
 		}
@@ -210,26 +266,74 @@ func (p *pushSender) tick() {
 			case st == stateAwaiting && was != stateAwaiting:
 				// running→awaiting (and any non-awaiting→awaiting, incl. a
 				// newly-appeared already-awaiting session — unchanged edge).
-				if np.onAwaiting {
+				if np.onAwaiting && p.userTypedSinceLastPush(u, name) {
+					p.markPushed(u, name)
 					p.notify(u, name, kindAwaiting)
 				}
 			case st == stateDone && was == stateRunning:
 				// running→done ONLY. A session first seen already done
 				// (was=="") or any non-running→done stays silent, so a
 				// SessionStart hook stamping "done" never fires.
-				if np.onDone {
+				if np.onDone && p.userTypedSinceLastPush(u, name) {
+					p.markPushed(u, name)
 					p.notify(u, name, kindDone)
 				}
 			}
 		}
 	}
-	// Drop last-state for users whose last device unsubscribed, so a later
-	// re-subscribe seeds silently again instead of replaying a stale edge.
+	// Drop per-user state for users whose last device unsubscribed, so a
+	// later re-subscribe seeds silently again instead of replaying a stale
+	// edge (and the activity maps don't grow unbounded).
 	for u := range p.last {
 		if !seen[u] {
 			delete(p.last, u)
+			delete(p.seenAct, u)
+			delete(p.pushedAct, u)
 		}
 	}
+}
+
+// observeActivity folds the stater's current client-activity reading into
+// seenAct, keeping the max ever observed per session — a client detaching
+// (tab closed) must not erase the fact that the user typed a prompt.
+func (p *pushSender) observeActivity(u string) {
+	act := p.stater.activity(u)
+	if len(act) == 0 {
+		return
+	}
+	sa := p.seenAct[u]
+	if sa == nil {
+		sa = map[string]int64{}
+		p.seenAct[u] = sa
+	}
+	for name, ts := range act {
+		if ts > sa[name] {
+			sa[name] = ts
+		}
+	}
+}
+
+// userTypedSinceLastPush is the activity gate: true when we have no activity
+// data for the session (fail open), or when the newest observed keystroke is
+// later than the watermark recorded at our previous push for it.
+func (p *pushSender) userTypedSinceLastPush(u, name string) bool {
+	sa, ok := p.seenAct[u][name]
+	if !ok {
+		return true
+	}
+	return sa > p.pushedAct[u][name]
+}
+
+// markPushed records the activity watermark for a session at push time. The
+// watermark is per-session, shared across kinds — whichever of awaiting/done
+// fires first consumes the current interaction's credit.
+func (p *pushSender) markPushed(u, name string) {
+	pa := p.pushedAct[u]
+	if pa == nil {
+		pa = map[string]int64{}
+		p.pushedAct[u] = pa
+	}
+	pa[name] = p.seenAct[u][name]
 }
 
 // notify builds the payload for `session` of the given kind and fans it out
