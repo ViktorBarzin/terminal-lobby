@@ -1845,6 +1845,35 @@
         #compose-bar button:active {
             background: color-mix(in srgb, var(--accent) 25%, var(--bg-card-hover));
         }
+        /* Ghost mode (input.bar 'auto' on coarse pointers): the mirror
+           field stays in the DOM, focusable and keyboard-summoning, but is
+           painted away so the terminal is the ONLY visible input surface.
+           opacity:0 (NEVER display:none / visibility:hidden, which kill
+           focus + the soft keyboard on iOS — a WebKit trait confirmed
+           2026-07-13) keeps the field interactive, so the keyboard,
+           QuickType and swipe typing all still fire; the bar reserves NO
+           terminal space (syncViewport reads a .ghost bar as height 0, so
+           the terminal reclaims it) and intercepts NO touches
+           (pointer-events:none) — focus arrives ONLY through the tapFocus
+           router (a terminal tap). The field keeps its real on-screen size
+           (a zero-size field can fail to summon the iOS keyboard) but shows
+           nothing: no caret, no border, no background, no ⌄. */
+        #compose-bar.ghost {
+            pointer-events: none;
+            background: transparent;
+            border-top: 0;
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+        #compose-bar.ghost #compose-input {
+            opacity: 0;
+            caret-color: transparent;
+            border-color: transparent;
+            background: transparent;
+        }
+        #compose-bar.ghost #compose-hide { display: none; }
         @media (pointer: coarse) {
             #soft-keys { display: flex; }
             /* Shrink the terminal container so its bottom edge meets the
@@ -2479,15 +2508,20 @@
             try { return localStorage.getItem(PINCH_FONT_KEY) !== 'off'; } catch (e) { return true; }
         }
 
-        // Coach-mark memory (M.11, RE-KEYED by IR.2) — set the first time
-        // the auto-shown input bar appears (input.bar === 'auto' only).
-        // Device-local ON PURPOSE, never roamed via tl:prefs:v1: a coach
-        // mark must not resurrect on every device via a stale server doc,
-        // nor be pre-suppressed on a NEW device by a roamed flag. Fresh
-        // key: the mirror model earns one fresh hint even where the old
-        // compose hint was seen; tl-compose-hint:v1 is never read again
-        // (the stale entry stays inert in localStorage).
-        const INPUT_HINT_KEY = 'tl-input-hint:v1';
+        // Ghost-mode coach-mark memory (RE-KEYED from tl-input-hint:v1 by
+        // the ghost-composer change) — set the first time this device
+        // enters GHOST mode (input.bar === 'auto' resolving visible on a
+        // coarse pointer). Device-local ON PURPOSE, never roamed via
+        // tl:prefs:v1: a coach mark must not resurrect on every device via
+        // a stale server doc, nor be pre-suppressed on a NEW device by a
+        // roamed flag. FRESH key on purpose: ghost is a genuinely new
+        // experience (the field is now invisible), so a device that already
+        // saw the old 'Type here — the terminal mirrors you' hint still
+        // earns exactly one ghost hint; tl-input-hint:v1 is never read again
+        // (the stale entry stays inert in localStorage). The old 'Type here'
+        // coach is retired with it — it only ever fired under 'auto', and
+        // 'auto' now means ghost.
+        const GHOST_HINT_KEY = 'tl-ghost-hint:v1';
         // Task IR.2 quick-toggle override — '1' = the input bar is
         // suppressed on THIS device; '0'/absent/garbage = follow the
         // roamed input.bar posture. Written by the ⌨ soft key (IR.3; was
@@ -2514,8 +2548,8 @@
         function toolbarHiddenHere() {
             try { return localStorage.getItem(TOOLBAR_HIDDEN_KEY) === '1'; } catch (e) { return false; }
         }
-        // Toolbar-fix restore coach — DEVICE-LOCAL one-shot (tl-input-hint:v1
-        // precedent). Names the two-finger-tap way back at most once per
+        // Toolbar-fix restore coach — DEVICE-LOCAL one-shot (the device-local
+        // one-shot precedent). Names the two-finger-tap way back at most once per
         // device, fired by applyToolbarPrefs when a device BOOTS with the row
         // hidden (a live in-session hide is covered by the gesture-time hint).
         const TOOLBAR_HINT_KEY = 'tl-toolbar-hint:v1';
@@ -5557,8 +5591,8 @@
                 if (hp) hp.checked = p.gestures.haptics;       // coarse row, vibrate-capable only (M.7)
                 const pf = settingsPanel.querySelector('#sp-pinch');
                 if (pf) pf.checked = pinchFontWanted();        // coarse row, Chromium or WebKit (M.8; default ON)
-                const ib = settingsPanel.querySelector('#sp-inputbar');
-                if (ib) ib.checked = p.input.bar !== 'off';    // coarse row only (IR.2 tri-state — 'auto' paints checked)
+                // input.bar is a 3-way seg now (ghost composer) — the
+                // generic .sp-seg reflect below paints its active value.
                 const sr = settingsPanel.querySelector('#sp-reopen');
                 if (sr) sr.checked = p.session.reopenLast;     // coarse-pointer row only (MF-5)
                 // Notifications section — universal (always present). Toggles
@@ -5750,7 +5784,13 @@
                     row_.appendChild(input);
                     row_.appendChild(val);
                 }
-                function segCtl(row_, key, values, labels) {
+                // onPick (optional): a side effect run with the chosen
+                // value BEFORE the pref write — e.g. the Input-mode seg
+                // clears the device-local ⌨ suppression when the user
+                // picks a field-engaging mode, so explicit settings intent
+                // beats the quick toggle. Existing callers pass 4 args;
+                // onPick is undefined and the guard skips it (byte-safe).
+                function segCtl(row_, key, values, labels, onPick) {
                     const seg = document.createElement('div');
                     seg.className = 'sp-seg';
                     seg.dataset.pref = key;
@@ -5764,6 +5804,7 @@
                         // deep-merges one level, so sibling flags survive.
                         // Flat keys patch exactly as before.
                         b.addEventListener('click', () => {
+                            if (onPick) onPick(v);
                             const dot = key.indexOf('.');
                             setPrefs(dot === -1 ? { [key]: v }
                                 : { [key.slice(0, dot)]: { [key.slice(dot + 1)]: v } });
@@ -6136,35 +6177,41 @@
                         pfRow.appendChild(pf);
                     }
 
-                    // Task IR.2: mirror input bar — roamed input.* options
-                    // (fresh namespace; the compose.* rows died with the
-                    // burned keys, and the Return-key row is GONE:
-                    // Enter semantics are fixed by the IR.1 mirror). The
-                    // bar is the DEFAULT phone experience: input.bar is
-                    // tri-state ('auto' = never-touched default, resolves
-                    // visible on coarse pointers) but the checkbox stays
-                    // BINARY — it only ever writes 'on'/'off', so an
-                    // untouched doc keeps 'auto' and keeps resolving
-                    // per-device. Checking it ON also clears the
-                    // device-local quick-toggle suppression
-                    // (tl:input.barHidden:v1): explicit settings intent
-                    // beats the ⌨ toggle (IR.3; was ✎).
-                    const ibRow = row('Input bar (compose field)');
-                    const ib = document.createElement('input');
-                    ib.type = 'checkbox';
-                    ib.id = 'sp-inputbar';
-                    ib.title = 'Show the input bar: a native text field ' +
-                        '(autocorrect, swipe typing, dictation) that ' +
-                        'mirrors into the terminal as you type. On by ' +
-                        'default on phones; the ⌨ soft key (under ⋯) ' +
-                        'hides/shows it on this device.';
-                    ib.addEventListener('change', () => {
-                        if (ib.checked) {
-                            try { localStorage.removeItem(INPUT_BAR_HIDDEN_KEY); } catch (e) {}
-                        }
-                        setPrefs({ input: { bar: ib.checked ? 'on' : 'off' } });
-                    });
-                    ibRow.appendChild(ib);
+                    // Ghost composer: roamed input.bar tri-state, now a
+                    // 3-WAY control (was a binary checkbox). The three
+                    // stored values map to what the user sees on a phone:
+                    //   'auto' = INVISIBLE (recommended) — the terminal is
+                    //            the only visible surface; a painted-away
+                    //            composer still carries autocorrect,
+                    //            QuickType and swipe typing (ghost mode);
+                    //   'on'   = VISIBLE BAR — a separate text field above
+                    //            the keyboard (the pre-ghost experience);
+                    //   'off'  = raw terminal keyboard (no field).
+                    // 'auto' stays the never-touched default so existing
+                    // roamed docs adopt ghost with no re-key (the value
+                    // meaning was redefined, not the key). The generic
+                    // .sp-seg reflect paints the active value; onPick clears
+                    // the device-local ⌨ suppression (tl:input.barHidden:v1)
+                    // whenever the user picks a field-engaging mode
+                    // ('auto'/'on'), so explicit settings intent beats the
+                    // quick toggle (the old checkbox did this on check-ON).
+                    const ibRow = row('Input mode');
+                    ibRow.title = 'How you type on this device. Invisible ' +
+                        '(recommended): the terminal is the only thing you ' +
+                        'see, but an invisible composer still gives you ' +
+                        'autocorrect, QuickType and swipe typing. Visible ' +
+                        'bar: a separate text field above the keyboard. Off: ' +
+                        'the raw terminal keyboard, no autocorrect. The ⌨ ' +
+                        'soft key (under ⋯) turns the field off/on on this ' +
+                        'device without leaving this screen.';
+                    segCtl(ibRow, 'input.bar',
+                           ['auto', 'on', 'off'],
+                           ['Invisible', 'Visible bar', 'Off'],
+                           (v) => {
+                               if (v !== 'off') {
+                                   try { localStorage.removeItem(INPUT_BAR_HIDDEN_KEY); } catch (e) {}
+                               }
+                           });
 
                     // Tap routing while the bar is open (M.11, re-keyed by
                     // IR.2) — the segCtl writes the dotted nested key
@@ -8586,9 +8633,20 @@
             // called before refit()'s timer bindings exist: tap-time, or
             // applyInputPrefs via the boot applyTermPrefs one-shot (same
             // TDZ posture as applyToolbarPrefs).
+            // GHOST: composeVisible means "the field is ENGAGED" (in
+            // layout, focusable, the tapFocus target) — true for BOTH the
+            // ghost (invisible) and 'on' (visible bar) postures, which is
+            // what keeps tapFocus/focusActiveInput/toggleInputBar
+            // byte-identical. The visible-vs-ghost RENDER split is the
+            // .ghost class, derived here from the roamed posture: 'auto'
+            // paints the invisible ghost, 'on' the full bar. (Only reached
+            // on coarse pointers, where the bar DOM exists; fine pointers
+            // keep the applyInputPrefs stub, so 'auto' never ghosts there.)
             function setComposeVisible(show, focus) {
                 composeVisible = show;
+                const ghost = show && getPrefs().input.bar === 'auto';
                 composeBar.classList.toggle('visible', show);
+                composeBar.classList.toggle('ghost', ghost);
                 if (show) autoGrowCompose();
                 refit();
                 if (show && focus) composeInput.focus();
@@ -8675,35 +8733,45 @@
             // Prefs reconciliation — called from applyTermPrefs (panel
             // changes arriving over tl-prefs, roamed-doc adoption, and
             // the boot one-shot, which is also what first applies
-            // input.bar). IR.2: effective visibility is a PURE function —
+            // input.bar). Effective engagement is a PURE function —
             // (input.bar==='on' || input.bar==='auto') && no device-local
             // suppression — on this coarse-only block (fine pointers keep
             // the inert stub, which is what makes 'auto' resolve
             // per-device), and the reconcile runs BOTH directions, so the
-            // settings 'Input bar' checkbox hides/shows the bar live.
-            // Never steals focus in either direction (a lobby-sheet
-            // settings change or a boot must not summon a keyboard).
+            // settings 'Input mode' control switches live.
+            // GHOST: 'auto'⇄'on' both keep the field ENGAGED (want stays
+            // true) but must FLIP the render (ghost⇄visible bar), so the
+            // reconcile also fires when the ghost-ness diverges from what
+            // is painted — not just on an engage/disengage edge. Never
+            // steals focus in either direction (a lobby-sheet settings
+            // change or a boot must not summon a keyboard).
             // IR.1: enterkeyhint is not reconciled here — it is FIXED
             // 'send' at creation (Enter always submits).
-            let inputHintShown = false;   // coach toast once per page-life
+            let ghostHintShown = false;   // coach toast once per page-life
             applyInputPrefs = function () {
                 const bar = getPrefs().input.bar;
                 const want = bar !== 'off' && !inputBarHiddenHere();
-                if (want !== composeVisible) setComposeVisible(want, false);
-                // IR.2 one-time coach toast — only under the 'auto'
-                // (never-configured) posture while the bar is actually
-                // visible, gated by the device-local INPUT_HINT_KEY
-                // (fresh key: the mirror model earns one fresh hint even
-                // where the old compose hint was seen); a user who SET
-                // bar:'on' knows the bar. Toasts render top-of-viewport,
-                // never overlapping the bottom bar.
-                if (want && bar === 'auto' && !inputHintShown) {
-                    inputHintShown = true;
+                const ghost = want && bar === 'auto';
+                if (want !== composeVisible ||
+                        ghost !== composeBar.classList.contains('ghost')) {
+                    setComposeVisible(want, false);
+                }
+                // One-time GHOST coach toast — only under the 'auto'
+                // (never-configured) posture while the field is actually
+                // engaged (= ghost), gated by the device-local
+                // GHOST_HINT_KEY (fresh key: ghost earns one fresh hint
+                // even where the old visible-bar hint was seen). A user who
+                // SET bar:'on' chose the visible bar and needs no coach.
+                // Names the way back (Settings → Input mode) because the
+                // field is now invisible — the reversibility rule for a
+                // change that hides UI. Toasts render top-of-viewport.
+                if (ghost && !ghostHintShown) {
+                    ghostHintShown = true;
                     let seen = null;
-                    try { seen = localStorage.getItem(INPUT_HINT_KEY); } catch (e) {}
+                    try { seen = localStorage.getItem(GHOST_HINT_KEY); } catch (e) {}
                     if (seen === null) {
-                        try { localStorage.setItem(INPUT_HINT_KEY, '1'); } catch (e) {}
-                        showToast('Type here — the terminal mirrors you. Enter sends.', 'info', 6000);
+                        try { localStorage.setItem(GHOST_HINT_KEY, '1'); } catch (e) {}
+                        showToast('Typing now goes through an invisible composer — autocorrect still works. Settings → Input mode brings the visible bar back.', 'info', 6000);
                     }
                 }
             };
@@ -8749,7 +8817,7 @@
                 // Boot restore-coach — ONCE, on the FIRST application (boot):
                 // if this device BOOTS with the row hidden, name the
                 // two-finger-tap way back. Persistent one-shot per device
-                // (tl-input-hint precedent) and only while that gesture is
+                // (the device-local one-shot precedent) and only while that gesture is
                 // enabled (else the hint would lie — the settings row is the
                 // way back there). A live settings/gesture hide is NOT
                 // coached here (the gesture hide has its own page-life hint;
@@ -9270,9 +9338,15 @@
                 // comes out of the terminal too. Compose hidden ⇒
                 // offsetHeight 0 ⇒ every formula is identical to the
                 // pre-M.10 baseline.
+                // GHOST: a ghost bar counts as height 0 here even though its
+                // (invisible, pointer-events:none) field keeps a real
+                // offsetHeight — the terminal RECLAIMS the bar's space (the
+                // whole point of ghost mode) and the floating buttons sit at
+                // the normal bottom (--cb-h 0). The field still floats fixed
+                // over the terminal's bottom edge, painting nothing.
                 document.documentElement.style.setProperty('--sk-h', tbH + 'px');
                 const cb = document.getElementById('compose-bar');
-                const cbH = cb ? cb.offsetHeight : 0;
+                const cbH = (cb && !cb.classList.contains('ghost')) ? cb.offsetHeight : 0;
                 document.documentElement.style.setProperty('--cb-h', cbH + 'px');
                 terminalEl.style.height = Math.max(0, vv.height - tbH - cbH) + 'px';
             }
