@@ -1431,11 +1431,17 @@ implements the feature. Format:
   dispatches are FINE-step raw CDP via `gestures.py` (plan M.8: coarse
   dispatch false-greens — it never exercises Chrome's ~1-3-move
   cancelable-touchmove window; `pinch()` defaults give ≈2.5
-  px/finger/move). Flag legs set the shared-origin localStorage key
-  `tl:gesture-pinch-font:v1`='on' (any window — one store). fontSize
-  isolation: snapshot `tl:prefs:v1`.fontSize + `tl-font-size` before,
-  restore after (pinch steps also PUT the roamed doc — prefs-isolation
-  rule above applies).
+  px/finger/move). The key `tl:gesture-pinch-font:v1` is now DEFAULT ON
+  (2026-07-13): ON legs run with the key ABSENT and again ='on' (both
+  enable); the disable leg sets ='off' explicitly (removing the key no
+  longer disables). Two front-ends over one commit vocabulary — the
+  Chromium touch-span claim (CDP `pinch()`, the legs below) and the WebKit
+  GestureEvent handler (iOS/iPadOS; its wiring leg dispatches SYNTHETIC
+  gesture events under a faked `window.GestureEvent`, since Chromium has
+  neither the API nor a CDP path to it). Set the key in any window — one
+  shared-origin store. fontSize isolation: snapshot `tl:prefs:v1`.fontSize
+  + `tl-font-size` before, restore after (pinch steps also PUT the roamed
+  doc — prefs-isolation rule above applies).
 - [Task M.8] Flag-ON diverging pinch (the CLAIM): flag 'on',
   `pinch(page, cx, cy, span0=80, span1=255, steps=35)` centered on the
   terminal → `__pz.consumed[0] === true` with
@@ -1455,10 +1461,17 @@ implements the feature. Format:
   (role=status) showed `Aa NNpx` with `.visible` during the burst,
   gone ≈220ms after touchend. Converging leg (`span0=255, span1=80`)
   → fontSize steps DOWN (toward the 10 clamp).
-- [Task M.8] Flag-OFF native-zoom guard (STANDING red-line leg:
+- [Task M.8] Default-on (key ABSENT — the flip's whole point): with
+  `tl:gesture-pinch-font:v1` NEVER set (fresh device), the SAME diverging
+  `pinch(cx, cy, span0=80, span1=255, steps=35)` CLAIMS identically to the
+  'on' leg — `__pz.consumed.every(x=>x)`, `window.top.visualViewport.scale
+  === 1`, fontSize steps up — proving `pinchFontWanted()` reads unset as
+  ON. The lobby panel's `#sp-pinch` shows CHECKED for the same unset state.
+- [Task M.8] Explicit-'off' native-zoom guard (STANDING red-line leg:
   `#terminal`'s `touch-action: pan-x pan-y pinch-zoom` must never be
-  narrowed): key removed (= production default), same diverging
-  dispatch → ZERO consumed moves and `window.top.visualViewport.scale
+  narrowed): key set ='off' (the explicit disable — the default is now ON,
+  so REMOVING the key would ENABLE it; only 'off' disables), same
+  diverging dispatch → ZERO consumed moves and `window.top.visualViewport.scale
   > 1` (native pinch-zoom reached the compositor; measured 5 = the
   clamp. The unconsumed stream also shows Chrome's cancelable window
   live: `__pz.cancelable` = [true, false, false, …] — exactly why the
@@ -1506,20 +1519,49 @@ implements the feature. Format:
   path (lobby A+ → tl-prefs message → applyTermPrefs needFit) and
   lineHeight slides; a NO-OP apply (duplicate tl-font-size message)
   must not flash it.
-- [Task M.8] Settings + defaults: a coarse-pointer Chromium lobby
-  panel renders 'Pinch font size' (`#sp-pinch`), UNCHECKED by default
-  (DEFAULT OFF stands until Viktor's real-device run of
-  `scripts/devserve/pinch-probe.html` — chrome://inspect; the
-  release-resume legs are the hardware-fragile part); ticking writes
-  `tl:gesture-pinch-font:v1`='on' (plain per-browser key, never
-  roamed), unticking REMOVES the key; the row does NOT render on a
-  fine-pointer desktop panel. With the key set, the recognizer arms
-  ONLY at `pageScale() ≤ 1.001` (order matters: REMOVE the flag, zoom
-  in natively via dispatch, THEN set flag 'on' → diverging pinch
-  consumes NOTHING while zoomed — native pinch stays the way back
-  out; reset scale after. Zooming in with the flag already on gets
-  CLAIMED instead and false-reds the leg — bit the implementation
-  smoke).
+- [Task M.8] Settings + defaults: a coarse-pointer lobby panel renders
+  'Pinch font size' (`#sp-pinch`), CHECKED by default (DEFAULT ON,
+  2026-07-13). The row now renders wherever a front-end registers —
+  Chromium OR WebKit; under Pixel-7 emulation a faked
+  `window.GestureEvent` exercises the WebKit branch of the `if
+  (isChromiumFamily || hasGestureEvent)` gate. Unticking writes
+  `tl:gesture-pinch-font:v1`='off' and re-ticking writes ='on' (plain
+  per-browser key, never roamed — BOTH states explicit now that unset
+  means ON); the row does NOT render on a fine-pointer desktop panel NOR
+  (drop the front-end fake) on a coarse Gecko-only panel. With the key
+  not 'off', the recognizer arms ONLY at `pageScale() ≤ 1.001` (order
+  matters: set the flag ='off', zoom in natively via dispatch, set ='on',
+  THEN diverging pinch consumes NOTHING while zoomed — native pinch stays
+  the way back out; reset scale after. Zooming in with the flag already
+  enabled gets CLAIMED instead and false-reds the leg — bit the
+  implementation smoke).
+- [Task M.8] WebKit GestureEvent wiring (Chromium can't fire real gesture
+  events, so this proves HANDLER PLUMBING via synthetic dispatch;
+  real-iOS zoom-suppression + release-resume are DEVICE-MANUAL — Viktor,
+  via `scripts/devserve/pinch-probe.html` on the iPhone PWA, portrait +
+  landscape, Safari tab + installed PWA): add an init script
+  `window.GestureEvent = window.GestureEvent || function(){}` so
+  `hasGestureEvent` is true and the WebKit front-end attaches. Run this
+  leg in its OWN context — the fake makes `recognizers === 4`, which would
+  false-red the module-isolation leg. In the terminal iframe with the key
+  not 'off', dispatch to `#terminal` a bubbling `gesturestart` (`scale`
+  1, `cancelable` true) → `e.defaultPrevented === true` (the claim);
+  `gesturechange` `scale` 1.5 → `defaultPrevented === true`, fontSize
+  steps UP (`trunc(0.5/0.07)=7` → clamps to 22 from 15), `#font-pill`
+  `.visible` reads `Aa 22px`, each committed step ticks haptic `5` under
+  the M.7 spy; `scale` 0.5 → steps DOWN toward the 10 clamp; `gestureend`
+  → `#font-pill` gone ≈220ms later. GUARD sub-legs (each →
+  `defaultPrevented === false`, no `gz`, fontSize unchanged): key ='off';
+  `window.top.visualViewport.scale` faked >1.001 (already-zoomed — native
+  pinch is the way back); `gesturestart` dispatched to `document.body`
+  (off the terminal surface). 3rd-finger FREEZE: CDP `touchStart` with 3
+  points (bumps `gestureTouches` via the passive counter recognizer), then
+  `gesturechange` `scale` 1.5 → font does NOT step past the pre-freeze
+  value and stays frozen for the rest of the gesture (a claimed WebKit
+  gesture can't release mid-flight without a native-zoom pop). The
+  single-finger path is BYTE-UNTOUCHED — gesture events never fire for one
+  finger, and the WebKit front-end adds only `gesturestart/change/end`
+  listeners, never touching the 1-finger touch handlers.
 - [Task M.8] Red line: §A.5 on both emulated viewports + the standing
   diff guards (M.1 touch-discriminator block AND the ADR-0003
   mousedown interceptor byte-identical vs `6773cbd` *(re-baselined by
