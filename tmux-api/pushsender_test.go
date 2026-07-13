@@ -67,8 +67,9 @@ func genSubKeys(t *testing.T) pushKeys {
 // snapshot never aliases what the next tick reads (aliasing would erase the
 // very transition the edge detector looks for).
 type stubStater struct {
-	mu sync.Mutex
-	m  map[string]string
+	mu  sync.Mutex
+	m   map[string]string
+	act map[string]int64
 }
 
 func (s *stubStater) set(m map[string]string) {
@@ -82,6 +83,22 @@ func (s *stubStater) states(string) map[string]string {
 	defer s.mu.Unlock()
 	cp := make(map[string]string, len(s.m))
 	for k, v := range s.m {
+		cp[k] = v
+	}
+	return cp
+}
+
+func (s *stubStater) setAct(m map[string]int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.act = m
+}
+
+func (s *stubStater) activity(string) map[string]int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make(map[string]int64, len(s.act))
+	for k, v := range s.act {
 		cp[k] = v
 	}
 	return cp
@@ -219,6 +236,96 @@ func TestPushSenderNewlyAppearedAwaitingFires(t *testing.T) {
 	sender.tick()
 	if rec.hit("/d") != 1 {
 		t.Fatalf("newly-appeared awaiting: got %d, want 1", rec.hit("/d"))
+	}
+}
+
+// The user-activity gate (Viktor, 2026-07-13: "send only once the turn
+// completes, not when any subagent completes"): once a client-activity
+// timestamp is known for a session, an edge only pushes if the user typed
+// into it SINCE our previous push. Internal turn boundaries (wakeups,
+// subagent reports) flip running→done without keystrokes and stay silent.
+func TestPushSenderActivityGateSuppressesAgentBounces(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	_ = store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)})
+
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	// Seed; user typed at T=100 (the prompt that started the turn).
+	stub.set(map[string]string{"main": stateRunning})
+	stub.setAct(map[string]int64{"main": 100})
+	sender.tick()
+
+	// First running→done after the prompt: pushes.
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if rec.hit("/d") != 1 {
+		t.Fatalf("first done after user prompt: got %d pushes, want 1", rec.hit("/d"))
+	}
+
+	// Agent bounce: done→running→done with NO new keystrokes — silent.
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if rec.hit("/d") != 1 {
+		t.Fatalf("agent bounce without user input pushed: got %d, want still 1", rec.hit("/d"))
+	}
+
+	// User types again (T=200) → the next completion pushes again.
+	stub.setAct(map[string]int64{"main": 200})
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if rec.hit("/d") != 2 {
+		t.Fatalf("done after fresh user input: got %d pushes, want 2", rec.hit("/d"))
+	}
+}
+
+// The watermark is SHARED across kinds: an awaiting push consumes the
+// activity credit, so the done that follows the same user prompt stays
+// silent — but the user's approval keystrokes re-arm it. One push per
+// human interaction, whichever kind fires first.
+func TestPushSenderActivityGateSharedAcrossKinds(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	_ = store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)})
+
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	stub.set(map[string]string{"main": stateRunning})
+	stub.setAct(map[string]int64{"main": 100})
+	sender.tick()
+
+	// Permission ask mid-turn: running→awaiting pushes (fresh prompt credit).
+	stub.set(map[string]string{"main": stateAwaiting})
+	sender.tick()
+	if rec.hit("/d") != 1 {
+		t.Fatalf("awaiting after prompt: got %d, want 1", rec.hit("/d"))
+	}
+
+	// Turn completes with no further input — done suppressed (credit spent).
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if rec.hit("/d") != 1 {
+		t.Fatalf("done after awaiting, no new input: got %d, want still 1", rec.hit("/d"))
+	}
+
+	// The user's approval was typed input (T=150): next completion pushes.
+	stub.setAct(map[string]int64{"main": 150})
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if rec.hit("/d") != 2 {
+		t.Fatalf("done after approval keystrokes: got %d, want 2", rec.hit("/d"))
 	}
 }
 
