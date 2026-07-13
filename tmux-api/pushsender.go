@@ -95,30 +95,24 @@ type pushSender struct {
 	last   map[string]map[string]string
 }
 
-// forceTCP4 wraps a DialContext-shaped dial func, substituting network "tcp4"
-// for whatever network the caller (an http.Transport) requests, so every push
-// connection goes over IPv4. See newPushHTTPClient for why.
-func forceTCP4(dial func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	return func(ctx context.Context, _, addr string) (net.Conn, error) {
-		return dial(ctx, "tcp4", addr)
-	}
-}
-
 // newPushHTTPClient builds the *http.Client every Web Push send shares (both
 // the background sender and the on-demand POST /push/test go through
 // pushSender.send, the single webpush.SendNotification call site). It clones
 // the stdlib default transport — preserving HTTP/2, proxy and idle-conn
-// behaviour — and overrides only the dialer to force IPv4.
+// behaviour — and overrides only the dial timeout; the network family is the
+// caller's (dual-stack).
 //
-// devvm v6 path to Apple's push range (2620:149::/32) blackholes after connect
-// (2026-07-12): the TCP handshake completes but no response headers arrive, so
-// a v6 send hangs until pushClientTimeout and Viktor's iPhone never gets the
-// push; v4 to Apple answers in ~165ms. Forcing tcp4 is the service-level fix —
-// remove it if the site's IPv6 path to Apple is ever fixed.
+// History: 2026-07-12→13 this forced tcp4 because the site's IPv6 path to
+// Apple's push range (2620:149::/32) blackholed after the TCP handshake (HE
+// tunnel MTU 1280, LAN RA advertising 1500, Apple's LBs ignoring
+// Packet-Too-Big). Root cause is fixed at the router — pfSense clamps MSS to
+// 1280 on the HE_IPv6 gif interface — so pushes dial dual-stack again and
+// double as a daily canary of that path. If Apple sends ever time out again,
+// suspect the site v6 path first (pfSense: Interfaces → HE_IPv6 → MSS).
 func newPushHTTPClient() *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	d := &net.Dialer{Timeout: pushDialTimeout}
-	tr.DialContext = forceTCP4(d.DialContext)
+	tr.DialContext = d.DialContext
 	return &http.Client{
 		Timeout:   pushClientTimeout,
 		Transport: tr,
