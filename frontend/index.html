@@ -2428,19 +2428,22 @@
             try { return localStorage.getItem(GESTURES_KILL_KEY) !== 'off'; } catch (e) { return true; }
         }
 
-        // Task M.8 pinch-to-font opt-IN — tl:gesture-pinch-font:v1, a
-        // plain per-browser localStorage key: 'on' enables, anything else
-        // (or unset) = OFF. DEFAULT OFF, and deliberately NOT roamed via
-        // tl:prefs:v1 (same posture as tl:keybindings:v1): claiming the
-        // native pinch-zoom stream is per-DEVICE trust, pending Viktor's
-        // real-device probe run (scripts/devserve/pinch-probe.html via
-        // chrome://inspect — the devvm has no adb, and the release-resume
-        // legs are the hardware-fragile part). Read per-press by the
-        // terminal-iframe recognizer; written by the settings toggle
-        // (#sp-pinch). The tl-gestures master kill above applies on top.
+        // Task M.8 pinch-to-font — tl:gesture-pinch-font:v1, a plain
+        // per-browser localStorage key: 'off' disables, anything else (or
+        // unset) = ENABLED. DEFAULT ON (Viktor greenlit pinch-to-zoom
+        // 2026-07-13; his primary device is the iPhone PWA). Deliberately
+        // NOT roamed via tl:prefs:v1 (same posture as tl:keybindings:v1):
+        // claiming the native pinch-zoom stream is a per-DEVICE choice.
+        // Because the default is now ON, the settings toggle writes BOTH
+        // states explicitly ('on'/'off') — remove-to-default would now read
+        // as ON, so it can no longer express "off". Read per-gesture by the
+        // terminal-iframe recognizer (the Chromium touch-span front-end AND
+        // the WebKit GestureEvent front-end, below); written by the settings
+        // toggle (#sp-pinch). The tl-gestures master kill above applies on
+        // top.
         const PINCH_FONT_KEY = 'tl:gesture-pinch-font:v1';
         function pinchFontWanted() {
-            try { return localStorage.getItem(PINCH_FONT_KEY) === 'on'; } catch (e) { return false; }
+            try { return localStorage.getItem(PINCH_FONT_KEY) !== 'off'; } catch (e) { return true; }
         }
 
         // Coach-mark memory (M.11, RE-KEYED by IR.2) — set the first time
@@ -2490,15 +2493,27 @@
         // hint family; the bar's own ⌄ no longer hides the bar so it never
         // reaches this coach.
         const BAR_HINT_KEY = 'tl-bar-hint:v1';
-        // Chromium-family gate for the pinch recognizer + its settings row
-        // (plan M.8: the consume-every-2f-move claim model is probed
-        // against Chrome's cancelable-touchmove pipeline ONLY; WebKit and
-        // Gecko schedule touchmove cancelability differently and iOS
-        // browsers are all WebKit). navigator.userAgentData ships in every
-        // Chromium and, in 2026, only there; the UA sniff is a fallback
-        // for Chromium builds with the API disabled.
+        // Pinch-to-font engine signals — the recognizer ships TWO front-ends
+        // over one commit vocabulary, selected by engine (M.8; iOS/WebKit
+        // added 2026-07-13):
+        //   isChromiumFamily → the consume-every-2f-move touch-span claim,
+        //     probed ONLY against Chrome's cancelable-touchmove pipeline.
+        //     navigator.userAgentData ships in every Chromium and, in 2026,
+        //     only there; the UA sniff is the fallback for Chromium builds
+        //     with the API disabled.
+        //   hasGestureEvent → iOS/iPadOS WebKit's proprietary GestureEvent
+        //     (gesturestart/gesturechange/gestureend, cumulative e.scale).
+        //     Chromium and Gecko don't implement it, so its presence is a
+        //     clean WebKit signal; the WebKit front-end suppresses native
+        //     pinch-zoom by preventDefault-ing the gesture events (WebKit
+        //     schedules touchmove cancelability differently, so the touch-
+        //     span claim is NOT portable there). macOS Safari has it too but
+        //     is fine-pointer, excluded by the coarse-pointer gate on every
+        //     call site. No engine is BOTH, so at most one front-end arms;
+        //     Gecko/Firefox-mobile matches neither and keeps native zoom.
         const isChromiumFamily = !!navigator.userAgentData ||
             /\b(?:HeadlessChrome|Chromium|Chrome)\/\d/.test(navigator.userAgent);
+        const hasGestureEvent = typeof window.GestureEvent !== 'undefined';
 
         // ---- haptic vocabulary (Task M.7) ------------------------------
         // ONE helper, three grades — every touch/gesture call site routes
@@ -5483,7 +5498,7 @@
                 const hp = settingsPanel.querySelector('#sp-haptics');
                 if (hp) hp.checked = p.gestures.haptics;       // coarse row, vibrate-capable only (M.7)
                 const pf = settingsPanel.querySelector('#sp-pinch');
-                if (pf) pf.checked = pinchFontWanted();        // coarse Chromium row only (M.8)
+                if (pf) pf.checked = pinchFontWanted();        // coarse row, Chromium or WebKit (M.8; default ON)
                 const ib = settingsPanel.querySelector('#sp-inputbar');
                 if (ib) ib.checked = p.input.bar !== 'off';    // coarse row only (IR.2 tri-state — 'auto' paints checked)
                 const sr = settingsPanel.querySelector('#sp-reopen');
@@ -6030,32 +6045,34 @@
                         () => setPrefs({ session: { reopenLast: sr.checked } }));
                     srRow.appendChild(sr);
 
-                    // Task M.8: pinch-to-font-size — DEFAULT OFF, plain
+                    // Task M.8: pinch-to-font-size — DEFAULT ON, plain
                     // per-browser tl:gesture-pinch-font:v1 key (never
-                    // roamed; posture of the App-shortcuts opt-in above):
-                    // it claims the native pinch-zoom stream over the
-                    // terminal, so each DEVICE opts in — and the default
-                    // stays off until Viktor's real-device probe run
-                    // (scripts/devserve/pinch-probe.html). Rendered only
-                    // where the recognizer can register (Chromium-family
-                    // coarse pointers — the claim model is probed against
-                    // Chrome's touch pipeline; on iOS/WebKit the row would
-                    // govern nothing, same posture as the Android-only
-                    // swipe row). The attached terminal reads the key per
-                    // gesture, so the flip is live — no reload.
-                    if (isChromiumFamily) {
+                    // roamed; per-DEVICE, like the App-shortcuts opt-in
+                    // above): it claims the native pinch-zoom stream over the
+                    // terminal. DEFAULT ON now (Viktor greenlit it), so the
+                    // toggle writes BOTH states explicitly ('on'/'off') —
+                    // remove-to-default would read as ON. Rendered wherever a
+                    // front-end can register: Chromium-family (touch-span
+                    // claim) OR WebKit (iOS/iPadOS GestureEvent). Gecko-mobile
+                    // matches neither, so the row is hidden there rather than
+                    // showing a toggle that governs nothing (fine-pointer
+                    // desktop is already excluded by the coarse block). The
+                    // attached terminal reads the key per gesture, so the flip
+                    // is live — no reload.
+                    if (isChromiumFamily || hasGestureEvent) {
                         const pfRow = row('Pinch font size');
                         const pf = document.createElement('input');
                         pf.type = 'checkbox';
                         pf.id = 'sp-pinch';
                         pf.title = 'Pinch with two fingers over the ' +
-                            'terminal to step the font size (experimental). ' +
-                            'Off (default): a two-finger pinch keeps native ' +
-                            'browser zoom.';
+                            'terminal to step the font size. On by default. ' +
+                            'Pinching while the page is already zoomed keeps ' +
+                            'native browser zoom (your way back out); the ' +
+                            'gestures kill-switch turns it off with every ' +
+                            'other touch gesture.';
                         pf.addEventListener('change', () => {
                             try {
-                                if (pf.checked) localStorage.setItem(PINCH_FONT_KEY, 'on');
-                                else localStorage.removeItem(PINCH_FONT_KEY);
+                                localStorage.setItem(PINCH_FONT_KEY, pf.checked ? 'on' : 'off');
                             } catch (e) {}
                         });
                         pfRow.appendChild(pf);
@@ -8878,86 +8895,99 @@
                 });
             }
 
-            // ---- Task M.8: 2-finger pinch → font size (DEFAULT OFF) ----
-            // The respec is probe-derived — do NOT simplify it back
-            // (analysis 2026-07-11: BOTH naive models were falsified on
-            // the production surface. Chrome's cancelable-touchmove window
-            // is ~1-3 moves, so classify-at-12%-THEN-claim never lands;
-            // and a one-shot first-move preventDefault doesn't hold —
-            // native zoom resumes the moment consumption stops). A claim
-            // therefore means CONTINUOUS consumption of EVERY 2-finger
-            // touchmove from move 1, via the module's lazily-attached
-            // non-passive listener, with classification deferred to
-            // 2f-move 3:
-            //   |span/span0 − 1| ≥ 0.05 → CLAIMED: keep consuming; step
-            //     the font ±1 per ±7% cumulative span ratio through the
-            //     shared applyFontSize (clamp 10-22, persist, fit — the
-            //     exact stepper path; it carries the M.7 selection haptic
-            //     per committed step) with an 'Aa 15px' pill readout;
-            //   else → RELEASE (dead until all fingers lift): native
-            //     resumes, having lost only ~7.5px of centroid travel
-            //     (3 moves × ~2.5px).
-            // Gates: tl:gesture-pinch-font:v1 opt-in, read per press —
-            // DEFAULT OFF pending Viktor's real-device probe
-            // (scripts/devserve/pinch-probe.html; the release-resume legs
-            // are the hardware-fragile part and the devvm has no adb) —
-            // plus the tl-gestures master kill (module-level); Chromium-
-            // family only (the model is probed against Chrome's touch
-            // pipeline); armed only while visualViewport.scale ≤ 1.001 —
-            // an already-zoomed page keeps native pinch as its only way
-            // back out. Declared displacement while ON: a deliberate
-            // pinch OVER THE TERMINAL font-resizes instead of native-
-            // zooming. Mid-scroll finger-joins stay native BY PLATFORM
-            // LIMIT (their moves arrive cancelable=false — probe legs
-            // G/N: panic-zoom mid-scroll always works), so the first
-            // non-cancelable move RELEASES instead of fighting the
-            // compositor. #terminal's touch-action (pan-x pan-y
-            // pinch-zoom) stays untouched — the flag-OFF battery leg
-            // (native zoom must still reach scale>1) is the standing
-            // regression guard.
-            if (isChromiumFamily) {
-                const PINCH_CLASSIFY_MOVE = 3;     // classify at 2f-move 3
-                const PINCH_CLASSIFY_RATIO = 0.05; // |span/span0−1| ≥ 5% = pinch
-                const PINCH_STEP_RATIO = 0.07;     // ±1 font step per ±7% span
-                let pz = null;  // {ids, span0, moves, claimed, dead, baseFont, lastTarget}
-                let fontPillEl = null, fontPillTimer = null;
-                // Pinch-zoom scale is a TOP-LEVEL page property (the tab
-                // zooms, not the iframe): this document usually runs as
-                // the lobby's same-origin session iframe, whose OWN
-                // visualViewport.scale stays 1 in Chromium regardless of
-                // page zoom — so read the top window's. Deep-linked
-                // terminal pages (top === self) read their own; a
-                // cross-origin top (never the case here) falls back to
-                // the local value.
-                function pageScale() {
-                    try {
-                        if (window.top.visualViewport) return window.top.visualViewport.scale;
-                    } catch (e) { /* cross-origin top: local fallback */ }
-                    return window.visualViewport ? window.visualViewport.scale : 1;
+            // ---- Task M.8: 2-finger pinch → font size (DEFAULT ON) ----
+            // Two front-ends over ONE commit vocabulary, chosen by engine
+            // (isChromiumFamily / hasGestureEvent, defined above); at most
+            // one arms. The COMMIT path is shared: a cumulative span ratio
+            // (1.0 at gesture start) maps to a clamped font step via the SAME
+            // clampFontSize(base + trunc((ratio−1)/7%)) formula through the
+            // shared applyFontSize (which carries the M.7 selection haptic
+            // per committed step), with the 'Aa NNpx' #font-pill readout.
+            // Shared gates: tl:gesture-pinch-font:v1 (DEFAULT ON, read per
+            // gesture) + the tl-gestures master kill; armed only OVER THE
+            // TERMINAL and only while pageScale() ≤ 1.001 — an already-zoomed
+            // page keeps native pinch as its only way back out (the standing
+            // regression guard); a 3rd finger aborts and never resumes mid-
+            // gesture. #terminal's touch-action (pan-x pan-y pinch-zoom)
+            // stays untouched, so native zoom is intact whenever no front-end
+            // claims (flag off / zoomed / off-terminal / no front-end) — the
+            // flag-'off' battery leg (native zoom must still reach scale>1)
+            // is that standing guard.
+            //
+            // Front-end A — CHROMIUM (touch-span claim). Probe-derived, do
+            // NOT simplify back (2026-07-11: BOTH naive models were falsified
+            // on the production surface — Chrome's cancelable-touchmove window
+            // is ~1-3 moves, so classify-THEN-claim never lands, and a one-
+            // shot first-move preventDefault doesn't hold). A claim means
+            // CONTINUOUS consumption of EVERY 2-finger touchmove from move 1
+            // (the module's lazily-attached non-passive listener), classify
+            // deferred to 2f-move 3: |span/span0−1| ≥ 0.05 → CLAIMED (keep
+            // consuming, step the font); else RELEASE (native resumes, losing
+            // ~7.5px of centroid travel). Mid-scroll finger-joins arrive
+            // cancelable=false → RELEASE on the first (panic-zoom mid-scroll
+            // stays native — the DECLARED platform leak).
+            //
+            // Front-end B — WEBKIT (iOS/iPadOS, GestureEvent). WebKit
+            // schedules touchmove cancelability differently, so the touch-
+            // span claim isn't portable; instead the proprietary GestureEvent
+            // IS the pinch signal (a plain 2-finger pan/scroll never fires it,
+            // so there's no pan-vs-pinch classification to do). preventDefault
+            // at gesturestart suppresses native pinch-zoom; e.scale is the
+            // cumulative span ratio, driving the same step formula. A claimed
+            // WebKit gesture can't be released mid-flight without a native-
+            // zoom pop, so the 3rd-finger abort FREEZES stepping through
+            // gestureend rather than half-claiming. Listeners are
+            // {passive:false} and guard e.cancelable. Real-device suppression
+            // (especially in the standalone PWA) is validated by Viktor live
+            // (scripts/devserve/pinch-probe.html); the CDP battery proves the
+            // Chromium model and the WebKit handler wiring.
+
+            // Shared commit plumbing (both front-ends). Defined on any coarse
+            // pointer; simply unused on an engine with no front-end (Gecko
+            // mobile) — this whole block is coarse-pointer-only already.
+            const PINCH_CLASSIFY_MOVE = 3;     // Chromium: classify at 2f-move 3
+            const PINCH_CLASSIFY_RATIO = 0.05; // |ratio−1| ≥ 5% = a real pinch
+            const PINCH_STEP_RATIO = 0.07;     // ±1 font step per ±7% span ratio
+            let fontPillEl = null, fontPillTimer = null;
+            // Pinch-zoom scale is a TOP-LEVEL page property (the tab zooms,
+            // not the iframe): this document usually runs as the lobby's
+            // same-origin session iframe, whose OWN visualViewport.scale stays
+            // 1 regardless of page zoom — so read the top window's. Deep-
+            // linked terminal pages (top === self) read their own; a cross-
+            // origin top (never the case here) falls back to the local value.
+            // The same top-window read holds for a same-origin iframe on iOS.
+            function pageScale() {
+                try {
+                    if (window.top.visualViewport) return window.top.visualViewport.scale;
+                } catch (e) { /* cross-origin top: local fallback */ }
+                return window.visualViewport ? window.visualViewport.scale : 1;
+            }
+            function showFontPill(size) {
+                if (!fontPillEl) {
+                    fontPillEl = document.createElement('div');
+                    fontPillEl.id = 'font-pill';
+                    fontPillEl.setAttribute('role', 'status');
+                    document.body.appendChild(fontPillEl);
                 }
+                clearTimeout(fontPillTimer);
+                fontPillTimer = null;
+                fontPillEl.textContent = 'Aa ' + size + 'px';
+                fontPillEl.classList.add('visible');
+            }
+            function hideFontPillSoon() {
+                if (!fontPillEl || fontPillTimer) return;
+                fontPillTimer = setTimeout(() => {
+                    fontPillTimer = null;
+                    fontPillEl.classList.remove('visible');
+                }, 220);
+            }
+
+            if (isChromiumFamily) {
+                let pz = null;  // {ids, span0, moves, claimed, dead, baseFont, lastTarget}
                 function pinchSpan(ts) {
                     return Math.max(1, Math.hypot(
                         ts[0].clientX - ts[1].clientX,
                         ts[0].clientY - ts[1].clientY));
-                }
-                function showFontPill(size) {
-                    if (!fontPillEl) {
-                        fontPillEl = document.createElement('div');
-                        fontPillEl.id = 'font-pill';
-                        fontPillEl.setAttribute('role', 'status');
-                        document.body.appendChild(fontPillEl);
-                    }
-                    clearTimeout(fontPillTimer);
-                    fontPillTimer = null;
-                    fontPillEl.textContent = 'Aa ' + size + 'px';
-                    fontPillEl.classList.add('visible');
-                }
-                function hideFontPillSoon() {
-                    if (!fontPillEl || fontPillTimer) return;
-                    fontPillTimer = setTimeout(() => {
-                        fontPillTimer = null;
-                        fontPillEl.classList.remove('visible');
-                    }, 220);
                 }
                 multiTouch.add({
                     start(e) {
@@ -8966,7 +8996,7 @@
                             return;
                         }
                         if (e.touches.length !== 2) return;
-                        if (!pinchFontWanted()) return;   // per-press: DEFAULT OFF
+                        if (!pinchFontWanted()) return;   // per-gesture flag (DEFAULT ON)
                         if (pageScale() > 1.001) return;  // zoomed page: native only
                         const a = e.touches[0], b = e.touches[1];
                         if (!(terminalEl.contains(a.target) && terminalEl.contains(b.target))) return;
@@ -9023,6 +9053,55 @@
                         hideFontPillSoon();
                     }
                 });
+            }
+
+            if (hasGestureEvent) {
+                // WebKit front-end (iOS/iPadOS). gz holds the active CLAIMED
+                // gesture; gestureTouches tracks the live finger count —
+                // GestureEvent exposes scale but not touch count, and the
+                // 3rd-finger guard needs it — via the sanctioned passive
+                // touch listeners (a noop-move recognizer, so it never
+                // consumes touchmove and never affects native zoom).
+                let gz = null;            // {baseFont, lastTarget, frozen}
+                let gestureTouches = 0;
+                multiTouch.add({
+                    start(e) { gestureTouches = e.touches.length; },
+                    end(e)   { gestureTouches = e.touches.length; },
+                    reset()  { gestureTouches = 0; }
+                });
+                document.addEventListener('gesturestart', (e) => {
+                    // Per-gesture gates (master kill + flag read live), then
+                    // the shared guards. preventDefault HERE is the claim —
+                    // it suppresses native pinch-zoom for the whole gesture.
+                    if (!gesturesEnabled() || !pinchFontWanted()) return;
+                    if (pageScale() > 1.001) return;              // zoomed page: native only
+                    if (!terminalEl.contains(e.target)) return;   // terminal surface only
+                    if (e.cancelable !== false) e.preventDefault();
+                    gz = { baseFont: getPrefs().fontSize, lastTarget: null, frozen: false };
+                }, { passive: false });
+                document.addEventListener('gesturechange', (e) => {
+                    if (!gz) return;
+                    if (e.cancelable !== false) e.preventDefault();   // hold the claim
+                    if (gestureTouches > 2) gz.frozen = true;         // 3rd finger: freeze, never resume mid-gesture
+                    if (gz.frozen) return;
+                    const ratio = e.scale > 0 ? e.scale : 1;          // WebKit: cumulative span ratio
+                    // Deadzone until a real pinch (parity with Chromium's 5%
+                    // classify): no pill/step for sub-5% incidental scale.
+                    if (gz.lastTarget === null && Math.abs(ratio - 1) < PINCH_CLASSIFY_RATIO) return;
+                    const target = clampFontSize(
+                        gz.baseFont + Math.trunc((ratio - 1) / PINCH_STEP_RATIO));
+                    if (target !== gz.lastTarget) {
+                        gz.lastTarget = target;
+                        if (target !== getPrefs().fontSize) applyFontSize(target);
+                        showFontPill(target);
+                    }
+                }, { passive: false });
+                document.addEventListener('gestureend', (e) => {
+                    if (!gz) return;
+                    if (e.cancelable !== false) e.preventDefault();
+                    gz = null;
+                    hideFontPillSoon();
+                }, { passive: false });
             }
         }
 
