@@ -2455,8 +2455,9 @@
         // Task IR.2 quick-toggle override — '1' = the input bar is
         // suppressed on THIS device; '0'/absent/garbage = follow the
         // roamed input.bar posture. Written by the ⌨ soft key (IR.3; was
-        // ✎) and the bar's own ⌄, cleared by checking the settings 'Input bar' row
-        // ON (explicit settings intent beats the quick toggle).
+        // ✎; the bar's own ⌄ no longer writes it — bar-trap fix, it now only
+        // dismisses the keyboard), cleared by checking the settings 'Input
+        // bar' row ON (explicit settings intent beats the quick toggle).
         // Device-local ON PURPOSE, never roamed: hiding the bar on the
         // phone must not hide it on the tablet.
         const INPUT_BAR_HIDDEN_KEY = 'tl:input.barHidden:v1';
@@ -2482,6 +2483,13 @@
         // device, fired by applyToolbarPrefs when a device BOOTS with the row
         // hidden (a live in-session hide is covered by the gesture-time hint).
         const TOOLBAR_HINT_KEY = 'tl-toolbar-hint:v1';
+        // Bar-trap restore coach — DEVICE-LOCAL one-shot (the TOOLBAR_HINT_KEY
+        // precedent). When the input bar is hidden via the ⌨ soft key, name
+        // the way back at most once per device: ⌨ hides on its second tap, so
+        // a per-page-life toast would nag on every reload. Fresh key in the
+        // hint family; the bar's own ⌄ no longer hides the bar so it never
+        // reaches this coach.
+        const BAR_HINT_KEY = 'tl-bar-hint:v1';
         // Chromium-family gate for the pinch recognizer + its settings row
         // (plan M.8: the consume-every-2f-move claim model is probed
         // against Chrome's cancelable-touchmove pipeline ONLY; WebKit and
@@ -6066,15 +6074,15 @@
                     // device-local quick-toggle suppression
                     // (tl:input.barHidden:v1): explicit settings intent
                     // beats the ⌨ toggle (IR.3; was ✎).
-                    const ibRow = row('Input bar');
+                    const ibRow = row('Input bar (compose field)');
                     const ib = document.createElement('input');
                     ib.type = 'checkbox';
                     ib.id = 'sp-inputbar';
                     ib.title = 'Show the input bar: a native text field ' +
                         '(autocorrect, swipe typing, dictation) that ' +
                         'mirrors into the terminal as you type. On by ' +
-                        'default on phones; the ⌨ soft key hides/shows ' +
-                        'it on this device.';
+                        'default on phones; the ⌨ soft key (under ⋯) ' +
+                        'hides/shows it on this device.';
                     ib.addEventListener('change', () => {
                         if (ib.checked) {
                             try { localStorage.removeItem(INPUT_BAR_HIDDEN_KEY); } catch (e) {}
@@ -8224,7 +8232,8 @@
                 // activeElement lookup: this key is built BEFORE the
                 // compose block, so composeInput is not in scope here. Bar
                 // VISIBILITY is untouched by dismiss (⌄ here drops the
-                // keyboard; the bar's own ⌄ collapses the bar).
+                // keyboard; the bar's own ⌄ now does the same since the
+                // bar-trap fix — hiding the bar is the ⌨ key + settings).
                 const ae = document.activeElement;
                 if (ae === helperTextarea || (ae && ae.id === 'compose-input')) ae.blur();
                 else if (helperTextarea) helperTextarea.blur();
@@ -8283,16 +8292,18 @@
             composeHide.type = 'button';
             composeHide.id = 'compose-hide';
             composeHide.textContent = '⌄';
-            composeHide.setAttribute('aria-label', 'Hide compose bar');
+            composeHide.setAttribute('aria-label', 'Dismiss keyboard');
             composeBar.appendChild(composeInput);
             composeBar.appendChild(composeHide);
             document.body.appendChild(composeBar);
 
             let composeVisible = false;
             // (IR.2: the old page-life composeUserToggled flag is gone —
-            // a manual ⌨/⌄ hide now persists as the DEVICE-LOCAL
+            // a manual ⌨ hide now persists as the DEVICE-LOCAL
             // suppression key instead, because visibility reconciles
-            // against prefs both directions on every apply.)
+            // against prefs both directions on every apply. Since the
+            // bar-trap fix the bar's own ⌄ no longer hides — it dismisses
+            // the keyboard — so ⌨ + settings are the only writers.)
 
             // Auto-grow to 5 lines (scrollHeight clamp), internal scroll
             // past that. All heights derive from the computed style so a
@@ -8473,14 +8484,19 @@
             composeHide.addEventListener('pointerdown', (ev) => {
                 ev.preventDefault();
                 haptic('selection');
-                // A manual collapse persists as the DEVICE-LOCAL override
-                // (IR.2, same key as the ⌨ toggle) — visibility reconciles
-                // against prefs on every apply now, so an unpersisted
-                // collapse would be undone by the next prefs event. The
-                // roamed input.bar posture is never written here.
-                setInputBarHidden(true);
-                setComposeVisible(false, true);
-                noteComposeCollapse();
+                // bar-trap fix: the bar's ⌄ now DISMISSES THE KEYBOARD and
+                // leaves the bar VISIBLE — it no longer writes barHidden or
+                // collapses the bar. Tapping it expecting a keyboard-dismiss
+                // used to strand the whole bar with no restore hint (the same
+                // reversibility trap the toolbar-hide ⌄ carried). The
+                // ev.preventDefault above keeps this button from taking focus,
+                // so blurring the focused input drops the soft keyboard and
+                // nothing re-summons it. Hiding the bar is now EXCLUSIVE to
+                // the ⌨ soft key (under ⋯) and the settings 'Input bar' row,
+                // both of which name the way back. Blur whichever of our
+                // inputs holds the keyboard; neither focused = harmless no-op.
+                const ae = document.activeElement;
+                if (ae === composeInput || ae === helperTextarea) ae.blur();
             });
 
             // Show/hide. Showing re-measures the field (it may carry kept
@@ -8523,15 +8539,23 @@
                 if (want !== composeVisible) setComposeVisible(want, true);
                 if (hiding) noteComposeCollapse();
             }
-            // Page-life reopen hint (M.11, toolbarHintShown precedent):
-            // the FIRST ⌨/⌄ collapse per page-life names the way back.
-            // Once — repeat collapses are a chosen workflow, not a
-            // discovery gap.
+            // Restore coach for a ⌨-hidden bar — DEVICE-LOCAL one-shot
+            // (TOOLBAR_HINT_KEY precedent, bar-trap fix). Only the ⌨ soft key
+            // reaches here now: the bar's own ⌄ dismisses the keyboard and no
+            // longer collapses the bar. It names the way back at most ONCE per
+            // device (⌨ hides on its second tap, so a per-page-life toast
+            // would nag every reload). The page-life bool still guards a
+            // double-toast within one life before the marker read settles
+            // (e.g. private-mode storage throwing on get).
             let composeReopenHintShown = false;
             function noteComposeCollapse() {
                 if (composeReopenHintShown) return;
                 composeReopenHintShown = true;
-                showToast('⌨ brings the input bar back', 'info', 2500);
+                let seen = null;
+                try { seen = localStorage.getItem(BAR_HINT_KEY); } catch (e) {}
+                if (seen !== null) return;
+                try { localStorage.setItem(BAR_HINT_KEY, '1'); } catch (e) {}
+                showToast('Input bar hidden — tap ⌨ (under ⋯) to bring it back', 'info', 3500);
             }
 
             // Focus routing (guarded — byte-equivalent while the field is
