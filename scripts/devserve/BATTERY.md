@@ -3051,3 +3051,168 @@ matters at create/resurrect.
   (e.g. `;id`, `$(id)`, spaces) is dropped at BOTH the frontend re-parse
   and tmux-attach.sh — session comes up with default behavior, never a
   shell word. (The key is never executed; only mapped.)
+
+### [ghost] Ghost composer: `input.bar:'auto'` on coarse = INVISIBLE mirror field (Viktor: "make the compose invisible so the user only sees the terminal while we still have a composer field to make use of the keyboard features")
+
+The compose field becomes VISUALLY IMPERCEPTIBLE while staying functionally
+active — the terminal is the ONLY visible input surface, but the native
+keyboard features the field exists for (iOS QuickType/autocorrect, swipe
+typing, dictation) survive because the field is still focused and streaming.
+The unification Viktor asked for: the pty echo is the single visible truth
+you watch; the field is a hidden IME conduit, so the visible-desync class
+dissolves. True prefill-from-terminal is NOT attempted (no "current input
+line" API; the line is TUI-owned) — the mirror stays inserts-only from empty
+after every reset, which is always safe.
+
+**Value redefinition, NOT a re-key (memory 9642 discipline).** `input.bar`
+stays the roamed tri-state `'auto'|'on'|'off'`; only the MEANING of `'auto'`
+on a coarse pointer changed: it now resolves to GHOST instead of the visible
+bar. Existing roamed docs hold `'auto'` (the never-touched default) and adopt
+ghost with no migration write-back; a user who explicitly chose `'on'` keeps
+the visible bar; `'off'` stays raw keyboard. Fine-pointer `'auto'` is
+unchanged (the compose DOM is coarse-only; `applyInputPrefs` is the inert
+stub there).
+
+**Render split = a `.ghost` class, mode-mapping only.** `composeVisible`
+keeps meaning "the field is ENGAGED" (in layout, focusable, the `tapFocus`
+target) — TRUE for both ghost and `'on'`, which is exactly what keeps
+`tapFocus`/`focusActiveInput`/`toggleInputBar` byte-identical. The
+visible-vs-ghost difference is `#compose-bar.ghost` (added alongside
+`.visible` when `input.bar==='auto'`): the field goes `opacity:0`,
+`caret-color:transparent`, transparent border/bg; the bar goes
+`pointer-events:none` (focus arrives ONLY via the tapFocus router — a
+terminal tap — never a direct touch) with no backdrop and `#compose-hide`
+(⌄) hidden. `syncViewport` reads a `.ghost` bar as height 0, so the terminal
+RECLAIMS the bar's space (and `--cb-h` is 0, so floats sit at the normal
+bottom); the field keeps a real ≥1px on-screen footprint (a zero-size field
+can fail to summon the iOS keyboard — opacity:0-but-sized is the WebKit-safe
+hidden-input pattern; `display:none`/`visibility:hidden`/off-screen would
+kill focus+keyboard). `applyInputPrefs` reconciles BOTH the engage edge AND
+the ghost⇄visible flip (an `'auto'⇄'on'` switch keeps `want` true but must
+re-render).
+
+**Mirror input path BYTE-IDENTICAL — ghost is rendering + mode-mapping, not
+an input-path change.** Verified mechanically vs `origin/master`: the mirror
+engine (`lastValue`/`reconcile`/`emit`/`mirrorCommonPrefix`), the field
+`input`/`beforeinput`/`keydown` listeners (diff→`term.input`, Enter
+reconcile+`\r`, empty-Backspace DEL), `mirrorLineReset`, the single-finger
+swipe recognizer (`SWIPE_THRESHOLD`), the `tapFocus` arrow, and the
+`attachCustomKeyEventHandler` head are ALL byte-for-byte unchanged;
+`attachCustomKeyEventHandler(` count stays exactly 1; `term.input(`/
+`sendInput(`/`mirrorLineReset(` occurrence counts unchanged. The `.ghost`
+render is invisible to the reset path (a mirrorLineReset in ghost just
+restarts the autocorrect context empty — inserts-only, always safe).
+
+**Settings: 3-way `input.bar` seg replaces the binary checkbox.** The
+`#sp-inputbar` checkbox 'Input bar (compose field)' becomes an 'Input mode'
+segmented control — Invisible (=`auto`, recommended) / Visible bar (=`on`) /
+Off (=`off`) — reusing the generic `.sp-seg` reflect (no bespoke reflect).
+`segCtl` gained an optional `onPick` side effect (existing 4-arg callers
+byte-safe): picking a field-engaging mode (`auto`/`on`) clears the
+device-local `tl:input.barHidden:v1` ⌨ suppression, so explicit settings
+intent beats the quick toggle (the old checkbox did this on check-ON). Labels
+fit with no overflow at 390 AND 375 px. The device-local ⌨ soft key +
+`tl:input.barHidden:v1` are unchanged (⌨ cycles field availability on this
+device); the bar's own ⌄ dismiss and the toolbar ⌄ are unchanged.
+
+**Reversibility (STANDING rule 9735, this feature hides UI).** First ghost
+activation on a device shows a one-shot toast keyed by the FRESH device-local
+marker `tl-ghost-hint:v1` — 'Typing now goes through an invisible composer —
+autocorrect still works. Settings → Input mode brings the visible bar back.'
+The way back (Settings → Input mode → Visible bar) is NAMED; the ⌨ soft key
+still toggles the field on this device. Fresh key on purpose: a device that
+already saw the old `tl-input-hint:v1` 'Type here' coach still earns one ghost
+hint (ghost is a new experience); the old coach retires with the rename (it
+only ever fired under `'auto'`). No new hide control, no new icon
+(icon/blast-radius rule).
+
+**SUPERSEDE NOTE for [bar-trap] SETTINGS COPY + [IR.2] SETTINGS SURFACE:** the
+`#sp-inputbar` 'Input bar (compose field)' checkbox is GONE; read those legs'
+settings expectations as the 'Input mode' 3-way seg (`data-pref="input.bar"`,
+buttons Invisible/Visible bar/Off). The [bar-trap] CHEVRON-DISMISS and ⌨-hide
+one-shot legs are unchanged (verified below). [IR.1]/[IR.2]/[bar-trap] mirror
++ tap-routing legs re-run green in ghost mode (the bridge behaves identically
+with the field invisible).
+
+Harness: `dev-harness.py --scratch` (proxy 7995 / ttyd 7994, scratch
+`-L tl-dev` session `main`), Chromium `p.devices['Pixel 7']` (390×844 coarse,
+`is_mobile`+`has_touch`), bare-terminal entry `/?arg=main` (compose/mirror/
+tapFocus/viewport) + lobby `/` (settings), Terminal-Proxy `__term` + a
+`term.input` emit-tap, `/api/sessions/prefs` route-intercepted (GET → the
+seeded doc, PUT → captured, NEVER forwarded — the live roamed doc is never
+touched), fresh context per leg for marker isolation. All legs green
+**44/44 on 2026-07-13** (`scratchpad/ghost_battery.py`). Real QuickType /
+swipe-typing / dictation over the invisible field is DEVICE-MANUAL (Chromium
+emulation summons no iOS keyboard — see the ghost items in §DEVICE-MANUAL).
+
+- [ghost] RENDER: `auto`+coarse → `#compose-bar` class `visible ghost`,
+  `#compose-input` computed `opacity:0` + transparent caret, bar
+  `background:transparent` + `pointer-events:none`, `#compose-hide`
+  `display:none`; field still `display:flex` (focusable, NOT display:none).
+- [ghost] QUICKTYPE ATTRS INTACT: `autocorrect='on'`, `spellcheck='true'`,
+  `autocapitalize='off'`, NO `autocomplete` attr, `inputmode='text'`,
+  `enterkeyhint='send'` — byte-unchanged from the visible-bar field (the
+  attributes QuickType keys on; only paint is suppressed).
+- [ghost] TAP-FOCUS: blur, single-finger tap on the terminal → the invisible
+  `#compose-input` becomes activeElement (focus via the tapFocus router,
+  despite `pointer-events:none` on the bar — programmatic focus is not
+  hit-tested).
+- [ghost] STREAM+ECHO: focus field, `Input.insertText 'echo …'` → emitted ==
+  the typed text (one chunk); Enter → emitted += `\r` (own frame),
+  capture-pane shows the executed line echo in the TERMINAL.
+- [ghost] OOB RESET: type into field, tap soft ↑ (sendKey → mirrorLineReset)
+  → field cleared; typing again is clean inserts-only (the reset is invisible
+  to the user — exactly the point).
+- [ghost] MIRROR: autocorrect-swap (select-all + replace → DEL×n + retype,
+  field converges), mid-string edit (backspace-to-common-prefix + tail
+  retype), empty-field Backspace → single DEL — all identical to the visible
+  bar.
+- [ghost] GEOMETRY: `--kb-offset` present and the `#compose-bar` rule's
+  `bottom` is wired to it; terminal height RECLAIMS the bar space vs `'on'`
+  (ghost termH > on termH by the bar height, measured 788 vs 736 at 390×844).
+- [ghost] A.5 RED LINE (ghost): 1-finger swipe → synthetic wheel → tmux
+  copy-mode with NO keyboard/field summon; tap → field focus with ZERO pty
+  bytes (3b); `--kb-offset` plumbing present.
+- [on] VISIBLE BAR unchanged: class `visible` (NOT ghost), opacity 1, opaque
+  bg, ⌄ shown, `pointer-events:auto`; tap → field focus (3b); mirror streams;
+  [bar-trap] ⌄ dismisses the keyboard, bar STAYS visible, `barHidden` ABSENT.
+- [off] RAW KEYBOARD unchanged: bar `display:none` (no `visible`/`ghost`);
+  tap → the `.xterm-helper-textarea` focuses (raw keyboard), NOT the field.
+- [ghost] LIVE-APPLY (sync): boot `'on'` (visible) → live prefs change to
+  `'auto'` flips to ghost (visible+ghost, opacity 0); `'auto'→'on'` flips
+  back to the visible bar; `→'off'` hides — the applyInputPrefs ghost⇄visible
+  reconcile fires on the no-engage-edge switch. (In-frame via
+  localStorage + `tl-prefs-change`, the same path the lobby's
+  `postMessage{type:'tl-prefs'}` → `applyTermPrefs` reaches.)
+- [ghost] HINT one-shot: fresh device + `auto` → ghost coach toast fires ONCE
+  and sets `tl-ghost-hint:v1`; reload → silent; a preset `tl-input-hint:v1`
+  (old key) does NOT suppress it (fresh key); a preset `tl-ghost-hint:v1`
+  suppresses it; `'on'` mode shows NO ghost coach.
+- [ghost] SETTINGS 3-way: old `#sp-inputbar` checkbox GONE; the 'Input mode'
+  seg renders 3 buttons (`data-val` auto/on/off, labels Invisible/Visible
+  bar/Off) with the generic reflect painting the active value; clicking
+  writes `input.bar` to localStorage AND fires the roamed PUT; picking
+  Invisible/Visible bar clears `tl:input.barHidden:v1` (onPick); the seg is
+  ABSENT on a fine pointer (coarse-only section); labels do not overflow at
+  390/375 px.
+
+### ghost — §DEVICE-MANUAL addendum (Viktor's real iPhone)
+
+Chromium emulation cannot summon the real iOS keyboard, so these ride the real
+device (all should behave EXACTLY as the visible-bar §DEVICE-MANUAL items —
+the field's input traits are byte-identical, only its paint changed):
+
+- Tap the terminal in ghost mode → the iOS keyboard rises WITH the QuickType
+  predictive/autocorrect bar (the field is opacity:0 but focused + sized +
+  on-screen; QuickType keys on the field's traits, not its CSS visibility).
+- Swipe-type a word / tap a QuickType suggestion / dictate → streams into the
+  terminal as it commits; the pty echo is the only visible feedback.
+- Post-space autocorrect swap lands in the terminal (diff); acceptable worst
+  case is the last word submitting uncorrected on a swap-vs-Enter race (never
+  corruption) — identical to the visible bar.
+- Password prompt: switch to the raw keyboard (Settings → Input mode → Off, or
+  ⌨ under ⋯, then tap the terminal) — the mirror must not carry secrets even
+  when invisible.
+- The one-shot ghost hint 'Typing now goes through an invisible composer …'
+  appears exactly ONCE on first ghost activation, names Settings → Input mode
+  as the way back, and never returns on reload.
