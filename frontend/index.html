@@ -2200,7 +2200,21 @@
                 // gesture enable/disable, not device state).
                 swipeSessionOptIn: false, // Task M.6 + complaint 1: 3-finger swipe cycles sessions — OPT-IN
                 twoFingerTap: true,   // Task M.6: 2-finger tap toggles the soft-key toolbar
-                haptics: true         // Task M.7: vibration cues (Android-only API)
+                haptics: true,        // Task M.7: vibration cues (Android-only API)
+                // Touch scroll (Viktor: "the drag experience is a bit slow.
+                // maybe we can make it more sensitive?"). scrollSpeed multiplies
+                // the finger-px → wheel-deltaY at EMISSION only; discrimination
+                // is untouched. Default 2× DERIVED from harness measurement: at
+                // 1× a wheel event costs ~3.3 row-heights of finger travel (the
+                // <50px-delta ×0.3 damping in xterm 6's consumeWheelEvent), so a
+                // low-lines-per-event TUI (Claude Code) scrolls ~0.3 lines per
+                // row-height — the reported slowness. 2× doubles it while keeping
+                // already-fine cases (copy-mode ~1.3, vim ~0.85 lines/rowheight)
+                // controllable; 3× is offered for a strict ~1:1. momentum ON:
+                // native flick-coast, cancelled by any new touch/real wheel/key/
+                // reattach. Both are FRESH keys — no re-key dance (#9642).
+                scrollSpeed: 2,
+                scrollMomentum: true
             }),
             // Task IR.2: input.* — the mirror input bar (coarse
             // pointers). FRESH namespace RETIRING compose.* (2026-07-12,
@@ -2288,7 +2302,14 @@
                 bottomSheet: v => typeof v === 'boolean',
                 swipeSessionOptIn: v => typeof v === 'boolean',
                 twoFingerTap: v => typeof v === 'boolean',
-                haptics: v => typeof v === 'boolean'
+                haptics: v => typeof v === 'boolean',
+                // Touch-scroll sensitivity (emission multiplier on the 1-finger
+                // swipe → synthetic-wheel path) + flick momentum. Fresh keys
+                // (never re-keyed): an absent key means the code default applies
+                // on every device, so bumping the default later is NOT inert
+                // (contrast the swipeSession trap, #9642).
+                scrollSpeed: v => v === 1 || v === 1.5 || v === 2 || v === 3,
+                scrollMomentum: v => typeof v === 'boolean'
             },
             input: {
                 bar: v => v === 'auto' || v === 'on' || v === 'off',
@@ -5591,8 +5612,10 @@
                 if (hp) hp.checked = p.gestures.haptics;       // coarse row, vibrate-capable only (M.7)
                 const pf = settingsPanel.querySelector('#sp-pinch');
                 if (pf) pf.checked = pinchFontWanted();        // coarse row, Chromium or WebKit (M.8; default ON)
-                // input.bar is a 3-way seg now (ghost composer) — the
-                // generic .sp-seg reflect below paints its active value.
+                const smo = settingsPanel.querySelector('#sp-scrollmomentum');
+                if (smo) smo.checked = p.gestures.scrollMomentum; // coarse-pointer row only (touch scroll)
+                // input.bar and gestures.scrollSpeed are .sp-seg controls — the
+                // generic .sp-seg reflect below paints their active values.
                 const sr = settingsPanel.querySelector('#sp-reopen');
                 if (sr) sr.checked = p.session.reopenLast;     // coarse-pointer row only (MF-5)
                 // Notifications section — universal (always present). Toggles
@@ -5998,6 +6021,34 @@
                 // soft-key toolbar, which only exists there. Task M.4 rides
                 // the same block: its two gestures are touch-only too.
                 if (matchMedia('(pointer: coarse)').matches) {
+                    // Touch scroll (Viktor: drag "a bit slow. maybe we can make
+                    // it more sensitive?"). Scroll speed multiplies finger travel
+                    // → scroll distance at emission (default 2×, DERIVED from
+                    // harness measurement); momentum adds a native flick-coast.
+                    // Both are roamed gestures.* keys, read live per gesture —
+                    // no reload. This is a sensitivity tune INSIDE the
+                    // recognizer, NOT a wheel/selection semantics change (#8388).
+                    const ssRow = row('Scroll speed');
+                    ssRow.title = 'How far a one-finger drag scrolls the terminal. ' +
+                        '2× (default) roughly doubles the stock feel; 3× is about ' +
+                        'one line of content per finger row-height in apps like ' +
+                        'Claude Code. Precise slow drags stay line-accurate at any ' +
+                        'setting.';
+                    segCtl(ssRow, 'gestures.scrollSpeed',
+                           [1, 1.5, 2, 3], ['1×', '1.5×', '2×', '3×']);
+
+                    const smoRow = row('Scroll momentum');
+                    const smo = document.createElement('input');
+                    smo.type = 'checkbox';
+                    smo.id = 'sp-scrollmomentum';
+                    smo.title = 'After a quick flick, the terminal keeps scrolling ' +
+                        'and coasts to a stop (like a phone list). Any new touch, ' +
+                        'a key, or scrolling with a mouse stops it at once. Turn ' +
+                        'off for strictly one-to-one, no-coast scrolling.';
+                    smo.addEventListener('change',
+                        () => setPrefs({ gestures: { scrollMomentum: smo.checked } }));
+                    smoRow.appendChild(smo);
+
                     const repRow = row('Key repeat');
                     const rep = document.createElement('input');
                     rep.type = 'checkbox';
@@ -7600,9 +7651,75 @@
             m.stopImmediatePropagation();
         }, true);
 
+        // ===== Touch-scroll sensitivity + flick momentum (coarse pointers) =====
+        // The 1-finger swipe recognizer (further below) and its lift-off coast
+        // both scroll through emitScroll(): a finger delta becomes a synthetic
+        // wheel whose deltaY is SCALED by gestures.scrollSpeed. xterm 6 damps
+        // sub-50px wheel deltas ×0.3 and accumulates fractional rows, so at 1×
+        // one wheel event costs ~3.3 row-heights of finger travel (measured) —
+        // the "a bit slow" default. The multiplier lives HERE (emission) ONLY;
+        // the recognizer's tap-vs-swipe CLASSIFICATION is byte-identical to the
+        // pre-change code. Momentum reuses this exact emission path, so per-tick
+        // wheel semantics are identical to a live drag (memory 8388 red line:
+        // wheel/selection semantics unchanged — only the px-per-tick ratio moves,
+        // which is the behavior Viktor asked for).
+        const SCROLL_FRAME_MS = 1000 / 60;
+        const MOMENTUM_DECAY = 0.95;          // velocity retained per animation frame
+        const MOMENTUM_START_VEL = 0.28;      // px/ms at release below which we do NOT coast
+        const MOMENTUM_MAX_COAST_SCREENS = 3; // hard cap on coasted finger-px (a few screens)
+        let momentumRAF = null;
+        let scrollVelEMA = 0, scrollLastMoveT = 0, scrollLastEmitY = 0, scrollEmittedGesture = false;
+        function scrollSpeedMult() {
+            const v = getPrefs().gestures.scrollSpeed;
+            return (v === 1 || v === 1.5 || v === 2 || v === 3) ? v : 2;
+        }
+        function scrollMomentumOn() { return !!getPrefs().gestures.scrollMomentum; }
+        function xtermCellH() {
+            const scr = document.querySelector('.xterm-screen');
+            return (scr && term.rows) ? scr.getBoundingClientRect().height / term.rows : 16;
+        }
+        function xtermScreenH() {
+            const scr = document.querySelector('.xterm-screen');
+            return scr ? scr.getBoundingClientRect().height : (term.rows || 24) * 16;
+        }
+        // The ONE synthetic-wheel construction shared by live drag AND momentum.
+        // deltaMode 0 + clientX/Y verbatim from the original recognizer emission.
+        function emitScroll(deltaPx, clientY) {
+            if (!term.element || !deltaPx) return;
+            term.element.dispatchEvent(new WheelEvent('wheel', {
+                deltaY: deltaPx * scrollSpeedMult(),
+                deltaMode: 0,
+                bubbles: true, cancelable: true,
+                clientX: 0, clientY: clientY,
+            }));
+        }
+        function cancelScrollMomentum() {
+            if (momentumRAF !== null) { cancelAnimationFrame(momentumRAF); momentumRAF = null; }
+        }
+        function startScrollMomentum(velPxPerMs, clientY) {
+            cancelScrollMomentum();
+            let vFrame = velPxPerMs * SCROLL_FRAME_MS;              // px per frame at release
+            const stopFrame = 0.5 * xtermCellH() / 60;             // ≈ 0.5 line/s
+            const capPx = MOMENTUM_MAX_COAST_SCREENS * xtermScreenH();
+            let coastPx = 0;
+            const step = () => {
+                vFrame *= MOMENTUM_DECAY;
+                if (Math.abs(vFrame) < stopFrame || coastPx >= capPx || !term.element) {
+                    momentumRAF = null; return;
+                }
+                coastPx += Math.abs(vFrame);
+                emitScroll(vFrame, clientY);
+                momentumRAF = requestAnimationFrame(step);
+            };
+            momentumRAF = requestAnimationFrame(step);
+        }
+
         // The other two clear triggers of the contract:
         let wheelAccum = 0, wheelAccumAt = 0;
         document.getElementById('terminal').addEventListener('wheel', (w) => {
+            // Hard-cancel momentum on a REAL wheel (trusted); our own synthetic
+            // coast ticks are untrusted and must NOT self-cancel.
+            if (w.isTrusted) cancelScrollMomentum();
             if (!term.hasSelection()) return;
             const now = Date.now();
             if (now - wheelAccumAt > WHEEL_WINDOW_MS) wheelAccum = 0;
@@ -7797,6 +7914,12 @@
                 let startY = null, lastY = null, moved = false;
                 const SWIPE_THRESHOLD = 6;  // px — tap vs. swipe
                 terminalEl.addEventListener('touchstart', (e) => {
+                    // Momentum (additive, NOT classification): a new touch is a
+                    // hard-cancel for any in-flight coast, and resets flick
+                    // velocity. The three CLASSIFICATION lines below are
+                    // byte-identical to the pre-momentum recognizer.
+                    cancelScrollMomentum();
+                    scrollVelEMA = 0; scrollLastMoveT = 0; scrollEmittedGesture = false;
                     if (e.touches.length !== 1) { startY = lastY = null; return; }
                     startY = lastY = e.touches[0].clientY;
                     moved = false;
@@ -7808,17 +7931,33 @@
                     lastY = y;
                     if (!moved && Math.abs(startY - y) > SWIPE_THRESHOLD) moved = true;
                     if (!moved || delta === 0 || !term.element) return;
-                    term.element.dispatchEvent(new WheelEvent('wheel', {
-                        deltaY: delta,
-                        deltaMode: 0,
-                        bubbles: true, cancelable: true,
-                        clientX: 0, clientY: y,
-                    }));
+                    // EMISSION (replaces the inline WheelEvent; same construction,
+                    // now scaled + shared with momentum). The classification gate
+                    // above is unchanged — this only runs once motion is a swipe.
+                    const nowT = performance.now();
+                    if (scrollLastMoveT) {
+                        const dt = nowT - scrollLastMoveT;
+                        if (dt > 0) scrollVelEMA = 0.8 * (delta / dt) + 0.2 * scrollVelEMA;
+                    }
+                    scrollLastMoveT = nowT;
+                    scrollLastEmitY = y;
+                    scrollEmittedGesture = true;
+                    emitScroll(delta, y);
                 }, { passive: true });
                 terminalEl.addEventListener('touchend', () => {
                     if (!moved && startY !== null) tapFocus();
                     startY = lastY = null;
                     moved = false;
+                    // Momentum kickoff (additive): coast only after a genuine
+                    // swipe that was STILL MOVING at release (a deliberate
+                    // slow-to-a-stop or pause-then-lift leaves velEMA ~0 / stale
+                    // and does not coast — precise reading stays line-accurate).
+                    if (scrollEmittedGesture && scrollMomentumOn()) {
+                        const restMs = performance.now() - scrollLastMoveT;
+                        const v0 = restMs < 80 ? scrollVelEMA : 0;
+                        if (Math.abs(v0) >= MOMENTUM_START_VEL) startScrollMomentum(v0, scrollLastEmitY);
+                    }
+                    scrollEmittedGesture = false;
                 }, { passive: true });
             })();
 
@@ -8079,6 +8218,7 @@
             // transform on toolbar keys — that only makes sense for letters
             // typed on the system soft keyboard).
             function sendKey(bytes) {
+                cancelScrollMomentum();   // any soft key (Esc/arrows/…) hard-cancels a flick coast
                 // IR.1: pre-baked key bytes go straight to sendInput and
                 // never pass term.onData — reset the compose-mirror
                 // baseline here or a soft arrow/Esc would silently desync
@@ -9270,6 +9410,7 @@
         // remap the first char (Ctrl-letter or Alt-prefix) before sending.
         // On desktop softMods stays null and this falls through to sendInput.
         term.onData((data) => {
+            cancelScrollMomentum();   // any keyboard/mirror byte hard-cancels a flick coast
             if (!mirrorEmitting) mirrorLineReset();   // Task IR.1: out-of-band bytes invalidate the compose-mirror baseline (the ONE declared guard delta)
             if (softMods && data) {
                 const ctrlActive = softMods.ctrl !== 'idle';
@@ -10533,6 +10674,7 @@
                         // line — the compose mirror's diff baseline is
                         // stale; drop it (no-op on fine pointers).
                         mirrorLineReset();
+                        cancelScrollMomentum();   // a (re)attach / session switch hard-cancels a coast
                         hideConnPill();
                         // Ladder reset only after the connection PROVES
                         // stable (30s up) — an instant re-drop keeps the
