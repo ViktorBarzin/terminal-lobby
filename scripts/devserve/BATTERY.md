@@ -2851,6 +2851,65 @@ verified by DOM read on the lobby panel).
   focus with ZERO pty bytes + no scroll; bar-hidden tap → raw keyboard (helper
   textarea) focus; `--kb-offset` present. Boot with ZERO console/page errors.
 
+### [xterm6] xterm.js 5.5.0 → 6.0.0 lockstep upgrade (plan P28)
+
+CDN-loaded core + addons bumped to the 6.0 lockstep release (core 6.0.0,
+addon-fit 0.11.0, web-links 0.12.0, webgl 0.19.0, clipboard 0.2.0,
+unicode11 0.9.0; addon-image stays 0.9.0 — already the 6.0 build). ZERO
+frontend API adaptations were needed; the whole change is script-tag
+versions + fresh sha384 SRI + comment refresh. Lockstep source: all seven
+packages co-published 2025-12-22 (npm registry `time` map). 6.0 breaking
+changes audited: removed `windowsMode`/`fastScrollModifier`/
+`overviewRulerWidth` (none used), canvas renderer removed (we use WebGL→DOM,
+never addon-canvas), viewport/scrollbar reimplemented (#5096 — the DOM
+contract below still holds). Verified against the harness (build stamped)
+2026-07-13; the full §A red-line suite was re-run green on the 6.0 build.
+
+- [xterm6] Boot: page loads (SRI-gated — a wrong hash would block the
+  script), `window.__term` constructed, console shows only benign
+  SwiftShader perf warnings → no errors, no addon-load failures.
+- [xterm6] Renderer: WebGL ACTIVE (`.xterm-screen` has ≥2 `<canvas>`
+  layers incl. `xterm-link-layer`, NO `.xterm-rows` DOM-renderer node).
+- [xterm6] Geometry unchanged: fit 0.11.0 yields the SAME 109×35 grid as
+  5.5.0 + fit 0.10.0 (both reserve a scrollbar width; 0.11.0 uses
+  `overviewRuler.width||14`, 0.10.0 the measured `viewport.scrollBarWidth`
+  — the column count is identical).
+- [xterm6] DOM contract: `.xterm`, `.xterm-screen`, `.xterm-viewport`
+  (byte-identical CSS: absolute inset-0), `.xterm-helper-textarea` all
+  still match rendered DOM; 6.0's new `.xterm-scrollable-element` overlay
+  scrollbar is present and consumes the `readTerminalTheme()`
+  scrollbarSlider* keys (now LIVE; inert on 5.5.0).
+- [xterm6] Options accepted by 6.0: `macOptionClickForcesSelection`,
+  `altClickMovesCursor:false`, `cursorInactiveStyle:'outline'`,
+  `minimumContrastRatio:4.5`, `scrollback:10000`, `linkHandler`,
+  `allowProposedApi`, `fontWeightBold` — all present on `term.options`.
+- [xterm6] Addons live: `term.unicode.activeVersion==='11'` (emoji
+  measures width 2 — X lands at cell 2); clipboard OSC52 custom provider
+  (0.2.0 kept the `(base64, provider)` ctor + default-provider-only-'c'
+  gate, and normalised its UMD export — our defensive accessor handles
+  both); webgl context-loss lifecycle + `clearTextureAtlas` intact; image
+  addon renders sixel (§A.4, 649–668 distinct colours).
+- [xterm6] [links] on 6.0: custom join provider (reads `buffer.active` /
+  `getLine` / `translateToString` / `getCell`) reconstructs the FULL URL
+  from a CC-shape wrapped split (chip title == full url from both rows);
+  no false join across a '⏺' boundary; '⧉ Copy link' chip shows outside
+  `.xterm-screen`, is suppressed while a selection exists, and its click
+  copies the full url; OSC 8 (server `terminal-features xterm*:hyperlinks`)
+  hover shows the TARGET uri and click opens it via `linkHandler` with NO
+  confirm() dialog. web-links 0.12.0 regex is byte-identical to our clone.
+  Click-to-open activation was byte-for-byte DIFFERENTIAL-checked against a
+  master (5.5.0) harness build with identical content/coords — behaviour is
+  identical, so the upgrade introduces no link-activation regression.
+- [xterm6] Fonts: `document.fonts.check('15px "JetBrains Mono"')` true and
+  TL Symbols covers the glyph battery.
+- [xterm6] RED LINE §A on the 6.0 build: A.1 buttonless-motion swallow
+  (selection survives a trusted move, zero `^[[<` reports leaked, Escape
+  clears + reaches app), A.2 both wheel halves (mouse-app scrolls,
+  non-mouse wheel-up → copy-mode), A.3 OSC52 chord → clipboard, A.4 sixel,
+  A.5 tap-vs-swipe + `--kb-offset`, A.6 bracketed paste — ALL green.
+  flowprobe PAUSE honored + throughput nominal; gestures.py 2-point +
+  1-finger + long-press inject cleanly under 6.0.
+
 ## DEVICE-MANUAL — consolidated standing real-phone checklist (input rework)
 
 THE single list for Viktor's real-device pass (deploy heads-up item).
