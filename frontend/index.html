@@ -2070,7 +2070,12 @@
         // the lobby's A−/A+ stepper, the terminal-mode floating stepper and
         // the xterm constructor (15 was the historical hardcoded value).
         const FONT_SIZE_KEY = 'tl-font-size';
-        const FONT_SIZE_MIN = 10, FONT_SIZE_MAX = 22, FONT_SIZE_DEFAULT = 15;
+        // MIN 6 (was 10 until 2026-07-13, Viktor: "support font sizes
+        // smaller than 10px"): tiny sizes are deliberate zoom-outs — ~7px
+        // reaches the 80-col floor PORTRAIT on a 390px phone. Stale-build
+        // devices validate roamed fontSize against their own MIN, so a <10
+        // value roams as default-15 there until they pick up this build.
+        const FONT_SIZE_MIN = 6, FONT_SIZE_MAX = 22, FONT_SIZE_DEFAULT = 15;
         function clampFontSize(n) {
             n = Math.round(Number(n));
             if (!Number.isFinite(n)) return FONT_SIZE_DEFAULT;
@@ -9925,7 +9930,7 @@
             const before = getPrefs().fontSize;
             const next = setPrefs({ fontSize: clampFontSize(n) });
             // Task M.7: selection-grade tick per COMMITTED step (clamped
-            // no-ops at 10/22 stay silent). Pinch steps (M.8) ride this
+            // no-ops at 6/22 stay silent). Pinch steps (M.8) ride this
             // same shared fn.
             if (next.fontSize !== before) haptic('selection');
             applyTermPrefs(getPrefs());
