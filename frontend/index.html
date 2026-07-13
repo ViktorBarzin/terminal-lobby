@@ -981,7 +981,7 @@
         }
         .lobby-sub { color: var(--text-muted); font-size: 12px; margin: 0 0 18px 0; line-height: 1.5; }
         .new-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
-        .new-row input {
+        .new-row input, .new-row select {
             box-sizing: border-box; height: 32px; padding: 0 11px;
             border-radius: var(--radius);
             border: 1px solid var(--border); background: var(--bg-card);
@@ -991,7 +991,7 @@
         }
         /* No outline: none here — the shared :focus-visible ring below
            supplies the focus indicator (Task 2.8). */
-        .new-row input:focus { border-color: var(--accent); }
+        .new-row input:focus, .new-row select:focus { border-color: var(--accent); }
         /* T3 default-button metric (Task 2.8, button.tsx size default):
            h-8 = 32px, px 11px, 500 14px (weight via the group rule
            above), radius already var(--radius). */
@@ -1927,6 +1927,12 @@
                 <p class="lobby-sub">Pick a session or create one. Sessions persist after you close the tab.</p>
                 <div class="new-row">
                     <input id="new-name" type="text" placeholder="new session name" maxlength="32" autocomplete="off">
+                    <select id="new-cmd" title="What a NEW session runs. Default = your account's usual behavior (launcher users auto-start Claude); explicit choices run that command in your login shell — when it exits the session closes. Existing sessions are attached as-is. Roams across your devices.">
+                        <option value="default">Default</option>
+                        <option value="claude">claude</option>
+                        <option value="codex">codex</option>
+                        <option value="shell">Plain shell</option>
+                    </select>
                     <button id="new-btn">Create &amp; Open</button>
                 </div>
                 <div id="session-list" class="session-list"></div>
@@ -1997,6 +2003,13 @@
         const PUSH_TEST_API    = '/api/sessions/push/test';
         const params = new URLSearchParams(location.search);
         const rawArg = params.get('arg');
+        // Second ?arg= = the new-session command KEY (lobby dropdown).
+        // Whitelist-validated here AND in tmux-attach.sh; anything else
+        // drops to '' (default behavior). Forwarded on the WS URL in
+        // connect() — ttyd -a maps repeated arg params to $1 $2.
+        const CMD_KEY_RE = /^[a-z0-9_-]{1,16}$/;
+        const rawCmdKey = params.getAll('arg')[1] || '';
+        const validCmdKey = CMD_KEY_RE.test(rawCmdKey) ? rawCmdKey : '';
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
 
         // Theme — shared by lobby + terminal-mode iframe (same-origin
@@ -2194,7 +2207,18 @@
             // /prefs docs lack the key entirely, so normalizePrefs serves
             // this code default everywhere — no re-key dance needed.
             session: Object.freeze({
-                reopenLast: true
+                reopenLast: true,
+                // What a NEWLY created session runs (second ?arg= to the
+                // attach chain; tmux -A ignores it for existing sessions).
+                // A whitelisted KEY, never a command line — the key→command
+                // mapping happens as the target user in tmux-user-attach
+                // (~/.config/terminal-lobby/commands overrides the builtins).
+                // 'default' = no explicit command (the user's tmux
+                // default-command decides, e.g. emo's start-claude.sh).
+                // Roamed on purpose: which tool you reach for is a
+                // user-level preference, not a device trait. NEW namespace
+                // key — pre-existing docs materialize 'default', no re-key.
+                newCommand: 'default'
             }),
             // Notifications: which Claude-turn transitions raise an OS
             // notification (foreground path here + the background push the
@@ -2242,7 +2266,9 @@
                 tapFocus: v => v === 'field' || v === 'terminal'
             },
             session: {
-                reopenLast: v => typeof v === 'boolean'
+                reopenLast: v => typeof v === 'boolean',
+                newCommand: v => v === 'default' || v === 'claude' ||
+                    v === 'codex' || v === 'shell'
             },
             notify: {
                 onDone: v => typeof v === 'boolean',
@@ -4467,6 +4493,18 @@
                 reloadToggleEl.addEventListener('click', () => location.reload());
             }
 
+            // Frame URL for a session attach: name plus (when not
+            // 'default') the roamed new-session command key as a second
+            // arg. Existing sessions ignore it (tmux -A); a dead session
+            // resurrected by this attach runs the chosen command.
+            function frameArgs(name) {
+                let u = '/?arg=' + encodeURIComponent(name);
+                try {
+                    const k = getPrefs().session.newCommand;
+                    if (k && k !== 'default') u += '&arg=' + encodeURIComponent(k);
+                } catch (e) {}
+                return u;
+            }
             function activateSession(name) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
                 if (currentActive === name) { updateActiveCard(); return; }
@@ -4477,7 +4515,7 @@
                 activeConfirmed = false;
                 emptyEl.classList.add('hidden');
                 frameEl.classList.remove('hidden');
-                setFrameUrl('/?arg=' + encodeURIComponent(name));
+                setFrameUrl(frameArgs(name));
                 if (location.hash.slice(1) !== name) {
                     history.replaceState(null, '', '#' + name);
                 }
@@ -4589,7 +4627,7 @@
                         showToast('Renamed to ' + newName, 'success');
                         if (currentActive === oldName) {
                             currentActive = newName;
-                            setFrameUrl('/?arg=' + encodeURIComponent(newName));
+                            setFrameUrl(frameArgs(newName));
                             history.replaceState(null, '', '#' + newName);
                             updateTitle();
                         }
@@ -5327,6 +5365,19 @@
             function quickRefreshAfterCreate() {
                 [700, 1600, 3000, 4500].forEach((ms) => setTimeout(renderLobby, ms));
             }
+            // New-session command dropdown (roamed session.newCommand):
+            // reflect the pref, write it back on change, follow roam
+            // updates from other devices via tl-prefs-change.
+            const newCmdEl = document.getElementById('new-cmd');
+            function syncNewCmd() {
+                try { newCmdEl.value = getPrefs().session.newCommand; } catch (e) {}
+                if (!newCmdEl.value) newCmdEl.value = 'default';
+            }
+            syncNewCmd();
+            newCmdEl.addEventListener('change', () => {
+                setPrefs({ session: { newCommand: newCmdEl.value } });
+            });
+            window.addEventListener('tl-prefs-change', syncNewCmd);
             newBtnEl.addEventListener('click', () => {
                 const name = newNameEl.value.trim();
                 if (!NAME_RE.test(name)) {
@@ -10374,7 +10425,8 @@
 
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const argSuffix = '?arg=' + encodeURIComponent(validArg);
+            let argSuffix = '?arg=' + encodeURIComponent(validArg);
+            if (validCmdKey) argSuffix += '&arg=' + encodeURIComponent(validCmdKey);
             const base = location.pathname.replace(/\/+$/, '');
             const wsUrl = proto + '//' + location.host + base + '/ws' + argSuffix;
 

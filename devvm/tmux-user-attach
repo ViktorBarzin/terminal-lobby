@@ -25,6 +25,51 @@ name="${1:-}"
 start_dir="${2:-$HOME}"
 [[ -d "$start_dir" ]] || start_dir="$HOME"
 
+# $3 = optional command KEY (validated upstream too; re-validated here).
+# Mapping to a real command line happens HERE, as the target user:
+#   1. ~/.config/terminal-lobby/commands — `key=command line` per line,
+#      user-editable, wins over builtins (lets wizard map claude to his
+#      --session-id wrapper, or anyone add their own keys later).
+#   2. Builtins: claude / codex (run through the user's login+interactive
+#      shell so rc functions, aliases and PATH behave like typing it),
+#      shell (an explicit plain login shell — bypasses tmux
+#      default-command, e.g. emo's auto-claude launcher).
+# Empty/invalid/'default' → no explicit command: tmux default-command
+# rules, exactly as before this feature.
+CMD_RE='^[a-z0-9_-]{1,16}$'
+cmd_key="${3:-}"
+[[ "$cmd_key" =~ $CMD_RE ]] || cmd_key=""
+cmd=""
+plain_shell=no
+if [[ -n "$cmd_key" && "$cmd_key" != "default" ]]; then
+    f="$HOME/.config/terminal-lobby/commands"
+    if [[ -r "$f" ]]; then
+        cmd=$(awk -F= -v k="$cmd_key" '
+            /^[[:space:]]*(#|$)/ {next}
+            $1==k {sub(/^[^=]*=/, ""); print; exit}
+        ' "$f")
+    fi
+    if [[ -z "$cmd" ]]; then
+        case "$cmd_key" in
+            claude) cmd="claude" ;;
+            codex)  cmd="codex" ;;
+            shell)  plain_shell=yes ;;
+        esac
+    fi
+fi
+user_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
+user_shell="${user_shell:-/bin/sh}"
+# tmux args after the session flags: nothing (default-command decides),
+# an explicit plain login shell, or the mapped command via login+
+# interactive shell (-l loads profile/PATH, -i loads rc functions like
+# wizard's claude wrapper). When the command exits the session closes.
+tmux_cmd=()
+if [[ "$plain_shell" == yes ]]; then
+    tmux_cmd=("$user_shell" -l)
+elif [[ -n "$cmd" ]]; then
+    tmux_cmd=("$user_shell" -lic "$cmd")
+fi
+
 uid="$(id -u)"
 export XDG_RUNTIME_DIR="/run/user/$uid"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
@@ -34,10 +79,10 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
 # attach so a connection never fails outright.
 scope_ok=no
 if systemctl --user show-environment >/dev/null 2>&1; then scope_ok=yes; fi
-logger -t tmux-user-attach "user=$(id -un) name='$name' dir='$start_dir' scope=$scope_ok"
+logger -t tmux-user-attach "user=$(id -un) name='$name' dir='$start_dir' cmd='${cmd_key:-<none>}' scope=$scope_ok"
 if [[ "$scope_ok" == yes ]]; then
     exec systemd-run --user --scope --quiet --collect \
-        tmux new-session -A -s "$name" -c "$start_dir"
+        tmux new-session -A -s "$name" -c "$start_dir" "${tmux_cmd[@]}"
 fi
 
-exec tmux new-session -A -s "$name" -c "$start_dir"
+exec tmux new-session -A -s "$name" -c "$start_dir" "${tmux_cmd[@]}"

@@ -3018,3 +3018,36 @@ necessarily a stop-the-line (the acceptable-worst-case items say so).
 - Primary line fits without horizontal scroll on the real 390-class
   and 375-class devices (binding at 390; ≤360 gracefully fades+scrolls
   with ⋯/⌄ pinned).
+
+## [cmd] New-session command dropdown (2026-07-13)
+
+What a NEW session runs, chosen at create time. Chain: lobby `#new-cmd`
+select (roamed `session.newCommand`, whitelist default|claude|codex|shell)
+→ `frameArgs()` appends a SECOND `?arg=<key>` (omitted for 'default') →
+terminal page re-validates (`CMD_KEY_RE`) and forwards it on the WS URL →
+ttyd `-a` hands it to tmux-attach.sh as `$2` (regex-gated) → passed as `$3`
+to tmux-user-attach, which maps key→command AS THE TARGET USER:
+`~/.config/terminal-lobby/commands` (`key=command line`, wins) else
+builtins — claude/codex via `"$user_shell" -lic '<cmd>'` (rc functions and
+PATH behave like typing it), shell via an explicit `"$user_shell" -l`
+(bypasses tmux default-command, e.g. emo's auto-claude launcher). Empty /
+invalid / 'default' → no explicit command (pre-feature behavior). tmux
+`new-session -A` ignores the command for EXISTING sessions — the key only
+matters at create/resurrect.
+
+- [cmd.1] Lobby: `#new-cmd` renders in `.new-row` with the 4 options,
+  reflects `session.newCommand`, change writes the pref (PUT roamed doc)
+  and `tl-prefs-change` re-syncs it (roam from another device).
+- [cmd.2] URL: with the pref at 'codex', activating a session yields an
+  iframe URL `/?arg=<name>&arg=codex`; at 'default' exactly ONE arg. The
+  terminal page's `validCmdKey` accepts only the whitelist regex; the WS
+  URL carries the same second arg.
+- [cmd.3] Chain smoke (live, as the OS user): `tmux-attach.sh <name> shell`
+  under a real tty creates the session with
+  `#{pane_start_command}` = `<user_shell> -l` (explicit, default-command
+  bypassed); no key → empty pane_start_command (default behavior). Clean
+  up the scratch session after.
+- [cmd.4] Injection guard: a second arg outside `^[a-z0-9_-]{1,16}$`
+  (e.g. `;id`, `$(id)`, spaces) is dropped at BOTH the frontend re-parse
+  and tmux-attach.sh — session comes up with default behavior, never a
+  shell word. (The key is never executed; only mapped.)
