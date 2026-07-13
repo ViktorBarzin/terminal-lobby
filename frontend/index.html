@@ -2140,12 +2140,17 @@
                 // still REGISTERS only on Android coarse-pointer UAs (iOS:
                 // the OS owns the whole 3-finger vocabulary while a text
                 // input is focused — analysis exclusion #1); twoFingerTap
-                // registers on any coarse pointer. toolbarHidden is roamed
-                // STATE, not an option: the 2-finger tap toggle persists it
-                // so the reclaimed ~50px survives reloads.
+                // registers on any coarse pointer. toolbarHidden WAS roamed
+                // STATE here but is now RETIRED (burned key, same discipline
+                // as swipeSession above): roaming it let an accidental tap on
+                // one device hide the soft-key row on ALL devices, and the
+                // receiver got no restore hint. The hidden-state moved
+                // DEVICE-LOCAL to tl:input.toolbarHidden:v1 — this roamed key
+                // is ignored on read here and dropped from the next whole-doc
+                // write. twoFingerTap STAYS roamed (a genuine per-account
+                // gesture enable/disable, not device state).
                 swipeSessionOptIn: false, // Task M.6 + complaint 1: 3-finger swipe cycles sessions — OPT-IN
                 twoFingerTap: true,   // Task M.6: 2-finger tap toggles the soft-key toolbar
-                toolbarHidden: false, // Task M.6: soft-key toolbar currently hidden
                 haptics: true         // Task M.7: vibration cues (Android-only API)
             }),
             // Task IR.2: input.* — the mirror input bar (coarse
@@ -2223,7 +2228,6 @@
                 bottomSheet: v => typeof v === 'boolean',
                 swipeSessionOptIn: v => typeof v === 'boolean',
                 twoFingerTap: v => typeof v === 'boolean',
-                toolbarHidden: v => typeof v === 'boolean',
                 haptics: v => typeof v === 'boolean'
             },
             input: {
@@ -2459,6 +2463,25 @@
         function inputBarHiddenHere() {
             try { return localStorage.getItem(INPUT_BAR_HIDDEN_KEY) === '1'; } catch (e) { return false; }
         }
+        // Toolbar-fix: the 2-finger-tap soft-key-row hidden-state, RE-KEYED
+        // from the roamed gestures.toolbarHidden (burned above) to a
+        // DEVICE-LOCAL override — the tl:input.barHidden:v1 posture. Roaming
+        // it let an accidental tap on one device hide the key row on ALL of
+        // them, with no restore hint on the receiver. '1' = row hidden on
+        // THIS device; '0'/absent/garbage = shown (never a crash). Written by
+        // the 2-finger tap (terminal iframe) and the 'Show key row' settings
+        // row (lobby); those live in different browsing contexts, so a lobby
+        // write reaches the iframe as a storage event (the master-kill
+        // channel — see the toolbar storage listener).
+        const TOOLBAR_HIDDEN_KEY = 'tl:input.toolbarHidden:v1';
+        function toolbarHiddenHere() {
+            try { return localStorage.getItem(TOOLBAR_HIDDEN_KEY) === '1'; } catch (e) { return false; }
+        }
+        // Toolbar-fix restore coach — DEVICE-LOCAL one-shot (tl-input-hint:v1
+        // precedent). Names the two-finger-tap way back at most once per
+        // device, fired by applyToolbarPrefs when a device BOOTS with the row
+        // hidden (a live in-session hide is covered by the gesture-time hint).
+        const TOOLBAR_HINT_KEY = 'tl-toolbar-hint:v1';
         // Chromium-family gate for the pinch recognizer + its settings row
         // (plan M.8: the consume-every-2f-move claim model is probed
         // against Chrome's cancelable-touchmove pipeline ONLY; WebKit and
@@ -5447,6 +5470,8 @@
                 if (sw) sw.checked = p.gestures.swipeSessionOptIn; // Android coarse row only (M.6)
                 const tf = settingsPanel.querySelector('#sp-twofinger');
                 if (tf) tf.checked = p.gestures.twoFingerTap;  // coarse-pointer row only (M.6)
+                const skr = settingsPanel.querySelector('#sp-showrow');
+                if (skr) skr.checked = !toolbarHiddenHere();   // coarse-pointer row only (toolbar-fix, device-local)
                 const hp = settingsPanel.querySelector('#sp-haptics');
                 if (hp) hp.checked = p.gestures.haptics;       // coarse row, vibrate-capable only (M.7)
                 const pf = settingsPanel.querySelector('#sp-pinch');
@@ -5922,9 +5947,11 @@
                     }
 
                     // Task M.6: 2-finger tap → hide/show the soft-key
-                    // toolbar (reclaims ~50px of terminal). Turning it OFF
-                    // also forces the toolbar visible — the hidden state is
-                    // only honored while its restore gesture exists.
+                    // toolbar (reclaims ~50px of terminal). Roamed enable/
+                    // disable of the GESTURE only (toolbar-fix): the hidden
+                    // STATE is now device-local, so turning the gesture off
+                    // no longer force-shows a hidden row — the 'Show key row'
+                    // row below is the restore path.
                     const tfRow = row('2-finger tap');
                     const tf = document.createElement('input');
                     tf.type = 'checkbox';
@@ -5934,6 +5961,30 @@
                     tf.addEventListener('change',
                         () => setPrefs({ gestures: { twoFingerTap: tf.checked } }));
                     tfRow.appendChild(tf);
+
+                    // Toolbar-fix: device-local visibility of the soft-key
+                    // toolbar — the always-available restore path that does
+                    // NOT require knowing the 2-finger tap (an accidental tap
+                    // that hides the row, or a device that booted hidden, is
+                    // recoverable here). Bound to tl:input.toolbarHidden:v1
+                    // (device-local, NOT roamed): checked = row shown on this
+                    // device. The write reaches the terminal iframe as a
+                    // storage event (applyToolbarPrefs reconciles); no roamed
+                    // pref is touched, so it never leaves this device.
+                    const skrRow = row('Show key row');
+                    const skr = document.createElement('input');
+                    skr.type = 'checkbox';
+                    skr.id = 'sp-showrow';
+                    skr.title = 'Show the key toolbar (Esc, arrows, Tab, …) ' +
+                        'on this device. A two-finger tap on the terminal ' +
+                        'toggles it too.';
+                    skr.addEventListener('change', () => {
+                        try {
+                            if (skr.checked) localStorage.removeItem(TOOLBAR_HIDDEN_KEY);
+                            else localStorage.setItem(TOOLBAR_HIDDEN_KEY, '1');
+                        } catch (e) {}
+                    });
+                    skrRow.appendChild(skr);
 
                     // Task M.7: haptic cues — rendered ONLY where the
                     // vibration API exists (Android/Chromium; iOS ships
@@ -8556,13 +8607,17 @@
             };
 
             // ---- Task M.6: 2-finger tap → toolbar toggle ----------------
-            // Reclaims the toolbar's ~50px for the terminal. Persisted as
-            // roamed STATE (gestures.toolbarHidden) — but honored only
-            // while its restore gesture exists (master kill on and
-            // gestures.twoFingerTap true): a roamed hidden toolbar must
-            // never strand a device that cannot two-finger-tap it back.
+            // Reclaims the toolbar's ~50px for the terminal. Persisted
+            // DEVICE-LOCAL (tl:input.toolbarHidden:v1, toolbar-fix): the
+            // hidden-state was roamed (gestures.toolbarHidden) until an
+            // accidental tap on one device stranded the soft-key row hidden
+            // on ALL of them with no restore hint — re-keyed device-local so
+            // a hide never leaves its own device. The device-local master
+            // kill still reverts to plain chrome; the 'Show key row' settings
+            // row is the always-available restore path.
             let toolbarHidden = false;
-            let toolbarHintShown = false;   // one hint per page-life
+            let toolbarHintShown = false;   // one restore-hint per page-life (gesture hide + boot hint share it)
+            let toolbarBootApplied = false; // first applyToolbarPrefs = boot; gates the boot restore-hint
             function setToolbarHidden(hidden, persist) {
                 toolbarHidden = hidden;
                 // Inline display beats the @media(pointer:coarse) flex;
@@ -8572,13 +8627,46 @@
                 document.body.classList.toggle('has-soft-keys', !hidden);
                 syncViewport();
                 refit();
-                if (persist) setPrefs({ gestures: { toolbarHidden: hidden } });
+                if (persist) {
+                    try {
+                        if (hidden) localStorage.setItem(TOOLBAR_HIDDEN_KEY, '1');
+                        else localStorage.removeItem(TOOLBAR_HIDDEN_KEY);
+                    } catch (e) {}
+                }
             }
             applyToolbarPrefs = function () {
-                const p = getPrefs();
-                const wantHidden = p.gestures.toolbarHidden &&
-                    gesturesEnabled() && p.gestures.twoFingerTap;
+                // Device-local hidden-state (toolbar-fix) — no longer gated
+                // by the ROAMED gestures.twoFingerTap. That coupling WAS the
+                // bug class: a roamed flag flipped on one device could
+                // force-show the row on every device. The device-local
+                // master kill still reverts to plain chrome, and the 'Show
+                // key row' settings row is the always-available restore path,
+                // so a hidden row can never strand this device.
+                const wantHidden = toolbarHiddenHere() && gesturesEnabled();
                 if (wantHidden !== toolbarHidden) setToolbarHidden(wantHidden, false);
+                // Boot restore-coach — ONCE, on the FIRST application (boot):
+                // if this device BOOTS with the row hidden, name the
+                // two-finger-tap way back. Persistent one-shot per device
+                // (tl-input-hint precedent) and only while that gesture is
+                // enabled (else the hint would lie — the settings row is the
+                // way back there). A live settings/gesture hide is NOT
+                // coached here (the gesture hide has its own page-life hint;
+                // the settings row is self-evident), which is why the check
+                // is boot-scoped. Shares toolbarHintShown so a session toasts
+                // the restore hint at most once.
+                if (!toolbarBootApplied) {
+                    toolbarBootApplied = true;
+                    if (wantHidden && !toolbarHintShown &&
+                            getPrefs().gestures.twoFingerTap) {
+                        let seen = null;
+                        try { seen = localStorage.getItem(TOOLBAR_HINT_KEY); } catch (e) {}
+                        if (seen === null) {
+                            toolbarHintShown = true;
+                            try { localStorage.setItem(TOOLBAR_HINT_KEY, '1'); } catch (e) {}
+                            showToast('Two-finger tap to restore keys', 'info', 2500);
+                        }
+                    }
+                }
             };
             // Boot application arrives via applyTermPrefs' one-shot
             // reconciliation below — NOT an eager call here: refit() reads
@@ -8589,9 +8677,12 @@
             // so a persisted hidden state still applies before first paint.
             // The master kill is a plain localStorage key with no
             // postMessage channel — a flip from the lobby (another window)
-            // arrives as a storage event; reconcile visibility then.
+            // arrives as a storage event; reconcile visibility then. Same for
+            // TOOLBAR_HIDDEN_KEY: the 'Show key row' settings row lives in the
+            // LOBBY (another browsing context), so its device-local write
+            // reaches this iframe only as a storage event (toolbar-fix).
             window.addEventListener('storage', (e) => {
-                if (e.key === GESTURES_KILL_KEY) applyToolbarPrefs();
+                if (e.key === GESTURES_KILL_KEY || e.key === TOOLBAR_HIDDEN_KEY) applyToolbarPrefs();
             });
 
             // Recognizer: 2 fingers down+up within 220ms, per-finger travel
@@ -9699,9 +9790,9 @@
                 maskFitBurst();   // Task M.8: dim the container through the metric swap
                 try { fitAddon.fit(); } catch (e) { console.warn('prefs fit failed:', e); }
             }
-            // Task M.6: toolbar visibility rides the same prefs plumbing
-            // (gestures.toolbarHidden / gestures.twoFingerTap) — a no-op
-            // stub on fine pointers.
+            // Task M.6: toolbar visibility — device-local
+            // tl:input.toolbarHidden:v1 (toolbar-fix; formerly the roamed
+            // gestures.toolbarHidden) — a no-op stub on fine pointers.
             applyToolbarPrefs();
             // Task M.10/IR.2: input bar rides it too (input.bar × the
             // device-local ⌨ override) — a no-op stub on fine pointers.
