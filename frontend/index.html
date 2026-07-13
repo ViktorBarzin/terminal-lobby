@@ -29,8 +29,8 @@
          the npm-published files are immutable for a pinned version. Hashes
          computed fresh at implementation time:
          curl -s <url> | openssl dgst -sha384 -binary | base64 -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css"
-          integrity="sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP"
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css"
+          integrity="sha384-n2n7twoohnW+d3myBKaUgl7DSiwidw6MkQy9oesGzkPpMjejKRR3XlnD+5yCdtBD"
           crossorigin="anonymous">
     <style>
         /* JetBrains Mono 2.304 (OFL-1.1) — vendored in frontend/fonts/, served
@@ -502,7 +502,7 @@
             transition: opacity 80ms linear;
         }
         /* Window padding (Task 1.9): 8×10px grid inset. The .xterm element
-           is the ONE padding location addon-fit@0.10.0 actually subtracts
+           is the ONE padding location addon-fit@0.11.0 actually subtracts
            when proposing cols/rows (it reads the parent's size and THIS
            element's padding — verified against the pinned addon source), so
            the grid shrinks to fit instead of clipping. The theme-colored
@@ -1314,7 +1314,8 @@
            flips that scrollbar to custom rendering, which can change the
            width xterm measured at open() — grid geometry is a red line.
            (xterm gets themed slider COLORS via readTerminalTheme() instead —
-           inert on 5.5.0, live after the deferred 6.x upgrade.) */
+           live since the 6.0 upgrade, which routes them into the VS Code-
+           derived .xterm-scrollable-element overlay scrollbar.) */
         #lobby-sidebar::-webkit-scrollbar,
         #lobby.access-denied::-webkit-scrollbar,
         #img-gallery .gallery-grid::-webkit-scrollbar,
@@ -1957,26 +1958,26 @@
          .min files are re-minified over time and explicitly SRI-unsafe;
          a drifted hash would brick the page for every user). Hashes
          computed fresh at implementation time from each exact URL. -->
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"
-            integrity="sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/"
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js"
+            integrity="sha384-f/1U6Z9wM4D71a5eRXEZnyOTMOvjqxr2XLwh+Go1OvIl3L3tOcvUrzudnhbECwl4"
             crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"
-            integrity="sha384-iF+jqbuti4XlB64clWgFWYEscb+UnSRv3VgVikGYZu+otNFnSHr7y7NcKfBnGizn"
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.js"
+            integrity="sha384-txoiwu4RR2GD3qySbaj+BbzibkLbSJRcfqGYMu6z1EqHil4A2dyBiBW5dlacG6OR"
             crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"
-            integrity="sha384-Zb/L38m4THfRbsxxv8gWAi8cQ6xcWQnv0BgR0qwbTDwtBDaPi6pkyfgfBIH6C8ZG"
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.12.0/lib/addon-web-links.js"
+            integrity="sha384-0IIwkXq0LAkIxEVKxlOxWbje2g/VT+5CzVTZiEukyiZ02pOl/O+M0fkpEKAYqto9"
             crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.js"
-            integrity="sha384-AkzdQDeATxpW8V7I2EPcwg17qAoLQMjEFHb//1QaAAIyIlbDAHGKno5+huH7RKxq"
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.19.0/lib/addon-webgl.js"
+            integrity="sha384-8/2DNT7OeuMQVc7wBPoMHAQ+NmEoYSx27k7IdbsItiomGC5D9+LTrbo8jtY6YZv8"
             crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.1.0/lib/addon-clipboard.js"
-            integrity="sha384-u4EBOaE07GHmKsUXC4q1Q+tB3DztCkgpT0AzFavi1gCO/qQryHvcVVI05jk/B8hG"
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.2.0/lib/addon-clipboard.js"
+            integrity="sha384-w58/aoMoWyj3vL47sXkN/bnchsdCAHHUQslw59i9Ei276OIuUCZgAO5y07Db60Bg"
             crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-image@0.9.0/lib/addon-image.js"
             integrity="sha384-A0PSF1Lj/V7OlfamYmcJj3t0ncwvdrr98hHE84Byzdlov+oKltItc43WKEcQZUb5"
             crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js"
-            integrity="sha384-7DkEj65mwuJpyTemyRshYB1TDCUcpXHiCcSt0agkXn8Zz8nOqajgB6EoeULHiS1O"
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.9.0/lib/addon-unicode11.js"
+            integrity="sha384-s7G1tpQVHxwemnFdH7ZEOPEAMxRSbFGsvrhaHpxYuMssFdike2DQuIBzg43+p5/3"
             crossorigin="anonymous"></script>
     <script>
     (async function() {
@@ -2048,12 +2049,13 @@
                 brightMagenta: v('--terminal-ansi-bright-magenta') || '#e5cbff',
                 brightCyan: v('--terminal-ansi-bright-cyan') || '#a7f4f7',
                 brightWhite: v('--terminal-ansi-bright-white') || '#f4f7fc',
-                // Scrollbar slider colors (Task 1.10). INERT on the pinned
-                // xterm 5.5.0 — its ITheme has no scrollbarSlider* keys
-                // (verified against the published typings); unknown keys are
-                // simply never read. The names match the 6.x ITheme exactly,
-                // so the deferred xterm-6 upgrade gets themed scrollbars for
-                // free. Values track the lobby scrollbar tokens.
+                // Scrollbar slider colors (Task 1.10). LIVE since the xterm
+                // 6.0 upgrade — 6.x's ITheme defines these scrollbarSlider*
+                // keys and 6.0's VS Code-derived overlay scrollbar
+                // (.xterm-scrollable-element) paints itself from them. (On
+                // 5.5.0 they were inert: the old ITheme lacked the keys and
+                // unknown keys were simply never read.) Values track the
+                // lobby scrollbar tokens.
                 scrollbarSliderBackground:
                     v('--scrollbar-thumb') || 'rgba(255,255,255,0.1)',
                 scrollbarSliderHoverBackground:
@@ -6669,8 +6671,9 @@
         // started on, exactly the addon's semantics); the selection/copy
         // machinery is untouched (red line).
 
-        // Verbatim from @xterm/addon-web-links 0.11.0 (MIT, (c) 2019 The
-        // xterm.js authors) — regex and URL gate must stay byte-identical
+        // Verbatim from @xterm/addon-web-links 0.12.0 (MIT, (c) 2019 The
+        // xterm.js authors; regex unchanged from 0.11.0, re-verified byte-
+        // identical at the 6.0 bump) — regex and URL gate must stay byte-identical
         // so detection semantics never drift from stock.
         const TL_URL_REGEX = /(https?|HTTPS?):[/]{2}[^\s"'!*(){}|\\\^<>`]*[^\s"':,.!?{}|\\\^~\[\]`()<>]/;
         function tlIsUrl(urlString) {
@@ -7011,10 +7014,12 @@
         }
 
         // OSC 52 clipboard: lets tmux's own copy (with `set-clipboard on`) and
-        // any program write straight to the OS clipboard. NOTE: this addon's
-        // UMD build exposes the class as the global `ClipboardAddon` directly,
-        // NOT `ClipboardAddon.ClipboardAddon` like fit/webgl — accept both
-        // shapes. Wrapped so a load hiccup can't break the terminal.
+        // any program write straight to the OS clipboard. NOTE on UMD shape:
+        // addon-clipboard@0.2.0 normalized its export to the namespaced
+        // `ClipboardAddon.ClipboardAddon` form (fit/webgl style); the old
+        // 0.1.0 build exposed the class as the global `ClipboardAddon`
+        // directly. Accept BOTH shapes so the accessor is version-proof.
+        // Wrapped so a load hiccup can't break the terminal.
         try {
             const ClipAddon = (typeof ClipboardAddon !== 'undefined')
                 && (ClipboardAddon.ClipboardAddon || ClipboardAddon);
@@ -8392,7 +8397,7 @@
                 }
                 return p;
             }
-            // Every mirror byte leaves through term.input() (xterm 5.5.0
+            // Every mirror byte leaves through term.input() (xterm 6.0.0
             // public API): onData → soft-mod wrapper → sendInput → ws —
             // the EXISTING socket path, nothing new. mirrorEmitting marks
             // our own traffic so the onData out-of-band reset hook
