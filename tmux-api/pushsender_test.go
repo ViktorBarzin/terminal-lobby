@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -384,75 +383,60 @@ func TestPushSenderLogsAcceptedSends(t *testing.T) {
 	}
 }
 
-// --- Web Push HTTP client: force IPv4 (devvm v6→Apple blackhole, 2026-07-12) ---
+// --- Web Push HTTP client: dual-stack (site v6 path fixed 2026-07-13) ---
 //
-// The devvm's IPv6 route to Apple's push range (2620:149::/32) completes the TCP
-// handshake then blackholes — no response headers ever arrive — so a v6 send
-// hangs until the client timeout and the iPhone never gets the push (v4 answers
-// in ~165ms). The push HTTP client forces every connection over IPv4; these pin
-// that behaviour so a regression can't silently route pushes back over v6.
+// History: the site's IPv6 path to Apple's push range (2620:149::/32) used to
+// blackhole after the TCP handshake (HE tunnel MTU 1280, LAN RA advertising
+// 1500, Apple's LBs ignoring Packet-Too-Big), so the client forced tcp4 as a
+// service-level workaround (2026-07-12). The root cause is fixed at the router
+// (pfSense MSS clamping 1280 on the HE_IPv6 gif interface, 2026-07-13), the
+// workaround is removed, and these pin the restored dual-stack behaviour: the
+// transport must dial whatever network it is asked for, both families.
 
-// forceTCP4 must substitute network "tcp4" for whatever network the transport
-// requests, so no push send is ever attempted over IPv6. Spy on the wrapped
-// dialer to read back the network it is actually handed.
-func TestForceTCP4OverridesRequestedNetwork(t *testing.T) {
-	errSpy := errors.New("spy dial reached")
-	for _, requested := range []string{"tcp", "tcp4", "tcp6"} {
-		var got string
-		spy := func(_ context.Context, network, _ string) (net.Conn, error) {
-			got = network
-			return nil, errSpy
-		}
-		_, err := forceTCP4(spy)(context.Background(), requested, "web.push.apple.com:443")
-		if !errors.Is(err, errSpy) {
-			t.Fatalf("requested %q: inner dialer was not called (err=%v)", requested, err)
-		}
-		if got != "tcp4" {
-			t.Fatalf("requested %q: inner dialer got network %q, want tcp4", requested, got)
-		}
-	}
-}
-
-// dialForcesTCP4 proves client's transport overrides the requested network to
-// tcp4: it asks the transport to dial an IPv4-only listener over "tcp6" and
-// requires the connection to succeed. An un-forced dial would try to resolve
-// the v4 literal 127.0.0.1 as IPv6 and fail, so a successful connect is only
-// possible if "tcp6" was rewritten to "tcp4" — the exact override the fix
-// installs, checked on the real transport the client uses.
-func dialForcesTCP4(t *testing.T, client *http.Client) {
+// dialHonorsRequestedNetwork proves the client's transport does NOT rewrite the
+// requested network family: it must reach an IPv6-only loopback listener over
+// "tcp6" (impossible if tcp6 were still rewritten to tcp4 — [::1] does not
+// resolve as IPv4) and an IPv4-only listener over "tcp4".
+func dialHonorsRequestedNetwork(t *testing.T, client *http.Client) {
 	t.Helper()
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen tcp4: %v", err)
-	}
-	defer ln.Close()
 	tr, ok := client.Transport.(*http.Transport)
 	if !ok || tr.DialContext == nil {
-		t.Fatalf("transport = %T with no DialContext; want the tcp4-forcing transport", client.Transport)
+		t.Fatalf("transport = %T with no DialContext; want the cloned default transport with a bounded dialer", client.Transport)
 	}
-	conn, err := tr.DialContext(context.Background(), "tcp6", ln.Addr().String())
-	if err != nil {
-		t.Fatalf("dial of IPv4 listener %s over requested tcp6 failed — network not forced to tcp4: %v", ln.Addr(), err)
+	for _, tc := range []struct{ network, addr string }{
+		{"tcp6", "[::1]:0"},
+		{"tcp4", "127.0.0.1:0"},
+	} {
+		ln, err := net.Listen(tc.network, tc.addr)
+		if err != nil {
+			t.Fatalf("listen %s: %v", tc.network, err)
+		}
+		conn, err := tr.DialContext(context.Background(), tc.network, ln.Addr().String())
+		if err != nil {
+			ln.Close()
+			t.Fatalf("dial %s listener %s failed — network family not honored: %v", tc.network, ln.Addr(), err)
+		}
+		_ = conn.Close()
+		ln.Close()
 	}
-	_ = conn.Close()
 }
 
-// The shared push client bounds a whole send at pushClientTimeout and forces
-// IPv4 on the transport that every SendNotification goes through.
-func TestNewPushHTTPClientForcesIPv4AndTimeout(t *testing.T) {
+// The shared push client bounds a whole send at pushClientTimeout and dials
+// dual-stack on the transport that every SendNotification goes through.
+func TestNewPushHTTPClientDualStackAndTimeout(t *testing.T) {
 	client := newPushHTTPClient()
 	if client.Timeout != pushClientTimeout {
 		t.Fatalf("client.Timeout = %s, want %s", client.Timeout, pushClientTimeout)
 	}
-	dialForcesTCP4(t, client)
+	dialHonorsRequestedNetwork(t, client)
 }
 
 // Both send paths — the background loop (tick→notify→send) and the on-demand
 // /push/test (handlePushTest→sender.send) — funnel through pushSender.send,
 // the single webpush.SendNotification call site, which uses p.client. So the
-// sender's client MUST be the shared IPv4-forcing client, not a default that
-// would let a send escape over the blackholed v6 path.
-func TestPushSenderUsesSharedIPv4Client(t *testing.T) {
+// sender's client MUST be the shared bounded-timeout client, not a bare
+// default that would let a send hang unbounded.
+func TestPushSenderUsesSharedClient(t *testing.T) {
 	sender := newPushSender(newPushStore(t.TempDir()), nil, nil, testVAPID(t))
 	hc, ok := sender.client.(*http.Client)
 	if !ok {
@@ -461,5 +445,5 @@ func TestPushSenderUsesSharedIPv4Client(t *testing.T) {
 	if hc.Timeout != pushClientTimeout {
 		t.Fatalf("sender.client.Timeout = %s, want %s", hc.Timeout, pushClientTimeout)
 	}
-	dialForcesTCP4(t, hc)
+	dialHonorsRequestedNetwork(t, hc)
 }
