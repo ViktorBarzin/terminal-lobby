@@ -2951,6 +2951,12 @@ contract below still holds). Verified against the harness (build stamped)
   A.5 tap-vs-swipe + `--kb-offset`, A.6 bracketed paste — ALL green.
   flowprobe PAUSE honored + throughput nominal; gestures.py 2-point +
   1-finger + long-press inject cleanly under 6.0.
+- [xterm6] POST-MERGE with pinch-to-font default-ON (master d1a8cbb,
+  merged 4ef049e): §A red-line re-run green on the integrated build, and
+  pinch-to-font works under 6.0 — a pinch raises/lowers
+  `term.options.fontSize` (15→22 zoom-in, →12 zoom-out) with a clean 6.0
+  re-render (cols/rows recompute), zero page errors, and the pty still
+  echoes after the font churn.
 
 ## DEVICE-MANUAL — consolidated standing real-phone checklist (input rework)
 
