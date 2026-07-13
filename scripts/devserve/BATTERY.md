@@ -335,9 +335,13 @@ implements the feature. Format:
   tracks via the storage event). No iframe reload either way
   (`__tlMark` survives).
 - [Task 1.8] Clamp: hold `A−` down to the floor → `fontSize` stops at
-  **10**; hold `A+` to the ceiling → stops at **22**; localStorage
-  `tl-font-size` never leaves [10, 22]; garbage in the key (e.g.
-  `"huge"`) → next boot falls back to 15, no crash.
+  **6** (floor lowered from 10 on 2026-07-13 — Viktor wants sub-10px
+  zoom-outs; ~7px reaches 80 cols PORTRAIT on a 390px phone); hold `A+`
+  to the ceiling → stops at **22**; localStorage `tl-font-size` never
+  leaves [6, 22]; garbage in the key (e.g. `"huge"`) → next boot falls
+  back to 15, no crash. Roam note: a stale-build device validates
+  fontSize against ITS floor (10), so <10 shows as default-15 there
+  until it reloads — self-heals, no re-key needed.
 - [Task 1.8] Persistence: set size 18, reload the top-level page →
   the terminal boots at 18 (`window.__term.options.fontSize` → 18,
   constructor read — no postMessage involved) and the sidebar readout
@@ -1549,7 +1553,7 @@ implements the feature. Format:
   `gesturechange` `scale` 1.5 → `defaultPrevented === true`, fontSize
   steps UP (`trunc(0.5/0.07)=7` → clamps to 22 from 15), `#font-pill`
   `.visible` reads `Aa 22px`, each committed step ticks haptic `5` under
-  the M.7 spy; `scale` 0.5 → steps DOWN toward the 10 clamp; `gestureend`
+  the M.7 spy; `scale` 0.5 → steps DOWN (15→8, formula-exact — the floor is 6); `gestureend`
   → `#font-pill` gone ≈220ms later. GUARD sub-legs (each →
   `defaultPrevented === false`, no `gz`, fontSize unchanged): key ='off';
   `window.top.visualViewport.scale` faked >1.001 (already-zoomed — native
