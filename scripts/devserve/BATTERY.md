@@ -160,7 +160,8 @@ contract:
    since M.11 (tap FOCUS routes per `input.tapFocus` — pref re-keyed by
    IR.2, routing identical; tap byte semantics — no pty bytes, no
    scroll — identical in all three):
-   - **3a** bar hidden (`input.bar:'off'` seeded, or after ✎/⌄):
+   - **3a** bar hidden (`input.bar:'off'` seeded, or after ⌨ — since the
+     bar-trap fix the bar's own ⌄ dismisses the keyboard, it no longer hides):
      **Expect:** the terminal focuses (helper textarea → soft keyboard
      path) — verbatim the pre-M.11 leg.
    - **3b** bar visible + defaults (`bar:'auto'`, `tapFocus:'field'`):
@@ -2788,6 +2789,68 @@ captured, never forwarded) so the live roamed doc on :7684 is never touched.
   settings-row `const` collision would fail the whole-script parse — caught by
   the boot leg and fixed pre-commit).
 
+### [bar-trap] Bar's ⌄ = keyboard-dismiss only + ⌨-hide device one-shot hint + settings copy (compose-bar hide trap)
+
+The input bar's own ⌄ chevron WROTE `tl:input.barHidden:v1` and collapsed the
+whole bar — users tapped it expecting a keyboard-dismiss (the ⌄ glyph reads that
+way, and the toolbar's ⌄ dismiss key sits right beside it) and lost the bar with
+no on-screen way back; the restore paths (⌨ under ⋯, Settings → 'Input bar') were
+undiscoverable (Viktor: "the compose tab disappears and I can't find a way to
+re-enable it"). Same reversibility-trap class as [toolbar-fix] (a403b4a).
+DOM/UI-affordance-only fix — the input path (IR.1 mirror engine, `sendInput`,
+`onData`) and the tap-routing / `tapFocus` semantics are byte-untouched.
+
+1. **Bar ⌄ = dismiss only.** `#compose-hide`'s pointerdown now blurs the focused
+   input (`composeInput`/helper → soft keyboard drops) and leaves the bar
+   VISIBLE. It no longer calls `setInputBarHidden` / `setComposeVisible` /
+   `noteComposeCollapse`, so it never writes `tl:input.barHidden:v1`. aria-label
+   'Hide compose bar' → 'Dismiss keyboard'. Hiding the bar is now EXCLUSIVE to
+   the ⌨ soft key (`toggleInputBar`) and the settings 'Input bar' checkbox.
+2. **⌨-hide device one-shot hint.** `noteComposeCollapse` (reached only from the
+   ⌨ toggle now) fires 'Input bar hidden — tap ⌨ (under ⋯) to bring it back' at
+   most ONCE per device, gated by the new device-local marker `tl-bar-hint:v1`
+   (the `tl-toolbar-hint:v1` precedent) plus the page-life `composeReopenHintShown`
+   guard. Was a page-life-only '⌨ brings the input bar back' (2500ms → 3500ms).
+3. **Settings copy.** Row 'Input bar' → 'Input bar (compose field)'; the
+   `#sp-inputbar` tooltip now names 'the ⌨ soft key (under ⋯)'. The change
+   handler (clears `barHidden` + writes `input.bar` on/off) is byte-identical —
+   round-trip behavior unchanged by construction.
+
+**Default changes (disclosed):** the bar's ⌄ no longer hides the bar (it
+dismisses the keyboard); new device-local marker `tl-bar-hint:v1`; reopen-hint
+copy + duration changed. NO roamed-pref changes; NO input-path or tap-routing
+changes. **Supersedes** the [IR.2] DEVICE-OVERRIDE reopen-hint copy ('✎/⌨ brings
+the input bar back' → the device one-shot above) and the [IR.3] ⌨ TOGGLE leg
+(now ALSO toasts the one-shot on first hide).
+
+**Standing guard — §A.5 preserved by construction:** `git diff origin/master`
+touches none of the single-finger swipe→`WheelEvent` recognizer (`terminalEl`
+touchstart/move/end, `SWIPE_THRESHOLD` 6), the `tapFocus` arrow,
+`setComposeVisible`, or the `syncViewport` `--kb-offset` plumbing — verified
+re-run live below anyway.
+
+Harness: `dev-harness.py --scratch` (Chromium iPhone 390×844 `is_mobile`+
+`has_touch`, outer-page `#main`, terminal iframe found by content), scratch
+server `-L tl-dev` session `main`. All legs green **20/20 on 2026-07-13** (proxy
+7931 / ttyd 7930). No lobby sessions created; NO `/prefs` writes (settings
+verified by DOM read on the lobby panel).
+
+- [bar-trap] CHEVRON DISMISS: bar visible + `#compose-input` focused → tap
+  `#compose-hide` → activeElement LEAVES the field (→ BODY, keyboard drops),
+  `#compose-bar` KEEPS `.visible`, `tl:input.barHidden:v1` ABSENT, field value
+  unchanged. (The write that stranded the bar is gone.)
+- [bar-trap] ⌨ HIDE ONE-SHOT: markers cleared → ⋯ expands the overflow → tap ⌨ →
+  bar hidden + `tl:input.barHidden:v1`='1' + toast 'Input bar hidden — tap ⌨
+  (under ⋯) to bring it back' + `tl-bar-hint:v1`='1'; tap ⌨ → bar returns, key
+  cleared; tap ⌨ again → bar hides with NO second toast (device one-shot).
+- [bar-trap] SETTINGS COPY: coarse ⚙ panel (lobby) → `#sp-inputbar` row label ==
+  'Input bar (compose field)', tooltip contains 'the ⌨ soft key (under ⋯)'.
+- [bar-trap] RED LINE §A.5 (iPhone 390×844): 1-finger swipe (finger DOWN) →
+  synthetic wheel → tmux copy-mode with focus UNCHANGED (no keyboard summon,
+  field not focused); tap (bar visible, `tapFocus` field) → `#compose-input`
+  focus with ZERO pty bytes + no scroll; bar-hidden tap → raw keyboard (helper
+  textarea) focus; `--kb-offset` present. Boot with ZERO console/page errors.
+
 ## DEVICE-MANUAL — consolidated standing real-phone checklist (input rework)
 
 THE single list for Viktor's real-device pass (deploy heads-up item).
@@ -2832,6 +2895,10 @@ necessarily a stop-the-line (the acceptable-worst-case items say so).
   reappears ONCE after the deploy (retired key ignored); hide it via
   ⌨ or Settings → 'Input bar' → it stays hidden across reloads and
   roams.
+- The bar's own ⌄ DISMISSES THE KEYBOARD and keeps the bar visible — it
+  never hides the bar (bar-trap fix). Hiding is ⌨ (under ⋯) or Settings →
+  'Input bar (compose field)'; the first ⌨ hide toasts the way back
+  ('Input bar hidden — tap ⌨ (under ⋯) to bring it back') once per device.
 - Expanded-row (⋯) thumb pass: every second-tier key reachable
   one-handed, haptic tick per tap (Android), tap-commit — a swipe
   starting on a key commits nothing.
