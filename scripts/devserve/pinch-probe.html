@@ -3,9 +3,11 @@
   pinch-probe.html — STANDING MANUAL device probe (Task M.8).
 
   WHY THIS PAGE EXISTS
-  The terminal's pinch-to-font-size ships DEFAULT OFF (tl:gesture-pinch-font:v1)
-  because its claim model, while CDP-probe-verified under Pixel-7 emulation,
-  has two hardware-fragile legs that no emulated dispatch can settle:
+  The terminal's pinch-to-font-size now ships DEFAULT ON
+  (tl:gesture-pinch-font:v1; flipped 2026-07-13 — Viktor greenlit it). This
+  page stays as a HARDWARE-DEBUG harness for the CHROMIUM (Android)
+  touch-span recognizer, whose claim model has two hardware-fragile legs
+  that no emulated CDP dispatch can settle:
 
     1. CLAIM HOLD — consuming EVERY 2-finger touchmove from move 1 must keep
        the whole stream cancelable for the full gesture on real hardware
@@ -14,14 +16,20 @@
        2-finger pan), native pan/zoom must actually RESUME mid-gesture on the
        device, not leave a dead sequence.
 
-  Flipping the default to ON needs Viktor's run of this page on real Android
-  hardware (the devvm has no adb): walk every leg below in portrait AND
-  landscape, in a Chrome tab and (optionally) the installed PWA. Any leg
-  failing → the default stays OFF; record the result in the analysis doc
+  If a real-device regression is suspected, walk every leg below on real
+  Android hardware (the devvm has no adb) in portrait AND landscape, in a
+  Chrome tab and the installed PWA; record findings in the analysis doc
   (docs/plans/2026-07-11-t3-ux-parity-analysis.md).
 
-  The model here is a byte-faithful standalone copy of the recognizer in
-  frontend/index.html (Task M.8): standing PASSIVE touchstart/touchend/
+  NOTE — iOS/iPadOS is NOT this page's model. The production WebKit
+  front-end drives font sizing off the proprietary GestureEvent
+  (gesturestart/gesturechange/gestureend, e.scale), NOT the touch-span
+  claim modelled here; validate iOS directly on the real terminal surface
+  (pinch over the terminal steps the font; pinch while the page is already
+  zoomed still un-zooms natively).
+
+  The model here is a byte-faithful standalone copy of the CHROMIUM
+  touch-span recognizer in frontend/index.html (Task M.8): standing PASSIVE touchstart/touchend/
   touchcancel; a {capture:true,passive:false} document touchmove LAZILY
   attached at the 2nd touch and detached at the last touchend/touchcancel;
   consume every 2-finger move from move 1; classify at move 3
