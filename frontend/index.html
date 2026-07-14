@@ -4778,17 +4778,28 @@
                 const prev = prevStates;
                 prevStates = new Map(sessions.map(s => [s.name, s.state || '']));
                 if (!prev) return;   // first poll after load seeds quietly
-                // Gate on away() (hidden OR unfocused), not just hidden — a
-                // visible-but-unfocused window (another app on top, a
-                // second monitor) should still notify.
+                // Opt-in + permission gate only — away() moved PER-SESSION
+                // below: while the tab is focused, sessions you are NOT
+                // viewing still notify (Viktor: orchestrating in the lobby,
+                // sessions finish, "i get the in-app notification but
+                // nothing on the desktop" — the old blanket !away() return
+                // suppressed every OS notification while focused). The
+                // ACTIVE session stays quiet when focused (you are looking
+                // at it); the shared tl-<session> tag still coalesces with
+                // any background push, so nothing double-alerts.
                 if (!notifyOptedIn() || typeof Notification === 'undefined' ||
-                    Notification.permission !== 'granted' || !away()) return;
+                    Notification.permission !== 'granted') return;
                 // Per-user roamed gate (mirrors the server's parseNotifyPrefs):
                 // onAwaiting/onDone default true, so an untouched doc notifies
                 // on both — the bell opt-in + permission above still gate on top.
                 const np = getPrefs().notify;
                 for (const s of sessions) {
                     const was = prev.get(s.name);
+                    // Focused + this is the session on screen → the user is
+                    // watching it happen; no OS notification. Everything
+                    // else (hidden, unfocused, or a background session while
+                    // focused) notifies.
+                    if (!away() && typeof currentActive !== 'undefined' && s.name === currentActive) continue;
                     if (s.state === 'awaiting' && was !== 'awaiting') {
                         // Seeding fix (Item 4): a session first seen (absent
                         // from prev) that is ALREADY awaiting counts as a
@@ -4881,6 +4892,17 @@
                 });
             }
             paintNotifyToggle();
+            // Self-heal the BACKGROUND push subscription on every load (the
+            // desktop-silent finding): subscribePush is idempotent
+            // (getSubscription reuses, PUT upserts by endpoint), but it used
+            // to run ONLY on bell-click — a lapsed/rotated desktop endpoint
+            // stayed dead forever while the server kept 201-ing into the
+            // void. One best-effort refresh per load keeps this device''s
+            // endpoint current whenever the bell is on + permission granted.
+            if (notifyOptedIn() && typeof Notification !== 'undefined' &&
+                Notification.permission === 'granted') {
+                try { subscribePush(); } catch (e) {}
+            }
 
             // Item 2: header ⟳ — a plain reload, mirrored by the settings
             // panel "Reload app" row. Handy in the installed PWA, where
