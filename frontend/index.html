@@ -1881,6 +1881,11 @@
         #compose-bar {
             display: none;
             position: fixed;
+            /* Icon fix: the bar itself never set a family, so text
+               rendered directly in it computed to the UA SERIF default
+               (Times New Roman) — real defect independent of the svg
+               swap; the input/button rules below still override. */
+            font-family: var(--font-ui);
             left: 0; right: 0;
             bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom)
                          + var(--sk-h, 0px));
@@ -3352,14 +3357,16 @@
                     copy.type = 'button';
                     copy.className = 't-copy';
                     copy.title = 'Copy message';
-                    copy.textContent = '⧉';
+                    copy.replaceChildren(iconNode('copy', 14));
                     copy.addEventListener('click', () => {
                         (navigator.clipboard
                             ? navigator.clipboard.writeText(desc)
                             : Promise.reject()
                         ).then(() => {
-                            copy.textContent = '✓';
-                            setTimeout(() => { copy.textContent = '⧉'; }, 1200);
+                            copy.replaceChildren(iconNode('check', 14));
+                            setTimeout(() => {
+                                copy.replaceChildren(iconNode('copy', 14));
+                            }, 1200);
                         }).catch(() => {});
                     });
                     t.el.appendChild(copy);
@@ -7352,7 +7359,10 @@
                 el = document.createElement('button');
                 el.type = 'button';
                 el.id = 'link-chip';
-                el.textContent = '⧉ Copy link';
+                // Icon fix: ⧉ (U+29C9) was the set's highest tofu risk —
+                // a rare math glyph no bundled font covers.
+                el.replaceChildren(iconNode('copy', 14),
+                    document.createTextNode(' Copy link'));
                 el.hidden = true;
                 // Keep xterm focused: swallow the focus-stealing mousedown
                 // but let the click through (same trick as #img-preview).
@@ -8894,7 +8904,7 @@
             const composeHide = document.createElement('button');
             composeHide.type = 'button';
             composeHide.id = 'compose-hide';
-            composeHide.textContent = '⌄';
+            composeHide.replaceChildren(iconNode('chevron-down', 16));
             composeHide.setAttribute('aria-label', 'Dismiss keyboard');
             composeBar.appendChild(composeInput);
             composeBar.appendChild(composeHide);
