@@ -3321,3 +3321,14 @@ fontSize 15.
   (.current). Hides on mouseleave/focusout/Escape. Colors re-read at show
   time (theme flips honored). Coarse/touch devices: legend never wires and
   native title attributes are KEPT. Zero page errors.
+
+- [notify] Desktop notification matrix (2026-07-14 fix; drive with
+  scratchpad verify_notif_fix.py pattern — spied Notification +
+  showNotification + PushManager, route-fed sessions, zero live writes):
+  focused + ACTIVE session running→done → 0 OS notifications (you are
+  watching it); focused + NON-active session → 1 (the fix: background
+  sessions announce during orchestration); hidden → 1; visible-unfocused
+  → 1. The tl-<session> tag still coalesces with background push (no
+  doubles). subscribePush now self-heals ON LOAD when bell+permission are
+  on (getSubscription+subscribe attempts observed at boot) — a lapsed
+  desktop endpoint refreshes every session instead of dying silently.
