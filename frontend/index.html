@@ -3271,7 +3271,17 @@
         // the stack viewport (see the CSS block).
         const tlToast = (() => {
             const stack = document.getElementById('toast');
-            const ICONS = { error: '✕', warning: '⚠', success: '✓', info: 'ℹ', loading: '' };
+            // Icon fix: node FACTORIES, not glyph strings — ⚠/ℹ are
+            // emoji-capable (render as color emoji on iOS/Android) and
+            // ✕/✓ fell to fallback fonts. loading stays null: that card
+            // draws the CSS ring spinner, no glyph.
+            const ICONS = {
+                error:   () => iconNode('x', 16),
+                warning: () => iconNode('triangle-alert', 16),
+                success: () => iconNode('check', 16),
+                info:    () => iconNode('info', 16),
+                loading: null
+            };
             const CLAMP_MIN_CHARS = 180; // T3: shorten long bodies visually; Copy keeps the full string
             const MAX_STACK = 6;
             const toasts = new Map(); // id → {id, el, opts, timer, expanded}
@@ -3285,7 +3295,7 @@
                 t.el.className = 'toast-card t-' + type;
                 const icon = document.createElement('span');
                 icon.className = 't-icon';
-                icon.textContent = ICONS[type];
+                if (ICONS[type]) icon.appendChild(ICONS[type]());
                 t.el.appendChild(icon);
                 const body = document.createElement('div');
                 body.className = 't-body';
