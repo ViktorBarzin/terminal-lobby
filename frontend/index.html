@@ -2449,6 +2449,15 @@
             // this code default everywhere — no re-key dance needed.
             session: Object.freeze({
                 reopenLast: true,
+                // Card metadata "idle · 2d ago" (state word + last-activity
+                // time). DEFAULT OFF (Viktor: "users don't care for the most
+                // part when was the last time they connected") — idle cards
+                // then carry no detail line at all (denser list), attached
+                // cards show just "N attached", and the live "Working for
+                // Xs" note is unaffected (current activity, not history).
+                // NEW namespace key — existing roamed docs materialize the
+                // off default, no re-key dance.
+                showIdleMeta: false,
                 // What a NEWLY created session runs (second ?arg= to the
                 // attach chain; tmux -A ignores it for existing sessions).
                 // A whitelisted KEY, never a command line — the key→command
@@ -2516,6 +2525,7 @@
             },
             session: {
                 reopenLast: v => typeof v === 'boolean',
+                showIdleMeta: v => typeof v === 'boolean',
                 newCommand: v => v === 'default' || v === 'claude' ||
                     v === 'codex' || v === 'shell'
             },
@@ -4426,46 +4436,68 @@
             // theme-colored tile stands in so the dot still shows.
             const faviconEl = document.querySelector('link[rel="icon"]');
             const FAVICON_HREF = '/icon-192.png';
-            let faviconBadged = false;
-            let badgedFaviconUrl = null;
-            let badgedFaviconPending = false;
-            function renderBadgedFavicon(done) {
+            let faviconBadged = '';                  // '' | 'awaiting' | 'done'
+            const badgedFaviconUrls = {};            // kind → rendered dataURL
+            const badgedFaviconPending = {};         // kind → render in flight
+            // Two badge KINDS (Viktor: "yellow signals something is wrong —
+            // I'd prefer a green tick" for done): 'awaiting' keeps the amber
+            // dot (Claude genuinely wants input — attention color earned);
+            // 'done' — a turn finished, or the bell rang with nothing
+            // awaiting — draws a GREEN CIRCLE with a WHITE TICK instead of
+            // wearing the warning color for good news.
+            function renderBadgedFavicon(kind, done) {
                 const size = 64, r = 13, cx = size - r - 3, cy = r + 3;
                 const css = getComputedStyle(document.body);
-                const amber = css.getPropertyValue('--state-awaiting').trim() || '#f59e0b';
                 const canvas = document.createElement('canvas');
                 canvas.width = canvas.height = size;
                 const ctx = canvas.getContext('2d');
-                const drawDot = () => {
+                const drawBadge = () => {
                     ctx.beginPath();
                     ctx.arc(cx, cy, r, 0, Math.PI * 2);
-                    ctx.fillStyle = amber;
-                    ctx.fill();
+                    if (kind === 'done') {
+                        ctx.fillStyle = css.getPropertyValue('--state-done').trim() || '#56d364';
+                        ctx.fill();
+                        // white tick, stroke scaled to the 13px badge radius
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 3.4;
+                        ctx.lineCap = 'round';
+                        ctx.lineJoin = 'round';
+                        ctx.beginPath();
+                        ctx.moveTo(cx - r * 0.45, cy + r * 0.05);
+                        ctx.lineTo(cx - r * 0.1, cy + r * 0.42);
+                        ctx.lineTo(cx + r * 0.5, cy - r * 0.35);
+                        ctx.stroke();
+                    } else {
+                        ctx.fillStyle = css.getPropertyValue('--state-awaiting').trim() || '#f59e0b';
+                        ctx.fill();
+                    }
                     done(canvas.toDataURL('image/png'));
                 };
                 const img = new Image();
-                img.onload = () => { ctx.drawImage(img, 0, 0, size, size); drawDot(); };
+                img.onload = () => { ctx.drawImage(img, 0, 0, size, size); drawBadge(); };
                 img.onerror = () => {
                     ctx.fillStyle = css.getPropertyValue('--bg-page').trim() || '#0d1117';
                     ctx.fillRect(0, 0, size, size);
-                    drawDot();
+                    drawBadge();
                 };
                 img.src = FAVICON_HREF;
             }
             function updateFavicon() {
                 if (!faviconEl) return;
-                const want = attentionBell ||
-                    lastSessions.some(s => s.state === 'awaiting');
-                if (want === faviconBadged) return;
-                faviconBadged = want;
-                if (!want) { faviconEl.href = FAVICON_HREF; return; }
-                if (badgedFaviconUrl) { faviconEl.href = badgedFaviconUrl; return; }
-                if (badgedFaviconPending) return;  // applied when the render lands
-                badgedFaviconPending = true;
-                renderBadgedFavicon((url) => {
-                    badgedFaviconPending = false;
-                    badgedFaviconUrl = url;
-                    if (faviconBadged) faviconEl.href = url;
+                // Kind precedence: any session awaiting input outranks the
+                // finished/bell signal — amber only when action is wanted.
+                const kind = lastSessions.some(s => s.state === 'awaiting') ? 'awaiting'
+                    : (attentionBell ? 'done' : '');
+                if (kind === faviconBadged) return;
+                faviconBadged = kind;
+                if (!kind) { faviconEl.href = FAVICON_HREF; return; }
+                if (badgedFaviconUrls[kind]) { faviconEl.href = badgedFaviconUrls[kind]; return; }
+                if (badgedFaviconPending[kind]) return;  // applied when the render lands
+                badgedFaviconPending[kind] = true;
+                renderBadgedFavicon(kind, (url) => {
+                    badgedFaviconPending[kind] = false;
+                    badgedFaviconUrls[kind] = url;
+                    if (faviconBadged === kind) faviconEl.href = url;
                 });
             }
 
@@ -5253,10 +5285,15 @@
                 meta.appendChild(titleRow);
                 const detail = document.createElement('div');
                 detail.className = 'session-detail' + (s.attached > 0 ? ' attached' : '');
+                const showMeta = getPrefs().session.showIdleMeta;
                 const attachedText = s.attached > 0 ? (s.attached + ' attached') : 'idle';
-                detail.append(attachedText + ' · ' + relativeTime(s.lastActivity));
+                if (showMeta) {
+                    detail.append(attachedText + ' · ' + relativeTime(s.lastActivity));
+                } else if (s.attached > 0) {
+                    detail.append(attachedText);
+                }
                 if (s.state === 'running') {
-                    detail.append(' · ');
+                    if (detail.childNodes.length > 0) detail.append(' · ');
                     detail.appendChild(workingNote(stateChangedAt(s.name)));
                 }
                 meta.appendChild(detail);
@@ -5816,6 +5853,7 @@
             // build applies both idempotently.
             window.addEventListener('tl-prefs-change', () => {
                 paintSettingsPanel();
+                renderLobby();   // card metadata (showIdleMeta) applies live
                 if (currentActive && frameUrl && frameEl.contentWindow) {
                     const p = getPrefs();
                     frameEl.contentWindow.postMessage({ type: 'tl-prefs', prefs: p }, location.origin);
@@ -5875,7 +5913,9 @@
                 // input.bar and gestures.scrollSpeedV2 are .sp-seg controls — the
                 // generic .sp-seg reflect below paints their active values.
                 const sr = settingsPanel.querySelector('#sp-reopen');
-                if (sr) sr.checked = p.session.reopenLast;     // coarse-pointer row only (MF-5)
+                if (sr) sr.checked = p.session.reopenLast;
+                const im = settingsPanel.querySelector('#sp-idlemeta');
+                if (im) im.checked = p.session.showIdleMeta;     // coarse-pointer row only (MF-5)
                 // Notifications section — universal (always present). Toggles
                 // reflect the roamed notify.* prefs; the state readout is
                 // per-THIS-device (permission + bell synchronously here, the
@@ -6185,6 +6225,22 @@
                 // every device registered under this account. Subscriptions
                 // are PER DEVICE + BROWSER (the note at the end says so): the
                 // bell must be enabled on each device you want pushes on.
+                // Card metadata (universal): the "idle · 2d ago" line is
+                // OFF by default — most users don't care when they last
+                // connected (Viktor). Roamed like the notify toggles.
+                const imRow = row('Show idle / last-connected on cards');
+                imRow.classList.add('sp-row-wide');
+                const im = document.createElement('input');
+                im.type = 'checkbox';
+                im.id = 'sp-idlemeta';
+                im.title = 'Show each session card\'s "idle · 2d ago" ' +
+                    'metadata line (state word + time since last activity). ' +
+                    'Off: idle cards stay clean; attached cards still show ' +
+                    'the attach count and live "Working" notes.';
+                im.addEventListener('change',
+                    () => setPrefs({ session: { showIdleMeta: im.checked } }));
+                imRow.appendChild(im);
+
                 const notifTitle = document.createElement('div');
                 notifTitle.className = 'sp-title';
                 notifTitle.textContent = 'Notifications';
