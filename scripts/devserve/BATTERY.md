@@ -3217,84 +3217,81 @@ the field's input traits are byte-identical, only its paint changed):
   appears exactly ONCE on first ghost activation, names Settings → Input mode
   as the way back, and never returns on reload.
 
-### scroll — touch-scroll sensitivity + flick momentum
+### scroll v2 — deterministic kinetic scroller (supersedes the v1 multiplier)
 
-Viktor: drag "a bit slow. maybe we can make it more sensitive?". The 1-finger
-swipe recognizer's tap/swipe DISCRIMINATION is byte-identical to before (the
-CLASSIFICATION region — SWIPE_THRESHOLD and the tap-routing/gating lines — was
-byte-compared vs origin/master); ONLY the emission got a `gestures.scrollSpeed`
-multiplier and a lift-off momentum coast were added, both through the ONE shared
-`emitScroll()`. So §A.5 (below) and [M.6] module isolation re-run UNCHANGED —
-they are re-listed here as the red line for this change.
+Viktor on-device after v1: "still somewhat clunky. not fast enough, the scroll
+then release doesn't continue the movement - can we make it feel like a native
+scroll?" v1's deltaY-multiplier had two measured defects: (1) xterm 6 damps
+sub-50px pixel-mode deltas ×0.3 — a finger's typical 5–15px per-frame moves lose
+70% of their motion at ANY multiplier (measured: 10× pixel dy=−5 → 0 app
+events) — and in mouse-tracking mode delivers AT MOST ONE app event per DOM
+wheel event; (2) the momentum start gate (two-sample velocity + an 80ms
+pause-then-lift rule) ate real-device flicks. v2 replaces emission entirely:
+`feedScroll()` accumulates signed finger px and dispatches DISCRETE
+`deltaMode=DOM_DELTA_LINE, deltaY=±1` wheels — UNDAMPED and one-row-exact in
+xterm 6 — one per rowPx (= cellH / `gestures.scrollSpeedV2`), k per frame
+(burst cap 10), sub-row remainder carried. Deterministic finger→content:
+speed = wheel events per finger row-height, IDENTICAL in copy-mode and
+mouse-any panes (no saturation at any font — the v1 fontSize-15 caveat is
+moot). Momentum: ring buffer of (y, event-time, handler-time) samples;
+release velocity = window-averaged over the last 100ms; coast via the SAME
+feedScroll under exp decay τ=325ms, floor 0.5 row/s, cap 4 screen-heights.
+Stationary-lift: browsers DEDUPE identical-coordinate touchmoves (a held
+finger produces NO samples), so the gate is the MIN of event-time and
+handler-time gap between the newest sample and touchend — ≤180ms attenuates
+exp(−gap/400) (delivery latency trims, never kills a flick — v1's binary
+trap stays dead), >180ms = held still → no coast. Every pty-bound byte
+cancels the coast at the `sendInput` choke point (plus per-path cancels:
+touchstart, trusted wheel, soft keys, reattach). PREF RE-KEY (#9642):
+`gestures.scrollSpeed` (v1 multiplier semantics) RETIRED — dropped on read,
+never written; fresh `gestures.scrollSpeedV2` ∈ {1,1.5,2,3}, DEFAULT 1
+(= native one-to-one, ≈3× v1's effective Claude-Code rate).
+`gestures.scrollMomentum` keeps its key (on/off semantics unchanged).
+Tap/swipe CLASSIFICATION byte-identical to pre-v1 (diff-compared).
 
-MECHANIC (xterm 6.0.0 `coreMouseService.consumeWheelEvent`, measured): a
-pixel-mode wheel deltaY becomes `deltaY/cellH` rows, damped ×0.3 when |deltaY|<50,
-fractional rows accumulated; in MOUSE-tracking mode the row count is only a GATE —
-xterm sends at most ONE mouse-wheel event per DOM wheel event. So at 1× a wheel
-event costs ~3.3 row-heights of finger travel (the slow default). The multiplier
-scales linearly UNTIL a single per-frame delta×mult exceeds one row (then the
-per-DOM-event cap saturates it) — non-saturated through 3× at any realistic font
-(cellH≈20px @ fontSize 15); the tiny-font bare-harness render (cellH 8px) DOES
-saturate above ~2×, so linearity legs MUST force fontSize 15.
+Driver: scratchpad `verify_v2.py` (self-documenting; re-create from this
+contract if lost). All legs green 2026-07-14 00:5x, iPhone-13 CDP emulation,
+fontSize 15.
 
-- [scroll] Red line — §A.5 (tap-vs-swipe + `--kb-offset`) iPhone-class: a tap
-  (ΔY≤6px) → focuses the ghost `#compose-input` (TEXTAREA, keyboard) with ZERO
-  pty bytes and `#{pane_in_mode}` 0 (capture-pane unchanged); a swipe (>6px) →
-  synthetic wheels + `#{pane_in_mode}` 1 (copy-mode) with NO focus summon
-  (activeElement stays non-editable, no keyboard); a 2-finger swipe → the
-  1-finger recognizer emits ZERO wheels (`touches.length!==1` reset). Verified.
-- [scroll] Red line — [M.6] module isolation (Pixel 7): `window.__tlGestures`
-  unchanged (`attached:false`, `recognizers:3`); during a 1-finger swipe
-  `__tlGestures.attached` stays false (the added touchstart handler is
-  capture+PASSIVE, attaches nothing) and the swipe still delivers moves past the
-  6px discriminator (floor ≥8 — the added momentum multiplier does NOT change the
-  wheel-event COUNT, only per-event deltaY); a 2-finger sequence never
-  `preventDefault`s (native pinch intact). Verified.
-- [scroll] (a) SENSITIVITY LINEARITY — CDP 1-finger swipe (`multi_swipe`, 36
-  steps) at `gestures.scrollSpeed` ∈ {1,2,3}, momentum off, fontSize forced 15
-  (cellH 20px). Denominator = summed synthetic |deltaY| ÷ speed (telescopes to
-  net finger travel, coalescing-independent). Measured (harness, iPhone 13):
-  mouse-any wheel events per row-height 0.316 / 0.632 / 0.895 (ratios 2.00, 2.83
-  — clean linear, matches the 0.3×mult prediction); copy-mode lines per
-  row-height 1.05 / 2.63 / 4.21 (monotonic; tmux's discrete copy-scroll step
-  makes it slightly super-linear). 1× reproduces the pre-change baseline
-  (0.305 events/rowheight). Assert: strictly increasing in speed, mouse-any
-  ratio within ±25% of the multiplier.
-- [scroll] (b) MOMENTUM — a fast flick (few large steps) coasts after touchend:
-  synthetic wheels continue with strictly-decaying |deltaY| (measured
-  12.3→1.4px over ~1.6s) then stop (<0.5 line/s). `scrollMomentum:false` → ZERO
-  coast wheels after lift. HARD CANCELS, each → zero synthetic wheels >20ms after
-  the action: a new touchstart (tap), a REAL (trusted) wheel (CDP
-  `Input.dispatchMouseEvent mouseWheel`), and a key send (`Escape`). A session
-  (re)attach (`ws.onopen`) also cancels (in-frame; a parent-driven switch reloads
-  the iframe). Momentum reuses `emitScroll` verbatim, so per-tick semantics ==
-  live drag.
-- [scroll] (c) COAST CAP — a brutal flick@3× terminates within ~1.8s and coasted
-  finger-px stays ≤ 3×screenHeight (exponential decay self-bounds to a few
-  screens; the cap is the safety net so a runaway flick can't spray a
-  mouse-any TUI).
-- [scroll] (d) SETTINGS — coarse-pointer panel shows 'Scroll speed' (`.sp-seg`
-  `data-pref='gestures.scrollSpeed'`, buttons 1×/1.5×/2×/3×, 2× active by
-  default) and 'Scroll momentum' (`#sp-scrollmomentum`, checked by default);
-  clicking a seg button / the checkbox writes the roamed `gestures.*` key
-  (localStorage + PUT) and the reflect repaints live (no reload — `emitScroll`
-  reads `getPrefs()` per gesture); NEITHER row renders on a fine pointer.
-- [scroll] (e) LOW-SPEED PRECISION — a slow deliberate drag (many slow steps,
-  near-zero release velocity) does NOT coast (zero post-lift wheels) and scrolls
-  line-accurately (per-frame delta×mult stays in the ×0.3 damped-LINEAR regime, so
-  no overshoot) — Viktor's core read-Claude-Code use stays precise at every speed.
+- [scroll2] Red line — §A.5 re-run: tap → ghost `#compose-input` focus, ZERO
+  pty bytes, `pane_in_mode` 0; swipe → wheels + copy-mode, NO keyboard summon;
+  2-finger → 1-finger recognizer emits nothing. [M.6] isolation re-run green.
+- [scroll2] (a) DETERMINISM — 36-step swipe at speeds 1/1.5/2/3: wheel events
+  per finger row-height = 0.98 / 1.47 / 1.96 / 2.99 in BOTH pane classes
+  (mouse-any SGR-delivered count == synthetic count — the per-DOM-event cap is
+  beaten by k discrete dispatches). Assert within ±10% of the speed value.
+- [scroll2] (b) MOMENTUM — flick with last-move→touchend gap 0ms and 120ms
+  BOTH coast (defect-1 regression guard); gap 250ms (stationary hold) does
+  NOT; inter-event spacing widens across the coast (decay); momentum-off →
+  zero coast; slow decelerating drag → zero coast (event-time gap ≥ hold
+  threshold since dedupe eats the settle moves).
+- [scroll2] (c) CANCELS — touchstart / trusted wheel / pty-bound byte (type a
+  CHAR into the ghost field — Escape is a DOM no-op there; soft keys and raw
+  path cancel via their own hooks): each stops the coast — ZERO events after
+  mark+150ms (CDP pipeline can leak ≤3 same/next-frame stragglers inside the
+  window; the contract is the STOP, not the exact frame).
+- [scroll2] (d) CAP — brutal 3× flick bounded: coasted rows ≤ 4 screens,
+  terminates <2.6s.
+- [scroll2] (e) SETTINGS — coarse-only rows: 'Scroll speed' seg
+  (`data-pref='gestures.scrollSpeedV2'`, 1×/1.5×/2×/3×, 1× default-active) +
+  'Scroll momentum' checkbox (default on); writes roam (localStorage + PUT),
+  apply live per-gesture; absent on fine pointers; `gestures.scrollSpeed`
+  (old key) absent from fresh docs and ignored when present.
+- [scroll2] HARNESS GOTCHAS — (1) a FRESH profile shows the one-shot
+  ghost-hint toast whose card overlays the upper-terminal swipe path and
+  SWALLOWS touches (hit-test: `.toast-card` over `#terminal`) — pre-seed
+  `tl-ghost-hint:v1='1'` in the test context or the first gestures emit
+  nothing; (2) kill the harness python AND its ttyd child by PID (port 7996
+  squatter serves a deleted index → 404s); (3) Playwright driver EPIPE at
+  teardown is cosmetic — results print before it; run `python3 -u`.
 
-### scroll — §DEVICE-MANUAL addendum (Viktor's real iPhone)
+### scroll v2 — §DEVICE-MANUAL (Viktor's real iPhone)
 
-CDP touch cannot reproduce true finger physics or the real 60Hz frame cadence;
-these ride the device:
-
-- A one-finger drag over Claude Code output scrolls noticeably faster than
-  before at the default 2× (a finger row-height moves ≈2/3–1 content line; try
-  3× if you want a stricter one-to-one). Reading a specific line with a slow
-  deliberate drag stays precise — no overshoot.
-- A quick flick keeps scrolling and coasts to a stop; landing a finger anywhere,
-  scrolling with a paired mouse, hitting a soft key, or switching sessions stops
-  it instantly. Toggle Settings → Scroll momentum off for strict no-coast.
-- Passwords / raw input: momentum only rides the touch-scroll path, never key
-  input — unaffected by the mirror/ghost secret rules.
+- Default 1× = true native ratio (one content line per finger row-height —
+  already ≈3× faster in Claude Code than v1's default). The Settings dial
+  goes to 3× if you want even faster.
+- A flick MUST coast now and glide to a stop (this was v2's reason to exist);
+  touching the screen, a real mouse wheel, or any key/soft-key stops it dead.
+- A slow deliberate drag reads line-precise and never coasts; holding the
+  finger still before lifting never coasts.
+- Momentum off (Settings) = strict one-to-one, no-coast.

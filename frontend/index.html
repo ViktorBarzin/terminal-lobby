@@ -2201,19 +2201,19 @@
                 swipeSessionOptIn: false, // Task M.6 + complaint 1: 3-finger swipe cycles sessions — OPT-IN
                 twoFingerTap: true,   // Task M.6: 2-finger tap toggles the soft-key toolbar
                 haptics: true,        // Task M.7: vibration cues (Android-only API)
-                // Touch scroll (Viktor: "the drag experience is a bit slow.
-                // maybe we can make it more sensitive?"). scrollSpeed multiplies
-                // the finger-px → wheel-deltaY at EMISSION only; discrimination
-                // is untouched. Default 2× DERIVED from harness measurement: at
-                // 1× a wheel event costs ~3.3 row-heights of finger travel (the
-                // <50px-delta ×0.3 damping in xterm 6's consumeWheelEvent), so a
-                // low-lines-per-event TUI (Claude Code) scrolls ~0.3 lines per
-                // row-height — the reported slowness. 2× doubles it while keeping
-                // already-fine cases (copy-mode ~1.3, vim ~0.85 lines/rowheight)
-                // controllable; 3× is offered for a strict ~1:1. momentum ON:
-                // native flick-coast, cancelled by any new touch/real wheel/key/
-                // reattach. Both are FRESH keys — no re-key dance (#9642).
-                scrollSpeed: 2,
+                // Touch scroll v2 (Viktor on-device: "still somewhat clunky, not
+                // fast enough, release doesn't continue — make it feel native").
+                // scrollSpeedV2 = wheel events emitted per finger row-height, via
+                // the deterministic LINE-wheel scroller (see feedScroll); DEFAULT
+                // 1 = one row of scroll per finger row-height = native 1:1 (that
+                // is ~3× v1's effective Claude-Code rate, which measured slow).
+                // RE-KEYED from v1's gestures.scrollSpeed (a deltaY multiplier
+                // with different semantics AND already serialized into roamed docs
+                // as 2/3): #9642 — a bare default flip would be inert, so the old
+                // key is dropped on read (not in PREF_VALID) and this fresh key's
+                // default reaches everyone. scrollMomentum keeps its key (on/off
+                // semantics unchanged; the coast physics changed underneath).
+                scrollSpeedV2: 1,
                 scrollMomentum: true
             }),
             // Task IR.2: input.* — the mirror input bar (coarse
@@ -2303,12 +2303,13 @@
                 swipeSessionOptIn: v => typeof v === 'boolean',
                 twoFingerTap: v => typeof v === 'boolean',
                 haptics: v => typeof v === 'boolean',
-                // Touch-scroll sensitivity (emission multiplier on the 1-finger
-                // swipe → synthetic-wheel path) + flick momentum. Fresh keys
-                // (never re-keyed): an absent key means the code default applies
-                // on every device, so bumping the default later is NOT inert
-                // (contrast the swipeSession trap, #9642).
-                scrollSpeed: v => v === 1 || v === 1.5 || v === 2 || v === 3,
+                // Touch-scroll v2: scrollSpeedV2 = wheel events per finger
+                // row-height (deterministic LINE-wheel scroller) + flick momentum.
+                // scrollSpeedV2 RE-KEYS v1's scrollSpeed (#9642): the old key is
+                // absent here, so normalizePrefs drops it on read and omits it on
+                // the next whole-doc write — no migration, and this fresh key's
+                // default (1 = native) reaches every device.
+                scrollSpeedV2: v => v === 1 || v === 1.5 || v === 2 || v === 3,
                 scrollMomentum: v => typeof v === 'boolean'
             },
             input: {
@@ -5614,7 +5615,7 @@
                 if (pf) pf.checked = pinchFontWanted();        // coarse row, Chromium or WebKit (M.8; default ON)
                 const smo = settingsPanel.querySelector('#sp-scrollmomentum');
                 if (smo) smo.checked = p.gestures.scrollMomentum; // coarse-pointer row only (touch scroll)
-                // input.bar and gestures.scrollSpeed are .sp-seg controls — the
+                // input.bar and gestures.scrollSpeedV2 are .sp-seg controls — the
                 // generic .sp-seg reflect below paints their active values.
                 const sr = settingsPanel.querySelector('#sp-reopen');
                 if (sr) sr.checked = p.session.reopenLast;     // coarse-pointer row only (MF-5)
@@ -6021,20 +6022,19 @@
                 // soft-key toolbar, which only exists there. Task M.4 rides
                 // the same block: its two gestures are touch-only too.
                 if (matchMedia('(pointer: coarse)').matches) {
-                    // Touch scroll (Viktor: drag "a bit slow. maybe we can make
-                    // it more sensitive?"). Scroll speed multiplies finger travel
-                    // → scroll distance at emission (default 2×, DERIVED from
-                    // harness measurement); momentum adds a native flick-coast.
-                    // Both are roamed gestures.* keys, read live per gesture —
-                    // no reload. This is a sensitivity tune INSIDE the
-                    // recognizer, NOT a wheel/selection semantics change (#8388).
+                    // Touch scroll (Viktor: "make it feel like a native scroll").
+                    // Scroll speed = wheel events per finger row-height in the
+                    // deterministic LINE-wheel scroller (default 1× = one content
+                    // row per finger row-height = native 1:1). Roamed gestures.*
+                    // keys, read live per gesture — no reload. Emission/momentum
+                    // only; wheel/selection semantics per event unchanged (#8388).
                     const ssRow = row('Scroll speed');
-                    ssRow.title = 'How far a one-finger drag scrolls the terminal. ' +
-                        '2× (default) roughly doubles the stock feel; 3× is about ' +
-                        'one line of content per finger row-height in apps like ' +
-                        'Claude Code. Precise slow drags stay line-accurate at any ' +
-                        'setting.';
-                    segCtl(ssRow, 'gestures.scrollSpeed',
+                    ssRow.title = 'How fast a one-finger drag scrolls the terminal. ' +
+                        '1× (default) is native one-to-one — content follows your ' +
+                        'finger, one line per finger row-height, in apps like Claude ' +
+                        'Code. 2×/3× scroll faster. Precise slow drags stay ' +
+                        'line-accurate at any setting.';
+                    segCtl(ssRow, 'gestures.scrollSpeedV2',
                            [1, 1.5, 2, 3], ['1×', '1.5×', '2×', '3×']);
 
                     const smoRow = row('Scroll momentum');
@@ -7651,27 +7651,42 @@
             m.stopImmediatePropagation();
         }, true);
 
-        // ===== Touch-scroll sensitivity + flick momentum (coarse pointers) =====
-        // The 1-finger swipe recognizer (further below) and its lift-off coast
-        // both scroll through emitScroll(): a finger delta becomes a synthetic
-        // wheel whose deltaY is SCALED by gestures.scrollSpeed. xterm 6 damps
-        // sub-50px wheel deltas ×0.3 and accumulates fractional rows, so at 1×
-        // one wheel event costs ~3.3 row-heights of finger travel (measured) —
-        // the "a bit slow" default. The multiplier lives HERE (emission) ONLY;
-        // the recognizer's tap-vs-swipe CLASSIFICATION is byte-identical to the
-        // pre-change code. Momentum reuses this exact emission path, so per-tick
-        // wheel semantics are identical to a live drag (memory 8388 red line:
-        // wheel/selection semantics unchanged — only the px-per-tick ratio moves,
-        // which is the behavior Viktor asked for).
-        const SCROLL_FRAME_MS = 1000 / 60;
-        const MOMENTUM_DECAY = 0.95;          // velocity retained per animation frame
-        const MOMENTUM_START_VEL = 0.28;      // px/ms at release below which we do NOT coast
-        const MOMENTUM_MAX_COAST_SCREENS = 3; // hard cap on coasted finger-px (a few screens)
+        // ===== Touch-scroll: deterministic kinetic scroller (coarse pointers) =====
+        // The 1-finger swipe recognizer (below) and its lift-off momentum both
+        // scroll through feedScroll(): finger px accumulate, and every rowPx
+        // (= cellHeight / scrollSpeed) of travel dispatches ONE discrete
+        // deltaMode=LINE wheel (deltaY ±1). Why discrete LINE wheels (v2,
+        // replacing v1's deltaY multiplier): xterm 6's consumeWheelEvent damps
+        // pixel-mode deltas <50px to ×0.3 AND, in mouse-tracking mode, delivers
+        // AT MOST ONE wheel event to the app per DOM wheel event — so scaling a
+        // per-frame pixel delta both loses 70% of it and then caps at one event
+        // (measured: 10× pixel dy=-5 → 0 app events; even dy=-60 → only 10). A
+        // LINE deltaY=±1 is UNDAMPED and one-row-exact (consumeWheelEvent returns
+        // ±1), and k discrete dispatches in a frame yield k app events (measured
+        // 10/10) — beating the cap by construction. Result: deterministic
+        // finger→content — scrollSpeed = wheel events per finger row-height, in
+        // Claude Code AND copy-mode. Only EMISSION/MOMENTUM changed; tap-vs-swipe
+        // CLASSIFICATION is byte-identical (8388 red line: per-event wheel
+        // SEMANTICS unchanged — still one ordinary line-wheel; only the count and
+        // the lift-off coast are new, which is the "native scroll" Viktor asked
+        // for). Sign: finger-DOWN (y increasing → delta<0) → deltaY −1 → scroll
+        // UP into scrollback/copy-mode (verified; matches memory 9734).
+        const MOMENTUM_TAU_MS = 325;               // exp velocity decay (~UIScrollView-normal)
+        const MOMENTUM_STOP_ROWS_PER_S = 0.5;      // coast ends below this speed
+        const MOMENTUM_MAX_COAST_SCREENS = 4;      // hard cap on coasted finger-px
+        const MOMENTUM_MIN_START_ROWS_PER_S = 3;   // release slower than this → no coast
+        const GAP_STILL_MS = 180;                  // last-sample→touchend gap beyond this = finger held still, no coast
+        const GAP_ATTEN_TAU_MS = 400;              // smooth attenuation of release velocity across the 0..GAP_STILL band
+        const SCROLL_MAX_EVENTS_PER_FEED = 10;     // burst cap: one frame can't spray hundreds of events
+        const VEL_WINDOW_MS = 100;                 // ring-buffer window for release velocity
         let momentumRAF = null;
-        let scrollVelEMA = 0, scrollLastMoveT = 0, scrollLastEmitY = 0, scrollEmittedGesture = false;
+        let scrollAccumPx = 0;                     // signed finger-px remainder, shared drag→coast
+        let scrollSamples = [];                    // ring buffer of {y,t} for release velocity
+        let scrollLastEmitY = 100;                 // clientY carried onto synthetic wheels
+        let scrollEmittedGesture = false;
         function scrollSpeedMult() {
-            const v = getPrefs().gestures.scrollSpeed;
-            return (v === 1 || v === 1.5 || v === 2 || v === 3) ? v : 2;
+            const v = getPrefs().gestures.scrollSpeedV2;
+            return (v === 1 || v === 1.5 || v === 2 || v === 3) ? v : 1;
         }
         function scrollMomentumOn() { return !!getPrefs().gestures.scrollMomentum; }
         function xtermCellH() {
@@ -7682,33 +7697,71 @@
             const scr = document.querySelector('.xterm-screen');
             return scr ? scr.getBoundingClientRect().height : (term.rows || 24) * 16;
         }
-        // The ONE synthetic-wheel construction shared by live drag AND momentum.
-        // deltaMode 0 + clientX/Y verbatim from the original recognizer emission.
-        function emitScroll(deltaPx, clientY) {
-            if (!term.element || !deltaPx) return;
+        // The ONE synthetic-wheel primitive, shared by live drag AND momentum:
+        // a discrete one-row DOM_DELTA_LINE wheel (sign<0 = up/scrollback,
+        // sign>0 = down). Undamped and one-event-per-dispatch in xterm 6.
+        function emitLineWheel(sign) {
+            if (!term.element) return;
             term.element.dispatchEvent(new WheelEvent('wheel', {
-                deltaY: deltaPx * scrollSpeedMult(),
-                deltaMode: 0,
+                deltaY: sign < 0 ? -1 : 1,
+                deltaMode: 1,   // DOM_DELTA_LINE
                 bubbles: true, cancelable: true,
-                clientX: 0, clientY: clientY,
+                clientX: 0, clientY: scrollLastEmitY,
             }));
+        }
+        // Accumulate signed finger px; emit one line-wheel per rowPx crossed
+        // (rowPx = cellHeight / scrollSpeed → scrollSpeed events per row-height).
+        // The sub-row remainder persists, so drag and coast stay seamless/exact.
+        function feedScroll(deltaPx) {
+            scrollAccumPx += deltaPx;
+            const rowPx = xtermCellH() / scrollSpeedMult();
+            if (!(rowPx > 0)) return;
+            let k = Math.trunc(scrollAccumPx / rowPx);   // signed event count this feed
+            if (k === 0) return;
+            if (k > SCROLL_MAX_EVENTS_PER_FEED) k = SCROLL_MAX_EVENTS_PER_FEED;
+            else if (k < -SCROLL_MAX_EVENTS_PER_FEED) k = -SCROLL_MAX_EVENTS_PER_FEED;
+            scrollAccumPx -= k * rowPx;
+            const sign = k < 0 ? -1 : 1;
+            for (let i = 0; i < Math.abs(k); i++) emitLineWheel(sign);
         }
         function cancelScrollMomentum() {
             if (momentumRAF !== null) { cancelAnimationFrame(momentumRAF); momentumRAF = null; }
         }
-        function startScrollMomentum(velPxPerMs, clientY) {
+        // Weighted release velocity (px/ms) over the last VEL_WINDOW_MS of samples.
+        // A genuine pause leaves recent samples clustered → near-zero velocity, so
+        // NO special pause rule is needed — that rule was defect 1 on real iOS,
+        // where WKWebView coalescing routinely puts >80ms between the last
+        // touchmove and touchend and thus killed every flick.
+        function releaseVelocity() {
+            const s = scrollSamples;
+            if (s.length < 2) return 0;
+            const tEnd = s[s.length - 1].t;
+            let i = s.length - 1;
+            while (i > 0 && tEnd - s[i - 1].t <= VEL_WINDOW_MS) i--;
+            const a = s[i], b = s[s.length - 1];
+            const dt = b.t - a.t;
+            if (dt <= 0) return 0;
+            return (b.y - a.y) / dt;   // px/ms; finger-down (y increasing) = positive
+        }
+        function startScrollMomentum(velPxPerMs) {
             cancelScrollMomentum();
-            let vFrame = velPxPerMs * SCROLL_FRAME_MS;              // px per frame at release
-            const stopFrame = 0.5 * xtermCellH() / 60;             // ≈ 0.5 line/s
+            const cellH = xtermCellH();
+            // feedScroll's sign follows (lastY − y): finger-down drag feeds
+            // NEGATIVE px, but releaseVelocity is POSITIVE for finger-down — so
+            // coast feeds the NEGATED release velocity to continue the motion.
+            let vel = -velPxPerMs;                                     // px/ms in feedScroll's sign
+            const stopVel = MOMENTUM_STOP_ROWS_PER_S * cellH / 1000;   // px/ms
             const capPx = MOMENTUM_MAX_COAST_SCREENS * xtermScreenH();
-            let coastPx = 0;
-            const step = () => {
-                vFrame *= MOMENTUM_DECAY;
-                if (Math.abs(vFrame) < stopFrame || coastPx >= capPx || !term.element) {
+            let coastPx = 0, last = performance.now();
+            const step = (now) => {
+                const dt = Math.min(64, now - last); last = now;
+                vel *= Math.exp(-dt / MOMENTUM_TAU_MS);
+                if (Math.abs(vel) < stopVel || coastPx >= capPx || !term.element) {
                     momentumRAF = null; return;
                 }
-                coastPx += Math.abs(vFrame);
-                emitScroll(vFrame, clientY);
+                const stepPx = vel * dt;
+                coastPx += Math.abs(stepPx);
+                feedScroll(stepPx);
                 momentumRAF = requestAnimationFrame(step);
             };
             momentumRAF = requestAnimationFrame(step);
@@ -7724,7 +7777,12 @@
             const now = Date.now();
             if (now - wheelAccumAt > WHEEL_WINDOW_MS) wheelAccum = 0;
             wheelAccumAt = now;
-            wheelAccum += Math.abs(w.deltaY) + Math.abs(w.deltaX);
+            // Normalize to px so the threshold stays meaningful across event
+            // modes: our synthetic scroll now emits DOM_DELTA_LINE (deltaY ±1),
+            // which counts as one row-height of scroll, not one pixel.
+            wheelAccum += (w.deltaMode === 1)
+                ? (Math.abs(w.deltaY) + Math.abs(w.deltaX)) * xtermCellH()
+                : Math.abs(w.deltaY) + Math.abs(w.deltaX);
             if (wheelAccum >= WHEEL_CLEAR_PX) {
                 const total = Math.round(wheelAccum);
                 wheelAccum = 0;
@@ -7919,7 +7977,7 @@
                     // velocity. The three CLASSIFICATION lines below are
                     // byte-identical to the pre-momentum recognizer.
                     cancelScrollMomentum();
-                    scrollVelEMA = 0; scrollLastMoveT = 0; scrollEmittedGesture = false;
+                    scrollAccumPx = 0; scrollSamples = []; scrollEmittedGesture = false;
                     if (e.touches.length !== 1) { startY = lastY = null; return; }
                     startY = lastY = e.touches[0].clientY;
                     moved = false;
@@ -7931,31 +7989,50 @@
                     lastY = y;
                     if (!moved && Math.abs(startY - y) > SWIPE_THRESHOLD) moved = true;
                     if (!moved || delta === 0 || !term.element) return;
-                    // EMISSION (replaces the inline WheelEvent; same construction,
-                    // now scaled + shared with momentum). The classification gate
-                    // above is unchanged — this only runs once motion is a swipe.
-                    const nowT = performance.now();
-                    if (scrollLastMoveT) {
-                        const dt = nowT - scrollLastMoveT;
-                        if (dt > 0) scrollVelEMA = 0.8 * (delta / dt) + 0.2 * scrollVelEMA;
-                    }
-                    scrollLastMoveT = nowT;
+                    // EMISSION (v2): accumulate finger px → discrete one-row LINE
+                    // wheels via feedScroll, and sample (y,t) for the ring-buffer
+                    // release velocity. The classification gate above is unchanged
+                    // — this only runs once motion is a swipe.
+                    // Two clocks per sample: e.timeStamp (event CREATION — true
+                    // finger timing, survives coalesced/late delivery on real
+                    // iOS) and performance.now() at handling (sane for synthetic
+                    // CDP events whose creation stamps batch unreliably). The
+                    // touchend stationary-gap takes the MIN of the two — the
+                    // flick-favorable reading in both worlds, while a genuine
+                    // hold is large on BOTH clocks.
+                    scrollSamples.push({ y, t: e.timeStamp, th: performance.now() });
+                    if (scrollSamples.length > 24) scrollSamples.shift();
                     scrollLastEmitY = y;
                     scrollEmittedGesture = true;
-                    emitScroll(delta, y);
+                    feedScroll(delta);
                 }, { passive: true });
-                terminalEl.addEventListener('touchend', () => {
+                terminalEl.addEventListener('touchend', (e) => {
                     if (!moved && startY !== null) tapFocus();
                     startY = lastY = null;
                     moved = false;
-                    // Momentum kickoff (additive): coast only after a genuine
-                    // swipe that was STILL MOVING at release (a deliberate
-                    // slow-to-a-stop or pause-then-lift leaves velEMA ~0 / stale
-                    // and does not coast — precise reading stays line-accurate).
+                    // Momentum kickoff (additive): ring-buffer release velocity →
+                    // coast. Stationary-lift handling CANNOT rely on "clustered
+                    // slow samples": browsers DEDUPE identical-coordinate
+                    // touchmoves, so a finger held still produces NO samples and
+                    // the buffer ends at the last MOVING sample (measured: the
+                    // decel-then-hold leg coasted 4 rows). Use EVENT time
+                    // instead: the gap between the newest sample and this
+                    // touchend. A real WKWebView flick lifts within ~120ms of
+                    // the last (possibly coalesced) move; a deliberate hold is
+                    // longer. ≤ GAP_STILL_MS the velocity is only attenuated
+                    // smoothly (exp(−gap/τ)) so delivery latency trims a fast
+                    // flick but never kills it — v1's binary 80ms trap stays
+                    // dead. > GAP_STILL_MS = held still → no coast.
                     if (scrollEmittedGesture && scrollMomentumOn()) {
-                        const restMs = performance.now() - scrollLastMoveT;
-                        const v0 = restMs < 80 ? scrollVelEMA : 0;
-                        if (Math.abs(v0) >= MOMENTUM_START_VEL) startScrollMomentum(v0, scrollLastEmitY);
+                        const last = scrollSamples[scrollSamples.length - 1];
+                        const gap = last ? Math.max(0, Math.min(
+                            e.timeStamp - last.t,
+                            performance.now() - last.th)) : Infinity;
+                        let v0 = releaseVelocity();
+                        if (gap > GAP_STILL_MS) v0 = 0;
+                        else v0 *= Math.exp(-gap / GAP_ATTEN_TAU_MS);
+                        if (Math.abs(v0) * 1000 / xtermCellH() >= MOMENTUM_MIN_START_ROWS_PER_S)
+                            startScrollMomentum(v0);
                     }
                     scrollEmittedGesture = false;
                 }, { passive: true });
@@ -9375,6 +9452,12 @@
         }
 
         function sendInput(data) {
+            // A pty-bound byte hard-cancels a flick coast, WHATEVER path
+            // produced it (raw keyboard, mirror field, soft key, paste):
+            // this is the single choke point, so the cancel contract can't
+            // be missed by a new input path. The scattered per-path cancels
+            // remain as belt-and-braces.
+            cancelScrollMomentum();
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const payload = textEncoder.encode(data);
             const buf = new Uint8Array(payload.length + 1);
