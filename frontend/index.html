@@ -517,6 +517,10 @@
             html, body { height: 100dvh; }
         }
         .hidden { display: none !important; }
+        /* Inline Lucide icons (iconNode): tuck the box slightly below the
+           baseline so icon+text buttons read aligned; flex-centered
+           icon-only buttons ignore vertical-align entirely. */
+        .tl-icon { vertical-align: -0.125em; }
         /* Typed toast stack (Task 2.7). #toast — the single-element toast
            of old — is now the fixed stack VIEWPORT; each toast renders as
            a .toast-card child. Position + safe-area offsets kept verbatim
@@ -969,9 +973,14 @@
         #list-close {
             flex: 0 0 auto; width: 32px; height: 32px; padding: 0;
             box-sizing: border-box;
+            /* Icon fix: flex-center the inline svg exactly (same ±0.5px
+               the old line-box centering measured), and stop inheriting
+               the UA button face for any residual text. */
+            display: flex; align-items: center; justify-content: center;
             border-radius: var(--radius);
             background: var(--bg-card); color: var(--text-muted);
             border: 1px solid var(--border);
+            font-family: var(--font-ui);
             font-size: 16px; line-height: 1; cursor: pointer; opacity: 0.8;
             transition: background 0.15s, border-color 0.15s, opacity 0.15s;
         }
@@ -979,7 +988,10 @@
         #reload-toggle:hover,
         #list-close:hover { background: var(--bg-card-hover); opacity: 1; }
         #notify-toggle.on {
-            border-color: var(--accent); background: var(--bg-card-hover); opacity: 1;
+            /* color feeds the bell-ring svg via currentColor — the accent
+               stroke is what reads as "notifications on". */
+            border-color: var(--accent); color: var(--accent);
+            background: var(--bg-card-hover); opacity: 1;
         }
         .lobby-sub { color: var(--text-muted); font-size: 12px; margin: 0 0 18px 0; line-height: 1.5; }
         .new-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
@@ -2011,12 +2023,12 @@
             <aside id="lobby-sidebar">
                 <div class="lobby-header-row">
                     <h1 class="lobby-header">tmux sessions</h1>
-                    <button id="reload-toggle" type="button"
-                            title="Reload the app">&#10227;</button>
-                    <button id="notify-toggle" type="button" aria-pressed="false"
-                            title="Notify me when Claude finishes or needs input">&#128276;</button>
-                    <button id="list-close" class="hidden" type="button"
-                            aria-label="Close the list and return to your session">&#10005;</button>
+                    <button id="reload-toggle" type="button" data-icon="rotate-cw"
+                            title="Reload the app"></button>
+                    <button id="notify-toggle" type="button" aria-pressed="false" data-icon="bell"
+                            title="Notify me when Claude finishes or needs input"></button>
+                    <button id="list-close" class="hidden" type="button" data-icon="x"
+                            aria-label="Close the list and return to your session"></button>
                 </div>
                 <p class="lobby-sub">Pick a session or create one. Sessions persist after you close the tab.</p>
                 <div class="new-row">
@@ -2033,10 +2045,10 @@
                 <button id="new-project-btn" class="new-project-btn" type="button"
                         title="Create an empty project folder to group sessions into">+ Project</button>
                 <button id="restore-btn" class="restore-btn" type="button"
-                        title="Recreate your saved sessions that aren't currently running (e.g. after an OOM), resuming each Claude conversation">&#8635; Restore saved sessions</button>
+                        title="Recreate your saved sessions that aren't currently running (e.g. after an OOM), resuming each Claude conversation"><span data-icon="rotate-ccw" data-icon-px="15"></span> Restore saved sessions</button>
                 <div class="settings-row">
                     <button type="button" id="settings-btn" aria-haspopup="true" aria-expanded="false"
-                            title="Settings — theme, font size, line height, letter spacing, cursor, bold weight (prefs roam across your devices; theme stays per device)">&#9881; Settings</button>
+                            title="Settings — theme, font size, line height, letter spacing, cursor, bold weight (prefs roam across your devices; theme stays per device)"><span data-icon="settings" data-icon-px="15"></span> Settings</button>
                 </div>
             </aside>
             <main id="lobby-content">
@@ -2105,6 +2117,113 @@
         const rawCmdKey = params.getAll('arg')[1] || '';
         const validCmdKey = CMD_KEY_RE.test(rawCmdKey) ? rawCmdKey : '';
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
+
+        // ---- inline icon set (icon fix, 2026-07-14) --------------------
+        // Chrome icons are inline Lucide 1.24.0 SVGs (MIT, lucide.dev):
+        // the old text/emoji glyphs rendered as COLOR emoji (🔔 🖼 📷 📋),
+        // or fell through to per-platform fallback symbol fonts — no
+        // bundled font covers ⟳ ↻ ⚙ ⋯ ⌄ ✕ ⧉ in the chrome stacks, so
+        // shapes and sizes varied per OS. Shapes live in this STATIC,
+        // developer-authored spec table and become real DOM nodes via
+        // createElementNS — no HTML-string parsing anywhere. stroke is
+        // currentColor, so an icon always tracks its button's color and
+        // theme. Deliberately still text/CSS: ‹ › ↑ ↓ ← → A− A+ and the
+        // Esc/Tab/Ctrl/… key labels (covered by the bundled faces),
+        // .state-dot and the toast loading spinner (drawn in CSS).
+        const TL_ICONS = {
+            'rotate-cw': [
+                ['path', { d: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8' }],
+                ['path', { d: 'M21 3v5h-5' }]],
+            'rotate-ccw': [
+                ['path', { d: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8' }],
+                ['path', { d: 'M3 3v5h5' }]],
+            bell: [
+                ['path', { d: 'M10.268 21a2 2 0 0 0 3.464 0' }],
+                ['path', { d: 'M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326' }]],
+            'bell-ring': [
+                ['path', { d: 'M10.268 21a2 2 0 0 0 3.464 0' }],
+                ['path', { d: 'M22 8c0-2.3-.8-4.3-2-6' }],
+                ['path', { d: 'M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326' }],
+                ['path', { d: 'M4 2C2.8 3.7 2 5.7 2 8' }]],
+            x: [
+                ['path', { d: 'M18 6 6 18' }],
+                ['path', { d: 'm6 6 12 12' }]],
+            settings: [
+                ['path', { d: 'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915' }],
+                ['circle', { cx: '12', cy: '12', r: '3' }]],
+            image: [
+                ['rect', { width: '18', height: '18', x: '3', y: '3', rx: '2', ry: '2' }],
+                ['circle', { cx: '9', cy: '9', r: '2' }],
+                ['path', { d: 'm21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21' }]],
+            camera: [
+                ['path', { d: 'M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z' }],
+                ['circle', { cx: '12', cy: '13', r: '3' }]],
+            clipboard: [
+                ['rect', { width: '8', height: '4', x: '8', y: '2', rx: '1', ry: '1' }],
+                ['path', { d: 'M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2' }]],
+            ellipsis: [
+                ['circle', { cx: '12', cy: '12', r: '1' }],
+                ['circle', { cx: '19', cy: '12', r: '1' }],
+                ['circle', { cx: '5', cy: '12', r: '1' }]],
+            'chevron-down': [
+                ['path', { d: 'm6 9 6 6 6-6' }]],
+            'chevron-up': [
+                ['path', { d: 'm18 15-6-6-6 6' }]],
+            keyboard: [
+                ['path', { d: 'M10 8h.01' }],
+                ['path', { d: 'M12 12h.01' }],
+                ['path', { d: 'M14 8h.01' }],
+                ['path', { d: 'M16 12h.01' }],
+                ['path', { d: 'M18 8h.01' }],
+                ['path', { d: 'M6 8h.01' }],
+                ['path', { d: 'M7 16h10' }],
+                ['path', { d: 'M8 12h.01' }],
+                ['rect', { width: '20', height: '16', x: '2', y: '4', rx: '2' }]],
+            'triangle-alert': [
+                ['path', { d: 'm21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3' }],
+                ['path', { d: 'M12 9v4' }],
+                ['path', { d: 'M12 17h.01' }]],
+            check: [
+                ['path', { d: 'M20 6 9 17l-5-5' }]],
+            info: [
+                ['circle', { cx: '12', cy: '12', r: '10' }],
+                ['path', { d: 'M12 16v-4' }],
+                ['path', { d: 'M12 8h.01' }]],
+            copy: [
+                ['rect', { width: '14', height: '14', x: '8', y: '8', rx: '2', ry: '2' }],
+                ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }]]
+        };
+        // A Lucide icon as a fresh <svg> node, px square on the 24 grid.
+        // aria-hidden: the OWNING control carries the accessible name
+        // (title / aria-label) — the drawing is presentation only.
+        function iconNode(name, px = 16) {
+            const NS = 'http://www.w3.org/2000/svg';
+            const svg = document.createElementNS(NS, 'svg');
+            svg.setAttribute('class', 'tl-icon');
+            svg.setAttribute('viewBox', '0 0 24 24');
+            svg.setAttribute('width', px);
+            svg.setAttribute('height', px);
+            svg.setAttribute('fill', 'none');
+            svg.setAttribute('stroke', 'currentColor');
+            svg.setAttribute('stroke-width', '2');
+            svg.setAttribute('stroke-linecap', 'round');
+            svg.setAttribute('stroke-linejoin', 'round');
+            svg.setAttribute('aria-hidden', 'true');
+            svg.setAttribute('focusable', 'false');
+            for (const [tag, attrs] of TL_ICONS[name]) {
+                const child = document.createElementNS(NS, tag);
+                for (const key of Object.keys(attrs)) child.setAttribute(key, attrs[key]);
+                svg.appendChild(child);
+            }
+            return svg;
+        }
+        // Static markup ships an EMPTY [data-icon] slot where a glyph
+        // entity used to sit (the markup above this script); one boot
+        // pass fills every slot. Dynamic call sites build nodes directly.
+        for (const slot of document.querySelectorAll('[data-icon]')) {
+            slot.replaceChildren(
+                iconNode(slot.dataset.icon, parseInt(slot.dataset.iconPx, 10) || 16));
+        }
 
         // Theme — shared by lobby + terminal-mode iframe (same-origin
         // localStorage). The canonical name list ('system' included) and the
@@ -4532,6 +4651,9 @@
                 const on = notifyOptedIn() &&
                     typeof Notification !== 'undefined' &&
                     Notification.permission === 'granted';
+                // Icon fix: the enabled state swaps the bell for bell-ring;
+                // the .on rule's color turns it accent via currentColor.
+                notifyToggleEl.replaceChildren(iconNode(on ? 'bell-ring' : 'bell', 16));
                 notifyToggleEl.classList.toggle('on', on);
                 notifyToggleEl.setAttribute('aria-pressed', on ? 'true' : 'false');
                 notifyToggleEl.title = on
