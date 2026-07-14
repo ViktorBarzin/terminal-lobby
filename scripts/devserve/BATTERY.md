@@ -3312,3 +3312,12 @@ fontSize 15.
   `tmux -L nubtest` pane, drive the hook with TMUX/TMUX_PANE env + stdin
   wordings, read @claude_state between steps (done+idle→done,
   done+permission→awaiting, done+unknown→done, running+idle→awaiting).
+
+- [legend] Color-legend tooltip (2026-07-14): hovering (or keyboard-focusing)
+  any state dot / Working note / connection pill on a HOVER-CAPABLE pointer
+  shows #tl-legend explaining the whole color vocabulary (claude kind:
+  Running/Needs input/Done painted from live --state-* vars; conn kind:
+  Connecting/Offline), with the hovered element's current row highlighted
+  (.current). Hides on mouseleave/focusout/Escape. Colors re-read at show
+  time (theme flips honored). Coarse/touch devices: legend never wires and
+  native title attributes are KEPT. Zero page errors.
