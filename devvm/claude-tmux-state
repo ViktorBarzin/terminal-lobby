@@ -37,25 +37,26 @@ clear)
     tmux set-option -u -t "$TMUX_PANE" @claude_state >/dev/null 2>&1 || true
     ;;
 notify)
-    # Notifications are not all "awaiting input". Permission/approval asks
-    # and the idle-reminder wordings ("waiting for your input") ARE, so
-    # match them directly — case-INSENSITIVELY, since Claude's exact
-    # phrasing drifts between versions and a missed match silently drops
-    # the awaiting badge. For any OTHER notify wording, promote only when
-    # a turn was recently active: BOTH running (Claude stopped mid-turn to
-    # ask) AND done (turn just finished, next prompt awaited) now count —
-    # a notify on either means Claude wants the user's attention (the old
-    # code promoted from running only, so a completed session that then
-    # pinged never lit up).
+    # Notifications are not all "awaiting input". BLOCKED asks — permission
+    # / approval dialogs and "needs your input" — always stamp awaiting
+    # (amber): the turn cannot proceed without the user. The IDLE-REMINDER
+    # wording ("waiting for your input") is different: after a COMPLETED
+    # turn it is just Claude politely idling, and stamping awaiting there
+    # repainted every finished session amber ~a minute after it went green
+    # (Viktor: "the nub is yellow-ish when the agent is completed"). So the
+    # idle wording — and any other unrecognized wording — promotes ONLY
+    # from running (Claude stopped mid-turn: genuinely blocked); a done
+    # session STAYS done (green). Matching stays case-insensitive since
+    # Claude's phrasing drifts between versions.
     msg="$(cat 2>/dev/null || true)"
     msg_lc="$(printf '%s' "$msg" | tr '[:upper:]' '[:lower:]')"
     case "$msg_lc" in
-    *permission*|*approval*|*"waiting for your input"*|*"needs your input"*)
+    *permission*|*approval*|*"needs your input"*)
         stamp awaiting
         ;;
     *)
         cur="$(tmux show-option -qv -t "$TMUX_PANE" @claude_state 2>/dev/null || true)"
-        { [ "$cur" = "running" ] || [ "$cur" = "done" ]; } && stamp awaiting
+        [ "$cur" = "running" ] && stamp awaiting
         ;;
     esac
     ;;
