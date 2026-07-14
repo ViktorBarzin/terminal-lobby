@@ -11,7 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="/icon-192.png">
     <!-- Tab icon; the lobby's attention system (Task 2.1) swaps this href to
-         a canvas-rendered data: URL (icon + amber dot) while any session
+         a canvas-rendered data: URL (icon + a state-colored dot) while any session
          awaits input, and restores it on clear. 404s harmlessly until the
          PWA asset carve-out ships (the badge renderer has a tile fallback). -->
     <link rel="icon" type="image/png" href="/icon-192.png">
@@ -118,10 +118,11 @@
             --accent: #d4a574;
             --danger: #c47a5a;
             --success: #88a888;
-            /* Claude state dots. Carbon's accent is itself amber, so
+            /* Claude state dots. Carbon's accent is itself amber (awaiting
+               is now purple per the T3-style restyle), so
                "awaiting" leans hotter orange to stay distinguishable. */
             --state-running: #d4a574;
-            --state-awaiting: #e06c3a;
+            --state-awaiting: #a56eff;  /* Carbon purple */
             --state-done: #88a888;
             --terminal-bg: #0c0c0a;
             --terminal-fg: #e8e3d6;
@@ -164,7 +165,7 @@
             --danger: #f47067;
             --success: #56d364;
             --state-running: #4493f8;
-            --state-awaiting: #d29922;
+            --state-awaiting: #a371f7;  /* GitHub purple */
             --state-done: #56d364;
             --terminal-bg: #0d1117;
             --terminal-fg: #e6e8eb;
@@ -202,7 +203,7 @@
             --danger: #cc7070;
             --success: #9ccb9c;
             --state-running: #e8e8e8;
-            --state-awaiting: #d4a054;
+            --state-awaiting: #a78bda;  /* muted lavender */
             --state-done: #9ccb9c;
             --terminal-bg: #0d0d0d;
             --terminal-fg: #e0e0e0;
@@ -240,7 +241,7 @@
             --danger: #b5482d;
             --success: #3d6b3d;
             --state-running: #b5482d;
-            --state-awaiting: #9a6b00;
+            --state-awaiting: #6f42c1;  /* deep purple (light bg) */
             --state-done: #3d6b3d;
             --terminal-bg: #faf7f2;
             --terminal-fg: #1d1b18;
@@ -283,10 +284,10 @@
             --accent: #366ffb;
             --danger: #ff6467;
             --success: #10b981;
-            /* T3's semantic pill trio: sky running / amber awaiting /
+            /* T3's semantic pill trio: sky running / violet awaiting /
                emerald done. */
             --state-running: #0ea5e9;
-            --state-awaiting: #f59e0b;
+            --state-awaiting: #8b5cf6;  /* violet-500 */
             --state-done: #10b981;
             --terminal-bg: #161616;
             --terminal-fg: #f5f5f5;
@@ -326,7 +327,7 @@
             --danger: #c10007;
             --success: #047857;
             --state-running: #0ea5e9;
-            --state-awaiting: #f59e0b;
+            --state-awaiting: #7c3aed;  /* violet-600 (light bg) */
             --state-done: #10b981;
             --terminal-bg: #ffffff;
             --terminal-fg: #262626;
@@ -369,7 +370,7 @@
             --danger: #f38ba8;       /* red */
             --success: #a6e3a1;      /* green */
             --state-running: #89b4fa;  /* blue */
-            --state-awaiting: #fab387; /* peach */
+            --state-awaiting: #cba6f7; /* mauve */
             --state-done: #a6e3a1;     /* green */
             --terminal-bg: #1e1e2e;
             --terminal-fg: #cdd6f4;
@@ -406,7 +407,7 @@
             --danger: #d20f39;       /* red */
             --success: #40a02b;      /* green */
             --state-running: #1e66f5;  /* blue */
-            --state-awaiting: #df8e1d; /* yellow */
+            --state-awaiting: #8839ef; /* latte mauve */
             --state-done: #40a02b;     /* green */
             --terminal-bg: #eff1f5;
             --terminal-fg: #4c4f69;
@@ -654,7 +655,7 @@
         #conn-pill::before {
             content: ''; width: 7px; height: 7px; border-radius: 50%;
             flex: none;
-            background: #f59e0b; /* amber — same state color as "awaiting" */
+            background: var(--state-awaiting, #8b5cf6); /* same state color as "awaiting" (violet since the purple restyle) */
             animation: conn-pulse 1.2s ease-in-out infinite;
         }
         #conn-pill.offline::before { background: var(--danger); animation: none; }
@@ -2757,8 +2758,8 @@
                 ['done',     '--state-done',     'Done',        'the last turn finished'],
             ],
             conn: [
-                ['connecting', null, 'Connecting', 'amber pulse — attaching to the session'],
-                ['offline',    null, 'Offline',    'red — connection lost, retrying'],
+                ['connecting', '--state-awaiting', 'Connecting', 'attaching to the session'],
+                ['offline',    null,                'Offline',    'connection lost, retrying'],
             ],
         };
         const tlHoverCapable = window.matchMedia && matchMedia('(hover: hover)').matches;
@@ -2781,7 +2782,7 @@
                 dot.className = 'lg-dot';
                 dot.style.background = varName
                     ? (css.getPropertyValue(varName).trim() || 'currentColor')
-                    : (key === 'offline' ? (css.getPropertyValue('--danger').trim() || '#f85149') : '#f59e0b');
+                    : (css.getPropertyValue('--danger').trim() || '#f85149');
                 const text = document.createElement('span');
                 text.className = 'lg-text';
                 const nm = document.createElement('span');
@@ -4532,7 +4533,7 @@
             let attentionBell = false;    // favicon badge latched by a bell
             function away() { return document.hidden || !document.hasFocus(); }
 
-            // Favicon badge: the icon canvas-rendered with an amber dot
+            // Favicon badge: the icon canvas-rendered with an awaiting-colored dot
             // top-right (--state-awaiting; the plan's 8px dot scaled to the
             // 64px favicon raster). Rendered once and cached; while the
             // icon route 404s (PWA asset carve-out lands in Wave 3) a
@@ -4571,7 +4572,7 @@
                         ctx.lineTo(cx + r * 0.5, cy - r * 0.35);
                         ctx.stroke();
                     } else {
-                        ctx.fillStyle = css.getPropertyValue('--state-awaiting').trim() || '#f59e0b';
+                        ctx.fillStyle = css.getPropertyValue('--state-awaiting').trim() || '#8b5cf6';
                         ctx.fill();
                     }
                     done(canvas.toDataURL('image/png'));
