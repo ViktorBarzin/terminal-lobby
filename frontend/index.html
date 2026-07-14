@@ -1643,6 +1643,52 @@
             }
         }
 
+        /* Full-screen two-view mobile nav (coarse pointer + narrow).
+           A phone shows EITHER the whole session list OR the whole
+           terminal — never the old sidebar-40vh + terminal split, which
+           wasted the screen on both. sidebar-collapsed is the view flip:
+           absent = BROWSING (the list owns the viewport), present =
+           TERMINAL (the attached session owns it). #sidebar-toggle is the
+           always-visible "back to the list" control in terminal view, and
+           a session card is the forward path in browsing view. Pure CSS +
+           class state — no history entries, so the M.3 flat history holds.
+           Kept separate from the plain max-width:720px block above so a
+           narrow FINE-pointer window (a shrunk desktop) is byte-identical
+           to before; only touch phones get the flip. */
+        @media (pointer: coarse) and (max-width: 720px) {
+            #lobby, #lobby-shell { height: 100dvh; }
+            /* BROWSING VIEW (default): the list fills the viewport and
+               owns its own scroll (5526 inner-scroller — the document
+               never scrolls). The terminal pane is fully out of flow. */
+            #lobby-shell {
+                display: block;
+                grid-template-columns: none; grid-template-rows: none;
+            }
+            #lobby-sidebar {
+                height: 100dvh; max-height: none;
+                border-right: 0; border-bottom: 0;
+            }
+            #lobby-content { display: none; }
+            /* The toggle only ever means "go back to the list" here, so it
+               is redundant (and confusing) while the list is already up. */
+            #sidebar-toggle { display: none; }
+
+            /* TERMINAL VIEW (sidebar-collapsed): the attached session
+               fills the viewport; the sidebar is fully hidden (its restore
+               path is the toggle below, per 9735). */
+            #lobby.sidebar-collapsed #lobby-sidebar { display: none; }
+            #lobby.sidebar-collapsed #lobby-content { display: block; height: 100dvh; }
+            /* Back-to-list control: a labelled pill in the top-left, above
+               the terminal but not over its content (the terminal's own
+               chrome lives inside the iframe). Label text set in JS. */
+            #lobby.sidebar-collapsed #sidebar-toggle {
+                display: inline-flex; width: auto; min-width: 0;
+                top: calc(12px + env(safe-area-inset-top));
+                left: calc(12px + env(safe-area-inset-left)); right: auto;
+                padding: 0 14px; gap: 6px; font-size: 15px;
+            }
+        }
+
         /* Soft-key toolbar — terminal mode only, touch devices only.
            Built in JS after xterm mounts; lives docked above the soft
            keyboard (visualViewport-aware). Display:none by default; the
@@ -4065,19 +4111,10 @@
                 });
             }
 
-            // On touch + small screen, the first session activation collapses
-            // the sidebar so the terminal gets the full viewport. We stamp a
-            // localStorage flag so we don't fight users who manually re-open it.
-            const MOBILE_AUTO_COLLAPSE_KEY = 'tmux-mobile-auto-collapsed';
+            // Coarse + narrow = the full-screen two-view mobile nav (list ⇄
+            // terminal). Drives both the CSS view flip and the JS that enters
+            // the terminal view on attach and returns to the list on detach.
             const mobileQuery = matchMedia('(pointer: coarse) and (max-width: 720px)');
-            function maybeAutoCollapseSidebar() {
-                if (!mobileQuery.matches) return;
-                try {
-                    if (localStorage.getItem(MOBILE_AUTO_COLLAPSE_KEY) === 'done') return;
-                    localStorage.setItem(MOBILE_AUTO_COLLAPSE_KEY, 'done');
-                } catch (e) { /* localStorage disabled — best-effort */ }
-                setSidebarCollapsed(true);
-            }
 
             // --- status pills v2 (Task 2.4) -----------------------------
             // "Unseen done" bookkeeping, T3's hasUnseenCompletion shape: a
@@ -4563,7 +4600,15 @@
             }
             function activateSession(name) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
-                if (currentActive === name) { updateActiveCard(); return; }
+                if (currentActive === name) {
+                    // Re-tapping the attached session from the browsing view
+                    // flips forward to its terminal (mobile two-view nav). The
+                    // iframe stayed alive behind the list, so this is a pure
+                    // view flip — no reload. Desktop: just refresh the card.
+                    updateActiveCard();
+                    if (mobileQuery.matches) setSidebarCollapsed(true);
+                    return;
+                }
                 currentActive = name;
                 // Task MF-5: remember this device's last attached session
                 // for the hashless coarse-pointer reland (edge-back swipe).
@@ -4582,7 +4627,10 @@
                 updateTitle();
                 ensureSessionVisible(name);
                 updateActiveCard();
-                maybeAutoCollapseSidebar();
+                // Mobile two-view nav: attaching flips to the full-screen
+                // terminal view. Replaces the old one-shot auto-collapse —
+                // now EVERY activation enters the terminal view on a phone.
+                if (mobileQuery.matches) setSidebarCollapsed(true);
                 paint();
             }
 
@@ -4601,6 +4649,9 @@
                 }
                 updateTitle();
                 updateActiveCard();
+                // Mobile two-view nav: a detach empties the terminal, so drop
+                // back to the full-screen list rather than a blank terminal.
+                if (mobileQuery.matches) setSidebarCollapsed(false);
             }
 
             async function killSession(name) {
@@ -5471,15 +5522,33 @@
             }
             function setSidebarCollapsed(collapsed) {
                 lobbyEl.classList.toggle('sidebar-collapsed', collapsed);
-                toggleEl.textContent = collapsed ? '›' : '‹';
+                // On a phone the collapsed toggle IS the "back to the list"
+                // control (terminal view); label it plainly. The CSS hides it
+                // in the browsing view. Desktop keeps the ‹/› collapse chevrons.
+                if (collapsed && mobileQuery.matches) {
+                    toggleEl.textContent = '‹ Sessions';
+                    toggleEl.title = 'Back to your sessions';
+                } else {
+                    toggleEl.textContent = collapsed ? '›' : '‹';
+                    toggleEl.title = collapsed ? 'Show sidebar' : 'Hide sidebar';
+                }
                 toggleEl.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-                toggleEl.title = collapsed ? 'Show sidebar' : 'Hide sidebar';
                 try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); } catch (e) {}
             }
             toggleEl.addEventListener('click', () => {
                 setSidebarCollapsed(!lobbyEl.classList.contains('sidebar-collapsed'));
             });
-            setSidebarCollapsed(getSidebarCollapsed());
+            // On a phone the view is derived from the attached session, not the
+            // persisted collapse pref: boot into the list and let a #hash or the
+            // MF-5 reland flip to the terminal via activateSession. Desktop keeps
+            // honoring the saved collapse pref.
+            setSidebarCollapsed(mobileQuery.matches ? false : getSidebarCollapsed());
+            // Rotating across the breakpoint (portrait phone ⇄ landscape, which
+            // exceeds 720px and uses the desktop grid) re-derives the toggle's
+            // label/shape without changing the collapse state.
+            mobileQuery.addEventListener('change', () => {
+                setSidebarCollapsed(lobbyEl.classList.contains('sidebar-collapsed'));
+            });
 
             // Theme selection — the grid lives in the ⚙ settings panel
             // (#sp-theme, MF-1; formerly a standalone sidebar picker).
