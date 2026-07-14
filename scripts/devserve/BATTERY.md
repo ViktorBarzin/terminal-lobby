@@ -3303,3 +3303,12 @@ fontSize 15.
   survives, no reload). Hidden: at fresh boot with nothing attached, in
   terminal view, and always on desktop (`.hidden` + JS mobile gate). Verified
   full loop card→‹ Sessions→✕→terminal, 0 page errors.
+
+- [state] Notify classifier (claude-tmux-state, nub-color fix 2026-07-14): a
+  DONE session receiving the idle-reminder wording ("waiting for your input")
+  or any unknown wording STAYS done (green nub) — only `*permission*`,
+  `*approval*`, `*needs your input*` always stamp awaiting, and unknown/idle
+  wordings promote solely from running (mid-turn block). Test recipe: scratch
+  `tmux -L nubtest` pane, drive the hook with TMUX/TMUX_PANE env + stdin
+  wordings, read @claude_state between steps (done+idle→done,
+  done+permission→awaiting, done+unknown→done, running+idle→awaiting).
