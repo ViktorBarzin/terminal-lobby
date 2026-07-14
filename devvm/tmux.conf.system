@@ -24,3 +24,36 @@ set -as terminal-features 'xterm*:RGB'
 # (rg --hyperlink, eza, gh & friends; Claude Code does not emit OSC 8).
 # Same semantics as the RGB line: applies at each tmux server's next start.
 set -as terminal-features 'xterm*:hyperlinks'
+
+# Provenance (desktop smooth-wheel, 2026-07-14, terminal.viktorbarzin.me):
+# tmux's DEFAULT copy-mode WheelUpPane/WheelDownPane scroll 5 lines per wheel
+# report (`send -X -N5`). The web terminal's frontend now de-damps the
+# desktop trackpad and emits many proportional ONE-ROW line-wheels per
+# gesture (gestures.wheelSmooth, frontend/index.html) — but each still hits
+# the -N5 binding, so copy-mode history scroll comes out 5× too fast and in
+# 5-line steps (measured). Dropping it to -N1 makes ONE emitted row scroll
+# ONE line, so the frontend's pacing maps 1:1 to content — smooth, native,
+# fine-grained history scrolling. tmux's DEFAULT loads before this file and
+# no user ~/.tmux.conf rebinds these copy-mode keys, so -N1 wins.
+#
+# SCOPED TO wizard (Viktor's decision, 2026-07-14): this file is loaded by
+# EVERY user's tmux server (it is the box-wide /etc/tmux.conf), and a bare
+# rebind here would change copy-mode wheel scroll for EVERY tmux user incl.
+# their direct SSH/console — emo and anyone else — silently. Viktor asked to
+# keep the finer 1-line scroll to his own account only. The if-shell test
+# runs at each server's start; `id -un` is that server's OS user (the web
+# terminal and SSH share the SAME per-user tmux server), so wizard's server
+# gets -N1 (web + his SSH), every other user keeps tmux's default -N5,
+# untouched. Mouse-tracking panes (Claude Code, less --mouse) never run this
+# binding regardless (tmux forwards the wheel to the inner app). Applies only
+# to tmux servers STARTED AFTER this lands — an already-running server keeps
+# its current behavior until its next start (kill-server / reboot), so a live
+# session needs a restart to pick it up. Braces + if-shell need tmux ≥3.0
+# (box is 3.4). select-pane dropped: redundant inside copy-mode, and it kept
+# the block brace-clean.
+if-shell '[ "$(id -un)" = wizard ]' {
+    bind -T copy-mode-vi WheelUpPane   send-keys -X -N1 scroll-up
+    bind -T copy-mode-vi WheelDownPane send-keys -X -N1 scroll-down
+    bind -T copy-mode    WheelUpPane   send-keys -X -N1 scroll-up
+    bind -T copy-mode    WheelDownPane send-keys -X -N1 scroll-down
+}

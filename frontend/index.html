@@ -2444,7 +2444,24 @@
                 // default reaches everyone. scrollMomentum keeps its key (on/off
                 // semantics unchanged; the coast physics changed underneath).
                 scrollSpeedV2: 1,
-                scrollMomentum: true
+                scrollMomentum: true,
+                // Desktop smooth-wheel (Viktor on-device: trackpad history
+                // scroll "choppy" — xterm 6 damps sub-50px pixel wheels ×0.3
+                // and caps mouse-tracking panes at one report per DOM wheel,
+                // so a trackpad's small-delta stream becomes a sparse,
+                // quantized trickle). wheelSmooth ON = a fine-pointer wheel
+                // interceptor de-damps that stream and re-emits proportional
+                // one-row LINE wheels via the same emitLineWheel primitive the
+                // touch scroller uses; wheelSpeed = LINE wheels per finger
+                // row-height, default 1 = ~native 1:1 pixel-to-content. FRESH
+                // keys (no re-key). DEFAULT ON, but the Settings toggle
+                // DETACHES the handler for a byte-identical raw passthrough —
+                // the instant-revert is the safety net for this red-line
+                // surface (#8388). Touches the wheel path; per-event SEMANTICS
+                // unchanged (one ordinary line-wheel, same xterm→tmux→app
+                // path) — only the count/pacing differ.
+                wheelSmooth: true,
+                wheelSpeed: 1
             }),
             // Task IR.2: input.* — the mirror input bar (coarse
             // pointers). FRESH namespace RETIRING compose.* (2026-07-12,
@@ -2549,7 +2566,11 @@
                 // the next whole-doc write — no migration, and this fresh key's
                 // default (1 = native) reaches every device.
                 scrollSpeedV2: v => v === 1 || v === 1.5 || v === 2 || v === 3,
-                scrollMomentum: v => typeof v === 'boolean'
+                scrollMomentum: v => typeof v === 'boolean',
+                // Desktop smooth-wheel (fresh keys; absent old docs default
+                // per PREF_DEFAULTS — wheelSmooth true, wheelSpeed 1).
+                wheelSmooth: v => typeof v === 'boolean',
+                wheelSpeed: v => v === 1 || v === 1.5 || v === 2 || v === 3
             },
             input: {
                 bar: v => v === 'auto' || v === 'on' || v === 'off',
@@ -6202,7 +6223,9 @@
                 if (pf) pf.checked = pinchFontWanted();        // coarse row, Chromium or WebKit (M.8; default ON)
                 const smo = settingsPanel.querySelector('#sp-scrollmomentum');
                 if (smo) smo.checked = p.gestures.scrollMomentum; // coarse-pointer row only (touch scroll)
-                // input.bar and gestures.scrollSpeedV2 are .sp-seg controls — the
+                const smw = settingsPanel.querySelector('#sp-wheelsmooth');
+                if (smw) smw.checked = p.gestures.wheelSmooth; // hover-pointer row only (desktop wheel)
+                // input.bar and gestures.scrollSpeedV2/wheelSpeed are .sp-seg controls — the
                 // generic .sp-seg reflect below paints their active values.
                 const sr = settingsPanel.querySelector('#sp-reopen');
                 if (sr) sr.checked = p.session.reopenLast;
@@ -6506,6 +6529,33 @@
                         'to copy a link whose text wraps across rows.';
                     lc.addEventListener('change', () => setPrefs({ links: { copyChip: lc.checked } }));
                     lcRow.appendChild(lc);
+
+                    // Desktop smooth wheel scroll (Viktor: trackpad history
+                    // scroll "choppy"). Hover-pointer row: it governs the
+                    // mouse/trackpad wheel, which only exists here. Roamed
+                    // gestures.* keys, read live. Turning it OFF detaches the
+                    // interceptor for an instant, byte-identical revert to
+                    // the raw wheel — the safety net on this red-line surface.
+                    const smwRow = row('Smooth scrolling');
+                    const smw = document.createElement('input');
+                    smw.type = 'checkbox';
+                    smw.id = 'sp-wheelsmooth';
+                    smw.title = 'Smooth out mouse/trackpad scrolling in the ' +
+                        'terminal. On: a trackpad scrolls proportionally and ' +
+                        'fluidly instead of the choppy line-jumps tmux gives ' +
+                        'raw. Off: the exact raw wheel behaviour returns at ' +
+                        'once. Works in scrollback/history and in apps like ' +
+                        'Claude Code.';
+                    smw.addEventListener('change',
+                        () => setPrefs({ gestures: { wheelSmooth: smw.checked } }));
+                    smwRow.appendChild(smw);
+
+                    const wsRow = row('Scroll speed');
+                    wsRow.title = 'How fast the mouse/trackpad scrolls when ' +
+                        'smooth scrolling is on. 1× (default) is roughly ' +
+                        'native one-to-one; 1.5×/2×/3× scroll faster.';
+                    segCtl(wsRow, 'gestures.wheelSpeed',
+                           [1, 1.5, 2, 3], ['1×', '1.5×', '2×', '3×']);
                 }
 
                 // Notifications (universal — desktop AND mobile, unlike the
@@ -8475,6 +8525,110 @@
             };
             momentumRAF = requestAnimationFrame(step);
         }
+
+        // ===== Desktop smooth-wheel interceptor (fine pointers). RED LINE (#8388). =====
+        // Viktor's trackpad-history complaint: measured, xterm 6's
+        // consumeWheelEvent damps sub-50px PIXEL wheels to ×0.3 and, in
+        // mouse-tracking mode, forwards AT MOST ONE report per DOM wheel event
+        // (magnitude discarded), so a Mac trackpad's small-delta stream is a
+        // sparse, quantized trickle; tmux copy-mode then jumps 5 whole lines
+        // per surviving report. This handler DE-DAMPS: it captures the FULL
+        // pixel travel and re-emits proportional one-row DOM_DELTA_LINE wheels
+        // (deltaY ±1 — UNDAMPED and 1:1 to app reports) via the SAME
+        // emitLineWheel primitive the touch scroller uses, rAF-paced. Why rAF
+        // and not synchronous: it caps per-frame rows (a huge coalesced delta
+        // or mouse notch can't spray a jump), smooths the macOS inertia tail,
+        // AND defers the synthetic dispatch out of the current wheel event
+        // (no re-entrancy). NO JS momentum: the OS inertia tail arrives as
+        // more trusted wheels and is paced the same way (the touch momentum
+        // engine's release velocity is touch-sample-only anyway, and layering
+        // JS coast would fight macOS inertia). Registered via xterm's
+        // SANCTIONED attachCustomWheelEventHandler, which runs BEFORE the
+        // damp/cap; returning false suppresses xterm's default handling
+        // (xterm still preventDefaults via its own non-passive cancel(), so
+        // the page never scrolls — same as today). REVERSIBILITY is the safety
+        // net that lets this default ON: applyWheelSmoothPref() ATTACHES the
+        // handler only while gestures.wheelSmooth is on and gestures aren't
+        // master-killed; OFF DETACHES it (null) so xterm's exact raw wheel
+        // path returns byte-for-byte (no separate DOM listener ever existed —
+        // this rides xterm's own wheel listener). Per-event wheel SEMANTICS
+        // are unchanged (one ordinary line-wheel, same xterm→tmux→app path) —
+        // only the count and pacing change, which is the "native scroll"
+        // Viktor asked for.
+        let wheelAccumPx = 0;   // signed px remainder, desktop wheel pacer
+        let wheelRAF = null;
+        function wheelSmoothOn() {
+            return gesturesEnabled() && getPrefs().gestures.wheelSmooth;
+        }
+        function wheelSpeedMult() {
+            const v = getPrefs().gestures.wheelSpeed;
+            return (v === 1 || v === 1.5 || v === 2 || v === 3) ? v : 1;
+        }
+        // Drain the accumulated px into one-row LINE wheels, capped per frame;
+        // keep pumping while ≥1 row of travel remains (inertia tail / burst).
+        function pumpWheel() {
+            wheelRAF = null;
+            const rowPx = xtermCellH() / wheelSpeedMult();
+            if (!(rowPx > 0) || !term.element) { wheelAccumPx = 0; return; }
+            let k = Math.trunc(wheelAccumPx / rowPx);
+            if (k !== 0) {
+                if (k > SCROLL_MAX_EVENTS_PER_FEED) k = SCROLL_MAX_EVENTS_PER_FEED;
+                else if (k < -SCROLL_MAX_EVENTS_PER_FEED) k = -SCROLL_MAX_EVENTS_PER_FEED;
+                wheelAccumPx -= k * rowPx;
+                const sign = k < 0 ? -1 : 1;
+                for (let i = 0; i < Math.abs(k); i++) emitLineWheel(sign);
+            }
+            if (Math.abs(wheelAccumPx) >= rowPx) wheelRAF = requestAnimationFrame(pumpWheel);
+        }
+        // xterm custom wheel handler: return true = let xterm handle it
+        // (today's raw path); return false = we handled it (suppress default).
+        function onDesktopWheel(ev) {
+            // Our own emitLineWheel synthetics are UNTRUSTED — pass them through
+            // so xterm forwards them to the app. This isTrusted gate is also the
+            // re-entrancy guard (no loop).
+            if (!ev.isTrusted) return true;
+            // Never intercept modified or horizontal-dominant wheels: Shift
+            // (horizontal), Ctrl/Cmd (zoom), Alt, and native 2-finger
+            // horizontal swipes stay EXACTLY as today (red line).
+            if (ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return true;
+            if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) return true;
+            if (!wheelSmoothOn() || !term.element) return true;
+            const px = (ev.deltaMode === 1) ? ev.deltaY * xtermCellH()
+                     : (ev.deltaMode === 2) ? ev.deltaY * xtermScreenH()
+                     : ev.deltaY;
+            if (!px) return true;
+            wheelAccumPx += px;
+            // Bound the accumulator to ONE frame's drain. There is no JS
+            // momentum on the desktop wheel by design (the coast comes from
+            // the OS inertia tail arriving as more trusted wheels), so the
+            // accumulator must never hold more than pumpWheel drains in a
+            // frame — otherwise a hard flick, a coalesced delta, or the
+            // inertia tail backlogs and keeps emitting for seconds AFTER the
+            // fingers stop (gate steady-state finding: uncapped → multi-second
+            // runaway coast). Surplus beyond ~600 rows/s (10 rows × 60fps, far
+            // above any intentional scroll) is dropped, not queued; de-damping
+            // up to that ceiling is unchanged, and post-input coast is ≤1 frame.
+            const capPx = SCROLL_MAX_EVENTS_PER_FEED * (xtermCellH() / wheelSpeedMult());
+            if (wheelAccumPx > capPx) wheelAccumPx = capPx;
+            else if (wheelAccumPx < -capPx) wheelAccumPx = -capPx;
+            if (wheelRAF === null) wheelRAF = requestAnimationFrame(pumpWheel);
+            return false;
+        }
+        // Attach while on, detach (null) while off / master-killed. Called at
+        // init and from applyTermPrefs (so the Settings toggle, a roamed doc,
+        // and the gesture master kill all apply live). Detach = byte-identical
+        // raw passthrough.
+        function applyWheelSmoothPref() {
+            if (!term || !term.attachCustomWheelEventHandler) return;
+            if (wheelSmoothOn()) {
+                term.attachCustomWheelEventHandler(onDesktopWheel);
+            } else {
+                term.attachCustomWheelEventHandler(null);
+                wheelAccumPx = 0;
+                if (wheelRAF !== null) { cancelAnimationFrame(wheelRAF); wheelRAF = null; }
+            }
+        }
+        applyWheelSmoothPref();
 
         // The other two clear triggers of the contract:
         let wheelAccum = 0, wheelAccumAt = 0;
@@ -10979,6 +11133,12 @@
             // Task M.10/IR.2: input bar rides it too (input.bar × the
             // device-local ⌨ override) — a no-op stub on fine pointers.
             applyInputPrefs();
+            // Desktop smooth-wheel: attach/detach the wheel interceptor to
+            // match gestures.wheelSmooth (+ the gesture master kill). Every
+            // apply path routes here — the Settings toggle (tl-prefs-change),
+            // a roamed doc adoption, and the cross-frame prefs push — so the
+            // toggle is instant and reversible on this red-line surface.
+            applyWheelSmoothPref();
         }
         // Changes made in THIS window (floating A−/A+, boot adoption of the
         // server doc) come through the same-tab CustomEvent.
