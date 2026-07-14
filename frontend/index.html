@@ -517,6 +517,27 @@
             html, body { height: 100dvh; }
         }
         .hidden { display: none !important; }
+        /* Color-legend tooltip (hover-capable pointers): hovering ANY
+           state-colored element (card nub, Working note, connection pill)
+           explains the WHOLE color vocabulary, current row highlighted.
+           One shared fixed-position element, DOM-built, themed via the
+           live --state-* variables so every theme shows its true colors. */
+        #tl-legend {
+            position: fixed; z-index: 300; max-width: 300px;
+            background: var(--bg-card); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            box-shadow: var(--surface-shadow);
+            padding: 8px 10px; font-family: var(--font-ui); font-size: 12px;
+            line-height: 1.45; pointer-events: none;
+        }
+        #tl-legend .lg-row { display: flex; align-items: baseline; gap: 8px; opacity: 0.75; }
+        #tl-legend .lg-row.current { opacity: 1; font-weight: 600; }
+        #tl-legend .lg-dot {
+            flex: none; width: 8px; height: 8px; border-radius: 50%;
+            align-self: center;
+        }
+        #tl-legend .lg-name { flex: none; }
+        #tl-legend .lg-desc { color: var(--text-muted); font-weight: 400; }
         /* Inline Lucide icons (iconNode): tuck the box slightly below the
            baseline so icon+text buttons read aligned; flex-centered
            icon-only buttons ignore vertical-align entirely. */
@@ -2715,6 +2736,78 @@
         // under tl:prefs:v1 gestures.* and are checked IN ADDITION to
         // this. Shared scope: gesture code runs in both the lobby (card
         // long-press) and the terminal iframe (soft keys, multi-touch).
+        // --- color-legend tooltip (shared: lobby + terminal modes) -------
+        // tlAttachLegend(el, kind, currentFn): on hover/focus (hover-capable
+        // pointers only), show a legend explaining ALL colors of that
+        // element's vocabulary, highlighting the current one. kinds:
+        //   'claude' — the session state dots / Working note
+        //   'conn'   — the connection pill
+        // currentFn() returns the row key to highlight at show time.
+        const TL_LEGENDS = {
+            claude: [
+                ['running',  '--state-running',  'Running',     'Claude is working'],
+                ['awaiting', '--state-awaiting', 'Needs input', 'blocked on you — a question or permission ask'],
+                ['done',     '--state-done',     'Done',        'the last turn finished'],
+            ],
+            conn: [
+                ['connecting', null, 'Connecting', 'amber pulse — attaching to the session'],
+                ['offline',    null, 'Offline',    'red — connection lost, retrying'],
+            ],
+        };
+        const tlHoverCapable = window.matchMedia && matchMedia('(hover: hover)').matches;
+        let tlLegendEl = null;
+        function tlLegendShow(anchor, kind, current) {
+            const rows = TL_LEGENDS[kind];
+            if (!rows) return;
+            if (!tlLegendEl) {
+                tlLegendEl = document.createElement('div');
+                tlLegendEl.id = 'tl-legend';
+                tlLegendEl.setAttribute('role', 'tooltip');
+                document.body.appendChild(tlLegendEl);
+            }
+            tlLegendEl.replaceChildren();
+            const css = getComputedStyle(document.body);
+            for (const [key, varName, name, desc] of rows) {
+                const row = document.createElement('div');
+                row.className = 'lg-row' + (key === current ? ' current' : '');
+                const dot = document.createElement('span');
+                dot.className = 'lg-dot';
+                dot.style.background = varName
+                    ? (css.getPropertyValue(varName).trim() || 'currentColor')
+                    : (key === 'offline' ? (css.getPropertyValue('--danger').trim() || '#f85149') : '#f59e0b');
+                const nm = document.createElement('span');
+                nm.className = 'lg-name';
+                nm.textContent = name;
+                const ds = document.createElement('span');
+                ds.className = 'lg-desc';
+                ds.textContent = '— ' + desc;
+                row.append(dot, nm, ds);
+                tlLegendEl.appendChild(row);
+            }
+            const r = anchor.getBoundingClientRect();
+            tlLegendEl.style.visibility = 'hidden';
+            tlLegendEl.style.display = 'block';
+            const w = tlLegendEl.offsetWidth, h = tlLegendEl.offsetHeight;
+            let x = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+            let y = r.bottom + 8;
+            if (y + h > window.innerHeight - 8) y = r.top - h - 8;
+            tlLegendEl.style.left = x + 'px';
+            tlLegendEl.style.top = Math.max(8, y) + 'px';
+            tlLegendEl.style.visibility = '';
+        }
+        function tlLegendHide() {
+            if (tlLegendEl) tlLegendEl.style.display = 'none';
+        }
+        function tlAttachLegend(el, kind, currentFn) {
+            if (!tlHoverCapable) return;   // hover vocabulary only; touch keeps titles
+            el.removeAttribute('title');   // no double tooltip on hover devices
+            el.addEventListener('mouseenter', () => tlLegendShow(el, kind, currentFn()));
+            el.addEventListener('mouseleave', tlLegendHide);
+            el.addEventListener('focusin', () => tlLegendShow(el, kind, currentFn()));
+            el.addEventListener('focusout', tlLegendHide);
+        }
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') tlLegendHide(); }, true);
+
         const GESTURES_KILL_KEY = 'tl-gestures';
         function gesturesEnabled() {
             try { return localStorage.getItem(GESTURES_KILL_KEY) !== 'off'; } catch (e) { return true; }
@@ -5232,6 +5325,7 @@
                 dot.title = 'Claude: ' + (state === 'done' ? 'completed' :
                     state === 'awaiting' ? 'awaiting your input' : 'running');
                 if (extraClass === 'unseen') dot.title += ' (new since your last visit)';
+                tlAttachLegend(dot, 'claude', () => state);   // hover explains ALL the colors
                 return dot;
             }
 
@@ -5241,6 +5335,7 @@
             function workingNote(sinceMs) {
                 const note = document.createElement('span');
                 note.className = 'working-note';
+                tlAttachLegend(note, 'claude', () => 'running');
                 for (let i = 0; i < 3; i++) note.appendChild(document.createElement('i'));
                 note.append('Working for ');
                 const timer = document.createElement('span');
@@ -10960,6 +11055,9 @@
         let retryTimer = null;  // pending scheduled connect (null while attempting)
         let stableTimer = null; // pending "connection survived 30s" ladder reset
         const connPill = document.getElementById('conn-pill');
+        // Hovering the pill explains the connection colors (amber pulse vs red).
+        tlAttachLegend(connPill, 'conn',
+            () => connPill.classList.contains('offline') ? 'offline' : 'connecting');
         function paintConnPill(attempt) {
             connPill.textContent =
                 navigator.onLine === false ? 'You are offline'
