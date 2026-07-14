@@ -1785,6 +1785,11 @@
         #soft-keys button:active {
             background: color-mix(in srgb, var(--accent) 25%, var(--bg-card-hover));
         }
+        /* Icon soft keys (makeBtn opts.icon): flex-center the svg in the
+           same 38px box the text keys use — geometry untouched. */
+        #soft-keys button.sk-icon {
+            display: inline-flex; align-items: center; justify-content: center;
+        }
         #soft-keys button.sk-mod.armed {
             color: var(--accent);
             border-color: color-mix(in srgb, var(--accent) 55%, transparent);
@@ -8456,7 +8461,15 @@
             function makeBtn(label, onTap, opts) {
                 const b = document.createElement('button');
                 b.type = 'button';
-                b.textContent = label;
+                // Icon fix: opts.icon renders a Lucide svg INSTEAD of the
+                // text label (label may be null then) — purely the face of
+                // the key; bytes/aria/tap wiring below are untouched.
+                if (opts && opts.icon) {
+                    b.classList.add('sk-icon');
+                    b.replaceChildren(iconNode(opts.icon, opts.iconPx || 18));
+                } else {
+                    b.textContent = label;
+                }
                 if (opts && opts.cls)     b.classList.add(opts.cls);
                 if (opts && opts.dataMod) b.setAttribute('data-mod', opts.dataMod);
                 if (opts && opts.ariaLabel) b.setAttribute('aria-label', opts.ariaLabel);
@@ -8726,15 +8739,16 @@
             // which writes the SAME roamed pref; the hidden
             // #font-dec-btn/#font-inc-btn elements stay as the desktop
             // floating cluster.
-            grpMedia.appendChild(skNarrow(makeBtn('🖼',
+            grpMedia.appendChild(skNarrow(makeBtn(null,
                 () => document.getElementById('gallery-btn').click(),
                 // swallowClick: the gallery overlay opens under the lifting
                 // finger — without it the tap's trailing trusted click lands
                 // on the backdrop and instantly closes it (MF-2 round 2).
-                { ariaLabel: 'Session images', noFocus: true, swallowClick: true })));
-            grpMedia.appendChild(skNarrow(makeBtn('📷',
+                { icon: 'image',
+                  ariaLabel: 'Session images', noFocus: true, swallowClick: true })));
+            grpMedia.appendChild(skNarrow(makeBtn(null,
                 () => document.getElementById('img-btn').click(),
-                { ariaLabel: 'Upload image', noFocus: true })));
+                { icon: 'camera', ariaLabel: 'Upload image', noFocus: true })));
             // IR.3: ⌨ — ONE input-mode toggle, replacing BOTH the M.11
             // 'Kbd' raw-keyboard key and the M.10 '✎' bar toggle. It
             // flips the input bar via toggleInputBar() (IR.2: the
@@ -8745,8 +8759,9 @@
             // whenever the bar is away), so Kbd's one-shot raw excursion
             // collapses into ⌨-off + tap. noFocus: toggleInputBar does
             // its own focus handling.
-            const inputToggleBtn = skNarrow(makeBtn('⌨', () => toggleInputBar(),
-                { ariaLabel: 'Switch between input field and raw keyboard',
+            const inputToggleBtn = skNarrow(makeBtn(null, () => toggleInputBar(),
+                { icon: 'keyboard',
+                  ariaLabel: 'Switch between input field and raw keyboard',
                   noFocus: true }));
             inputToggleBtn.id = 'sk-input-toggle';
             inputToggleBtn.title = 'Switch between input field and raw keyboard';
@@ -8771,8 +8786,8 @@
             const KEY_ROW_EXPANDED_KEY = 'tl:input.keyRowExpanded:v1';
             let keyRowExpanded = false;
             try { keyRowExpanded = localStorage.getItem(KEY_ROW_EXPANDED_KEY) === '1'; } catch (e) {}
-            const moreBtn = skNarrow(makeBtn('⋯', () => setKeyRowExpanded(!keyRowExpanded),
-                { cls: 'sk-mod', ariaLabel: 'More keys', noFocus: true }));
+            const moreBtn = skNarrow(makeBtn(null, () => setKeyRowExpanded(!keyRowExpanded),
+                { icon: 'ellipsis', cls: 'sk-mod', ariaLabel: 'More keys', noFocus: true }));
             moreBtn.classList.add('sk-more');
             moreBtn.title = 'More keys';
             function paintKeyRowExpanded() {
@@ -8802,7 +8817,7 @@
             // keeps makeBtn from immediately re-summoning it. The way
             // back is a terminal tap (raw keyboard or mirror field, per
             // input.tapFocus).
-            line.appendChild(skNarrow(makeBtn('⌄', () => {
+            line.appendChild(skNarrow(makeBtn(null, () => {
                 // M.11 fix (pre-existing bug, default-path now): in compose
                 // mode the active input is #compose-input, not the helper —
                 // blur whichever input actually holds the keyboard. Lazy
@@ -8814,7 +8829,8 @@
                 const ae = document.activeElement;
                 if (ae === helperTextarea || (ae && ae.id === 'compose-input')) ae.blur();
                 else if (helperTextarea) helperTextarea.blur();
-            }, { ariaLabel: 'Hide keyboard', noFocus: true, cls: 'sk-dismiss' })));
+            }, { icon: 'chevron-down',
+                 ariaLabel: 'Hide keyboard', noFocus: true, cls: 'sk-dismiss' })));
 
             document.body.appendChild(toolbar);
             document.body.classList.add('has-soft-keys');
