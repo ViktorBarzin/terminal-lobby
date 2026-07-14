@@ -5886,27 +5886,31 @@
             // Only active typing defers: a sticky tappable "Update ready"
             // toast that reloads on tap, on the tab hiding, or on the next
             // idle check.
-            const TL_KB_BUSY_MS = 10000;   // "recently typing" window
-            let frameKbActiveAt = 0;       // fed by tl-kb-activity from the iframe
-            let updatePending = false;     // a deferred reload is armed (toast up)
-            function frameTypingRecently() {
-                return !!currentActive && (Date.now() - frameKbActiveAt) < TL_KB_BUSY_MS;
-            }
+            let updatePending = false;     // a deferred reload is armed (pill up)
             function requestTopReload(why) {
-                if (!frameTypingRecently() || document.hidden) {
+                // Viktor: "keep it connected and repaint only on refresh."
+                // While a terminal is ATTACHED and the tab is VISIBLE, a new
+                // build NEVER yanks the page out from under the user — it
+                // surfaces a sticky "Update ready" pill and waits for the tap
+                // (or the tab hiding, below). Auto-reload stays immediate ONLY
+                // when there is no attached terminal (pure lobby) or the tab
+                // is hidden — nothing on screen to interrupt. (Previously it
+                // reloaded unless the user had typed in the last 10s, so a
+                // reader watching a session got flashed on every deploy — the
+                // flicker Viktor called out. The typing-recency signal is
+                // retired with this change.)
+                if (!currentActive || document.hidden) {
                     if (!tlStormOK()) return;
-                    console.log('deploy detected (' + why + ') — reloading the lobby');
+                    console.log('deploy detected (' + why + ') — reloading (no active terminal / hidden)');
                     location.reload();
                     return;
                 }
-                // Terminal attached and keys flowing — defer, don't yank it
-                // out from under the user.
-                if (updatePending) return;   // toast already up
+                if (updatePending) return;   // pill already up
                 updatePending = true;
                 tlToast.add({
                     type: 'info',
                     title: 'Update ready — tap to refresh',
-                    timeout: 0,  // sticky until tapped or auto-reloaded
+                    timeout: 0,  // sticky until tapped or the tab hides
                     onTap: () => { if (tlStormOK()) location.reload(); }
                 });
             }
@@ -7246,11 +7250,6 @@
                 } else if (e.data.type === 'tl-kb-alt') {
                     frameAltDown = !!e.data.alt;
                     syncAltBadges();
-                } else if (e.data.type === 'tl-kb-activity') {
-                    // Typing recency from the terminal iframe — feeds the
-                    // deploy-reload defer decision (origin + source already
-                    // checked above).
-                    frameKbActiveAt = Date.now();
                 } else if (e.data.type === 'tl-build-stale') {
                     // The embedded terminal saw a new build on its reconnect
                     // heal and handed the reload up: the top owns the single
@@ -8098,30 +8097,6 @@
                 document.title = document.title.slice(2);
             }
         });
-
-        // Deploy-refresh defer signal: the lobby postpones its "new build →
-        // reload the top" while keys are actively flowing into this
-        // terminal, so it needs to hear about typing. A window-level
-        // CAPTURE keydown listener sees every input path (xterm's helper
-        // textarea, the compose bar) without touching the single
-        // attachCustomKeyEventHandler contract or any input plumbing —
-        // observe-only, never preventDefault. Throttled to one message per
-        // 1.5 s; the lobby treats "no report for 10 s" as idle, so the
-        // throttle can never make a busy terminal look idle. Rides the
-        // established iframe→top postMessage channel (tl-attention /
-        // tl-gesture / tl-kb-alt family).
-        let kbActivityReportedAt = 0;
-        window.addEventListener('keydown', () => {
-            if (!isFramed) return;
-            const now = Date.now();
-            if (now - kbActivityReportedAt < 1500) return;
-            kbActivityReportedAt = now;
-            try {
-                window.parent.postMessage(
-                    { type: 'tl-kb-activity', session: validArg },
-                    location.origin);
-            } catch (e) {}
-        }, true);
 
         // 'TL Symbols' — Iosevka-subset fallback face (scripts/build-tl-symbols.sh):
         // braille + the Claude Code spinner/status glyphs (✢✳✻✽⏺⎿✔☐☒⏵◼※⠋) that
