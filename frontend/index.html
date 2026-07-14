@@ -635,6 +635,9 @@
             font-size: 13px; line-height: 20px;
         }
         .toast-card .t-copy:hover, .toast-card .t-x:hover { color: var(--text-primary); }
+        /* Tappable toast (opt-in onTap — the deploy "Update ready" card):
+           the whole card is one button. */
+        .toast-card.t-tappable { cursor: pointer; }
         /* Connection pill (Task 2.2): slim non-modal WS status for the
            terminal iframe — top-center so it never covers the floating
            action buttons or the prompt. Pure status surface:
@@ -3412,6 +3415,7 @@
                 clearChildren(t.el);
                 const type = ICONS.hasOwnProperty(o.type) ? o.type : 'info';
                 t.el.className = 'toast-card t-' + type;
+                if (typeof o.onTap === 'function') t.el.classList.add('t-tappable');
                 const icon = document.createElement('span');
                 icon.className = 't-icon';
                 if (ICONS[type]) icon.appendChild(ICONS[type]());
@@ -3511,6 +3515,17 @@
                 const t = { id, el: document.createElement('div'),
                             opts: opts || {}, timer: null, expanded: false };
                 toasts.set(id, t);
+                // Whole-card tap action (opt-in onTap — the deploy "Update
+                // ready" toast): wired once on the persistent card element,
+                // NOT in render() (update() re-renders and would stack
+                // listeners). Inner controls (✕ dismiss, expand, copy) keep
+                // their own click semantics.
+                if (typeof t.opts.onTap === 'function') {
+                    t.el.addEventListener('click', (e) => {
+                        if (e.target.closest('.t-x, .t-expand, .t-copy')) return;
+                        t.opts.onTap();
+                    });
+                }
                 render(t);
                 arm(t);
                 stack.appendChild(t.el);
@@ -4103,6 +4118,101 @@
             lobby.appendChild(p2);
             lobby.classList.add('visible', 'access-denied');
             document.title = 'access denied';
+        }
+
+        // ---- deploy reload: TOP-owned, single reload ----------------------
+        // After a deploy the served page changes. Reloading is owned by the
+        // TOP document: an embedded terminal signals its parent (see
+        // reloadIfStale) rather than reloading itself, so the lobby shell —
+        // the part with no WebSocket to drop — is what actually refreshes,
+        // and the iframe is replaced by that one top reload instead of racing
+        // its own. tlTopReload is installed by the lobby (a defer-while-typing
+        // policy); a top-level document with no policy installed (a
+        // directly-opened terminal) falls back to the storm-guarded plain
+        // reload below.
+        let tlTopReload = null;
+        function tlStormOK() {
+            // At most one auto-reload per 2 minutes per top-level document.
+            // This is also the anti-loop backstop: our served page is
+            // byte-stable within a deploy (ttyd serves a static file; TL_BUILD
+            // is seded once at deploy — nothing per-request varies), and a
+            // reload re-boots the page so armBaseline('boot') re-arms the
+            // baseline to the NEW bytes and detection stops. Even in the
+            // pathological case of a per-request-varying page this caps
+            // reloads at one per 2 min rather than a tight loop.
+            let last = 0;
+            try { last = Number(sessionStorage.getItem('tl-stale-reload') || 0); } catch (e) {}
+            if (Date.now() - last < 120000) return false;
+            try { sessionStorage.setItem('tl-stale-reload', String(Date.now())); } catch (e) {}
+            return true;
+        }
+        function tlPlainReload(why) {
+            if (!tlStormOK()) return;
+            console.log('page changed on the server (' + why + ') — reloading');
+            location.reload();
+        }
+
+        // ---- stale-page self-heal (shared: lobby + terminal) --------------
+        // Deploys restart ttyd, which only DROPS the WebSocket: the page
+        // silently reconnects and keeps running its old JavaScript forever —
+        // Cache-Control: no-store never helps because the tab never
+        // re-fetches itself. (Found the hard way: a day-old tab lacked the
+        // drag-select feature entirely; drags fell through to Claude Code's
+        // own hold-to-select highlight, which dies on mouse release.)
+        // Remedy: hash our own served bytes at boot, and later re-fetch +
+        // compare — if the server now serves a different page, reload into
+        // it. The TERMINAL checks on every reconnect (the connection just
+        // dropped anyway and tmux keeps the session); the LOBBY — which has
+        // no WebSocket to drop — runs the same check on a short timer and on
+        // visibility/pageshow resume (this hash check is the ONLY deploy
+        // channel — there is no server build header). cacheMode threads the
+        // cost knob: default 'no-store' (terminal verbatim — full
+        // re-download); 'no-cache' (lobby) revalidates with If-None-Match
+        // against the strong ETag the patched ttyd serves, so an unchanged
+        // page costs a bodyless 304 (an unpatched ttyd just serves full
+        // 200s — correct, merely not as cheap).
+        // Known gap: a deploy landing between page load and the boot fetch
+        // makes the baseline the NEW bytes while old code runs — heals on
+        // the deploy after next. Not worth a build-stamp pipeline.
+        let bootPageHash = null;
+        function hashPage(text) {
+            let h = 5381;
+            for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+            return text.length + ':' + h;
+        }
+        function fetchSelf(cacheMode) {
+            return fetch(location.pathname + location.search,
+                         { cache: cacheMode || 'no-store', credentials: 'same-origin' })
+                // Validate it is OUR page — an auth interstitial must never
+                // become the baseline (it would blind the comparison).
+                .then(r => r.ok ? r.text() : null)
+                .then(t => (t && t.includes('terminal-lobby build:') ? t : null));
+        }
+        function armBaseline(where, cacheMode) {
+            return fetchSelf(cacheMode).then(t => {
+                if (t) { bootPageHash = hashPage(t); }
+                else { console.warn('stale-tab healer: baseline fetch failed (' + where + ') — will retry on reconnect'); }
+            }).catch(() => {});
+        }
+        function reloadIfStale(cacheMode) {
+            // A failed boot baseline must not disarm the healer forever:
+            // re-arm now, compare on the NEXT check.
+            if (!bootPageHash) { armBaseline('reconnect', cacheMode); return; }
+            fetchSelf(cacheMode).then(t => {
+                if (!t || hashPage(t) === bootPageHash) return;
+                // A new build is being served. Reloading is TOP-owned: an
+                // embedded terminal never reloads itself (that freshens only
+                // the iframe, leaves the lobby shell stale, and races the top
+                // into a double load) — it signals the parent and lets the
+                // top own the single reload, which replaces this iframe
+                // anyway. A top-level document (the lobby, or a
+                // directly-opened terminal) drives its own reload.
+                if (window.parent !== window) {
+                    try { window.parent.postMessage({ type: 'tl-build-stale' }, location.origin); } catch (e) {}
+                    return;
+                }
+                (tlTopReload || tlPlainReload)('self-heal');
+            }).catch(() => {});
         }
 
         // Preflight: ask tmux-api who we are. 403 = unmapped Authentik user → deny.
@@ -5745,6 +5855,60 @@
                 applyAltBadges();
             }
 
+            // ---- deploy self-refresh: top-owned reload policy ------------
+            // Detection is the healer (lobbySelfCheck, below) plus the
+            // tl-build-stale signal an embedded terminal sends when its
+            // reconnect heal sees a new build. Both route to requestTopReload,
+            // which owns the single reload. Policy (research doc): no attached
+            // terminal, a hidden tab, or an idle terminal → reload NOW (the
+            // top reload takes the iframe with it; tmux keeps the session).
+            // Only active typing defers: a sticky tappable "Update ready"
+            // toast that reloads on tap, on the tab hiding, or on the next
+            // idle check.
+            const TL_KB_BUSY_MS = 10000;   // "recently typing" window
+            let frameKbActiveAt = 0;       // fed by tl-kb-activity from the iframe
+            let updatePending = false;     // a deferred reload is armed (toast up)
+            function frameTypingRecently() {
+                return !!currentActive && (Date.now() - frameKbActiveAt) < TL_KB_BUSY_MS;
+            }
+            function requestTopReload(why) {
+                if (!frameTypingRecently() || document.hidden) {
+                    if (!tlStormOK()) return;
+                    console.log('deploy detected (' + why + ') — reloading the lobby');
+                    location.reload();
+                    return;
+                }
+                // Terminal attached and keys flowing — defer, don't yank it
+                // out from under the user.
+                if (updatePending) return;   // toast already up
+                updatePending = true;
+                tlToast.add({
+                    type: 'info',
+                    title: 'Update ready — tap to refresh',
+                    timeout: 0,  // sticky until tapped or auto-reloaded
+                    onTap: () => { if (tlStormOK()) location.reload(); }
+                });
+            }
+            tlTopReload = requestTopReload;   // reloadIfStale routes top-level reloads here
+            // Deferred update: fire the moment the tab hides (nothing left to
+            // interrupt), and re-check on resume — iOS standalone throttles/
+            // suspends background timers hard, so the resume hook is what makes
+            // an update land the instant the user comes back (treat "became
+            // visible" as "re-check now"; per WebKit 202399 don't trust the
+            // state value beyond that).
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    if (updatePending && tlStormOK()) { updatePending = false; location.reload(); }
+                    return;
+                }
+                lobbySelfCheck();    // resume — re-check for a deploy right away
+            });
+            // bfcache restore: the page comes back frozen, not reloaded —
+            // an entire deploy may have landed while it slept.
+            window.addEventListener('pageshow', (e) => {
+                if (e.persisted) lobbySelfCheck();
+            });
+
             async function renderLobby() {
                 if (isDragging || gestureActive || openMenuEl || ctxMenuOpen || renameEditing) return;
                 try {
@@ -7032,6 +7196,16 @@
                 } else if (e.data.type === 'tl-kb-alt') {
                     frameAltDown = !!e.data.alt;
                     syncAltBadges();
+                } else if (e.data.type === 'tl-kb-activity') {
+                    // Typing recency from the terminal iframe — feeds the
+                    // deploy-reload defer decision (origin + source already
+                    // checked above).
+                    frameKbActiveAt = Date.now();
+                } else if (e.data.type === 'tl-build-stale') {
+                    // The embedded terminal saw a new build on its reconnect
+                    // heal and handed the reload up: the top owns the single
+                    // reload (it replaces the iframe too).
+                    requestTopReload('terminal signal');
                 }
             });
 
@@ -7064,6 +7238,27 @@
                     showToast('Open a session first, then drop files', 'error', 3500);
                 }
             });
+
+            // ---- deploy detection: the lobby's stale-page healer --------
+            // The lobby has no WebSocket to drop, so it polls its own served
+            // bytes: re-hash the page (conditional GET — cache:'no-cache'
+            // revalidates against ttyd's strong ETag, so an unchanged page is
+            // a bodyless 304) and, on a real change, route to requestTopReload
+            // (reusing the fetchSelf/reloadIfStale hoisted above the split).
+            // This hash check is the ONLY deploy channel, so the cadence is a
+            // short 5 s to meet the "picked up within seconds" bar; the 304
+            // keeps that cheap. Skipped while hidden (the visibility/pageshow
+            // resume hooks re-check on return). Detection runs even while
+            // typing — the defer lives in requestTopReload (it raises the
+            // toast instead of reloading), so a typing user still learns an
+            // update is ready.
+            const TL_SELF_CHECK_MS = 5000;
+            function lobbySelfCheck() {
+                if (document.hidden) return;
+                reloadIfStale('no-cache');
+            }
+            armBaseline('boot', 'no-cache');
+            setInterval(lobbySelfCheck, TL_SELF_CHECK_MS);
 
             renderLobby();
             setInterval(renderLobby, 5000);
@@ -7853,6 +8048,30 @@
                 document.title = document.title.slice(2);
             }
         });
+
+        // Deploy-refresh defer signal: the lobby postpones its "new build →
+        // reload the top" while keys are actively flowing into this
+        // terminal, so it needs to hear about typing. A window-level
+        // CAPTURE keydown listener sees every input path (xterm's helper
+        // textarea, the compose bar) without touching the single
+        // attachCustomKeyEventHandler contract or any input plumbing —
+        // observe-only, never preventDefault. Throttled to one message per
+        // 1.5 s; the lobby treats "no report for 10 s" as idle, so the
+        // throttle can never make a busy terminal look idle. Rides the
+        // established iframe→top postMessage channel (tl-attention /
+        // tl-gesture / tl-kb-alt family).
+        let kbActivityReportedAt = 0;
+        window.addEventListener('keydown', () => {
+            if (!isFramed) return;
+            const now = Date.now();
+            if (now - kbActivityReportedAt < 1500) return;
+            kbActivityReportedAt = now;
+            try {
+                window.parent.postMessage(
+                    { type: 'tl-kb-activity', session: validArg },
+                    location.origin);
+            } catch (e) {}
+        }, true);
 
         // 'TL Symbols' — Iosevka-subset fallback face (scripts/build-tl-symbols.sh):
         // braille + the Claude Code spinner/status glyphs (✢✳✻✽⏺⎿✔☐☒⏵◼※⠋) that
@@ -11173,57 +11392,13 @@
             if (retryTimer) paintConnPill(connAttempts + 1);
         });
 
-        // ---- stale-tab self-heal ----------------------------------------
-        // Deploys restart ttyd, which only DROPS the WebSocket: the page
-        // silently reconnects and keeps running its old JavaScript forever —
-        // Cache-Control: no-store never helps because the tab never
-        // re-fetches itself. (Found the hard way: a day-old tab lacked the
-        // drag-select feature entirely; drags fell through to Claude Code's
-        // own hold-to-select highlight, which dies on mouse release.)
-        // Remedy: hash our own served bytes at boot, and on every RECONNECT
-        // re-fetch + compare — if the server now serves a different page,
-        // reload into it. Reconnect is the perfect moment: the connection
-        // just dropped anyway and tmux keeps the session.
-        // Known gap: a deploy landing between page load and the boot fetch
-        // makes the baseline the NEW bytes while old code runs — heals on
-        // the deploy after next. Not worth a build-stamp pipeline.
-        let bootPageHash = null;
-        function hashPage(text) {
-            let h = 5381;
-            for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
-            return text.length + ':' + h;
-        }
-        function fetchSelf() {
-            return fetch(location.pathname + location.search,
-                         { cache: 'no-store', credentials: 'same-origin' })
-                // Validate it is OUR page — an auth interstitial must never
-                // become the baseline (it would blind the comparison).
-                .then(r => r.ok ? r.text() : null)
-                .then(t => (t && t.includes('terminal-lobby build:') ? t : null));
-        }
-        function armBaseline(where) {
-            return fetchSelf().then(t => {
-                if (t) { bootPageHash = hashPage(t); }
-                else { console.warn('stale-tab healer: baseline fetch failed (' + where + ') — will retry on reconnect'); }
-            }).catch(() => {});
-        }
+        // ---- stale-tab self-heal (definitions hoisted) -------------------
+        // hashPage/fetchSelf/armBaseline/reloadIfStale live ABOVE the
+        // lobby/terminal split now (the lobby generalizes them as its
+        // no-backend fallback). This terminal path keeps its historic
+        // behavior verbatim: full no-store baseline at boot, compare on
+        // every reconnect (see ws.onopen → reloadIfStale()).
         armBaseline('boot');
-        function reloadIfStale() {
-            // A failed boot baseline must not disarm the healer forever:
-            // re-arm now, compare on the NEXT reconnect.
-            if (!bootPageHash) { armBaseline('reconnect'); return; }
-            fetchSelf().then(t => {
-                if (!t || hashPage(t) === bootPageHash) return;
-                // Loop guard: at most one auto-reload per 2 minutes per tab
-                // (a flaky fetch must not reload-storm a working terminal).
-                let last = 0;
-                try { last = Number(sessionStorage.getItem('tl-stale-reload') || 0); } catch (e) {}
-                if (Date.now() - last < 120000) return;
-                try { sessionStorage.setItem('tl-stale-reload', String(Date.now())); } catch (e) {}
-                console.log('page changed on the server — reloading to pick it up');
-                location.reload();
-            }).catch(() => {});
-        }
 
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
