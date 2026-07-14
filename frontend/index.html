@@ -3303,9 +3303,13 @@
                     const panel = document.createElement('div');
                     panel.className = 't-detail';
                     const paintExpand = () => {
-                        btn.textContent = t.expanded
-                            ? (labels.collapse || 'Hide details') + ' ▴'
-                            : (labels.expand || 'Show details') + ' ▾';
+                        // Icon fix: label text + chevron svg (▴/▾ fell
+                        // outside every bundled font's coverage).
+                        btn.replaceChildren(
+                            document.createTextNode(t.expanded
+                                ? (labels.collapse || 'Hide details') + ' '
+                                : (labels.expand || 'Show details') + ' '),
+                            iconNode(t.expanded ? 'chevron-up' : 'chevron-down', 14));
                         panel.classList.toggle('hidden', !t.expanded);
                     };
                     btn.addEventListener('click', () => { t.expanded = !t.expanded; paintExpand(); });
@@ -5239,7 +5243,7 @@
                 const actions = document.createElement('div');
                 actions.className = 'session-actions';
                 const menuBtn = document.createElement('button');
-                menuBtn.textContent = '⋯';
+                menuBtn.replaceChildren(iconNode('ellipsis', 16));
                 menuBtn.title = 'Session actions';
                 menuBtn.setAttribute('aria-label', 'Actions for session ' + s.name);
                 menuBtn.draggable = false;
@@ -5363,7 +5367,9 @@
 
                 const chev = document.createElement('span');
                 chev.className = 'chev';
-                chev.textContent = '▾';
+                // Icon fix: chevron-down svg; the existing .collapsed CSS
+                // rotate(-90deg) on the span still points it sideways.
+                chev.replaceChildren(iconNode('chevron-down', 14));
                 header.appendChild(chev);
 
                 const title = document.createElement('span');
@@ -5411,7 +5417,7 @@
                     actions.appendChild(addBtn);
                 }
                 const pMenuBtn = document.createElement('button');
-                pMenuBtn.textContent = '⋯';
+                pMenuBtn.replaceChildren(iconNode('ellipsis', 16));
                 pMenuBtn.title = isUngrouped ? 'Ungrouped actions' : 'Project actions';
                 pMenuBtn.setAttribute('aria-label',
                     isUngrouped ? 'Actions for ungrouped sessions' : 'Actions for project ' + projectName);
