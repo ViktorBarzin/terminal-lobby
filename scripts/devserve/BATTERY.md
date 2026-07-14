@@ -3295,3 +3295,11 @@ fontSize 15.
 - A slow deliberate drag reads line-precise and never coasts; holding the
   finger still before lifting never coasts.
 - Momentum off (Settings) = strict one-to-one, no-coast.
+
+- [nav] LIST-CLOSE ✕ (follow-up, Viktor: "the only option to close it is to
+  choose a project"): in the mobile BROWSING view with a session ATTACHED, an
+  ✕ (header icon tier, 44px) is visible with title "Close the list — back to
+  <session>"; tapping it flips to terminal view with the SAME iframe (marker
+  survives, no reload). Hidden: at fresh boot with nothing attached, in
+  terminal view, and always on desktop (`.hidden` + JS mobile gate). Verified
+  full loop card→‹ Sessions→✕→terminal, 0 page errors.

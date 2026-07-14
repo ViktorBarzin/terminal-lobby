@@ -965,7 +965,8 @@
         /* T3 icon-button tier (Task 2.8): 32×32 (size-8), 16px glyph at
            80% resting opacity, button radius. */
         #notify-toggle,
-        #reload-toggle {
+        #reload-toggle,
+        #list-close {
             flex: 0 0 auto; width: 32px; height: 32px; padding: 0;
             box-sizing: border-box;
             border-radius: var(--radius);
@@ -975,7 +976,8 @@
             transition: background 0.15s, border-color 0.15s, opacity 0.15s;
         }
         #notify-toggle:hover,
-        #reload-toggle:hover { background: var(--bg-card-hover); opacity: 1; }
+        #reload-toggle:hover,
+        #list-close:hover { background: var(--bg-card-hover); opacity: 1; }
         #notify-toggle.on {
             border-color: var(--accent); background: var(--bg-card-hover); opacity: 1;
         }
@@ -1629,7 +1631,7 @@
                 min-height: 44px;
             }
             /* Square icon buttons stay square at target size. */
-            #sidebar-toggle, #notify-toggle, #reload-toggle { width: 44px; height: 44px; }
+            #sidebar-toggle, #notify-toggle, #reload-toggle, #list-close { width: 44px; height: 44px; }
             /* The header row's reserve for the fixed #sidebar-toggle
                grows with it (44px + 12px inset). */
             .lobby-header-row { padding-right: 56px; }
@@ -1676,6 +1678,17 @@
             /* The toggle only ever means "go back to the list" here, so it
                is redundant (and confusing) while the list is already up. */
             #sidebar-toggle { display: none; }
+            /* Base tier gives #list-close its look; visibility stays gated:
+               display:none by default (below, outside this block it never
+               shows) and inline-flex only here when un-hidden. */
+            /* Closing the list WITHOUT picking a session (Viktor: "the only
+               option to close it is to choose a project"): an ✕ in the list
+               header, shown only while a session is attached — it returns
+               to that session's terminal view. Fresh boots with nothing
+               attached have nothing to close, so it stays hidden (the JS
+               toggles .hidden; rule 9735 both ways: the list's own close is
+               this ✕, the terminal's is the ‹ Sessions pill). */
+            #list-close:not(.hidden) { display: inline-flex; }
 
             /* TERMINAL VIEW (sidebar-collapsed): the attached session
                fills the viewport; the sidebar is fully hidden (its restore
@@ -2002,6 +2015,8 @@
                             title="Reload the app">&#10227;</button>
                     <button id="notify-toggle" type="button" aria-pressed="false"
                             title="Notify me when Claude finishes or needs input">&#128276;</button>
+                    <button id="list-close" class="hidden" type="button"
+                            aria-label="Close the list and return to your session">&#10005;</button>
                 </div>
                 <p class="lobby-sub">Pick a session or create one. Sessions persist after you close the tab.</p>
                 <div class="new-row">
@@ -5538,10 +5553,25 @@
                 }
                 toggleEl.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
                 try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); } catch (e) {}
+                if (typeof updateListClose === 'function') updateListClose();
             }
             toggleEl.addEventListener('click', () => {
                 setSidebarCollapsed(!lobbyEl.classList.contains('sidebar-collapsed'));
             });
+            // ✕ in the list header (mobile browsing view): close the list and
+            // return to the ATTACHED session without having to re-pick its
+            // card. Hidden when nothing is attached (nothing to close) and on
+            // desktop (the split has no "closed" state). Recomputed on every
+            // view flip — setSidebarCollapsed is the single flip choke point,
+            // and both attach paths and deactivateSession flip through it.
+            const listCloseEl = document.getElementById('list-close');
+            function updateListClose() {
+                const show = mobileQuery.matches && !!currentActive &&
+                    !lobbyEl.classList.contains('sidebar-collapsed');
+                listCloseEl.classList.toggle('hidden', !show);
+                if (show) listCloseEl.title = 'Close the list — back to ' + currentActive;
+            }
+            listCloseEl.addEventListener('click', () => setSidebarCollapsed(true));
             // On a phone the view is derived from the attached session, not the
             // persisted collapse pref: boot into the list and let a #hash or the
             // MF-5 reland flip to the terminal via activateSession. Desktop keeps
