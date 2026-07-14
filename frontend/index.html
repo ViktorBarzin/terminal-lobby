@@ -530,13 +530,20 @@
             padding: 8px 10px; font-family: var(--font-ui); font-size: 12px;
             line-height: 1.45; pointer-events: none;
         }
-        #tl-legend .lg-row { display: flex; align-items: baseline; gap: 8px; opacity: 0.75; }
-        #tl-legend .lg-row.current { opacity: 1; font-weight: 600; }
+        /* Row anatomy: the dot pins to the FIRST text line (flex-start +
+           optical margin), and name+desc live in ONE text block so a wrapped
+           description indents under the text, never under the dot — a
+           centered dot on a wrapped row floats detached (Viktor's shot). */
+        #tl-legend .lg-row { display: flex; align-items: flex-start; gap: 8px; opacity: 0.75; }
+        #tl-legend .lg-row + .lg-row { margin-top: 3px; }
+        #tl-legend .lg-row.current { opacity: 1; }
+        #tl-legend .lg-row.current .lg-name { font-weight: 600; }
         #tl-legend .lg-dot {
             flex: none; width: 8px; height: 8px; border-radius: 50%;
-            align-self: center;
+            margin-top: 5px;   /* optical center of the first 17px line box */
         }
-        #tl-legend .lg-name { flex: none; }
+        #tl-legend .lg-text { min-width: 0; }
+        #tl-legend .lg-name { font-weight: 500; }
         #tl-legend .lg-desc { color: var(--text-muted); font-weight: 400; }
         /* Inline Lucide icons (iconNode): tuck the box slightly below the
            baseline so icon+text buttons read aligned; flex-centered
@@ -2746,7 +2753,7 @@
         const TL_LEGENDS = {
             claude: [
                 ['running',  '--state-running',  'Running',     'Claude is working'],
-                ['awaiting', '--state-awaiting', 'Needs input', 'blocked on you — a question or permission ask'],
+                ['awaiting', '--state-awaiting', 'Needs input', 'a question or approval needs you'],
                 ['done',     '--state-done',     'Done',        'the last turn finished'],
             ],
             conn: [
@@ -2775,13 +2782,16 @@
                 dot.style.background = varName
                     ? (css.getPropertyValue(varName).trim() || 'currentColor')
                     : (key === 'offline' ? (css.getPropertyValue('--danger').trim() || '#f85149') : '#f59e0b');
+                const text = document.createElement('span');
+                text.className = 'lg-text';
                 const nm = document.createElement('span');
                 nm.className = 'lg-name';
                 nm.textContent = name;
                 const ds = document.createElement('span');
                 ds.className = 'lg-desc';
-                ds.textContent = '— ' + desc;
-                row.append(dot, nm, ds);
+                ds.textContent = ' — ' + desc;
+                text.append(nm, ds);
+                row.append(dot, text);
                 tlLegendEl.appendChild(row);
             }
             const r = anchor.getBoundingClientRect();
