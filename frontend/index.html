@@ -6418,10 +6418,55 @@
                 bellVal.id = 'sp-notify-bell';
                 bellRow.appendChild(bellVal);
 
-                const testRow = row('Test notification');
-                testRow.title = 'Send a real push to every device registered under your ' +
-                    'account. If it does not appear on this device, this device is not ' +
-                    'subscribed (enable the bell), or the browser blocked notifications.';
+                // "Test this device" fires a LOCAL notification (no server,
+                // no other devices): it exercises exactly the browser→OS
+                // display chain on THIS machine, so a silent result with
+                // permission granted means the OS/browser is suppressing
+                // notifications for this site (macOS Focus/DND, Chrome
+                // banners off) — the one failure the server-side 201s can
+                // never reveal. Viktor: the fan-out test buzzing his phone
+                // while debugging the desktop was confusing scoping.
+                const testHereRow = row('Test this device');
+                testHereRow.title = 'Show a notification on THIS device only — no server, ' +
+                    'no other devices. If nothing appears while permission is granted, ' +
+                    'your OS or browser is blocking notifications for this site.';
+                const testHereBtn = document.createElement('button');
+                testHereBtn.type = 'button';
+                testHereBtn.className = 'sp-btn';
+                testHereBtn.id = 'sp-notify-test-here';
+                testHereBtn.textContent = 'Show';
+                testHereBtn.addEventListener('click', async () => {
+                    if (typeof Notification === 'undefined') {
+                        showToast('This browser has no Notification API', 'error', 4000);
+                        return;
+                    }
+                    let perm = Notification.permission;
+                    if (perm === 'default') perm = await Notification.requestPermission();
+                    if (perm !== 'granted') {
+                        showToast('Notification permission is "' + perm + '" — allow notifications for this site in the browser', 'error', 6000);
+                        return;
+                    }
+                    const title = 'Test — this device';
+                    const opts = { body: 'If you can read this outside the tab, the OS chain works.', tag: 'tl-test-here' };
+                    let shown = false;
+                    try {
+                        const reg = await navigator.serviceWorker.getRegistration();
+                        if (reg && reg.showNotification) { await reg.showNotification(title, opts); shown = true; }
+                    } catch (e) {}
+                    if (!shown) {
+                        try { new Notification(title, opts); shown = true; } catch (e) {}
+                    }
+                    showToast(shown
+                        ? 'Shown. Nothing on screen? Your OS/browser is hiding notifications for this site (Focus/DND, banners off).'
+                        : 'The browser refused to show it — check site notification settings.',
+                        shown ? 'info' : 'error', 7000);
+                });
+                testHereRow.appendChild(testHereBtn);
+
+                const testRow = row('Test all devices');
+                testRow.title = 'Send a real push through the server to EVERY device ' +
+                    'registered under your account (phones included). For checking just ' +
+                    'this device, use "Test this device" above.';
                 const testBtn = document.createElement('button');
                 testBtn.type = 'button';
                 testBtn.className = 'sp-btn';
@@ -6437,8 +6482,9 @@
                         }
                         const { sent, pruned } = await resp.json();
                         if (sent > 0) {
-                            showToast('Test sent to ' + sent + ' device' + (sent === 1 ? '' : 's') +
-                                (pruned ? (' — pruned ' + pruned + ' stale') : ''), 'success', 4000);
+                            showToast('Push accepted for ' + sent + ' registered device' + (sent === 1 ? '' : 's') +
+                                ' (all your devices, not just this one)' +
+                                (pruned ? (' — pruned ' + pruned + ' stale') : ''), 'success', 5000);
                         } else {
                             showToast('No devices subscribed. Enable the bell on each device you want pushes on.', 'info', 5000);
                         }
