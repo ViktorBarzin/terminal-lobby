@@ -1668,6 +1668,10 @@
                 height: 100dvh; max-height: none;
                 border-right: 0; border-bottom: 0;
             }
+            /* Density (Viktor: "show the most projects when browsing on
+               mobile"): the helper sub-line is redundant once the list owns
+               the whole screen — reclaim its row for another session. */
+            #lobby-sidebar .lobby-sub { display: none; }
             #lobby-content { display: none; }
             /* The toggle only ever means "go back to the list" here, so it
                is redundant (and confusing) while the list is already up. */
