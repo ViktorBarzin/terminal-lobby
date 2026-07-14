@@ -670,7 +670,11 @@
             width: 48px; height: 48px; border-radius: 12px;
             background: color-mix(in srgb, var(--accent) 22%, transparent);
             border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-            color: var(--text-primary); font-size: 22px; cursor: pointer;
+            /* Icon fix: the cluster never declared a font-family, so any
+               text here (A+/A− below, residual labels) hit the UA button
+               default; the media buttons themselves are svg now. */
+            color: var(--text-primary); font-family: var(--font-ui);
+            font-size: 22px; cursor: pointer;
             display: flex; align-items: center; justify-content: center;
             backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
             transition: background 0.2s, transform 0.1s;
@@ -2061,9 +2065,9 @@
     <div id="conn-pill" class="hidden" role="status"></div>
     <button id="font-dec-btn" title="Smaller terminal font">A&#8722;</button>
     <button id="font-inc-btn" title="Larger terminal font">A+</button>
-    <button id="gallery-btn" title="Session images">&#128444;&#65039;</button>
-    <button id="img-btn" title="Upload image">&#128247;</button>
-    <button id="paste-btn" title="Paste from clipboard">&#128203;</button>
+    <button id="gallery-btn" title="Session images" data-icon="image" data-icon-px="20"></button>
+    <button id="img-btn" title="Upload image" data-icon="camera" data-icon-px="20"></button>
+    <button id="paste-btn" title="Paste from clipboard" data-icon="clipboard" data-icon-px="20"></button>
     <input type="file" id="img-input" accept="image/*">
 
     <!-- SRI (Task 1.13): published non-.min paths ONLY (jsdelivr-generated
