@@ -4356,6 +4356,7 @@
                 'Logged in as ' + whoami.osUser + ' (' + whoami.authentik + '). Sessions are kernel-isolated per Unix user; you only see your own.';
 
             const listEl    = document.getElementById('session-list');
+            const sidebarScrollEl = document.getElementById('lobby-sidebar');
             const newNameEl = document.getElementById('new-name');
             const newBtnEl  = document.getElementById('new-btn');
             const newProjectBtnEl = document.getElementById('new-project-btn');
@@ -6172,6 +6173,12 @@
             // no fetching — so layout mutations repaint instantly.
             function paint() {
                 if (isDragging || gestureActive || openMenuEl || ctxMenuOpen || renameEditing) return;
+                // Preserve the sidebar scroll across the full list rebuild:
+                // switching sessions (and every poll) re-renders via
+                // clearChildren, which momentarily collapses the content and
+                // resets the scroller to the top — losing the user's place in
+                // a long session list. Save now, restore after the re-append.
+                const savedScroll = sidebarScrollEl ? sidebarScrollEl.scrollTop : 0;
                 clearChildren(listEl);
                 const liveByName = new Map(lastSessions.map(s => [s.name, s]));
                 const referenced = new Set();
@@ -6200,6 +6207,9 @@
                 // Task 4.1: a repaint mid-Alt-hold rebuilds the cards —
                 // re-overlay the jump badges (no-op unless showing).
                 applyAltBadges();
+                // Restore scroll after the synchronous rebuild — no paint has
+                // happened between save and here, so it is invisible (no jump).
+                if (sidebarScrollEl) sidebarScrollEl.scrollTop = savedScroll;
             }
 
             // ---- deploy self-refresh: top-owned reload policy ------------
