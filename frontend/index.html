@@ -984,6 +984,17 @@
         }
         #session-frame { width: 100%; height: 100%; border: 0; display: block; }
         #session-frame.hidden { display: none; }
+        /* Session-swap cover (anti-flicker): switching sessions reloads the
+           single terminal iframe, leaving a brief blank/re-boot gap. A themed
+           panel covers the pane the instant a swap starts and fades out when
+           the incoming terminal posts tl-terminal-ready (fallback timeout in
+           JS). opacity:0 + pointer-events:none at rest, so it NEVER sits over
+           the live terminal canvas (red line) — it only exists mid-swap. */
+        #frame-cover {
+            position: absolute; inset: 0; z-index: 2;
+            background: var(--terminal-bg);
+            opacity: 0; pointer-events: none;
+        }
         #lobby-empty {
             color: var(--text-muted); display: flex; align-items: center; justify-content: center;
             height: 100%; font-style: italic; padding: 24px; text-align: center;
@@ -2161,6 +2172,7 @@
             <main id="lobby-content">
                 <div id="lobby-empty">Pick a session, or create one above.</div>
                 <iframe id="session-frame" class="hidden" referrerpolicy="same-origin" allow="clipboard-read; clipboard-write" title="terminal session"></iframe>
+                <div id="frame-cover" aria-hidden="true"></div>
             </main>
         </div>
     </div>
@@ -4350,6 +4362,7 @@
             const restoreBtnEl = document.getElementById('restore-btn');
             const frameEl   = document.getElementById('session-frame');
             const emptyEl   = document.getElementById('lobby-empty');
+            const frameCover = document.getElementById('frame-cover');
 
             // Task M.3: every session-iframe navigation goes through here.
             // Same-origin location.replace() swaps the framed document
@@ -4362,8 +4375,31 @@
             // attribute — frameUrl tracks the current URL; always read it
             // instead of frameEl.src (which goes stale on the first swap).
             let frameUrl = '';
+            // Session-swap cover: hide the iframe reload behind a themed panel
+            // (#frame-cover). show is INSTANT (no fade-in, so the blank gap is
+            // never seen); hide FADES out, called when the incoming terminal
+            // posts tl-terminal-ready — or by the fallback timer. The terminal's
+            // own reveal cap is 1500ms, so 1800ms here always outlives a real
+            // reveal (directly-opened / errored / slow-connect terminals that
+            // never signal still get uncovered).
+            let coverTimer = null;
+            function showFrameCover() {
+                clearTimeout(coverTimer);
+                frameCover.style.transition = 'none';
+                frameCover.style.opacity = '1';
+                coverTimer = setTimeout(hideFrameCover, 1800);
+            }
+            function hideFrameCover() {
+                clearTimeout(coverTimer);
+                frameCover.style.transition = 'opacity 200ms ease';
+                frameCover.style.opacity = '0';
+            }
             function setFrameUrl(url) {
                 frameUrl = url;
+                // Cover a real session (re)load; a jump to the empty state
+                // (about:blank) just clears any lingering cover.
+                if (url && url !== 'about:blank') showFrameCover();
+                else hideFrameCover();
                 try {
                     frameEl.contentWindow.location.replace(url);
                 } catch (e) {
@@ -6201,7 +6237,13 @@
                     type: 'info',
                     title: 'Update ready — tap to refresh',
                     timeout: 0,  // sticky until tapped or the tab hides
-                    onTap: () => { if (tlStormOK()) location.reload(); }
+                    // A tap is an EXPLICIT user action — never gate it on
+                    // tlStormOK (that 2-min guard exists only to break AUTO
+                    // reload loops). Gating the tap meant that when two deploys
+                    // landed <2min apart, tapping "Update ready" silently did
+                    // nothing and the pill stuck (esp. desktop, which relies on
+                    // the tap since it stays visible+attached).
+                    onTap: () => { location.reload(); }
                 });
             }
             tlTopReload = requestTopReload;   // reloadIfStale routes top-level reloads here
@@ -7533,7 +7575,11 @@
             window.addEventListener('message', (e) => {
                 if (e.origin !== location.origin || !e.data) return;
                 if (e.source !== frameEl.contentWindow) return;
-                if (e.data.type === 'tl-command') {
+                if (e.data.type === 'tl-terminal-ready') {
+                    // The incoming terminal painted its first frame — lift the
+                    // session-swap cover (anti-flicker).
+                    hideFrameCover();
+                } else if (e.data.type === 'tl-command') {
                     if (typeof e.data.command === 'string') runAppCommand(e.data.command);
                 } else if (e.data.type === 'tl-gesture') {
                     // Task M.6: touch affordances forwarded up by the
@@ -8336,6 +8382,12 @@
             terminalRevealed = true;
             clearTimeout(terminalRevealCap);
             bootTermContainer.style.opacity = '';   // 80ms CSS fade-in
+            // Tell the parent lobby the terminal has painted so it can lift its
+            // session-swap cover (anti-flicker). No-op when top-level (a
+            // directly-opened terminal has no parent cover).
+            if (window.parent !== window) {
+                try { window.parent.postMessage({ type: 'tl-terminal-ready' }, location.origin); } catch (e) {}
+            }
         }
         function maybeRevealTerminal() {
             if (booted && firstFrameSeen) revealTerminal();
