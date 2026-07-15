@@ -7,6 +7,9 @@
 #   /usr/bin/tmux               tmux-api polls `tmux list-sessions`
 #   /usr/local/bin/tmux-user-attach   ttyd attach (re-homes the server into
 #                                      the user's systemd scope; see script)
+#   /usr/local/bin/tmux-user-dirlist  tmux-api GET /dirs (project dir picker).
+#                                      Argument-free; prints dir NAMES under the
+#                                      user's home. No input → nothing to inject.
 #   /usr/local/bin/tmux-restore-user  tmux-api POST /restore (web-UI button).
 #                                      Runs as root because it drives
 #                                      tmux-persist's single-user restore (reads
@@ -19,7 +22,12 @@
 # Authentik usernames are accepted; this file is the kernel-level grant
 # that makes the per-user attach actually work.
 
-wizard ALL=(emo) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach
+# One line per non-wizard OS user in /etc/ttyd-user-map. tmux-user-dirlist
+# (GET /dirs) is granted alongside the attach binaries so the directory picker
+# works for every user, not just wizard (whose own tmux-api runs its home scan
+# directly, no sudo).
+wizard ALL=(emo) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist
+wizard ALL=(ancamilea) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist
 
 # Restore button (POST /restore): run the validated root wrapper. It accepts a
 # single OS-user arg and re-checks it against /etc/ttyd-user-map, so this grant

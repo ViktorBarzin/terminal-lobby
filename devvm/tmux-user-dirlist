@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Installed at /usr/local/bin/tmux-user-dirlist (root:root, mode 0755).
+#
+# Runs AS the target OS user — invoked by tmux-api's GET /dirs handler,
+# either directly (lobby user == tmux-api's own user, i.e. wizard) or via
+# `sudo -n -H -u <user> tmux-user-dirlist`. It prints, one absolute path per
+# line, the candidate directories a project can be rooted at: the source list
+# the lobby's fuzzy directory picker filters client-side.
+#
+# Why a dedicated wrapper instead of whitelisting fd under sudo: fd has
+# --exec, so a `sudo -u <user> fdfind` grant would be an arbitrary-code-exec
+# vector as another user. This wrapper takes NO arguments and hardcodes every
+# flag, so an untrusted caller has nothing to inject — the sudoers grant is
+# scoped to exactly this fixed behavior, mirroring tmux-user-attach. It only
+# ever lists directory NAMES, never file contents.
+set -euo pipefail
+
+# Resolve the invoking user's home explicitly rather than trusting $HOME —
+# the same robustness tmux-user-attach uses for the login shell. `sudo -H`
+# sets HOME, but this keeps working even without it.
+home="$(getent passwd "$(id -un)" | cut -d: -f6)"
+home="${home:-${HOME:-}}"
+[[ -n "$home" && -d "$home" ]] || exit 0
+
+# fd is packaged as `fdfind` on Debian/Ubuntu (the devvm) and `fd` elsewhere.
+fd_bin=fdfind
+command -v "$fd_bin" >/dev/null 2>&1 || fd_bin=fd
+
+# List directories under $home for the picker:
+#   --type d           directories only (never file contents)
+#   --absolute-path    paths the frontend hands straight to `tmux -c`
+#   --max-depth 4      project roots live shallow; bounds the scan
+#   --max-results 5000 hard ceiling, a little above tmux-api's 4000 return
+#                      cap so the API can still detect + flag truncation
+#   -E …               prune high-volume, never-a-project-root trees fd does
+#                      NOT already skip (hidden dirs and .gitignore'd paths
+#                      are excluded by default; these plain names are not)
+# An empty pattern matches every directory. A failure (no fd, unreadable
+# tree) exits non-zero, which tmux-api surfaces as a 500.
+exec "$fd_bin" \
+	--type d \
+	--absolute-path \
+	--color never \
+	--max-depth 4 \
+	--max-results 5000 \
+	-E node_modules -E go -E snap -E vendor -E __pycache__ \
+	-E target -E dist -E build \
+	'' "$home"
