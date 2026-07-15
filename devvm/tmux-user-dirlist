@@ -29,18 +29,25 @@ command -v "$fd_bin" >/dev/null 2>&1 || fd_bin=fd
 # List directories under $home for the picker:
 #   --type d           directories only (never file contents)
 #   --absolute-path    paths the frontend hands straight to `tmux -c`
+#   --no-ignore-vcs    do NOT honor .gitignore. A workspace whose root
+#                      .gitignore is allowlist-model (e.g. ~/code ignores
+#                      every nested project repo — tripit/, infra/, …) would
+#                      otherwise hide exactly the dirs you want to root a
+#                      project at. Hidden dirs (.git, .cache, .venv, …) stay
+#                      excluded regardless — only VCS-ignore is disabled.
 #   --max-depth 4      project roots live shallow; bounds the scan
 #   --max-results 5000 hard ceiling, a little above tmux-api's 4000 return
 #                      cap so the API can still detect + flag truncation
-#   -E …               prune high-volume, never-a-project-root trees fd does
-#                      NOT already skip (hidden dirs and .gitignore'd paths
-#                      are excluded by default; these plain names are not)
+#   -E …               prune high-volume, never-a-project-root trees (with
+#                      VCS-ignore off, fd no longer skips gitignored build
+#                      output, so pruning these plain names matters more)
 # An empty pattern matches every directory. A failure (no fd, unreadable
 # tree) exits non-zero, which tmux-api surfaces as a 500.
 exec "$fd_bin" \
 	--type d \
 	--absolute-path \
 	--color never \
+	--no-ignore-vcs \
 	--max-depth 4 \
 	--max-results 5000 \
 	-E node_modules -E go -E snap -E vendor -E __pycache__ \
