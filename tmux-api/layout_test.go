@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,53 @@ func TestLayoutSaveLoadRoundtrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(in, out) {
 		t.Fatalf("roundtrip mismatch:\n in: %+v\nout: %+v", in, out)
+	}
+}
+
+// A project's directory (the base pwd for sessions launched inside it) must
+// survive save→load; a dir-less project stays dir-less.
+func TestLayoutProjectDirRoundtrip(t *testing.T) {
+	st := testStore(t)
+	in := Layout{
+		Version: 1,
+		Projects: []Project{
+			{Name: "tripit", Sessions: []string{"fix-dates"}, Dir: "/home/wizard/code/tripit"},
+			{Name: "infra", Sessions: []string{}},
+		},
+		Ungrouped: []string{"scratch"},
+	}
+	if err := st.save("alice", in); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	out, err := st.load("alice")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if out.Projects[0].Dir != "/home/wizard/code/tripit" {
+		t.Fatalf("project dir roundtrip: got %q, want /home/wizard/code/tripit", out.Projects[0].Dir)
+	}
+	if out.Projects[1].Dir != "" {
+		t.Fatalf("dir-less project must load with empty Dir, got %q", out.Projects[1].Dir)
+	}
+}
+
+// Documents written before projects had a dir must load with an empty Dir —
+// back-compat with pre-field layouts (their sessions stay home-rooted).
+func TestLayoutLegacyDocHasEmptyProjectDir(t *testing.T) {
+	st := testStore(t)
+	if err := os.MkdirAll(st.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"version":1,"projects":[{"name":"tripit","sessions":["fix-dates"]}],"ungrouped":[]}`
+	if err := os.WriteFile(filepath.Join(st.dir, "alice.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := st.load("alice")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if l.Projects[0].Dir != "" {
+		t.Fatalf("legacy project dir: got %q, want empty", l.Projects[0].Dir)
 	}
 }
 
@@ -187,6 +235,14 @@ func TestValidateLayoutAccepts(t *testing.T) {
 	}
 }
 
+func TestValidateLayoutAcceptsAbsoluteProjectDir(t *testing.T) {
+	l := validLayout()
+	l.Projects[0].Dir = "/home/wizard/code/tripit"
+	if err := validateLayout(l); err != nil {
+		t.Fatalf("absolute project dir rejected: %v", err)
+	}
+}
+
 func TestValidateLayoutRejects(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -200,6 +256,8 @@ func TestValidateLayoutRejects(t *testing.T) {
 		{"bad ungrouped name", func(l *Layout) { l.Ungrouped[0] = "bad!name" }},
 		{"session in two projects", func(l *Layout) { l.Projects[1].Sessions = []string{"fix-dates"} }},
 		{"session both grouped and ungrouped", func(l *Layout) { l.Ungrouped = append(l.Ungrouped, "fix-dates") }},
+		{"relative project dir", func(l *Layout) { l.Projects[0].Dir = "relative/path" }},
+		{"project dir too long", func(l *Layout) { l.Projects[0].Dir = "/" + strings.Repeat("a", maxDirLen) }},
 		{"negative ungroupedIndex", func(l *Layout) { l.UngroupedIndex = -1 }},
 		{"ungroupedIndex past last slot", func(l *Layout) { l.UngroupedIndex = len(l.Projects) + 1 }},
 		{"too many projects", func(l *Layout) {
