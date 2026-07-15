@@ -2079,8 +2079,7 @@
                 <p class="lobby-sub">Pick a session or create one. Sessions persist after you close the tab.</p>
                 <div class="new-row">
                     <input id="new-name" type="text" placeholder="new session name" maxlength="32" autocomplete="off">
-                    <select id="new-cmd" title="What a NEW session runs. Default = your account's usual behavior (launcher users auto-start Claude); explicit choices run that command in your login shell — when it exits the session closes. Existing sessions are attached as-is. Roams across your devices.">
-                        <option value="default">Default</option>
+                    <select id="new-cmd" title="What a NEW session runs (default: claude). Each choice runs that command in your login shell — when it exits, the session closes. Existing sessions are attached as-is. Roams across your devices.">
                         <option value="claude">claude</option>
                         <option value="codex">codex</option>
                         <option value="shell">Plain shell</option>
@@ -2515,9 +2514,15 @@
                 // 'default' = no explicit command (the user's tmux
                 // default-command decides, e.g. bob's start-claude.sh).
                 // Roamed on purpose: which tool you reach for is a
-                // user-level preference, not a device trait. NEW namespace
-                // key — pre-existing docs materialize 'default', no re-key.
-                newCommand: 'default'
+                // user-level preference, not a device trait. Default is now
+                // 'claude' (Viktor 2026-07-15: dropped the "Default" option —
+                // it meant a plain shell for launcher-less accounts, a
+                // confusing default). 'default' is NO LONGER offered in the
+                // dropdown but stays a VALID value (below) so launcher users
+                // (e.g. bob, whose tmux default-command auto-starts Claude via
+                // start-claude.sh) keep that path via an explicit 'default'
+                // pref — a bare dropdown choice would bypass their launcher.
+                newCommand: 'claude'
             }),
             // Notifications: which Claude-turn transitions raise an OS
             // notification (foreground path here + the background push the
@@ -6004,8 +6009,13 @@
             // updates from other devices via tl-prefs-change.
             const newCmdEl = document.getElementById('new-cmd');
             function syncNewCmd() {
-                try { newCmdEl.value = getPrefs().session.newCommand; } catch (e) {}
-                if (!newCmdEl.value) newCmdEl.value = 'default';
+                let v = 'claude';
+                try { v = getPrefs().session.newCommand; } catch (e) {}
+                // 'default' (launcher users, e.g. bob) is a valid pref but no
+                // longer a dropdown option — reflect it as the visible 'claude'
+                // WITHOUT overwriting the pref (only the change handler writes),
+                // so their launcher path via frameArgs()'s pref read is intact.
+                newCmdEl.value = (v === 'claude' || v === 'codex' || v === 'shell') ? v : 'claude';
             }
             syncNewCmd();
             newCmdEl.addEventListener('change', () => {
