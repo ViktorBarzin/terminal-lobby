@@ -33,6 +33,13 @@ type Layout struct {
 type Project struct {
 	Name     string   `json:"name"`
 	Sessions []string `json:"sessions"`
+	// Dir is the base working directory for sessions CREATED inside this
+	// project — passed through to `tmux new-session -c`. Optional: empty
+	// means the user's $HOME, exactly as before projects had a dir. It only
+	// affects a session at creation time; moving a live session into a
+	// project cannot change its cwd, and existence is checked as the target
+	// user at attach time (a stale dir falls back to $HOME there).
+	Dir string `json:"dir,omitempty"`
 }
 
 const (
@@ -40,6 +47,9 @@ const (
 	layoutVersion = 1
 	maxProjects   = 100
 	maxLayoutBody = 64 * 1024
+	// maxDirLen caps a project's Dir — comfortably past Linux PATH_MAX so a
+	// real path never trips it, while bounding a hostile/garbage document.
+	maxDirLen = 4096
 )
 
 type layoutStore struct {
@@ -220,6 +230,14 @@ func validateLayout(l Layout) error {
 			return fmt.Errorf("duplicate project %q", p.Name)
 		}
 		projectNames[p.Name] = true
+		if p.Dir != "" {
+			if len(p.Dir) > maxDirLen {
+				return fmt.Errorf("project %q dir too long (%d > %d)", p.Name, len(p.Dir), maxDirLen)
+			}
+			if !filepath.IsAbs(p.Dir) {
+				return fmt.Errorf("project %q dir must be an absolute path: %q", p.Name, p.Dir)
+			}
+		}
 		for _, sess := range p.Sessions {
 			if err := checkSession(sess); err != nil {
 				return err

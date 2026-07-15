@@ -184,6 +184,7 @@ func main() {
 	http.HandleFunc("/whoami", handleWhoami)
 	http.HandleFunc("/restore", handleRestore)
 	http.HandleFunc("/layout", handleLayout)
+	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
 	http.HandleFunc("/push/vapid-public", handlePushVAPIDPublic)
