@@ -1536,15 +1536,19 @@
         }
         .pd-selected b { color: var(--text-primary); font-weight: 500; }
         .pd-list {
-            flex: 1 1 auto; min-height: 120px; max-height: 300px; overflow-y: auto;
+            flex: 0 1 auto; min-height: 120px; max-height: 300px; overflow-y: auto;
             display: flex; flex-direction: column; gap: 2px;
             border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px);
             padding: 4px;
         }
         .pd-row {
+            /* never let the flex column compress a row to a sliver: overflow
+               below zeroes a flex item's automatic min-size, so without this
+               flex-shrink collapses the rows and clips the text vertically. */
+            flex: 0 0 auto;
             text-align: left; padding: 6px 8px; border: 0; border-radius: 6px;
             background: transparent; color: var(--text-primary);
-            font: inherit; font-size: 12px; cursor: pointer;
+            font: inherit; font-size: 12px; line-height: 1.5; cursor: pointer;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .pd-row:hover { background: var(--bg-card-hover); }
