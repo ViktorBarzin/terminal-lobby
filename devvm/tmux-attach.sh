@@ -58,13 +58,26 @@ cmd_key="${2:-}"
 home_dir=$(getent passwd "$os_user" | cut -d: -f6)
 home_dir="${home_dir:-/}"
 
-logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$home_dir' cmd='${cmd_key:-<none>}' self='$(id -un)'"
+# Optional third ?arg= = the base directory for a NEW session (the lobby
+# passes a project's dir here). Absolute paths only; anything else — absent,
+# relative, over-long — falls back to the user's home. It is forwarded as a
+# single argv element (never shell-evaluated) and re-checked for existence AS
+# the target user in tmux-user-attach, which drops a stale/unreachable dir
+# back to $HOME. `tmux new-session -A` ignores -c for an already-live session,
+# so this only takes effect when the session is (re)created.
+start_dir="$home_dir"
+dir_arg="${3:-}"
+if [[ "$dir_arg" == /* && ${#dir_arg} -le 4096 ]]; then
+    start_dir="$dir_arg"
+fi
+
+logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$start_dir' cmd='${cmd_key:-<none>}' self='$(id -un)'"
 
 # Launch via tmux-user-attach so the tmux *server* is parented to the OS
 # user's own systemd manager (user@<uid>.service), not the ttyd.service
 # cgroup. Without this, a `systemctl restart ttyd` kills every session.
 if [[ "$os_user" == "$(id -un)" ]]; then
-    exec /usr/local/bin/tmux-user-attach "$name" "$home_dir" "$cmd_key"
+    exec /usr/local/bin/tmux-user-attach "$name" "$start_dir" "$cmd_key"
 else
-    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach "$name" "$home_dir" "$cmd_key"
+    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach "$name" "$start_dir" "$cmd_key"
 fi
