@@ -1502,6 +1502,64 @@
             color: var(--text-muted); font-size: 11px; line-height: 1.35;
         }
 
+        /* Project create / set-directory modal (fuzzy dir picker). */
+        .pd-backdrop {
+            position: fixed; inset: 0; z-index: 10001;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex; align-items: center; justify-content: center;
+            padding: 16px;
+        }
+        .pd-modal {
+            width: 440px; max-width: 100%; max-height: calc(100vh - 32px);
+            display: flex; flex-direction: column; gap: 10px;
+            padding: 16px; overflow: hidden;
+            background: var(--bg-card); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), var(--surface-shadow);
+            font-family: var(--font-ui); font-size: 13px;
+        }
+        .pd-title { font-size: 14px; font-weight: 600; }
+        .pd-field { display: flex; align-items: center; gap: 8px; }
+        .pd-field > label { flex: 0 0 auto; width: 52px; color: var(--text-muted); }
+        .pd-field > input, .pd-search {
+            flex: 1 1 auto; min-width: 0; padding: 7px 9px;
+            background: var(--bg-page); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px);
+            font: inherit;
+        }
+        .pd-field > input:focus, .pd-search:focus {
+            outline: none; border-color: var(--accent);
+        }
+        .pd-selected {
+            font-size: 12px; color: var(--text-muted);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .pd-selected b { color: var(--text-primary); font-weight: 500; }
+        .pd-list {
+            flex: 1 1 auto; min-height: 120px; max-height: 300px; overflow-y: auto;
+            display: flex; flex-direction: column; gap: 2px;
+            border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px);
+            padding: 4px;
+        }
+        .pd-row {
+            text-align: left; padding: 6px 8px; border: 0; border-radius: 6px;
+            background: transparent; color: var(--text-primary);
+            font: inherit; font-size: 12px; cursor: pointer;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .pd-row:hover { background: var(--bg-card-hover); }
+        .pd-row.active { color: var(--accent); background: var(--bg-card-hover); }
+        .pd-hint { font-size: 11px; color: var(--text-muted); min-height: 14px; }
+        .pd-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+        .pd-btn {
+            padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px;
+            background: var(--bg-card); color: var(--text-primary);
+            font: inherit; font-size: 12px; cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .pd-btn:hover { background: var(--bg-card-hover); }
+        .pd-btn.pd-primary { border-color: var(--accent); color: var(--accent); }
+
         /* Bottom-sheet presentation (Task M.5) — coarse-pointer chrome
            for the settings panel + the Task 2.5 context menu. The
            backdrop div is the ROOT (modal shade, tap = dismiss; its
@@ -2147,6 +2205,7 @@
         const RESTORE_API  = '/api/sessions/restore';
         const WHOAMI_API   = '/api/sessions/whoami';
         const LAYOUT_API   = '/api/sessions/layout';
+        const DIRS_API     = '/api/sessions/dirs';
         // Web Push (Notifications Part 2): all ride the same /api/sessions/
         // tmux-api prefix as /prefs.
         const PUSH_SUBS_API    = '/api/sessions/push-subscriptions';
@@ -5055,13 +5114,47 @@
             // 'default') the roamed new-session command key as a second
             // arg. Existing sessions ignore it (tmux -A); a dead session
             // resurrected by this attach runs the chosen command.
+            // The base pwd for sessions launched in a project — empty when the
+            // session is ungrouped or its project has no dir. Sent to the attach
+            // script, which applies it via `tmux new-session -c`.
+            function projectDirForSession(name) {
+                const pname = projectOfSession(name);
+                if (!pname) return '';
+                const p = layout.projects.find(x => x.name === pname);
+                return (p && p.dir) || '';
+            }
             function frameArgs(name) {
                 let u = '/?arg=' + encodeURIComponent(name);
+                let cmd = 'default';
                 try {
                     const k = getPrefs().session.newCommand;
-                    if (k && k !== 'default') u += '&arg=' + encodeURIComponent(k);
+                    if (k) cmd = k;
                 } catch (e) {}
+                // A project dir must land at arg3, so whenever we send a dir we
+                // ALSO send the command at arg2 — as 'default' when none, which
+                // the attach scripts treat identically to omitting it. With no
+                // dir, keep the historic shape (arg2 only for a non-default
+                // command). tmux -A ignores -c on a live session, so sending the
+                // dir on every attach is harmless and lets a resurrected project
+                // session land back in its dir.
+                const dir = projectDirForSession(name);
+                if (dir) {
+                    u += '&arg=' + encodeURIComponent(cmd) + '&arg=' + encodeURIComponent(dir);
+                } else if (cmd !== 'default') {
+                    u += '&arg=' + encodeURIComponent(cmd);
+                }
                 return u;
+            }
+
+            // A create must not silently reattach to an existing session
+            // (ttyd's `tmux new-session -A` would): reject a name that is
+            // already a live session, exactly as project creation rejects a
+            // duplicate project name. Case-sensitive, matching tmux. This
+            // guards the two deliberate CREATE actions only (never attach-by-
+            // click / deep link, where reattaching is the point); the server's
+            // -A stays the backstop against the ~5s-stale poll window.
+            function sessionExists(name) {
+                return lastSessions.some(s => s.name === name);
             }
             function activateSession(name) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
@@ -5399,10 +5492,7 @@
             }
 
             function createProject() {
-                const name = promptProjectName('New project name:');
-                if (!name) return;
-                layout.projects.push({ name, sessions: [] });
-                saveLayout();
+                openProjectModal({ mode: 'create' });
             }
 
             function renameProject(oldName) {
@@ -5436,6 +5526,192 @@
                 saveLayout();
             }
 
+            // --- project create / set-directory modal -------------------------
+            // A small centered dialog: (create) project name + a fuzzy dir
+            // picker; (edit-dir) just the picker for an existing project. The
+            // chosen dir becomes the base pwd for sessions launched in the
+            // project (frameArgs → tmux new-session -c). Candidates come once
+            // from GET /dirs (scanned under the user's home) and are filtered
+            // client-side; an absolute path can also be typed for anything the
+            // scan didn't surface. Blank = no dir (sessions use $HOME).
+
+            // Subsequence fuzzy score (case-insensitive): -1 = no match, higher
+            // is better, with a bonus for contiguous runs so "tript" ranks
+            // ".../tripit" above scattered hits.
+            function fuzzyScore(query, str) {
+                const q = query.toLowerCase(), s = str.toLowerCase();
+                if (!q) return 0;
+                let qi = 0, score = 0, last = -2;
+                for (let si = 0; si < s.length && qi < q.length; si++) {
+                    if (s[si] === q[qi]) {
+                        score += (si === last + 1) ? 2 : 1;
+                        last = si; qi++;
+                    }
+                }
+                return qi === q.length ? score : -1;
+            }
+
+            let dirCache = null;   // last GET /dirs result, refreshed on open
+
+            function openProjectModal(opts) {
+                const editing = opts.mode === 'edit-dir';
+                const proj = editing ? layout.projects.find(p => p.name === opts.projectName) : null;
+                if (editing && !proj) return;
+                let selectedDir = editing ? (proj.dir || '') : '';
+
+                const backdrop = document.createElement('div');
+                backdrop.className = 'pd-backdrop';
+                const modal = document.createElement('div');
+                modal.className = 'pd-modal';
+                backdrop.appendChild(modal);
+
+                const title = document.createElement('div');
+                title.className = 'pd-title';
+                title.textContent = editing ? ('Directory for “' + proj.name + '”') : 'New project';
+                modal.appendChild(title);
+
+                let nameInput = null;
+                if (!editing) {
+                    const nrow = document.createElement('div');
+                    nrow.className = 'pd-field';
+                    const nlab = document.createElement('label');
+                    nlab.textContent = 'Name';
+                    nameInput = document.createElement('input');
+                    nameInput.type = 'text';
+                    nameInput.maxLength = 32;
+                    nameInput.placeholder = 'project name';
+                    nameInput.autocomplete = 'off';
+                    nrow.appendChild(nlab);
+                    nrow.appendChild(nameInput);
+                    modal.appendChild(nrow);
+                }
+
+                const selRow = document.createElement('div');
+                selRow.className = 'pd-selected';
+                function renderSelected() {
+                    selRow.textContent = 'Directory: ' + (selectedDir || '(home — no directory)');
+                }
+                renderSelected();
+                modal.appendChild(selRow);
+
+                const search = document.createElement('input');
+                search.type = 'text';
+                search.className = 'pd-search';
+                search.placeholder = 'search ~ or type an absolute path';
+                search.autocomplete = 'off';
+                modal.appendChild(search);
+
+                const list = document.createElement('div');
+                list.className = 'pd-list';
+                modal.appendChild(list);
+
+                const hint = document.createElement('div');
+                hint.className = 'pd-hint';
+                modal.appendChild(hint);
+
+                function renderList() {
+                    const q = search.value.trim();
+                    list.replaceChildren();
+                    const rows = [{ label: '(home — no directory)', dir: '' }];
+                    if (q.startsWith('/')) rows.push({ label: 'Use path: ' + q, dir: q });
+                    if (dirCache && dirCache.dirs) {
+                        const scored = [];
+                        for (const d of dirCache.dirs) {
+                            const sc = fuzzyScore(q, d);
+                            if (sc >= 0) scored.push([sc, d]);
+                        }
+                        scored.sort((a, b) => b[0] - a[0] || a[1].length - b[1].length);
+                        for (const pair of scored.slice(0, 100)) rows.push({ label: pair[1], dir: pair[1] });
+                    }
+                    for (const r of rows) {
+                        const b = document.createElement('button');
+                        b.type = 'button';
+                        b.className = 'pd-row' + (r.dir === selectedDir ? ' active' : '');
+                        b.textContent = r.label;
+                        b.title = r.dir || '';
+                        b.addEventListener('click', () => {
+                            selectedDir = r.dir;
+                            renderSelected();
+                            renderList();
+                            search.focus();
+                        });
+                        list.appendChild(b);
+                    }
+                }
+
+                const footer = document.createElement('div');
+                footer.className = 'pd-footer';
+                const cancelBtn = document.createElement('button');
+                cancelBtn.type = 'button';
+                cancelBtn.className = 'pd-btn';
+                cancelBtn.textContent = 'Cancel';
+                const saveBtn = document.createElement('button');
+                saveBtn.type = 'button';
+                saveBtn.className = 'pd-btn pd-primary';
+                saveBtn.textContent = editing ? 'Save' : 'Create';
+                footer.appendChild(cancelBtn);
+                footer.appendChild(saveBtn);
+                modal.appendChild(footer);
+
+                function close() {
+                    backdrop.remove();
+                    document.removeEventListener('keydown', onKey);
+                    requestTerminalFocus();
+                }
+                function onKey(e) {
+                    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+                }
+                cancelBtn.addEventListener('click', close);
+                backdrop.addEventListener('pointerdown', (e) => { if (e.target === backdrop) close(); });
+                document.addEventListener('keydown', onKey);
+                search.addEventListener('input', renderList);
+
+                saveBtn.addEventListener('click', () => {
+                    if (selectedDir && !selectedDir.startsWith('/')) {
+                        showToast('Directory must be an absolute path', 'error', 4000);
+                        return;
+                    }
+                    if (editing) {
+                        if (selectedDir) proj.dir = selectedDir; else delete proj.dir;
+                        saveLayout();
+                        close();
+                        return;
+                    }
+                    const name = (nameInput.value || '').trim();
+                    if (!NAME_RE.test(name)) {
+                        showToast('Project name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                        return;
+                    }
+                    if (layout.projects.some(p => p.name === name)) {
+                        showToast('Project "' + name + '" already exists', 'error', 4000);
+                        return;
+                    }
+                    const p = { name, sessions: [] };
+                    if (selectedDir) p.dir = selectedDir;
+                    layout.projects.push(p);
+                    saveLayout();
+                    close();
+                });
+
+                document.body.appendChild(backdrop);
+                renderList();
+                (nameInput || search).focus();
+
+                // Fetch candidates once; re-render when they land. A stale
+                // cache from a previous open renders instantly meanwhile.
+                hint.textContent = 'Loading directories…';
+                fetch(DIRS_API, { credentials: 'same-origin' })
+                    .then((resp) => { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
+                    .then((data) => {
+                        dirCache = data;
+                        hint.textContent = data.truncated
+                            ? 'Showing a subset — type an absolute path if you don’t see it.'
+                            : '';
+                        renderList();
+                    })
+                    .catch(() => { hint.textContent = 'Could not scan directories — type an absolute path.'; });
+            }
+
             // Move a group one visual slot up/down — the touch-friendly
             // counterpart of dragging its header. Works on the combined
             // sequence, so projects and the Ungrouped section move past each
@@ -5462,6 +5738,10 @@
                 const name = input.trim();
                 if (!NAME_RE.test(name)) {
                     showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
+                    return;
+                }
+                if (sessionExists(name)) {
+                    showToast('Session "' + name + '" already exists', 'error', 4000);
                     return;
                 }
                 moveSessionTo(name, projectName);
@@ -5764,6 +6044,7 @@
                     if (!isUngrouped) {
                         items.push(
                             { label: 'Rename project', onClick: () => renameProject(projectName) },
+                            { label: 'Set directory…', onClick: () => openProjectModal({ mode: 'edit-dir', projectName }) },
                             { label: 'Delete project', danger: true, onClick: () => deleteProject(projectName) }
                         );
                     }
@@ -6027,6 +6308,10 @@
                 if (!NAME_RE.test(name)) {
                     showToast('Name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000);
                     return;
+                }
+                if (sessionExists(name)) {
+                    showToast('Session "' + name + '" already exists', 'error', 4000);
+                    return;  // keep the typed name so it can be adjusted
                 }
                 newNameEl.value = '';
                 activateSession(name);
