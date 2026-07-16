@@ -1094,17 +1094,19 @@
         }
         .restore-btn:disabled { opacity: 0.64; cursor: default; }
 
-        .session-list { display: flex; flex-direction: column; gap: 6px; }
+        .session-list { display: flex; flex-direction: column; gap: 2px; }
+        /* Thin single-line rows (2026-07-16 redesign): no per-row border,
+           shadow, or card surface — T3's thread-list density. A tint + left
+           accent mark the active row; hover is a neutral tint. See
+           docs/plans/2026-07-16-thin-session-rows-design.md */
         .session-card {
-            display: flex; align-items: center; justify-content: space-between;
+            display: flex; align-items: center; gap: 7px;
             position: relative;  /* .kb-badge anchor (Task 4.1) — no visual change */
-            background: var(--bg-card); border: 1px solid var(--border);
-            border-left: 3px solid transparent;
-            border-radius: calc(var(--radius) + 8px);
-            /* T3 card surface: soft drop + 1px scheme bevel (Task 1.11b). */
-            box-shadow: var(--surface-shadow);
-            padding: 10px 12px; cursor: pointer;
-            transition: background 0.15s, border-color 0.15s;
+            border-left: 2px solid transparent;
+            border-radius: calc(var(--radius) - 2px);
+            box-sizing: border-box;
+            padding: 4px 8px; min-height: 28px; cursor: pointer;
+            transition: background 0.12s, border-color 0.12s;
             font-family: inherit; color: var(--text-primary); text-align: left;
             /* Task M.4: press-and-hold belongs to the long-press recognizer
                on touch — suppress text selection and the iOS callout so the
@@ -1112,7 +1114,9 @@
             user-select: none; -webkit-user-select: none;
             -webkit-touch-callout: none;
         }
-        .session-card:hover { background: var(--bg-card-hover); }
+        /* Touch: a comfortable ~44px tap target while the styling stays thin. */
+        @media (pointer: coarse) { .session-card { min-height: 44px; } }
+        .session-card:hover { background: var(--hover-tint); }
         .session-card:focus-visible {
             /* var(--ring) like the shared rule below, but INSET: a +1px
                ring on this full-bleed row would clip under the sidebar's
@@ -1121,21 +1125,26 @@
             outline-offset: -2px;
         }
         .session-card.active {
-            background: var(--bg-card-hover);
-            border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+            background: color-mix(in srgb, var(--accent) 12%, transparent);
             border-left-color: var(--accent);
         }
-        .session-meta {
-            display: flex; flex-direction: column; gap: 2px;
-            min-width: 0; flex: 1;
+        .session-card.active:hover {
+            background: color-mix(in srgb, var(--accent) 18%, transparent);
         }
         .session-name {
-            font-size: 15px; font-weight: 700; color: var(--text-primary);
-            letter-spacing: 0.1px;
+            font-size: 13px; font-weight: 500; color: var(--text-primary);
+            flex: 1; min-width: 0;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
-        .session-detail { font-size: 12px; color: var(--text-muted); }
-        .session-detail.attached { color: var(--success); }
+        .session-card.active .session-name { font-weight: 600; }
+        /* Right-edge meta (2026-07-16): a time on every row — the live
+           elapsed timer while running (state colour), else the relative
+           last-activity. Replaces the old second-line .session-detail. */
+        .row-time {
+            flex-shrink: 0; font-size: 10px; font-variant-numeric: tabular-nums;
+            color: var(--text-muted); white-space: nowrap;
+        }
+        .row-time.running { color: var(--state-running); }
         /* Inline rename editor (Task 2.5) — sits where the title was, at
            the title's own metrics so the card doesn't jump. */
         .session-name input.rename-input {
@@ -1149,17 +1158,15 @@
                for the Task M.4 long-press). */
             user-select: text; -webkit-user-select: text;
         }
-        .session-actions { display: flex; gap: 6px; flex-shrink: 0; }
+        .session-actions { display: flex; gap: 4px; flex-shrink: 0; }
         .session-actions button {
-            /* xs buttons sit at radius − 2 (T3's rounded-md tier). The ⋯
-               is an icon glyph: 16px at 80% opacity (Task 2.8, T3's
-               [&_svg]:size-4 opacity-80 — opacity on the glyph color, not
-               the button, so the border stays crisp). */
-            padding: 4px 8px; border-radius: calc(var(--radius) - 2px);
-            border: 1px solid var(--border);
-            background: var(--bg-card-hover);
-            color: color-mix(in srgb, var(--text-primary) 80%, transparent);
-            font-family: inherit; font-size: 16px; line-height: 1; cursor: pointer;
+            /* Ghost glyph on the bare row (2026-07-16): no border or surface,
+               a muted ⋯ that lifts to a neutral tint on hover — T3's ghost
+               icon action. */
+            padding: 0 4px; border-radius: calc(var(--radius) - 2px);
+            border: none; background: transparent;
+            color: color-mix(in srgb, var(--text-primary) 55%, transparent);
+            font-family: inherit; font-size: 15px; line-height: 1; cursor: pointer;
         }
         .session-actions button.rename {
             color: var(--accent);
@@ -1170,11 +1177,7 @@
             border-color: color-mix(in srgb, var(--danger) 45%, transparent);
         }
         .session-actions button:hover {
-            /* T3 hover tint layered over the chip surface (Task 2.8) —
-               replaces the old brightness filter, which also brightened
-               the border. Glyph goes full-opacity. */
-            background: linear-gradient(var(--hover-tint), var(--hover-tint))
-                        var(--bg-card-hover);
+            background: var(--hover-tint);
             color: var(--text-primary);
         }
         .session-card.dragging { opacity: 0.4; cursor: grabbing; }
@@ -1187,10 +1190,9 @@
            the -1s delay starts it mid-sweep so the first paint already
            moves. */
         .session-skeleton {
-            height: 55px;
+            height: 28px;
             box-sizing: border-box;
-            border: 1px solid var(--border);
-            border-radius: calc(var(--radius) + 8px);
+            border-radius: calc(var(--radius) - 2px);
             background: linear-gradient(120deg, transparent 40%,
                             var(--skeleton-highlight), transparent 60%)
                         var(--bg-card) 0 0 / 200% 100%;
@@ -1201,7 +1203,7 @@
         }
 
         /* Claude state dot — running pulses, awaiting glows, done sits still. */
-        .session-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+        .session-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; }
         .state-dot {
             width: 8px; height: 8px; border-radius: 50%;
             flex: 0 0 8px; display: inline-block;
@@ -1226,30 +1228,11 @@
             0%, 100% { opacity: 1; transform: scale(1); }
             50%      { opacity: 0.35; transform: scale(0.8); }
         }
-        /* "Working for Xs" note on running cards (Task 2.4, T3's
-           WorkingTimelineRow): three 4px dots pulsing staggered
-           0/200/400ms + a self-ticking seconds span. */
-        .working-note {
-            display: inline-flex; align-items: center; gap: 3px;
-            color: var(--state-running); white-space: nowrap;
-        }
-        .working-note i {
-            width: 4px; height: 4px; border-radius: 50%;
-            background: var(--state-running);
-            animation: working-pulse 1.4s ease-in-out infinite;
-        }
-        .working-note i:nth-child(2) { animation-delay: 200ms; }
-        .working-note i:nth-child(3) { animation-delay: 400ms; margin-right: 3px; }
-        @keyframes working-pulse {
-            0%, 100% { opacity: 0.25; }
-            50%      { opacity: 1; }
-        }
-
         /* Project groups */
-        .project-group { display: flex; flex-direction: column; gap: 6px; }
+        .project-group { display: flex; flex-direction: column; gap: 2px; }
         .project-header {
             display: flex; align-items: center; gap: 6px;
-            padding: 4px 6px 4px 2px; border-radius: 6px;
+            padding: 2px 6px 2px 2px; border-radius: 6px;
             cursor: pointer; user-select: none; -webkit-user-select: none;
             color: var(--text-muted); min-width: 0;
         }
@@ -1296,7 +1279,7 @@
             border-color: color-mix(in srgb, var(--accent) 45%, transparent);
         }
         .project-sessions {
-            display: flex; flex-direction: column; gap: 6px;
+            display: flex; flex-direction: column; gap: 2px;
             margin-left: 5px; padding-left: 8px;
             border-left: 1px solid var(--border);
         }
@@ -2567,15 +2550,6 @@
             // this code default everywhere — no re-key dance needed.
             session: Object.freeze({
                 reopenLast: true,
-                // Card metadata "idle · 2d ago" (state word + last-activity
-                // time). DEFAULT OFF (Viktor: "users don't care for the most
-                // part when was the last time they connected") — idle cards
-                // then carry no detail line at all (denser list), attached
-                // cards show just "N attached", and the live "Working for
-                // Xs" note is unaffected (current activity, not history).
-                // NEW namespace key — existing roamed docs materialize the
-                // off default, no re-key dance.
-                showIdleMeta: false,
                 // What a NEWLY created session runs (second ?arg= to the
                 // attach chain; tmux -A ignores it for existing sessions).
                 // A whitelisted KEY, never a command line — the key→command
@@ -2653,7 +2627,6 @@
             },
             session: {
                 reopenLast: v => typeof v === 'boolean',
-                showIdleMeta: v => typeof v === 'boolean',
                 newCommand: v => v === 'default' || v === 'claude' ||
                     v === 'codex' || v === 'shell'
             },
@@ -5815,21 +5788,33 @@
                 return dot;
             }
 
-            // Running cards carry "● ● ● Working for Xs" in the detail row
-            // (Task 2.4). The seconds span self-ticks via the shared 1 Hz
-            // interval — dataset.since anchors it to the state transition.
-            function workingNote(sinceMs) {
-                const note = document.createElement('span');
-                note.className = 'working-note';
-                tlAttachLegend(note, 'claude', () => 'running');
-                for (let i = 0; i < 3; i++) note.appendChild(document.createElement('i'));
-                note.append('Working for ');
-                const timer = document.createElement('span');
-                timer.className = 'working-timer';
-                timer.dataset.since = String(sinceMs || Date.now());
-                timer.textContent = formatWorking(Date.now() - Number(timer.dataset.since));
-                note.appendChild(timer);
-                return note;
+            // A transparent stand-in for the state dot so stateless sessions
+            // keep the same left inset, so names stay aligned down the list.
+            function placeholderDot() {
+                const d = document.createElement('span');
+                d.className = 'state-dot';
+                d.setAttribute('aria-hidden', 'true');
+                return d;
+            }
+
+            // Everything the thin row no longer shows inline lives in the
+            // hover / long-press tooltip (2026-07-16 redesign): the live
+            // command + pane title, the attach count, and last activity.
+            function rowTooltip(s) {
+                const parts = [];
+                if (s.state) {
+                    parts.push(s.state === 'done' ? 'completed'
+                        : s.state === 'awaiting' ? 'awaiting your input'
+                        : 'running');
+                }
+                if (s.pane_current_command) {
+                    parts.push(s.pane_title
+                        ? s.pane_current_command + ' — ' + s.pane_title
+                        : s.pane_current_command);
+                }
+                if (s.attached > 0) parts.push(s.attached + ' attached');
+                if (s.lastActivity) parts.push('active ' + relativeTime(s.lastActivity));
+                return parts.join(' · ');
             }
 
             function renderCard(s) {
@@ -5842,32 +5827,35 @@
                 card.draggable = !isCoarsePointer;   // Task M.4 (see isCoarsePointer above)
                 if (s.name === currentActive) card.classList.add('active');
 
-                const meta = document.createElement('div');
-                meta.className = 'session-meta';
+                // Left: the state dot (in a fixed-width slot so names align
+                // even when a session has no Claude state) + the name.
                 const titleRow = document.createElement('div');
                 titleRow.className = 'session-title-row';
                 const dot = stateDot(s.state, isUnseenDone(s) ? 'unseen' : '');
-                if (dot) titleRow.appendChild(dot);
+                titleRow.appendChild(dot || placeholderDot());
                 const name = document.createElement('div');
                 name.className = 'session-name';
                 name.textContent = s.name;
                 titleRow.appendChild(name);
-                meta.appendChild(titleRow);
-                const detail = document.createElement('div');
-                detail.className = 'session-detail' + (s.attached > 0 ? ' attached' : '');
-                const showMeta = getPrefs().session.showIdleMeta;
-                const attachedText = s.attached > 0 ? (s.attached + ' attached') : 'idle';
-                if (showMeta) {
-                    detail.append(attachedText + ' · ' + relativeTime(s.lastActivity));
-                } else if (s.attached > 0) {
-                    detail.append(attachedText);
-                }
+                card.appendChild(titleRow);
+
+                // Right edge: a time on every row (2026-07-16). Running -> the
+                // live elapsed timer, self-ticked by the shared 1 Hz interval
+                // (state colour); otherwise -> the relative last activity.
+                const time = document.createElement('div');
+                time.className = 'row-time' + (s.state === 'running' ? ' running' : '');
                 if (s.state === 'running') {
-                    if (detail.childNodes.length > 0) detail.append(' · ');
-                    detail.appendChild(workingNote(stateChangedAt(s.name)));
+                    const since = stateChangedAt(s.name) || Date.now();
+                    const t = document.createElement('span');
+                    t.className = 'working-timer';
+                    t.dataset.since = String(since);
+                    t.textContent = formatWorking(Date.now() - since);
+                    time.appendChild(t);
+                } else {
+                    time.textContent = relativeTime(s.lastActivity);
                 }
-                meta.appendChild(detail);
-                card.appendChild(meta);
+                card.appendChild(time);
+                card.title = rowTooltip(s);
 
                 const actions = document.createElement('div');
                 actions.className = 'session-actions';
@@ -6517,7 +6505,7 @@
             // build applies both idempotently.
             window.addEventListener('tl-prefs-change', () => {
                 paintSettingsPanel();
-                renderLobby();   // card metadata (showIdleMeta) applies live
+                renderLobby();   // re-render cards so pref changes apply live
                 if (currentActive && frameUrl && frameEl.contentWindow) {
                     const p = getPrefs();
                     frameEl.contentWindow.postMessage({ type: 'tl-prefs', prefs: p }, location.origin);
@@ -6580,8 +6568,6 @@
                 // generic .sp-seg reflect below paints their active values.
                 const sr = settingsPanel.querySelector('#sp-reopen');
                 if (sr) sr.checked = p.session.reopenLast;
-                const im = settingsPanel.querySelector('#sp-idlemeta');
-                if (im) im.checked = p.session.showIdleMeta;     // coarse-pointer row only (MF-5)
                 // Notifications section — universal (always present). Toggles
                 // reflect the roamed notify.* prefs; the state readout is
                 // per-THIS-device (permission + bell synchronously here, the
@@ -6918,22 +6904,6 @@
                 // every device registered under this account. Subscriptions
                 // are PER DEVICE + BROWSER (the note at the end says so): the
                 // bell must be enabled on each device you want pushes on.
-                // Card metadata (universal): the "idle · 2d ago" line is
-                // OFF by default — most users don't care when they last
-                // connected (Viktor). Roamed like the notify toggles.
-                const imRow = row('Show idle / last-connected on cards');
-                imRow.classList.add('sp-row-wide');
-                const im = document.createElement('input');
-                im.type = 'checkbox';
-                im.id = 'sp-idlemeta';
-                im.title = 'Show each session card\'s "idle · 2d ago" ' +
-                    'metadata line (state word + time since last activity). ' +
-                    'Off: idle cards stay clean; attached cards still show ' +
-                    'the attach count and live "Working" notes.';
-                im.addEventListener('change',
-                    () => setPrefs({ session: { showIdleMeta: im.checked } }));
-                imRow.appendChild(im);
-
                 const notifTitle = document.createElement('div');
                 notifTitle.className = 'sp-title';
                 notifTitle.textContent = 'Notifications';
