@@ -113,15 +113,25 @@ Fix: session mode now parses arg3 (`validDir`, absolute-only, mirrors
 `tmux-attach.sh`), and `connect()` forwards it — pinning the command to arg2
 (`'default'` if none) so the dir always lands on `$3`.
 
-**② The command was silently dropped.** The stored `newCommand` pref could still
-hold the retired `'default'` launcher value. `syncNewCmd` *displayed* it as
-`claude` but deliberately didn't rewrite it (to protect "launcher users like
-emo") — a rationale gone stale: no user has a `start-claude.sh` default-command
-any more, and there is no `default-command` set anywhere, so `'default'` resolves
-to the login shell (bash) for everyone. `frameArgs` read `'default'` and sent no
-command at all. Fix: `effectiveNewCommand()` normalizes absent/legacy/invalid →
-`claude` everywhere, the command is always sent, and `syncNewCmd` heals a stale
-pref once. Retiring `'default'` changes nothing for other users.
+**② The command was silently dropped — for wizard specifically.** wizard's
+stored `newCommand` pref was the legacy `'default'`, which `syncNewCmd` *displays*
+as `claude` but which `frameArgs` sends as "no command". `'default'` means "use
+the tmux `default-command`" — correct for LAUNCHER users: emo and ancamilea both
+have `~/start-claude.sh`, emo wires it via `set -g default-command`, and emo's
+pref is deliberately pinned to `'default'` to keep it. wizard has *no* launcher,
+so his `'default'` resolved to a plain login shell — the "plain bash" he saw. The
+fix is a **per-user data correction**, not a code change: wizard's pref was set
+to `'claude'` server-side (`frameArgs` then sends it, mapped to his personalized
+`claude` via `~/.config/terminal-lobby/commands`).
+
+> **Course-correction (same day):** a first attempt normalized `'default'` →
+> `'claude'` in code with a pref self-heal, on the wrong belief — from a check
+> silently blocked by `/home/emo` permissions — that no launcher users remained.
+> It was briefly deployed, then reverted before emo loaded it: the heal would
+> have clobbered emo's pinned `'default'` and bypassed the launcher. `'default'`
+> stays a valid, honored value; only the individual stale pref was corrected.
+> Bonus from bug ①: a launcher session created in a project now also lands in
+> the project dir.
 
 Delivered alongside (unrelated UI, same file): on the already-selected session a
 single click on its **name** opens inline rename (desktop only; mobile keeps
@@ -143,12 +153,13 @@ sequenceDiagram
 ```
 
 **Verified end-to-end this time.** Dev-harness (Playwright network capture):
-`/token` + `/ws` carry `arg=claude` (was nothing) and the dir at arg3 (was
-dropped); inline rename opens only on the active card's name; non-active clicks
-still attach; pref healed `default`→`claude` on the live server. Real attach
-through the **deployed** scripts: `spawn: … dir='/home/wizard/code/tripit'
-cmd='shell'` (was `dir='/home/wizard' cmd='<none>'`) → `pane_current_path=
-/home/wizard/code/tripit`, `start_cmd=/bin/zsh -l`.
+`/token` + `/ws` carry the command and the project dir at arg3 (was dropped);
+inline rename opens only on the active card's name; non-active clicks still
+attach. Real attach through the **deployed** scripts, both command paths:
+`cmd='shell'` → `pane_current_path=/home/wizard/code/tripit`,
+`start_cmd=/bin/zsh -l`; `cmd='default'` → same dir, `start_cmd=[]` (empty → the
+user's `default-command`/launcher runs). Contrast the pre-fix
+`dir='/home/wizard' cmd='<none>'`.
 
 ## Security notes
 
