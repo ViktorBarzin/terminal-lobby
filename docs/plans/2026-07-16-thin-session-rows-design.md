@@ -1,7 +1,7 @@
 # Thin session rows — sidebar density redesign
 
 **Repo:** terminal-lobby &middot; **File touched:** `frontend/index.html`
-**Date:** 2026-07-16 &middot; **Status:** Approved — executing
+**Date:** 2026-07-16 &middot; **Status:** Done — deployed (build `3069802`)
 **Owner:** Viktor (wizard)
 **Re-verified against HEAD `bfa210e` (2026-07-16):** the checkout advanced past the
 plan's baseline (`a16a960`); commit `0422eb6` ("card polish") already deleted the
@@ -130,8 +130,22 @@ tooltip shows the command; ⋯ opens the menu; drag still reorders and moves bet
 projects; long names truncate; dot slot keeps names aligned for stateless sessions;
 all four themes read well. Compare against `docs/screenshots/`.
 
-## Rollout
+## Rollout — done (2026-07-16)
 
-Worktree → implement → verify (screenshots) → re-publish this doc (status
-executing → done) → merge to master → watch the GitHub Actions build + Woodpecker
-deploy + rollout → confirm live at `terminal.viktorbarzin.me`.
+Worktree → implement → verify (headless browser, 15 mock sessions across all
+states) → merge to master (`3069802`).
+
+**This repo has no CI** (`deploy.sh`: *"kept as a stand-alone script so it works
+without CI (which is currently TODO)"*) — there is no GitHub Actions workflow and
+Woodpecker 404s for it, so the push does not auto-deploy. Went live via a manual
+`scripts/deploy.sh` run on the DevVM (`10.0.10.10`) after claiming presence
+(`service:terminal-lobby`): it rebuilds the Go binaries, stamps the frontend, scps
+to the box and restarts `ttyd`/`tmux-api`/`clipboard-upload`. The lobby is designed
+to keep active terminals connected across a deploy, so no session was dropped.
+
+Verified live: `/usr/local/share/ttyd/index.html` serves build `3069802` with the
+new markers (`.row-time`, `min-height: 28px`, `rowTooltip()`) and none of the old
+ones (`session-meta` / `working-note` / `showIdleMeta` / `cmd-chip`).
+
+Follow-up worth noting (not this task): CI/CD for terminal-lobby is still TODO —
+every change ships by a manual `scripts/deploy.sh`.
