@@ -3064,6 +3064,24 @@
                 { key: 'alt+shift+[', command: 'session.prev', when: '!galleryOpen' },
                 { key: 'alt+shift+]', command: 'session.next', when: '!galleryOpen' }
             ];
+            // Platform: Cmd is never forwarded to the pty on macOS, so a
+            // Cmd-based always-on chord steals nothing there; Ctrl+J IS the
+            // LF byte on every platform, so on non-Mac the new-shell chord
+            // deliberately claims it (accepted tradeoff).
+            const IS_MAC = (() => {
+                try {
+                    const p = (navigator.userAgentData && navigator.userAgentData.platform)
+                        || navigator.platform || '';
+                    return /mac/i.test(p);
+                } catch (e) { return false; }
+            })();
+            // ALWAYS-ON bindings: fire regardless of the opt-in `enabled`
+            // flag AND for every user (they bypass the layer gate). Kept
+            // separate from KB_DEFAULT_BINDINGS, which stay opt-in and
+            // user-overridable. Ctrl+J / Cmd+J → open a new plain shell.
+            const KB_ALWAYS_BINDINGS = [
+                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: '!galleryOpen' }
+            ];
             const KB_COMMANDS = new Set(KB_DEFAULT_BINDINGS.map(b => b.command));
             const MOD_WORDS = ['ctrl', 'control', 'shift', 'alt', 'option', 'meta', 'cmd', 'super'];
 
@@ -3119,6 +3137,10 @@
                 }));
             }
             let kbResolved = resolveBindings();
+            // Always-on bindings never take overrides — resolve once.
+            const kbAlwaysResolved = KB_ALWAYS_BINDINGS.map(b => ({
+                command: b.command, when: b.when, chord: parseChord(b.key)
+            }));
             function refreshKb() {
                 kbDoc = normalizeKeybindings(readKbRaw());
                 kbResolved = resolveBindings();
@@ -3185,9 +3207,18 @@
             // returns the matched binding, or null when the layer is
             // disabled / the event is not an exact enabled-chord match.
             function matchesAppChord(e) {
-                if (!kbDoc.enabled) return null;
                 if (e.type && e.type !== 'keydown') return null;
                 const ctx = getContextFn ? getContextFn() : {};
+                // Always-on bindings are checked BEFORE the enabled gate:
+                // they fire for every user whether or not the opt-in layer
+                // is on (Ctrl+J / Cmd+J new-shell). They still honor `when`,
+                // so an open gallery keeps its own keys.
+                for (const b of kbAlwaysResolved) {
+                    if (!b.chord) continue;
+                    if (b.when && !evalWhen(b.when, ctx)) continue;
+                    if (eventMatchesChord(e, b.chord)) return b;
+                }
+                if (!kbDoc.enabled) return null;
                 for (const b of kbResolved) {
                     if (!b.chord) continue;
                     if (b.when && !evalWhen(b.when, ctx)) continue;
@@ -3450,7 +3481,8 @@
                 enabled: kbEnabled,
                 setEnabled: setKbEnabled,
                 createPalette,
-                recentsFirst
+                recentsFirst,
+                newShellChord: IS_MAC ? 'Cmd+J' : 'Ctrl+J'
             };
         })();
 
@@ -5132,13 +5164,17 @@
                 const p = layout.projects.find(x => x.name === pname);
                 return (p && p.dir) || '';
             }
-            function frameArgs(name) {
+            function frameArgs(name, opts) {
                 let u = '/?arg=' + encodeURIComponent(name);
                 let cmd = 'default';
-                try {
-                    const k = getPrefs().session.newCommand;
-                    if (k) cmd = k;
-                } catch (e) {}
+                if (opts && opts.cmd) {
+                    cmd = opts.cmd;                  // forced command (e.g. 'shell')
+                } else {
+                    try {
+                        const k = getPrefs().session.newCommand;
+                        if (k) cmd = k;
+                    } catch (e) {}
+                }
                 // A project dir must land at arg3, so whenever we send a dir we
                 // ALSO send the command at arg2 — as 'default' when none, which
                 // the attach scripts treat identically to omitting it (a launcher
@@ -5147,7 +5183,11 @@
                 // non-'default' command). tmux -A ignores -c on a live session,
                 // so sending the dir on every attach is harmless and lets a
                 // resurrected project session land back in its dir.
-                const dir = projectDirForSession(name);
+                // opts.dir (new-shell shortcut) overrides the session's own
+                // project dir: the new session is Ungrouped but must launch in
+                // the CURRENT session's project dir. '' means home (no arg3).
+                const dir = (opts && typeof opts.dir === 'string')
+                    ? opts.dir : projectDirForSession(name);
                 if (dir) {
                     u += '&arg=' + encodeURIComponent(cmd) + '&arg=' + encodeURIComponent(dir);
                 } else if (cmd !== 'default') {
@@ -5166,7 +5206,7 @@
             function sessionExists(name) {
                 return lastSessions.some(s => s.name === name);
             }
-            function activateSession(name) {
+            function activateSession(name, opts) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
                 if (currentActive === name) {
                     // Re-tapping the attached session from the browsing view
@@ -5184,7 +5224,7 @@
                 activeConfirmed = false;
                 emptyEl.classList.add('hidden');
                 frameEl.classList.remove('hidden');
-                setFrameUrl(frameArgs(name));
+                setFrameUrl(frameArgs(name, opts));
                 if (location.hash.slice(1) !== name) {
                     history.replaceState(null, '', '#' + name);
                 }
@@ -6844,8 +6884,9 @@
                 kb.id = 'sp-kb';
                 kb.title = 'Enable app keyboard shortcuts in this browser: ' +
                     'Ctrl+Shift+K command palette, Alt+1..9 attach Nth session, ' +
-                    'Alt+Shift+[ / ] cycle sessions. Off (default): every key ' +
-                    'reaches the terminal exactly as before.';
+                    'Alt+Shift+[ / ] cycle sessions. Off (default): those keys ' +
+                    'reach the terminal as before. Note: ' + tlKb.newShellChord +
+                    ' always opens a new shell, regardless of this toggle.';
                 kb.addEventListener('change', () => {
                     tlKb.setEnabled(kb.checked);
                     syncAltBadges();   // disabling mid-Alt-hold must drop the badges
@@ -7462,6 +7503,29 @@
                 if (announce) flashSessionPill(target, dir);
                 activateSession(target);
             }
+            // Ctrl+J / Cmd+J — open a new plain-shell session in the current
+            // window (always-on, ungated). First-free name (shell, shell-2, …),
+            // launched in the CURRENTLY-ACTIVE session's project dir (home when
+            // none); the new session itself is Ungrouped. pendingShellNames
+            // covers the ~5s poll lag so rapid presses don't collide.
+            const pendingShellNames = new Set();
+            function firstFreeShellName() {
+                const taken = new Set(lastSessions.map(s => s.name));
+                pendingShellNames.forEach(n => taken.add(n));
+                if (!taken.has('shell')) return 'shell';
+                for (let i = 2; i < 1000; i++) {
+                    if (!taken.has('shell-' + i)) return 'shell-' + i;
+                }
+                return 'shell-' + Date.now();     // pathological fallback
+            }
+            function openNewShellHere() {
+                const name = firstFreeShellName();
+                const dir = currentActive ? projectDirForSession(currentActive) : '';
+                pendingShellNames.add(name);
+                setTimeout(() => pendingShellNames.delete(name), 15000);
+                activateSession(name, { cmd: 'shell', dir: dir });
+                quickRefreshAfterCreate();
+            }
             const ATTACH_PREFIX = 'session.attach.';
             function runAppCommand(cmd) {
                 if (cmd === 'palette.toggle') { palette.toggle(); return; }
@@ -7483,6 +7547,10 @@
                 if (cmd === 'session.new') {
                     setSidebarCollapsed(false);           // the box lives in the sidebar
                     newNameEl.focus();
+                    return;
+                }
+                if (cmd === 'session.new.shell') {
+                    openNewShellHere();
                     return;
                 }
                 if (cmd === 'session.kill.current') {
@@ -11689,6 +11757,22 @@
                 : (i < 0 ? names[names.length - 1] : names[(i - 1 + names.length) % names.length]),
                 { replace: true });
         }
+        // Unframed (deep-linked) new-shell: no lobby/layout here, so no
+        // project dir — navigate the tab to a fresh first-free shell in the
+        // home dir. assign() (not replace) keeps it back-walkable, like the
+        // other deliberate jumps.
+        async function openNewShellUnframed() {
+            let list = [];
+            try { list = await fetchSessionList(); } catch (e) {}
+            const taken = new Set(list.map(s => s.name));
+            let name = 'shell';
+            if (taken.has('shell')) {
+                for (let i = 2; i < 1000; i++) {
+                    if (!taken.has('shell-' + i)) { name = 'shell-' + i; break; }
+                }
+            }
+            location.assign('/?arg=' + encodeURIComponent(name) + '&arg=shell');
+        }
         const palette = isFramed ? null : tlKb.createPalette({
             sessions: fetchSessionList,
             current: () => validArg,
@@ -11718,6 +11802,7 @@
                 } catch (e) {}
                 return;
             }
+            if (cmd === 'session.new.shell') { openNewShellUnframed(); return; }
             if (cmd === 'palette.toggle') { palette.toggle(); return; }
             if (palette.isOpen()) palette.close(false);
             if (cmd.startsWith(ATTACH_PREFIX) || cmd === 'session.next' || cmd === 'session.prev') {
