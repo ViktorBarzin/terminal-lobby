@@ -5159,28 +5159,26 @@
                 const p = layout.projects.find(x => x.name === pname);
                 return (p && p.dir) || '';
             }
-            // The command KEY a NEW session should run. The dropdown offers
-            // claude/codex/shell; a legacy/absent/invalid pref — notably the
-            // retired 'default' launcher value (no user has a start-claude.sh
-            // default-command anymore) — normalizes to 'claude', so the command
-            // the dropdown SHOWS is always the command that actually runs.
-            function effectiveNewCommand() {
-                let v;
-                try { v = getPrefs().session.newCommand; } catch (e) {}
-                return (v === 'claude' || v === 'codex' || v === 'shell') ? v : 'claude';
-            }
             function frameArgs(name) {
                 let u = '/?arg=' + encodeURIComponent(name);
-                // The command is always an explicit key now (effectiveNewCommand
-                // normalizes the retired 'default'), sent on every attach. A
-                // project dir must land at arg3, so it always follows the command
-                // at arg2. tmux -A ignores -c and the command on a live session,
-                // so sending both on every attach is harmless and lets a
+                let cmd = 'default';
+                try {
+                    const k = getPrefs().session.newCommand;
+                    if (k) cmd = k;
+                } catch (e) {}
+                // A project dir must land at arg3, so whenever we send a dir we
+                // ALSO send the command at arg2 — as 'default' when none, which
+                // the attach scripts treat identically to omitting it (a launcher
+                // user's tmux default-command, e.g. emo's start-claude.sh, then
+                // runs). With no dir, keep the historic shape (arg2 only for a
+                // non-'default' command). tmux -A ignores -c on a live session,
+                // so sending the dir on every attach is harmless and lets a
                 // resurrected project session land back in its dir.
-                u += '&arg=' + encodeURIComponent(effectiveNewCommand());
                 const dir = projectDirForSession(name);
                 if (dir) {
-                    u += '&arg=' + encodeURIComponent(dir);
+                    u += '&arg=' + encodeURIComponent(cmd) + '&arg=' + encodeURIComponent(dir);
+                } else if (cmd !== 'default') {
+                    u += '&arg=' + encodeURIComponent(cmd);
                 }
                 return u;
             }
@@ -6342,16 +6340,15 @@
             // updates from other devices via tl-prefs-change.
             const newCmdEl = document.getElementById('new-cmd');
             function syncNewCmd() {
-                let stored;
-                try { stored = getPrefs().session.newCommand; } catch (e) {}
-                const norm = effectiveNewCommand();
-                newCmdEl.value = norm;
-                // Heal a legacy/absent/invalid pref (notably the retired
-                // 'default' — no launcher users remain) ONCE, so the stored
-                // value matches what the dropdown shows and frameArgs sends.
-                // Only writes when normalization changed it, so the
-                // tl-prefs-change echo can't loop.
-                if (stored !== norm) setPrefs({ session: { newCommand: norm } });
+                let v = 'claude';
+                try { v = getPrefs().session.newCommand; } catch (e) {}
+                // 'default' is a valid backing value (kept for LAUNCHER users
+                // like emo/ancamilea, whose tmux default-command runs their
+                // start-claude.sh) but is no longer a dropdown option — reflect
+                // it as the visible 'claude' WITHOUT overwriting the pref (only
+                // the change handler writes), so their launcher path via
+                // frameArgs()'s pref read stays intact.
+                newCmdEl.value = (v === 'claude' || v === 'codex' || v === 'shell') ? v : 'claude';
             }
             syncNewCmd();
             newCmdEl.addEventListener('change', () => {
