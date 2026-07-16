@@ -1,7 +1,8 @@
 # Forbid duplicate session names + per-project launch directory
 
-**Status:** Shipped & verified live (2026-07-15) · **Repo:** terminal-lobby ·
-**Owner:** Viktor (wizard)
+**Status:** Shipped 2026-07-15; **follow-up fix 2026-07-16** — the dir never
+actually reached tmux, and the command was silently dropped (see "Follow-up fix"
+below) · **Repo:** terminal-lobby · **Owner:** Viktor (wizard)
 
 Two changes, delivered together because both touch the create path.
 
@@ -93,6 +94,61 @@ flowchart LR
   `~/code/tripit` top; dir selection updates state; **dup-guard rejects `fable`
   without navigating**; console clean. The `.gitignore` blind-spot was caught
   here and fixed (`--no-ignore-vcs`).
+
+## Follow-up fix (2026-07-16)
+
+The 2026-07-15 "verified live" was **incomplete**: it exercised the picker, the
+modal, the dup-guard and `GET /dirs`, but never confirmed a *created* session's
+actual `pwd` or command. Two bugs hid in exactly that gap — a `+`-in-project
+session opened in `$HOME` running a plain shell, honoring neither the project
+dir nor the shown command.
+
+**① The dir never reached tmux.** `frameArgs` correctly emitted arg3=dir into
+the iframe URL — but that URL just reloads `index.html` in *session mode*, and
+the code that opens the connection, `connect()`, rebuilt the `/ws` + `/token`
+URL from only arg0 (name) + arg1 (command). Arg2 (the dir) was parsed nowhere
+and forwarded nowhere, so it died at the iframe boundary. The sequence diagram
+above elided the session-mode page, which is precisely why the gap was missed.
+Fix: session mode now parses arg3 (`validDir`, absolute-only, mirrors
+`tmux-attach.sh`), and `connect()` forwards it — pinning the command to arg2
+(`'default'` if none) so the dir always lands on `$3`.
+
+**② The command was silently dropped.** The stored `newCommand` pref could still
+hold the retired `'default'` launcher value. `syncNewCmd` *displayed* it as
+`claude` but deliberately didn't rewrite it (to protect "launcher users like
+emo") — a rationale gone stale: no user has a `start-claude.sh` default-command
+any more, and there is no `default-command` set anywhere, so `'default'` resolves
+to the login shell (bash) for everyone. `frameArgs` read `'default'` and sent no
+command at all. Fix: `effectiveNewCommand()` normalizes absent/legacy/invalid →
+`claude` everywhere, the command is always sent, and `syncNewCmd` heals a stale
+pref once. Retiring `'default'` changes nothing for other users.
+
+Delivered alongside (unrelated UI, same file): on the already-selected session a
+single click on its **name** opens inline rename (desktop only; mobile keeps
+tap-to-terminal + long-press); the card **session name** is larger/bolder and the
+not-very-helpful live-command chip (`bash`/`node`/…) is removed.
+
+```mermaid
+sequenceDiagram
+    participant L as Lobby (top page)
+    participant I as iframe (session mode)
+    participant C as connect()
+    participant T as ttyd (-a) → tmux-attach.sh
+    L->>I: iframe src /?arg=name&arg=claude&arg=/dir  (frameArgs ✓ always did this)
+    Note over I: parse arg0=name, arg1=cmd, arg2=dir (validDir — NEW)
+    I->>C: open WS
+    C->>T: /ws + /token ?arg=name&arg=claude&arg=/dir
+    Note over C: BEFORE: only name+cmd — dir dropped here (the bug)
+    T->>T: $1=name $2=claude $3=/dir → tmux new-session -c /dir … claude
+```
+
+**Verified end-to-end this time.** Dev-harness (Playwright network capture):
+`/token` + `/ws` carry `arg=claude` (was nothing) and the dir at arg3 (was
+dropped); inline rename opens only on the active card's name; non-active clicks
+still attach; pref healed `default`→`claude` on the live server. Real attach
+through the **deployed** scripts: `spawn: … dir='/home/wizard/code/tripit'
+cmd='shell'` (was `dir='/home/wizard' cmd='<none>'`) → `pane_current_path=
+/home/wizard/code/tripit`, `start_cmd=/bin/zsh -l`.
 
 ## Security notes
 
