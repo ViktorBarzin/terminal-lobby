@@ -93,7 +93,7 @@ viewer's platform):
 | `Alt+Shift+Backspace` | Kill the **attached** session — from anywhere, even mid-type (always on) |
 | `Ctrl+Shift+K` | Command palette (fuzzy session + action search) |
 | `Ctrl+J` / `Cmd+J` | Toggle a docked scratch shell (always on) |
-| `/` or `?` | Show this shortcuts help (also under `Ctrl+Shift+K`) |
+| `/` or `?` / `Alt+/` | Show this shortcuts help (`Alt+/` works in a session too) |
 
 Sessions past the tenth aren't digit-jumpable — cycle with
 `Alt+Shift+[` / `]` or search with the palette. The chords work while
@@ -104,8 +104,9 @@ tab-switching and a page in a normal tab can't override them, whereas
 
 `/` (or `?`) opens the shortcuts help from the lobby — it's a plain key,
 so it only fires when the lobby chrome has focus (never while you're
-typing in the terminal, where `/` belongs to the shell). From inside a
-session, open it via the `Ctrl+Shift+K` palette → **Keyboard shortcuts**.
+typing in the terminal, where `/` belongs to the shell). Inside a session,
+use **`Alt+/`** (`Option+/` on Mac) — a modifier chord, so it opens the
+help from anywhere — or the `Ctrl+Shift+K` palette → **Keyboard shortcuts**.
 
 **Backspace** / **Delete** kill the selected session straight from the
 sidebar — select a session card (click it, or Tab/arrow to it) and press
