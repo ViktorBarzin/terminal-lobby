@@ -188,6 +188,12 @@ func main() {
 		log.Printf("seeded global project store from per-user layouts")
 	}
 
+	// Localhost token the devvm attach path uses to record a shared attach's
+	// client tty (for kick-on-revoke). Non-fatal if it can't be set up.
+	if err := ensureInternalToken(); err != nil {
+		log.Printf("internal token init failed (shared-attach kick recording disabled): %v", err)
+	}
+
 	http.HandleFunc("/sessions", handleSessions)
 	http.HandleFunc("/sessions/", handleSessionByName)
 	http.HandleFunc("/whoami", handleWhoami)
@@ -195,6 +201,9 @@ func main() {
 	http.HandleFunc("/layout", handleLayout)
 	http.HandleFunc("/projects", handleProjects)
 	http.HandleFunc("/projects/", handleProjectByID)
+	http.HandleFunc("/shares", handleShares)
+	http.HandleFunc("/shares/", handleShareByPath)
+	http.HandleFunc("/internal/attach", handleInternalAttach)
 	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
