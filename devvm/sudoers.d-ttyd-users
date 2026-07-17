@@ -34,4 +34,10 @@ wizard ALL=(ancamilea) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach,
 # can only ever restore a real terminal user's OWN saved sessions. Target is
 # root (not a per-user target) because tmux-persist itself does the per-user
 # runuser + reads the root-owned manifest.
-wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-restore-user
+#
+# tmux-user-setfacl (project co-ownership): applies/removes POSIX ACLs on a
+# shared project dir for its members. Root because the tree holds files owned by
+# several members (only root can setfacl all of them + fully revoke). The
+# wrapper self-validates its args (canonical dir strictly under a home, real
+# users, inode cap) so this grant can't become an arbitrary-path ACL writer.
+wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-restore-user, /usr/local/bin/tmux-user-setfacl
