@@ -334,6 +334,145 @@ func createProject(w http.ResponseWriter, r *http.Request, osUser string) {
 	_ = json.NewEncoder(w).Encode(p)
 }
 
+var (
+	errProjectNotFound = errors.New("project not found")
+	errNotMember       = errors.New("not a project member")
+)
+
+func indexByID(ps *ProjectSet, id string) int {
+	for i := range ps.Projects {
+		if ps.Projects[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// projectErrStatus maps an update() error to an HTTP response. Sentinels become
+// 404/403; anything else is an opaque 500 (input is pre-validated in the handler
+// so a validation failure here would be a genuine surprise).
+func projectErrStatus(w http.ResponseWriter, osUser, action string, err error) {
+	switch {
+	case errors.Is(err, errProjectNotFound):
+		http.Error(w, "project not found", http.StatusNotFound)
+	case errors.Is(err, errNotMember):
+		http.Error(w, "not a project member", http.StatusForbidden)
+	default:
+		logAndFail(w, "%s for %s failed: %v", action, osUser, err)
+	}
+}
+
+// handleProjectByID serves per-project operations under /projects/<id> (and its
+// sub-resources /members, /sessions added in later slices).
+func handleProjectByID(w http.ResponseWriter, r *http.Request) {
+	osUser := resolveOSUser(w, r)
+	if osUser == "" {
+		return
+	}
+	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/projects/"), "/")
+	parts := strings.Split(path, "/")
+	id := parts[0]
+	if id == "" {
+		http.Error(w, "missing project id", http.StatusBadRequest)
+		return
+	}
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodPatch:
+			patchProject(w, r, osUser, id)
+		case http.MethodDelete:
+			deleteProject(w, osUser, id)
+		default:
+			http.Error(w, "PATCH or DELETE only", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+	http.Error(w, "not found", http.StatusNotFound)
+}
+
+// patchProject updates the provided fields (PATCH semantics: only fields present
+// in the body change). Any member may edit (co-equal governance). Values are
+// pre-validated for a clean 400.
+func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
+	var body struct {
+		Name       *string `json:"name"`
+		Dir        *string `json:"dir"`
+		AttachMode *string `json:"attachMode"`
+		CoOwned    *bool   `json:"coOwned"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLayoutBody)).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Name != nil && !sessionNameRe.MatchString(strings.TrimSpace(*body.Name)) {
+		http.Error(w, "invalid project name", http.StatusBadRequest)
+		return
+	}
+	if body.Dir != nil && *body.Dir != "" && (!filepath.IsAbs(*body.Dir) || len(*body.Dir) > maxDirLen) {
+		http.Error(w, "project dir must be an absolute path", http.StatusBadRequest)
+		return
+	}
+	if body.AttachMode != nil {
+		switch *body.AttachMode {
+		case "", projectAttachRO, projectAttachRW:
+		default:
+			http.Error(w, "invalid attach mode", http.StatusBadRequest)
+			return
+		}
+	}
+	var updated GlobalProject
+	err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		i := indexByID(ps, id)
+		if i < 0 {
+			return errProjectNotFound
+		}
+		if !projectMember(ps.Projects[i], osUser) {
+			return errNotMember
+		}
+		if body.Name != nil {
+			ps.Projects[i].Name = strings.TrimSpace(*body.Name)
+		}
+		if body.Dir != nil {
+			ps.Projects[i].Dir = *body.Dir
+		}
+		if body.AttachMode != nil {
+			ps.Projects[i].AttachMode = *body.AttachMode
+		}
+		if body.CoOwned != nil {
+			ps.Projects[i].CoOwned = *body.CoOwned
+		}
+		updated = ps.Projects[i]
+		return nil
+	})
+	if err != nil {
+		projectErrStatus(w, osUser, "patch project", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(updated)
+}
+
+// deleteProject removes the project (any member may, co-equal). It dissolves the
+// grouping only — sessions are tmux state and are never touched here.
+func deleteProject(w http.ResponseWriter, osUser, id string) {
+	err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		i := indexByID(ps, id)
+		if i < 0 {
+			return errProjectNotFound
+		}
+		if !projectMember(ps.Projects[i], osUser) {
+			return errNotMember
+		}
+		ps.Projects = append(ps.Projects[:i], ps.Projects[i+1:]...)
+		return nil
+	})
+	if err != nil {
+		projectErrStatus(w, osUser, "delete project", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // migrateAllLayouts builds the initial global project set from every mapped
 // user's per-user layout, but only if the global store does not yet exist.
 // Returns true when it performed the one-shot import, false when the store was
