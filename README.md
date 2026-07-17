@@ -90,6 +90,7 @@ viewer's platform):
 | `Alt+Shift+S` | Toggle the sidebar (fullscreen terminal ⇄ lobby) |
 | `Alt+Shift+N` | New session (focus the name box) |
 | `Alt+Shift+W` / `Alt+Shift+R` | Kill / rename the current session |
+| `Alt+Shift+Backspace` | Kill the **attached** session — from anywhere, even mid-type (always on) |
 | `Ctrl+Shift+K` | Command palette (fuzzy session + action search) |
 | `Ctrl+J` / `Cmd+J` | Toggle a docked scratch shell (always on) |
 | `/` or `?` | Show this shortcuts help (also under `Ctrl+Shift+K`) |
@@ -105,6 +106,15 @@ tab-switching and a page in a normal tab can't override them, whereas
 so it only fires when the lobby chrome has focus (never while you're
 typing in the terminal, where `/` belongs to the shell). From inside a
 session, open it via the `Ctrl+Shift+K` palette → **Keyboard shortcuts**.
+
+**Backspace** / **Delete** kill the selected session straight from the
+sidebar — select a session card (click it, or Tab/arrow to it) and press
+Backspace or Delete (a confirm guards it). Like `/`, these are plain keys, so
+they only fire when the sidebar has focus, never while you're typing in a
+terminal. From inside a session — where those keys belong to the shell — use
+`Alt+Shift+Backspace` (in the table above), which kills the attached session
+from anywhere. Rename a session by **double-clicking** its name (single click
+just selects), or from the card's `⋯` menu.
 
 ## Session image gallery
 
