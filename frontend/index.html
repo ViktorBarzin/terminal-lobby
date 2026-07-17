@@ -1161,8 +1161,14 @@
             user-select: none; -webkit-user-select: none;
             -webkit-touch-callout: none;
         }
-        /* Touch: a comfortable ~44px tap target while the styling stays thin. */
-        @media (pointer: coarse) { .session-card { min-height: 44px; } }
+        /* Touch rows match desktop density (28px) — Viktor 2026-07-17. The old
+           `@media (pointer: coarse) { min-height: 44px }` floor made mobile rows
+           noticeably taller than desktop. The row's long-press opens the actions
+           menu, so the redundant ⋯ button (which the blanket 44px touch rule at
+           `:where(#lobby …) button` would otherwise keep, pinning the row to 44px)
+           is hidden on touch in renderCard — letting the row collapse to the
+           desktop 28px. T3's mobile thread rows likewise carry no trailing menu.
+           See docs/plans/2026-07-16-thin-session-rows-design.md (mobile-density). */
         .session-card:hover { background: var(--hover-tint); }
         .session-card:focus-visible {
             /* var(--ring) like the shared rule below, but INSET: a +1px
@@ -5999,24 +6005,36 @@
                 card.appendChild(time);
                 card.title = rowTooltip(s);
 
-                const actions = document.createElement('div');
-                actions.className = 'session-actions';
-                const menuBtn = document.createElement('button');
-                menuBtn.replaceChildren(iconNode('ellipsis', 16));
-                menuBtn.title = 'Session actions';
-                menuBtn.setAttribute('aria-label', 'Actions for session ' + s.name);
-                menuBtn.draggable = false;
-                menuBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    openMenu(menuBtn, [
-                        ...moveMenuItems(s.name),
-                        { labelHeading: 'Session' },
-                        { label: 'Rename', onClick: () => renameSession(s.name) },
-                        { label: 'Kill', danger: true, onClick: () => killSession(s.name) }
-                    ]);
-                });
-                actions.appendChild(menuBtn);
-                card.appendChild(actions);
+                // On touch, the row's long-press opens this exact Move/Rename/Kill
+                // menu, so the always-visible ⋯ is redundant — and its 44px
+                // min-height (the blanket touch rule) would pin the row at 44px,
+                // defeating the mobile-density change. Hide it on touch to let the
+                // row collapse to the desktop 28px (Viktor 2026-07-17). Guard: if
+                // the card long-press gesture is off, keep ⋯ so actions stay
+                // reachable. Re-evaluated per render, so a live settings toggle
+                // settles on the next list paint.
+                const longPressActions = isCoarsePointer &&
+                    gesturesEnabled() && getPrefs().gestures.cardLongPress;
+                if (!longPressActions) {
+                    const actions = document.createElement('div');
+                    actions.className = 'session-actions';
+                    const menuBtn = document.createElement('button');
+                    menuBtn.replaceChildren(iconNode('ellipsis', 16));
+                    menuBtn.title = 'Session actions';
+                    menuBtn.setAttribute('aria-label', 'Actions for session ' + s.name);
+                    menuBtn.draggable = false;
+                    menuBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        openMenu(menuBtn, [
+                            ...moveMenuItems(s.name),
+                            { labelHeading: 'Session' },
+                            { label: 'Rename', onClick: () => renameSession(s.name) },
+                            { label: 'Kill', danger: true, onClick: () => killSession(s.name) }
+                        ]);
+                    });
+                    actions.appendChild(menuBtn);
+                    card.appendChild(actions);
+                }
 
                 card.addEventListener('click', (e) => {
                     // detail > 1 = second click of a double-click — the
