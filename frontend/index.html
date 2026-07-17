@@ -3249,7 +3249,14 @@
             // there is no dock — so there Ctrl+J falls through to the pty as a
             // normal newline instead of being swallowed.
             const KB_ALWAYS_BINDINGS = [
-                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: 'lobbyOpen && !galleryOpen' }
+                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: 'lobbyOpen && !galleryOpen' },
+                // ⌥⇧⌫ kills the attached session from ANYWHERE the lobby owns keys —
+                // including while typing in a framed terminal (forwarded like the
+                // new-shell chord above), so you don't have to click back to the
+                // sidebar first. Always-on (no opt-in). Alt+SHIFT, not plain ⌥⌫ —
+                // the shell/Claude editor use ⌥⌫ for delete-word (\e\x7f), so plain
+                // ⌥⌫ must keep reaching the pty. session.kill.current keeps its confirm.
+                { key: 'alt+shift+backspace', command: 'session.kill.current', when: 'lobbyOpen && !galleryOpen' }
             ];
             const KB_COMMANDS = new Set(KB_DEFAULT_BINDINGS.map(b => b.command));
             const MOD_WORDS = ['ctrl', 'control', 'shift', 'alt', 'option', 'meta', 'cmd', 'super'];
