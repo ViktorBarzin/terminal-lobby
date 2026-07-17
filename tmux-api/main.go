@@ -212,6 +212,7 @@ func main() {
 	http.HandleFunc("/shares", handleShares)
 	http.HandleFunc("/shares/", handleShareByPath)
 	http.HandleFunc("/internal/attach", handleInternalAttach)
+	http.HandleFunc("/users", handleUsers)
 	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)

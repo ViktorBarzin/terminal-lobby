@@ -499,6 +499,24 @@ func handleProjectSessions(w http.ResponseWriter, r *http.Request, osUser, id st
 	}
 }
 
+// handleUsers (GET /users) returns the mapped OS users, sorted — the candidate
+// set for the share / add-member pickers. Requires a valid caller.
+func handleUsers(w http.ResponseWriter, r *http.Request) {
+	osUser := resolveOSUser(w, r)
+	if osUser == "" {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	users := mappedOSUsers()
+	sort.Strings(users)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(users)
+}
+
 // isMappedOSUser reports whether osUser is a valid terminal account (a target
 // in the Authentik→OS-user map) — the population that may be added to projects.
 func isMappedOSUser(osUser string) bool {
