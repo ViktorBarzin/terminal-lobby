@@ -147,6 +147,66 @@ func (s *projectStore) saveLocked(ps ProjectSet) error {
 	return os.Rename(tmp.Name(), s.path)
 }
 
+// validateProjectSet enforces the global-document invariants: known version,
+// bounded count, unique non-empty ids, project/member/session names in the
+// tmux name charset, absolute dirs, a valid attach mode, at least one member
+// per project, and each session (owner,name) referenced by at most one project.
+// Project NAMES are deliberately NOT required unique — two owners may each have
+// a "work" project (identity is the id).
+func validateProjectSet(ps ProjectSet) error {
+	if ps.Version != projectsVersion {
+		return fmt.Errorf("unsupported project set version %d", ps.Version)
+	}
+	if len(ps.Projects) > maxProjects {
+		return fmt.Errorf("too many projects (%d > %d)", len(ps.Projects), maxProjects)
+	}
+	ids := map[string]bool{}
+	sessionSeen := map[SessionRef]bool{}
+	for _, p := range ps.Projects {
+		if p.ID == "" {
+			return fmt.Errorf("project %q has empty id", p.Name)
+		}
+		if ids[p.ID] {
+			return fmt.Errorf("duplicate project id %q", p.ID)
+		}
+		ids[p.ID] = true
+		if !sessionNameRe.MatchString(p.Name) {
+			return fmt.Errorf("invalid project name %q", p.Name)
+		}
+		if p.Dir != "" {
+			if len(p.Dir) > maxDirLen {
+				return fmt.Errorf("project %q dir too long (%d > %d)", p.Name, len(p.Dir), maxDirLen)
+			}
+			if !filepath.IsAbs(p.Dir) {
+				return fmt.Errorf("project %q dir must be an absolute path: %q", p.Name, p.Dir)
+			}
+		}
+		switch p.AttachMode {
+		case "", projectAttachRO, projectAttachRW:
+		default:
+			return fmt.Errorf("project %q invalid attach mode %q", p.Name, p.AttachMode)
+		}
+		if len(p.Members) == 0 {
+			return fmt.Errorf("project %q has no members", p.Name)
+		}
+		for _, m := range p.Members {
+			if !sessionNameRe.MatchString(m.OSUser) {
+				return fmt.Errorf("project %q invalid member %q", p.Name, m.OSUser)
+			}
+		}
+		for _, s := range p.Sessions {
+			if !sessionNameRe.MatchString(s.Owner) || !sessionNameRe.MatchString(s.Name) {
+				return fmt.Errorf("project %q invalid session ref %+v", p.Name, s)
+			}
+			if sessionSeen[s] {
+				return fmt.Errorf("session %+v listed in more than one project", s)
+			}
+			sessionSeen[s] = true
+		}
+	}
+	return nil
+}
+
 // newProjectID returns a short, opaque, collision-resistant project id.
 func newProjectID() string {
 	var b [9]byte
