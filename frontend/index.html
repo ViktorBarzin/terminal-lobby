@@ -6183,15 +6183,10 @@
                     // detail > 1 = second click of a double-click — the
                     // inline-rename path owns it (Task 2.5 guard).
                     if (e.detail > 1) return;
-                    // On the ALREADY-selected session, a single click on the
-                    // name text opens inline rename (desktop only — a coarse
-                    // pointer keeps tap = flip-to-terminal, and renames via
-                    // long-press). Non-active cards always attach first.
-                    if (s.name === currentActive && !isCoarsePointer &&
-                        e.target.closest('.session-name')) {
-                        startInlineRename(s.name);
-                        return;
-                    }
+                    // Single click always selects/attaches — so a focused card is
+                    // a consistent kill target for the Backspace/Delete shortcut,
+                    // whether you click the name or the status. Rename now lives on
+                    // double-click the title, the ⋯ menu, and (mobile) long-press.
                     activateSession(s.name);
                 });
                 card.addEventListener('keydown', (e) => {
