@@ -2,12 +2,37 @@
 
 **Repo:** terminal-lobby &middot; **File touched:** `frontend/index.html`
 **Date:** 2026-07-16 &middot; **Status:** Done — deployed (build `3069802`)
+&middot; **Mobile-density follow-up:** 2026-07-17 (touch rows → 28px, see Update below)
 **Owner:** Viktor (wizard)
 **Re-verified against HEAD `bfa210e` (2026-07-16):** the checkout advanced past the
 plan's baseline (`a16a960`); commit `0422eb6` ("card polish") already deleted the
 on-row `.cmd-chip`, enlarged `.session-name` to 15px/700, and added a desktop
 single-click-to-rename on the active card. Line numbers below are current; no
 decision changed.
+
+## Update — 2026-07-17 · mobile matches desktop density (28px)
+
+The original design kept a **44px min-height floor on touch** (decision #2) plus an
+**always-visible ⋯** (decision #5). Net effect: mobile rows rendered ~16px taller
+than the 28px desktop rows — good on desktop, still too tall on mobile. Two changes
+bring touch rows to the **same 28px** (T3's mobile thread-list density):
+
+1. **Dropped the `@media (pointer: coarse) { .session-card { min-height: 44px } }`
+   floor.** Touch rows inherit the desktop 28px. → **supersedes decision #2.**
+2. **Hide the ⋯ actions button on touch.** ⋯ is a real `<button>`, so the blanket
+   touch rule `:where(#lobby …) :where(button …) { min-height: 44px }` kept the row
+   at 44px even without the floor. The row's **long-press already opens the identical
+   Move / Rename / Kill menu** (`openCardCtxMenu`), so ⋯ is redundant on touch.
+   **Guard:** if the `cardLongPress` gesture is disabled (master gesture kill or the
+   per-gesture pref), ⋯ is kept so actions stay reachable. Evaluated per render in
+   `renderCard`, so a live settings toggle settles on the next list paint.
+   → **supersedes decision #5 on touch** (⋯ stays always-visible on desktop).
+
+Touch row anatomy is now `[● name …………… 3m]` — no trailing ⋯.
+
+**Trade-off (accepted, Viktor):** 28px touch rows sit below the 44px Apple-HIG
+tap-target the original design cited — **density chosen over tap margin**; long-press
+is the mobile action affordance. Desktop is unchanged.
 
 ## Problem
 
@@ -28,10 +53,10 @@ keeping the signals that matter, so **~16 sessions fit where ~6 do today**.
 | # | Decision | Choice | Why |
 |---|----------|--------|-----|
 | 1 | Row shape | **Bare rows** — no per-row border / shadow / big radius. Active = subtle bg tint + 3px left accent; hover = bg tint | The card chrome *is* the height; T3 rows carry none |
-| 2 | Height / touch | ~28px desktop; **~44px min-height floor on touch** via the existing `isCoarsePointer` path | A mouse is precise; a fingertip needs ≥44px (Apple HIG) |
+| 2 | Height / touch | ~28px desktop; **~44px min-height floor on touch** via the existing `isCoarsePointer` path | A mouse is precise; a fingertip needs ≥44px (Apple HIG) — _**superseded 2026-07-17**: touch floor dropped, touch = desktop 28px (see Update above)_ |
 | 3 | Right edge | **Always a time** — running → live self-ticking elapsed timer in state colour; otherwise → relative last-activity | Preserves the "working for Xs" signal, compressed. Retires `showIdleMeta` (now always-on) |
 | 4 | Live-command chip | **Move to hover / long-press tooltip** — the on-row chip was already deleted in `0422eb6`, so only the tooltip is left to add | It read "claude" on nearly every row — noise on-row, and it stole width from the name |
-| 5 | Actions (⋯) | **Always visible**, right of the time | Discoverability over minimalism |
+| 5 | Actions (⋯) | **Always visible**, right of the time | Discoverability over minimalism — _**superseded 2026-07-17 on touch**: ⋯ hidden on touch (long-press opens the same menu); still always-visible on desktop (see Update above)_ |
 | 6 | Vertical rhythm | **Tight stack** — row gap `6px → 2px`, group headers compressed to ~22px | Removing the inter-row gap is the last density lever; ~16 rows visible |
 
 ## Row anatomy
