@@ -4623,6 +4623,13 @@
             // Mutate-then-save: repaint optimistically, then persist; on failure
             // re-fetch so the sidebar snaps back to the server's truth.
             async function saveLayout() {
+                // Arm a short grace window (mirrors dockGraceUntil): the local
+                // change we're about to PUT may not round-trip before the next
+                // 5s poll's GET, whose stale doc would clobber it via
+                // `layout = layoutResult`. renderLobby keeps local project dirs
+                // over this window so a following mutation can never PUT a
+                // dir-less document. See renderLobby.
+                layoutGraceUntil = Date.now() + 4000;
                 paint();
                 try {
                     await putLayout();
@@ -5848,7 +5855,14 @@
                         return;
                     }
                     if (editing) {
-                        if (selectedDir) proj.dir = selectedDir; else delete proj.dir;
+                        // Re-resolve the project on the LIVE layout before writing.
+                        // A lobby poll during modal-open runs `layout = layoutResult`
+                        // (renderLobby), swapping in fresh project objects and
+                        // orphaning the `proj` captured when the modal opened —
+                        // writing to that orphan would silently no-op, since
+                        // saveLayout serializes the live layout. Match by name.
+                        const live = layout.projects.find(p => p.name === opts.projectName);
+                        if (live) { if (selectedDir) live.dir = selectedDir; else delete live.dir; }
                         saveLayout();
                         close();
                         return;
@@ -6471,9 +6485,26 @@
                         // stale fetch for a short grace window.
                         const inGrace = Date.now() < dockGraceUntil;
                         const localDock = inGrace ? layout.dock : undefined;
+                        // Same guard for project dirs: a "Set directory…" we just
+                        // made locally may not have round-tripped through the PUT
+                        // yet — keep local dirs over a short grace window so a
+                        // stale poll can't strip them (which would make the next
+                        // mutation PUT a dir-less doc). Captured present/absent by
+                        // name, then re-applied — mirrors dirByProject on drag.
+                        const dirGrace = Date.now() < layoutGraceUntil;
+                        const localDirs = dirGrace
+                            ? new Map(layout.projects.map(p => [p.name, p.dir || '']))
+                            : null;
                         layout = layoutResult;
                         if (inGrace) {
                             if (localDock) layout.dock = localDock; else delete layout.dock;
+                        }
+                        if (localDirs) {
+                            for (const p of layout.projects) {
+                                if (!localDirs.has(p.name)) continue;
+                                const d = localDirs.get(p.name);
+                                if (d) p.dir = d; else delete p.dir;
+                            }
                         }
                         if (!layoutLoaded) {
                             layoutLoaded = true;
@@ -7677,6 +7708,7 @@
             const lobbyContentEl = document.getElementById('lobby-content');
             let dockFrameSession = null;   // session #dock-frame currently attaches
             let dockGraceUntil = 0;        // shields a local dock change from a stale poll
+            let layoutGraceUntil = 0;      // shields local project dirs from a stale poll (see saveLayout/renderLobby)
 
             const pendingShellNames = new Set();
             function firstFreeShellName() {
