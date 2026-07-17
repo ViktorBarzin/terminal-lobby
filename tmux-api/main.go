@@ -193,6 +193,7 @@ func main() {
 	http.HandleFunc("/whoami", handleWhoami)
 	http.HandleFunc("/restore", handleRestore)
 	http.HandleFunc("/layout", handleLayout)
+	http.HandleFunc("/projects", handleProjects)
 	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
