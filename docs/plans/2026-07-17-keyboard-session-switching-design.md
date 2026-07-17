@@ -114,7 +114,7 @@ silent.
 |---|---|---|---|
 | `Alt+0` | `session.attach.10` | extend | 10th sidebar card |
 | `Alt+Shift+Enter` | `session.next.awaiting` | **new command** | next session with `state === 'awaiting'`, from after the current, wrapping; toast if none |
-| `Alt+Shift+\` | `sidebar.toggle` | **new command** | keyboard `‹`/`›`; expands or collapses |
+| `Alt+Shift+S` | `sidebar.toggle` | **new command** | keyboard `‹`/`›`; expands or collapses (a letter, not `\` — see note) |
 | `Alt+Shift+N` | `session.new` | bind existing | focus the new-session name box (expands sidebar) |
 | `Alt+Shift+W` | `session.kill.current` | bind existing | kills the focused session (with confirm) |
 | `Alt+Shift+R` | `session.rename.current` | bind existing | renames the focused session |
@@ -122,6 +122,13 @@ silent.
 All chords remain user-overridable via `tl:keybindings:v1.overrides`. Chords
 follow the existing collision discipline (avoid pty-critical keys and browser
 chords); `Alt+Shift+<key>` is the safe space the layer already uses.
+
+> **Chord note:** `sidebar.toggle` uses `Alt+Shift+S`, not the originally
+> sketched `Alt+Shift+\`. The layout-proof key match keys off `e.code`
+> aliases, which the code only maintains for letters, digits and the two
+> brackets — a bare backslash has no alias and, under Shift, `e.key`
+> becomes `|`, so `Alt+Shift+\` would silently fail to match on many
+> layouts / on Mac Option+Shift. Letters (`KeyS`) survive both.
 
 ## Decision: on by default {#decision-default-on}
 
@@ -141,7 +148,7 @@ The layer flips from default-OFF to **default-ON for all users**.
 Single file for behavior: `frontend/index.html`.
 
 1. `KB_DEFAULT_BINDINGS`: add `alt+0 → session.attach.10`, `alt+shift+enter →
-   session.next.awaiting`, `alt+shift+\ → sidebar.toggle`, `alt+shift+n →
+   session.next.awaiting`, `alt+shift+s → sidebar.toggle`, `alt+shift+n →
    session.new`, `alt+shift+w → session.kill.current`, `alt+shift+r →
    session.rename.current`.
 2. `normalizeKeybindings`: default `enabled` to `true` when the stored doc is
@@ -167,7 +174,7 @@ scratch tmux sessions and Playwright headless:
 - `Alt+0` attaches the 10th; `Alt+3` the 3rd;
 - `Alt+Shift+Enter` jumps to an `awaiting` session (mark one via
   `@claude_state`); no-op toast when none;
-- `Alt+Shift+\` toggles the sidebar; `Alt+Shift+N` focuses the name box;
+- `Alt+Shift+S` toggles the sidebar; `Alt+Shift+N` focuses the name box;
   `Alt+Shift+W`/`R` reach kill/rename (confirm dialogs fire).
 
 ## Rejected alternatives
