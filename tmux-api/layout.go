@@ -28,6 +28,25 @@ type Layout struct {
 	// = last). Absent in pre-field documents -> 0, the historic pinned-
 	// top position.
 	UngroupedIndex int `json:"ungroupedIndex"`
+	// Dock is the Ctrl+J bottom-panel scratch shell (frontend
+	// docs/2026-07-17-ctrl-j-shell-dock-design.md). A pointer so it is
+	// omitted entirely when nothing is docked. It MUST be a real struct
+	// field: without it, decoding a PUT silently dropped the client's dock
+	// and GET never returned it, so the panel only survived the client's 4s
+	// grace and then vanished on the next poll — the "auto-close" bug. It
+	// rides the same whole-document PUT/GET as the rest of the layout, so it
+	// roams across devices and survives mutations (mutateSessions preserves,
+	// renames, or clears it in lockstep with the session it names).
+	Dock *DockState `json:"dock,omitempty"`
+}
+
+// DockState mirrors the frontend layout.dock shape: the docked session's
+// name, whether the panel is expanded, and the launch dir used only when the
+// shell is (re)created.
+type DockState struct {
+	Session string `json:"session"`
+	Visible bool   `json:"visible"`
+	Dir     string `json:"dir,omitempty"`
 }
 
 type Project struct {
@@ -191,6 +210,19 @@ func (s *layoutStore) mutateSessions(osUser string, fn func(string) (string, boo
 		l.Projects[i].Sessions = apply(l.Projects[i].Sessions)
 	}
 	l.Ungrouped = apply(l.Ungrouped)
+	// The dock names a session too — keep it in lockstep: a UI kill of the
+	// docked shell clears the dock; a rename follows it. Without this a kill
+	// would leave the dock pointing at a dead session (and a rename would
+	// silently un-dock it).
+	if l.Dock != nil {
+		if name, keep := fn(l.Dock.Session); !keep {
+			l.Dock = nil
+			changed = true
+		} else if name != l.Dock.Session {
+			l.Dock.Session = name
+			changed = true
+		}
+	}
 	if !changed {
 		return nil
 	}
@@ -247,6 +279,22 @@ func validateLayout(l Layout) error {
 	for _, sess := range l.Ungrouped {
 		if err := checkSession(sess); err != nil {
 			return err
+		}
+	}
+	// The dock names a live scratch shell that is deliberately NOT listed in
+	// projects/ungrouped (it's hidden from the sidebar), so it is validated on
+	// its own rather than through checkSession's uniqueness map.
+	if l.Dock != nil {
+		if !sessionNameRe.MatchString(l.Dock.Session) {
+			return fmt.Errorf("invalid dock session name %q", l.Dock.Session)
+		}
+		if l.Dock.Dir != "" {
+			if len(l.Dock.Dir) > maxDirLen {
+				return fmt.Errorf("dock dir too long (%d > %d)", len(l.Dock.Dir), maxDirLen)
+			}
+			if !filepath.IsAbs(l.Dock.Dir) {
+				return fmt.Errorf("dock dir must be an absolute path: %q", l.Dock.Dir)
+			}
 		}
 	}
 	return nil
