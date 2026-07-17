@@ -3653,7 +3653,10 @@
                 setEnabled: setKbEnabled,
                 createPalette,
                 recentsFirst,
-                newShellChord: IS_MAC ? 'Cmd+J' : 'Ctrl+J'
+                newShellChord: IS_MAC ? 'Cmd+J' : 'Ctrl+J',
+                // Display label for the Alt/Option modifier, personalized to
+                // the viewer's platform (Mac keyboards call it Option).
+                altLabel: IS_MAC ? 'Option' : 'Alt'
             };
         })();
 
@@ -7274,14 +7277,15 @@
                 const kb = document.createElement('input');
                 kb.type = 'checkbox';
                 kb.id = 'sp-kb';
+                const altLbl = tlKb.altLabel || 'Alt';   // 'Option' on Mac
                 kb.title = 'App keyboard shortcuts in this browser (ON by ' +
-                    'default): Ctrl+Shift+K palette, Alt+1..9 / Alt+0 attach the ' +
-                    '1st..10th session, Alt+Shift+[ / ] cycle, Alt+Shift+Enter ' +
-                    'jump to a session awaiting input, Alt+Shift+S toggle sidebar, ' +
-                    'Alt+Shift+N new, Alt+Shift+W kill, Alt+Shift+R rename. ' +
-                    'Uncheck to send these keys to the terminal instead. Note: ' +
-                    tlKb.newShellChord + ' always toggles a docked shell panel, ' +
-                    'regardless of this toggle.';
+                    'default): Ctrl+Shift+K palette, ' + altLbl + '+1..9 / ' + altLbl +
+                    '+0 attach the 1st..10th session, ' + altLbl + '+Shift+[ / ] cycle, ' +
+                    altLbl + '+Shift+Enter jump to a session awaiting input, ' + altLbl +
+                    '+Shift+S toggle sidebar, ' + altLbl + '+Shift+N new, ' + altLbl +
+                    '+Shift+W kill, ' + altLbl + '+Shift+R rename. Uncheck to send these ' +
+                    'keys to the terminal instead. Note: ' + tlKb.newShellChord +
+                    ' always toggles a docked shell panel, regardless of this toggle.';
                 kb.addEventListener('change', () => {
                     tlKb.setEnabled(kb.checked);
                     syncAltBadges();   // disabling mid-Alt-hold must drop the badges
@@ -7848,22 +7852,23 @@
             function showShortcutsHelp() {
                 if (scHelpEl) return;
                 const dock = tlKb.newShellChord || 'Ctrl+J';
+                const ALT = tlKb.altLabel || 'Alt';   // 'Option' on Mac
                 const groups = [
                     ['Switch sessions', [
-                        [['Alt+1 – Alt+9'], 'Jump to session 1–9'],
-                        [['Alt+0'], 'Jump to session 10'],
-                        [['Alt (hold)'], 'Preview session numbers'],
-                        [['Alt+Shift+[', 'Alt+Shift+]'], 'Previous / next session'],
-                        [['Alt+Shift+Enter'], 'Next session awaiting input'],
+                        [[`${ALT}+1 – ${ALT}+9`], 'Jump to session 1–9'],
+                        [[`${ALT}+0`], 'Jump to session 10'],
+                        [[`${ALT} (hold)`], 'Preview session numbers'],
+                        [[`${ALT}+Shift+[`, `${ALT}+Shift+]`], 'Previous / next session'],
+                        [[`${ALT}+Shift+Enter`], 'Next session awaiting input'],
                     ]],
                     ['Manage sessions', [
-                        [['Alt+Shift+N'], 'New session'],
-                        [['Alt+Shift+W'], 'Kill current session'],
-                        [['Alt+Shift+R'], 'Rename current session'],
+                        [[`${ALT}+Shift+N`], 'New session'],
+                        [[`${ALT}+Shift+W`], 'Kill current session'],
+                        [[`${ALT}+Shift+R`], 'Rename current session'],
                         [[dock], 'Toggle scratch shell dock'],
                     ]],
                     ['Interface', [
-                        [['Alt+Shift+S'], 'Toggle sidebar'],
+                        [[`${ALT}+Shift+S`], 'Toggle sidebar'],
                         [['Ctrl+Shift+K'], 'Command palette'],
                         [['/', '?'], 'Show this help'],
                         [['Esc'], 'Close menus'],
@@ -8418,8 +8423,8 @@
             try {
                 const KB_HINT_KEY = 'tl:kb-hint-seen:v1';
                 if (tlKb.enabled() && !localStorage.getItem(KB_HINT_KEY)) {
-                    showToast('Keyboard shortcuts are on — hold Alt to see 1–0, ' +
-                        'or turn them off in ⚙ Settings', '', 7000);
+                    showToast('Keyboard shortcuts are on — hold ' + (tlKb.altLabel || 'Alt') +
+                        ' to see 1–0, or turn them off in ⚙ Settings', '', 7000);
                     try { localStorage.setItem(KB_HINT_KEY, '1'); } catch (e) {}
                 }
             } catch (e) {}
