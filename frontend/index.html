@@ -941,6 +941,12 @@
         #lobby-content {
             position: relative; background: var(--terminal-bg);
             min-width: 0; height: 100vh; overflow: hidden;
+            /* Vertical split (Ctrl+J dock): top terminal (row 1) + resize
+               gutter (row 2) + docked shell (row 3). Collapsed by default
+               (0 0) so an undocked lobby is byte-identical to before; the
+               dock rows animate open when a shell is docked. */
+            display: grid; grid-template-rows: 1fr 0px 0px;
+            transition: grid-template-rows 0.18s ease;
             /* Above the body.lobby::after grain (z-0): the terminal iframe
                pane must stay grain-free (red line: nothing may sit over the
                terminal/sixel canvas). Overlays (toast 9999, menus 10000,
@@ -1000,6 +1006,45 @@
             height: 100%; font-style: italic; padding: 24px; text-align: center;
         }
         #lobby-empty.hidden { display: none; }
+
+        /* --- Ctrl+J bottom dock (row 1 = top terminal, row 3 = shell) ------ */
+        #lobby-top { position: relative; min-height: 0; overflow: hidden; }
+        #dock-gutter {
+            cursor: row-resize; overflow: hidden;
+            background: var(--border);
+            transition: background 0.12s;
+        }
+        #dock-gutter:hover, #dock-gutter.resizing { background: var(--accent); }
+        #dock {
+            display: flex; flex-direction: column; min-height: 0;
+            overflow: hidden; background: var(--terminal-bg);
+        }
+        #dock-header {
+            flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+            height: 28px; padding: 0 8px; cursor: grab; user-select: none;
+            background: var(--bg-card); color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+            font-family: var(--font-ui); font-size: 12px;
+        }
+        #dock-header:active { cursor: grabbing; }
+        #dock-header.drag-out { opacity: 0.5; }
+        #dock-grip { opacity: 0.55; letter-spacing: -2px; cursor: grab; }
+        #dock-title { font-weight: 500; color: var(--text-primary); }
+        #dock-spacer { flex: 1 1 auto; }
+        #dock-hide, #dock-close {
+            flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: transparent; color: var(--text-muted);
+            border: 1px solid transparent; border-radius: var(--radius);
+            font-family: var(--font-ui); font-size: 15px; line-height: 1; cursor: pointer;
+        }
+        #dock-hide:hover, #dock-close:hover {
+            background: color-mix(in srgb, var(--accent) 14%, var(--bg-card));
+            color: var(--text-primary); border-color: var(--border);
+        }
+        #dock-frame { flex: 1 1 auto; width: 100%; border: 0; min-height: 0; display: block; }
+        #lobby-content.dock-resizing { transition: none; }
+        .session-card .dock-badge { margin-left: 4px; opacity: 0.7; }
 
         .lobby-header { font-size: 18px; color: var(--accent); margin: 0 0 4px 0; font-weight: 600; }
         /* Header row: title + the notification bell toggle (Task 2.1).
@@ -2142,9 +2187,22 @@
                 </div>
             </aside>
             <main id="lobby-content">
-                <div id="lobby-empty">Pick a session, or create one above.</div>
-                <iframe id="session-frame" class="hidden" referrerpolicy="same-origin" allow="clipboard-read; clipboard-write" title="terminal session"></iframe>
-                <div id="frame-cover" aria-hidden="true"></div>
+                <div id="lobby-top">
+                    <div id="lobby-empty">Pick a session, or create one above.</div>
+                    <iframe id="session-frame" class="hidden" referrerpolicy="same-origin" allow="clipboard-read; clipboard-write" title="terminal session"></iframe>
+                    <div id="frame-cover" aria-hidden="true"></div>
+                </div>
+                <div id="dock-gutter" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+                <div id="dock" aria-label="docked shell">
+                    <div id="dock-header" title="Drag to the sidebar to move this shell out">
+                        <span id="dock-grip" aria-hidden="true">⠿</span>
+                        <span id="dock-title">shell</span>
+                        <span id="dock-spacer"></span>
+                        <button type="button" id="dock-hide" title="Hide panel (Ctrl+J)" aria-label="Hide panel">–</button>
+                        <button type="button" id="dock-close" title="Un-dock — move this shell to the sidebar" aria-label="Un-dock">✕</button>
+                    </div>
+                    <iframe id="dock-frame" referrerpolicy="same-origin" allow="clipboard-read; clipboard-write" title="docked shell"></iframe>
+                </div>
             </main>
         </div>
     </div>
@@ -3079,8 +3137,12 @@
             // flag AND for every user (they bypass the layer gate). Kept
             // separate from KB_DEFAULT_BINDINGS, which stay opt-in and
             // user-overridable. Ctrl+J / Cmd+J → open a new plain shell.
+            // `lobbyOpen` is true in the lobby top window AND in a framed
+            // terminal (isFramed); false in a bare deep-linked ?arg= tab, where
+            // there is no dock — so there Ctrl+J falls through to the pty as a
+            // normal newline instead of being swallowed.
             const KB_ALWAYS_BINDINGS = [
-                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: '!galleryOpen' }
+                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: 'lobbyOpen && !galleryOpen' }
             ];
             const KB_COMMANDS = new Set(KB_DEFAULT_BINDINGS.map(b => b.command));
             const MOD_WORDS = ['ctrl', 'control', 'shift', 'alt', 'option', 'meta', 'cmd', 'super'];
@@ -4435,6 +4497,7 @@
             // Dragging a project header reorders whole groups; mutually
             // exclusive with dragSrcCard (a drag is one or the other).
             let dragSrcGroup = null;
+            let dragSrcDockSession = null;   // set while dragging the dock header out to the sidebar
             let isDragging = false;
             // Task M.4: true while a long-press is PENDING on a card (finger
             // down, 500 ms timer running). Joins isDragging in the repaint
@@ -4488,6 +4551,15 @@
                 l.ungroupedIndex = Number.isInteger(l.ungroupedIndex)
                     ? Math.max(0, Math.min(l.ungroupedIndex, l.projects.length))
                     : 0;
+                // Ctrl+J dock: {session, visible}. Degrade a malformed dock to
+                // absent rather than crash (same posture as the fields above).
+                if (l.dock && typeof l.dock === 'object' && typeof l.dock.session === 'string'
+                        && /^[a-zA-Z0-9_-]{1,32}$/.test(l.dock.session)) {
+                    l.dock = { session: l.dock.session, visible: l.dock.visible !== false,
+                        dir: typeof l.dock.dir === 'string' ? l.dock.dir : '' };
+                } else if ('dock' in l) {
+                    delete l.dock;
+                }
                 return l;
             }
 
@@ -4567,9 +4639,11 @@
             // assignments that make OOM restores regroup.
             function captureLayoutFromDom() {
                 const deadByProject = new Map();
+                const dirByProject = new Map();   // preserve project dirs across a drag
                 const liveNames = new Set(lastSessions.map(s => s.name));
                 for (const p of layout.projects) {
                     deadByProject.set(p.name, p.sessions.filter(n => !liveNames.has(n)));
+                    if (p.dir) dirByProject.set(p.name, p.dir);
                 }
                 const deadUngrouped = layout.ungrouped.filter(n => !liveNames.has(n));
 
@@ -4583,7 +4657,9 @@
                         ungrouped = members.concat(deadUngrouped);
                         ungroupedIndex = projects.length;
                     } else {
-                        projects.push({ name, sessions: members.concat(deadByProject.get(name) || []) });
+                        const proj = { name, sessions: members.concat(deadByProject.get(name) || []) };
+                        if (dirByProject.has(name)) proj.dir = dirByProject.get(name);
+                        projects.push(proj);
                     }
                 });
                 // The ungrouped group isn't rendered while empty — keep its
@@ -4592,7 +4668,9 @@
                     ungrouped = deadUngrouped;
                     ungroupedIndex = Math.min(layout.ungroupedIndex, projects.length);
                 }
-                layout = { version: 1, projects, ungrouped, ungroupedIndex };
+                const next = { version: 1, projects, ungrouped, ungroupedIndex };
+                if (layout.dock) next.dock = layout.dock;   // dock survives a card drag
+                layout = next;
             }
 
             // --- collapse state (per-browser view preference) ----------------
@@ -5208,6 +5286,22 @@
             }
             function activateSession(name, opts) {
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
+                // The docked session lives in the bottom panel — targeting it
+                // (card click / Alt+N / cycle) reveals + focuses the dock rather
+                // than swapping it to the top. Coarse pointers have no dock.
+                {
+                    const ds = dockState();
+                    if (ds.session === name && !isCoarsePointer) {
+                        if (!ds.visible) {
+                            dockGraceUntil = Date.now() + 4000;
+                            layout.dock = { session: name, visible: true, dir: ds.dir };
+                            applyDock();
+                            saveLayout();
+                        }
+                        focusDockSoon();
+                        return;
+                    }
+                }
                 if (currentActive === name) {
                     // Re-tapping the attached session from the browsing view
                     // flips forward to its terminal (mobile two-view nav). The
@@ -5877,6 +5971,14 @@
                 name.className = 'session-name';
                 name.textContent = s.name;
                 titleRow.appendChild(name);
+                if (dockState().session === s.name && !isCoarsePointer) {
+                    const badge = document.createElement('span');
+                    badge.className = 'dock-badge';
+                    badge.textContent = '▤';
+                    badge.title = 'Docked in the bottom panel';
+                    badge.setAttribute('aria-label', 'docked');
+                    titleRow.appendChild(badge);
+                }
                 card.appendChild(titleRow);
 
                 // Right edge: a time on every row (2026-07-16). Running -> the
@@ -6159,18 +6261,25 @@
                     }
                 });
 
-                // Header as a drop target: drop = append to this project.
+                // Header as a drop target: a card append to this project, OR
+                // the docked shell dragged out (un-dock + join this project).
                 header.addEventListener('dragover', (e) => {
-                    if (!dragSrcCard) return;
+                    if (!dragSrcCard && !dragSrcDockSession) return;
                     e.preventDefault();
                     e.dataTransfer.dropEffect = 'move';
                     header.classList.add('drag-over');
                 });
                 header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
                 header.addEventListener('drop', (e) => {
+                    header.classList.remove('drag-over');
+                    if (dragSrcDockSession) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        unDock(group.dataset.project || '');   // '' = Ungrouped
+                        return;
+                    }
                     if (!dragSrcCard) return;
                     e.preventDefault();
-                    header.classList.remove('drag-over');
                     group.querySelector('.project-sessions').appendChild(dragSrcCard);
                     // If the group was collapsed the card is now hidden —
                     // dragend's captureLayoutFromDom still finds it in the DOM.
@@ -6316,7 +6425,15 @@
                         // layout, sessions still render.
                         if (!layoutLoaded) console.warn('layout fetch failed:', layoutResult);
                     } else {
+                        // A dock change we just made locally may not have
+                        // round-tripped through the PUT yet — keep it over a
+                        // stale fetch for a short grace window.
+                        const inGrace = Date.now() < dockGraceUntil;
+                        const localDock = inGrace ? layout.dock : undefined;
                         layout = layoutResult;
+                        if (inGrace) {
+                            if (localDock) layout.dock = localDock; else delete layout.dock;
+                        }
                         if (!layoutLoaded) {
                             layoutLoaded = true;
                             seedLayoutFromLegacyOrder();
@@ -6331,6 +6448,7 @@
                         deactivateSession();
                     }
                     lastSessions = sessions;
+                    reconcileDock();   // clear the dock if its session died; keep the grid in sync
                     // Attention (Task 2.1): favicon + OS notifications track
                     // the same poll that paints the cards (title via paint's
                     // updateTitle). State-change timestamps (Task 2.4) must
@@ -6886,7 +7004,7 @@
                     'Ctrl+Shift+K command palette, Alt+1..9 attach Nth session, ' +
                     'Alt+Shift+[ / ] cycle sessions. Off (default): those keys ' +
                     'reach the terminal as before. Note: ' + tlKb.newShellChord +
-                    ' always opens a new shell, regardless of this toggle.';
+                    ' always toggles a docked shell panel, regardless of this toggle.';
                 kb.addEventListener('change', () => {
                     tlKb.setEnabled(kb.checked);
                     syncAltBadges();   // disabling mid-Alt-hold must drop the badges
@@ -7503,11 +7621,21 @@
                 if (announce) flashSessionPill(target, dir);
                 activateSession(target);
             }
-            // Ctrl+J / Cmd+J — open a new plain-shell session in the current
-            // window (always-on, ungated). First-free name (shell, shell-2, …),
-            // launched in the CURRENTLY-ACTIVE session's project dir (home when
-            // none); the new session itself is Ungrouped. pendingShellNames
-            // covers the ~5s poll lag so rapid presses don't collide.
+            // ---- Ctrl+J bottom dock (persistent shell panel) --------------
+            // The shell docks in a persistent bottom panel instead of swapping
+            // the window (design: docs/2026-07-17-ctrl-j-shell-dock-design.md).
+            // The docked session + visibility ride the roamed layout
+            // (layout.dock); the split ratio is a per-browser view pref. Fine-
+            // pointer only — coarse pointers never render the dock.
+            const DOCK_RATIO_KEY = 'tl:dock-split:v1';
+            const dockEl         = document.getElementById('dock');
+            const dockFrameEl    = document.getElementById('dock-frame');
+            const dockGutterEl   = document.getElementById('dock-gutter');
+            const dockTitleEl    = document.getElementById('dock-title');
+            const lobbyContentEl = document.getElementById('lobby-content');
+            let dockFrameSession = null;   // session #dock-frame currently attaches
+            let dockGraceUntil = 0;        // shields a local dock change from a stale poll
+
             const pendingShellNames = new Set();
             function firstFreeShellName() {
                 const taken = new Set(lastSessions.map(s => s.name));
@@ -7518,13 +7646,169 @@
                 }
                 return 'shell-' + Date.now();     // pathological fallback
             }
-            function openNewShellHere() {
-                const name = firstFreeShellName();
-                const dir = currentActive ? projectDirForSession(currentActive) : '';
-                pendingShellNames.add(name);
-                setTimeout(() => pendingShellNames.delete(name), 15000);
-                activateSession(name, { cmd: 'shell', dir: dir });
-                quickRefreshAfterCreate();
+            function dockState() {
+                const d = layout && layout.dock;
+                if (d && typeof d === 'object' && typeof d.session === 'string' && NAME_RE.test(d.session)) {
+                    return { session: d.session, visible: d.visible !== false,
+                        dir: typeof d.dir === 'string' ? d.dir : '' };
+                }
+                return { session: null, visible: false, dir: '' };
+            }
+            function dockPct() {
+                let p = parseFloat(localStorage.getItem(DOCK_RATIO_KEY));
+                if (!isFinite(p)) p = 30;
+                return Math.max(12, Math.min(85, p));
+            }
+            function setFrameUrlOn(frame, url) {
+                try { frame.contentWindow.location.replace(url); }
+                catch (e) { frame.src = url; }
+            }
+            // Reconcile the grid + dock iframe with layout.dock. Reattaches the
+            // iframe only when the docked session changes, so polls don't flicker
+            // it. A docked-but-hidden session keeps its iframe alive (0-height
+            // row) so re-showing is instant and the shell keeps running.
+            function applyDock() {
+                const ds = dockState();
+                const showable = !!ds.session && !isCoarsePointer;
+                if (showable) {
+                    if (dockFrameSession !== ds.session) {
+                        dockFrameSession = ds.session;
+                        dockTitleEl.textContent = ds.session;
+                        setFrameUrlOn(dockFrameEl, frameArgs(ds.session, { cmd: 'shell', dir: ds.dir }));
+                    }
+                } else if (dockFrameSession) {
+                    dockFrameSession = null;
+                    setFrameUrlOn(dockFrameEl, 'about:blank');
+                }
+                const open = showable && ds.visible;
+                lobbyContentEl.style.gridTemplateRows = open
+                    ? ('1fr 6px ' + dockPct() + '%') : '1fr 0px 0px';
+                dockGutterEl.setAttribute('aria-hidden', open ? 'false' : 'true');
+            }
+            function focusDockSoon() {
+                setTimeout(() => { try { dockFrameEl.contentWindow.focus(); } catch (e) {} }, 60);
+            }
+            // Ctrl+J: create+dock a shell if none; else toggle the panel.
+            function openOrToggleDock() {
+                if (isCoarsePointer) {
+                    // No dock on touch → fall back to a full-window shell.
+                    const nm = firstFreeShellName();
+                    pendingShellNames.add(nm);
+                    setTimeout(() => pendingShellNames.delete(nm), 15000);
+                    activateSession(nm, { cmd: 'shell', dir: currentActive ? projectDirForSession(currentActive) : '' });
+                    quickRefreshAfterCreate();
+                    return;
+                }
+                const ds = dockState();
+                dockGraceUntil = Date.now() + 4000;
+                if (!ds.session) {
+                    const name = firstFreeShellName();
+                    const dir = currentActive ? projectDirForSession(currentActive) : '';
+                    pendingShellNames.add(name);
+                    setTimeout(() => pendingShellNames.delete(name), 15000);
+                    layout.dock = { session: name, visible: true, dir: dir };
+                    applyDock();
+                    saveLayout();
+                    quickRefreshAfterCreate();
+                    focusDockSoon();
+                } else {
+                    layout.dock = { session: ds.session, visible: !ds.visible, dir: ds.dir };
+                    applyDock();
+                    saveLayout();
+                    if (layout.dock.visible) focusDockSoon();
+                }
+            }
+            function hideDock() {
+                const ds = dockState();
+                if (!ds.session) return;
+                dockGraceUntil = Date.now() + 4000;
+                layout.dock = { session: ds.session, visible: false, dir: ds.dir };
+                applyDock();
+                saveLayout();
+            }
+            // Promote the docked shell to a normal sidebar card. It's a live
+            // session, so clearing the dock is enough; a project name (from a
+            // drop on a project header) also assigns it there.
+            function unDock(projectName) {
+                const ds = dockState();
+                if (!ds.session) return;
+                const name = ds.session;
+                dockGraceUntil = Date.now() + 4000;
+                delete layout.dock;
+                applyDock();                          // tears the iframe down
+                if (typeof projectName === 'string') moveSessionTo(name, projectName);  // saves layout
+                else saveLayout();
+                showToast('Shell moved to the sidebar', 'info', 2000);
+            }
+            // Clear a dock whose session died / was killed (from the poll).
+            function reconcileDock() {
+                const ds = dockState();
+                if (ds.session && !pendingShellNames.has(ds.session)
+                        && !lastSessions.some(s => s.name === ds.session)) {
+                    delete layout.dock;
+                }
+                applyDock();
+            }
+
+            // Dock header controls + drag-out + gutter resize (fine pointer).
+            document.getElementById('dock-hide').addEventListener('click', hideDock);
+            document.getElementById('dock-close').addEventListener('click', () => unDock());
+            const dockHeaderEl = document.getElementById('dock-header');
+            dockHeaderEl.draggable = !isCoarsePointer;
+            dockHeaderEl.addEventListener('dragstart', (e) => {
+                const ds = dockState();
+                if (!ds.session) { e.preventDefault(); return; }
+                dragSrcDockSession = ds.session;
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', ds.session);
+                dockHeaderEl.classList.add('drag-out');
+            });
+            dockHeaderEl.addEventListener('dragend', () => {
+                dockHeaderEl.classList.remove('drag-out');
+                dragSrcDockSession = null;
+            });
+            // Resize: a viewport shield captures pointer moves over the iframes;
+            // the ratio persists per-browser. Grid transition off while dragging.
+            dockGutterEl.addEventListener('pointerdown', (e) => {
+                const ds = dockState();
+                if (isCoarsePointer || !ds.session || !ds.visible) return;
+                e.preventDefault();
+                const rect = lobbyContentEl.getBoundingClientRect();
+                lobbyContentEl.classList.add('dock-resizing');
+                dockGutterEl.classList.add('resizing');
+                const shield = document.createElement('div');
+                shield.style.cssText = 'position:fixed;inset:0;z-index:10001;cursor:row-resize;';
+                document.body.appendChild(shield);
+                function onMove(ev) {
+                    const pct = (rect.bottom - ev.clientY) / rect.height * 100;
+                    try { localStorage.setItem(DOCK_RATIO_KEY, String(Math.max(12, Math.min(85, pct)))); } catch (_) {}
+                    lobbyContentEl.style.gridTemplateRows = '1fr 6px ' + dockPct() + '%';
+                }
+                function onUp() {
+                    shield.removeEventListener('pointermove', onMove);
+                    shield.removeEventListener('pointerup', onUp);
+                    shield.remove();
+                    lobbyContentEl.classList.remove('dock-resizing');
+                    dockGutterEl.classList.remove('resizing');
+                }
+                shield.addEventListener('pointermove', onMove);
+                shield.addEventListener('pointerup', onUp);
+            });
+            // Whole-sidebar fallback: dropping the dragged-out dock anywhere in
+            // the sidebar that ISN'T a project header un-docks it to Ungrouped
+            // (project-header drops stopPropagation for the join-a-project case).
+            const sidebarEl = document.getElementById('lobby-sidebar');
+            if (sidebarEl) {
+                sidebarEl.addEventListener('dragover', (e) => {
+                    if (!dragSrcDockSession) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                });
+                sidebarEl.addEventListener('drop', (e) => {
+                    if (!dragSrcDockSession) return;
+                    e.preventDefault();
+                    unDock('');
+                });
             }
             const ATTACH_PREFIX = 'session.attach.';
             function runAppCommand(cmd) {
@@ -7550,7 +7834,7 @@
                     return;
                 }
                 if (cmd === 'session.new.shell') {
-                    openNewShellHere();
+                    openOrToggleDock();
                     return;
                 }
                 if (cmd === 'session.kill.current') {
@@ -7618,14 +7902,18 @@
             // Same trust model as tl-attention: only OUR iframe's window.
             window.addEventListener('message', (e) => {
                 if (e.origin !== location.origin || !e.data) return;
-                if (e.source !== frameEl.contentWindow) return;
+                const fromTop  = e.source === frameEl.contentWindow;
+                const fromDock = e.source === dockFrameEl.contentWindow;
+                if (!fromTop && !fromDock) return;
                 if (e.data.type === 'tl-terminal-ready') {
                     // The incoming terminal painted its first frame — lift the
-                    // session-swap cover (anti-flicker).
-                    hideFrameCover();
+                    // session-swap cover (anti-flicker). Top pane only.
+                    if (fromTop) hideFrameCover();
                 } else if (e.data.type === 'tl-command') {
+                    // Commands from EITHER terminal drive the lobby — e.g. Ctrl+J
+                    // pressed inside the dock toggles the panel.
                     if (typeof e.data.command === 'string') runAppCommand(e.data.command);
-                } else if (e.data.type === 'tl-gesture') {
+                } else if (fromTop && e.data.type === 'tl-gesture') {
                     // Task M.6: touch affordances forwarded up by the
                     // terminal iframe — the ‹/› soft keys and the Android
                     // 3-finger swipe. Only cycle-session exists; dir is
@@ -7636,7 +7924,7 @@
                             (e.data.dir === 1 || e.data.dir === -1)) {
                         cycleSession(e.data.dir, true);
                     }
-                } else if (e.data.type === 'tl-kb-alt') {
+                } else if (fromTop && e.data.type === 'tl-kb-alt') {
                     frameAltDown = !!e.data.alt;
                     syncAltBadges();
                 } else if (e.data.type === 'tl-build-stale') {
@@ -11757,22 +12045,6 @@
                 : (i < 0 ? names[names.length - 1] : names[(i - 1 + names.length) % names.length]),
                 { replace: true });
         }
-        // Unframed (deep-linked) new-shell: no lobby/layout here, so no
-        // project dir — navigate the tab to a fresh first-free shell in the
-        // home dir. assign() (not replace) keeps it back-walkable, like the
-        // other deliberate jumps.
-        async function openNewShellUnframed() {
-            let list = [];
-            try { list = await fetchSessionList(); } catch (e) {}
-            const taken = new Set(list.map(s => s.name));
-            let name = 'shell';
-            if (taken.has('shell')) {
-                for (let i = 2; i < 1000; i++) {
-                    if (!taken.has('shell-' + i)) { name = 'shell-' + i; break; }
-                }
-            }
-            location.assign('/?arg=' + encodeURIComponent(name) + '&arg=shell');
-        }
         const palette = isFramed ? null : tlKb.createPalette({
             sessions: fetchSessionList,
             current: () => validArg,
@@ -11802,7 +12074,6 @@
                 } catch (e) {}
                 return;
             }
-            if (cmd === 'session.new.shell') { openNewShellUnframed(); return; }
             if (cmd === 'palette.toggle') { palette.toggle(); return; }
             if (palette.isOpen()) palette.close(false);
             if (cmd.startsWith(ATTACH_PREFIX) || cmd === 'session.next' || cmd === 'session.prev') {
