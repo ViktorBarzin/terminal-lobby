@@ -74,9 +74,17 @@ type Session struct {
 	// "awaiting", "done", or "" when no live Claude. omitempty keeps the
 	// old wire shape for stateless sessions (external /sessions pollers).
 	State string `json:"state,omitempty"`
-	// Project the session is assigned to per the user's layout; "" =
+	// Project the session is assigned to (global project store); "" =
 	// ungrouped.
 	Project string `json:"project,omitempty"`
+	// Owner is the OS user whose server the session runs on. For the caller's
+	// own sessions this is the caller; for a foreign session surfaced via a
+	// shared project or a direct share it is the real owner. omitempty keeps
+	// the old wire shape for external pollers of their own sessions.
+	Owner string `json:"owner,omitempty"`
+	// Access is how the CALLER may attach a foreign session: "ro" (watch) or
+	// "rw" (drive-as-owner). Empty for the caller's own sessions (full control).
+	Access string `json:"access,omitempty"`
 	// Command/Title mirror the active pane's #{pane_current_command} /
 	// #{pane_title} (Task 2.5): the lobby's live-command chip and the
 	// attached-tab title read them. omitempty keeps the old wire shape
@@ -344,18 +352,54 @@ func userSessions(osUser string) []Session {
 // /sessions. Mirrors the historic encoder output: success → marshaled slice +
 // trailing newline; tmux error → "[]" without a newline.
 func buildSessionsBody(osUser string) []byte {
-	sessions := userSessions(osUser)
-	if sessions == nil {
+	own := userSessions(osUser) // nil on tmux error, non-nil (maybe empty) when healthy
+	ps, perr := projectStoreInstance.load()
+	ss, serr := shareStoreInstance.load()
+	if perr != nil {
+		log.Printf("project load for %s failed (serving without projects): %v", osUser, perr)
+	}
+	if serr != nil {
+		log.Printf("share load for %s failed (serving without shared sessions): %v", osUser, serr)
+	}
+
+	result := make([]Session, 0, len(own))
+	for i := range own {
+		own[i].Owner = osUser
+		if perr == nil {
+			own[i].Project = projectNameOf(ps, osUser, own[i].Name)
+		}
+	}
+	result = append(result, own...)
+
+	// Foreign sessions: those owned by others that the caller may see via a
+	// shared project or a direct share. Store trouble must not take the list
+	// down — foreign sessions just don't appear until the stores recover.
+	if perr == nil && serr == nil {
+		byOwner := map[string]map[string]Session{}
+		for _, r := range foreignRefsFor(osUser, ps, ss) {
+			if _, ok := byOwner[r.Owner]; !ok {
+				m := map[string]Session{}
+				for _, s := range userSessions(r.Owner) {
+					m[s.Name] = s
+				}
+				byOwner[r.Owner] = m
+			}
+			s, live := byOwner[r.Owner][r.Name]
+			if !live {
+				continue // only surface foreign sessions that actually exist now
+			}
+			s.Owner = r.Owner
+			s.Access = r.Access
+			s.Project = r.Project
+			result = append(result, s)
+		}
+	}
+
+	// Preserve the historic "tmux down and nothing to show" signal.
+	if own == nil && len(result) == 0 {
 		return []byte("[]")
 	}
-	// Layout trouble must not take the session list down with it — the
-	// project column just goes empty until the store recovers.
-	if layout, err := layoutStoreInstance.load(osUser); err == nil {
-		applyLayout(sessions, layout)
-	} else {
-		log.Printf("layout load for %s failed (serving sessions without projects): %v", osUser, err)
-	}
-	body, err := json.Marshal(sessions)
+	body, err := json.Marshal(result)
 	if err != nil {
 		return []byte("[]")
 	}
@@ -404,20 +448,6 @@ func parseSessions(out []byte) []Session {
 		})
 	}
 	return sessions
-}
-
-// applyLayout fills each session's Project from the user's layout; sessions
-// in no project (or unknown to the layout) stay ungrouped.
-func applyLayout(sessions []Session, l Layout) {
-	projectOf := map[string]string{}
-	for _, p := range l.Projects {
-		for _, sess := range p.Sessions {
-			projectOf[sess] = p.Name
-		}
-	}
-	for i := range sessions {
-		sessions[i].Project = projectOf[sessions[i].Name]
-	}
 }
 
 // logAndFail logs the operator-facing detail and returns an opaque 500.
