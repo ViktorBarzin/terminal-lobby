@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Installed at /usr/local/bin/tmux-user-setfacl (root:root, mode 0755).
+#
+# Applies / removes POSIX ACL co-ownership on a shared project directory for a
+# set of members. Invoked ONLY by the tmux-api service (wizard) via the
+# passwordless sudo grant in /etc/sudoers.d/ttyd-users (target root).
+#
+# Why root: a shared project dir accumulates files owned by SEVERAL members, and
+# only the file owner or root may change an ACL — so a non-root pass would apply
+# partially and, worse, could not fully REVOKE a departed member's access to the
+# files they created. Root makes both grant and revoke complete.
+#
+# Trust model (Viktor, 2026-07-17): NO denylist/allowlist "armor" — the owner is
+# trusted to share only what should be shared. The guardrails here are ordinary
+# input validation, so this root tool can't be turned into an arbitrary-path
+# ACL-writer: the dir must be an absolute, REAL directory, canonical (no symlink
+# components), strictly BELOW a /home/<user> (never a home root itself), the
+# members must be real existing users, and the tree is inode-capped.
+#
+# Usage: tmux-user-setfacl grant|revoke <absolute-dir> <user>[,<user>...]
+set -euo pipefail
+
+action="${1:-}"
+dir="${2:-}"
+users_csv="${3:-}"
+USER_RE='^[a-z_][a-z0-9_-]{0,31}$'
+CAP=200000
+
+[[ "$action" == "grant" || "$action" == "revoke" ]] || { echo "usage: grant|revoke <dir> <users>" >&2; exit 2; }
+[[ "$dir" == /* ]] || { echo "dir must be absolute" >&2; exit 2; }
+
+# Resolve physically and require the input to already be canonical — this
+# rejects any symlink in the path (realpath would otherwise silently follow one
+# out of the intended tree).
+real="$(realpath -e -- "$dir" 2>/dev/null)" || { echo "dir does not exist" >&2; exit 2; }
+[[ "$real" == "$dir" ]] || { echo "dir must be a canonical path (symlink component?)" >&2; exit 2; }
+[[ -d "$real" ]] || { echo "not a directory" >&2; exit 2; }
+# Strictly below a home: /home/<user>/<at least one more component>.
+[[ "$real" =~ ^/home/[^/]+/.+ ]] || { echo "dir must be under a user home, not a home root" >&2; exit 2; }
+home="/home/$(printf '%s' "$real" | cut -d/ -f3)"
+
+IFS=',' read -r -a users <<< "$users_csv"
+[[ "${#users[@]}" -ge 1 ]] || { echo "no users" >&2; exit 2; }
+for u in "${users[@]}"; do
+    [[ "$u" =~ $USER_RE ]] || { echo "bad user '$u'" >&2; exit 2; }
+    id "$u" >/dev/null 2>&1 || { echo "no such user '$u'" >&2; exit 2; }
+done
+
+# Inode-cap the tree (DoS guard); prune the heavy/irrelevant dirs we also skip
+# when applying ACLs.
+prune=( -path '*/node_modules' -o -path '*/.git' -o -path '*/.venv' -o -path '*/target' -o -path '*/dist' )
+count="$(find "$real" -xdev \( "${prune[@]}" \) -prune -o -print 2>/dev/null | head -n $((CAP + 1)) | wc -l)"
+[[ "$count" -le "$CAP" ]] || { echo "tree too large ($count > $CAP inodes) — refusing" >&2; exit 3; }
+
+acc_spec=""
+def_spec=""
+for u in "${users[@]}"; do
+    if [[ "$action" == "grant" ]]; then
+        acc_spec+="u:$u:rwX,"
+        def_spec+="u:$u:rwX,"
+    else
+        acc_spec+="u:$u,"
+        def_spec+="u:$u,"
+    fi
+done
+acc_spec="${acc_spec%,}"
+def_spec="${def_spec%,}"
+
+logger -t tmux-user-setfacl "action=$action dir=$real home=$home users='$users_csv' inodes=$count"
+
+if [[ "$action" == "grant" ]]; then
+    # Open traverse (x) on each ancestor from just below the home down to the
+    # dir's parent, so members can reach the shared dir. Home itself is 0711
+    # already (world-traversable), so we never touch it.
+    p="$real"
+    while :; do
+        p="$(dirname "$p")"
+        [[ "$p" == "$home" || "$p" == "/" ]] && break
+        for u in "${users[@]}"; do setfacl -m "u:$u:x" -- "$p"; done
+    done
+    # Recursive rwX (access) on everything, plus default ACLs on directories so
+    # new files inherit access for every member.
+    find "$real" -xdev \( "${prune[@]}" \) -prune -o -print0 \
+        | xargs -0 -r setfacl -m "$acc_spec" --
+    find "$real" -xdev \( "${prune[@]}" \) -prune -o -type d -print0 \
+        | xargs -0 -r setfacl -d -m "$def_spec" --
+else
+    # Remove the members' access + default entries. Ancestor traverse grants are
+    # left in place (harmless: siblings keep their own perms; re-shares reuse
+    # them) — a deliberate v1 simplification under the trust model.
+    find "$real" -xdev \( "${prune[@]}" \) -prune -o -print0 \
+        | xargs -0 -r setfacl -x "$acc_spec" -- 2>/dev/null || true
+    find "$real" -xdev \( "${prune[@]}" \) -prune -o -type d -print0 \
+        | xargs -0 -r setfacl -d -x "$def_spec" -- 2>/dev/null || true
+fi
+echo "ok"
