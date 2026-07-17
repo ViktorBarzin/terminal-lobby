@@ -11194,6 +11194,33 @@
             // the copy/paste branches; layer disabled (the default) →
             // matchesAppChord is null for every event and nothing changes.
             if (tlKb.matchesAppChord(e)) return false;
+            // F12 opens the browser devtools like on any normal web page.
+            // Without this, xterm's default function-key handling sends \e[24~
+            // to the pty AND preventDefault()s the event, so devtools never
+            // opens over a focused terminal. Returning false hands the key
+            // wholly to the browser (no pty byte, no preventDefault). App
+            // chords above still win if F12 is ever bound; modified F12
+            // (Ctrl/Shift/…+F12) stays with xterm. (Viktor, 2026-07-17.)
+            if (e.key === 'F12' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+                return false;
+            }
+            // ⌥←/⌥→ = move by word — native macOS text-field muscle memory.
+            // xterm emits the modifier-3 cursor form \e[1;3D / \e[1;3C for
+            // Option+Arrow, which zsh leaves as `undefined-key` (bash binds it,
+            // zsh does not — verified via bindkey), so word navigation silently
+            // no-ops for Mac users in zsh (the reported bug). Emit the universal
+            // Meta-b / Meta-f (\eb / \ef) instead — exactly what iTerm2 sends
+            // for ⌥←/⌥→ — which is bound to backward-word / forward-word in
+            // zsh, bash, readline and Claude Code's editor alike. ⌥Delete
+            // already sends \e\x7f (backward-kill-word) via xterm and is left
+            // untouched. Mac-only: on Windows/Linux ⌥ is not the word-motion
+            // modifier (Ctrl+←/→ is, and zsh already binds \e[1;5C/D).
+            if (isMacLike && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+                    && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+                sendInput(e.key === 'ArrowLeft' ? '\x1bb' : '\x1bf');
+                e.preventDefault();
+                return false;
+            }
             if (e.key === 'Escape' && term.hasSelection()) {
                 clearSelectionBecause('Escape');             // contract: Esc clears...
                 return true;                                 // ...and still reaches the app
