@@ -6,7 +6,14 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <!-- 'default' (opaque status bar, app laid out BELOW it), not 'black-translucent':
+         translucent makes the web view draw UNDER the status bar, and the terminal
+         scrollback (which carries no top safe-area padding) renders beneath the
+         clock/battery. iOS tints the opaque bar from <meta theme-color> (#0d1117),
+         so it still matches the app — no visual downgrade. NOTE: iOS bakes this meta
+         into the WebClip at Add-to-Home-Screen time, so EXISTING installs must be
+         deleted and re-added to pick up the change (mem 9125). -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Terminal">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="/icon-192.png">
@@ -926,13 +933,16 @@
         }
         #lobby.sidebar-collapsed #lobby-shell { grid-template-columns: 0 1fr; }
         #lobby-sidebar {
-            /* Safe-area (Task 1.12 audit): the sidebar touches the viewport
-               TOP in the stacked <720px layout (portrait standalone: status
-               bar overlaps the header without the top inset) and the LEFT
-               edge in the side-by-side grid (landscape notch). env() is 0
-               where there is no inset, so desktop stays byte-identical. */
+            /* Safe-area (Task 1.12 audit; BOTTOM added 2026-07-17): the sidebar
+               touches the viewport TOP in the stacked <720px layout (portrait
+               standalone: status bar overlaps the header without the top inset),
+               the LEFT edge in the side-by-side grid (landscape notch), and the
+               BOTTOM edge in the full-screen mobile browsing view — without the
+               bottom inset the footer (Settings) sat under the home indicator and
+               was clipped at max scroll. env() is 0 where there is no inset, so
+               desktop stays byte-identical. */
             padding: calc(20px + env(safe-area-inset-top)) 14px
-                     20px calc(14px + env(safe-area-inset-left));
+                     calc(20px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
             overflow-x: hidden; overflow-y: auto;
             border-right: 1px solid var(--border);
             background: var(--bg-sidebar); min-width: 0;
@@ -1813,7 +1823,15 @@
                 grid-template-columns: none; grid-template-rows: none;
             }
             #lobby-sidebar {
-                height: 100dvh; max-height: none;
+                /* svh (stable small viewport), NOT dvh: in an iOS-26 standalone
+                   PWA the dynamic/large viewport extends ~59pt into the OS-
+                   reserved bottom band, so a 100dvh scroll container pushes its
+                   last rows (the Settings footer) below the visible area where
+                   they cannot be scrolled into view. svh is the stably-visible
+                   height, so the whole list fits and the footer clears (with the
+                   env(safe-area-inset-bottom) padding above). dvh kept first as a
+                   fallback for engines without svh. */
+                height: 100dvh; height: 100svh; max-height: none;
                 border-right: 0; border-bottom: 0;
             }
             /* Density (Viktor: "show the most projects when browsing on
