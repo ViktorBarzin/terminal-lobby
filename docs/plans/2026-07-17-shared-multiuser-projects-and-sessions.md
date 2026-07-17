@@ -1,19 +1,19 @@
 # Shared multi-user projects & sessions — terminal-lobby
 
-**Status:** Executing — backend + devvm **shipped & live-tested on the devvm**; frontend UI in progress · **Repo:** terminal-lobby · **Owner:** Viktor (wizard) · **Date:** 2026-07-17 · **Flow:** grill-with-docs
+**Status:** ✅ Done — shipped to master & deployed to the devvm, verified live · **Repo:** terminal-lobby · **Owner:** Viktor (wizard) · **Date:** 2026-07-17 · **Flow:** grill-with-docs
 
-## Execution status (2026-07-17, live)
+## Execution status (2026-07-17) — DONE, deployed, tested live
 
-Built test-first in dependency order and **deployed to the devvm**; the security-critical mechanism is **verified live** (not just unit-tested — per the 2026-07-16 "verify the real attach" lesson):
+Built test-first in dependency order, landed to master, **deployed to the devvm**, and **verified live** (not just unit-tested — per the 2026-07-16 "verify the real attach" lesson):
 
 - ✅ **Global project store + migration** — existing per-user layouts imported as single-member projects on first start (verified: both wizard's and emo's projects present; `/projects` correctly shows only the caller's memberships).
 - ✅ **Project API** — create / list / edit (name·dir·attach-mode) / delete / members / session-assignment, co-equal governance, 403/404/409 gates.
 - ✅ **Session sharing** — share store + `/shares` (create/list/revoke); `/internal/attach` returns the mode **200** / denies **403** / rejects no-token, and records the client tty; revoke removes the row then kicks. Verified live via forged requests.
 - ✅ **Attach-as-owner** (`tmux-attach.sh`) — 4th `owner` arg → server-authorized attach with server-sourced `-r`; exact-argv invariant; `/etc/tmux.conf` never binds `switch-client -r`.
 - ✅ **Filesystem co-ownership** — root `tmux-user-setfacl` wrapper (canonical-dir-under-home + real-users + inode-cap guardrails, all refusals verified); `acl` installed via deploy. Verified live: toggling co-ownership grants `emo` `rwX` (+ default inheritance) on a project dir and revokes it cleanly; `emo` could read/write during the grant.
-- 🔄 **Frontend** (`index.html`) — settings dialog, Share… UI, foreign-session badges + owner-arg threading — in progress.
+- ✅ **Frontend** (`index.html`) — Project settings dialog (name·dir·attach-mode·members·co-ownership), session **Share…** dialog (RO/RW, honest wording, RW second-confirm, unshare), foreign-session rendering (owner badge, eye/pen glyph, attach-only, "Shared with me" section), and the owner threaded at **arg4** through both `frameArgs` and `connect()` (the #9926 trap) — Playwright-verified the `/ws` + `/token` URLs carry `arg=<owner>` at position 4.
 
-Then: land the frontend, redeploy, and live-test the UI end-to-end (real browser: share a session, attach it read-only/read-write, revoke-kicks).
+**End-to-end live proof (deployed stack):** a real read-only cross-user attach — `emo` authorized to attach `wizard`'s session, a real tmux client connected `readonly=YES` with `-r` sourced server-side, the client tty recorded for kick, revoke clean; co-ownership `getfacl` showed `emo` gaining then losing `rwX`; wrapper guardrails refuse home-root / outside-home / bad-user; existing lobby unaffected (zero foreign sessions for real users). Backend `go test`/`vet` green throughout.
 
 Expand the terminal-lobby "project" from a per-user sidebar label into a **first-class, multi-owner, shareable workspace**, and let users **share sessions** with each other — read-only (watch) or read-write (drive) — across the box's per-OS-user isolation boundary. Delivered as one drop, built in dependency order (P1→P4).
 
