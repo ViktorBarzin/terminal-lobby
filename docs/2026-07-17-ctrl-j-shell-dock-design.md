@@ -126,3 +126,30 @@ Two refinements after the first ship (`3c1ab67`):
   the terminal lost its height. Also `#lobby-top { height:100% }` in the mobile
   block so `#session-frame` fills. Verified with Playwright (desktop hide +
   promote; mobile `#dock` display:none, terminal fills, `Ctrl+J` swap fallback).
+
+## Revision — 2026-07-17 (dock persistence was never wired — orphan/auto-close fix)
+
+The "roamed server-side" persistence above **never worked**: `layout.dock` was
+sent on every PUT and preserved by the client's `fetchLayout`, but tmux-api's
+`Layout` struct had **no `dock` field**, so the server silently dropped it on
+decode and never returned it. The dock therefore lived only in client memory,
+shielded by the 4s `dockGraceUntil`; the first poll after that grace overwrote
+it with the server's dock-less copy. Symptoms: the panel "auto-closed" a few
+seconds after opening, `Ctrl+J` then spawned a *new* `shell-N` (create branch,
+no dock present), and the still-live shell un-hid into Ungrouped.
+
+Fix (`wizard/dock-orphan-fix`):
+
+- **Server persistence (root cause):** `Layout` gains a `Dock *DockState`
+  (`{session, visible, dir}`) field — stored, returned, and validated like the
+  rest. `mutateSessions` keeps it in lockstep with the session it names (a UI
+  kill clears the dock; a rename follows it). This is what makes it actually
+  roam + survive polls.
+- **Client hardening (defence in depth):** a poll may not drop a still-live dock
+  on a single stale/dock-less read — two consecutive such polls are required
+  (`dockDropStreak`); `reconcileDock` fails open on an empty session list; and
+  `saveLayout`'s failed-PUT re-fetch preserves a live dock.
+- **Reclaim (`Ctrl+J`):** with no dock but live scratch shells stranded in the
+  sidebar, re-dock the newest (`reclaimableShells`, matched by `shell`/`shell-N`
+  name + unassigned) and auto-kill the rest (`killSessionSilent`). Loose `shell*`
+  in Ungrouped is treated as disposable — **promote into a project to keep one.**

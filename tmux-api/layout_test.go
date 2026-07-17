@@ -216,6 +216,115 @@ func TestLayoutRenameSession(t *testing.T) {
 	}
 }
 
+// The dock (Ctrl+J scratch shell) must survive save→load like the rest of the
+// layout — the field's absence was the "auto-close" bug (server dropped it, so
+// the panel only lived for the client's 4s grace).
+func TestLayoutDockRoundtrip(t *testing.T) {
+	st := testStore(t)
+	in := Layout{
+		Version:   1,
+		Projects:  []Project{{Name: "tripit", Sessions: []string{"fix-dates"}}},
+		Ungrouped: []string{},
+		Dock:      &DockState{Session: "shell", Visible: true, Dir: "/home/wizard/code"},
+	}
+	if err := st.save("alice", in); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	out, err := st.load("alice")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if out.Dock == nil {
+		t.Fatal("dock lost across roundtrip (server dropped it — the bug)")
+	}
+	if !reflect.DeepEqual(in.Dock, out.Dock) {
+		t.Fatalf("dock roundtrip mismatch:\n in: %+v\nout: %+v", in.Dock, out.Dock)
+	}
+	// visible:false must round-trip as false (no omitempty on Visible).
+	in.Dock.Visible = false
+	if err := st.save("alice", in); err != nil {
+		t.Fatal(err)
+	}
+	out, _ = st.load("alice")
+	if out.Dock.Visible {
+		t.Fatal("dock visible:false must round-trip as false")
+	}
+}
+
+// A document written before the dock field existed must load with a nil Dock
+// (back-compat, exactly like legacy project dirs / ungroupedIndex).
+func TestLayoutLegacyDocHasNilDock(t *testing.T) {
+	st := testStore(t)
+	if err := os.MkdirAll(st.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"version":1,"projects":[],"ungrouped":["scratch"]}`
+	if err := os.WriteFile(filepath.Join(st.dir, "alice.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := st.load("alice")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if l.Dock != nil {
+		t.Fatalf("legacy doc must load with nil Dock, got %+v", l.Dock)
+	}
+}
+
+// Killing the docked session (UI kill → removeSession) clears the dock;
+// killing any other session leaves the dock intact.
+func TestLayoutRemoveSessionKeepsDockInLockstep(t *testing.T) {
+	st := testStore(t)
+	base := func() Layout {
+		return Layout{
+			Version:   1,
+			Projects:  []Project{{Name: "tripit", Sessions: []string{"fix-dates"}}},
+			Ungrouped: []string{},
+			Dock:      &DockState{Session: "shell", Visible: true},
+		}
+	}
+	// Killing a non-dock session preserves the dock.
+	if err := st.save("alice", base()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.removeSession("alice", "fix-dates"); err != nil {
+		t.Fatalf("removeSession: %v", err)
+	}
+	if l, _ := st.load("alice"); l.Dock == nil || l.Dock.Session != "shell" {
+		t.Fatalf("dock must survive an unrelated kill, got %+v", l.Dock)
+	}
+	// Killing the docked session clears the dock.
+	if err := st.save("bob", base()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.removeSession("bob", "shell"); err != nil {
+		t.Fatalf("removeSession dock: %v", err)
+	}
+	if l, _ := st.load("bob"); l.Dock != nil {
+		t.Fatalf("killing the docked session must clear the dock, got %+v", l.Dock)
+	}
+}
+
+// A rename of the docked session follows it, so the dock never silently
+// detaches from a renamed shell.
+func TestLayoutRenameSessionFollowsDock(t *testing.T) {
+	st := testStore(t)
+	if err := st.save("alice", Layout{
+		Version:   1,
+		Projects:  []Project{},
+		Ungrouped: []string{},
+		Dock:      &DockState{Session: "shell", Visible: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.renameSession("alice", "shell", "scratchpad"); err != nil {
+		t.Fatalf("renameSession: %v", err)
+	}
+	if l, _ := st.load("alice"); l.Dock == nil || l.Dock.Session != "scratchpad" {
+		t.Fatalf("rename must follow the dock, got %+v", l.Dock)
+	}
+}
+
 // --- validation ------------------------------------------------------------
 
 func validLayout() Layout {
@@ -243,6 +352,20 @@ func TestValidateLayoutAcceptsAbsoluteProjectDir(t *testing.T) {
 	}
 }
 
+func TestValidateLayoutAcceptsDock(t *testing.T) {
+	l := validLayout()
+	l.Dock = &DockState{Session: "shell", Visible: true, Dir: "/home/wizard/code"}
+	if err := validateLayout(l); err != nil {
+		t.Fatalf("valid dock rejected: %v", err)
+	}
+	// A dock session need NOT appear in projects/ungrouped — it's the hidden
+	// scratch shell, deliberately absent from the sidebar lists.
+	l.Dock.Session = "not-listed-anywhere"
+	if err := validateLayout(l); err != nil {
+		t.Fatalf("dock session absent from lists must be allowed: %v", err)
+	}
+}
+
 func TestValidateLayoutRejects(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -258,6 +381,9 @@ func TestValidateLayoutRejects(t *testing.T) {
 		{"session both grouped and ungrouped", func(l *Layout) { l.Ungrouped = append(l.Ungrouped, "fix-dates") }},
 		{"relative project dir", func(l *Layout) { l.Projects[0].Dir = "relative/path" }},
 		{"project dir too long", func(l *Layout) { l.Projects[0].Dir = "/" + strings.Repeat("a", maxDirLen) }},
+		{"bad dock session name", func(l *Layout) { l.Dock = &DockState{Session: "bad!name", Visible: true} }},
+		{"relative dock dir", func(l *Layout) { l.Dock = &DockState{Session: "shell", Dir: "relative/path"} }},
+		{"dock dir too long", func(l *Layout) { l.Dock = &DockState{Session: "shell", Dir: "/" + strings.Repeat("a", maxDirLen)} }},
 		{"negative ungroupedIndex", func(l *Layout) { l.UngroupedIndex = -1 }},
 		{"ungroupedIndex past last slot", func(l *Layout) { l.UngroupedIndex = len(l.Projects) + 1 }},
 		{"too many projects", func(l *Layout) {
