@@ -154,6 +154,64 @@ func TestValidateProjectSet(t *testing.T) {
 	}
 }
 
+// One-shot bootstrap: with no global store yet, migrateAllLayouts imports every
+// mapped user's per-user layout as single-member projects; run again it is a
+// no-op (does not double-import).
+func TestMigrateAllLayoutsOneShot(t *testing.T) {
+	dir := t.TempDir()
+	ls := newLayoutStore(dir + "/layout")
+	ps := newProjectStore(dir + "/projects.json")
+	if err := ls.save("wizard", Layout{Version: 1, Projects: []Project{{Name: "tripit", Sessions: []string{"s1"}}}, Ungrouped: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ls.save("bob", Layout{Version: 1, Projects: []Project{{Name: "work", Sessions: []string{}}}, Ungrouped: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := migrateAllLayouts(ls, ps, []string{"wizard", "bob"})
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !migrated {
+		t.Fatal("first run should report it migrated")
+	}
+	set, err := ps.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.Projects) != 2 {
+		t.Fatalf("want 2 migrated projects, got %d: %+v", len(set.Projects), set.Projects)
+	}
+	owners := map[string]string{} // project name -> sole member
+	ids := map[string]bool{}
+	for _, p := range set.Projects {
+		if len(p.Members) != 1 {
+			t.Fatalf("project %q should be single-member, got %+v", p.Name, p.Members)
+		}
+		if p.ID == "" || ids[p.ID] {
+			t.Fatalf("project %q id empty or duplicate: %q", p.Name, p.ID)
+		}
+		ids[p.ID] = true
+		owners[p.Name] = p.Members[0].OSUser
+	}
+	if owners["tripit"] != "wizard" || owners["work"] != "bob" {
+		t.Fatalf("wrong ownership after migration: %+v", owners)
+	}
+
+	// Second run must not double-import.
+	migrated2, err := migrateAllLayouts(ls, ps, []string{"wizard", "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated2 {
+		t.Fatal("second run should be a no-op (store already exists)")
+	}
+	set2, _ := ps.load()
+	if len(set2.Projects) != 2 {
+		t.Fatalf("second run changed the set: got %d projects", len(set2.Projects))
+	}
+}
+
 // A generated project ID is non-empty and unique across calls (the real
 // generator, not the test stub).
 func TestNewProjectIDUnique(t *testing.T) {
