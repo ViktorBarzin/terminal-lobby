@@ -179,6 +179,15 @@ func main() {
 		os.Exit(runSanitizeResurrect(os.Args[2:], os.Stderr))
 	}
 
+	// One-shot: seed the global project store from existing per-user layouts
+	// the first time the service starts after this feature ships. Non-fatal —
+	// the service must come up even if migration hits a snag.
+	if migrated, err := migrateAllLayouts(layoutStoreInstance, projectStoreInstance, mappedOSUsers()); err != nil {
+		log.Printf("project store migration failed (continuing without it): %v", err)
+	} else if migrated {
+		log.Printf("seeded global project store from per-user layouts")
+	}
+
 	http.HandleFunc("/sessions", handleSessions)
 	http.HandleFunc("/sessions/", handleSessionByName)
 	http.HandleFunc("/whoami", handleWhoami)
