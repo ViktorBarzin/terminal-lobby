@@ -3,7 +3,9 @@ Description=ttyd Read-Only Terminal Service
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/ttyd -R -p 7682 tmux new-session -A -s read-only -c /home/wizard/code
+# -P 30: match ttyd.service — ping every 30s (default 5s) to spare the radio
+# on a backgrounded phone; safely under the Traefik/Cloudflare idle timeouts.
+ExecStart=/usr/local/bin/ttyd -R -P 30 -p 7682 tmux new-session -A -s read-only -c /home/wizard/code
 Restart=always
 User=wizard
 
