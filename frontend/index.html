@@ -4673,7 +4673,17 @@
                     await putLayout();
                 } catch (err) {
                     showToast('Saving layout failed: ' + err.message, 'error', 4000);
+                    // The PUT that would have persisted the dock just failed, so
+                    // the server copy is dock-less — a naive re-fetch would orphan
+                    // a still-live docked shell. Preserve a live dock across the
+                    // re-fetch; the next mutation retries the PUT.
+                    const keepDock = dockState();
                     try { layout = await fetchLayout(); } catch (e) { /* next poll */ }
+                    if (keepDock.session && lastSessions.some(s => s.name === keepDock.session)
+                            && !(layout.dock && layout.dock.session === keepDock.session)) {
+                        layout.dock = { session: keepDock.session,
+                            visible: keepDock.visible, dir: keepDock.dir };
+                    }
                     paint();
                 }
             }
@@ -5515,6 +5525,18 @@
                 }
             }
 
+            // Kill without killSession's confirm() / per-session toast — used by
+            // the dock reclaim to close stray scratch shells in bulk. Best-effort:
+            // a stray that survives is harmless (it just shows as a normal card).
+            async function killSessionSilent(name) {
+                if (!NAME_RE.test(name)) return;
+                try {
+                    await fetch(SESSIONS_API + '/' + encodeURIComponent(name), {
+                        method: 'DELETE', credentials: 'same-origin'
+                    });
+                } catch (e) { /* best-effort */ }
+            }
+
             // Restore the current user's saved-but-dead sessions (tmux-persist
             // manifest) on demand. Non-destructive: tmux-persist skips sessions
             // that are already live, so this only recreates missing ones and
@@ -6195,15 +6217,10 @@
                     // detail > 1 = second click of a double-click — the
                     // inline-rename path owns it (Task 2.5 guard).
                     if (e.detail > 1) return;
-                    // On the ALREADY-selected session, a single click on the
-                    // name text opens inline rename (desktop only — a coarse
-                    // pointer keeps tap = flip-to-terminal, and renames via
-                    // long-press). Non-active cards always attach first.
-                    if (s.name === currentActive && !isCoarsePointer &&
-                        e.target.closest('.session-name')) {
-                        startInlineRename(s.name);
-                        return;
-                    }
+                    // Single click always selects/attaches — so a focused card is
+                    // a consistent kill target for the Backspace/Delete shortcut,
+                    // whether you click the name or the status. Rename now lives on
+                    // double-click the title, the ⋯ menu, and (mobile) long-press.
                     activateSession(s.name);
                 });
                 card.addEventListener('keydown', (e) => {
@@ -6618,9 +6635,31 @@
                         const localDirs = dirGrace
                             ? new Map(layout.projects.map(p => [p.name, p.dir || '']))
                             : null;
+                        // Hysteresis (orphan-bug fix): capture the pre-swap dock.
+                        // If the incoming layout drops/replaces a dock whose shell
+                        // is still live in THIS poll's sessions, don't believe it
+                        // on the first sighting — keep the live dock and only let
+                        // the removal stand after two consecutive such polls.
+                        const prevDock = dockState();
+                        const dockShellLive = !!prevDock.session
+                            && sessions.some(s => s.name === prevDock.session);
+                        const incomingSameDock = !!(layoutResult.dock
+                            && typeof layoutResult.dock === 'object'
+                            && layoutResult.dock.session === prevDock.session);
                         layout = layoutResult;
                         if (inGrace) {
                             if (localDock) layout.dock = localDock; else delete layout.dock;
+                            dockDropStreak = 0; dockDropStreakSession = null;
+                        } else if (dockShellLive && !incomingSameDock) {
+                            if (dockDropStreakSession !== prevDock.session) {
+                                dockDropStreak = 0; dockDropStreakSession = prevDock.session;
+                            }
+                            if (++dockDropStreak < 2) {
+                                layout.dock = { session: prevDock.session,
+                                    visible: prevDock.visible, dir: prevDock.dir };
+                            }   // else: believe the removal, leave incoming layout as-is
+                        } else {
+                            dockDropStreak = 0; dockDropStreakSession = null;
                         }
                         if (localDirs) {
                             for (const p of layout.projects) {
@@ -7836,6 +7875,13 @@
             let dockFrameSession = null;   // session #dock-frame currently attaches
             let dockGraceUntil = 0;        // shields a local dock change from a stale poll
             let layoutGraceUntil = 0;      // shields local project dirs from a stale poll (see saveLayout/renderLobby)
+            // Hysteresis for the poll merge: a live dock must not be dropped by a
+            // SINGLE stale/dockless poll (the orphan bug). We believe a removal
+            // only after two consecutive polls that drop a still-live dock — long
+            // enough to ride out a stale read, short enough that a genuine
+            // cross-device undock still lands in ~2 polls. See renderLobby.
+            let dockDropStreak = 0;
+            let dockDropStreakSession = null;
 
             const pendingShellNames = new Set();
             function firstFreeShellName() {
@@ -7846,6 +7892,19 @@
                     if (!taken.has('shell-' + i)) return 'shell-' + i;
                 }
                 return 'shell-' + Date.now();     // pathological fallback
+            }
+            // Live scratch shells stranded in the sidebar — a former dock whose
+            // pointer was lost while its shell kept running. Pure so it can be
+            // reasoned about / tested in isolation. A "dock shell" is a live
+            // session named shell / shell-N that is NOT assigned to a project
+            // (project-assigned shells are deliberately kept — that is how you
+            // promote a scratch shell you want to survive). Newest-created first.
+            function reclaimableShells(sessions, lay) {
+                const inProject = new Set();
+                (lay && lay.projects || []).forEach(p => (p.sessions || []).forEach(n => inProject.add(n)));
+                return sessions
+                    .filter(s => /^shell(-\d+)?$/.test(s.name) && !inProject.has(s.name))
+                    .sort((a, b) => (b.created || 0) - (a.created || 0));
             }
             function dockState() {
                 const d = layout && layout.dock;
@@ -7910,6 +7969,31 @@
                 const ds = dockState();
                 dockGraceUntil = Date.now() + 4000;
                 if (!ds.session) {
+                    // Reclaim before creating: if live scratch shells are
+                    // stranded in the sidebar (a former dock that lost its
+                    // pointer while its shell kept running), re-dock the newest
+                    // one — its scrollback is intact, tmux just reattaches — and
+                    // auto-kill the rest so they stop piling up in Ungrouped.
+                    // Never touch the currently-attached top session.
+                    const orphans = reclaimableShells(lastSessions, layout);
+                    if (orphans.length) {
+                        const target = orphans[0].name;
+                        layout.dock = { session: target, visible: true, dir: '' };
+                        applyDock();
+                        if (currentActive === target) deactivateSession();  // it lives in the dock now
+                        const extras = orphans.slice(1)
+                            .map(s => s.name).filter(n => n !== currentActive);
+                        saveLayout();
+                        if (extras.length) {
+                            Promise.all(extras.map(killSessionSilent)).then(() => renderLobby());
+                        }
+                        focusDockSoon();
+                        showToast(extras.length
+                            ? 'Reclaimed ' + target + ' · closed ' + extras.length
+                                + ' stray shell' + (extras.length > 1 ? 's' : '')
+                            : 'Reclaimed ' + target, 'info', 3000);
+                        return;
+                    }
                     const name = firstFreeShellName();
                     const dir = currentActive ? projectDirForSession(currentActive) : '';
                     pendingShellNames.add(name);
@@ -7949,9 +8033,15 @@
                 showToast('Shell moved to the sidebar', 'info', 2000);
             }
             // Clear a dock whose session died / was killed (from the poll).
+            // Fails open like sessionStillExists(): only clear when we have a
+            // healthy, NON-EMPTY session list that positively excludes the
+            // shell. /sessions returns [] on any tmux hiccup, and clearing on
+            // that would orphan a still-live docked shell — the exact bug this
+            // guards against.
             function reconcileDock() {
                 const ds = dockState();
                 if (ds.session && !pendingShellNames.has(ds.session)
+                        && lastSessions.length > 0
                         && !lastSessions.some(s => s.name === ds.session)) {
                     delete layout.dock;
                 }
