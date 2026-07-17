@@ -1722,8 +1722,8 @@
         }
 
         /* Alt-held session-jump badges (Task 4.1): numbered chips on the
-           first nine sidebar cards while Alt is held ≥100 ms and the
-           keybinding layer is enabled — they label the Alt+1..9 targets.
+           first ten sidebar cards while Alt is held ≥100 ms and the
+           keybinding layer is enabled — they label the Alt+1..9/0 targets.
            .session-card is position:relative purely as their anchor. */
         .kb-badge {
             position: absolute; top: -6px; right: -4px; z-index: 2;
@@ -3177,8 +3177,18 @@
                 { key: 'alt+7', command: 'session.attach.7', when: '!galleryOpen' },
                 { key: 'alt+8', command: 'session.attach.8', when: '!galleryOpen' },
                 { key: 'alt+9', command: 'session.attach.9', when: '!galleryOpen' },
+                { key: 'alt+0', command: 'session.attach.10', when: '!galleryOpen' },
                 { key: 'alt+shift+[', command: 'session.prev', when: '!galleryOpen' },
-                { key: 'alt+shift+]', command: 'session.next', when: '!galleryOpen' }
+                { key: 'alt+shift+]', command: 'session.next', when: '!galleryOpen' },
+                // Dev-flow chords. Alt+Shift namespace; letters + Enter carry
+                // e.code aliases (KeyN/KeyS/…) so they survive Mac Option+Shift
+                // rendering a symbol for e.key and non-US layouts — a bare
+                // backslash would not, which is why sidebar.toggle is 's'.
+                { key: 'alt+shift+enter', command: 'session.next.awaiting', when: 'lobbyOpen && !galleryOpen' },
+                { key: 'alt+shift+s', command: 'sidebar.toggle', when: 'lobbyOpen && !galleryOpen' },
+                { key: 'alt+shift+n', command: 'session.new', when: 'lobbyOpen && !galleryOpen' },
+                { key: 'alt+shift+w', command: 'session.kill.current', when: 'lobbyOpen && !galleryOpen' },
+                { key: 'alt+shift+r', command: 'session.rename.current', when: 'lobbyOpen && !galleryOpen' }
             ];
             // Platform: Cmd is never forwarded to the pty on macOS, so a
             // Cmd-based always-on chord steals nothing there; Ctrl+J IS the
@@ -3233,12 +3243,14 @@
                 } catch (e) { return null; }
             }
             // validate-or-default, same posture as normalizePrefs: garbage
-            // degrades to {enabled:false, overrides:{}} — never a crash, and
-            // never an accidentally-enabled layer.
+            // degrades to the DEFAULT, which is now {enabled:true} (on-by-
+            // default). Only an explicit stored {enabled:false} — what the
+            // settings toggle writes when unchecked — disables the layer, and
+            // that opt-out persists per browser. Never a crash.
             function normalizeKeybindings(raw) {
-                const out = { enabled: false, overrides: {} };
+                const out = { enabled: true, overrides: {} };
                 if (raw && typeof raw === 'object') {
-                    if (raw.enabled === true) out.enabled = true;
+                    if (raw.enabled === false) out.enabled = false;
                     const ov = raw.overrides;
                     if (ov && typeof ov === 'object' && !Array.isArray(ov)) {
                         for (const k of Object.keys(ov)) {
@@ -6739,9 +6751,10 @@
                 try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); } catch (e) {}
                 if (typeof updateListClose === 'function') updateListClose();
             }
-            toggleEl.addEventListener('click', () => {
+            function toggleSidebar() {
                 setSidebarCollapsed(!lobbyEl.classList.contains('sidebar-collapsed'));
-            });
+            }
+            toggleEl.addEventListener('click', toggleSidebar);
             // ✕ in the list header (mobile browsing view): close the list and
             // return to the ATTACHED session without having to re-pick its
             // card. Hidden when nothing is attached (nothing to close) and on
@@ -7174,20 +7187,23 @@
                 });
                 flowRow.appendChild(flow);
 
-                // Task 4.1: "App shortcuts" opt-in — the keybinding layer +
-                // command palette. Plain per-browser tl:keybindings:v1 key
-                // (never roamed): chords steal keys from the pty, so each
-                // browser opts in explicitly; DEFAULT OFF. The attached
+                // Task 4.1: "App shortcuts" — the keybinding layer + command
+                // palette. Plain per-browser tl:keybindings:v1 key (never
+                // roamed). DEFAULT ON: unchecking sends Alt+digit etc. back to
+                // the pty and that opt-out persists per browser. The attached
                 // terminal follows live via the storage event.
                 const kbRow = row('App shortcuts');
                 const kb = document.createElement('input');
                 kb.type = 'checkbox';
                 kb.id = 'sp-kb';
-                kb.title = 'Enable app keyboard shortcuts in this browser: ' +
-                    'Ctrl+Shift+K command palette, Alt+1..9 attach Nth session, ' +
-                    'Alt+Shift+[ / ] cycle sessions. Off (default): those keys ' +
-                    'reach the terminal as before. Note: ' + tlKb.newShellChord +
-                    ' always toggles a docked shell panel, regardless of this toggle.';
+                kb.title = 'App keyboard shortcuts in this browser (ON by ' +
+                    'default): Ctrl+Shift+K palette, Alt+1..9 / Alt+0 attach the ' +
+                    '1st..10th session, Alt+Shift+[ / ] cycle, Alt+Shift+Enter ' +
+                    'jump to a session awaiting input, Alt+Shift+S toggle sidebar, ' +
+                    'Alt+Shift+N new, Alt+Shift+W kill, Alt+Shift+R rename. ' +
+                    'Uncheck to send these keys to the terminal instead. Note: ' +
+                    tlKb.newShellChord + ' always toggles a docked shell panel, ' +
+                    'regardless of this toggle.';
                 kb.addEventListener('change', () => {
                     tlKb.setEnabled(kb.checked);
                     syncAltBadges();   // disabling mid-Alt-hold must drop the badges
@@ -8024,6 +8040,30 @@
                     cycleSession(cmd === 'session.next' ? 1 : -1, false);
                     return;
                 }
+                if (cmd === 'session.next.awaiting') {
+                    // Hop to the next session whose Claude is awaiting input,
+                    // in sidebar order starting AFTER the current one (wraps).
+                    const order = orderedSessionNames();
+                    if (order.length) {
+                        const stateOf = {};
+                        for (const s of lastSessions) stateOf[s.name] = s.state;
+                        const start = order.indexOf(currentActive);   // -1 → from top
+                        for (let k = 1; k <= order.length; k++) {
+                            const name = order[(start + k + order.length) % order.length];
+                            if (stateOf[name] === 'awaiting') {
+                                if (name === currentActive) requestTerminalFocus();
+                                else activateSession(name);
+                                return;
+                            }
+                        }
+                    }
+                    showToast('No session awaiting input', '', 2000);
+                    return;
+                }
+                if (cmd === 'sidebar.toggle') {
+                    toggleSidebar();
+                    return;
+                }
                 if (cmd === 'session.new') {
                     setSidebarCollapsed(false);           // the box lives in the sidebar
                     newNameEl.focus();
@@ -8056,7 +8096,7 @@
             }
 
             // Alt-held session-jump badges: numbered chips on the first
-            // nine cards after Alt has been down 100 ms (plan spec), from
+            // ten cards after Alt has been down 100 ms (plan spec), from
             // EITHER document — the iframe forwards its own tracker over
             // tl-kb-alt, since its keydowns never reach this window.
             let lobbyAltDown = false, frameAltDown = false;
@@ -8065,11 +8105,12 @@
                 listEl.querySelectorAll('.kb-badge').forEach(el => el.remove());
                 if (!altBadgesOn) return;
                 Array.from(listEl.querySelectorAll('.session-card'))
-                    .slice(0, 9)
+                    .slice(0, 10)
                     .forEach((card, i) => {
                         const b = document.createElement('span');
                         b.className = 'kb-badge';
-                        b.textContent = String(i + 1);
+                        // 1..9 then 0 on the tenth (Alt+0 → session.attach.10).
+                        b.textContent = i === 9 ? '0' : String(i + 1);
                         b.setAttribute('aria-hidden', 'true');
                         card.appendChild(b);
                     });
@@ -8139,6 +8180,19 @@
                 runCommand: runAppCommand,
                 onAltChange: (down) => { lobbyAltDown = down; syncAltBadges(); }
             });
+
+            // One-time discovery hint (per browser): the shortcut layer is ON
+            // by default now, so surface it once for anyone who never opted in.
+            // Skipped when the user has explicitly turned it off, and shown only
+            // in the lobby top window (this init is the lobby's).
+            try {
+                const KB_HINT_KEY = 'tl:kb-hint-seen:v1';
+                if (tlKb.enabled() && !localStorage.getItem(KB_HINT_KEY)) {
+                    showToast('Keyboard shortcuts are on — hold Alt to see 1–0, ' +
+                        'or turn them off in ⚙ Settings', '', 7000);
+                    try { localStorage.setItem(KB_HINT_KEY, '1'); } catch (e) {}
+                }
+            } catch (e) {}
 
             // Drops on the terminal are handled inside the iframe. If one lands
             // on the lobby chrome (sidebar) instead, suppress the browser's
