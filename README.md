@@ -69,6 +69,32 @@ summary, so hooks it is). Claudes started before the hooks were
 installed show no dot until their next restart/resume; worst-case
 display lag is ~10 s (5 s API cache + 5 s poll).
 
+## Sharing (multi-user)
+
+Projects and sessions can be **shared with other users on the same machine**
+(the OS users behind each Authentik identity in `/etc/ttyd-user-map`).
+
+- **Projects are first-class, multi-owner workspaces.** A project has a name, an
+  optional directory, a member set, a session-attach mode, and a co-ownership
+  flag; edit them all from **Project settings…** on the project `⋯` menu.
+  Governance is co-equal — any member may rename, re-dir, add/remove members, or
+  delete it (delete only dissolves the grouping, never kills sessions). Members
+  see each other's sessions in the shared project.
+- **Share a single session** from its `⋯` menu → **Share…**, read-only or
+  read-write. A shared session is attached *as its owner*: read-only (`tmux
+  attach -r`) lets a guest **watch**; read-write is a **full interactive shell
+  as the owner** — so it is gated behind an extra confirm and is a deliberate
+  trust grant. Revoking (or the guest leaving) detaches their live client
+  immediately.
+- **Filesystem co-ownership.** Enabling co-ownership on a project with a
+  directory grants every member POSIX-ACL `rwX` on that tree (via an audited,
+  root-run `setfacl` wrapper), so members can work on the shared files from
+  their own sessions. Removed on unshare/leave. Trust-based: you choose what to
+  share (a directory strictly under your home, never `~` itself).
+
+The store is server-side (`GET`/`POST /projects`, `/shares`, …), so shares roam
+across your devices. Design + security model: `docs/plans/2026-07-17-shared-multiuser-projects-and-sessions.md`.
+
 ## Keyboard shortcuts
 
 Switch sessions and drive the lobby without the mouse. The shortcut layer
