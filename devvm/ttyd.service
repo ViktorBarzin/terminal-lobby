@@ -11,7 +11,13 @@ After=network.target
 # attaches also lose this to sudo's env_reset; the system tmux.conf
 # covers those users regardless.
 Environment=COLORTERM=truecolor
-ExecStart=/usr/local/bin/ttyd -W -a -H X-authentik-username -t enableClipboard=true -I /usr/local/share/ttyd/index.html -p 7681 /usr/local/bin/tmux-attach.sh
+# -P 30: WebSocket ping every 30s instead of ttyd's 5s default. Each ping
+# wakes a backgrounded phone's radio, so 5s drained battery for nothing;
+# 30s cuts that 6x and stays well under the Traefik idle timeout (180s) and
+# Cloudflare's ~100s WS idle, so an idle terminal never churns reconnects.
+# The frontend also drops the socket entirely after the tab is hidden 60s
+# (see frontend/index.html battery saver) — this covers foreground-idle.
+ExecStart=/usr/local/bin/ttyd -W -a -H X-authentik-username -P 30 -t enableClipboard=true -I /usr/local/share/ttyd/index.html -p 7681 /usr/local/bin/tmux-attach.sh
 Restart=always
 User=wizard
 

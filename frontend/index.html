@@ -11899,6 +11899,22 @@
         let connAttempts = 0;   // connect()s started since the last stable connection
         let retryTimer = null;  // pending scheduled connect (null while attempting)
         let stableTimer = null; // pending "connection survived 30s" ladder reset
+        // ---- battery saver: drop the socket while the tab stays hidden ----
+        // ttyd pings the WebSocket every 30s (server -P) and streams any pane
+        // output; left open behind a locked screen or a switched-away PWA it
+        // keeps the phone's radio warm for nothing — the reason a mobile PWA
+        // drains battery "after" a session. So once the tab has been hidden
+        // HIDDEN_SUSPEND_MS, close the socket and hold it down until the tab is
+        // shown again. Lossless: tmux reattach repaints the live screen on
+        // reconnect (the same path a deploy's ttyd restart already exercises),
+        // and "awaiting input" alerts still arrive over Web Push while
+        // suspended (the push subscription is server-driven, independent of
+        // this socket). The grace is generous on purpose — a brief app-switch
+        // must not cost a reconnect flicker; 60s hidden ~always means the phone
+        // was put down. Single knob, tune here.
+        const HIDDEN_SUSPEND_MS = 60000;
+        let hiddenSuspendTimer = null; // grace countdown once hidden (null otherwise)
+        let batterySuspended = false;  // socket intentionally down until the tab shows
         const connPill = document.getElementById('conn-pill');
         // Hovering the pill explains the connection colors (amber pulse vs red).
         tlAttachLegend(connPill, 'conn',
@@ -11913,6 +11929,7 @@
         }
         function hideConnPill() { connPill.classList.add('hidden'); }
         function scheduleReconnect() {
+            if (batterySuspended) return; // suspended for battery — reconnect waits for the tab to show
             if (retryTimer) return; // one pending attempt at a time
             const delay = RETRY_DELAYS_MS[Math.min(connAttempts, RETRY_DELAYS_MS.length - 1)];
             paintConnPill(connAttempts + 1); // the attempt this timer will run
@@ -11929,9 +11946,56 @@
             console.log('reconnect: instant retry (' + why + ')');
             connect();
         }
+        // Tear the socket down after the tab has been hidden long enough, and
+        // reopen the moment it's shown — reusing the existing connect()/ladder.
+        function suspendForBattery() {
+            hiddenSuspendTimer = null;
+            // The timer can fire just as the tab is shown: its callback was
+            // already queued when the visible handler ran, so clearTimeout
+            // missed it. Never suspend a visible tab — that would close a
+            // healthy socket with nothing left to reconnect it (a visible tab
+            // fires no further visibilitychange).
+            if (!document.hidden || batterySuspended) return;
+            batterySuspended = true;
+            clearTimeout(retryTimer); retryTimer = null; // drop any pending reconnect
+            clearTimeout(stableTimer);
+            hideConnPill();
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                try { ws.close(); } catch (e) { /* already closing */ }
+            }
+            console.log('battery saver: socket suspended (tab hidden ' + HIDDEN_SUSPEND_MS + 'ms)');
+        }
+        // Resume from a suspend — shared by the visibilitychange and pageshow
+        // paths. connect() detaches any prior socket, so calling this twice
+        // (both events firing on one restore) can't leave two live sockets.
+        function resumeFromSuspend(why) {
+            clearTimeout(hiddenSuspendTimer); hiddenSuspendTimer = null;
+            if (!batterySuspended) return false;
+            batterySuspended = false;
+            console.log('battery saver: ' + why + ' → reconnecting');
+            connect();
+            return true;
+        }
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) retryNow('tab visible');
+            if (document.hidden) {
+                if (!hiddenSuspendTimer && !batterySuspended) {
+                    hiddenSuspendTimer = setTimeout(suspendForBattery, HIDDEN_SUSPEND_MS);
+                }
+                return;
+            }
+            // Tab shown: resume a suspended socket, else bring a pending
+            // reconnect forward.
+            if (!resumeFromSuspend('tab visible')) retryNow('tab visible');
         });
+        // bfcache restore (iOS standalone especially): the page returns frozen,
+        // not reloaded, and its visibilitychange can be unreliable — so pageshow
+        // is the belt to visibilitychange's suspenders for waking a suspend.
+        window.addEventListener('pageshow', (e) => {
+            if (e.persisted) resumeFromSuspend('bfcache restore');
+        });
+        // A page that boots hidden (opened in a background tab) arms the same
+        // countdown; visibilitychange won't fire until it is first shown.
+        if (document.hidden) hiddenSuspendTimer = setTimeout(suspendForBattery, HIDDEN_SUSPEND_MS);
         window.addEventListener('online', () => retryNow('back online'));
         window.addEventListener('offline', () => {
             // Repaint a waiting pill to "You are offline"; the online
@@ -11948,6 +12012,19 @@
         armBaseline('boot');
 
         function connect() {
+            // Neutralize any earlier socket before opening a new one. A battery
+            // resume can call connect() while a just-closed socket's onclose is
+            // still queued (a frozen mobile tab completes close() late);
+            // detaching its handlers stops that stale onclose from scheduling a
+            // competing reconnect — without this, resume's socket plus the
+            // stale-onclose's socket both go live, doubling the pty stream and
+            // the pings. Idempotent: on the normal ladder the prior socket is
+            // already CLOSED, so this is a no-op.
+            if (ws) {
+                try { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }
+                catch (e) { /* already closing */ }
+                ws = null;
+            }
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             let argSuffix = '?arg=' + encodeURIComponent(validArg);
             // Keep a project dir pinned to arg3: when we have one, always emit a
@@ -11969,6 +12046,9 @@
             fetch(base + '/token' + argSuffix, { credentials: 'same-origin' })
                 .then(r => r.json())
                 .then(tokenData => {
+                    // Tab went hidden while the token was in flight — don't open
+                    // a socket the battery saver is about to suspend anyway.
+                    if (batterySuspended) return;
                     const token = tokenData.token || '';
                     ws = new WebSocket(wsUrl, ['tty']);
                     ws.binaryType = 'arraybuffer';
@@ -12089,11 +12169,14 @@
 
                     ws.onclose = () => {
                         slowRequests.ack(wsSlowId); // no-op after onopen's ack
-                        // The connection did not survive — stop a pending
-                        // stability reset and show status while we decide
-                        // whether to reconnect (the existence check below
-                        // can itself take a moment on a struggling network).
                         clearTimeout(stableTimer);
+                        // Battery saver closed us on purpose — stay down (no
+                        // pill, no ladder); the visibilitychange handler
+                        // reconnects when the tab is shown again.
+                        if (batterySuspended) return;
+                        // The connection did not survive — show status while we
+                        // decide whether to reconnect (the existence check below
+                        // can itself take a moment on a struggling network).
                         paintConnPill(connAttempts + 1);
                         // First connection is the create/attach — always retry it.
                         // After we've connected once, a close may mean the session
