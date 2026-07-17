@@ -249,6 +249,106 @@ func TestHandleProjectsRequiresAuth(t *testing.T) {
 	}
 }
 
+func createProjectVia(t *testing.T, authUser, body string) GlobalProject {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodPost, "/projects", body, authUser))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create helper: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var p GlobalProject
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatalf("create helper decode: %v", err)
+	}
+	return p
+}
+
+// A member can edit name/dir/attach-mode via PATCH (the settings dialog).
+func TestPatchProjectUpdatesFields(t *testing.T) {
+	swapProjectStore(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n")
+	p := createProjectVia(t, me, `{"name":"tripit"}`)
+
+	rec := httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPatch, "/projects/"+p.ID,
+		`{"name":"trip","dir":"/home/wizard/code/tripit","attachMode":"rw"}`, me))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var up GlobalProject
+	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
+		t.Fatal(err)
+	}
+	if up.Name != "trip" || up.Dir != "/home/wizard/code/tripit" || up.AttachMode != "rw" {
+		t.Fatalf("patch result: %+v", up)
+	}
+}
+
+func TestPatchProjectForbiddenForNonMember(t *testing.T) {
+	swapProjectStore(t)
+	me, other := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n"+other+"="+other+"\n")
+	p := createProjectVia(t, me, `{"name":"tripit"}`)
+	rec := httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPatch, "/projects/"+p.ID, `{"name":"trip"}`, other))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("patch by non-member: got %d, want 403", rec.Code)
+	}
+}
+
+func TestPatchProjectNotFound(t *testing.T) {
+	swapProjectStore(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n")
+	rec := httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPatch, "/projects/p_nope", `{"name":"x"}`, me))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("patch missing: got %d, want 404", rec.Code)
+	}
+}
+
+func TestPatchProjectRejectsBadAttachMode(t *testing.T) {
+	swapProjectStore(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n")
+	p := createProjectVia(t, me, `{"name":"tripit"}`)
+	rec := httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPatch, "/projects/"+p.ID, `{"attachMode":"sideways"}`, me))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad attachMode: got %d, want 400", rec.Code)
+	}
+}
+
+// Any member can delete (co-equal governance); a non-member cannot. Delete
+// removes the project but never touches sessions.
+func TestDeleteProject(t *testing.T) {
+	swapProjectStore(t)
+	me, other := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n"+other+"="+other+"\n")
+	p := createProjectVia(t, me, `{"name":"tripit"}`)
+
+	rec := httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodDelete, "/projects/"+p.ID, "", other))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("delete by non-member: got %d, want 403", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodDelete, "/projects/"+p.ID, "", me))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: got %d, want 204", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodGet, "/projects", "", me))
+	var mine []GlobalProject
+	_ = json.Unmarshal(rec.Body.Bytes(), &mine)
+	if len(mine) != 0 {
+		t.Fatalf("project still listed after delete: %+v", mine)
+	}
+}
+
 func TestHandleProjectsRejectsOtherMethods(t *testing.T) {
 	swapProjectStore(t)
 	me, _ := twoLocalUsers(t)
