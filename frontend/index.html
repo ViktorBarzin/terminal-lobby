@@ -1044,6 +1044,8 @@
         }
         #dock-frame { flex: 1 1 auto; width: 100%; border: 0; min-height: 0; display: block; }
         #lobby-content.dock-resizing { transition: none; }
+        /* Narrow viewports (incl. narrow desktop windows): no dock. */
+        @media (max-width: 720px) { #dock, #dock-gutter { display: none; } }
         .session-card .dock-badge { margin-left: 4px; opacity: 0.7; }
 
         .lobby-header { font-size: 18px; color: var(--accent); margin: 0 0 4px 0; font-weight: 600; }
@@ -1842,6 +1844,12 @@
                 left: calc(12px + env(safe-area-inset-left)); right: auto;
                 padding: 0 14px; gap: 6px; font-size: 15px;
             }
+            /* No bottom dock on mobile (the Ctrl+J dock is desktop-only): keep
+               it fully out of flow, and let #lobby-top fill the block-layout
+               #lobby-content so the terminal fills the screen (grid rows don't
+               apply once #lobby-content is display:block here). */
+            #dock, #dock-gutter { display: none; }
+            #lobby.sidebar-collapsed #lobby-top { height: 100%; }
         }
 
         /* Soft-key toolbar — terminal mode only, touch devices only.
@@ -5291,7 +5299,7 @@
                 // than swapping it to the top. Coarse pointers have no dock.
                 {
                     const ds = dockState();
-                    if (ds.session === name && !isCoarsePointer) {
+                    if (ds.session === name && dockAllowed()) {
                         if (!ds.visible) {
                             dockGraceUntil = Date.now() + 4000;
                             layout.dock = { session: name, visible: true, dir: ds.dir };
@@ -5971,14 +5979,6 @@
                 name.className = 'session-name';
                 name.textContent = s.name;
                 titleRow.appendChild(name);
-                if (dockState().session === s.name && !isCoarsePointer) {
-                    const badge = document.createElement('span');
-                    badge.className = 'dock-badge';
-                    badge.textContent = '▤';
-                    badge.title = 'Docked in the bottom panel';
-                    badge.setAttribute('aria-label', 'docked');
-                    titleRow.appendChild(badge);
-                }
                 card.appendChild(titleRow);
 
                 // Right edge: a time on every row (2026-07-16). Running -> the
@@ -6312,6 +6312,11 @@
                 const savedScroll = sidebarScrollEl ? sidebarScrollEl.scrollTop : 0;
                 clearChildren(listEl);
                 const liveByName = new Map(lastSessions.map(s => [s.name, s]));
+                // The docked scratch shell is not a thread — keep it out of the
+                // sidebar list while the dock is showing it (desktop). On mobile
+                // (no dock) it falls through as a normal session, never lost.
+                const hiddenDock = dockAllowed() ? dockState().session : null;
+                if (hiddenDock) liveByName.delete(hiddenDock);
                 const referenced = new Set();
                 for (const p of layout.projects) p.sessions.forEach(n => referenced.add(n));
                 layout.ungrouped.forEach(n => referenced.add(n));
@@ -6322,7 +6327,7 @@
                 // sequence (ungroupedIndex) and is skipped while empty.
                 const ungrouped = layout.ungrouped
                     .map(n => liveByName.get(n)).filter(Boolean)
-                    .concat(lastSessions.filter(s => !referenced.has(s.name)));
+                    .concat(lastSessions.filter(s => !referenced.has(s.name) && s.name !== hiddenDock));
                 for (const g of groupSeq()) {
                     if (g === UNGROUPED_COLLAPSE_ID) {
                         if (ungrouped.length) listEl.appendChild(renderGroup('', ungrouped));
@@ -7560,7 +7565,8 @@
             const palette = tlKb.createPalette({
                 // lastSessions is the poll the cards are painted from —
                 // ≤5s stale, instantly available (no fetch on open).
-                sessions: () => Promise.resolve(lastSessions),
+                sessions: () => Promise.resolve(
+                    dockAllowed() ? lastSessions.filter(s => s.name !== dockState().session) : lastSessions),
                 current: () => currentActive,
                 attach: (name) => {
                     if (currentActive === name) requestTerminalFocus();
@@ -7663,13 +7669,20 @@
                 try { frame.contentWindow.location.replace(url); }
                 catch (e) { frame.src = url; }
             }
+            // The dock is a DESKTOP feature: fine pointer AND a wide enough
+            // viewport. Coarse pointers (phones/tablets) and narrow windows
+            // never render it — Ctrl+J there falls back to a full-window shell,
+            // and the docked session shows as a normal card instead.
+            const dockWideMQ = matchMedia('(min-width: 721px)');
+            function dockAllowed() { return !isCoarsePointer && dockWideMQ.matches; }
+
             // Reconcile the grid + dock iframe with layout.dock. Reattaches the
             // iframe only when the docked session changes, so polls don't flicker
             // it. A docked-but-hidden session keeps its iframe alive (0-height
             // row) so re-showing is instant and the shell keeps running.
             function applyDock() {
                 const ds = dockState();
-                const showable = !!ds.session && !isCoarsePointer;
+                const showable = !!ds.session && dockAllowed();
                 if (showable) {
                     if (dockFrameSession !== ds.session) {
                         dockFrameSession = ds.session;
@@ -7690,8 +7703,8 @@
             }
             // Ctrl+J: create+dock a shell if none; else toggle the panel.
             function openOrToggleDock() {
-                if (isCoarsePointer) {
-                    // No dock on touch → fall back to a full-window shell.
+                if (!dockAllowed()) {
+                    // No dock on mobile / narrow → fall back to a full-window shell.
                     const nm = firstFreeShellName();
                     pendingShellNames.add(nm);
                     setTimeout(() => pendingShellNames.delete(nm), 15000);
@@ -7751,6 +7764,10 @@
             }
 
             // Dock header controls + drag-out + gutter resize (fine pointer).
+            // React to the viewport crossing the dock width threshold: show/hide
+            // the dock and re-filter the sidebar (docked session hides on desktop,
+            // shows as a normal card on narrow).
+            try { dockWideMQ.addEventListener('change', () => { applyDock(); paint(); }); } catch (e) {}
             document.getElementById('dock-hide').addEventListener('click', hideDock);
             document.getElementById('dock-close').addEventListener('click', () => unDock());
             const dockHeaderEl = document.getElementById('dock-header');
