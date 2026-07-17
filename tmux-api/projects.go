@@ -543,6 +543,7 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		http.Error(w, "unknown or unmapped user", http.StatusBadRequest)
 		return
 	}
+	var grant *coownOp
 	err := projectStoreInstance.update(func(ps *ProjectSet) error {
 		i := indexByID(ps, id)
 		if i < 0 {
@@ -553,6 +554,9 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		}
 		if !projectMember(ps.Projects[i], target) {
 			ps.Projects[i].Members = append(ps.Projects[i].Members, Member{OSUser: target, AddedBy: osUser})
+			if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
+				grant = &coownOp{"grant", p.Dir, []string{target}}
+			}
 		}
 		return nil
 	})
@@ -560,12 +564,16 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		projectErrStatus(w, osUser, "add member", err)
 		return
 	}
+	if grant != nil {
+		runCoownAsync(*grant)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // removeMember drops a member and their session refs from the project (any
 // member may, co-equal). If the last member leaves, the project dissolves.
 func removeMember(w http.ResponseWriter, osUser, id, target string) {
+	var revoke *coownOp
 	err := projectStoreInstance.update(func(ps *ProjectSet) error {
 		i := indexByID(ps, id)
 		if i < 0 {
@@ -573,6 +581,9 @@ func removeMember(w http.ResponseWriter, osUser, id, target string) {
 		}
 		if !projectMember(ps.Projects[i], osUser) {
 			return errNotMember
+		}
+		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" && projectMember(p, target) {
+			revoke = &coownOp{"revoke", p.Dir, []string{target}}
 		}
 		members := ps.Projects[i].Members[:0]
 		for _, m := range ps.Projects[i].Members {
@@ -596,6 +607,9 @@ func removeMember(w http.ResponseWriter, osUser, id, target string) {
 	if err != nil {
 		projectErrStatus(w, osUser, "remove member", err)
 		return
+	}
+	if revoke != nil {
+		runCoownAsync(*revoke)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -710,6 +724,8 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		}
 	}
 	var updated GlobalProject
+	var wasCoOwned bool
+	var oldDir string
 	err := projectStoreInstance.update(func(ps *ProjectSet) error {
 		i := indexByID(ps, id)
 		if i < 0 {
@@ -718,6 +734,8 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		if !projectMember(ps.Projects[i], osUser) {
 			return errNotMember
 		}
+		wasCoOwned = ps.Projects[i].CoOwned
+		oldDir = ps.Projects[i].Dir
 		if body.Name != nil {
 			ps.Projects[i].Name = strings.TrimSpace(*body.Name)
 		}
@@ -737,6 +755,10 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		projectErrStatus(w, osUser, "patch project", err)
 		return
 	}
+	// Apply/remove filesystem ACLs if co-ownership or the dir changed (async).
+	for _, op := range coownOpsForPatch(wasCoOwned, oldDir, updated.CoOwned, updated.Dir, memberUsers(updated)) {
+		runCoownAsync(op)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(updated)
 }
@@ -744,6 +766,7 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 // deleteProject removes the project (any member may, co-equal). It dissolves the
 // grouping only — sessions are tmux state and are never touched here.
 func deleteProject(w http.ResponseWriter, osUser, id string) {
+	var revoke *coownOp
 	err := projectStoreInstance.update(func(ps *ProjectSet) error {
 		i := indexByID(ps, id)
 		if i < 0 {
@@ -752,12 +775,18 @@ func deleteProject(w http.ResponseWriter, osUser, id string) {
 		if !projectMember(ps.Projects[i], osUser) {
 			return errNotMember
 		}
+		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
+			revoke = &coownOp{"revoke", p.Dir, memberUsers(p)}
+		}
 		ps.Projects = append(ps.Projects[:i], ps.Projects[i+1:]...)
 		return nil
 	})
 	if err != nil {
 		projectErrStatus(w, osUser, "delete project", err)
 		return
+	}
+	if revoke != nil {
+		runCoownAsync(*revoke)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
