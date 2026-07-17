@@ -240,6 +240,21 @@ func TestCreateProjectRejectsBadName(t *testing.T) {
 	}
 }
 
+func TestHandleUsersListsMapped(t *testing.T) {
+	me, other := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n"+other+"="+other+"\n")
+	rec := httptest.NewRecorder()
+	handleUsers(rec, projectsReq(http.MethodGet, "/users", "", me))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("users: got %d", rec.Code)
+	}
+	var users []string
+	_ = json.Unmarshal(rec.Body.Bytes(), &users)
+	if len(users) != 2 {
+		t.Fatalf("want 2 mapped users, got %+v", users)
+	}
+}
+
 func TestHandleProjectsRequiresAuth(t *testing.T) {
 	swapProjectStore(t)
 	rec := httptest.NewRecorder()
