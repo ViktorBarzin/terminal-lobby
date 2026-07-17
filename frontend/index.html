@@ -1613,6 +1613,71 @@
         }
         .pd-btn:hover { background: var(--bg-card-hover); }
         .pd-btn.pd-primary { border-color: var(--accent); color: var(--accent); }
+        .pd-btn:disabled { opacity: 0.5; cursor: default; }
+
+        /* Shared multi-user projects & sessions (2026-07-17). */
+        /* Owner badge on a foreign (shared-with-me) session card. */
+        .shared-badge {
+            display: inline-flex; align-items: center; gap: 3px;
+            margin-left: 6px; padding: 1px 6px;
+            border: 1px solid var(--border); border-radius: 999px;
+            font-size: 10px; line-height: 1.4; color: var(--text-muted);
+            white-space: nowrap; flex: 0 0 auto;
+        }
+        .shared-badge .tl-icon { flex: 0 0 auto; }
+        .shared-badge.rw { color: var(--accent); border-color: var(--accent); }
+        .session-card.foreign .session-name { font-style: italic; }
+        /* The "Shared with me" section reads as slightly set-apart. */
+        .foreign-group > .project-header .project-title { color: var(--text-muted); }
+        .foreign-group > .project-header .project-title .tl-icon { vertical-align: -2px; }
+
+        /* Project settings + session share dialogs (reuse .pd-modal chrome). */
+        .ps-modal { width: 480px; gap: 12px; }
+        .ps-section { display: flex; flex-direction: column; gap: 6px; }
+        .ps-sec-label {
+            font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-muted);
+        }
+        .ps-note { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+        .ps-warn { color: var(--danger); }
+        /* Segmented RO/RW toggle. */
+        .ps-seg { display: flex; gap: 6px; }
+        .ps-seg button {
+            flex: 1 1 0; padding: 7px 10px; cursor: pointer;
+            border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px);
+            background: var(--bg-page); color: var(--text-primary);
+            font: inherit; font-size: 12px;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .ps-seg button:hover { background: var(--bg-card-hover); }
+        .ps-seg button.active { border-color: var(--accent); color: var(--accent); background: var(--hover-tint); }
+        .ps-check { flex-direction: row; align-items: center; gap: 8px; }
+        .ps-check input { flex: 0 0 auto; width: 15px; height: 15px; accent-color: var(--accent); }
+        .ps-check label { cursor: pointer; }
+        /* Member / share rows. */
+        .ps-members { display: flex; flex-direction: column; gap: 4px; }
+        .ps-member {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            padding: 5px 8px; border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 3px); background: var(--bg-page);
+        }
+        .ps-member-name { display: inline-flex; align-items: center; gap: 4px; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ps-member-rm {
+            flex: 0 0 auto; padding: 3px 10px; cursor: pointer;
+            border: 1px solid var(--border); border-radius: 6px;
+            background: transparent; color: var(--text-primary); font: inherit; font-size: 11px;
+        }
+        .ps-member-rm:hover { background: var(--bg-card-hover); }
+        .ps-member-rm.danger { color: var(--danger); border-color: var(--danger); }
+        .ps-add { display: flex; gap: 6px; }
+        .ps-select {
+            flex: 1 1 auto; min-width: 0; padding: 6px 8px;
+            background: var(--bg-page); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px);
+            font: inherit; font-size: 12px;
+        }
+        .ps-add .pd-btn { flex: 0 0 auto; }
 
         /* Bottom-sheet presentation (Task M.5) — coarse-pointer chrome
            for the settings panel + the Task 2.5 context menu. The
@@ -2349,6 +2414,17 @@
         const WHOAMI_API   = '/api/sessions/whoami';
         const LAYOUT_API   = '/api/sessions/layout';
         const DIRS_API     = '/api/sessions/dirs';
+        // Shared multi-user projects & sessions (2026-07-17): the first-class
+        // global project store, the mapped-OS-user list (share/member pickers),
+        // and the session-share table. Same-origin under /api/sessions/, gated
+        // by the X-Authentik-Username header Traefik/ttyd already inject.
+        const PROJECTS_API = '/api/sessions/projects';
+        const USERS_API    = '/api/sessions/users';
+        const SHARES_API   = '/api/sessions/shares';
+        // A foreign/shared attach is deep-linked as `#<name>@<owner>` (owner is
+        // an OS user, same charset as a session name). Plain `#<name>` stays a
+        // own-session attach; a hash that matches neither shape attaches nothing.
+        const FOREIGN_HASH_RE = /^([a-zA-Z0-9_-]{1,32})@([a-zA-Z0-9_-]{1,32})$/;
         // Web Push (Notifications Part 2): all ride the same /api/sessions/
         // tmux-api prefix as /prefs.
         const PUSH_SUBS_API    = '/api/sessions/push-subscriptions';
@@ -2369,6 +2445,16 @@
         // (never executed) on the WS + token URLs in connect().
         const rawDir = params.getAll('arg')[2] || '';
         const validDir = (rawDir.charAt(0) === '/' && rawDir.length <= 4096) ? rawDir : '';
+        // Fourth ?arg= = the session OWNER for a SHARED/foreign attach. When it
+        // names a real OS user, tmux-attach.sh attaches THAT user's session
+        // (authorized server-side via the share table, `-r` sourced from the
+        // server) instead of the caller's own. This MUST be re-emitted on the
+        // /ws + /token URLs in connect(): ttyd's `-a` maps repeated arg params
+        // positionally to $1..$4 and the shared-attach branch reads owner from
+        // $4 — a 4th arg that dies at the iframe boundary silently breaks shared
+        // attach (memory #9926, the same trap the per-project dir hit).
+        const rawOwner = params.getAll('arg')[3] || '';
+        const validOwner = NAME_RE.test(rawOwner) ? rawOwner : '';
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
 
         // ---- inline icon set (icon fix, 2026-07-14) --------------------
@@ -2444,7 +2530,24 @@
                 ['path', { d: 'M12 8h.01' }]],
             copy: [
                 ['rect', { width: '14', height: '14', x: '8', y: '8', rx: '2', ry: '2' }],
-                ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }]]
+                ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }]],
+            eye: [
+                ['path', { d: 'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0' }],
+                ['circle', { cx: '12', cy: '12', r: '3' }]],
+            'square-pen': [
+                ['path', { d: 'M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7' }],
+                ['path', { d: 'M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z' }]],
+            users: [
+                ['path', { d: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2' }],
+                ['circle', { cx: '9', cy: '7', r: '4' }],
+                ['path', { d: 'M22 21v-2a4 4 0 0 0-3-3.87' }],
+                ['path', { d: 'M16 3.13a4 4 0 0 1 0 7.75' }]],
+            'share-2': [
+                ['circle', { cx: '18', cy: '5', r: '3' }],
+                ['circle', { cx: '6', cy: '12', r: '3' }],
+                ['circle', { cx: '18', cy: '19', r: '3' }],
+                ['line', { x1: '8.59', x2: '15.42', y1: '13.51', y2: '17.49' }],
+                ['line', { x1: '15.41', x2: '8.59', y1: '6.51', y2: '10.49' }]]
         };
         // A Lucide icon as a fresh <svg> node, px square on the 24 grid.
         // aria-hidden: the OWNING control carries the accessible name
@@ -4610,6 +4713,12 @@
             }
 
             let currentActive = null;
+            // The OS user that owns the currently-attached session when it is a
+            // FOREIGN/shared session (owner != me); null for my own sessions.
+            // Threaded to frameArgs so the iframe attaches the right server, and
+            // encoded in the hash (`name@owner`) so a reload re-attaches the
+            // shared session instead of a same-named session of my own.
+            let activeOwner = null;
             // A session is "confirmed" once a /sessions poll has actually listed
             // it. Only a confirmed-then-vanished session means it was killed
             // elsewhere (→ deactivate). A freshly-activated session that has
@@ -4794,6 +4903,10 @@
                 let ungrouped = [];
                 let ungroupedIndex = -1;
                 listEl.querySelectorAll('.project-group').forEach(group => {
+                    // The "Shared with me" section is not a layout group — never
+                    // fold its foreign cards into my layout (they're other
+                    // users' sessions).
+                    if (group.dataset.foreign === '1') return;
                     const name = group.dataset.project;
                     const members = Array.from(group.querySelectorAll('.session-card')).map(c => c.dataset.name);
                     if (name === '') {
@@ -4820,6 +4933,11 @@
 
             const COLLAPSE_KEY = 'tmux-collapsed-' + whoami.osUser;
             const UNGROUPED_COLLAPSE_ID = '__ungrouped__';
+            // Collapse key for the layout-free "Shared with me" section. Its
+            // group is excluded from layout capture by dataset.foreign, so even
+            // an (absurd) project sharing this literal name can't pollute the
+            // layout — at most it shares a per-browser collapse flag.
+            const FOREIGN_COLLAPSE_ID = '__shared_with_me__';
             function getCollapsed() {
                 try {
                     const raw = localStorage.getItem(COLLAPSE_KEY);
@@ -5468,9 +5586,26 @@
                 // opts.dir (new-shell shortcut) overrides the session's own
                 // project dir: the new session is Ungrouped but must launch in
                 // the CURRENT session's project dir. '' means home (no arg3).
-                const dir = (opts && typeof opts.dir === 'string')
-                    ? opts.dir : projectDirForSession(name);
-                if (dir) {
+                // Shared/foreign attach: opts.owner is the session's real owner
+                // (a different OS user). It MUST land at arg4 ($4, the
+                // shared-attach branch in tmux-attach.sh), so whenever we send
+                // it we ALSO emit arg2 (command) and arg3 (dir) ahead of it —
+                // 'default' as an inert placeholder when absent (a non-absolute
+                // dir falls back to $HOME and is ignored outright by the attach
+                // branch, which sources `-r` from the server). Dropping an
+                // earlier arg shifts owner out of $4 and silently breaks shared
+                // attach (memory #9926). connect() re-derives the exact same
+                // suffix after the iframe reloads. For a foreign attach the dir
+                // is meaningless, so we never derive it from MY layout.
+                const owner = (opts && opts.owner) ? opts.owner : '';
+                const dir = owner
+                    ? (opts && typeof opts.dir === 'string' ? opts.dir : '')
+                    : ((opts && typeof opts.dir === 'string') ? opts.dir : projectDirForSession(name));
+                if (owner) {
+                    u += '&arg=' + encodeURIComponent(cmd)
+                       + '&arg=' + encodeURIComponent(dir || 'default')
+                       + '&arg=' + encodeURIComponent(owner);
+                } else if (dir) {
                     u += '&arg=' + encodeURIComponent(cmd) + '&arg=' + encodeURIComponent(dir);
                 } else if (cmd !== 'default') {
                     u += '&arg=' + encodeURIComponent(cmd);
@@ -5516,6 +5651,7 @@
                     return;
                 }
                 currentActive = name;
+                activeOwner = (opts && opts.owner) ? opts.owner : null;
                 // Task MF-5: remember this device's last attached session
                 // for the hashless coarse-pointer reland (edge-back swipe).
                 try { localStorage.setItem(LAST_ACTIVE_KEY, name); } catch (e) {}
@@ -5523,8 +5659,11 @@
                 emptyEl.classList.add('hidden');
                 frameEl.classList.remove('hidden');
                 setFrameUrl(frameArgs(name, opts));
-                if (location.hash.slice(1) !== name) {
-                    history.replaceState(null, '', '#' + name);
+                // A foreign attach deep-links as `#name@owner` so a reload
+                // re-attaches the shared session (own attach stays `#name`).
+                const wantHash = activeOwner ? (name + '@' + activeOwner) : name;
+                if (location.hash.slice(1) !== wantHash) {
+                    history.replaceState(null, '', '#' + wantHash);
                 }
                 // Attaching = seeing (Task 2.4): clears the unseen-done
                 // emerald; paint() repaints the dot + title badge now
@@ -5543,6 +5682,7 @@
             function deactivateSession() {
                 if (!currentActive && frameEl.classList.contains('hidden')) return;
                 currentActive = null;
+                activeOwner = null;
                 // Task MF-5: a detach means the user chose the list (or the
                 // session died) — a later hashless boot must honor that.
                 try { localStorage.removeItem(LAST_ACTIVE_KEY); } catch (e) {}
@@ -5908,6 +6048,75 @@
                 layout.ungroupedIndex = Math.min(layout.ungroupedIndex, layout.projects.length);
                 setCollapsed(name, false);
                 saveLayout();
+                // Dissolve the first-class global project too (co-equal
+                // governance: any member may). Best-effort; never kills sessions.
+                deleteGlobalProjectByName(name);
+            }
+
+            // --- shared project + session-share store clients ----------------
+            // The per-user LAYOUT still owns sidebar grouping / ordering; these
+            // talk to the GLOBAL first-class project store and the session-share
+            // table (the multi-user half). A layout group is matched to a global
+            // project by NAME (the one-shot migration keyed them the same); on
+            // the rare name collision among the caller's visible projects we
+            // prefer the one the caller created.
+            let lastProjects = [];   // most recent GET /projects (settings + foreign)
+
+            async function fetchProjects() {
+                const resp = await fetch(PROJECTS_API, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const arr = await resp.json();
+                return Array.isArray(arr) ? arr : [];
+            }
+            async function fetchUsers() {
+                const resp = await fetch(USERS_API, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const arr = await resp.json();
+                return Array.isArray(arr) ? arr : [];
+            }
+            async function fetchShares() {
+                const resp = await fetch(SHARES_API, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const arr = await resp.json();
+                return Array.isArray(arr) ? arr : [];
+            }
+            // The access the poll assigned to a foreign (owner != me) session,
+            // for the shared-attach badge/glyph; 'ro' is the safe default.
+            function accessOfForeign(name, owner) {
+                const s = lastSessions.find(x => x.name === name && x.owner === owner);
+                return (s && s.access) || 'ro';
+            }
+            // Resolve the caller's global project by name (creator preferred on
+            // a collision). Returns the project object or null.
+            function pickGlobalProject(projects, name, me) {
+                const hits = projects.filter(p => p.name === name);
+                if (!hits.length) return null;
+                return hits.find(p => p.createdBy === me) || hits[0];
+            }
+            // Best-effort create of the first-class global project mirroring a
+            // new layout group, so it can gain members / be shared. Sidebar
+            // grouping is layout-driven and works with or without this.
+            async function createGlobalProject(name, dir) {
+                try {
+                    const body = { name };
+                    if (dir) body.dir = dir;
+                    const resp = await fetch(PROJECTS_API, {
+                        method: 'POST', credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    if (!resp.ok) console.warn('create global project', name, resp.status);
+                } catch (e) { console.warn('create global project', name, e); }
+            }
+            async function deleteGlobalProjectByName(name) {
+                try {
+                    const g = pickGlobalProject(await fetchProjects(), name, whoami.osUser);
+                    if (!g) return;
+                    const resp = await fetch(PROJECTS_API + '/' + encodeURIComponent(g.id), {
+                        method: 'DELETE', credentials: 'same-origin'
+                    });
+                    if (!resp.ok) console.warn('delete global project', name, resp.status);
+                } catch (e) { console.warn('delete global project', name, e); }
             }
 
             // --- project create / set-directory modal -------------------------
@@ -6081,6 +6290,9 @@
                     if (selectedDir) p.dir = selectedDir;
                     layout.projects.push(p);
                     saveLayout();
+                    // Also mint the first-class global project (POST /projects)
+                    // so it can later gain members / sharing via Project settings.
+                    createGlobalProject(name, selectedDir);
                     close();
                 });
 
@@ -6101,6 +6313,411 @@
                         renderList();
                     })
                     .catch(() => { hint.textContent = 'Could not scan directories — type an absolute path.'; });
+            }
+
+            // --- project settings dialog (first-class multi-user project) ----
+            // Replaces the old separate "Rename project" + "Set directory…": one
+            // dialog over the GLOBAL project store — Name + Directory (PATCH),
+            // Members (POST/DELETE over the /users picker), a blanket attach-mode
+            // toggle for OTHER members' sessions, and a co-ownership flag. The
+            // per-user layout still owns sidebar grouping, so Name/Dir are
+            // mirrored back into the layout on save. Members are applied live;
+            // Name/Dir/attachMode/coOwned are batched into one PATCH on Save.
+            async function openProjectSettings(projectName) {
+                const me = whoami.osUser;
+                const layoutP0 = layout.projects.find(p => p.name === projectName);
+                let g = null;
+                try {
+                    g = pickGlobalProject(await fetchProjects(), projectName, me);
+                    if (!g) {
+                        // No global counterpart yet (project predates this build,
+                        // or the store was reset) — mint one mirroring the layout
+                        // group so the dialog is fully functional.
+                        await createGlobalProject(projectName, layoutP0 && layoutP0.dir);
+                        g = pickGlobalProject(await fetchProjects(), projectName, me);
+                    }
+                } catch (e) {
+                    showToast('Could not load project settings: ' + e.message, 'error', 4000);
+                    return;
+                }
+                if (!g) { showToast('Could not load project “' + projectName + '”', 'error', 4000); return; }
+                let users = [];
+                try { users = await fetchUsers(); } catch (e) { /* picker just shows nobody */ }
+
+                let selectedDir = g.dir || (layoutP0 && layoutP0.dir) || '';
+                let attachMode = (g.attachMode === 'rw') ? 'rw' : 'ro';
+                let coOwned = !!g.coOwned;
+
+                const backdrop = document.createElement('div');
+                backdrop.className = 'pd-backdrop';
+                const modal = document.createElement('div');
+                modal.className = 'pd-modal ps-modal';
+                backdrop.appendChild(modal);
+
+                const title = document.createElement('div');
+                title.className = 'pd-title';
+                title.textContent = 'Project settings — “' + projectName + '”';
+                modal.appendChild(title);
+
+                // Name
+                const nrow = document.createElement('div');
+                nrow.className = 'pd-field';
+                const nlab = document.createElement('label'); nlab.textContent = 'Name';
+                const nameInput = document.createElement('input');
+                nameInput.type = 'text'; nameInput.maxLength = 32; nameInput.autocomplete = 'off';
+                nameInput.value = g.name || projectName;
+                nrow.appendChild(nlab); nrow.appendChild(nameInput);
+                modal.appendChild(nrow);
+
+                // Directory — the existing fuzzy /dirs picker + typed absolute path.
+                const dsec = document.createElement('div'); dsec.className = 'ps-section';
+                const selRow = document.createElement('div'); selRow.className = 'pd-selected';
+                function renderSelected() {
+                    selRow.replaceChildren(document.createTextNode('Directory: '));
+                    const b = document.createElement('b');
+                    b.textContent = selectedDir || '(home — no directory)';
+                    selRow.appendChild(b);
+                }
+                renderSelected();
+                const search = document.createElement('input');
+                search.type = 'text'; search.className = 'pd-search';
+                search.placeholder = 'search ~ or type an absolute path'; search.autocomplete = 'off';
+                const dlist = document.createElement('div'); dlist.className = 'pd-list';
+                function renderDirList() {
+                    const q = search.value.trim();
+                    dlist.replaceChildren();
+                    const rows = [{ label: '(home — no directory)', dir: '' }];
+                    if (q.startsWith('/')) rows.push({ label: 'Use path: ' + q, dir: q });
+                    if (dirCache && dirCache.dirs) {
+                        const scored = [];
+                        for (const d of dirCache.dirs) { const sc = fuzzyScore(q, d); if (sc >= 0) scored.push([sc, d]); }
+                        scored.sort((a, b) => b[0] - a[0] || a[1].length - b[1].length);
+                        for (const pair of scored.slice(0, 100)) rows.push({ label: pair[1], dir: pair[1] });
+                    }
+                    for (const r of rows) {
+                        const b = document.createElement('button');
+                        b.type = 'button';
+                        b.className = 'pd-row' + (r.dir === selectedDir ? ' active' : '');
+                        b.textContent = r.label; b.title = r.dir || '';
+                        b.addEventListener('click', () => { selectedDir = r.dir; renderSelected(); renderDirList(); search.focus(); });
+                        dlist.appendChild(b);
+                    }
+                }
+                search.addEventListener('input', renderDirList);
+                dsec.appendChild(selRow); dsec.appendChild(search); dsec.appendChild(dlist);
+                modal.appendChild(dsec);
+                renderDirList();
+                fetch(DIRS_API, { credentials: 'same-origin' })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => { if (d) { dirCache = d; renderDirList(); } }).catch(() => {});
+
+                // Blanket attach mode for OTHER members' sessions in this project.
+                const asec = document.createElement('div'); asec.className = 'ps-section';
+                const alab = document.createElement('div'); alab.className = 'ps-sec-label';
+                alab.textContent = 'When I attach another member’s session here';
+                asec.appendChild(alab);
+                const seg = document.createElement('div'); seg.className = 'ps-seg';
+                const roBtn = document.createElement('button'); roBtn.type = 'button'; roBtn.textContent = 'Read-only (watch)';
+                const rwBtn = document.createElement('button'); rwBtn.type = 'button'; rwBtn.textContent = 'Read-write (drive)';
+                function renderSeg() {
+                    roBtn.classList.toggle('active', attachMode === 'ro');
+                    rwBtn.classList.toggle('active', attachMode === 'rw');
+                }
+                roBtn.addEventListener('click', () => { attachMode = 'ro'; renderSeg(); });
+                rwBtn.addEventListener('click', () => {
+                    if (attachMode === 'rw') return;
+                    if (!confirm('Read-write means attaching a member’s session opens a FULL SHELL as that member — you run commands as them. Use this only among trusted users. Continue?')) return;
+                    attachMode = 'rw'; renderSeg();
+                });
+                seg.appendChild(roBtn); seg.appendChild(rwBtn);
+                asec.appendChild(seg);
+                modal.appendChild(asec);
+                renderSeg();
+
+                // Co-ownership of the directory.
+                const csec = document.createElement('div'); csec.className = 'ps-section ps-check';
+                const cbox = document.createElement('input'); cbox.type = 'checkbox'; cbox.checked = coOwned;
+                cbox.id = 'ps-coown-' + g.id;
+                const clab = document.createElement('label'); clab.htmlFor = cbox.id;
+                clab.textContent = 'Co-own the directory with members';
+                csec.appendChild(cbox); csec.appendChild(clab);
+                modal.appendChild(csec);
+                const cnote = document.createElement('div'); cnote.className = 'ps-note';
+                cnote.textContent = 'Grants members read/write to the project directory (filesystem ACLs).';
+                modal.appendChild(cnote);
+                cbox.addEventListener('change', () => {
+                    if (cbox.checked && !coOwned) {
+                        if (!confirm('Co-ownership grants every member read/write access to “' + (selectedDir || 'the project directory') + '” on the filesystem. Continue?')) { cbox.checked = false; return; }
+                    }
+                    coOwned = cbox.checked;
+                });
+
+                // Members — live add/remove over the global store.
+                const msec = document.createElement('div'); msec.className = 'ps-section';
+                const mlab = document.createElement('div'); mlab.className = 'ps-sec-label'; mlab.textContent = 'Members';
+                msec.appendChild(mlab);
+                const mlist = document.createElement('div'); mlist.className = 'ps-members';
+                msec.appendChild(mlist);
+                const addRow = document.createElement('div'); addRow.className = 'ps-add';
+                const addSel = document.createElement('select'); addSel.className = 'ps-select';
+                const addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'pd-btn'; addBtn.textContent = 'Add';
+                addRow.appendChild(addSel); addRow.appendChild(addBtn);
+                msec.appendChild(addRow);
+                modal.appendChild(msec);
+
+                function renderMembers() {
+                    mlist.replaceChildren();
+                    for (const m of (g.members || [])) {
+                        const row = document.createElement('div'); row.className = 'ps-member';
+                        const who = document.createElement('span'); who.className = 'ps-member-name';
+                        who.textContent = m.osUser + (m.osUser === me ? ' (you)' : '');
+                        row.appendChild(who);
+                        const rm = document.createElement('button'); rm.type = 'button'; rm.className = 'ps-member-rm';
+                        rm.textContent = m.osUser === me ? 'Leave' : 'Remove';
+                        if (m.osUser === me) rm.classList.add('danger');
+                        rm.addEventListener('click', () => (m.osUser === me ? leaveThis() : removeMemberLive(m.osUser)));
+                        row.appendChild(rm);
+                        mlist.appendChild(row);
+                    }
+                    const memberSet = new Set((g.members || []).map(m => m.osUser));
+                    const candidates = users.filter(u => !memberSet.has(u));
+                    addSel.replaceChildren();
+                    if (!candidates.length) {
+                        const opt = document.createElement('option'); opt.textContent = 'No more users'; opt.disabled = true;
+                        addSel.appendChild(opt); addSel.disabled = true; addBtn.disabled = true;
+                    } else {
+                        addSel.disabled = false; addBtn.disabled = false;
+                        for (const u of candidates) { const opt = document.createElement('option'); opt.value = u; opt.textContent = u; addSel.appendChild(opt); }
+                    }
+                }
+                async function refreshProject() {
+                    // Re-pick by stable id (name may be mid-edit in the box).
+                    try { const fresh = (await fetchProjects()).find(p => p.id === g.id); if (fresh) g = fresh; } catch (e) {}
+                    renderMembers();
+                }
+                async function addMemberLive() {
+                    const u = addSel.value;
+                    if (!u) return;
+                    try {
+                        const resp = await fetch(PROJECTS_API + '/' + encodeURIComponent(g.id) + '/members', {
+                            method: 'POST', credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ osUser: u })
+                        });
+                        if (resp.ok) { showToast('Added ' + u, 'success'); await refreshProject(); }
+                        else showToast('Add failed: HTTP ' + resp.status, 'error');
+                    } catch (e) { showToast('Add error: ' + e.message, 'error'); }
+                }
+                async function removeMemberLive(u) {
+                    try {
+                        const resp = await fetch(PROJECTS_API + '/' + encodeURIComponent(g.id) + '/members/' + encodeURIComponent(u), {
+                            method: 'DELETE', credentials: 'same-origin' });
+                        if (resp.ok) { showToast('Removed ' + u, 'success'); await refreshProject(); renderLobby(); }
+                        else showToast('Remove failed: HTTP ' + resp.status, 'error');
+                    } catch (e) { showToast('Remove error: ' + e.message, 'error'); }
+                }
+                async function leaveThis() {
+                    if (!confirm('Leave project “' + projectName + '”? It stays for the other members; your own sessions fall back to Ungrouped in your sidebar.')) return;
+                    try {
+                        const resp = await fetch(PROJECTS_API + '/' + encodeURIComponent(g.id) + '/members/' + encodeURIComponent(me), {
+                            method: 'DELETE', credentials: 'same-origin' });
+                        if (!resp.ok) { showToast('Leave failed: HTTP ' + resp.status, 'error'); return; }
+                    } catch (e) { showToast('Leave error: ' + e.message, 'error'); return; }
+                    const lp = layout.projects.find(p => p.name === projectName);
+                    if (lp) {
+                        layout.ungrouped.push(...lp.sessions);
+                        layout.projects = layout.projects.filter(x => x !== lp);
+                        layout.ungroupedIndex = Math.min(layout.ungroupedIndex, layout.projects.length);
+                        setCollapsed(projectName, false);
+                        saveLayout();
+                    }
+                    showToast('Left ' + projectName, 'success');
+                    close(); renderLobby();
+                }
+                addBtn.addEventListener('click', addMemberLive);
+                renderMembers();
+
+                // Footer
+                const footer = document.createElement('div'); footer.className = 'pd-footer';
+                const cancelBtn = document.createElement('button'); cancelBtn.type = 'button'; cancelBtn.className = 'pd-btn'; cancelBtn.textContent = 'Close';
+                const saveBtn = document.createElement('button'); saveBtn.type = 'button'; saveBtn.className = 'pd-btn pd-primary'; saveBtn.textContent = 'Save';
+                footer.appendChild(cancelBtn); footer.appendChild(saveBtn);
+                modal.appendChild(footer);
+
+                function close() {
+                    backdrop.remove(); document.removeEventListener('keydown', onKey); requestTerminalFocus();
+                }
+                function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+                cancelBtn.addEventListener('click', close);
+                backdrop.addEventListener('pointerdown', (e) => { if (e.target === backdrop) close(); });
+                document.addEventListener('keydown', onKey);
+
+                saveBtn.addEventListener('click', async () => {
+                    const newName = (nameInput.value || '').trim();
+                    if (!NAME_RE.test(newName)) { showToast('Project name must match ^[a-zA-Z0-9_-]{1,32}$', 'error', 4000); return; }
+                    if (selectedDir && !selectedDir.startsWith('/')) { showToast('Directory must be an absolute path', 'error', 4000); return; }
+                    if (newName !== projectName && layout.projects.some(p => p.name === newName)) {
+                        showToast('Project “' + newName + '” already exists', 'error', 4000); return;
+                    }
+                    saveBtn.disabled = true;
+                    try {
+                        const resp = await fetch(PROJECTS_API + '/' + encodeURIComponent(g.id), {
+                            method: 'PATCH', credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: newName, dir: selectedDir, attachMode, coOwned })
+                        });
+                        if (!resp.ok) { showToast('Save failed: HTTP ' + resp.status, 'error'); saveBtn.disabled = false; return; }
+                    } catch (e) { showToast('Save error: ' + e.message, 'error'); saveBtn.disabled = false; return; }
+                    // Mirror Name/Dir into the per-user layout (grouping source).
+                    const lp = layout.projects.find(p => p.name === projectName);
+                    if (lp) {
+                        if (newName !== projectName) {
+                            const wasCollapsed = getCollapsed()[projectName];
+                            lp.name = newName;
+                            setCollapsed(projectName, false);
+                            if (wasCollapsed) setCollapsed(newName, true);
+                        }
+                        if (selectedDir) lp.dir = selectedDir; else delete lp.dir;
+                        saveLayout();
+                    }
+                    showToast('Saved', 'success');
+                    close(); renderLobby();
+                });
+
+                document.body.appendChild(backdrop);
+                nameInput.focus();
+            }
+
+            // --- session share dialog (RO watch / RW full-shell-as-me) --------
+            // Shares one of MY sessions with other mapped users. Wording is
+            // deliberately honest: RO = they watch my terminal (and, per the
+            // tmux server-scope caveat, can see ALL my sessions); RW = a FULL
+            // SHELL as me. RW is behind a second confirm. Current shares of this
+            // session are listed with an Unshare (owner-side revoke).
+            async function openShareDialog(sessionName) {
+                const me = whoami.osUser;
+                let users = [], shares = [];
+                try {
+                    [users, shares] = await Promise.all([fetchUsers(), fetchShares()]);
+                } catch (e) {
+                    showToast('Could not load sharing: ' + e.message, 'error', 4000); return;
+                }
+                let mine = shares.filter(sh => sh.owner === me && sh.name === sessionName);
+
+                const backdrop = document.createElement('div'); backdrop.className = 'pd-backdrop';
+                const modal = document.createElement('div'); modal.className = 'pd-modal ps-modal';
+                backdrop.appendChild(modal);
+
+                const title = document.createElement('div'); title.className = 'pd-title';
+                title.textContent = 'Share session — “' + sessionName + '”';
+                modal.appendChild(title);
+
+                const warn = document.createElement('div'); warn.className = 'ps-note ps-warn';
+                warn.textContent = 'A guest attaches your whole tmux server, so they can see ALL your sessions — not only this one.';
+                modal.appendChild(warn);
+
+                const shSec = document.createElement('div'); shSec.className = 'ps-section';
+                const shLab = document.createElement('div'); shLab.className = 'ps-sec-label'; shLab.textContent = 'Shared with';
+                shSec.appendChild(shLab);
+                const clist = document.createElement('div'); clist.className = 'ps-members';
+                shSec.appendChild(clist);
+                modal.appendChild(shSec);
+
+                function renderShares() {
+                    clist.replaceChildren();
+                    if (!mine.length) {
+                        const none = document.createElement('div'); none.className = 'ps-note';
+                        none.textContent = 'Not shared with anyone yet.';
+                        clist.appendChild(none); return;
+                    }
+                    for (const sh of mine) {
+                        const row = document.createElement('div'); row.className = 'ps-member';
+                        const who = document.createElement('span'); who.className = 'ps-member-name';
+                        who.replaceChildren(iconNode(sh.mode === 'rw' ? 'square-pen' : 'eye', 13));
+                        who.appendChild(document.createTextNode(' ' + sh.guest + ' · '
+                            + (sh.mode === 'rw' ? 'read-write (full shell as me)' : 'read-only (watch)')));
+                        row.appendChild(who);
+                        const rm = document.createElement('button'); rm.type = 'button'; rm.className = 'ps-member-rm danger'; rm.textContent = 'Unshare';
+                        rm.addEventListener('click', () => unshare(sh.guest));
+                        row.appendChild(rm);
+                        clist.appendChild(row);
+                    }
+                }
+
+                const asec = document.createElement('div'); asec.className = 'ps-section';
+                const alab = document.createElement('div'); alab.className = 'ps-sec-label'; alab.textContent = 'Add a person';
+                asec.appendChild(alab);
+                const addRow = document.createElement('div'); addRow.className = 'ps-add';
+                const sel = document.createElement('select'); sel.className = 'ps-select';
+                const modeSel = document.createElement('select'); modeSel.className = 'ps-select';
+                for (const [v, t] of [['ro', 'Read-only (watch)'], ['rw', 'Read-write (drive as me)']]) {
+                    const o = document.createElement('option'); o.value = v; o.textContent = t; modeSel.appendChild(o);
+                }
+                const addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'pd-btn pd-primary'; addBtn.textContent = 'Share';
+                addRow.appendChild(sel); addRow.appendChild(modeSel); addRow.appendChild(addBtn);
+                asec.appendChild(addRow);
+                const modeNote = document.createElement('div'); modeNote.className = 'ps-note';
+                asec.appendChild(modeNote);
+                modal.appendChild(asec);
+
+                function renderCandidates() {
+                    const sharedSet = new Set(mine.map(sh => sh.guest));
+                    sel.replaceChildren();
+                    const candidates = users.filter(u => u !== me && !sharedSet.has(u));
+                    if (!candidates.length) {
+                        const o = document.createElement('option'); o.textContent = 'No one left to share with'; o.disabled = true; sel.appendChild(o);
+                        sel.disabled = true; modeSel.disabled = true; addBtn.disabled = true;
+                    } else {
+                        sel.disabled = false; modeSel.disabled = false; addBtn.disabled = false;
+                        for (const u of candidates) { const o = document.createElement('option'); o.value = u; o.textContent = u; sel.appendChild(o); }
+                    }
+                }
+                function renderModeNote() {
+                    modeNote.textContent = modeSel.value === 'rw'
+                        ? 'Read-write = a full shell as you: they can run any command as your user, across all your sessions.'
+                        : 'Read-only = they watch your terminal live (and can see all your sessions).';
+                }
+                modeSel.addEventListener('change', renderModeNote);
+
+                async function refreshShares() {
+                    try { mine = (await fetchShares()).filter(sh => sh.owner === me && sh.name === sessionName); } catch (e) {}
+                    renderShares(); renderCandidates();
+                }
+                async function addShare() {
+                    const guest = sel.value, mode = modeSel.value;
+                    if (!guest) return;
+                    if (mode === 'rw' && !confirm('Read-write gives ' + guest + ' a FULL SHELL as you — they can run any command as your user, across all your sessions. Share read-write?')) return;
+                    try {
+                        const resp = await fetch(SHARES_API, {
+                            method: 'POST', credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: sessionName, guest, mode })
+                        });
+                        if (resp.ok) { showToast('Shared with ' + guest, 'success'); await refreshShares(); renderLobby(); }
+                        else showToast('Share failed: HTTP ' + resp.status, 'error');
+                    } catch (e) { showToast('Share error: ' + e.message, 'error'); }
+                }
+                async function unshare(guest) {
+                    try {
+                        const resp = await fetch(SHARES_API + '/' + encodeURIComponent(me)
+                            + '/' + encodeURIComponent(sessionName) + '/' + encodeURIComponent(guest),
+                            { method: 'DELETE', credentials: 'same-origin' });
+                        if (resp.ok) { showToast('Unshared ' + guest, 'success'); await refreshShares(); renderLobby(); }
+                        else showToast('Unshare failed: HTTP ' + resp.status, 'error');
+                    } catch (e) { showToast('Unshare error: ' + e.message, 'error'); }
+                }
+                addBtn.addEventListener('click', addShare);
+
+                const footer = document.createElement('div'); footer.className = 'pd-footer';
+                const closeBtn = document.createElement('button'); closeBtn.type = 'button'; closeBtn.className = 'pd-btn'; closeBtn.textContent = 'Done';
+                footer.appendChild(closeBtn); modal.appendChild(footer);
+                function close() { backdrop.remove(); document.removeEventListener('keydown', onKey); requestTerminalFocus(); }
+                function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+                closeBtn.addEventListener('click', close);
+                backdrop.addEventListener('pointerdown', (e) => { if (e.target === backdrop) close(); });
+                document.addEventListener('keydown', onKey);
+
+                renderShares(); renderCandidates(); renderModeNote();
+                document.body.appendChild(backdrop);
             }
 
             // Move a group one visual slot up/down — the touch-friendly
@@ -6156,6 +6773,41 @@
                 return items;
             }
 
+            // --- foreign (shared-with-me) sessions ----------------------------
+            // A session whose owner is not me: surfaced via a shared project or
+            // a direct session share (owner/access come from GET /sessions).
+            function isForeignSession(s) {
+                return !!(s && s.owner && whoami && s.owner !== whoami.osUser);
+            }
+            // The ⋯ / context menu for a foreign card: attach-only. A direct
+            // share (no project annotation) can be Left; a project-sourced one
+            // is governed by project membership (Leave the project in settings).
+            function foreignMenuItems(s) {
+                if (s.project) {
+                    return [{ labelHeading: 'Shared by ' + s.owner + ' · via ' + s.project }];
+                }
+                return [
+                    { labelHeading: 'Shared by ' + s.owner },
+                    { label: 'Leave (stop watching)', danger: true, onClick: () => leaveShare(s) }
+                ];
+            }
+            async function leaveShare(s) {
+                if (!confirm('Leave ' + s.owner + '’s shared session “' + s.name + '”? '
+                        + 'It disappears from your sidebar; ' + s.owner + ' can re-share it later.')) return;
+                try {
+                    const resp = await fetch(SHARES_API + '/' + encodeURIComponent(s.owner)
+                        + '/' + encodeURIComponent(s.name) + '/' + encodeURIComponent(whoami.osUser),
+                        { method: 'DELETE', credentials: 'same-origin' });
+                    if (resp.ok) {
+                        showToast('Left ' + s.name, 'success');
+                        if (currentActive === s.name && activeOwner === s.owner) deactivateSession();
+                        renderLobby();
+                    } else {
+                        showToast('Leave failed: HTTP ' + resp.status, 'error');
+                    }
+                } catch (err) { showToast('Leave error: ' + err.message, 'error'); }
+            }
+
             // --- rendering -----------------------------------------------------
 
             function stateDot(state, extraClass) {
@@ -6202,11 +6854,17 @@
                 const card = document.createElement('div');
                 card.className = 'session-card';
                 card.dataset.name = s.name;
+                // Foreign = shared with me (owner != me): attach-only, badged,
+                // and NOT part of my layout — so never draggable (a drag would
+                // capture it into one of my layout groups) and matched to the
+                // active card by owner+name, not by name alone.
+                const foreign = isForeignSession(s);
+                if (foreign) { card.classList.add('foreign'); card.dataset.owner = s.owner; }
                 card.setAttribute('role', 'button');
                 card.setAttribute('tabindex', '0');
-                card.setAttribute('aria-label', 'Activate session ' + s.name);
-                card.draggable = !isCoarsePointer;   // Task M.4 (see isCoarsePointer above)
-                if (s.name === currentActive) card.classList.add('active');
+                card.setAttribute('aria-label', (foreign ? 'Attach shared session ' : 'Activate session ') + s.name);
+                card.draggable = !isCoarsePointer && !foreign;   // Task M.4 (see isCoarsePointer above)
+                if (s.name === currentActive && (foreign ? s.owner === activeOwner : !activeOwner)) card.classList.add('active');
 
                 // Left: the state dot (in a fixed-width slot so names align
                 // even when a session has no Claude state) + the name.
@@ -6218,6 +6876,21 @@
                 name.className = 'session-name';
                 name.textContent = s.name;
                 titleRow.appendChild(name);
+                if (foreign) {
+                    // Owner badge + a glyph honest about the grant: an eye for
+                    // read-only (watch), a pen for read-write (drive as them).
+                    const badge = document.createElement('span');
+                    badge.className = 'shared-badge' + (s.access === 'rw' ? ' rw' : '');
+                    badge.appendChild(iconNode(s.access === 'rw' ? 'square-pen' : 'eye', 12));
+                    const bt = document.createElement('span');
+                    bt.textContent = s.owner;
+                    badge.appendChild(bt);
+                    badge.title = 'Shared by ' + s.owner + ' — '
+                        + (s.access === 'rw'
+                            ? 'read-write: you drive their terminal as them'
+                            : 'read-only: you watch their terminal');
+                    titleRow.appendChild(badge);
+                }
                 card.appendChild(titleRow);
 
                 // Right edge: a time on every row (2026-07-16). Running -> the
@@ -6258,9 +6931,10 @@
                     menuBtn.draggable = false;
                     menuBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        openMenu(menuBtn, [
+                        openMenu(menuBtn, foreign ? foreignMenuItems(s) : [
                             ...moveMenuItems(s.name),
                             { labelHeading: 'Session' },
+                            { label: 'Share…', onClick: () => openShareDialog(s.name) },
                             { label: 'Rename', onClick: () => renameSession(s.name) },
                             { label: 'Kill', danger: true, onClick: () => killSession(s.name) }
                         ]);
@@ -6269,6 +6943,10 @@
                     card.appendChild(actions);
                 }
 
+                // Attach — a foreign session threads its owner (arg4) through
+                // frameArgs/connect so it attaches the owner's server, not mine.
+                const attachThis = () => activateSession(s.name,
+                    foreign ? { owner: s.owner, access: s.access } : undefined);
                 card.addEventListener('click', (e) => {
                     // detail > 1 = second click of a double-click — the
                     // inline-rename path owns it (Task 2.5 guard).
@@ -6277,18 +6955,19 @@
                     // a consistent kill target for the Backspace/Delete shortcut,
                     // whether you click the name or the status. Rename now lives on
                     // double-click the title, the ⋯ menu, and (mobile) long-press.
-                    activateSession(s.name);
+                    attachThis();
                 });
                 card.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        activateSession(s.name);
+                        attachThis();
                     }
                 });
                 // Double-click the TITLE → inline rename (Task 2.5).
                 // Guards per plan: nested buttons/inputs keep their own
                 // double-click, held modifiers mean something else.
                 card.addEventListener('dblclick', (e) => {
+                    if (foreign) return;   // can't rename a session you don't own
                     if (!e.target.closest('.session-title-row')) return;
                     if (e.target.closest('button, input')) return;
                     if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
@@ -6306,9 +6985,10 @@
                     ctxMenuOpen++;
                     let picked = null;
                     try {
-                        picked = await showContextMenu(x, y, [
+                        picked = await showContextMenu(x, y, foreign ? foreignMenuItems(s) : [
                             ...moveMenuItems(s.name),
                             { labelHeading: 'Session' },
+                            { label: 'Share…', onClick: () => openShareDialog(s.name) },
                             { label: 'Rename', keepFocus: true,
                               onClick: () => startInlineRename(s.name) },
                             { label: 'Kill', danger: true, onClick: () => killSession(s.name) }
@@ -6454,8 +7134,7 @@
                     ];
                     if (!isUngrouped) {
                         items.push(
-                            { label: 'Rename project', onClick: () => renameProject(projectName) },
-                            { label: 'Set directory…', onClick: () => openProjectModal({ mode: 'edit-dir', projectName }) },
+                            { label: 'Project settings…', onClick: () => openProjectSettings(projectName) },
                             { label: 'Delete project', danger: true, onClick: () => deleteProject(projectName) }
                         );
                     }
@@ -6546,6 +7225,64 @@
                 return group;
             }
 
+            // The "Shared with me" section: sessions other users shared with me
+            // (owner != me). A collapsible section like a project, but layout-
+            // free — no add-button, no drag/reorder, no project actions — and
+            // flagged (dataset.foreign) so a card drag never captures it into my
+            // layout. Cards render exactly like own ones but carry the owner
+            // badge + attach-only menu (see renderCard's `foreign` branch).
+            function renderForeignGroup(sessions) {
+                const collapsed = !!getCollapsed()[FOREIGN_COLLAPSE_ID];
+                const group = document.createElement('div');
+                group.className = 'project-group foreign-group' + (collapsed ? ' collapsed' : '');
+                group.dataset.project = FOREIGN_COLLAPSE_ID;
+                group.dataset.foreign = '1';
+
+                const header = document.createElement('div');
+                header.className = 'project-header';
+                header.setAttribute('role', 'button');
+                header.setAttribute('tabindex', '0');
+                header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                header.setAttribute('aria-label', (collapsed ? 'Expand ' : 'Collapse ') + 'sessions shared with me');
+
+                const chev = document.createElement('span');
+                chev.className = 'chev';
+                chev.replaceChildren(iconNode('chevron-down', 14));
+                header.appendChild(chev);
+
+                const title = document.createElement('span');
+                title.className = 'project-title';
+                title.replaceChildren(iconNode('share-2', 13));
+                title.appendChild(document.createTextNode(' Shared with me'));
+                header.appendChild(title);
+
+                const badges = document.createElement('span');
+                badges.className = 'project-badges';
+                const count = document.createElement('span');
+                count.textContent = String(sessions.length);
+                badges.appendChild(count);
+                header.appendChild(badges);
+
+                function toggleCollapse() {
+                    setCollapsed(FOREIGN_COLLAPSE_ID, !getCollapsed()[FOREIGN_COLLAPSE_ID]);
+                    paint();
+                }
+                header.addEventListener('click', toggleCollapse);
+                header.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCollapse(); }
+                });
+                group.appendChild(header);
+
+                const body = document.createElement('div');
+                body.className = 'project-sessions';
+                // Owner-major, then name, so a multi-owner list stays readable.
+                const ordered = sessions.slice().sort((a, b) =>
+                    (a.owner || '').localeCompare(b.owner || '') || a.name.localeCompare(b.name));
+                for (const s of ordered) body.appendChild(renderCard(s));
+                group.appendChild(body);
+                return group;
+            }
+
             // paint renders the sidebar from lastSessions + layout. Pure view —
             // no fetching — so layout mutations repaint instantly.
             function paint() {
@@ -6557,7 +7294,16 @@
                 // a long session list. Save now, restore after the re-append.
                 const savedScroll = sidebarScrollEl ? sidebarScrollEl.scrollTop : 0;
                 clearChildren(listEl);
-                const liveByName = new Map(lastSessions.map(s => [s.name, s]));
+                // Split my own sessions (which the per-user layout groups) from
+                // FOREIGN ones shared with me (owner != me). The whole
+                // layout-driven grouping below runs on my OWN sessions only, so
+                // it is byte-for-byte the existing behavior and a foreign session
+                // can never collide by name with one of mine. Foreign sessions
+                // render in their own "Shared with me" section (below).
+                const me = whoami && whoami.osUser;
+                const ownSessions = lastSessions.filter(s => !s.owner || s.owner === me);
+                const foreignSessions = lastSessions.filter(s => s.owner && s.owner !== me);
+                const liveByName = new Map(ownSessions.map(s => [s.name, s]));
                 // The docked scratch shell is not a thread — keep it out of the
                 // sidebar list while the dock is showing it (desktop). On mobile
                 // (no dock) it falls through as a normal session, never lost.
@@ -6573,7 +7319,7 @@
                 // sequence (ungroupedIndex) and is skipped while empty.
                 const ungrouped = layout.ungrouped
                     .map(n => liveByName.get(n)).filter(Boolean)
-                    .concat(lastSessions.filter(s => !referenced.has(s.name) && s.name !== hiddenDock));
+                    .concat(ownSessions.filter(s => !referenced.has(s.name) && s.name !== hiddenDock));
                 for (const g of groupSeq()) {
                     if (g === UNGROUPED_COLLAPSE_ID) {
                         if (ungrouped.length) listEl.appendChild(renderGroup('', ungrouped));
@@ -6582,7 +7328,10 @@
                     const members = g.sessions.map(n => liveByName.get(n)).filter(Boolean);
                     listEl.appendChild(renderGroup(g.name, members));
                 }
-                if (!ungrouped.length && !layout.projects.length) {
+                // Sessions other users shared with me — a dedicated, layout-free
+                // section (attach-only cards, owner-badged). Rendered last.
+                if (foreignSessions.length) listEl.appendChild(renderForeignGroup(foreignSessions));
+                if (!ungrouped.length && !layout.projects.length && !foreignSessions.length) {
                     listEl.appendChild(emptyState('No sessions yet.'));
                 }
                 updateTitle();
@@ -6813,8 +7562,14 @@
 
             window.addEventListener('hashchange', () => {
                 const hash = location.hash.slice(1);
-                if (hash && NAME_RE.test(hash)) {
-                    if (hash !== currentActive) activateSession(hash);
+                const fm = hash.match(FOREIGN_HASH_RE);
+                if (fm) {
+                    const hn = fm[1], ho = fm[2];
+                    if (hn !== currentActive || ho !== activeOwner) {
+                        activateSession(hn, { owner: ho, access: accessOfForeign(hn, ho) });
+                    }
+                } else if (hash && NAME_RE.test(hash)) {
+                    if (hash !== currentActive || activeOwner) activateSession(hash);
                 } else if (currentActive) {
                     deactivateSession();
                 }
@@ -8526,7 +9281,14 @@
                 }
             };
             const initialHash = location.hash.slice(1);
-            if (initialHash && NAME_RE.test(initialHash)) {
+            const initialForeign = initialHash.match(FOREIGN_HASH_RE);
+            if (initialForeign) {
+                // `#name@owner` deep link → re-attach the shared session (access
+                // filled from the poll once it lands; ro is a safe default).
+                activateSession(initialForeign[1],
+                    { owner: initialForeign[2], access: accessOfForeign(initialForeign[1], initialForeign[2]) });
+                readAndClearPendingSession();
+            } else if (initialHash && NAME_RE.test(initialHash)) {
                 activateSession(initialHash);
                 readAndClearPendingSession(); // consume any stash so a later plain launch won't jump
             } else if (!initialHash && isCoarsePointer && getPrefs().session.reopenLast) {
@@ -9870,7 +10632,9 @@
             telHadSelection = has;
         });
 
-        document.title = 'tmux: ' + whoami.osUser + '/' + validArg;
+        document.title = validOwner
+            ? 'tmux: ' + validOwner + '/' + validArg + ' (shared)'
+            : 'tmux: ' + whoami.osUser + '/' + validArg;
 
         // ------------------------------------------------------------------
         // Mobile / touch UI — soft keyboard, modifier toolbar, resize plumbing
@@ -12553,6 +13317,10 @@
             location.assign('/?arg=' + encodeURIComponent(name));
         }
         async function killCurrentSession() {
+            // A shared/foreign attach targets another user's server — killing or
+            // renaming their session isn't ours to do (and a DELETE here would
+            // hit MY own server, not theirs). Refuse.
+            if (validOwner) { showToast('This is ' + validOwner + '’s shared session — you can’t kill it', 'error', 4000); return; }
             if (!confirm('Kill tmux session "' + validArg + '"? Any running processes inside it will be terminated.')) return;
             try {
                 const resp = await fetch(SESSIONS_API + '/' + encodeURIComponent(validArg), {
@@ -12565,6 +13333,7 @@
             }
         }
         async function renameCurrentSession() {
+            if (validOwner) { showToast('This is ' + validOwner + '’s shared session — you can’t rename it', 'error', 4000); return; }
             const input = prompt('Rename "' + validArg + '" to:', validArg);
             if (input === null) return;
             const newName = input.trim();
@@ -12610,15 +13379,23 @@
             current: () => validArg,
             attach: gotoSession,
             refocus: () => requestTerminalFocus(),
-            actions: () => [
-                { label: 'New session', run: promptNewSession },
-                { label: 'Rename current session', hint: validArg, run: renameCurrentSession },
-                { label: 'Open image gallery', hint: validArg, run: () => openGallery() },
-                { label: 'Paste into terminal', hint: validArg,
-                  run: () => document.getElementById('paste-btn').click() },
-                { label: 'Kill current session', hint: validArg, danger: true,
-                  run: killCurrentSession }
-            ]
+            actions: () => {
+                // Foreign/shared attach: drop the destructive own-session
+                // actions (rename/kill act on the owner's server, not mine).
+                const acts = [{ label: 'New session', run: promptNewSession }];
+                if (!validOwner) {
+                    acts.push({ label: 'Rename current session', hint: validArg, run: renameCurrentSession });
+                }
+                acts.push(
+                    { label: 'Open image gallery', hint: validArg, run: () => openGallery() },
+                    { label: 'Paste into terminal', hint: validArg,
+                      run: () => document.getElementById('paste-btn').click() });
+                if (!validOwner) {
+                    acts.push({ label: 'Kill current session', hint: validArg, danger: true,
+                        run: killCurrentSession });
+                }
+                return acts;
+            }
         });
         function runAppCommand(cmd) {
             if (cmd === 'gallery.open') { openGallery(); return; }
@@ -12858,11 +13635,21 @@
             }
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             let argSuffix = '?arg=' + encodeURIComponent(validArg);
-            // Keep a project dir pinned to arg3: when we have one, always emit a
-            // command at arg2 ('default' if none) so ttyd's positional -a
-            // forwarding lands the dir on $3. Without a dir, the historic shape
-            // (arg2 only when there's a command). Shared by /ws and /token below.
-            if (validDir) {
+            // Pin a project dir to arg3 and a shared-session owner to arg4: when
+            // either is present, emit every earlier position ('default' as an
+            // inert placeholder when empty) so ttyd's positional `-a` forwarding
+            // lands each value on the right $N. A shared/foreign attach
+            // (validOwner) MUST reach $4 with arg1+arg2+arg3 ahead of it — drop
+            // one and owner slides into the dir/cmd slot and the attach silently
+            // falls back to my own server (memory #9926). Both /ws and /token
+            // below reuse this suffix, so both carry arg4=owner. Without a dir
+            // and without an owner, keep the historic shape (arg2 only when a
+            // command is set).
+            if (validOwner) {
+                argSuffix += '&arg=' + encodeURIComponent(validCmdKey || 'default');
+                argSuffix += '&arg=' + encodeURIComponent(validDir || 'default');
+                argSuffix += '&arg=' + encodeURIComponent(validOwner);
+            } else if (validDir) {
                 argSuffix += '&arg=' + encodeURIComponent(validCmdKey || 'default');
                 argSuffix += '&arg=' + encodeURIComponent(validDir);
             } else if (validCmdKey) {
