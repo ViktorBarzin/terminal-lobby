@@ -469,6 +469,48 @@ func TestHandleProjectsRejectsOtherMethods(t *testing.T) {
 	}
 }
 
+func TestProjectNameOf(t *testing.T) {
+	ps := ProjectSet{Version: 1, Projects: []GlobalProject{
+		{ID: "p1", Name: "tripit", Members: []Member{{OSUser: "wizard"}}, Sessions: []SessionRef{{Owner: "wizard", Name: "s1"}}},
+	}}
+	if got := projectNameOf(ps, "wizard", "s1"); got != "tripit" {
+		t.Fatalf("member session: got %q", got)
+	}
+	if got := projectNameOf(ps, "wizard", "nope"); got != "" {
+		t.Fatalf("ungrouped: got %q", got)
+	}
+	if got := projectNameOf(ps, "bob", "s1"); got != "" {
+		t.Fatalf("wrong owner same name: got %q", got)
+	}
+}
+
+// The caller sees foreign sessions via projects they belong to (blanket mode)
+// and via direct shares; own sessions, non-member projects, and shares to others
+// are excluded; rw beats ro when both apply.
+func TestForeignRefsFor(t *testing.T) {
+	ps := ProjectSet{Version: 1, Projects: []GlobalProject{
+		{ID: "p1", Name: "shared", AttachMode: "rw",
+			Members:  []Member{{OSUser: "wizard"}, {OSUser: "bob"}},
+			Sessions: []SessionRef{{Owner: "wizard", Name: "mine"}, {Owner: "bob", Name: "theirs"}}},
+		{ID: "p2", Name: "secret", AttachMode: "rw",
+			Members:  []Member{{OSUser: "bob"}},
+			Sessions: []SessionRef{{Owner: "bob", Name: "hidden"}}},
+	}}
+	ss := ShareSet{Version: 1, Shares: []Share{
+		{Owner: "carol", Name: "direct", Guest: "wizard", Mode: "ro"},
+		{Owner: "bob", Name: "theirs", Guest: "wizard", Mode: "ro"},   // also project(rw) -> rw wins
+		{Owner: "bob", Name: "other", Guest: "carol", Mode: "rw"}, // not for caller
+	}}
+	got := foreignRefsFor("wizard", ps, ss)
+	want := []visibleRef{
+		{Owner: "carol", Name: "direct", Access: "ro", Project: ""},
+		{Owner: "bob", Name: "theirs", Access: "rw", Project: "shared"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("foreign refs:\n got %+v\nwant %+v", got, want)
+	}
+}
+
 // One-shot bootstrap: with no global store yet, migrateAllLayouts imports every
 // mapped user's per-user layout as single-member projects; run again it is a
 // no-op (does not double-import).
