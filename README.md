@@ -77,7 +77,9 @@ to send these keys to the terminal instead — the opt-out persists). Chords
 are user-overridable via the `tl:keybindings:v1` localStorage key.
 
 **Hold `Alt`** for ~100 ms to reveal numbered chips on the first ten
-sidebar cards, then press the digit to jump:
+sidebar cards, then press the digit to jump (on macOS the UI shows `Alt`
+as `Option` — the labels in the help overlay, tooltip and hint follow the
+viewer's platform):
 
 | Chord | Action |
 |---|---|
@@ -88,8 +90,10 @@ sidebar cards, then press the digit to jump:
 | `Alt+Shift+S` | Toggle the sidebar (fullscreen terminal ⇄ lobby) |
 | `Alt+Shift+N` | New session (focus the name box) |
 | `Alt+Shift+W` / `Alt+Shift+R` | Kill / rename the current session |
+| `Alt+Shift+Backspace` | Kill the **attached** session — from anywhere, even mid-type (always on) |
 | `Ctrl+Shift+K` | Command palette (fuzzy session + action search) |
 | `Ctrl+J` / `Cmd+J` | Toggle a docked scratch shell (always on) |
+| `/` or `?` / `Alt+/` | Show this shortcuts help (`Alt+/` works in a session too) |
 
 Sessions past the tenth aren't digit-jumpable — cycle with
 `Alt+Shift+[` / `]` or search with the palette. The chords work while
@@ -97,6 +101,21 @@ focus is inside the terminal too (the iframe forwards them up to the
 lobby). **Alt**, not Cmd/Ctrl: the browser reserves `Cmd/Ctrl+digit` for
 tab-switching and a page in a normal tab can't override them, whereas
 `Alt+digit` is capturable everywhere.
+
+`/` (or `?`) opens the shortcuts help from the lobby — it's a plain key,
+so it only fires when the lobby chrome has focus (never while you're
+typing in the terminal, where `/` belongs to the shell). Inside a session,
+use **`Alt+/`** (`Option+/` on Mac) — a modifier chord, so it opens the
+help from anywhere — or the `Ctrl+Shift+K` palette → **Keyboard shortcuts**.
+
+**Backspace** / **Delete** kill the selected session straight from the
+sidebar — select a session card (click it, or Tab/arrow to it) and press
+Backspace or Delete (a confirm guards it). Like `/`, these are plain keys, so
+they only fire when the sidebar has focus, never while you're typing in a
+terminal. From inside a session — where those keys belong to the shell — use
+`Alt+Shift+Backspace` (in the table above), which kills the attached session
+from anywhere. Rename a session by **double-clicking** its name (single click
+just selects), or from the card's `⋯` menu.
 
 ## Session image gallery
 
