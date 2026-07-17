@@ -349,6 +349,115 @@ func TestDeleteProject(t *testing.T) {
 	}
 }
 
+// A member can add another mapped user; adding an unmapped user is 400; a
+// non-member cannot add anyone.
+func TestAddMember(t *testing.T) {
+	swapProjectStore(t)
+	me, other := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n"+other+"="+other+"\n")
+	p := createProjectVia(t, me, `{"name":"tripit"}`)
+
+	rec := httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPost, "/projects/"+p.ID+"/members", `{"osUser":"`+other+`"}`, me))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("add member: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// other now sees the project
+	rec = httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodGet, "/projects", "", other))
+	var theirs []GlobalProject
+	_ = json.Unmarshal(rec.Body.Bytes(), &theirs)
+	if len(theirs) != 1 {
+		t.Fatalf("added member should see the project, got %+v", theirs)
+	}
+	// adding an unmapped user → 400
+	rec = httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPost, "/projects/"+p.ID+"/members", `{"osUser":"ghost"}`, me))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("add unmapped: got %d, want 400", rec.Code)
+	}
+}
+
+// Removing a member drops their session refs; removing the last member
+// dissolves the project.
+func TestRemoveMemberAndLastMemberDissolves(t *testing.T) {
+	swapProjectStore(t)
+	me, other := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n"+other+"="+other+"\n")
+	p := createProjectVia(t, me, `{"name":"tripit"}`)
+	// add other + one of their sessions
+	rec := httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPost, "/projects/"+p.ID+"/members", `{"osUser":"`+other+`"}`, me))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("add member: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPost, "/projects/"+p.ID+"/sessions", `{"owner":"`+other+`","name":"work"}`, other))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("other adds own session: %d body=%s", rec.Code, rec.Body.String())
+	}
+	// other leaves → their session ref dropped, project still exists (me remains)
+	rec = httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodDelete, "/projects/"+p.ID+"/members/"+other, "", other))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("leave: %d", rec.Code)
+	}
+	set, _ := projectStoreInstance.load()
+	if len(set.Projects) != 1 || len(set.Projects[0].Members) != 1 || len(set.Projects[0].Sessions) != 0 {
+		t.Fatalf("after leave: %+v", set.Projects)
+	}
+	// me leaves too → last member gone → project dissolves
+	rec = httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodDelete, "/projects/"+p.ID+"/members/"+me, "", me))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("last leave: %d", rec.Code)
+	}
+	set, _ = projectStoreInstance.load()
+	if len(set.Projects) != 0 {
+		t.Fatalf("last member leaving should dissolve the project, got %+v", set.Projects)
+	}
+}
+
+// A member assigns their OWN session; a session already in another project is
+// 409; assigning someone else's session is refused.
+func TestAssignSession(t *testing.T) {
+	swapProjectStore(t)
+	me, other := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n"+other+"="+other+"\n")
+	p := createProjectVia(t, me, `{"name":"tripit"}`)
+
+	rec := httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPost, "/projects/"+p.ID+"/sessions", `{"owner":"`+me+`","name":"s1"}`, me))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("assign own session: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	// assigning someone else's session → 403
+	rec = httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPost, "/projects/"+p.ID+"/sessions", `{"owner":"`+other+`","name":"s2"}`, me))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("assign other's session: got %d, want 403", rec.Code)
+	}
+	// same session into a second project → 409
+	p2 := createProjectVia(t, me, `{"name":"other"}`)
+	rec = httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodPost, "/projects/"+p2.ID+"/sessions", `{"owner":"`+me+`","name":"s1"}`, me))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("session in two projects: got %d, want 409", rec.Code)
+	}
+	// remove it from p1
+	rec = httptest.NewRecorder()
+	handleProjectByID(rec, projectsReq(http.MethodDelete, "/projects/"+p.ID+"/sessions/"+me+"/s1", "", me))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("remove session: %d", rec.Code)
+	}
+	set, _ := projectStoreInstance.load()
+	for _, pr := range set.Projects {
+		if pr.ID == p.ID && len(pr.Sessions) != 0 {
+			t.Fatalf("session not removed: %+v", pr.Sessions)
+		}
+	}
+}
+
 func TestHandleProjectsRejectsOtherMethods(t *testing.T) {
 	swapProjectStore(t)
 	me, _ := twoLocalUsers(t)
