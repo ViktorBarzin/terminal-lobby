@@ -1,6 +1,19 @@
 # Shared multi-user projects & sessions — terminal-lobby
 
-**Status:** Design — verified via adversarial pass (2 blind challengers) · **Repo:** terminal-lobby · **Owner:** Viktor (wizard) · **Date:** 2026-07-17 · **Flow:** grill-with-docs
+**Status:** Executing — backend + devvm **shipped & live-tested on the devvm**; frontend UI in progress · **Repo:** terminal-lobby · **Owner:** Viktor (wizard) · **Date:** 2026-07-17 · **Flow:** grill-with-docs
+
+## Execution status (2026-07-17, live)
+
+Built test-first in dependency order and **deployed to the devvm**; the security-critical mechanism is **verified live** (not just unit-tested — per the 2026-07-16 "verify the real attach" lesson):
+
+- ✅ **Global project store + migration** — existing per-user layouts imported as single-member projects on first start (verified: both wizard's and bob's projects present; `/projects` correctly shows only the caller's memberships).
+- ✅ **Project API** — create / list / edit (name·dir·attach-mode) / delete / members / session-assignment, co-equal governance, 403/404/409 gates.
+- ✅ **Session sharing** — share store + `/shares` (create/list/revoke); `/internal/attach` returns the mode **200** / denies **403** / rejects no-token, and records the client tty; revoke removes the row then kicks. Verified live via forged requests.
+- ✅ **Attach-as-owner** (`tmux-attach.sh`) — 4th `owner` arg → server-authorized attach with server-sourced `-r`; exact-argv invariant; `/etc/tmux.conf` never binds `switch-client -r`.
+- ✅ **Filesystem co-ownership** — root `tmux-user-setfacl` wrapper (canonical-dir-under-home + real-users + inode-cap guardrails, all refusals verified); `acl` installed via deploy. Verified live: toggling co-ownership grants `bob` `rwX` (+ default inheritance) on a project dir and revokes it cleanly; `bob` could read/write during the grant.
+- 🔄 **Frontend** (`index.html`) — settings dialog, Share… UI, foreign-session badges + owner-arg threading — in progress.
+
+Then: land the frontend, redeploy, and live-test the UI end-to-end (real browser: share a session, attach it read-only/read-write, revoke-kicks).
 
 Expand the terminal-lobby "project" from a per-user sidebar label into a **first-class, multi-owner, shareable workspace**, and let users **share sessions** with each other — read-only (watch) or read-write (drive) — across the box's per-OS-user isolation boundary. Delivered as one drop, built in dependency order (P1→P4).
 
