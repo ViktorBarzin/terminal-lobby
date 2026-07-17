@@ -1,6 +1,13 @@
 # /etc/tmux.conf — system-wide tmux defaults for the terminal-lobby devvm.
 # Installed by scripts/deploy.sh from devvm/tmux.conf.system.
 #
+# SECURITY INVARIANT (session sharing): NEVER bind a key to `switch-client -r`
+# (or `switch-client -T` into a table that can reach a write command). A guest
+# attached to a shared session with `tmux attach -r` is read-only ONLY because
+# no such binding exists — `switch-client -r` toggles read-only OFF, which would
+# let a read-only guest become read-write (code-exec as the session owner). This
+# system config is the feature-owned floor; keep it clean.
+#
 # Provenance (Task 1.14 truecolor audit, 2026-07-11): ttyd attaches tmux
 # clients with TERM=xterm-256color, which terminfo does not mark RGB-capable,
 # so tmux down-converted 24-bit SGR to the 256-colour cube (a 77-colour test
