@@ -4987,6 +4987,39 @@
                 try { return localStorage.getItem(NOTIFY_KEY) === '1'; }
                 catch (e) { return false; }
             }
+            // IndexedDB stash for the iOS killed-PWA notification handoff. iOS
+            // cold-launches a KILLED PWA at start_url with no hash and does not
+            // fire notificationclick, so the SW cannot route the tap; sw.js's
+            // push handler saved the notified session (db 'tl-notif', store
+            // 'pending', key 'last', value { session, ts }) and boot reads it
+            // here. read-and-CONSUME (one-shot delete) so a later plain launch
+            // never replays it. Best-effort: any failure resolves null and boot
+            // silently falls back to the MF-5 last-active reland.
+            // 2 min: wide enough for a realistic tap→cold-launch, tight enough
+            // that a plain icon launch rarely falls inside a stale stash window
+            // (the stash records push RECEIPT, not the tap — no tap signal
+            // survives an iOS cold launch, so this window is the only guard).
+            const PENDING_NOTIF_TTL_MS = 120 * 1000;
+            function readAndClearPendingSession() {
+                return new Promise((resolve) => {
+                    let req;
+                    try { req = indexedDB.open('tl-notif', 1); } catch (e) { resolve(null); return; }
+                    req.onupgradeneeded = () => { try { req.result.createObjectStore('pending'); } catch (e) {} };
+                    req.onerror = () => resolve(null);
+                    req.onsuccess = () => {
+                        const db = req.result;
+                        try {
+                            const tx = db.transaction('pending', 'readwrite');
+                            const getReq = tx.objectStore('pending').get('last');
+                            getReq.onsuccess = () => { try { tx.objectStore('pending').delete('last'); } catch (e) {} };
+                            tx.oncomplete = () => { try { db.close(); } catch (e) {} resolve(getReq.result || null); };
+                            tx.onerror = () => { try { db.close(); } catch (e) {} resolve(null); };
+                            tx.onabort = () => { try { db.close(); } catch (e) {} resolve(null); }; // abort can fire without error
+
+                        } catch (e) { try { db.close(); } catch (e2) {} resolve(null); }
+                    };
+                });
+            }
             // Item 4: register the push service worker. Failure must NEVER
             // break boot — /sw.js 404s until the infra asset carve-out
             // lands (fine and silent) and some browsers lack SWs entirely.
@@ -5000,6 +5033,34 @@
                 navigator.serviceWorker.register('/sw.js')
                     .then(reg => { swRegistration = reg; })
                     .catch(() => { /* unsupported, or route not live yet */ });
+                // Page half of the notification-tap handoff. sw.js focuses this
+                // window and postMessages the notified session here; a SW->page
+                // message lands on navigator.serviceWorker, NOT window, so the
+                // window 'message' handlers (iframe/attention messaging) never
+                // see it — hence its own listener. Fixes the resident-PWA
+                // "focus-without-switch" bug: a warm mobile PWA almost always
+                // has an open window, so sw.js's old focus()+return foregrounded
+                // the app on the last-shown session and never switched.
+                // activateSession switches via the hash router in place, so the
+                // live terminal iframe + WebSocket survive.
+                navigator.serviceWorker.addEventListener('message', (e) => {
+                    const d = e.data;
+                    if (!d || d.type !== 'tl-activate-session') return;
+                    // Validate the name like the sibling tl-* handlers before
+                    // handing it on (activateSession re-checks it too). sw.js
+                    // never posts for a session-less /push/test tap, so this
+                    // guard is defense-in-depth against a malformed name.
+                    if (typeof d.session !== 'string' || !NAME_RE.test(d.session)) return;
+                    // No currentActive guard on purpose: passing an already-active
+                    // session through lets activateSession's already-active branch
+                    // flip the mobile list view forward to the terminal (what a
+                    // tap for the current session must do); it self-guards the
+                    // equal case, so there is no reload.
+                    activateSession(d.session);
+                    // Warm tap handled — consume any stash sw.js wrote for this
+                    // push so a later plain (icon) launch won't replay it.
+                    readAndClearPendingSession();
+                });
             }
             // A usable Notification CONSTRUCTOR is the desktop fallback.
             // The probe (new Notification('')) is the task-specified
@@ -8042,25 +8103,28 @@
             renderLobby();
             setInterval(renderLobby, 5000);
 
-            const initialHash = location.hash.slice(1);
-            if (initialHash && NAME_RE.test(initialHash)) {
-                activateSession(initialHash);
-            } else if (!initialHash && isCoarsePointer && getPrefs().session.reopenLast) {
+            // Boot landing — which session (if any) to attach on load. Precedence:
+            //   1. an explicit #session hash (warm openWindow / deep link);
+            //   2. a FRESH notification-tap target the SW stashed in IndexedDB —
+            //      the iOS killed-PWA path (cold-launch at start_url drops the
+            //      hash and fires no notificationclick, so this is the only way
+            //      the tapped session reaches a freshly-booted page);
+            //   3. the MF-5 last-active reland (edge-back-swipe / cold relaunch).
+            const relandLastActive = () => {
                 // Task MF-5 (complaint 1: "side swipe opens all sessions").
-                // The iOS edge-back-swipe traverses to the pre-app
-                // (Authentik) history entry, which redirects back to '/'
-                // WITHOUT the #session hash — so the lobby booted onto the
-                // full list. The gesture itself can't be removed; fix the
-                // LANDING: reattach the session this device last had open
-                // (also fixes cold PWA relaunch at start_url '/').
+                // The iOS edge-back-swipe traverses to the pre-app (Authentik)
+                // history entry, which redirects back to '/' WITHOUT the #session
+                // hash — so the lobby booted onto the full list. The gesture
+                // itself can't be removed; fix the LANDING: reattach the session
+                // this device last had open (also fixes cold PWA relaunch at '/').
                 // BOOT-ONLY by design — never wired to hashchange: the
-                // hashchange→deactivateSession path stays the explicit
-                // in-app detach, and deactivateSession clears the marker,
-                // so a user who chose the list keeps the list. Reattach
-                // rides activateSession's existing history.replaceState —
-                // history stays flat. REJECTED (audit): a pushState
-                // sentinel to absorb the swipe — it would re-arm the very
-                // gesture the M.3 flat-history work disarmed.
+                // hashchange→deactivateSession path stays the explicit in-app
+                // detach, and deactivateSession clears the marker, so a user who
+                // chose the list keeps the list. Reattach rides activateSession's
+                // existing history.replaceState — history stays flat. REJECTED
+                // (audit): a pushState sentinel to absorb the swipe — it would
+                // re-arm the very gesture the M.3 flat-history work disarmed.
+                // (The caller gates on isCoarsePointer && reopenLast.)
                 let last = null;
                 try { last = localStorage.getItem(LAST_ACTIVE_KEY); } catch (e) {}
                 if (last && NAME_RE.test(last)) {
@@ -8074,6 +8138,36 @@
                         })
                         .catch(() => {});
                 }
+            };
+            const initialHash = location.hash.slice(1);
+            if (initialHash && NAME_RE.test(initialHash)) {
+                activateSession(initialHash);
+                readAndClearPendingSession(); // consume any stash so a later plain launch won't jump
+            } else if (!initialHash && isCoarsePointer && getPrefs().session.reopenLast) {
+                // No hash + auto-reland enabled on a touch device — the SAME gate
+                // as the original MF-5 reland. The killed-PWA stash is iOS-only
+                // (desktop/Android notification cold-launches keep their hash via
+                // openWindow and take branch 1), so gating here also stops the
+                // stash from ever auto-attaching on desktop or when the user
+                // opted out of reopen-last. Prefer a FRESH stashed tap target,
+                // else the MF-5 last-active reland; the read consumes the stash
+                // (one-shot). (A present-but-invalid hash takes neither, as before.)
+                readAndClearPendingSession().then(rec => {
+                    if (currentActive) return; // a card tap won the race
+                    const fresh = rec && typeof rec.session === 'string' && NAME_RE.test(rec.session) &&
+                                  typeof rec.ts === 'number' && (Date.now() - rec.ts) < PENDING_NOTIF_TTL_MS;
+                    if (!fresh) { relandLastActive(); return; }
+                    // Attach the notified session only if it still exists; a dead
+                    // session falls back to the reland.
+                    fetch(SESSIONS_API, { credentials: 'same-origin' })
+                        .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+                        .then(list => {
+                            if (currentActive) return;
+                            if (list.some(s => s.name === rec.session)) activateSession(rec.session);
+                            else relandLastActive();
+                        })
+                        .catch(() => relandLastActive());
+                });
             }
             return;
         }
