@@ -69,6 +69,35 @@ summary, so hooks it is). Claudes started before the hooks were
 installed show no dot until their next restart/resume; worst-case
 display lag is ~10 s (5 s API cache + 5 s poll).
 
+## Keyboard shortcuts
+
+Switch sessions and drive the lobby without the mouse. The shortcut layer
+is **on by default** (per-browser; uncheck **App shortcuts** in ⚙ Settings
+to send these keys to the terminal instead — the opt-out persists). Chords
+are user-overridable via the `tl:keybindings:v1` localStorage key.
+
+**Hold `Alt`** for ~100 ms to reveal numbered chips on the first ten
+sidebar cards, then press the digit to jump:
+
+| Chord | Action |
+|---|---|
+| `Alt+1` … `Alt+9` | Attach the 1st–9th session (sidebar order) |
+| `Alt+0` | Attach the 10th session |
+| `Alt+Shift+[` / `Alt+Shift+]` | Cycle to the previous / next session |
+| `Alt+Shift+Enter` | Jump to the next session **awaiting input** (amber dot) |
+| `Alt+Shift+S` | Toggle the sidebar (fullscreen terminal ⇄ lobby) |
+| `Alt+Shift+N` | New session (focus the name box) |
+| `Alt+Shift+W` / `Alt+Shift+R` | Kill / rename the current session |
+| `Ctrl+Shift+K` | Command palette (fuzzy session + action search) |
+| `Ctrl+J` / `Cmd+J` | Toggle a docked scratch shell (always on) |
+
+Sessions past the tenth aren't digit-jumpable — cycle with
+`Alt+Shift+[` / `]` or search with the palette. The chords work while
+focus is inside the terminal too (the iframe forwards them up to the
+lobby). **Alt**, not Cmd/Ctrl: the browser reserves `Cmd/Ctrl+digit` for
+tab-switching and a page in a normal tab can't override them, whereas
+`Alt+digit` is capturable everywhere.
+
 ## Session image gallery
 
 Every image pasted, uploaded, or drag-dropped into a session, and
