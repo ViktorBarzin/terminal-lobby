@@ -337,6 +337,7 @@ func createProject(w http.ResponseWriter, r *http.Request, osUser string) {
 var (
 	errProjectNotFound = errors.New("project not found")
 	errNotMember       = errors.New("not a project member")
+	errSessionTaken    = errors.New("session already assigned to a project")
 )
 
 func indexByID(ps *ProjectSet, id string) int {
@@ -387,7 +388,202 @@ func handleProjectByID(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	http.Error(w, "not found", http.StatusNotFound)
+	switch parts[1] {
+	case "members":
+		handleProjectMembers(w, r, osUser, id, parts[2:])
+	case "sessions":
+		handleProjectSessions(w, r, osUser, id, parts[2:])
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+// handleProjectMembers: POST /projects/{id}/members adds; DELETE
+// /projects/{id}/members/{osUser} removes (leave or, co-equally, remove another).
+func handleProjectMembers(w http.ResponseWriter, r *http.Request, osUser, id string, rest []string) {
+	switch {
+	case len(rest) == 0 && r.Method == http.MethodPost:
+		addMember(w, r, osUser, id)
+	case len(rest) == 1 && r.Method == http.MethodDelete:
+		removeMember(w, osUser, id, rest[0])
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+// handleProjectSessions: POST /projects/{id}/sessions assigns; DELETE
+// /projects/{id}/sessions/{owner}/{name} unassigns.
+func handleProjectSessions(w http.ResponseWriter, r *http.Request, osUser, id string, rest []string) {
+	switch {
+	case len(rest) == 0 && r.Method == http.MethodPost:
+		addSession(w, r, osUser, id)
+	case len(rest) == 2 && r.Method == http.MethodDelete:
+		removeSession(w, osUser, id, rest[0], rest[1])
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+// isMappedOSUser reports whether osUser is a valid terminal account (a target
+// in the Authentik→OS-user map) — the population that may be added to projects.
+func isMappedOSUser(osUser string) bool {
+	for _, u := range loadUserMap() {
+		if u == osUser {
+			return true
+		}
+	}
+	return false
+}
+
+// addMember adds a mapped user to the project (caller must be a member).
+// Idempotent: adding an existing member is a no-op.
+func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
+	var body struct {
+		OSUser string `json:"osUser"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLayoutBody)).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	target := strings.TrimSpace(body.OSUser)
+	if !sessionNameRe.MatchString(target) || !isMappedOSUser(target) {
+		http.Error(w, "unknown or unmapped user", http.StatusBadRequest)
+		return
+	}
+	err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		i := indexByID(ps, id)
+		if i < 0 {
+			return errProjectNotFound
+		}
+		if !projectMember(ps.Projects[i], osUser) {
+			return errNotMember
+		}
+		if !projectMember(ps.Projects[i], target) {
+			ps.Projects[i].Members = append(ps.Projects[i].Members, Member{OSUser: target, AddedBy: osUser})
+		}
+		return nil
+	})
+	if err != nil {
+		projectErrStatus(w, osUser, "add member", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeMember drops a member and their session refs from the project (any
+// member may, co-equal). If the last member leaves, the project dissolves.
+func removeMember(w http.ResponseWriter, osUser, id, target string) {
+	err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		i := indexByID(ps, id)
+		if i < 0 {
+			return errProjectNotFound
+		}
+		if !projectMember(ps.Projects[i], osUser) {
+			return errNotMember
+		}
+		members := ps.Projects[i].Members[:0]
+		for _, m := range ps.Projects[i].Members {
+			if m.OSUser != target {
+				members = append(members, m)
+			}
+		}
+		ps.Projects[i].Members = members
+		sessions := ps.Projects[i].Sessions[:0]
+		for _, s := range ps.Projects[i].Sessions {
+			if s.Owner != target {
+				sessions = append(sessions, s)
+			}
+		}
+		ps.Projects[i].Sessions = sessions
+		if len(ps.Projects[i].Members) == 0 {
+			ps.Projects = append(ps.Projects[:i], ps.Projects[i+1:]...)
+		}
+		return nil
+	})
+	if err != nil {
+		projectErrStatus(w, osUser, "remove member", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// addSession assigns the caller's OWN session to the project. A session may
+// belong to at most one project (409 otherwise).
+func addSession(w http.ResponseWriter, r *http.Request, osUser, id string) {
+	var body struct {
+		Owner string `json:"owner"`
+		Name  string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLayoutBody)).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	owner := strings.TrimSpace(body.Owner)
+	name := strings.TrimSpace(body.Name)
+	if owner != osUser {
+		http.Error(w, "you can only assign your own sessions", http.StatusForbidden)
+		return
+	}
+	if !sessionNameRe.MatchString(owner) || !sessionNameRe.MatchString(name) {
+		http.Error(w, "invalid session ref", http.StatusBadRequest)
+		return
+	}
+	ref := SessionRef{Owner: owner, Name: name}
+	err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		i := indexByID(ps, id)
+		if i < 0 {
+			return errProjectNotFound
+		}
+		if !projectMember(ps.Projects[i], osUser) {
+			return errNotMember
+		}
+		for pi := range ps.Projects {
+			for _, s := range ps.Projects[pi].Sessions {
+				if s == ref {
+					return errSessionTaken
+				}
+			}
+		}
+		ps.Projects[i].Sessions = append(ps.Projects[i].Sessions, ref)
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, errSessionTaken) {
+			http.Error(w, "session already assigned to a project", http.StatusConflict)
+			return
+		}
+		projectErrStatus(w, osUser, "assign session", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeSession unassigns a session (any member may). It never kills the tmux
+// session — only the grouping.
+func removeSession(w http.ResponseWriter, osUser, id, owner, name string) {
+	ref := SessionRef{Owner: owner, Name: name}
+	err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		i := indexByID(ps, id)
+		if i < 0 {
+			return errProjectNotFound
+		}
+		if !projectMember(ps.Projects[i], osUser) {
+			return errNotMember
+		}
+		out := ps.Projects[i].Sessions[:0]
+		for _, s := range ps.Projects[i].Sessions {
+			if s != ref {
+				out = append(out, s)
+			}
+		}
+		ps.Projects[i].Sessions = out
+		return nil
+	})
+	if err != nil {
+		projectErrStatus(w, osUser, "unassign session", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // patchProject updates the provided fields (PATCH semantics: only fields present
