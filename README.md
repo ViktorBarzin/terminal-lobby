@@ -90,6 +90,7 @@ sidebar cards, then press the digit to jump:
 | `Alt+Shift+W` / `Alt+Shift+R` | Kill / rename the current session |
 | `Ctrl+Shift+K` | Command palette (fuzzy session + action search) |
 | `Ctrl+J` / `Cmd+J` | Toggle a docked scratch shell (always on) |
+| `/` or `?` | Show this shortcuts help (also under `Ctrl+Shift+K`) |
 
 Sessions past the tenth aren't digit-jumpable — cycle with
 `Alt+Shift+[` / `]` or search with the palette. The chords work while
@@ -97,6 +98,11 @@ focus is inside the terminal too (the iframe forwards them up to the
 lobby). **Alt**, not Cmd/Ctrl: the browser reserves `Cmd/Ctrl+digit` for
 tab-switching and a page in a normal tab can't override them, whereas
 `Alt+digit` is capturable everywhere.
+
+`/` (or `?`) opens the shortcuts help from the lobby — it's a plain key,
+so it only fires when the lobby chrome has focus (never while you're
+typing in the terminal, where `/` belongs to the shell). From inside a
+session, open it via the `Ctrl+Shift+K` palette → **Keyboard shortcuts**.
 
 ## Session image gallery
 

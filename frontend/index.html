@@ -1721,6 +1721,45 @@
             font-size: 11px; color: var(--text-muted);
         }
 
+        /* Keyboard-shortcuts help overlay (opened with / or ? in the lobby,
+           or the "Keyboard shortcuts" command-palette action). Reuses the
+           .cmd-palette-backdrop shade. */
+        .sc-help {
+            position: fixed; z-index: 10001;
+            top: 10vh; left: 50%; transform: translateX(-50%);
+            width: min(520px, calc(100vw - 32px));
+            max-height: 76vh; display: flex; flex-direction: column;
+            background: var(--bg-card);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), var(--surface-shadow);
+            font-family: var(--font-ui); font-size: 13px;
+            color: var(--text-primary); overflow: hidden;
+        }
+        .sc-help h2 {
+            margin: 0; padding: 12px 16px; font-size: 14px; font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+        .sc-help .sc-scroll { overflow-y: auto; padding: 4px 6px 8px; }
+        .sc-help .sc-group-label {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--text-muted); padding: 10px 10px 4px;
+        }
+        .sc-help .sc-row {
+            display: flex; align-items: baseline; gap: 12px; padding: 5px 10px;
+        }
+        .sc-help .sc-keys { flex: 0 0 auto; display: flex; gap: 4px; flex-wrap: wrap; }
+        .sc-help .sc-desc { margin-left: auto; text-align: right; color: var(--text-muted); }
+        .sc-help kbd {
+            font-family: var(--font-mono); font-size: 11px;
+            padding: 1px 6px; border-radius: 5px;
+            background: var(--hover-tint); border: 1px solid var(--border);
+            color: var(--text-primary); white-space: nowrap;
+        }
+        .sc-help .sc-note {
+            padding: 8px 16px; color: var(--text-muted); font-size: 12px;
+            border-top: 1px solid var(--border);
+        }
+
         /* Alt-held session-jump badges (Task 4.1): numbered chips on the
            first ten sidebar cards while Alt is held ≥100 ms and the
            keybinding layer is enabled — they label the Alt+1..9/0 targets.
@@ -7795,6 +7834,101 @@
                 return Array.from(listEl.querySelectorAll('.session-card'))
                     .map(c => c.dataset.name).filter(Boolean);
             }
+            // ---- Keyboard-shortcuts help overlay --------------------------
+            // Opened by bare '/' or '?' while the lobby chrome has focus, and
+            // by the "Keyboard shortcuts" command-palette action (which also
+            // works from inside the terminal). Terminal keydowns land in the
+            // iframe — a separate document — and never reach this window, so
+            // '/' still reaches the pty untouched while the terminal is
+            // focused. NOTE: keep this list in sync with KB_DEFAULT_BINDINGS.
+            let scHelpEl = null;
+            function hideShortcutsHelp() {
+                if (scHelpEl) { scHelpEl.remove(); scHelpEl = null; }
+            }
+            function showShortcutsHelp() {
+                if (scHelpEl) return;
+                const dock = tlKb.newShellChord || 'Ctrl+J';
+                const groups = [
+                    ['Switch sessions', [
+                        [['Alt+1 – Alt+9'], 'Jump to session 1–9'],
+                        [['Alt+0'], 'Jump to session 10'],
+                        [['Alt (hold)'], 'Preview session numbers'],
+                        [['Alt+Shift+[', 'Alt+Shift+]'], 'Previous / next session'],
+                        [['Alt+Shift+Enter'], 'Next session awaiting input'],
+                    ]],
+                    ['Manage sessions', [
+                        [['Alt+Shift+N'], 'New session'],
+                        [['Alt+Shift+W'], 'Kill current session'],
+                        [['Alt+Shift+R'], 'Rename current session'],
+                        [[dock], 'Toggle scratch shell dock'],
+                    ]],
+                    ['Interface', [
+                        [['Alt+Shift+S'], 'Toggle sidebar'],
+                        [['Ctrl+Shift+K'], 'Command palette'],
+                        [['/', '?'], 'Show this help'],
+                        [['Esc'], 'Close menus'],
+                    ]],
+                ];
+                const backdrop = document.createElement('div');
+                backdrop.className = 'cmd-palette-backdrop';
+                const panel = document.createElement('div');
+                panel.className = 'sc-help';
+                panel.setAttribute('role', 'dialog');
+                panel.setAttribute('aria-label', 'Keyboard shortcuts');
+                const h = document.createElement('h2');
+                h.textContent = 'Keyboard shortcuts';
+                panel.appendChild(h);
+                const scroll = document.createElement('div');
+                scroll.className = 'sc-scroll';
+                for (const [label, rows] of groups) {
+                    const gl = document.createElement('div');
+                    gl.className = 'sc-group-label';
+                    gl.textContent = label;
+                    scroll.appendChild(gl);
+                    for (const [keys, desc] of rows) {
+                        const row = document.createElement('div');
+                        row.className = 'sc-row';
+                        const ks = document.createElement('span');
+                        ks.className = 'sc-keys';
+                        for (const k of keys) {
+                            const kbd = document.createElement('kbd');
+                            kbd.textContent = k;
+                            ks.appendChild(kbd);
+                        }
+                        const d = document.createElement('span');
+                        d.className = 'sc-desc';
+                        d.textContent = desc;
+                        row.appendChild(ks);
+                        row.appendChild(d);
+                        scroll.appendChild(row);
+                    }
+                }
+                panel.appendChild(scroll);
+                const note = document.createElement('div');
+                note.className = 'sc-note';
+                note.textContent = 'On by default — toggle “App shortcuts” in ⚙ Settings. Press Esc or / to close.';
+                panel.appendChild(note);
+                backdrop.appendChild(panel);
+                backdrop.addEventListener('click', (e) => { if (e.target === backdrop) hideShortcutsHelp(); });
+                document.body.appendChild(backdrop);
+                scHelpEl = backdrop;
+            }
+            function toggleShortcutsHelp() {
+                if (scHelpEl) hideShortcutsHelp(); else showShortcutsHelp();
+            }
+            // '/' or '?' toggles help from the lobby chrome; Esc closes it.
+            // Guarded so it never fires while typing in a field, and modifier
+            // combos fall through to the real keybinding layer.
+            document.addEventListener('keydown', (e) => {
+                if (scHelpEl && e.key === 'Escape') { e.preventDefault(); hideShortcutsHelp(); return; }
+                if (e.key !== '/' && e.key !== '?') return;
+                if (e.ctrlKey || e.metaKey || e.altKey) return;
+                const t = e.target, tag = t && t.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+                e.preventDefault();
+                toggleShortcutsHelp();
+            }, true);
+
             const palette = tlKb.createPalette({
                 // lastSessions is the poll the cards are painted from —
                 // ≤5s stale, instantly available (no fetch on open).
@@ -7808,7 +7942,9 @@
                 refocus: () => requestTerminalFocus(),
                 actions: () => {
                     const acts = [{ label: 'New session', hint: 'name box',
-                                    keepFocus: true, run: () => runAppCommand('session.new') }];
+                                    keepFocus: true, run: () => runAppCommand('session.new') },
+                                  { label: 'Keyboard shortcuts', hint: '/',
+                                    run: () => runAppCommand('shortcuts.help') }];
                     if (currentActive) {
                         acts.push(
                             { label: 'Rename current session', hint: currentActive,
@@ -8152,6 +8288,10 @@
                 }
                 if (cmd === 'sidebar.toggle') {
                     toggleSidebar();
+                    return;
+                }
+                if (cmd === 'shortcuts.help') {
+                    showShortcutsHelp();
                     return;
                 }
                 if (cmd === 'session.new') {
