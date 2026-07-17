@@ -6587,11 +6587,13 @@
                 nameInput.focus();
             }
 
-            // --- session share dialog (RO watch / RW full-shell-as-me) --------
-            // Shares one of MY sessions with other mapped users. Wording is
-            // deliberately honest: RO = they watch my terminal (and, per the
-            // tmux server-scope caveat, can see ALL my sessions); RW = a FULL
-            // SHELL as me. RW is behind a second confirm. Current shares of this
+            // --- session share dialog (RO watch / RW shell-as-me) ------------
+            // Shares THIS session with other mapped users. Wording leads with
+            // the actual UI-level grant — RO = they watch this session, RW = a
+            // shell as me in this session — and demotes the tmux server-scope
+            // caveat (a viewer could reach my other sessions with tmux keys) to
+            // a small muted footnote: honest without scaring off the normal
+            // flow. RW is behind a second confirm. Current shares of this
             // session are listed with an Unshare (owner-side revoke).
             async function openShareDialog(sessionName) {
                 const me = whoami.osUser;
@@ -6657,6 +6659,14 @@
                 asec.appendChild(addRow);
                 const modeNote = document.createElement('div'); modeNote.className = 'ps-note';
                 asec.appendChild(modeNote);
+                // Demoted, honest caveat: the UI shares just this session, but a
+                // shared terminal IS the owner's whole tmux server, so a viewer
+                // could navigate to their other sessions with tmux keys. Kept
+                // small so it informs without scaring off the normal flow.
+                const caveat = document.createElement('div'); caveat.className = 'ps-note';
+                caveat.style.opacity = '0.6'; caveat.style.fontSize = '0.85em'; caveat.style.marginTop = '4px';
+                caveat.textContent = 'Heads up: a shared terminal is your whole tmux server, so they could reach your other sessions with tmux keys.';
+                asec.appendChild(caveat);
                 modal.appendChild(asec);
 
                 function renderCandidates() {
@@ -6673,8 +6683,8 @@
                 }
                 function renderModeNote() {
                     modeNote.textContent = modeSel.value === 'rw'
-                        ? 'Read-write = a full shell as you: they can run any command as your user, across all your sessions.'
-                        : 'Read-only = they watch your terminal live (and can see all your sessions).';
+                        ? 'Read-write — they can type in this session; commands run as your user (a shell as you).'
+                        : 'Read-only — they can watch this session live; they can’t type.';
                 }
                 modeSel.addEventListener('change', renderModeNote);
 
@@ -6685,7 +6695,7 @@
                 async function addShare() {
                     const guest = sel.value, mode = modeSel.value;
                     if (!guest) return;
-                    if (mode === 'rw' && !confirm('Read-write gives ' + guest + ' a FULL SHELL as you — they can run any command as your user, across all your sessions. Share read-write?')) return;
+                    if (mode === 'rw' && !confirm('Read-write gives ' + guest + ' a shell as you — they can run commands as your user in this session. Share read-write?')) return;
                     try {
                         const resp = await fetch(SHARES_API, {
                             method: 'POST', credentials: 'same-origin',
