@@ -77,7 +77,9 @@ to send these keys to the terminal instead — the opt-out persists). Chords
 are user-overridable via the `tl:keybindings:v1` localStorage key.
 
 **Hold `Alt`** for ~100 ms to reveal numbered chips on the first ten
-sidebar cards, then press the digit to jump:
+sidebar cards, then press the digit to jump (on macOS the UI shows `Alt`
+as `Option` — the labels in the help overlay, tooltip and hint follow the
+viewer's platform):
 
 | Chord | Action |
 |---|---|
