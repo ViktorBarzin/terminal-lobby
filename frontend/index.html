@@ -1721,6 +1721,45 @@
             font-size: 11px; color: var(--text-muted);
         }
 
+        /* Keyboard-shortcuts help overlay (opened with / or ? in the lobby,
+           or the "Keyboard shortcuts" command-palette action). Reuses the
+           .cmd-palette-backdrop shade. */
+        .sc-help {
+            position: fixed; z-index: 10001;
+            top: 10vh; left: 50%; transform: translateX(-50%);
+            width: min(520px, calc(100vw - 32px));
+            max-height: 76vh; display: flex; flex-direction: column;
+            background: var(--bg-card);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), var(--surface-shadow);
+            font-family: var(--font-ui); font-size: 13px;
+            color: var(--text-primary); overflow: hidden;
+        }
+        .sc-help h2 {
+            margin: 0; padding: 12px 16px; font-size: 14px; font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+        .sc-help .sc-scroll { overflow-y: auto; padding: 4px 6px 8px; }
+        .sc-help .sc-group-label {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--text-muted); padding: 10px 10px 4px;
+        }
+        .sc-help .sc-row {
+            display: flex; align-items: baseline; gap: 12px; padding: 5px 10px;
+        }
+        .sc-help .sc-keys { flex: 0 0 auto; display: flex; gap: 4px; flex-wrap: wrap; }
+        .sc-help .sc-desc { margin-left: auto; text-align: right; color: var(--text-muted); }
+        .sc-help kbd {
+            font-family: var(--font-mono); font-size: 11px;
+            padding: 1px 6px; border-radius: 5px;
+            background: var(--hover-tint); border: 1px solid var(--border);
+            color: var(--text-primary); white-space: nowrap;
+        }
+        .sc-help .sc-note {
+            padding: 8px 16px; color: var(--text-muted); font-size: 12px;
+            border-top: 1px solid var(--border);
+        }
+
         /* Alt-held session-jump badges (Task 4.1): numbered chips on the
            first ten sidebar cards while Alt is held ≥100 ms and the
            keybinding layer is enabled — they label the Alt+1..9/0 targets.
@@ -3188,7 +3227,11 @@
                 { key: 'alt+shift+s', command: 'sidebar.toggle', when: 'lobbyOpen && !galleryOpen' },
                 { key: 'alt+shift+n', command: 'session.new', when: 'lobbyOpen && !galleryOpen' },
                 { key: 'alt+shift+w', command: 'session.kill.current', when: 'lobbyOpen && !galleryOpen' },
-                { key: 'alt+shift+r', command: 'session.rename.current', when: 'lobbyOpen && !galleryOpen' }
+                { key: 'alt+shift+r', command: 'session.rename.current', when: 'lobbyOpen && !galleryOpen' },
+                // Global menu opener: Alt+/ (Option+/) opens the shortcuts help
+                // from anywhere, incl. while focused in a session — bare '/' is
+                // lobby-only (it must reach the pty inside the terminal).
+                { key: 'alt+/', command: 'shortcuts.help', when: 'lobbyOpen && !galleryOpen' }
             ];
             // Platform: Cmd is never forwarded to the pty on macOS, so a
             // Cmd-based always-on chord steals nothing there; Ctrl+J IS the
@@ -3210,7 +3253,14 @@
             // there is no dock — so there Ctrl+J falls through to the pty as a
             // normal newline instead of being swallowed.
             const KB_ALWAYS_BINDINGS = [
-                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: 'lobbyOpen && !galleryOpen' }
+                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: 'lobbyOpen && !galleryOpen' },
+                // ⌥⇧⌫ kills the attached session from ANYWHERE the lobby owns keys —
+                // including while typing in a framed terminal (forwarded like the
+                // new-shell chord above), so you don't have to click back to the
+                // sidebar first. Always-on (no opt-in). Alt+SHIFT, not plain ⌥⌫ —
+                // the shell/Claude editor use ⌥⌫ for delete-word (\e\x7f), so plain
+                // ⌥⌫ must keep reaching the pty. session.kill.current keeps its confirm.
+                { key: 'alt+shift+backspace', command: 'session.kill.current', when: 'lobbyOpen && !galleryOpen' }
             ];
             const KB_COMMANDS = new Set(KB_DEFAULT_BINDINGS.map(b => b.command));
             const MOD_WORDS = ['ctrl', 'control', 'shift', 'alt', 'option', 'meta', 'cmd', 'super'];
@@ -3305,6 +3355,9 @@
                 if (m) keys.add((m[1] || m[2]).toLowerCase());
                 if (code === 'BracketLeft') keys.add('[');
                 if (code === 'BracketRight') keys.add(']');
+                // Slash has no letter/digit alias; add it so Alt+/ matches even
+                // when a modifier remaps e.key (Mac Option+/ = ÷, Shift+/ = ?).
+                if (code === 'Slash') keys.add('/');
                 return keys;
             }
             // Exact modifier match (matchesShortcutModifiers): every one of
@@ -3614,7 +3667,10 @@
                 setEnabled: setKbEnabled,
                 createPalette,
                 recentsFirst,
-                newShellChord: IS_MAC ? 'Cmd+J' : 'Ctrl+J'
+                newShellChord: IS_MAC ? 'Cmd+J' : 'Ctrl+J',
+                // Display label for the Alt/Option modifier, personalized to
+                // the viewer's platform (Mac keyboards call it Option).
+                altLabel: IS_MAC ? 'Option' : 'Alt'
             };
         })();
 
@@ -7235,14 +7291,16 @@
                 const kb = document.createElement('input');
                 kb.type = 'checkbox';
                 kb.id = 'sp-kb';
+                const altLbl = tlKb.altLabel || 'Alt';   // 'Option' on Mac
                 kb.title = 'App keyboard shortcuts in this browser (ON by ' +
-                    'default): Ctrl+Shift+K palette, Alt+1..9 / Alt+0 attach the ' +
-                    '1st..10th session, Alt+Shift+[ / ] cycle, Alt+Shift+Enter ' +
-                    'jump to a session awaiting input, Alt+Shift+S toggle sidebar, ' +
-                    'Alt+Shift+N new, Alt+Shift+W kill, Alt+Shift+R rename. ' +
-                    'Uncheck to send these keys to the terminal instead. Note: ' +
-                    tlKb.newShellChord + ' always toggles a docked shell panel, ' +
-                    'regardless of this toggle.';
+                    'default): Ctrl+Shift+K palette, ' + altLbl + '+1..9 / ' + altLbl +
+                    '+0 attach the 1st..10th session, ' + altLbl + '+Shift+[ / ] cycle, ' +
+                    altLbl + '+Shift+Enter jump to a session awaiting input, ' + altLbl +
+                    '+Shift+S toggle sidebar, ' + altLbl + '+Shift+N new, ' + altLbl +
+                    '+Shift+W kill, ' + altLbl + '+Shift+R rename, ' + altLbl + '+/ this help. ' +
+                    'Uncheck to send these ' +
+                    'keys to the terminal instead. Note: ' + tlKb.newShellChord +
+                    ' always toggles a docked shell panel, regardless of this toggle.';
                 kb.addEventListener('change', () => {
                     tlKb.setEnabled(kb.checked);
                     syncAltBadges();   // disabling mid-Alt-hold must drop the badges
@@ -7795,6 +7853,102 @@
                 return Array.from(listEl.querySelectorAll('.session-card'))
                     .map(c => c.dataset.name).filter(Boolean);
             }
+            // ---- Keyboard-shortcuts help overlay --------------------------
+            // Opened by bare '/' or '?' while the lobby chrome has focus, and
+            // by the "Keyboard shortcuts" command-palette action (which also
+            // works from inside the terminal). Terminal keydowns land in the
+            // iframe — a separate document — and never reach this window, so
+            // '/' still reaches the pty untouched while the terminal is
+            // focused. NOTE: keep this list in sync with KB_DEFAULT_BINDINGS.
+            let scHelpEl = null;
+            function hideShortcutsHelp() {
+                if (scHelpEl) { scHelpEl.remove(); scHelpEl = null; }
+            }
+            function showShortcutsHelp() {
+                if (scHelpEl) return;
+                const dock = tlKb.newShellChord || 'Ctrl+J';
+                const ALT = tlKb.altLabel || 'Alt';   // 'Option' on Mac
+                const groups = [
+                    ['Switch sessions', [
+                        [[`${ALT}+1 – ${ALT}+9`], 'Jump to session 1–9'],
+                        [[`${ALT}+0`], 'Jump to session 10'],
+                        [[`${ALT} (hold)`], 'Preview session numbers'],
+                        [[`${ALT}+Shift+[`, `${ALT}+Shift+]`], 'Previous / next session'],
+                        [[`${ALT}+Shift+Enter`], 'Next session awaiting input'],
+                    ]],
+                    ['Manage sessions', [
+                        [[`${ALT}+Shift+N`], 'New session'],
+                        [[`${ALT}+Shift+W`], 'Kill current session'],
+                        [[`${ALT}+Shift+R`], 'Rename current session'],
+                        [[dock], 'Toggle scratch shell dock'],
+                    ]],
+                    ['Interface', [
+                        [[`${ALT}+Shift+S`], 'Toggle sidebar'],
+                        [['Ctrl+Shift+K'], 'Command palette'],
+                        [['/', '?', `${ALT}+/`], `Show this help (${ALT}+/ works in a session)`],
+                        [['Esc'], 'Close menus'],
+                    ]],
+                ];
+                const backdrop = document.createElement('div');
+                backdrop.className = 'cmd-palette-backdrop';
+                const panel = document.createElement('div');
+                panel.className = 'sc-help';
+                panel.setAttribute('role', 'dialog');
+                panel.setAttribute('aria-label', 'Keyboard shortcuts');
+                const h = document.createElement('h2');
+                h.textContent = 'Keyboard shortcuts';
+                panel.appendChild(h);
+                const scroll = document.createElement('div');
+                scroll.className = 'sc-scroll';
+                for (const [label, rows] of groups) {
+                    const gl = document.createElement('div');
+                    gl.className = 'sc-group-label';
+                    gl.textContent = label;
+                    scroll.appendChild(gl);
+                    for (const [keys, desc] of rows) {
+                        const row = document.createElement('div');
+                        row.className = 'sc-row';
+                        const ks = document.createElement('span');
+                        ks.className = 'sc-keys';
+                        for (const k of keys) {
+                            const kbd = document.createElement('kbd');
+                            kbd.textContent = k;
+                            ks.appendChild(kbd);
+                        }
+                        const d = document.createElement('span');
+                        d.className = 'sc-desc';
+                        d.textContent = desc;
+                        row.appendChild(ks);
+                        row.appendChild(d);
+                        scroll.appendChild(row);
+                    }
+                }
+                panel.appendChild(scroll);
+                const note = document.createElement('div');
+                note.className = 'sc-note';
+                note.textContent = 'On by default — toggle “App shortcuts” in ⚙ Settings. Press Esc or / to close.';
+                panel.appendChild(note);
+                backdrop.appendChild(panel);
+                backdrop.addEventListener('click', (e) => { if (e.target === backdrop) hideShortcutsHelp(); });
+                document.body.appendChild(backdrop);
+                scHelpEl = backdrop;
+            }
+            function toggleShortcutsHelp() {
+                if (scHelpEl) hideShortcutsHelp(); else showShortcutsHelp();
+            }
+            // '/' or '?' toggles help from the lobby chrome; Esc closes it.
+            // Guarded so it never fires while typing in a field, and modifier
+            // combos fall through to the real keybinding layer.
+            document.addEventListener('keydown', (e) => {
+                if (scHelpEl && e.key === 'Escape') { e.preventDefault(); hideShortcutsHelp(); return; }
+                if (e.key !== '/' && e.key !== '?') return;
+                if (e.ctrlKey || e.metaKey || e.altKey) return;
+                const t = e.target, tag = t && t.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+                e.preventDefault();
+                toggleShortcutsHelp();
+            }, true);
+
             const palette = tlKb.createPalette({
                 // lastSessions is the poll the cards are painted from —
                 // ≤5s stale, instantly available (no fetch on open).
@@ -7808,7 +7962,9 @@
                 refocus: () => requestTerminalFocus(),
                 actions: () => {
                     const acts = [{ label: 'New session', hint: 'name box',
-                                    keepFocus: true, run: () => runAppCommand('session.new') }];
+                                    keepFocus: true, run: () => runAppCommand('session.new') },
+                                  { label: 'Keyboard shortcuts', hint: '/',
+                                    run: () => runAppCommand('shortcuts.help') }];
                     if (currentActive) {
                         acts.push(
                             { label: 'Rename current session', hint: currentActive,
@@ -8154,6 +8310,10 @@
                     toggleSidebar();
                     return;
                 }
+                if (cmd === 'shortcuts.help') {
+                    toggleShortcutsHelp();
+                    return;
+                }
                 if (cmd === 'session.new') {
                     setSidebarCollapsed(false);           // the box lives in the sidebar
                     newNameEl.focus();
@@ -8278,8 +8438,8 @@
             try {
                 const KB_HINT_KEY = 'tl:kb-hint-seen:v1';
                 if (tlKb.enabled() && !localStorage.getItem(KB_HINT_KEY)) {
-                    showToast('Keyboard shortcuts are on — hold Alt to see 1–0, ' +
-                        'or turn them off in ⚙ Settings', '', 7000);
+                    showToast('Keyboard shortcuts are on — hold ' + (tlKb.altLabel || 'Alt') +
+                        ' to see 1–0, or turn them off in ⚙ Settings', '', 7000);
                     try { localStorage.setItem(KB_HINT_KEY, '1'); } catch (e) {}
                 }
             } catch (e) {}
