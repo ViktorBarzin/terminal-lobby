@@ -5743,6 +5743,30 @@
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') closeMenu(true);
             });
+            // Backspace / Delete kills the selected/attached session — skips the
+            // right-click → ⋯ menu → Kill dance. LOBBY-ONLY on purpose: this
+            // handler never exists in the terminal iframe, so a bare Backspace
+            // typed in the shell still reaches the pty untouched (the same
+            // invariant parseChord keeps by refusing bare-key chords). Target: an
+            // explicitly focused session card, else the attached session. Reuses
+            // killSession(), which keeps its own confirm() before the DELETE.
+            document.addEventListener('keydown', (e) => {
+                if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+                if (e.ctrlKey || e.metaKey || e.altKey) return;   // plain key only
+                // Never steal from a text field, a live drag/gesture, an open
+                // menu or modal, or an inline rename.
+                if (isDragging || gestureActive || openMenuEl || ctxMenuOpen ||
+                    renameEditing || document.querySelector('.pd-backdrop')) return;
+                const ae = document.activeElement;
+                if (ae && (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) || ae.isContentEditable)) return;
+                // A card the user tabbed/clicked to wins; else the currently
+                // attached session (what "active" means in the lobby).
+                const card = ae && ae.closest && ae.closest('.session-card');
+                const target = (card && card.dataset.name) || currentActive;
+                if (!target) return;
+                e.preventDefault();
+                killSession(target);   // its own confirm() guards the kill
+            });
 
             // --- project CRUD --------------------------------------------------
 
