@@ -106,3 +106,23 @@ Create → split appears; toggle hide/show; persist across a top-session switch 
 reload (mock layout with `dock`); drag-out promotes + collapses; gutter resize
 persists; coarse-pointer ⇒ no dock; killed/dead docked session clears; unframed
 `Ctrl+J` no-op. No console errors.
+
+## Revision — 2026-07-17 (hidden scratch shell + mobile)
+
+Two refinements after the first ship (`3c1ab67`):
+
+- **The dock shell is NOT a thread in the sidebar.** It's a hidden scratch shell
+  "for this thread", filtered out of the sidebar list (and the command palette)
+  while it's docked. Dragging it out still promotes it into a normal listed
+  thread. Implementation: `paint()` drops `dockState().session` from the rendered
+  cards (and `orderedSessionNames`, which reads the DOM, follows automatically)
+  while `dockAllowed()`. On mobile (no dock) it falls through as a normal card so
+  it's never lost.
+- **No dock on mobile.** The dock is gated on `dockAllowed()` = fine pointer AND
+  `min-width: 721px` (was just `!isCoarsePointer`), and `#dock`/`#dock-gutter` are
+  `display:none` on `max-width:720px`. Fixes a bug where, in the mobile two-view
+  nav, `#lobby-content` becomes `display:block` — which overrode the dock grid's
+  collapse, so the dock rendered as a visible block that `✕` couldn't hide and
+  the terminal lost its height. Also `#lobby-top { height:100% }` in the mobile
+  block so `#session-frame` fills. Verified with Playwright (desktop hide +
+  promote; mobile `#dock` display:none, terminal fills, `Ctrl+J` swap fallback).
