@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -245,6 +246,80 @@ func validateProjectSet(ps ProjectSet) error {
 		}
 	}
 	return nil
+}
+
+// visibleRef is a foreign session the caller may see/attach, with the access
+// mode and (optional) project it comes through.
+type visibleRef struct {
+	Owner   string
+	Name    string
+	Access  string // "ro" | "rw"
+	Project string
+}
+
+// projectNameOf returns the name of the project containing session (owner,name),
+// or "" when it belongs to none.
+func projectNameOf(ps ProjectSet, owner, name string) string {
+	ref := SessionRef{Owner: owner, Name: name}
+	for _, p := range ps.Projects {
+		for _, s := range p.Sessions {
+			if s == ref {
+				return p.Name
+			}
+		}
+	}
+	return ""
+}
+
+// foreignRefsFor computes the sessions owned by OTHER users that the caller may
+// see — via membership in a shared project (blanket attach mode) or a direct
+// session share — deduped by (owner,name) with rw beating ro and a project
+// annotation preferred. Pure: no tmux, so it is unit-testable.
+func foreignRefsFor(caller string, ps ProjectSet, ss ShareSet) []visibleRef {
+	best := map[SessionRef]*visibleRef{}
+	upsert := func(owner, name, access, project string) {
+		if owner == caller {
+			return // the caller's own session is not foreign
+		}
+		if access == "" {
+			access = projectAttachRO
+		}
+		k := SessionRef{Owner: owner, Name: name}
+		if v := best[k]; v != nil {
+			if v.Access == projectAttachRO && access == projectAttachRW {
+				v.Access = projectAttachRW
+			}
+			if v.Project == "" && project != "" {
+				v.Project = project
+			}
+			return
+		}
+		best[k] = &visibleRef{Owner: owner, Name: name, Access: access, Project: project}
+	}
+	for _, p := range ps.Projects {
+		if !projectMember(p, caller) {
+			continue
+		}
+		for _, s := range p.Sessions {
+			upsert(s.Owner, s.Name, p.AttachMode, p.Name)
+		}
+	}
+	for _, sh := range ss.Shares {
+		if sh.Guest == caller {
+			upsert(sh.Owner, sh.Name, sh.Mode, "")
+		}
+	}
+	out := make([]visibleRef, 0, len(best))
+	for _, v := range best {
+		out = append(out, *v)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Owner != out[j].Owner {
+			return out[i].Owner < out[j].Owner
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 // projectMember reports whether osUser is a member of p.

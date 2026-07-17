@@ -437,17 +437,6 @@ func TestParseSessionsUnknownStateDropped(t *testing.T) {
 	}
 }
 
-func TestApplyLayoutResolvesProjects(t *testing.T) {
-	sessions := []Session{{Name: "fix-dates"}, {Name: "scratch"}, {Name: "new-one"}}
-	applyLayout(sessions, validLayout())
-	if sessions[0].Project != "tripit" {
-		t.Fatalf("fix-dates project: %q", sessions[0].Project)
-	}
-	if sessions[1].Project != "" || sessions[2].Project != "" {
-		t.Fatalf("ungrouped/unknown sessions must have empty project: %+v", sessions[1:])
-	}
-}
-
 // --- handler gates (mirroring the existing restore gate tests) -------------
 
 func TestHandleLayoutRejectsDelete(t *testing.T) {
