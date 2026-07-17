@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -136,6 +138,25 @@ func (s *projectStore) save(ps ProjectSet) error {
 	return s.saveLocked(ps)
 }
 
+// update loads the set, applies fn, validates the result, and saves — all under
+// the lock, so a mutation on the shared document is atomic and never persists an
+// invariant-violating set. fn returning an error aborts without saving.
+func (s *projectStore) update(fn func(*ProjectSet) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	if err := fn(&ps); err != nil {
+		return err
+	}
+	if err := validateProjectSet(ps); err != nil {
+		return err
+	}
+	return s.saveLocked(ps)
+}
+
 // saveLocked writes atomically (tmp + rename) so a crash mid-write can't leave
 // a truncated document behind.
 func (s *projectStore) saveLocked(ps ProjectSet) error {
@@ -224,6 +245,93 @@ func validateProjectSet(ps ProjectSet) error {
 		}
 	}
 	return nil
+}
+
+// projectMember reports whether osUser is a member of p.
+func projectMember(p GlobalProject, osUser string) bool {
+	for _, m := range p.Members {
+		if m.OSUser == osUser {
+			return true
+		}
+	}
+	return false
+}
+
+// handleProjects serves the collection endpoint: GET lists the caller's member
+// projects, POST creates one. Per-project operations live under /projects/.
+func handleProjects(w http.ResponseWriter, r *http.Request) {
+	osUser := resolveOSUser(w, r)
+	if osUser == "" {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		listProjects(w, osUser)
+	case http.MethodPost:
+		createProject(w, r, osUser)
+	default:
+		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+	}
+}
+
+// listProjects returns the projects the caller is a member of (a multi-owner
+// project appears for every member; a non-member sees nothing).
+func listProjects(w http.ResponseWriter, osUser string) {
+	set, err := projectStoreInstance.load()
+	if err != nil {
+		logAndFail(w, "project load for %s failed: %v", osUser, err)
+		return
+	}
+	mine := make([]GlobalProject, 0)
+	for _, p := range set.Projects {
+		if projectMember(p, osUser) {
+			mine = append(mine, p)
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(mine)
+}
+
+// createProject makes a new project with the caller as its sole member and
+// createdBy. Name/dir are validated for a clean 400; the store's update then
+// re-validates the whole document under the lock.
+func createProject(w http.ResponseWriter, r *http.Request, osUser string) {
+	var body struct {
+		Name string `json:"name"`
+		Dir  string `json:"dir"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLayoutBody)).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if !sessionNameRe.MatchString(name) {
+		http.Error(w, "invalid project name", http.StatusBadRequest)
+		return
+	}
+	if body.Dir != "" && (!filepath.IsAbs(body.Dir) || len(body.Dir) > maxDirLen) {
+		http.Error(w, "project dir must be an absolute path", http.StatusBadRequest)
+		return
+	}
+	p := GlobalProject{
+		ID:        newProjectID(),
+		Name:      name,
+		Dir:       body.Dir,
+		CreatedBy: osUser,
+		Members:   []Member{{OSUser: osUser, AddedBy: osUser}},
+		Sessions:  []SessionRef{},
+	}
+	if err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		ps.Projects = append(ps.Projects, p)
+		return nil
+	}); err != nil {
+		logAndFail(w, "create project for %s failed: %v", osUser, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(p)
 }
 
 // migrateAllLayouts builds the initial global project set from every mapped
