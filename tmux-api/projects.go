@@ -61,7 +61,26 @@ const (
 	// projectAttachRO/RW are the two AttachMode values; "" is treated as RO.
 	projectAttachRO = "ro"
 	projectAttachRW = "rw"
+	// projectsPath is the single global project document, alongside the
+	// per-user layout files under /var/lib/tmux-api.
+	projectsPath = "/var/lib/tmux-api/projects.json"
 )
+
+var projectStoreInstance = newProjectStore(projectsPath)
+
+// mappedOSUsers returns the distinct OS users from the Authentik→OS-user map —
+// the population whose per-user layouts are imported at first-run migration.
+func mappedOSUsers() []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, u := range loadUserMap() {
+		if !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	return out
+}
 
 // projectStore persists the single global ProjectSet document. Mutations are
 // whole-document, mutex-guarded, atomic (tmp+rename) — mirroring layoutStore.
@@ -205,6 +224,31 @@ func validateProjectSet(ps ProjectSet) error {
 		}
 	}
 	return nil
+}
+
+// migrateAllLayouts builds the initial global project set from every mapped
+// user's per-user layout, but only if the global store does not yet exist.
+// Returns true when it performed the one-shot import, false when the store was
+// already present (a no-op). Runs once at startup, so no locking is needed
+// around the existence check.
+func migrateAllLayouts(ls *layoutStore, ps *projectStore, users []string) (bool, error) {
+	if _, err := os.Stat(ps.path); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	set := emptyProjectSet()
+	for _, u := range users {
+		l, err := ls.load(u)
+		if err != nil {
+			return false, fmt.Errorf("migrate layout for %s: %w", u, err)
+		}
+		set.Projects = append(set.Projects, migrateUserLayout(u, l, newProjectID)...)
+	}
+	if err := ps.save(set); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // newProjectID returns a short, opaque, collision-resistant project id.
