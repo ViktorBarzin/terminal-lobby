@@ -1,10 +1,36 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
+
+// swapProjectStore points the package-global projectStoreInstance at a fresh
+// temp store for a handler test, restoring it afterwards.
+func swapProjectStore(t *testing.T) {
+	t.Helper()
+	old := projectStoreInstance
+	projectStoreInstance = newProjectStore(t.TempDir() + "/projects.json")
+	t.Cleanup(func() { projectStoreInstance = old })
+}
+
+func projectsReq(method, path, body, authUser string) *http.Request {
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, path, nil)
+	} else {
+		r = httptest.NewRequest(method, path, strings.NewReader(body))
+	}
+	if authUser != "" {
+		r.Header.Set(authHeader, authUser)
+	}
+	return r
+}
 
 // --- global project store -------------------------------------------------
 //
@@ -151,6 +177,86 @@ func TestValidateProjectSet(t *testing.T) {
 				t.Fatalf("expected no error, got %v", err)
 			}
 		})
+	}
+}
+
+// --- project HTTP endpoints -------------------------------------------------
+
+// Creating a project makes the caller its sole member; listing returns only
+// the caller's member projects (a non-member sees none).
+func TestCreateAndListProjects(t *testing.T) {
+	swapProjectStore(t)
+	me, other := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n"+other+"="+other+"\n")
+
+	rec := httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodPost, "/projects", `{"name":"tripit","dir":"/home"}`, me))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: got %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	var created GlobalProject
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created: %v", err)
+	}
+	if created.ID == "" || created.Name != "tripit" || created.Dir != "/home" {
+		t.Fatalf("bad created project: %+v", created)
+	}
+	if len(created.Members) != 1 || created.Members[0].OSUser != me || created.CreatedBy != me {
+		t.Fatalf("creator must be sole member + createdBy: %+v", created)
+	}
+
+	rec = httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodGet, "/projects", "", me))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list me: got %d", rec.Code)
+	}
+	var mine []GlobalProject
+	if err := json.Unmarshal(rec.Body.Bytes(), &mine); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(mine) != 1 || mine[0].ID != created.ID {
+		t.Fatalf("list me: want the created project, got %+v", mine)
+	}
+
+	rec = httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodGet, "/projects", "", other))
+	var theirs []GlobalProject
+	if err := json.Unmarshal(rec.Body.Bytes(), &theirs); err != nil {
+		t.Fatalf("decode other list: %v", err)
+	}
+	if len(theirs) != 0 {
+		t.Fatalf("non-member must see no projects, got %+v", theirs)
+	}
+}
+
+func TestCreateProjectRejectsBadName(t *testing.T) {
+	swapProjectStore(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n")
+	rec := httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodPost, "/projects", `{"name":"bad name!"}`, me))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad name: got %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleProjectsRequiresAuth(t *testing.T) {
+	swapProjectStore(t)
+	rec := httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodGet, "/projects", "", ""))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth: got %d, want 401", rec.Code)
+	}
+}
+
+func TestHandleProjectsRejectsOtherMethods(t *testing.T) {
+	swapProjectStore(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, me+"="+me+"\n")
+	rec := httptest.NewRecorder()
+	handleProjects(rec, projectsReq(http.MethodDelete, "/projects", "", me))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE /projects: got %d, want 405", rec.Code)
 	}
 }
 
