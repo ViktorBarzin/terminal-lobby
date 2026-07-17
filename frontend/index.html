@@ -3227,7 +3227,11 @@
                 { key: 'alt+shift+s', command: 'sidebar.toggle', when: 'lobbyOpen && !galleryOpen' },
                 { key: 'alt+shift+n', command: 'session.new', when: 'lobbyOpen && !galleryOpen' },
                 { key: 'alt+shift+w', command: 'session.kill.current', when: 'lobbyOpen && !galleryOpen' },
-                { key: 'alt+shift+r', command: 'session.rename.current', when: 'lobbyOpen && !galleryOpen' }
+                { key: 'alt+shift+r', command: 'session.rename.current', when: 'lobbyOpen && !galleryOpen' },
+                // Global menu opener: Alt+/ (Option+/) opens the shortcuts help
+                // from anywhere, incl. while focused in a session — bare '/' is
+                // lobby-only (it must reach the pty inside the terminal).
+                { key: 'alt+/', command: 'shortcuts.help', when: 'lobbyOpen && !galleryOpen' }
             ];
             // Platform: Cmd is never forwarded to the pty on macOS, so a
             // Cmd-based always-on chord steals nothing there; Ctrl+J IS the
@@ -3351,6 +3355,9 @@
                 if (m) keys.add((m[1] || m[2]).toLowerCase());
                 if (code === 'BracketLeft') keys.add('[');
                 if (code === 'BracketRight') keys.add(']');
+                // Slash has no letter/digit alias; add it so Alt+/ matches even
+                // when a modifier remaps e.key (Mac Option+/ = ÷, Shift+/ = ?).
+                if (code === 'Slash') keys.add('/');
                 return keys;
             }
             // Exact modifier match (matchesShortcutModifiers): every one of
@@ -7290,7 +7297,8 @@
                     '+0 attach the 1st..10th session, ' + altLbl + '+Shift+[ / ] cycle, ' +
                     altLbl + '+Shift+Enter jump to a session awaiting input, ' + altLbl +
                     '+Shift+S toggle sidebar, ' + altLbl + '+Shift+N new, ' + altLbl +
-                    '+Shift+W kill, ' + altLbl + '+Shift+R rename. Uncheck to send these ' +
+                    '+Shift+W kill, ' + altLbl + '+Shift+R rename, ' + altLbl + '+/ this help. ' +
+                    'Uncheck to send these ' +
                     'keys to the terminal instead. Note: ' + tlKb.newShellChord +
                     ' always toggles a docked shell panel, regardless of this toggle.';
                 kb.addEventListener('change', () => {
@@ -7877,7 +7885,7 @@
                     ['Interface', [
                         [[`${ALT}+Shift+S`], 'Toggle sidebar'],
                         [['Ctrl+Shift+K'], 'Command palette'],
-                        [['/', '?'], 'Show this help'],
+                        [['/', '?', `${ALT}+/`], `Show this help (${ALT}+/ works in a session)`],
                         [['Esc'], 'Close menus'],
                     ]],
                 ];
@@ -8303,7 +8311,7 @@
                     return;
                 }
                 if (cmd === 'shortcuts.help') {
-                    showShortcutsHelp();
+                    toggleShortcutsHelp();
                     return;
                 }
                 if (cmd === 'session.new') {
