@@ -71,6 +71,54 @@ if [[ "$dir_arg" == /* && ${#dir_arg} -le 4096 ]]; then
     start_dir="$dir_arg"
 fi
 
+# ---- shared / foreign attach --------------------------------------------
+# A 4th ?arg= names the session OWNER. When present and different from the
+# authenticated guest's OS user, this attaches SOMEONE ELSE's session.
+# Authorization + the read-only decision come from tmux-api's token-gated
+# internal endpoint (which also records this client's tty so a revoke can
+# detach exactly it). The tmux argv is FIXED — the only guest-influenced value
+# is the NAME_RE-validated session name, and `-r` comes from the server's mode,
+# NEVER a client argument. This exact-argv discipline is the whole security
+# boundary given the broad sudo tmux grant.
+owner_arg="${4:-}"
+if [[ -n "$owner_arg" && "$owner_arg" =~ $NAME_RE && "$owner_arg" != "$os_user" ]]; then
+    guest="$os_user"
+    my_tty="$(tty 2>/dev/null || true)"
+    [[ "$my_tty" == /dev/* ]] || my_tty=""
+    token=""
+    [[ -r /var/lib/tmux-api/internal.token ]] && token="$(cat /var/lib/tmux-api/internal.token)"
+    resp="$(curl -s -m 5 -w $'\n%{http_code}' \
+        -H "X-Internal-Token: ${token}" -H 'Content-Type: application/json' \
+        --data "{\"owner\":\"${owner_arg}\",\"name\":\"${name}\",\"guest\":\"${guest}\",\"tty\":\"${my_tty}\"}" \
+        http://127.0.0.1:7684/internal/attach 2>/dev/null || true)"
+    code="$(printf '%s' "$resp" | tail -n1)"
+    mode="$(printf '%s' "$resp" | sed -n 's/.*"mode":"\([a-z]*\)".*/\1/p')"
+    logger -t ttyd-attach "shared-attach: guest='$guest' owner='$owner_arg' name='$name' tty='${my_tty:-none}' code='$code' mode='${mode:-none}'"
+    if [[ "$code" != "200" ]]; then
+        cat <<EOF
+
+  Access denied
+  ─────────────
+  '$guest' is not permitted to attach '$owner_arg's session '$name'
+  (no active share). Ask '$owner_arg' to share it from the lobby.
+
+EOF
+        sleep 5
+        exit 1
+    fi
+    # Fail SAFE: read-only unless the server explicitly said "rw".
+    ro_flag=(-r)
+    [[ "$mode" == "rw" ]] && ro_flag=()
+    # Attach the owner's ALREADY-RUNNING server as the owner. No systemd scope
+    # (the server exists, owned by the owner). Self (owner == the ttyd identity)
+    # needs no sudo; otherwise the passwordless per-user tmux grant applies.
+    if [[ "$owner_arg" == "$(id -un)" ]]; then
+        exec /usr/bin/tmux attach-session "${ro_flag[@]}" -t "$name"
+    else
+        exec sudo -n -H -u "$owner_arg" /usr/bin/tmux attach-session "${ro_flag[@]}" -t "$name"
+    fi
+fi
+
 logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$start_dir' cmd='${cmd_key:-<none>}' self='$(id -un)'"
 
 # Launch via tmux-user-attach so the tmux *server* is parented to the OS
