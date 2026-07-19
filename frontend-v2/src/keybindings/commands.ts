@@ -25,6 +25,8 @@ export interface CommandDeps {
   /** open + focus the new-session name box in the sidebar. */
   focusNewSession: () => void;
   notify: (message: string, kind: NotifyKind) => void;
+  /** open the SPA session image gallery (🖼) for the selected session. */
+  openGallery: () => void;
   /** post a terminal-document command DOWN to the active iframe; false if none. */
   forwardToTerminal: (cmd: string) => boolean;
   /** confirm/prompt seams (window.* by default; injectable for tests). */
@@ -103,8 +105,16 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
       return;
     }
 
-    if (cmd === "gallery.open" || cmd === "terminal.paste") {
-      // These live in the terminal document — forward down to the active iframe.
+    if (cmd === "gallery.open") {
+      // The gallery is an SPA overlay (opens over any view); the store toasts
+      // "Open a session first" when nothing is selected.
+      deps.openGallery();
+      return;
+    }
+
+    if (cmd === "terminal.paste") {
+      // Paste-into-terminal still lives in the terminal document (its clipboard
+      // read + image-aware routine) — forward down to the active iframe.
       if (!deps.forwardToTerminal(cmd)) deps.notify("Open a session first", "error");
       return;
     }
