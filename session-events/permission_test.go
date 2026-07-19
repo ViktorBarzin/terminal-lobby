@@ -9,10 +9,12 @@ import (
 // Case (b): a web decision resolves the wait.
 func TestPermissionResolveAllow(t *testing.T) {
 	emitted := make(chan Event, 8)
-	b := NewPermissionBroker(func(string) bool { return true }, func(e Event) { emitted <- e }, time.Second)
+	b := NewPermissionBroker(time.Second)
 
 	got := make(chan string, 1)
-	go func() { got <- b.Request(context.Background(), "demo", "Bash", `{"command":"ls"}`) }()
+	go func() {
+		got <- b.Request(context.Background(), "demo", "Bash", `{"command":"ls"}`, true, func(e Event) { emitted <- e })
+	}()
 
 	var reqID string
 	select {
@@ -48,25 +50,24 @@ func TestPermissionResolveAllow(t *testing.T) {
 
 // Case (c): no text client watching → ask (terminal prompt handles it), no emit.
 func TestPermissionFallThroughNoSubscriber(t *testing.T) {
-	b := NewPermissionBroker(func(string) bool { return false }, func(Event) {
-		t.Fatal("must not emit when no subscriber")
-	}, time.Second)
-	if d := b.Request(context.Background(), "demo", "Bash", "{}"); d != DecisionAsk {
+	b := NewPermissionBroker(time.Second)
+	emit := func(Event) { t.Fatal("must not emit when no subscriber") }
+	if d := b.Request(context.Background(), "demo", "Bash", "{}", false, emit); d != DecisionAsk {
 		t.Fatalf("want ask (fall through), got %q", d)
 	}
 }
 
 // Case (d): subscriber present but no answer by the deadline → deny (fail-closed).
 func TestPermissionFailClosedOnDeadline(t *testing.T) {
-	b := NewPermissionBroker(func(string) bool { return true }, func(Event) {}, 40*time.Millisecond)
-	if d := b.Request(context.Background(), "demo", "Bash", "{}"); d != DecisionDeny {
+	b := NewPermissionBroker(40 * time.Millisecond)
+	if d := b.Request(context.Background(), "demo", "Bash", "{}", true, func(Event) {}); d != DecisionDeny {
 		t.Fatalf("want deny (fail-closed), got %q", d)
 	}
 }
 
 // Resolving an unknown id is a no-op.
 func TestPermissionResolveUnknown(t *testing.T) {
-	b := NewPermissionBroker(func(string) bool { return true }, func(Event) {}, time.Second)
+	b := NewPermissionBroker(time.Second)
 	if b.Resolve("perm-999", DecisionAllow) {
 		t.Fatal("Resolve of unknown id should return false")
 	}
