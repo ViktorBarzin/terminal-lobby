@@ -30,6 +30,7 @@ type Event struct {
 	Body    string `json:"body,omitempty"`
 	Tool    string `json:"tool,omitempty"`
 	ToolID  string `json:"toolId,omitempty"`
+	ReqID   string `json:"reqId,omitempty"` // permission_request/resolved correlation id
 	IsError bool   `json:"isError,omitempty"`
 	At      int64  `json:"at,omitempty"`
 }
