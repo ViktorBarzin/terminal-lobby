@@ -1,6 +1,7 @@
 # Built Go binaries — produced by CI / local builds, never committed.
 tmux-api/tmux-api
 clipboard-upload/clipboard-upload
+file-api/file-api
 /out/
 /tmp-build/
 
