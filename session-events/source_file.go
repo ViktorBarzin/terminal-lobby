@@ -51,6 +51,14 @@ func (f *fileSource) Append(e Event) {
 	f.mu.Unlock()
 }
 
+// subscriberCount reports how many live SSE clients are attached — used to decide
+// whether a permission request waits for the web or falls through to the terminal.
+func (f *fileSource) subscriberCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.subs)
+}
+
 func (f *fileSource) Replay(from int64) []Event {
 	f.mu.Lock()
 	defer f.mu.Unlock()
