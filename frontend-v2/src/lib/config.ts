@@ -88,6 +88,31 @@ export function clipboardImgUrl(session: string, name: string): string {
   );
 }
 
+/**
+ * The file-api service prefix (roadmap pillar #6). The ingress routes /files/*
+ * to the file-api service WITHOUT stripping the prefix (the service's own routes
+ * are /files/list, /files/read, /files/write — see file-api/main.go), so from
+ * the browser every call is /files/... verbatim, mirroring session-events'
+ * root-path mapping (NOT tmux-api's strip-the-prefix mapping). The vite dev
+ * proxy reproduces it (vite.config.ts). `?api=` overrides the origin like the
+ * others so a laptop can point at a remote devvm.
+ */
+export const FILE_API_PREFIX = "/files";
+
+/** GET target reading one file's bytes (path is absolute, within the caller's
+ *  home; the server enforces the boundary + a 10MB cap). Doubles as an <img>
+ *  src for image previews. */
+export function fileReadUrl(path: string): string {
+  return `${API_BASE}${FILE_API_PREFIX}/read?path=${encodeURIComponent(path)}`;
+}
+
+/** GET target listing a directory's entries (dirs first). `all` includes
+ *  dotfiles. */
+export function fileListUrl(dir: string, all = false): string {
+  const a = all ? "&all=1" : "";
+  return `${API_BASE}${FILE_API_PREFIX}/list?dir=${encodeURIComponent(dir)}${a}`;
+}
+
 /** The tmux-api prefs endpoint (roamed settings). Whole-doc GET/PUT. */
 export const PREFS_PATH = "/prefs";
 
