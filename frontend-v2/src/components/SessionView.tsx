@@ -58,7 +58,12 @@ export const SessionView: Component<{
   // transcript, a transcript-derived recent-files list, or an explicit path.
   // Created here (per-session) so it disposes on session switch and its
   // recent-files list tracks THIS session's events.
-  const preview = createPreviewStore({ events: () => store.events });
+  const preview = createPreviewStore({
+    events: () => store.events,
+    // Route editor save toasts through the session's notify → app toast stack.
+    // Left undefined the store falls back to the app-wide toast singleton.
+    notify: props.notify,
+  });
 
   const maxId = createMemo(() => {
     const last = store.events[store.events.length - 1];

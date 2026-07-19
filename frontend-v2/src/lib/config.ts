@@ -113,6 +113,14 @@ export function fileListUrl(dir: string, all = false): string {
   return `${API_BASE}${FILE_API_PREFIX}/list?dir=${encodeURIComponent(dir)}${a}`;
 }
 
+/** POST target writing one file (roadmap pillar #6 editor). Body: JSON
+ *  {path, content}; the server confines the path to the caller's home, caps the
+ *  content at 10MB, and replies 204. The /files prefix is verbatim (the ingress
+ *  does not strip it), mirroring fileReadUrl / fileListUrl. */
+export function fileWriteUrl(): string {
+  return `${API_BASE}${FILE_API_PREFIX}/write`;
+}
+
 /** The tmux-api prefs endpoint (roamed settings). Whole-doc GET/PUT. */
 export const PREFS_PATH = "/prefs";
 
