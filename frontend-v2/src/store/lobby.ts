@@ -60,6 +60,9 @@ export interface LobbyStore {
   dispose(): void;
 }
 
+/** Toast severity forwarded to the app's toast system (subset of ToastKind). */
+export type NotifyKind = "info" | "error" | "warning" | "success";
+
 export interface LobbyStoreOptions {
   api?: LobbyApi;
   pollMs?: number;
@@ -67,6 +70,9 @@ export interface LobbyStoreOptions {
   initialSelected?: SelectedSession | null;
   /** update the URL hash on select (default true; off in tests). */
   syncHash?: boolean;
+  /** surface a store message to the app's toast stack (in ADDITION to the
+   *  legacy `toast()` signal). Omitted in tests. */
+  notify?: (message: string, kind: NotifyKind) => void;
 }
 
 const LAYOUT_GRACE_MS = 4000;
@@ -111,10 +117,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     };
   }
 
-  function showToast(msg: string): void {
+  function showToast(msg: string, kind: NotifyKind = "error"): void {
     setToast(msg);
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => setToast(null), 3200);
+    opts.notify?.(msg, kind);
   }
 
   // Merged view: server sessions + optimistic pending (not yet in the manifest).
@@ -334,7 +341,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   async function restore(): Promise<void> {
     try {
       await api.restoreSessions();
-      showToast("Restoring saved sessions…");
+      showToast("Restoring saved sessions…", "info");
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         showToast("Not allowed to restore");

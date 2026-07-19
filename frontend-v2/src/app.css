@@ -118,15 +118,200 @@ body {
   background: var(--state-awaiting);
   display: inline-block;
 }
-.tl-theme-picker {
+/* ---- Settings panel ---------------------------------------------------- */
+.tl-settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 16px;
+  background: rgba(0, 0, 0, 0.4);
+  overflow-y: auto;
+}
+.tl-settings {
+  width: min(420px, 100%);
   background: var(--bg-card);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  border-radius: calc(var(--radius) + 8px);
+  box-shadow: var(--surface-shadow), 0 16px 48px rgba(0, 0, 0, 0.35);
+  padding: 16px 18px 20px;
+}
+.tl-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.tl-settings-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.tl-settings-group {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.tl-settings-group:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.tl-settings-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.tl-settings-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+.tl-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.tl-theme-swatch {
   font: inherit;
   font-size: 12px;
-  padding: 5px 8px;
+  padding: 8px 6px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-theme-swatch:hover {
+  background: var(--bg-card-hover);
+}
+.tl-theme-swatch.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.tl-fontsize {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tl-fontsize-btn {
+  font: inherit;
+  font-size: 13px;
+  min-width: 40px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tl-fontsize-btn:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+}
+.tl-fontsize-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tl-fontsize-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  min-width: 44px;
+  text-align: center;
+}
+.tl-settings-select {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 8px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tl-settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+/* ---- Toast stack (top-right) ------------------------------------------- */
+.tl-toaster {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, 90vw);
+  pointer-events: none;
+}
+.tl-toast-card {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--text-muted);
+  border-radius: var(--radius);
+  box-shadow: var(--surface-shadow), 0 8px 24px rgba(0, 0, 0, 0.3);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.tl-toast-card[data-kind="error"] {
+  border-left-color: var(--danger);
+}
+.tl-toast-card[data-kind="warning"] {
+  border-left-color: var(--state-awaiting);
+}
+.tl-toast-card[data-kind="success"] {
+  border-left-color: var(--success);
+}
+.tl-toast-card[data-kind="info"],
+.tl-toast-card[data-kind="loading"] {
+  border-left-color: var(--accent);
+}
+.tl-toast-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tl-toast-message {
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.tl-toast-detail {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.tl-toast-close {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.tl-toast-close:hover {
+  color: var(--text-primary);
 }
 
 /* ---- Views ------------------------------------------------------------- */
@@ -536,31 +721,31 @@ body {
   color: var(--text-muted);
 }
 
-/* ---- terminal stub ----------------------------------------------------- */
+/* ---- terminal view (live ttyd iframe) ---------------------------------- */
 .tl-terminalview {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
+  min-height: 0;
+  width: 100%;
   background: var(--terminal-bg);
   color: var(--terminal-fg);
 }
-.tl-terminal-stub {
-  margin: auto;
-  padding: 24px;
-  text-align: center;
-  max-width: 520px;
+.tl-ttyd {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
 }
-.tl-terminal-stub-badge {
-  display: inline-block;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 10px;
-  margin-bottom: 12px;
-}
-.tl-terminal-stub code {
-  font-family: var(--font-mono);
-  color: var(--accent);
+/* Instant themed panel over the iframe during a session (re)load — hides the
+   blank/re-boot flash; JS sets opacity 1 (no transition) on navigate and fades
+   it out on tl-terminal-ready (or the 1800ms fallback). */
+.tl-frame-cover {
+  position: absolute;
+  inset: 0;
+  background: var(--terminal-bg);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1;
 }
