@@ -1,0 +1,160 @@
+import { For, onCleanup, onMount, type Component } from "solid-js";
+import { THEMES, THEME_LABELS, setTheme, theme } from "../theme/theme";
+import {
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  NEW_COMMANDS,
+  type NewCommand,
+  type PrefsStore,
+} from "../store/prefs";
+
+/**
+ * Settings overlay (feature-inventory §6 + the §1 9-theme grid). Three groups:
+ *   - Theme: a 9-button grid picker, per-DEVICE (`tmux-theme`), NOT roamed.
+ *   - Terminal font size: an A−/A+ stepper, clamped [6,22], ROAMED + dual-written
+ *     to the legacy device key so the embedded ttyd terminal page picks it up.
+ *   - Session + notifications: the roamed prefs (newCommand, notify.*) via /prefs.
+ * Closes on the ✕, a backdrop click, or Escape (focus returns to the opener).
+ */
+export const SettingsPanel: Component<{
+  prefs: PrefsStore;
+  onClose: () => void;
+}> = (props) => {
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      props.onClose();
+    }
+  };
+  onMount(() => window.addEventListener("keydown", onKey, true));
+  onCleanup(() => window.removeEventListener("keydown", onKey, true));
+
+  const fontSize = () => props.prefs.prefs().fontSize;
+  const newCommand = () => props.prefs.prefs().session.newCommand;
+  const notify = () => props.prefs.prefs().notify;
+
+  return (
+    <div
+      class="tl-settings-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) props.onClose();
+      }}
+    >
+      <div
+        class="tl-settings"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+      >
+        <div class="tl-settings-head">
+          <span class="tl-settings-title">Settings</span>
+          <button
+            type="button"
+            class="tl-icon-btn"
+            aria-label="Close settings"
+            title="Close"
+            onClick={() => props.onClose()}
+          >
+            ✕
+          </button>
+        </div>
+
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">Theme</div>
+          <div class="tl-theme-grid">
+            <For each={THEMES}>
+              {(t) => (
+                <button
+                  type="button"
+                  class="tl-theme-swatch"
+                  classList={{ active: theme() === t }}
+                  aria-pressed={theme() === t}
+                  onClick={() => setTheme(t)}
+                >
+                  {THEME_LABELS[t] ?? t}
+                </button>
+              )}
+            </For>
+          </div>
+          <div class="tl-settings-hint">This device only.</div>
+        </section>
+
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">Terminal font size</div>
+          <div class="tl-fontsize">
+            <button
+              type="button"
+              class="tl-fontsize-btn"
+              aria-label="Smaller font"
+              title="Smaller"
+              disabled={fontSize() <= FONT_SIZE_MIN}
+              onClick={() => props.prefs.setFontSize(fontSize() - 1)}
+            >
+              A−
+            </button>
+            <span class="tl-fontsize-value" aria-live="polite">
+              {fontSize()}px
+            </span>
+            <button
+              type="button"
+              class="tl-fontsize-btn"
+              aria-label="Larger font"
+              title="Larger"
+              disabled={fontSize() >= FONT_SIZE_MAX}
+              onClick={() => props.prefs.setFontSize(fontSize() + 1)}
+            >
+              A+
+            </button>
+          </div>
+        </section>
+
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">New session runs</div>
+          <select
+            class="tl-settings-select"
+            aria-label="Command for a new session"
+            value={newCommand()}
+            onChange={(e) =>
+              props.prefs.setPref({
+                session: { newCommand: e.currentTarget.value as NewCommand },
+              })
+            }
+          >
+            <For each={NEW_COMMANDS}>{(c) => <option value={c}>{c}</option>}</For>
+          </select>
+          <div class="tl-settings-hint">
+            Applies to newly created sessions only.
+          </div>
+        </section>
+
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">Notifications</div>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={notify().onDone}
+              onChange={(e) =>
+                props.prefs.setPref({
+                  notify: { onDone: e.currentTarget.checked },
+                })
+              }
+            />
+            <span>When a session finishes</span>
+          </label>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={notify().onAwaiting}
+              onChange={(e) =>
+                props.prefs.setPref({
+                  notify: { onAwaiting: e.currentTarget.checked },
+                })
+              }
+            />
+            <span>When a session needs input</span>
+          </label>
+        </section>
+      </div>
+    </div>
+  );
+};

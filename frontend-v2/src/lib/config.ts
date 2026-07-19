@@ -60,10 +60,29 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${TMUX_API_PREFIX}${p}`;
 }
 
-/** ttyd fallback URL for the terminal view (stubbed for the foundation). */
-export function ttydUrl(session: string): string {
-  return `${API_BASE}/terminal/${encodeURIComponent(session)}`;
+/** The tmux-api prefs endpoint (roamed settings). Whole-doc GET/PUT. */
+export const PREFS_PATH = "/prefs";
+
+/**
+ * Origin the terminal iframe attaches against — the patched ttyd `-I` page that
+ * serves `/`, `/ws`, `/token` (deploy-options doc). It MUST stay same-origin as
+ * the lobby: the ttyd page is the iframe, and the lobby↔iframe postMessage bus
+ * rejects any `e.origin !== location.origin`. Default "" = same-origin root, the
+ * exact base the vanilla app uses (`/?arg=`). `?terminal=<base>` overrides it so
+ * a canary build of this SPA can point at a second ttyd unit during cutover.
+ */
+function readTerminalBase(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const q = new URLSearchParams(window.location.search).get("terminal");
+    if (q) return q.replace(/\/$/, "");
+  } catch {
+    /* no URL / no search */
+  }
+  return "";
 }
+
+export const TERMINAL_BASE = readTerminalBase();
 
 export const BUILD_ID: string =
   typeof __TL_BUILD__ !== "undefined" ? __TL_BUILD__ : "dev";
