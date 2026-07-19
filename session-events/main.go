@@ -74,10 +74,12 @@ func main() {
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
-	// Hooks are localhost-only by deployment (the Claude Code hook runs as the OS
-	// user on this box). The ingress MUST NOT route /hooks/* publicly.
-	root.HandleFunc("POST /hooks/session-start", rg.handleSessionStart())
-	root.HandleFunc("POST /hooks/permission-request", permissionRequestHandler(broker, rg.permResolve))
+	// Hooks come from the Claude Code hook running as the OS user on THIS box, so
+	// they are hard-gated to loopback: an unauthenticated /hooks/permission-request
+	// from the LAN could otherwise approve tool calls. Defense in depth alongside
+	// the ingress not routing /hooks/* publicly.
+	root.HandleFunc("POST /hooks/session-start", localhostOnly(rg.handleSessionStart()))
+	root.HandleFunc("POST /hooks/permission-request", localhostOnly(permissionRequestHandler(broker, rg.permResolve)))
 	root.Handle("/", authMiddleware(*mapPath, web))
 
 	srv := &http.Server{Addr: *addr, Handler: root}
