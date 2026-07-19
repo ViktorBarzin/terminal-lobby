@@ -3,6 +3,30 @@
 **Status:** Living tracker (updated as we tackle pillars one by one)
 **Date:** 2026-07-19 · **Owner:** wizard
 
+## Build progress (updated 2026-07-19) — landed on `master`, all verified green
+
+- **Pillar #1 `session-events` — COMPLETE (backend).** Runnable `:7685` service:
+  transcript-tail → SSE (resume + heartbeat), prompt/cancel tmux injection
+  (turn-gated), permission control plane (3 safety cases), loopback-guarded hooks,
+  systemd unit. **27 Go tests** incl. real tmux integration. *Live activation is
+  GATED* — the org-wide PreToolUse hook touches emo's sessions + adds per-tool-call
+  latency (needs Viktor's go; see `session-events/DEPLOY.md`).
+- **Pillar #2 `frontend-v2` — IN PROGRESS.** Solid+TS foundation + two-view XOR
+  switch + MessagesTimeline renderer + resumable SSE client + **lobby sidebar**
+  (session list, state dots, projects, drag-reorder, CRUD via tmux-api, layout
+  persistence) + e2e Vite proxy + a real-session-events integration test. **61 tests**,
+  builds to one file, browser-verified against the real tmux-api (13 live sessions).
+  Remaining: terminal-view (ttyd iframe) wiring, settings/toasts/gallery/mobile/
+  keybindings/PWA parity.
+- **Pillar #6 `file-api` — BACKEND DONE.** list/read/write + path-traversal
+  defenses, tested. Frontend preview/editor surface pending.
+- **#3 (auto-update shell), #4 (resilient protocol — SSE resume/backoff already in
+  the client), #5 (deploy — artifacts written, gated)** remain.
+
+Build model: fan-out workflows across independent pillars; **sequential** waves
+within the single `frontend-v2` app (parallel edits would collide). Each wave:
+build → independent verify → I re-run gates → merge green.
+
 The scope grew from "adopt a framework" into a coherent **v2**. This doc is the
 single source of truth for the pillars, their dependencies, and the agreed order.
 We tackle them **one at a time**; each gets its own spec → plan.
