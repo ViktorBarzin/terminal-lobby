@@ -6,7 +6,7 @@
  * response content-type to route ext-less images / true binaries WITHOUT
  * downloading their bodies.
  */
-import { fileListUrl, fileReadUrl } from "./config";
+import { fileListUrl, fileReadUrl, fileWriteUrl } from "./config";
 import {
   classifyFile,
   type RendererKind,
@@ -113,4 +113,43 @@ export async function listDir(dir: string, all = false): Promise<FileEntry[]> {
   }
   const data = (await resp.json()) as unknown;
   return Array.isArray(data) ? (data as FileEntry[]) : [];
+}
+
+/** Human message for an HTTP status from POST /files/write. */
+export function writeErrorMessage(status: number): string {
+  switch (status) {
+    case 413:
+      return "File is too large to save (max 10MB).";
+    case 404:
+      return "Can't save — the parent folder doesn't exist.";
+    case 400:
+      return "Can't save this path (not a regular file).";
+    case 401:
+    case 403:
+      return "Not authorized to save this file.";
+    default:
+      return `Couldn't save file (HTTP ${status}).`;
+  }
+}
+
+/**
+ * Write `content` to `path` via POST /files/write (roadmap pillar #6 editor).
+ * Same-origin credentials (the ingress injects X-Authentik-Username). Resolves
+ * on the server's 204 (any 2xx); throws FileApiError(status) otherwise so the
+ * store can surface 413 (too large) / 403 (denied) / 404 (no parent dir)
+ * distinctly. The body is drained on failure so the connection can be reused.
+ */
+export async function writeFile(path: string, content: string): Promise<void> {
+  const resp = await fetch(fileWriteUrl(), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+  if (resp.ok) {
+    await resp.body?.cancel().catch(() => {});
+    return;
+  }
+  await resp.body?.cancel().catch(() => {});
+  throw new FileApiError(resp.status, writeErrorMessage(resp.status));
 }
