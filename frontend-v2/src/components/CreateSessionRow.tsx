@@ -1,4 +1,4 @@
-import { createSignal, type Component } from "solid-js";
+import { createSignal, onCleanup, onMount, type Component } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
 
 const CMD_KEY = "tl:new-cmd";
@@ -27,6 +27,13 @@ function loadCmd(): string {
 export const CreateSessionRow: Component<{ store: LobbyStore }> = (props) => {
   const [name, setName] = createSignal("");
   const [cmd, setCmd] = createSignal(loadCmd());
+  let inputEl: HTMLInputElement | undefined;
+
+  // The session.new command (Alt+Shift+N / palette "New session") focuses this
+  // box. App un-collapses the sidebar and dispatches this event.
+  const onFocusReq = () => queueMicrotask(() => inputEl?.focus());
+  onMount(() => window.addEventListener("tl:focus-new-session", onFocusReq));
+  onCleanup(() => window.removeEventListener("tl:focus-new-session", onFocusReq));
 
   const setCommand = (v: string) => {
     setCmd(v);
@@ -47,6 +54,7 @@ export const CreateSessionRow: Component<{ store: LobbyStore }> = (props) => {
   return (
     <div class="tl-new-row">
       <input
+        ref={inputEl}
         class="tl-new-input"
         placeholder="new session…"
         value={name()}
