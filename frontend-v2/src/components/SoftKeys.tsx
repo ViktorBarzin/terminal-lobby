@@ -138,14 +138,38 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
   };
   onCleanup(stopRepeat);
 
+  // ---- tap-commit travel guard (shared by key + modifier buttons) --------
+  // A non-repeat key/modifier fires on pointerUP only when the SAME pointer
+  // travelled < 10px, so a horizontal row-scroll that happens to start on a
+  // button never misfires it. preventDefault on pointerdown keeps focus on the
+  // active input (else the soft keyboard collapses between keystrokes).
+  const tapCommit = (fire: () => void) => {
+    let pending: { id: number; x: number; y: number } | null = null;
+    return {
+      onPointerDown: (e: PointerEvent) => {
+        e.preventDefault();
+        pending = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      },
+      onPointerUp: (e: PointerEvent) => {
+        if (!pending || e.pointerId !== pending.id) return;
+        const travel = Math.hypot(e.clientX - pending.x, e.clientY - pending.y);
+        pending = null;
+        if (travel >= TAP_COMMIT_MAX_TRAVEL_PX) return; // a swipe, not a tap
+        fire();
+      },
+      onPointerCancel: () => (pending = null),
+      onPointerLeave: () => (pending = null),
+    };
+  };
+
   // ---- key button (tap-commit vs down-fire) ------------------------------
   const keyButton = (def: KeyDef): JSX.Element => {
     const fire = () => sendKey(def.bytes as KeyName);
-    let pending: { id: number; x: number; y: number } | null = null;
-
-    const cls = `${def.narrow ? "sk-narrow" : ""}`.trim() || undefined;
+    const cls = def.narrow ? "sk-narrow" : undefined;
 
     if (def.repeat) {
+      // Repeat keys keep the down-fire path: initial send at pointerdown, then
+      // re-fire while held (hold-to-repeat needs the immediate first send).
       return (
         <button
           type="button"
@@ -164,24 +188,16 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
         </button>
       );
     }
+    const h = tapCommit(fire);
     return (
       <button
         type="button"
         class={cls}
         aria-label={def.ariaLabel}
-        onPointerDown={(e) => {
-          e.preventDefault();
-          pending = { id: e.pointerId, x: e.clientX, y: e.clientY };
-        }}
-        onPointerUp={(e) => {
-          if (!pending || e.pointerId !== pending.id) return;
-          const travel = Math.hypot(e.clientX - pending.x, e.clientY - pending.y);
-          pending = null;
-          if (travel >= TAP_COMMIT_MAX_TRAVEL_PX) return; // a swipe, not a tap
-          fire();
-        }}
-        onPointerCancel={() => (pending = null)}
-        onPointerLeave={() => (pending = null)}
+        onPointerDown={h.onPointerDown}
+        onPointerUp={h.onPointerUp}
+        onPointerCancel={h.onPointerCancel}
+        onPointerLeave={h.onPointerLeave}
       >
         {def.label}
       </button>
@@ -189,9 +205,11 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
   };
 
   // A modifier button reflects armed/latched from the signal (data-mod so tests
-  // and CSS can find it). Tap toggles the tri-state; no focus change / no repeat.
+  // and CSS can find it). Tap-commit toggles the tri-state (no focus change, no
+  // repeat) so a scroll starting on Ctrl/Alt never arms it accidentally.
   const modButton = (name: ModName, label: string): JSX.Element => {
     const state = (): ModState => mods()[name];
+    const h = tapCommit(() => onTapMod(name));
     return (
       <button
         type="button"
@@ -200,10 +218,10 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
         aria-label={`${label} modifier`}
         aria-pressed={state() !== "idle"}
         classList={{ armed: state() === "armed", latched: state() === "latched" }}
-        onPointerDown={(e) => {
-          e.preventDefault();
-          onTapMod(name);
-        }}
+        onPointerDown={h.onPointerDown}
+        onPointerUp={h.onPointerUp}
+        onPointerCancel={h.onPointerCancel}
+        onPointerLeave={h.onPointerLeave}
       >
         {label}
       </button>
