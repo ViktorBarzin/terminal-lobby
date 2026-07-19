@@ -18,9 +18,12 @@ blockers here. Repo-canonical (not published).
 - [ ] `session-events` must be RUNNING + deployed for `/events`,`/prompt`,`/cancel`,`/permission` (endpoints exist; not wired live). *(wave 2/5)*
 - [ ] Prove the vertical slice in a real browser: frontend-v2 ↔ running session-events ↔ real tmux, text + terminal. *(waves 2–5)*
 - [ ] Vite dev-proxy → real ingress-equivalent routing in the built/deployed artifact. *(wave 2)*
+- [ ] **BUG — API path prefix:** `lobby-api.ts`/`config.ts` call `/api/*` (works only under the v2 dev-proxy); the PROD ingress is `PathPrefix /api/sessions/` (strip). Move lobby-api + config + vite-proxy to `/api/sessions/*`. Push/SW paths are already correct (`/api/sessions/push*`, verbatim sw.js) — do NOT move those. *(wave 6, mem #10069)*
 
 ### Cross-subsystem deps
 - [ ] recents-first (command palette, Alt-jump) needs `tl:session-visits:v1` from the pills/visits subsystem. *(wave 4)*
+- [ ] **Seen/visit tracking** (Cat.2: STATES_KEY/VISITS_KEY/stateChangedAt) not ported → tab-title unseen-done count + SessionCard `unseen` are placeholders (`state==='done'`). `title.ts`/`notifications.ts` take an injectable `isUnseen` — swap the real predicate in both when it lands. *(wave 6)*
+- [ ] `relandLastActive` boot reattach (inventory #304) not ported (needs `LAST_ACTIVE_KEY` per-device). iOS killed-PWA stash-consume (#303) + SW `tl-activate-session` (#302) ARE wired. *(wave 6)*
 - [ ] `keyRepeat` hold-to-repeat needs a roamed pref + master kill when the mobile settings surface lands. *(wave 5)*
 - [ ] Ctrl/Cmd+J dropped the vanilla scratch-shell dock (v2 uses it for the view toggle) — revisit with the dock pillar. *(wave 4)*
 
