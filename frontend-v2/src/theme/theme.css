@@ -1,0 +1,347 @@
+/* ============================================================================
+   Theme token layer — ported VERBATIM from the vanilla frontend/index.html
+   (design §2 decision #4: keep the 9-theme CSS-var system as the token layer).
+
+   Nine picker choices: 8 explicit body.theme-* classes below +
+   'system' (resolved to t3-dark/t3-light by the pre-paint boot in index.html).
+   Slate is the default. Every color/terminal-ANSI var is unchanged from the
+   source so there is zero fidelity loss; the --terminal-ansi-* vars feed the
+   xterm ITheme derivation (readTerminalTheme) when the terminal view owns xterm.
+   ========================================================================== */
+
+:root {
+  /* Single source of truth for chrome mono stacks. */
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco,
+    "Courier New", monospace;
+  /* Lobby chrome only. Weights in use: 400 body / 500 buttons / 600 headings. */
+  --font-ui: "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  /* T3 radius scale: buttons/menus/inputs = --radius, cards/dialog = +8. */
+  --radius: 10px;
+}
+
+/* Themes — set on <body> as theme-{carbon,slate,mono,ink,t3-dark,
+   t3-light,catppuccin-mocha,catppuccin-latte}. Slate is the default. */
+body.theme-carbon {
+  --bg-page: #0c0c0a;
+  --bg-sidebar: #131311;
+  --bg-card: #1a1916;
+  --bg-card-hover: #22211d;
+  --text-primary: #e8e3d6;
+  --text-muted: #8a8474;
+  --border: #2a2826;
+  --border-strong: #3a3733;
+  --accent: #d4a574;
+  --danger: #c47a5a;
+  --success: #88a888;
+  --state-running: #d4a574;
+  --state-awaiting: #a56eff; /* Carbon purple */
+  --state-done: #88a888;
+  --terminal-bg: #0c0c0a;
+  --terminal-fg: #e8e3d6;
+  --terminal-cursor: #d4a574;
+  --terminal-selection: rgba(212, 165, 116, 0.22);
+  --terminal-cursor-accent: #0c0c0a;
+  --terminal-ansi-black: #1a1916;
+  --terminal-ansi-red: #ff7a8e;
+  --terminal-ansi-green: #86e795;
+  --terminal-ansi-yellow: #f4cd72;
+  --terminal-ansi-blue: #89beff;
+  --terminal-ansi-magenta: #d0b0ff;
+  --terminal-ansi-cyan: #7ce8ed;
+  --terminal-ansi-white: #d2dae6;
+  --terminal-ansi-bright-black: #6e7888;
+  --terminal-ansi-bright-red: #ffa8b4;
+  --terminal-ansi-bright-green: #b0f5ba;
+  --terminal-ansi-bright-yellow: #ffe095;
+  --terminal-ansi-bright-blue: #aed2ff;
+  --terminal-ansi-bright-magenta: #e5cbff;
+  --terminal-ansi-bright-cyan: #a7f4f7;
+  --terminal-ansi-bright-white: #f4f7fc;
+}
+body.theme-slate {
+  --bg-page: #0d1117;
+  --bg-sidebar: #11151c;
+  --bg-card: #161b22;
+  --bg-card-hover: #1c2128;
+  --text-primary: #e6e8eb;
+  --text-muted: #7d8590;
+  --border: #1f242d;
+  --border-strong: #30363d;
+  --accent: #4493f8;
+  --danger: #f47067;
+  --success: #56d364;
+  --state-running: #4493f8;
+  --state-awaiting: #a371f7; /* GitHub purple */
+  --state-done: #56d364;
+  --terminal-bg: #0d1117;
+  --terminal-fg: #e6e8eb;
+  --terminal-cursor: #4493f8;
+  --terminal-selection: rgba(68, 147, 248, 0.22);
+  --terminal-cursor-accent: #0d1117;
+  --terminal-ansi-black: #161b22;
+  --terminal-ansi-red: #ff7a8e;
+  --terminal-ansi-green: #86e795;
+  --terminal-ansi-yellow: #f4cd72;
+  --terminal-ansi-blue: #89beff;
+  --terminal-ansi-magenta: #d0b0ff;
+  --terminal-ansi-cyan: #7ce8ed;
+  --terminal-ansi-white: #d2dae6;
+  --terminal-ansi-bright-black: #6e7888;
+  --terminal-ansi-bright-red: #ffa8b4;
+  --terminal-ansi-bright-green: #b0f5ba;
+  --terminal-ansi-bright-yellow: #ffe095;
+  --terminal-ansi-bright-blue: #aed2ff;
+  --terminal-ansi-bright-magenta: #e5cbff;
+  --terminal-ansi-bright-cyan: #a7f4f7;
+  --terminal-ansi-bright-white: #f4f7fc;
+}
+body.theme-mono {
+  --bg-page: #0d0d0d;
+  --bg-sidebar: #131313;
+  --bg-card: #1a1a1a;
+  --bg-card-hover: #232323;
+  --text-primary: #e0e0e0;
+  --text-muted: #7d7d7d;
+  --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --accent: #e8e8e8;
+  --danger: #cc7070;
+  --success: #9ccb9c;
+  --state-running: #e8e8e8;
+  --state-awaiting: #a78bda; /* muted lavender */
+  --state-done: #9ccb9c;
+  --terminal-bg: #0d0d0d;
+  --terminal-fg: #e0e0e0;
+  --terminal-cursor: #e8e8e8;
+  --terminal-selection: rgba(255, 255, 255, 0.18);
+  --terminal-cursor-accent: #0d0d0d;
+  --terminal-ansi-black: #1a1a1a;
+  --terminal-ansi-red: #ff7a8e;
+  --terminal-ansi-green: #86e795;
+  --terminal-ansi-yellow: #f4cd72;
+  --terminal-ansi-blue: #89beff;
+  --terminal-ansi-magenta: #d0b0ff;
+  --terminal-ansi-cyan: #7ce8ed;
+  --terminal-ansi-white: #d2dae6;
+  --terminal-ansi-bright-black: #6e7888;
+  --terminal-ansi-bright-red: #ffa8b4;
+  --terminal-ansi-bright-green: #b0f5ba;
+  --terminal-ansi-bright-yellow: #ffe095;
+  --terminal-ansi-bright-blue: #aed2ff;
+  --terminal-ansi-bright-magenta: #e5cbff;
+  --terminal-ansi-bright-cyan: #a7f4f7;
+  --terminal-ansi-bright-white: #f4f7fc;
+}
+body.theme-ink {
+  --bg-page: #faf7f2;
+  --bg-sidebar: #f1ebda;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f4eee0;
+  --text-primary: #1d1b18;
+  --text-muted: #6e6862;
+  --border: #d8d2c4;
+  --border-strong: #b8b0a0;
+  --accent: #b5482d;
+  --danger: #b5482d;
+  --success: #3d6b3d;
+  --state-running: #b5482d;
+  --state-awaiting: #6f42c1; /* deep purple (light bg) */
+  --state-done: #3d6b3d;
+  --terminal-bg: #faf7f2;
+  --terminal-fg: #1d1b18;
+  --terminal-cursor: #b5482d;
+  --terminal-selection: rgba(181, 72, 45, 0.18);
+  --terminal-cursor-accent: #faf7f2;
+  --terminal-ansi-black: #2c3542;
+  --terminal-ansi-red: #bf4657;
+  --terminal-ansi-green: #3c7e56;
+  --terminal-ansi-yellow: #927023;
+  --terminal-ansi-blue: #4866a3;
+  --terminal-ansi-magenta: #845695;
+  --terminal-ansi-cyan: #357f8d;
+  --terminal-ansi-white: #d2d7df;
+  --terminal-ansi-bright-black: #707b8c;
+  --terminal-ansi-bright-red: #d45f70;
+  --terminal-ansi-bright-green: #55946f;
+  --terminal-ansi-bright-yellow: #ad852d;
+  --terminal-ansi-bright-blue: #5b7cc2;
+  --terminal-ansi-bright-magenta: #996bac;
+  --terminal-ansi-bright-cyan: #4695a4;
+  --terminal-ansi-bright-white: #ecf0f6;
+}
+/* T3 Code parity pair — surfaces/accents ported from t3code index.css. */
+body.theme-t3-dark {
+  --bg-page: #161616;
+  --bg-sidebar: #1b1b1b;
+  --bg-card: #1b1b1b;
+  --bg-card-hover: #242424;
+  --text-primary: #f5f5f5;
+  --text-muted: #818181;
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --accent: #366ffb;
+  --danger: #ff6467;
+  --success: #10b981;
+  --state-running: #0ea5e9;
+  --state-awaiting: #8b5cf6; /* violet-500 */
+  --state-done: #10b981;
+  --terminal-bg: #161616;
+  --terminal-fg: #f5f5f5;
+  --terminal-cursor: #b4cbff;
+  --terminal-selection: rgba(54, 111, 251, 0.22);
+  --terminal-cursor-accent: #161616;
+  --terminal-ansi-black: #181e26;
+  --terminal-ansi-red: #ff7a8e;
+  --terminal-ansi-green: #86e795;
+  --terminal-ansi-yellow: #f4cd72;
+  --terminal-ansi-blue: #89beff;
+  --terminal-ansi-magenta: #d0b0ff;
+  --terminal-ansi-cyan: #7ce8ed;
+  --terminal-ansi-white: #d2dae6;
+  --terminal-ansi-bright-black: #6e7888;
+  --terminal-ansi-bright-red: #ffa8b4;
+  --terminal-ansi-bright-green: #b0f5ba;
+  --terminal-ansi-bright-yellow: #ffe095;
+  --terminal-ansi-bright-blue: #aed2ff;
+  --terminal-ansi-bright-magenta: #e5cbff;
+  --terminal-ansi-bright-cyan: #a7f4f7;
+  --terminal-ansi-bright-white: #f4f7fc;
+}
+body.theme-t3-light {
+  --bg-page: #ffffff;
+  --bg-sidebar: #f7f7f7;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f5f5f5;
+  --text-primary: #262626;
+  --text-muted: #676767;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.15);
+  --accent: #1b4ed8;
+  --danger: #c10007;
+  --success: #047857;
+  --state-running: #0ea5e9;
+  --state-awaiting: #7c3aed; /* violet-600 (light bg) */
+  --state-done: #10b981;
+  --terminal-bg: #ffffff;
+  --terminal-fg: #262626;
+  --terminal-cursor: #26384e;
+  --terminal-selection: rgba(27, 78, 216, 0.18);
+  --terminal-cursor-accent: #ffffff;
+  --terminal-ansi-black: #2c3542;
+  --terminal-ansi-red: #bf4657;
+  --terminal-ansi-green: #3c7e56;
+  --terminal-ansi-yellow: #927023;
+  --terminal-ansi-blue: #4866a3;
+  --terminal-ansi-magenta: #845695;
+  --terminal-ansi-cyan: #357f8d;
+  --terminal-ansi-white: #d2d7df;
+  --terminal-ansi-bright-black: #707b8c;
+  --terminal-ansi-bright-red: #d45f70;
+  --terminal-ansi-bright-green: #55946f;
+  --terminal-ansi-bright-yellow: #ad852d;
+  --terminal-ansi-bright-blue: #5b7cc2;
+  --terminal-ansi-bright-magenta: #996bac;
+  --terminal-ansi-bright-cyan: #4695a4;
+  --terminal-ansi-bright-white: #ecf0f6;
+}
+/* Catppuccin pair — colors verbatim from the official palette. */
+body.theme-catppuccin-mocha {
+  --bg-page: #1e1e2e; /* base */
+  --bg-sidebar: #181825; /* mantle */
+  --bg-card: #313244; /* surface0 */
+  --bg-card-hover: #45475a; /* surface1 */
+  --text-primary: #cdd6f4; /* text */
+  --text-muted: #9399b2; /* overlay2 */
+  --border: #45475a; /* surface1 */
+  --border-strong: #585b70; /* surface2 */
+  --accent: #cba6f7; /* mauve */
+  --danger: #f38ba8; /* red */
+  --success: #a6e3a1; /* green */
+  --state-running: #89b4fa; /* blue */
+  --state-awaiting: #cba6f7; /* mauve */
+  --state-done: #a6e3a1; /* green */
+  --terminal-bg: #1e1e2e;
+  --terminal-fg: #cdd6f4;
+  --terminal-cursor: #f5e0dc; /* rosewater */
+  --terminal-selection: rgba(203, 166, 247, 0.22);
+  --terminal-cursor-accent: #1e1e2e;
+  --terminal-ansi-black: #45475a;
+  --terminal-ansi-red: #f38ba8;
+  --terminal-ansi-green: #a6e3a1;
+  --terminal-ansi-yellow: #f9e2af;
+  --terminal-ansi-blue: #89b4fa;
+  --terminal-ansi-magenta: #f5c2e7;
+  --terminal-ansi-cyan: #94e2d5;
+  --terminal-ansi-white: #bac2de;
+  --terminal-ansi-bright-black: #585b70;
+  --terminal-ansi-bright-red: #f38ba8;
+  --terminal-ansi-bright-green: #a6e3a1;
+  --terminal-ansi-bright-yellow: #f9e2af;
+  --terminal-ansi-bright-blue: #89b4fa;
+  --terminal-ansi-bright-magenta: #f5c2e7;
+  --terminal-ansi-bright-cyan: #94e2d5;
+  --terminal-ansi-bright-white: #a6adc8;
+}
+body.theme-catppuccin-latte {
+  --bg-page: #eff1f5; /* base */
+  --bg-sidebar: #e6e9ef; /* mantle */
+  --bg-card: #ffffff;
+  --bg-card-hover: #e6e9ef;
+  --text-primary: #4c4f69; /* text */
+  --text-muted: #6c6f85; /* subtext0 */
+  --border: #ccd0da; /* surface0 */
+  --border-strong: #bcc0cc; /* surface1 */
+  --accent: #8839ef; /* mauve */
+  --danger: #d20f39; /* red */
+  --success: #40a02b; /* green */
+  --state-running: #1e66f5; /* blue */
+  --state-awaiting: #8839ef; /* latte mauve */
+  --state-done: #40a02b; /* green */
+  --terminal-bg: #eff1f5;
+  --terminal-fg: #4c4f69;
+  --terminal-cursor: #dc8a78; /* rosewater */
+  --terminal-selection: rgba(136, 57, 239, 0.18);
+  --terminal-cursor-accent: #eff1f5;
+  --terminal-ansi-black: #5c5f77;
+  --terminal-ansi-red: #d20f39;
+  --terminal-ansi-green: #40a02b;
+  --terminal-ansi-yellow: #df8e1d;
+  --terminal-ansi-blue: #1e66f5;
+  --terminal-ansi-magenta: #ea76cb;
+  --terminal-ansi-cyan: #179299;
+  --terminal-ansi-white: #acb0be;
+  --terminal-ansi-bright-black: #6c6f85;
+  --terminal-ansi-bright-red: #d20f39;
+  --terminal-ansi-bright-green: #40a02b;
+  --terminal-ansi-bright-yellow: #df8e1d;
+  --terminal-ansi-bright-blue: #1e66f5;
+  --terminal-ansi-bright-magenta: #ea76cb;
+  --terminal-ansi-bright-cyan: #179299;
+  --terminal-ansi-bright-white: #bcc0cc;
+}
+
+/* Scheme-dependent tokens — dark defaults on body, flipped by the light themes
+   as a GROUP (body.theme-* wins on specificity). A new light theme must join
+   the selector list below. */
+body {
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
+  --scrollbar-thumb-active: rgba(255, 255, 255, 0.22);
+  --surface-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    inset 0 1px rgba(255, 255, 255, 0.06);
+  --skeleton-highlight: rgba(255, 255, 255, 0.04);
+  --hover-tint: rgba(255, 255, 255, 0.04);
+  --ring: var(--accent);
+}
+body.theme-ink,
+body.theme-t3-light,
+body.theme-catppuccin-latte {
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
+  --scrollbar-thumb-active: rgba(0, 0, 0, 0.3);
+  --surface-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    inset 0 -1px rgba(0, 0, 0, 0.04);
+  --skeleton-highlight: rgba(255, 255, 255, 0.64);
+  --hover-tint: rgba(0, 0, 0, 0.04);
+}
