@@ -2,6 +2,7 @@
 import { render } from "solid-js/web";
 import "./theme/theme.css";
 import "./app.css";
+import "./sidebar.css";
 import { App } from "./components/App";
 
 const root = document.getElementById("root");
