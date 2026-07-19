@@ -4,6 +4,7 @@ import {
   createSignal,
   onCleanup,
   onMount,
+  Show,
   type Component,
 } from "solid-js";
 import { createSessionStore, type NotifyKind } from "../store/session";
@@ -13,6 +14,9 @@ import type { PermissionDecision } from "../types/events";
 import { ViewSwitch } from "./ViewSwitch";
 import { TextView } from "./TextView";
 import { TerminalView } from "./TerminalView";
+import { SoftKeys } from "./SoftKeys";
+import { createCoarsePointer } from "../mobile/pointer";
+import { installViewportSync } from "../mobile/viewport";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -66,6 +70,38 @@ export const SessionView: Component<{
   const resolve = (reqId: string, d: PermissionDecision) =>
     void store.resolvePermission(reqId, d);
 
+  // ---- mobile input subsystem (design pillar #2 — Mobile/Touch) -----------
+  // Coarse-pointer only. The soft-key toolbar + mobile compose route bytes into
+  // the LIVE session pty via the terminal iframe (both views stay mounted, so
+  // the pty is alive even while text mode shows). `body.has-soft-keys` reserves
+  // a REAL height so the view surface shrinks above the toolbar.
+  const coarse = createCoarsePointer();
+  const sendBytesToPty = (bytes: string): void => {
+    window.__tlSendToTerminal?.(bytes);
+  };
+  const dismissKeyboard = (): void => {
+    const el = document.activeElement as HTMLElement | null;
+    el?.blur?.();
+  };
+  // Reserve the toolbar height on <body> while the toolbar is mounted.
+  createEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.classList.toggle("has-soft-keys", coarse());
+  });
+  onCleanup(() => {
+    if (typeof document !== "undefined") {
+      document.body.classList.remove("has-soft-keys");
+    }
+  });
+  // Keyboard-offset plumbing: publish --kb-offset / --sk-h and ask the terminal
+  // iframe to re-fit after the keyboard settles.
+  onMount(() => {
+    const dispose = installViewportSync({
+      onRefit: () => window.__tlRefitTerminal?.(),
+    });
+    onCleanup(dispose);
+  });
+
   return (
     <div class="tl-session-view" data-mode={mode()}>
       <div class="tl-session-bar">
@@ -88,6 +124,7 @@ export const SessionView: Component<{
             onSend={send}
             onStop={stop}
             onResolve={resolve}
+            sendToTerminal={coarse() ? sendBytesToPty : undefined}
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
@@ -101,6 +138,15 @@ export const SessionView: Component<{
           />
         </section>
       </main>
+
+      <Show when={coarse()}>
+        <SoftKeys
+          send={sendBytesToPty}
+          onCopy={() => window.__tlForwardToTerminal?.("terminal.copy")}
+          onPaste={() => window.__tlForwardToTerminal?.("terminal.paste")}
+          onDismissKeyboard={dismissKeyboard}
+        />
+      </Show>
     </div>
   );
 };

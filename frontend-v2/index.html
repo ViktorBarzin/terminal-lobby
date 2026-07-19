@@ -2,9 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- viewport-fit=cover exposes env(safe-area-inset-*); interactive-widget=
+         resizes-content shrinks the layout viewport for the soft keyboard
+         (Chromium) so bottom UI is not overlaid; no maximum-scale so native
+         pinch-zoom stays available (red-line: pinch reaches the compositor). -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <meta name="theme-color" content="#0d1117" />
     <meta name="color-scheme" content="dark light" />

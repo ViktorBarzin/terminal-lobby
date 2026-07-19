@@ -896,3 +896,155 @@ body {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* ---- Mobile: soft-key toolbar + keyboard plumbing (pillar #2) ----------- */
+/* Ported from the vanilla frontend/index.html #soft-keys. Coarse-pointer only;
+   fixed above the soft keyboard via --kb-offset (visualViewport-driven). A flex
+   COLUMN of [overflow tier .sk-extra] over [always-visible .sk-line]. */
+#soft-keys {
+  display: none; /* the (pointer: coarse) query below un-hides it */
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+  z-index: 40; /* above content; below settings(60)/palette(65)/toasts(70) */
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px calc(6px + env(safe-area-inset-left)) 6px
+    calc(6px + env(safe-area-inset-right));
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+  border-top: 1px solid var(--border-strong);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  font-family: var(--font-mono);
+}
+#soft-keys .sk-line {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+#soft-keys .sk-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: nowrap;
+  /* Edge-fade scroll affordance (static two-sided mask). */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 16px,
+    #000 calc(100% - 16px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 16px,
+    #000 calc(100% - 16px),
+    transparent
+  );
+}
+#soft-keys .sk-row::-webkit-scrollbar {
+  height: 0;
+}
+#soft-keys .sk-row.sk-extra {
+  display: none;
+}
+#soft-keys.expanded .sk-row.sk-extra {
+  display: flex;
+}
+#soft-keys .sk-group {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+#soft-keys .sk-sep {
+  flex: 0 0 1px;
+  align-self: stretch;
+  margin: 6px 5px;
+  background: var(--border-strong);
+  opacity: 0.6;
+}
+#soft-keys .sk-row.sk-primary {
+  gap: 12px;
+}
+#soft-keys button {
+  flex: 0 0 auto;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  touch-action: manipulation; /* no double-tap-zoom / 300ms delay on keys */
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+#soft-keys button.sk-narrow {
+  min-width: 36px;
+  padding: 0 8px;
+}
+#soft-keys button:active {
+  background: color-mix(in srgb, var(--accent) 25%, var(--bg-card-hover));
+}
+/* Modifier tri-state paint: armed = accent outline, latched = filled + dot. */
+#soft-keys button.sk-mod.armed,
+#soft-keys button.sk-more.armed {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-card-hover));
+}
+#soft-keys button.sk-mod.latched {
+  color: var(--bg-page);
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+#soft-keys button.sk-mod.latched::after {
+  content: "•";
+  margin-left: 4px;
+  font-weight: 700;
+}
+@media (max-width: 375px) {
+  #soft-keys button.sk-narrow {
+    min-width: 34px;
+  }
+}
+/* The primary line fits >360px, so drop its edge fade there (only ≤360px
+   degrades to fade+scroll). */
+@media (min-width: 361px) {
+  #soft-keys .sk-row.sk-primary {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
+@media (pointer: coarse) {
+  #soft-keys {
+    display: flex;
+  }
+  /* Reserve a REAL height so BOTH views sit above the toolbar (+ keyboard),
+     the FitAddon-honest equivalent of the vanilla `body.has-soft-keys #terminal`
+     shrink. --sk-h is the live toolbar height (viewport.ts), 50px pre-JS. */
+  body.has-soft-keys .tl-views {
+    margin-bottom: calc(
+      var(--sk-h, 50px) + var(--kb-offset, 0px) + env(safe-area-inset-bottom)
+    );
+  }
+  /* 16px blocks iOS Safari's focus auto-zoom on the compose field. */
+  .tl-composer-input {
+    font-size: 16px;
+  }
+}
