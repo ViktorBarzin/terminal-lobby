@@ -36,6 +36,20 @@ npm test             # vitest run
 `?session=<id>` selects the session; `?api=<base>` points the SSE/control calls
 at a remote devvm for local dev (default is same-origin).
 
+### Local dev against real backends
+
+The Vite dev server proxies to the two devvm services so the SPA runs end-to-end
+without CORS (`vite.config.ts`):
+
+- `/events`, `/prompt`, `/cancel`, `/permission` → **session-events** (default
+  `http://127.0.0.1:7685`, override `TL_SESSION_EVENTS`).
+- `/api/*` → **tmux-api** root, stripping the `/api` prefix (default
+  `http://127.0.0.1:7684`, override `TL_TMUX_API`).
+
+Both services resolve the OS user from the `X-Authentik-Username` header the
+ingress injects in prod; set `TL_DEV_AUTH=<authentik-name>` and the proxy stands
+in for the ingress so the dev server authenticates.
+
 ## Build output
 
 `npm run build` uses `vite-plugin-singlefile` to inline **all** JS + CSS into a
@@ -49,14 +63,23 @@ app (ttyd `-I index.html`). The build id is injected via Vite `define`
 ```
 src/
   types/events.ts        Wire contract — mirrors session-events/event.go EXACTLY
-  lib/config.ts          Endpoints (/events/<s>, /permission/<id>) + build id
+  types/lobby.ts         tmux-api shapes (Session/Layout/Project/Whoami)
+  lib/config.ts          Endpoints: /events,/prompt,/cancel,/permission (session-
+                         events) + apiUrl() for the /api tmux-api prefix + build id
+  lib/lobby-api.ts       tmux-api client (sessions/layout/whoami/kill/rename/…)
   sse/client.ts          Resumable SSE client (Last-Event-ID, backoff+jitter,
                          instant-retry on visible/online) — DOM-free, testable
-  store/session.ts       SSE → Solid store of events + permission/send control
+  store/session.ts       SSE → Solid store of events + prompt/cancel control
   store/viewmode.ts      Per-session/per-device {mode} persistence
+  store/lobby.ts         Lobby store: poll + optimistic layout PUT + session CRUD
+  store/collapse.ts      Per-browser group-collapse (tmux-collapsed-<user>)
   theme/theme.css        The 9-theme CSS-var token layer (ported verbatim)
   theme/theme.ts         Live theme switch + xterm ITheme derivation
   components/
+    lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
+    Sidebar / ProjectGroup / SessionCard / StateDot / CreateSessionRow
+    App.tsx              Lobby shell (sidebar + selected SessionView + toast)
+    SessionView.tsx      The per-session two-view surface (text | terminal)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
     MessagesTimeline.tsx  Rows-as-data renderer (fold / tool / working / …)
     Markdown.tsx          solid-markdown + remark-gfm + rehype-sanitize
@@ -64,8 +87,9 @@ src/
     Composer.tsx          Prompt input + Send↔Stop morph + number-key approvals
     PermissionPanel.tsx   Composer-docked Approve/Deny → POST /permission/<id>
     ViewSwitch.tsx        Segmented Text|Terminal + activity dot
-    TextView / TerminalView / App
-test/                    logic, render smoke, SSE client, event-parse suites
+    TerminalView.tsx
+test/                    logic, store, sidebar render, SSE client, event-parse,
+  integration/             + a REAL session-events SSE integration test
 ```
 
 ## Wire contract
@@ -75,11 +99,31 @@ test/                    logic, render smoke, SSE client, event-parse suites
 tool, toolId, reqId, isError, at`) and the 11 `kind` discriminators. The renderer
 only ever sees this normalized shape, never raw transcript JSONL.
 
+## Lobby sidebar (pillar #2)
+
+The sidebar is a pure view over the lobby store (`store/lobby.ts`), which polls
+`/api/sessions` + `/api/layout` (5s), derives the render model (`lobby.logic.ts`),
+and pushes every mutation back as a whole-document `PUT /api/layout` (optimistic,
+with a 4s grace window so a stale poll can't revert an in-flight change):
+
+- session list with Claude **state dots** (running pulses / awaiting glows / done
+  dims-or-rings-while-unseen), a live working timer for running sessions;
+- **project grouping + Ungrouped** at its movable slot (hides while empty);
+- **session CRUD** — create (optimistic + dup guard), rename (inline, POST
+  `/api/sessions/{n}/rename`, 409/404 handled), kill (DELETE), move-to (menu);
+- **drag-reorder** session cards (across groups) and group headers (HTML5 DnD),
+  plus menu move-up/down; per-browser **collapse**; **Restore** (POST `/restore`);
+- read-only **Shared-with-me** section for foreign sessions.
+
 ## Foundation stubs / follow-ups
 
-- **Terminal view** is a placeholder (ttyd iframe wiring is P2).
-- **Send / interrupt** POST to a provisional `/input/<session>` endpoint that
-  pillar #1's `session-events` service has not finalized yet; failures are
-  swallowed so the read path is unaffected. Optimistic echo + dedup is deferred.
+- **Terminal view** is a placeholder (ttyd iframe wiring is P2). A created
+  session's tmux birth rides that terminal attach (`new-session -A`); until it's
+  wired, a freshly-created card shows optimistically and reconciles on the poll.
+- **Global projects / sharing (Category 3 advanced):** grouping here is driven by
+  the per-user `/api/layout` (create/move at the layout level). The multi-user
+  global project store (member management, attach-mode, co-ownership, minting a
+  global project on create) and the dir-picker create-project modal are not yet
+  wired — a follow-up on top of this sidebar.
 - **Virtualization**, auto-fallback engine, mobile soft-keys, PWA/SW, gallery,
-  golden-master suite — later phases (see the roadmap + rewrite-design docs).
+  command palette, keybinding engine — later phases (see the inventory + design).
