@@ -13711,7 +13711,11 @@
             } else if (validCmdKey) {
                 argSuffix += '&arg=' + encodeURIComponent(validCmdKey);
             }
-            const base = location.pathname.replace(/\/+$/, '');
+            // /token + /ws live at the ORIGIN ROOT (served by ttyd/ingress), not
+            // under this page's path — strip the trailing filename so it resolves
+            // to '' whether this page is served at '/' (vanilla) or '/term.html'
+            // (v2 terminal iframe). A bare trailing-slash strip broke /term.html.
+            const base = location.pathname.replace(/\/[^/]*$/, '');
             const wsUrl = proto + '//' + location.host + base + '/ws' + argSuffix;
 
             connAttempts++;
