@@ -5,9 +5,11 @@
  *     control channel, served at the ROOT paths /events, /prompt, /cancel,
  *     /permission (see session-events/main.go).
  *   - tmux-api — the lobby data API (sessions, layout, whoami, projects …),
- *     reached under the /api/* prefix (the ingress strips /api → tmux-api root;
- *     see the runtime-topology diagram in the feature inventory). The vite dev
- *     proxy reproduces both mappings for local dev (vite.config.ts).
+ *     reached under the /api/sessions/* prefix (the PROD ingress is
+ *     `PathPrefix /api/sessions/` → tmux-api, stripping the whole prefix so
+ *     tmux-api sees /whoami, /sessions, /layout, … at its root; this matches the
+ *     vanilla frontend/index.html verbatim). The vite dev proxy reproduces both
+ *     mappings for local dev (vite.config.ts).
  *
  * `?api=<base>` overrides the origin for BOTH surfaces so a laptop can point at a
  * remote devvm; default is "" (same-origin).
@@ -25,8 +27,15 @@ function readApiBase(): string {
 
 export const API_BASE = readApiBase();
 
-/** The tmux-api prefix. Lobby data calls live under this (ingress strips it). */
-export const TMUX_API_PREFIX = "/api";
+/**
+ * The tmux-api prefix. Every lobby data call built with `apiUrl` lives under it.
+ * The PROD ingress routes `PathPrefix /api/sessions/` → tmux-api and STRIPS the
+ * whole prefix, so tmux-api serves /whoami, /sessions, /layout, /prefs, … at its
+ * root — exactly what the vanilla frontend/index.html calls. Web Push rides the
+ * same /api/sessions/ prefix but is spelled out verbatim in pwa/push.ts (NOT via
+ * apiUrl), so it is unaffected by this constant.
+ */
+export const TMUX_API_PREFIX = "/api/sessions";
 
 /** SSE endpoint for a session's normalized event stream (session-events). */
 export function eventsUrl(session: string, lastEventId: number): string {
@@ -54,7 +63,8 @@ export function cancelUrl(session: string): string {
   return `${API_BASE}/cancel/${encodeURIComponent(session)}`;
 }
 
-/** Build a tmux-api URL under the /api prefix (e.g. apiUrl("/sessions")). */
+/** Build a tmux-api URL under the /api/sessions prefix (e.g. apiUrl("/sessions")
+ *  → "/api/sessions/sessions"; apiUrl("/whoami") → "/api/sessions/whoami"). */
 export function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${API_BASE}${TMUX_API_PREFIX}${p}`;
@@ -125,22 +135,29 @@ export function fileWriteUrl(): string {
 export const PREFS_PATH = "/prefs";
 
 /**
- * Origin the terminal iframe attaches against — the patched ttyd `-I` page that
- * serves `/`, `/ws`, `/token` (deploy-options doc). It MUST stay same-origin as
- * the lobby: the ttyd page is the iframe, and the lobby↔iframe postMessage bus
- * rejects any `e.origin !== location.origin`. Default "" = same-origin root, the
- * exact base the vanilla app uses (`/?arg=`). `?terminal=<base>` overrides it so
- * a canary build of this SPA can point at a second ttyd unit during cutover.
+ * The terminal page the iframe attaches against — the ttyd-served terminal-mode
+ * document that mounts xterm on `?arg=` (frontend/term.html). It MUST stay
+ * same-origin as the lobby: the term page is the iframe, and the lobby↔iframe
+ * postMessage bus rejects any `e.origin !== location.origin`.
+ *
+ * Default is `/term.html` (NOT `/`): this SPA is served at `/`, so an iframe
+ * pointed at `/?arg=` would recursively load the SPA instead of the terminal
+ * page. term.html is a SEPARATE static asset (deploy ships it like sw.js) whose
+ * `?arg=` terminal branch attaches ttyd/tmux and speaks the tl-* postMessage
+ * bridge. `?terminal=<url>` overrides the whole page URL so a canary build can
+ * point at a second term unit during cutover (e.g. `?terminal=/term2.html` or
+ * `?terminal=https://canary.example/term.html`).
  */
+const TERMINAL_BASE_DEFAULT = "/term.html";
 function readTerminalBase(): string {
-  if (typeof window === "undefined") return "";
+  if (typeof window === "undefined") return TERMINAL_BASE_DEFAULT;
   try {
     const q = new URLSearchParams(window.location.search).get("terminal");
     if (q) return q.replace(/\/$/, "");
   } catch {
     /* no URL / no search */
   }
-  return "";
+  return TERMINAL_BASE_DEFAULT;
 }
 
 export const TERMINAL_BASE = readTerminalBase();
