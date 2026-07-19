@@ -19,17 +19,18 @@ const (
 //   - a web decision resolves the wait (allow/deny),
 //   - the deadline elapsing → deny (FAIL-CLOSED),
 //   - no text-mode client watching → ask (FALL THROUGH to the terminal prompt).
+//
+// hasSub/emit are passed per-request (bound to the resolved per-user session
+// source by the caller) so one broker serves every user/session.
 type PermissionBroker struct {
 	mu       sync.Mutex
 	pending  map[string]chan string
 	seq      int
-	hasSub   func(session string) bool
-	emit     func(Event)
 	deadline time.Duration
 }
 
-func NewPermissionBroker(hasSub func(string) bool, emit func(Event), deadline time.Duration) *PermissionBroker {
-	return &PermissionBroker{pending: map[string]chan string{}, hasSub: hasSub, emit: emit, deadline: deadline}
+func NewPermissionBroker(deadline time.Duration) *PermissionBroker {
+	return &PermissionBroker{pending: map[string]chan string{}, deadline: deadline}
 }
 
 func (b *PermissionBroker) register() (string, chan string) {
@@ -51,19 +52,19 @@ func (b *PermissionBroker) drop(id string) {
 // Request blocks for the web client's decision. Returns "ask" immediately when no
 // client is watching (so the terminal prompt handles it), and "deny" if the
 // deadline or context expires first (fail-closed).
-func (b *PermissionBroker) Request(ctx context.Context, session, tool, input string) string {
-	if b.hasSub == nil || !b.hasSub(session) {
+func (b *PermissionBroker) Request(ctx context.Context, session, tool, input string, hasSub bool, emit func(Event)) string {
+	if !hasSub {
 		return DecisionAsk
 	}
 	id, ch := b.register()
 	defer b.drop(id)
-	if b.emit != nil {
-		b.emit(Event{Kind: KindPermissionRequest, Session: session, Tool: tool, Body: input, ReqID: id})
+	if emit != nil {
+		emit(Event{Kind: KindPermissionRequest, Session: session, Tool: tool, Body: input, ReqID: id})
 	}
 	select {
 	case d := <-ch:
-		if b.emit != nil {
-			b.emit(Event{Kind: KindPermissionResolved, Session: session, Tool: tool, ReqID: id, Body: d})
+		if emit != nil {
+			emit(Event{Kind: KindPermissionResolved, Session: session, Tool: tool, ReqID: id, Body: d})
 		}
 		return d
 	case <-time.After(b.deadline):
