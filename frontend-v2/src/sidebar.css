@@ -499,23 +499,6 @@
   flex: 1 1 auto;
 }
 
-/* ---- Toast ------------------------------------------------------------- */
-.tl-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  z-index: 50;
-  background: var(--bg-card);
-  color: var(--text-primary);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--surface-shadow), 0 8px 24px rgba(0, 0, 0, 0.3);
-  padding: 8px 14px;
-  font-size: 13px;
-  max-width: 80vw;
-}
-
 /* ---- Narrow screens ---------------------------------------------------- */
 @media (max-width: 720px) {
   .tl-shell {

@@ -1,16 +1,23 @@
 import {
   createMemo,
   createSignal,
-  For,
   onCleanup,
+  onMount,
   Show,
   type Component,
 } from "solid-js";
-import { createLobbyStore, type SelectedSession } from "../store/lobby";
+import {
+  createLobbyStore,
+  type NotifyKind,
+  type SelectedSession,
+} from "../store/lobby";
 import { NAME_RE } from "../types/lobby";
 import { Sidebar } from "./Sidebar";
 import { SessionView } from "./SessionView";
-import { THEMES, THEME_LABELS, setTheme, theme } from "../theme/theme";
+import { SettingsPanel } from "./SettingsPanel";
+import { Toaster } from "./Toaster";
+import { createPrefsStore } from "../store/prefs";
+import { toasts } from "../store/toast";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 
@@ -43,11 +50,23 @@ function readSidebarCollapsed(): boolean {
  * The lobby shell: a sidebar of sessions/projects beside the selected session's
  * two-view surface. The lobby store owns the session list, layout, and all
  * mutations (tmux-api); selecting a card mounts a SessionView for it (remounted
- * per session so its SSE stream is scoped correctly).
+ * per session so its SSE stream is scoped correctly). Store errors surface as
+ * toasts; roamed prefs (prefsStore) + the theme picker live in the Settings
+ * panel opened from the shell bar.
  */
 export const App: Component = () => {
-  const store = createLobbyStore({ initialSelected: readInitialSelection() });
+  const notify = (message: string, kind: NotifyKind) =>
+    toasts.push({ kind, message });
+
+  const store = createLobbyStore({
+    initialSelected: readInitialSelection(),
+    notify,
+  });
   onCleanup(() => store.dispose());
+
+  const prefs = createPrefsStore();
+  onMount(() => void prefs.bootSync());
+  onCleanup(() => prefs.dispose());
 
   const [collapsed, setCollapsed] = createSignal(readSidebarCollapsed());
   const toggleSidebar = () => {
@@ -60,7 +79,9 @@ export const App: Component = () => {
     }
   };
 
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
   const selectedName = createMemo(() => store.selected()?.name ?? null);
+  const newCommand = () => prefs.prefs().session.newCommand;
 
   return (
     <div class="tl-shell" classList={{ "tl-shell-collapsed": collapsed() }}>
@@ -80,17 +101,15 @@ export const App: Component = () => {
           </button>
           <span class="tl-brand">terminal-lobby</span>
           <span class="tl-shellbar-spacer" />
-          <select
-            class="tl-theme-picker"
-            aria-label="Theme"
-            title="Theme"
-            value={theme()}
-            onChange={(e) => setTheme(e.currentTarget.value)}
+          <button
+            class="tl-icon-btn tl-settings-btn"
+            aria-label="Settings"
+            title="Settings"
+            aria-expanded={settingsOpen()}
+            onClick={() => setSettingsOpen((v) => !v)}
           >
-            <For each={THEMES}>
-              {(t) => <option value={t}>{THEME_LABELS[t] ?? t}</option>}
-            </For>
-          </select>
+            ⚙
+          </button>
         </div>
 
         <div class="tl-shell-body">
@@ -103,16 +122,23 @@ export const App: Component = () => {
               </div>
             }
           >
-            {(name) => <SessionView session={name} />}
+            {(name) => (
+              <SessionView
+                session={name}
+                owner={store.selected()?.owner}
+                newCommand={newCommand}
+                notify={notify}
+              />
+            )}
           </Show>
         </div>
       </div>
 
-      <Show when={store.toast()}>
-        <div class="tl-toast" role="status">
-          {store.toast()}
-        </div>
+      <Show when={settingsOpen()}>
+        <SettingsPanel prefs={prefs} onClose={() => setSettingsOpen(false)} />
       </Show>
+
+      <Toaster controller={toasts} />
     </div>
   );
 };
