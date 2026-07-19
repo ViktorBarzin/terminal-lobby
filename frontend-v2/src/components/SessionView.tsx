@@ -42,6 +42,8 @@ export const SessionView: Component<{
   onFrameAlt?: (down: boolean) => void;
   /** the terminal iframe's attention signal (tl-attention) -> lobby tab badge. */
   onFrameAttention?: (kind: "bell" | "output", session: string | null) => void;
+  /** the terminal iframe's tl-build-stale signal -> lobby's TOP-owned reload. */
+  onFrameBuildStale?: () => void;
   /** open the session image gallery (🖼) — owned by the lobby shell. */
   onOpenGallery?: () => void;
 }> = (props) => {
@@ -185,6 +187,7 @@ export const SessionView: Component<{
             onFrameCommand={props.onFrameCommand}
             onFrameAlt={props.onFrameAlt}
             onFrameAttention={props.onFrameAttention}
+            onFrameBuildStale={props.onFrameBuildStale}
           />
         </section>
       </main>
