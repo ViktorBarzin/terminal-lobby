@@ -4,9 +4,10 @@ import { isBuildStale } from "../deploy/healer.logic";
 
 /**
  * Terminal mode — the live ttyd attach (design pillar #2 fallback view). An
- * iframe pointed at the patched ttyd `-I` page for the current session via the
- * positional `?arg=` contract (terminal-url.ts). xterm stays EXTERNAL: ttyd
- * serves the terminal page, so nothing here imports xterm.
+ * iframe pointed at the ttyd-served /term.html page (TERMINAL_BASE, NOT "/" —
+ * "/" is this SPA, so the iframe would recurse) for the current session via the
+ * positional `?arg=` contract (terminal-url.ts). xterm stays EXTERNAL: term.html
+ * mounts it (from a CDN), so nothing here imports xterm.
  *
  * Contract, ported from the vanilla frontend/index.html:
  *  - PERMANENTLY MOUNTED. The XOR view switch only toggles CSS visibility
@@ -159,14 +160,14 @@ export const TerminalView: Component<{
 
   // ---- mobile soft-key / compose bridge (design pillar #2 — Mobile) --------
   // The SPA-side sender of the raw-byte bridge: the mobile soft-key toolbar and
-  // the terminal-target compose bar forward pty bytes DOWN to the ttyd iframe.
-  // BRIDGE CONTRACT the ttyd page (frontend/index.html, terminal-mode bypass)
-  // must implement to complete the round-trip:
+  // the terminal-target compose bar forward pty bytes DOWN to the terminal
+  // iframe (frontend/term.html, TERMINAL_BASE). BRIDGE CONTRACT the term page
+  // implements to complete the round-trip:
   //   window 'message', origin-scoped to location.origin, source === parent:
-  //     {type:'tl-input',  bytes:string}  -> sendInput(bytes) + mirrorLineReset()
+  //     {type:'tl-input',  bytes:string}  -> mirrorLineReset() + sendInput(bytes)
   //     {type:'tl-refit'}                  -> refit()  (re-fit xterm)
-  // The vanilla page already handles {type:'tl-command'} but NOT 'tl-input' /
-  // 'tl-refit' yet, so end-to-end forwarding is pending that receiver (blocker).
+  // term.html handles all three (tl-input / tl-refit / tl-command 'terminal.copy')
+  // in its terminal-mode message handler, closing the bridge end-to-end.
   const sendBytesToFrame = (bytes: string): boolean => {
     if (!iframe?.contentWindow) return false;
     postToFrame({ type: "tl-input", bytes });
