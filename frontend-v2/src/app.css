@@ -168,6 +168,53 @@ body {
   color: var(--text-muted);
   margin-top: 6px;
 }
+
+/* Header notification bell — accent color when notifications are enabled. */
+.tl-icon-btn.on {
+  color: var(--accent);
+}
+.tl-notify-btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Settings → Notifications: per-device readouts + test buttons. */
+.tl-settings-readouts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+.tl-settings-readout {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.tl-settings-readout b {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tl-settings-btnrow {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.tl-settings-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tl-settings-btn:hover {
+  background: var(--bg-card-hover);
+}
 .tl-theme-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
