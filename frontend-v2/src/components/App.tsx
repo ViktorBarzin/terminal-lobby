@@ -29,6 +29,7 @@ import type { TitleSession } from "../notify/title";
 import { BellIcon } from "./BellIcon";
 import { createGalleryStore } from "../store/gallery";
 import { Gallery } from "./Gallery";
+import { createDeployHealer } from "../deploy/healer";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 
@@ -109,6 +110,19 @@ export const App: Component = () => {
     session: () => store.selected()?.name ?? null,
     notify,
   });
+
+  // ---- deploy self-heal (pillar #3 — inventory Cat.10) --------------------
+  // The lobby is the ONLY deploy channel (no server build header): it polls its
+  // own served bytes on a 5s timer + on resume/bfcache, and on a real change
+  // owns the SINGLE reload. A terminal is "attached" when a session is selected
+  // (SessionView + its ttyd iframe are mounted) — the v2 analog of the vanilla
+  // `currentActive`; that gates the immediate-vs-deferred reload policy. The
+  // iframe's own `tl-build-stale` signal routes up through SessionView →
+  // onFrameBuildStale → healer.onBuildStale (the TOP-owned reload contract).
+  const healer = createDeployHealer({
+    hasAttachedTerminal: () => store.selected() !== null,
+  });
+  onCleanup(() => healer.dispose());
 
   const [collapsed, setCollapsed] = createSignal(readSidebarCollapsed());
   const toggleSidebar = () => {
@@ -286,6 +300,7 @@ export const App: Component = () => {
                 onFrameCommand={(cmd) => run(cmd)}
                 onFrameAlt={(down) => engine.setFrameAlt(down)}
                 onFrameAttention={notifications.onFrameAttention}
+                onFrameBuildStale={() => healer.onBuildStale()}
                 onOpenGallery={() => void gallery.open()}
               />
             )}
@@ -312,6 +327,20 @@ export const App: Component = () => {
 
       <Show when={gallery.view() !== "closed"}>
         <Gallery store={gallery} />
+      </Show>
+
+      {/* Deploy self-heal pill (inventory Cat.10): a new build landed while a
+          terminal is attached + the tab is visible. Sticky + tappable — an
+          EXPLICIT tap reloads (never storm-gated); it also fires on tab-hide /
+          bfcache resume. A new build NEVER yanks the page from an active viewer. */}
+      <Show when={healer.updateReady()}>
+        <button
+          type="button"
+          class="tl-update-pill"
+          onClick={() => healer.applyUpdate()}
+        >
+          Update ready — tap to refresh
+        </button>
       </Show>
 
       <Toaster controller={toasts} />
