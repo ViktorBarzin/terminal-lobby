@@ -1,0 +1,31 @@
+import { type Component } from "solid-js";
+import type { Event, PermissionDecision } from "../types/events";
+import type { PendingPermission } from "./timeline.logic";
+import { MessagesTimeline } from "./MessagesTimeline";
+import { Composer } from "./Composer";
+
+/**
+ * Text mode — the PRIMARY view. Structured transcript render (MessagesTimeline)
+ * above a composer with the docked permission panel.
+ */
+export const TextView: Component<{
+  events: Event[];
+  working: boolean;
+  pending: PendingPermission[];
+  onSend: (text: string) => void;
+  onStop: () => void;
+  onResolve: (reqId: string, decision: PermissionDecision) => void;
+}> = (props) => {
+  return (
+    <div class="tl-textview">
+      <MessagesTimeline events={props.events} />
+      <Composer
+        working={props.working}
+        pending={props.pending}
+        onSend={props.onSend}
+        onStop={props.onStop}
+        onResolve={props.onResolve}
+      />
+    </div>
+  );
+};
