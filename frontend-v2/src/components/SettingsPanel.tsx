@@ -7,6 +7,7 @@ import {
   type NewCommand,
   type PrefsStore,
 } from "../store/prefs";
+import type { NotificationSystem } from "../notify/notifications";
 
 /**
  * Settings overlay (feature-inventory §6 + the §1 9-theme grid). Three groups:
@@ -21,6 +22,8 @@ export const SettingsPanel: Component<{
   onClose: () => void;
   /** the keybinding layer's opt-in toggle (per-device, not roamed). */
   keybindings?: { enabled: Accessor<boolean>; setEnabled: (on: boolean) => void };
+  /** the PWA notification system (per-device readouts + test actions). */
+  notifications?: NotificationSystem;
 }> = (props) => {
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -30,6 +33,9 @@ export const SettingsPanel: Component<{
   };
   onMount(() => window.addEventListener("keydown", onKey, true));
   onCleanup(() => window.removeEventListener("keydown", onKey, true));
+  // Fill the "Subscribed here" readout once the panel opens (async: it compares
+  // this browser's live push endpoint against the server's stored list).
+  onMount(() => void props.notifications?.refreshDeviceState());
 
   const fontSize = () => props.prefs.prefs().fontSize;
   const newCommand = () => props.prefs.prefs().session.newCommand;
@@ -174,6 +180,56 @@ export const SettingsPanel: Component<{
             />
             <span>When a session needs input</span>
           </label>
+          <Show when={props.notifications}>
+            {(n) => (
+              <>
+                <div class="tl-settings-readouts">
+                  <div class="tl-settings-readout">
+                    <span>Permission</span>
+                    <b>
+                      {n().permission() === "granted"
+                        ? "granted"
+                        : n().permission() === "denied"
+                          ? "denied"
+                          : n().permission() === "unsupported"
+                            ? "unsupported"
+                            : "not set"}
+                    </b>
+                  </div>
+                  <div class="tl-settings-readout">
+                    <span>Subscribed here</span>
+                    <b>{n().deviceState()}</b>
+                  </div>
+                  <div class="tl-settings-readout">
+                    <span>Bell</span>
+                    <b>{n().bellOn() ? "on" : "off"}</b>
+                  </div>
+                </div>
+                <div class="tl-settings-btnrow">
+                  <button
+                    type="button"
+                    class="tl-settings-btn"
+                    title="Show a notification on THIS device only — no server. If nothing appears while permission is granted, your OS/browser is blocking notifications for this site."
+                    onClick={() => void n().testHere()}
+                  >
+                    Test this device
+                  </button>
+                  <button
+                    type="button"
+                    class="tl-settings-btn"
+                    title="Send a real push through the server to EVERY device registered under your account (phones included)."
+                    onClick={() => void n().testAll()}
+                  >
+                    Test all devices
+                  </button>
+                </div>
+                <div class="tl-settings-hint">
+                  Push is per device + browser — enable the bell on each device
+                  you want notified.
+                </div>
+              </>
+            )}
+          </Show>
         </section>
       </div>
     </div>
