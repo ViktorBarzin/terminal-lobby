@@ -24,6 +24,8 @@ export const SessionCard: Component<{
   session: Session;
   groupName: string; // "" = ungrouped
   tick: Accessor<number>;
+  /** Alt-hold chip label for this card ("1".."9","0"), or null when inactive. */
+  badge?: (name: string) => string | null;
 }> = (props) => {
   const s = () => props.session;
   const foreign = () => !!s().owner && s().owner !== props.store.me();
@@ -166,6 +168,13 @@ export const SessionCard: Component<{
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      <Show when={props.badge?.(s().name)} keyed>
+        {(label) => (
+          <span class="tl-kb-badge" aria-hidden="true">
+            {label}
+          </span>
+        )}
+      </Show>
       <StateDot state={s().state} unseen={s().state === "done"} />
       <Show
         when={!editing()}

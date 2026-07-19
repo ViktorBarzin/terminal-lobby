@@ -10,4 +10,8 @@ interface Window {
   __tlThemes?: string[];
   __tlApplyTheme?: (theme: string) => void;
   __tlThemeLive?: (theme: string) => void;
+  // Set by the mounted TerminalView so the lobby's runAppCommand can post a
+  // terminal-document command (gallery.open / terminal.paste) DOWN to the active
+  // iframe. Returns true if a frame was available to receive it.
+  __tlForwardToTerminal?: (command: string) => boolean;
 }

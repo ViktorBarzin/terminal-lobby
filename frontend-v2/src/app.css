@@ -749,3 +749,150 @@ body {
   pointer-events: none;
   z-index: 1;
 }
+
+/* ---- Command palette + shortcuts help (pillar #2 keybindings) ---------- */
+.tl-cmdpalette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 10vh 16px 16px;
+  background: rgba(0, 0, 0, 0.4);
+  overflow-y: auto;
+}
+.tl-cmdpalette {
+  width: min(560px, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: calc(var(--radius) + 8px);
+  box-shadow: var(--surface-shadow), 0 16px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.tl-cp-input {
+  font: inherit;
+  font-size: 15px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  outline: none;
+}
+.tl-cp-input::placeholder {
+  color: var(--text-muted);
+}
+.tl-cp-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+.tl-cp-group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 8px 10px 4px;
+}
+.tl-cp-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 6px 10px 10px;
+}
+.tl-cp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tl-cp-item.tl-cp-sel {
+  background: var(--bg-card-hover);
+}
+.tl-cp-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-cp-item.tl-cp-danger .tl-cp-title {
+  color: var(--danger);
+}
+.tl-cp-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Shortcuts-help overlay reuses the palette backdrop. */
+.tl-schelp {
+  width: min(460px, 100%);
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: calc(var(--radius) + 8px);
+  box-shadow: var(--surface-shadow), 0 16px 48px rgba(0, 0, 0, 0.35);
+  padding: 16px 18px 14px;
+}
+.tl-schelp-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+.tl-schelp-scroll {
+  overflow-y: auto;
+}
+.tl-schelp-group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin: 12px 0 6px;
+}
+.tl-schelp-group-label:first-child {
+  margin-top: 0;
+}
+.tl-schelp-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 0;
+}
+.tl-schelp-keys {
+  flex: 0 0 42%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tl-schelp-keys kbd,
+.tl-settings-check kbd {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.tl-schelp-desc {
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--text-secondary, var(--text-muted));
+}
+.tl-schelp-note {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
