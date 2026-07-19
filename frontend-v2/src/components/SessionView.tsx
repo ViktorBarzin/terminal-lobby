@@ -17,6 +17,7 @@ import { TerminalView } from "./TerminalView";
 import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer } from "../mobile/pointer";
 import { installViewportSync } from "../mobile/viewport";
+import { installImageClipboard } from "../clipboard/attach";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -39,6 +40,8 @@ export const SessionView: Component<{
   onFrameAlt?: (down: boolean) => void;
   /** the terminal iframe's attention signal (tl-attention) -> lobby tab badge. */
   onFrameAttention?: (kind: "bell" | "output", session: string | null) => void;
+  /** open the session image gallery (🖼) — owned by the lobby shell. */
+  onOpenGallery?: () => void;
 }> = (props) => {
   const session = props.session;
   const store = createSessionStore(session, { notify: props.notify });
@@ -104,6 +107,19 @@ export const SessionView: Component<{
     onCleanup(dispose);
   });
 
+  // ---- image clipboard subsystem (design pillar #2 — Gallery/Images) -------
+  // Paste path + full-screen drop-target: an image paste/drop uploads to the
+  // per-session clipboard store and the returned path is typed into the pty via
+  // the tl-input bridge (window.__tlSendToTerminal); non-image drops ride /tmp.
+  // Scoped to the mounted session (there IS a pty to send to). Pastes/drops that
+  // land inside the terminal iframe are handled by the ttyd page's own listeners
+  // (a separate document); this covers the SPA chrome (text mode, gallery).
+  const image = installImageClipboard({
+    session: () => session,
+    sendToPty: (t) => window.__tlSendToTerminal?.(t) ?? false,
+  });
+  onCleanup(image.dispose);
+
   return (
     <div class="tl-session-view" data-mode={mode()}>
       <div class="tl-session-bar">
@@ -114,6 +130,14 @@ export const SessionView: Component<{
           {store.status()}
         </span>
         <span class="tl-session-bar-spacer" />
+        <button
+          class="tl-icon-btn tl-gallery-btn"
+          aria-label="Session images"
+          title="Session images"
+          onClick={() => props.onOpenGallery?.()}
+        >
+          🖼
+        </button>
         <ViewSwitch mode={mode()} onSet={setMode} textDot={textDot()} />
       </div>
 
@@ -149,6 +173,12 @@ export const SessionView: Component<{
           onPaste={() => window.__tlForwardToTerminal?.("terminal.paste")}
           onDismissKeyboard={dismissKeyboard}
         />
+      </Show>
+
+      <Show when={image.dropActive()}>
+        <div class="tl-drop-overlay" aria-hidden="true">
+          Drop files — paths are typed into the session (images join its gallery)
+        </div>
       </Show>
     </div>
   );

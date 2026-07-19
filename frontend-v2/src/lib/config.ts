@@ -60,6 +60,34 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${TMUX_API_PREFIX}${p}`;
 }
 
+/**
+ * The clipboard-upload service prefix. The ingress routes /clipboard/* to the
+ * clipboard-upload service (stripping the prefix), so from the browser every
+ * image call is /clipboard/... — POST /clipboard/upload (multipart `image` for
+ * gallery pastes, `file` for ephemeral /tmp transfers), GET /clipboard/list?
+ * session=, GET /clipboard/img/<session>/<name>. The vite dev proxy reproduces
+ * the mapping (vite.config.ts). `?api=` overrides the origin like the others.
+ */
+export const CLIPBOARD_PREFIX = "/clipboard";
+
+/** Build a clipboard-upload URL under the /clipboard prefix. */
+export function clipboardUrl(path: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${CLIPBOARD_PREFIX}${p}`;
+}
+
+/** GET target listing the caller's stored images for one session (newest-first). */
+export function clipboardListUrl(session: string): string {
+  return clipboardUrl(`/list?session=${encodeURIComponent(session)}`);
+}
+
+/** GET target serving one stored image back (gallery thumbnail / lightbox src). */
+export function clipboardImgUrl(session: string, name: string): string {
+  return clipboardUrl(
+    `/img/${encodeURIComponent(session)}/${encodeURIComponent(name)}`,
+  );
+}
+
 /** The tmux-api prefs endpoint (roamed settings). Whole-doc GET/PUT. */
 export const PREFS_PATH = "/prefs";
 

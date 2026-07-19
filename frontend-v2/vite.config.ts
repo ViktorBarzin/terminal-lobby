@@ -15,6 +15,10 @@ const BUILD_ID = process.env.TL_BUILD || new Date().toISOString();
 // without CORS. Override the origins with TL_SESSION_EVENTS / TL_TMUX_API.
 const SESSION_EVENTS = process.env.TL_SESSION_EVENTS || "http://127.0.0.1:7685";
 const TMUX_API = process.env.TL_TMUX_API || "http://127.0.0.1:7684";
+// clipboard-upload (image store): the ingress routes /clipboard/* here stripping
+// the prefix, so the dev proxy reproduces that mapping. Override with
+// TL_CLIPBOARD_UPLOAD.
+const CLIPBOARD_UPLOAD = process.env.TL_CLIPBOARD_UPLOAD || "http://127.0.0.1:7683";
 // Both backends resolve the OS user from the X-Authentik-Username header that
 // the ingress injects in prod. For local dev, TL_DEV_AUTH lets the proxy stand
 // in for the ingress so the dev server actually authenticates. Injected via the
@@ -47,6 +51,13 @@ const proxy: Record<string, ProxyOptions> = {
     target: TMUX_API,
     changeOrigin: true,
     rewrite: (p: string) => p.replace(/^\/api/, ""),
+    configure: injectAuth,
+  },
+  // clipboard-upload image store: /clipboard/* -> service root (strip prefix).
+  "/clipboard": {
+    target: CLIPBOARD_UPLOAD,
+    changeOrigin: true,
+    rewrite: (p: string) => p.replace(/^\/clipboard/, ""),
     configure: injectAuth,
   },
 };
