@@ -6,7 +6,7 @@ import {
   onMount,
   type Component,
 } from "solid-js";
-import { createSessionStore } from "../store/session";
+import { createSessionStore, type NotifyKind } from "../store/session";
 import { createViewMode } from "../store/viewmode";
 import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
 import type { PermissionDecision } from "../types/events";
@@ -21,9 +21,17 @@ import { TerminalView } from "./TerminalView";
  * (CSS-hidden) so terminal state survives the Cmd/Ctrl-J toggle; the store's SSE
  * connection is closed on unmount (createSessionStore onCleanup).
  */
-export const SessionView: Component<{ session: string }> = (props) => {
+export const SessionView: Component<{
+  session: string;
+  /** real OS-user owner when this is a shared/foreign attach (else undefined). */
+  owner?: string;
+  /** current roamed newCommand key, for a newly-created session's terminal. */
+  newCommand?: () => string;
+  /** surface control-channel errors to the app's toast stack. */
+  notify?: (message: string, kind: NotifyKind) => void;
+}> = (props) => {
   const session = props.session;
-  const store = createSessionStore(session);
+  const store = createSessionStore(session, { notify: props.notify });
   const [mode, setMode, toggleMode] = createViewMode(() => session);
 
   const rows = createMemo(() => deriveRows(store.events));
@@ -79,7 +87,12 @@ export const SessionView: Component<{ session: string }> = (props) => {
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
-          <TerminalView session={session} active={mode() === "terminal"} />
+          <TerminalView
+            session={session}
+            owner={props.owner}
+            active={mode() === "terminal"}
+            newCommand={props.newCommand}
+          />
         </section>
       </main>
     </div>
