@@ -13,6 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "highlight.js": "^11.11.1",
     "mermaid": "^11.4.1",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
