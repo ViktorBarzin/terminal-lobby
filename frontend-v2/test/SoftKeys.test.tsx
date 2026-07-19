@@ -96,11 +96,11 @@ describe("<SoftKeys>", () => {
     fireEvent.click(getByLabelText("More keys")); // reveal the modifiers
     const ctrl = container.querySelector('[data-mod="ctrl"]')!;
     expect(ctrl.classList.contains("armed")).toBe(false);
-    firePointer(ctrl, "pointerdown", { pointerId: 1 });
+    tap(ctrl); // tap-commit toggles the tri-state
     expect(ctrl.classList.contains("armed")).toBe(true);
-    firePointer(ctrl, "pointerdown", { pointerId: 1 });
+    tap(ctrl);
     expect(ctrl.classList.contains("latched")).toBe(true);
-    firePointer(ctrl, "pointerdown", { pointerId: 1 });
+    tap(ctrl);
     expect(ctrl.classList.contains("armed")).toBe(false);
     expect(ctrl.classList.contains("latched")).toBe(false);
   });
@@ -112,7 +112,7 @@ describe("<SoftKeys>", () => {
     ));
     fireEvent.click(getByLabelText("More keys"));
     const alt = container.querySelector('[data-mod="alt"]')!;
-    firePointer(alt, "pointerdown", { pointerId: 1 }); // arm Alt
+    tap(alt); // arm Alt (tap-commit)
     expect(alt.classList.contains("armed")).toBe(true);
 
     const up = getByLabelText("Up arrow");
