@@ -30,15 +30,18 @@ export interface TerminalUrlOpts {
 }
 
 /**
- * Build the ttyd attach URL for `name` under `base` (base "" = same-origin root,
- * exactly what the vanilla app uses). Every arg value is encodeURIComponent'd.
+ * Build the ttyd attach URL for `name` under `base` — the terminal PAGE URL
+ * (default "/term.html"; see config.TERMINAL_BASE). `base` is the full page path
+ * (or origin+path for a cross-origin canary), and the positional args are appended
+ * as its query, so `buildTerminalUrl("/term.html", "foo")` → "/term.html?arg=foo".
+ * Every arg value is encodeURIComponent'd.
  */
 export function buildTerminalUrl(
   base: string,
   name: string,
   opts: TerminalUrlOpts = {},
 ): string {
-  let u = base + "/?arg=" + encodeURIComponent(name);
+  let u = base + "?arg=" + encodeURIComponent(name);
   const cmd = opts.cmd && opts.cmd.length > 0 ? opts.cmd : "default";
   const owner = opts.owner ?? "";
   const dir = opts.dir ?? "";
@@ -61,7 +64,8 @@ export function buildTerminalUrl(
   return u;
 }
 
-/** Config-bound builder: `buildTerminalUrl` against the same-origin ttyd base. */
+/** Config-bound builder: `buildTerminalUrl` against TERMINAL_BASE (the
+ *  same-origin /term.html page by default; `?terminal=` overrides it). */
 export function terminalUrl(name: string, opts?: TerminalUrlOpts): string {
   return buildTerminalUrl(TERMINAL_BASE, name, opts);
 }
