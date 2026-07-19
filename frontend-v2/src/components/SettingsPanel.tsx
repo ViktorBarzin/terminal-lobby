@@ -1,4 +1,4 @@
-import { For, onCleanup, onMount, type Component } from "solid-js";
+import { For, Show, onCleanup, onMount, type Accessor, type Component } from "solid-js";
 import { THEMES, THEME_LABELS, setTheme, theme } from "../theme/theme";
 import {
   FONT_SIZE_MAX,
@@ -19,6 +19,8 @@ import {
 export const SettingsPanel: Component<{
   prefs: PrefsStore;
   onClose: () => void;
+  /** the keybinding layer's opt-in toggle (per-device, not roamed). */
+  keybindings?: { enabled: Accessor<boolean>; setEnabled: (on: boolean) => void };
 }> = (props) => {
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -126,6 +128,25 @@ export const SettingsPanel: Component<{
             Applies to newly created sessions only.
           </div>
         </section>
+
+        <Show when={props.keybindings}>
+          {(kb) => (
+            <section class="tl-settings-group">
+              <div class="tl-settings-label">Keyboard</div>
+              <label class="tl-settings-check">
+                <input
+                  type="checkbox"
+                  checked={kb().enabled()}
+                  onChange={(e) => kb().setEnabled(e.currentTarget.checked)}
+                />
+                <span>App shortcuts (Alt+1–0, Ctrl+Shift+K, dev-flow chords)</span>
+              </label>
+              <div class="tl-settings-hint">
+                This device only. Press <kbd>/</kbd> for the full list.
+              </div>
+            </section>
+          )}
+        </Show>
 
         <section class="tl-settings-group">
           <div class="tl-settings-label">Notifications</div>

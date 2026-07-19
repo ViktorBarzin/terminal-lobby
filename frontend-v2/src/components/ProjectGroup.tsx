@@ -27,6 +27,8 @@ export const ProjectGroup: Component<{
   store: LobbyStore;
   group: RenderGroup;
   tick: Accessor<number>;
+  /** Alt-hold chip label lookup, threaded down to each session card. */
+  badge?: (name: string) => string | null;
 }> = (props) => {
   const isUngrouped = () => props.group.kind === "ungrouped";
   const token = () => (isUngrouped() ? "u" : "p:" + props.group.name);
@@ -206,6 +208,7 @@ export const ProjectGroup: Component<{
                 session={s}
                 groupName={isUngrouped() ? "" : props.group.name}
                 tick={props.tick}
+                badge={props.badge}
               />
             )}
           </For>
