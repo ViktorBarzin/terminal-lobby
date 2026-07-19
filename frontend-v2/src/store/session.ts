@@ -1,7 +1,7 @@
 import { createSignal, onCleanup, type Accessor } from "solid-js";
 import { createStore } from "solid-js/store";
 import { SseClient, type SseStatus } from "../sse/client";
-import { eventsUrl, inputUrl, permissionUrl } from "../lib/config";
+import { cancelUrl, eventsUrl, permissionUrl, promptUrl } from "../lib/config";
 import type { Event, PermissionDecision } from "../types/events";
 
 export interface SessionStore {
@@ -24,9 +24,10 @@ export interface SessionStore {
 /**
  * Wires the resumable SSE client into a Solid store. Events arrive already
  * ordered + deduped by the client (server replays from the Last-Event-ID
- * cursor), so we simply append. Control writes (send/interrupt) POST to a
- * provisional /input endpoint that pillar #1 will finalize; failures are
- * swallowed so an unwired control channel never breaks the read path.
+ * cursor), so we simply append. Control writes POST to session-events'
+ * /prompt/<session> (body {text}) and /cancel/<session>; failures are swallowed
+ * so an unwired control channel never breaks the read path. The prompt/result
+ * still surface once the transcript tails.
  */
 export function createSessionStore(session: string): SessionStore {
   const [events, setEvents] = createStore<Event[]>([]);
@@ -59,25 +60,25 @@ export function createSessionStore(session: string): SessionStore {
 
   const send = async (text: string): Promise<void> => {
     try {
-      await fetch(inputUrl(session), {
+      await fetch(promptUrl(session), {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
     } catch {
-      /* provisional endpoint; the prompt still shows once the transcript tails */
+      /* the prompt still shows once the transcript tails */
     }
   };
 
   const interrupt = async (): Promise<void> => {
     try {
-      await fetch(inputUrl(session), {
+      await fetch(cancelUrl(session), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ signal: "interrupt" }),
+        credentials: "same-origin",
       });
     } catch {
-      /* provisional */
+      /* best-effort cancel */
     }
   };
 
