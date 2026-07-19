@@ -1,0 +1,35 @@
+{
+  "name": "terminal-lobby-frontend-v2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "terminal-lobby v2 frontend — SolidJS + TypeScript two-view (text-mode + terminal) app. Pillar #2 foundation.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "mermaid": "^11.4.1",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "solid-js": "^1.9.4",
+    "solid-markdown": "^2.0.14"
+  },
+  "devDependencies": {
+    "@solidjs/testing-library": "^0.8.10",
+    "@testing-library/jest-dom": "^6.6.3",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11",
+    "vite-plugin-singlefile": "^2.3.3",
+    "vite-plugin-solid": "^2.11.6",
+    "vitest": "^2.1.8"
+  },
+  "overrides": {
+    "vite": "^6.0.11"
+  }
+}
