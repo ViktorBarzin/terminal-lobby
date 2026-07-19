@@ -29,6 +29,9 @@ blockers here. Repo-canonical (not published).
 
 ### Deferred (need dedicated passes)
 - [ ] Gestures: pinch-to-font + session-swipe — red-line-adjacent, need real-device CDP probing per BATTERY.md. *(wave 5)*
+- [ ] Ctrl+J scratch-shell dock (inventory Cat.8: dock/orphan-reclaim/resize-gutter) — NOT built; Ctrl+J is the v2 view-toggle → needs a keybinding-conflict decision first. *(wave 7)*
+- [ ] Gallery mobile: thumbnail long-press menu (Open/Insert-path/Download) + lightbox swipe-dismiss / horizontal swipe-nav (N/M chip shows, arrows/swipe not wired). *(wave 7)*
+- [ ] Unify `terminal.paste` into the SPA (programmatic `navigator.clipboard.read` + iOS transient-activation) — today it forwards to the ttyd page's routine. *(wave 7)*
 
 ## Rule for the final integration wave
 Nothing is "done" until: the vertical slice runs end-to-end in a browser against a
