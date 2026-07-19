@@ -27,6 +27,8 @@ import { ShortcutsHelp, createHelpController } from "./ShortcutsHelp";
 import { createNotificationSystem } from "../notify/notifications";
 import type { TitleSession } from "../notify/title";
 import { BellIcon } from "./BellIcon";
+import { createGalleryStore } from "../store/gallery";
+import { Gallery } from "./Gallery";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 
@@ -99,6 +101,15 @@ export const App: Component = () => {
   });
   onCleanup(() => notifications.dispose());
 
+  // ---- session image gallery (pillar #2 — inventory Cat.8) ----------------
+  // The gallery is per-session but lives at the shell level so gallery.open
+  // (palette action / 🖼 button / forwarded chord) opens it over any view. It
+  // fetches the SELECTED session's images on open; switching sessions closes it.
+  const gallery = createGalleryStore({
+    session: () => store.selected()?.name ?? null,
+    notify,
+  });
+
   const [collapsed, setCollapsed] = createSignal(readSidebarCollapsed());
   const toggleSidebar = () => {
     const next = !collapsed();
@@ -170,6 +181,7 @@ export const App: Component = () => {
       window.dispatchEvent(new CustomEvent("tl:focus-new-session"));
     },
     notify,
+    openGallery: () => void gallery.open(),
     forwardToTerminal: (cmd) => {
       const f = window.__tlForwardToTerminal;
       return typeof f === "function" ? !!f(cmd) : false;
@@ -177,7 +189,11 @@ export const App: Component = () => {
   });
 
   engine.init({
-    getContext: () => ({ terminalFocus: false, lobbyOpen: true, galleryOpen: false }),
+    getContext: () => ({
+      terminalFocus: false,
+      lobbyOpen: true,
+      galleryOpen: gallery.view() !== "closed",
+    }),
     runCommand: (cmd) => run(cmd),
   });
   onCleanup(() => engine.dispose());
@@ -270,6 +286,7 @@ export const App: Component = () => {
                 onFrameCommand={(cmd) => run(cmd)}
                 onFrameAlt={(down) => engine.setFrameAlt(down)}
                 onFrameAttention={notifications.onFrameAttention}
+                onOpenGallery={() => void gallery.open()}
               />
             )}
           </Show>
@@ -291,6 +308,10 @@ export const App: Component = () => {
 
       <Show when={help.isOpen()}>
         <ShortcutsHelp controller={help} altLabel={engine.altLabel} isMac={engine.isMac} />
+      </Show>
+
+      <Show when={gallery.view() !== "closed"}>
+        <Gallery store={gallery} />
       </Show>
 
       <Toaster controller={toasts} />
