@@ -2,12 +2,26 @@ import { Show, type Component } from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import type { PendingPermission } from "./timeline.logic";
 import { PermissionPanel } from "./PermissionPanel";
+import { splitComposeSubmit } from "../mobile/compose";
 
 /**
  * Prompt composer with the permission panel docked above it. Send↔Stop morphs
  * on `working` (design: Stop = inject ESC/Ctrl-C into the pty). Enter sends,
  * Shift+Enter inserts a newline. When a permission is pending and the input is
  * empty, 1 approves / 2 denies (T3 number-key affordance).
+ *
+ * Send routing (design pillar #2 — Mobile):
+ *   - `sendToTerminal` present (mobile / coarse pointer): submit shapes the
+ *     message as a bracketed paste + a SEPARATE trailing submit (compose.ts)
+ *     and forwards both frames into the live session pty — the same-session
+ *     prompt-inject that works today (the ttyd iframe bridge). A newline typed
+ *     into the field stays a SOFT newline inside the paste; only the trailing
+ *     \r submits.
+ *   - otherwise: `onSend(text)` — the session control channel (session-events
+ *     /prompt; see store/session.ts).
+ * The mobile input attributes (autocapitalize off, autocorrect/spellcheck on,
+ * enterkeyhint send) restore QuickType / swipe typing and are harmless on
+ * desktop.
  */
 export const Composer: Component<{
   working: boolean;
@@ -15,6 +29,9 @@ export const Composer: Component<{
   onSend: (text: string) => void;
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
+  /** Mobile bridge: forward raw pty bytes to the live terminal iframe. When
+   *  provided, submit uses the bracketed-paste + separate-submit split. */
+  sendToTerminal?: (bytes: string) => void;
 }> = (props) => {
   let ta: HTMLTextAreaElement | undefined;
 
@@ -27,7 +44,14 @@ export const Composer: Component<{
   const submit = () => {
     const t = (ta?.value ?? "").trim();
     if (!t) return;
-    props.onSend(t);
+    if (props.sendToTerminal) {
+      // Bracketed paste (soft newlines) + a SEPARATE trailing submit frame.
+      const { paste, submit: cr } = splitComposeSubmit(t);
+      props.sendToTerminal(paste);
+      props.sendToTerminal(cr);
+    } else {
+      props.onSend(t);
+    }
     if (ta) {
       ta.value = "";
       autosize();
@@ -62,6 +86,11 @@ export const Composer: Component<{
           class="tl-composer-input"
           rows={1}
           placeholder="Message…  (Enter to send · Shift+Enter for newline)"
+          autocapitalize="off"
+          autocorrect="on"
+          spellcheck={true}
+          enterkeyhint="send"
+          aria-label="Message to send to the session"
           onInput={autosize}
           onKeyDown={onKeyDown}
         />
