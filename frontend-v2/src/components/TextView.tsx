@@ -15,6 +15,8 @@ export const TextView: Component<{
   onSend: (text: string) => void;
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
+  /** Mobile: forward composed bytes to the live pty (bracketed paste + submit). */
+  sendToTerminal?: (bytes: string) => void;
 }> = (props) => {
   return (
     <div class="tl-textview">
@@ -25,6 +27,7 @@ export const TextView: Component<{
         onSend={props.onSend}
         onStop={props.onStop}
         onResolve={props.onResolve}
+        sendToTerminal={props.sendToTerminal}
       />
     </div>
   );

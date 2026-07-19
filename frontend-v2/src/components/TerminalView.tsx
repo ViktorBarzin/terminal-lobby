@@ -136,6 +136,29 @@ export const TerminalView: Component<{
   };
   let prevForward: ((c: string) => boolean) | undefined;
 
+  // ---- mobile soft-key / compose bridge (design pillar #2 — Mobile) --------
+  // The SPA-side sender of the raw-byte bridge: the mobile soft-key toolbar and
+  // the terminal-target compose bar forward pty bytes DOWN to the ttyd iframe.
+  // BRIDGE CONTRACT the ttyd page (frontend/index.html, terminal-mode bypass)
+  // must implement to complete the round-trip:
+  //   window 'message', origin-scoped to location.origin, source === parent:
+  //     {type:'tl-input',  bytes:string}  -> sendInput(bytes) + mirrorLineReset()
+  //     {type:'tl-refit'}                  -> refit()  (re-fit xterm)
+  // The vanilla page already handles {type:'tl-command'} but NOT 'tl-input' /
+  // 'tl-refit' yet, so end-to-end forwarding is pending that receiver (blocker).
+  const sendBytesToFrame = (bytes: string): boolean => {
+    if (!iframe?.contentWindow) return false;
+    postToFrame({ type: "tl-input", bytes });
+    return true;
+  };
+  let prevSendBytes: ((b: string) => boolean) | undefined;
+  const refitFrame = (): boolean => {
+    if (!iframe?.contentWindow) return false;
+    postToFrame({ type: "tl-refit" });
+    return true;
+  };
+  let prevRefit: (() => boolean) | undefined;
+
   // Live theme bridge — theme.ts calls window.__tlThemeLive on every switch.
   const onThemeLive = (name: string): void => {
     postToFrame({ type: "tl-theme", name });
@@ -154,6 +177,10 @@ export const TerminalView: Component<{
       window.__tlThemeLive = onThemeLive;
       prevForward = window.__tlForwardToTerminal;
       window.__tlForwardToTerminal = forwardToFrame;
+      prevSendBytes = window.__tlSendToTerminal;
+      window.__tlSendToTerminal = sendBytesToFrame;
+      prevRefit = window.__tlRefitTerminal;
+      window.__tlRefitTerminal = refitFrame;
     }
   });
   onCleanup(() => {
@@ -165,6 +192,12 @@ export const TerminalView: Component<{
     }
     if (typeof window !== "undefined" && window.__tlForwardToTerminal === forwardToFrame) {
       window.__tlForwardToTerminal = prevForward;
+    }
+    if (typeof window !== "undefined" && window.__tlSendToTerminal === sendBytesToFrame) {
+      window.__tlSendToTerminal = prevSendBytes;
+    }
+    if (typeof window !== "undefined" && window.__tlRefitTerminal === refitFrame) {
+      window.__tlRefitTerminal = prevRefit;
     }
   });
 
