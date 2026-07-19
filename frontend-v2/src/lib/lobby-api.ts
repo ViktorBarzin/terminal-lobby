@@ -1,0 +1,159 @@
+/**
+ * tmux-api client — the lobby's data + mutation surface. Every call is
+ * same-origin (the ingress injects X-Authentik-Username) and goes under the
+ * /api prefix (apiUrl). Shapes mirror tmux-api/*.go. Errors throw an
+ * ApiError carrying the HTTP status so callers can branch (409 taken, 404 gone).
+ */
+import { apiUrl } from "./config";
+import {
+  emptyLayout,
+  type Layout,
+  type LayoutProject,
+  type Session,
+  type Whoami,
+} from "../types/lobby";
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function req(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(apiUrl(path), { credentials: "same-origin", ...init });
+  return res;
+}
+
+async function json<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await req(path, init);
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
+/** GET /api/whoami → {authentik, osUser}. */
+export function whoami(): Promise<Whoami> {
+  return json<Whoami>("/whoami", { cache: "no-store" });
+}
+
+/** GET /api/sessions → own + foreign sessions. */
+export async function listSessions(): Promise<Session[]> {
+  const arr = await json<Session[]>("/sessions", { cache: "no-store" });
+  return Array.isArray(arr) ? arr : [];
+}
+
+/** GET /api/layout, normalized like the vanilla fetchLayout (defensive defaults). */
+export async function getLayout(): Promise<Layout> {
+  const l = await json<Partial<Layout>>("/layout", { cache: "no-store" });
+  return normalizeLayout(l);
+}
+
+/** Normalize a raw layout doc: arrays defaulted, ungroupedIndex clamped, dock
+ *  validated-or-dropped. Exported for testing. */
+export function normalizeLayout(raw: Partial<Layout> | null | undefined): Layout {
+  const base = emptyLayout();
+  if (!raw || typeof raw !== "object") return base;
+  const projects: LayoutProject[] = Array.isArray(raw.projects)
+    ? raw.projects
+        .filter((p): p is LayoutProject => !!p && typeof p.name === "string")
+        .map((p) => ({
+          name: p.name,
+          sessions: Array.isArray(p.sessions) ? p.sessions.filter((s) => typeof s === "string") : [],
+          ...(typeof p.dir === "string" && p.dir ? { dir: p.dir } : {}),
+        }))
+    : [];
+  const ungrouped = Array.isArray(raw.ungrouped)
+    ? raw.ungrouped.filter((s) => typeof s === "string")
+    : [];
+  const ui = Number.isInteger(raw.ungroupedIndex)
+    ? Math.max(0, Math.min(raw.ungroupedIndex as number, projects.length))
+    : 0;
+  const l: Layout = {
+    version: base.version,
+    projects,
+    ungrouped,
+    ungroupedIndex: ui,
+  };
+  const d = raw.dock;
+  if (d && typeof d === "object" && typeof d.session === "string" && /^[a-zA-Z0-9_-]{1,32}$/.test(d.session)) {
+    l.dock = {
+      session: d.session,
+      visible: d.visible !== false,
+      ...(typeof d.dir === "string" && d.dir ? { dir: d.dir } : {}),
+    };
+  }
+  return l;
+}
+
+/** PUT /api/layout — whole-document, last-writer-wins. Throws on non-204. */
+export async function putLayout(layout: Layout): Promise<void> {
+  const res = await req("/layout", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(layout),
+  });
+  if (!res.ok) throw new ApiError(res.status, `layout PUT HTTP ${res.status}`);
+}
+
+/** DELETE /api/sessions/{name} — kill a session (204/404). */
+export async function killSession(name: string): Promise<void> {
+  const res = await req(`/sessions/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) throw new ApiError(res.status, `kill HTTP ${res.status}`);
+}
+
+/** POST /api/sessions/{name}/rename {name} — 204/404/409(taken)/400(invalid). */
+export async function renameSession(oldName: string, newName: string): Promise<void> {
+  const res = await req(`/sessions/${encodeURIComponent(oldName)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: newName }),
+  });
+  if (!res.ok) throw new ApiError(res.status, `rename HTTP ${res.status}`);
+}
+
+/** POST /api/restore — recreate saved-but-dead sessions. */
+export async function restoreSessions(): Promise<void> {
+  const res = await req("/restore", { method: "POST" });
+  if (!res.ok) throw new ApiError(res.status, `restore HTTP ${res.status}`);
+}
+
+/** GET /api/dirs → candidate directories for the project dir picker. */
+export async function listDirs(): Promise<string[]> {
+  try {
+    const arr = await json<unknown>("/dirs", { cache: "no-store" });
+    if (Array.isArray(arr)) return arr.filter((d): d is string => typeof d === "string");
+    // /dirs may return {dirs, truncated}
+    if (arr && typeof arr === "object" && Array.isArray((arr as { dirs?: unknown[] }).dirs)) {
+      return (arr as { dirs: unknown[] }).dirs.filter((d): d is string => typeof d === "string");
+    }
+  } catch {
+    /* dir picker degrades to a free-text field */
+  }
+  return [];
+}
+
+/** The full client surface, bundled so a store/test can inject a fake. */
+export interface LobbyApi {
+  whoami(): Promise<Whoami>;
+  listSessions(): Promise<Session[]>;
+  getLayout(): Promise<Layout>;
+  putLayout(layout: Layout): Promise<void>;
+  killSession(name: string): Promise<void>;
+  renameSession(oldName: string, newName: string): Promise<void>;
+  restoreSessions(): Promise<void>;
+  listDirs(): Promise<string[]>;
+}
+
+export const lobbyApi: LobbyApi = {
+  whoami,
+  listSessions,
+  getLayout,
+  putLayout,
+  killSession,
+  renameSession,
+  restoreSessions,
+  listDirs,
+};
