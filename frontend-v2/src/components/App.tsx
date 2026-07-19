@@ -24,6 +24,9 @@ import { createRunAppCommand } from "../keybindings/commands";
 import { flatSessionOrder } from "../keybindings/navigation.logic";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutsHelp, createHelpController } from "./ShortcutsHelp";
+import { createNotificationSystem } from "../notify/notifications";
+import type { TitleSession } from "../notify/title";
+import { BellIcon } from "./BellIcon";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 
@@ -73,6 +76,28 @@ export const App: Component = () => {
   const prefs = createPrefsStore();
   onMount(() => void prefs.bootSync());
   onCleanup(() => prefs.dispose());
+
+  // ---- PWA notifications (pillar #2 — inventory Cat.9) ---------------------
+  // A plain snapshot of the poll list feeds the tab title/favicon badge + the
+  // foreground transition notifications. The system owns the header bell, web
+  // push, and the attention latch fed by the terminal iframe's tl-attention.
+  const sessionSnapshot = createMemo<TitleSession[]>(() =>
+    store.sessions.map((s) => ({
+      name: s.name,
+      state: s.state,
+      pane_current_command: s.pane_current_command,
+    })),
+  );
+  const notifications = createNotificationSystem({
+    sessions: sessionSnapshot,
+    selected: () => store.selected()?.name ?? null,
+    osUser: store.me,
+    notifyPrefs: () => prefs.prefs().notify,
+    loading: store.loading,
+    toast: notify,
+    onActivateSession: (name) => store.select(name),
+  });
+  onCleanup(() => notifications.dispose());
 
   const [collapsed, setCollapsed] = createSignal(readSidebarCollapsed());
   const toggleSidebar = () => {
@@ -195,6 +220,26 @@ export const App: Component = () => {
           </button>
           <span class="tl-brand">terminal-lobby</span>
           <span class="tl-shellbar-spacer" />
+          <Show when={notifications.bellMode !== "hidden"}>
+            <button
+              class="tl-icon-btn tl-notify-btn"
+              classList={{ on: notifications.bellOn() }}
+              aria-label="Notifications"
+              aria-pressed={notifications.bellOn()}
+              title={
+                notifications.bellMode === "install-hint"
+                  ? "Install to Home Screen for notifications"
+                  : notifications.bellTitle()
+              }
+              onClick={() =>
+                notifications.bellMode === "install-hint"
+                  ? notifications.showInstallHint()
+                  : void notifications.toggleBell()
+              }
+            >
+              <BellIcon ringing={notifications.bellOn()} />
+            </button>
+          </Show>
           <button
             class="tl-icon-btn tl-settings-btn"
             aria-label="Settings"
@@ -224,6 +269,7 @@ export const App: Component = () => {
                 notify={notify}
                 onFrameCommand={(cmd) => run(cmd)}
                 onFrameAlt={(down) => engine.setFrameAlt(down)}
+                onFrameAttention={notifications.onFrameAttention}
               />
             )}
           </Show>
@@ -235,6 +281,7 @@ export const App: Component = () => {
           prefs={prefs}
           onClose={() => setSettingsOpen(false)}
           keybindings={{ enabled: engine.enabled, setEnabled: engine.setEnabled }}
+          notifications={notifications}
         />
       </Show>
 

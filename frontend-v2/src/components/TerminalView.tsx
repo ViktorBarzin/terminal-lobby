@@ -32,6 +32,9 @@ export const TerminalView: Component<{
   onFrameCommand?: (command: string) => void;
   /** the terminal iframe's Alt-hold state, forwarded up (tl-kb-alt). */
   onFrameAlt?: (down: boolean) => void;
+  /** the terminal iframe's attention signal (bell / output-while-hidden). The
+   *  lobby owns the tab title+favicon, so it decides what to badge. */
+  onFrameAttention?: (kind: "bell" | "output", session: string | null) => void;
 }> = (props) => {
   let iframe: HTMLIFrameElement | undefined;
   let cover: HTMLDivElement | undefined;
@@ -112,7 +115,9 @@ export const TerminalView: Component<{
   const onMessage = (e: MessageEvent): void => {
     if (origin() && e.origin !== origin()) return;
     if (!iframe || e.source !== iframe.contentWindow) return;
-    const d = e.data as { type?: string; command?: unknown; alt?: unknown } | null;
+    const d = e.data as
+      | { type?: string; command?: unknown; alt?: unknown; kind?: unknown; session?: unknown }
+      | null;
     if (!d || typeof d !== "object") return;
     if (d.type === "tl-terminal-ready") {
       hideCover();
@@ -126,6 +131,13 @@ export const TerminalView: Component<{
       // The iframe's Alt tracker drives the lobby's Alt-hold badge overlay
       // (its keydowns never reach this window).
       props.onFrameAlt?.(!!d.alt);
+    } else if (d.type === "tl-attention") {
+      // BEL or output-while-hidden inside the terminal — the lobby owns the tab
+      // title+favicon (this frame's title/icon are invisible), so forward it up.
+      // Origin + source are already validated above (anti-spoof).
+      const kind = d.kind === "bell" ? "bell" : "output";
+      const session = typeof d.session === "string" ? d.session : null;
+      props.onFrameAttention?.(kind, session);
     }
   };
 
