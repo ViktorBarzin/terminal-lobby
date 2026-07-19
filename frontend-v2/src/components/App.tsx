@@ -1,102 +1,85 @@
 import {
-  createEffect,
   createMemo,
   createSignal,
   For,
   onCleanup,
-  onMount,
+  Show,
   type Component,
 } from "solid-js";
-import { createSessionStore } from "../store/session";
-import { createViewMode } from "../store/viewmode";
-import {
-  pendingPermissions,
-  sessionWorking,
-  deriveRows,
-} from "./timeline.logic";
-import type { PermissionDecision } from "../types/events";
-import { ViewSwitch } from "./ViewSwitch";
-import { TextView } from "./TextView";
-import { TerminalView } from "./TerminalView";
-import {
-  THEMES,
-  THEME_LABELS,
-  setTheme,
-  theme,
-} from "../theme/theme";
+import { createLobbyStore, type SelectedSession } from "../store/lobby";
+import { NAME_RE } from "../types/lobby";
+import { Sidebar } from "./Sidebar";
+import { SessionView } from "./SessionView";
+import { THEMES, THEME_LABELS, setTheme, theme } from "../theme/theme";
 
-function readSession(): string {
+const SIDEBAR_KEY = "tmux-sidebar-collapsed";
+
+function readInitialSelection(): SelectedSession | null {
+  if (typeof window === "undefined") return null;
   try {
+    const hash = window.location.hash.replace(/^#/, "");
+    if (hash) {
+      const at = hash.indexOf("@");
+      if (at > 0) return { name: hash.slice(0, at), owner: hash.slice(at + 1) };
+      if (NAME_RE.test(hash)) return { name: hash };
+    }
     const q = new URLSearchParams(window.location.search).get("session");
-    if (q) return q;
+    if (q && NAME_RE.test(q)) return { name: q };
   } catch {
     /* no URL */
   }
-  return "demo";
+  return null;
+}
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 /**
- * The two-view app shell. Both views are PERMANENTLY MOUNTED and swapped by CSS
- * visibility (never unmounted) so terminal state survives — a full-swap XOR.
- * Cmd/Ctrl-J toggles (capture phase, so a focused terminal can't swallow it).
- * An activity dot marks the Text segment when structured events land while the
- * terminal view is showing.
+ * The lobby shell: a sidebar of sessions/projects beside the selected session's
+ * two-view surface. The lobby store owns the session list, layout, and all
+ * mutations (tmux-api); selecting a card mounts a SessionView for it (remounted
+ * per session so its SSE stream is scoped correctly).
  */
 export const App: Component = () => {
-  const session = readSession();
-  const store = createSessionStore(session);
-  const [mode, setMode, toggleMode] = createViewMode(() => session);
+  const store = createLobbyStore({ initialSelected: readInitialSelection() });
+  onCleanup(() => store.dispose());
 
-  const rows = createMemo(() => deriveRows(store.events));
-  const working = createMemo(() => sessionWorking(rows()));
-  const pending = createMemo(() => pendingPermissions(store.events));
-
-  // Activity dot on the inactive Text segment: track the highest event id the
-  // Text view has "seen" (updated whenever text mode is active); a higher live
-  // id while in terminal mode raises the dot.
-  const maxId = createMemo(() => {
-    const last = store.events[store.events.length - 1];
-    return last ? last.id : 0;
-  });
-  const [seenText, setSeenText] = createSignal(0);
-  createEffect(() => {
-    if (mode() === "text") setSeenText(maxId());
-  });
-  const textDot = createMemo(() => mode() !== "text" && maxId() > seenText());
-
-  // Cmd/Ctrl-J toggle. Capture phase intercepts before a focused terminal.
-  const onKey = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && (e.key === "j" || e.key === "J")) {
-      e.preventDefault();
-      toggleMode();
+  const [collapsed, setCollapsed] = createSignal(readSidebarCollapsed());
+  const toggleSidebar = () => {
+    const next = !collapsed();
+    setCollapsed(next);
+    try {
+      localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0");
+    } catch {
+      /* no storage */
     }
   };
-  onMount(() => window.addEventListener("keydown", onKey, true));
-  onCleanup(() => window.removeEventListener("keydown", onKey, true));
 
-  const send = (t: string) => void store.send(t);
-  const stop = () => void store.interrupt();
-  const resolve = (reqId: string, d: PermissionDecision) =>
-    void store.resolvePermission(reqId, d);
+  const selectedName = createMemo(() => store.selected()?.name ?? null);
 
   return (
-    <div class="tl-app" data-mode={mode()}>
-      <header class="tl-header">
-        <div class="tl-header-left">
-          <span class="tl-brand">terminal-lobby</span>
-          <span class="tl-session" title="session">
-            {session}
-          </span>
-          <span
-            class="tl-conn"
-            data-status={store.status()}
-            title={`stream: ${store.status()}`}
+    <div class="tl-shell" classList={{ "tl-shell-collapsed": collapsed() }}>
+      <aside class="tl-shell-sidebar">
+        <Sidebar store={store} />
+      </aside>
+
+      <div class="tl-shell-content">
+        <div class="tl-shellbar">
+          <button
+            class="tl-icon-btn tl-sidebar-toggle"
+            aria-label={collapsed() ? "Show sidebar" : "Hide sidebar"}
+            title={collapsed() ? "Show sidebar" : "Hide sidebar"}
+            onClick={toggleSidebar}
           >
-            {store.status()}
-          </span>
-        </div>
-        <div class="tl-header-right">
-          <ViewSwitch mode={mode()} onSet={setMode} textDot={textDot()} />
+            {collapsed() ? "›" : "‹"}
+          </button>
+          <span class="tl-brand">terminal-lobby</span>
+          <span class="tl-shellbar-spacer" />
           <select
             class="tl-theme-picker"
             aria-label="Theme"
@@ -109,33 +92,27 @@ export const App: Component = () => {
             </For>
           </select>
         </div>
-      </header>
 
-      <main class="tl-views">
-        {/* Both views stay mounted for the page lifetime; CSS hides the inactive
-            one. Never key/unmount on mode — that would drop terminal state. */}
-        <section
-          class="tl-view"
-          classList={{ "tl-hidden": mode() !== "text" }}
-          aria-hidden={mode() !== "text"}
-        >
-          <TextView
-            events={store.events}
-            working={working()}
-            pending={pending()}
-            onSend={send}
-            onStop={stop}
-            onResolve={resolve}
-          />
-        </section>
-        <section
-          class="tl-view"
-          classList={{ "tl-hidden": mode() !== "terminal" }}
-          aria-hidden={mode() !== "terminal"}
-        >
-          <TerminalView session={session} active={mode() === "terminal"} />
-        </section>
-      </main>
+        <div class="tl-shell-body">
+          <Show
+            when={selectedName()}
+            keyed
+            fallback={
+              <div class="tl-shell-empty tl-muted">
+                Select a session from the sidebar, or create one to begin.
+              </div>
+            }
+          >
+            {(name) => <SessionView session={name} />}
+          </Show>
+        </div>
+      </div>
+
+      <Show when={store.toast()}>
+        <div class="tl-toast" role="status">
+          {store.toast()}
+        </div>
+      </Show>
     </div>
   );
 };
