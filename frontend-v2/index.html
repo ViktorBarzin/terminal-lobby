@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0d1117" />
+    <meta name="color-scheme" content="dark light" />
+    <title>terminal-lobby</title>
+  </head>
+  <body>
+    <script>
+      /* Pre-paint theme boot — ported verbatim (logic) from the vanilla
+         frontend/index.html. Runs as body's FIRST child so the very first frame
+         already carries the right palette and the browser-chrome color
+         (<meta name=theme-color>) is in sync. It cannot live in <head>: every
+         theme selector is body.theme-* and document.body does not exist during
+         <head> parsing. 'system' follows the OS scheme as t3-dark/t3-light. The
+         main app (src/theme/theme.ts) reuses these globals. */
+      (function () {
+        var FALLBACK = "slate";
+        window.__tlThemes = [
+          "carbon", "slate", "mono", "ink", "t3-dark",
+          "t3-light", "catppuccin-mocha", "catppuccin-latte", "system",
+        ];
+        window.__tlApplyTheme = function (t) {
+          if (window.__tlThemes.indexOf(t) === -1) t = FALLBACK;
+          if (t === "system") {
+            t = matchMedia("(prefers-color-scheme: dark)").matches
+              ? "t3-dark"
+              : "t3-light";
+          }
+          var b = document.body;
+          Array.prototype.slice.call(b.classList).forEach(function (c) {
+            if (c.indexOf("theme-") === 0) b.classList.remove(c);
+          });
+          b.classList.add("theme-" + t);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) {
+            meta.content =
+              getComputedStyle(b).getPropertyValue("--bg-page").trim() ||
+              "#0d1117";
+          }
+        };
+        function stored() {
+          try {
+            return localStorage.getItem("tmux-theme");
+          } catch (e) {
+            return null;
+          }
+        }
+        window.__tlApplyTheme(stored() || FALLBACK);
+        try {
+          matchMedia("(prefers-color-scheme: dark)").addEventListener(
+            "change",
+            function () {
+              if (stored() !== "system") return;
+              window.__tlApplyTheme("system");
+              if (typeof window.__tlThemeLive === "function") {
+                window.__tlThemeLive("system");
+              }
+            }
+          );
+        } catch (e) {
+          /* no matchMedia listener — auto-follow stays off */
+        }
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>
