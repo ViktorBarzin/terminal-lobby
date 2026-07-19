@@ -1095,3 +1095,144 @@ body {
     font-size: 16px;
   }
 }
+
+/* ---- Image gallery + lightbox + drop-target (Cat.8) -------------------- */
+/* z-order: gallery(66) / lightbox(67) / drop(68) all sit above the settings
+   panel(60) + command palette(65) but below the toast stack(70) so upload
+   toasts stay visible. The gallery is never open at the same time as the
+   settings/palette overlays. */
+
+.tl-gallery-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 66;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+}
+.tl-gallery-panel {
+  box-sizing: border-box;
+  max-width: 85vw;
+  max-height: 85vh;
+  min-width: min(60vw, 480px);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 8px);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.35),
+    var(--surface-shadow);
+  font-family: var(--font-ui);
+}
+.tl-gallery-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tl-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.tl-gallery-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-page);
+  cursor: zoom-in;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tl-gallery-cell:hover {
+  border-color: var(--accent);
+}
+.tl-gallery-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  -webkit-touch-callout: none;
+}
+.tl-gallery-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 30%, rgba(0, 0, 0, 0.6));
+}
+.tl-gallery-note {
+  grid-column: 1 / -1;
+  padding: 12px 4px;
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 13px;
+}
+
+.tl-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 67;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  cursor: zoom-out;
+}
+.tl-lightbox img {
+  max-width: 85vw;
+  max-height: 85vh;
+  object-fit: contain;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.tl-lightbox-chip {
+  position: absolute;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+/* Full-screen dashed-accent overlay while a file-bearing drag is over the
+   window; pointer-events:none so the drag keeps reaching the drop target. */
+.tl-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 68;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  box-sizing: border-box;
+  padding: 24px;
+  background: color-mix(in srgb, var(--accent) 14%, rgba(0, 0, 0, 0.55));
+  border: 3px dashed var(--accent);
+  color: var(--text-primary);
+  font: 600 16px var(--font-mono);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  pointer-events: none;
+}
