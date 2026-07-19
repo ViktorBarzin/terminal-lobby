@@ -14,6 +14,8 @@ import type { PermissionDecision } from "../types/events";
 import { ViewSwitch } from "./ViewSwitch";
 import { TextView } from "./TextView";
 import { TerminalView } from "./TerminalView";
+import { FilePreview } from "./FilePreview";
+import { createPreviewStore } from "../store/preview";
 import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer } from "../mobile/pointer";
 import { installViewportSync } from "../mobile/viewport";
@@ -50,6 +52,13 @@ export const SessionView: Component<{
   const rows = createMemo(() => deriveRows(store.events));
   const working = createMemo(() => sessionWorking(rows()));
   const pending = createMemo(() => pendingPermissions(store.events));
+
+  // ---- file preview surface (roadmap pillar #6) ---------------------------
+  // Session-integrated overlay: opens from a Read/Edit/Write path in the
+  // transcript, a transcript-derived recent-files list, or an explicit path.
+  // Created here (per-session) so it disposes on session switch and its
+  // recent-files list tracks THIS session's events.
+  const preview = createPreviewStore({ events: () => store.events });
 
   const maxId = createMemo(() => {
     const last = store.events[store.events.length - 1];
@@ -131,6 +140,14 @@ export const SessionView: Component<{
         </span>
         <span class="tl-session-bar-spacer" />
         <button
+          class="tl-icon-btn tl-preview-btn"
+          aria-label="File preview"
+          title="Preview files"
+          onClick={() => preview.show()}
+        >
+          📄
+        </button>
+        <button
           class="tl-icon-btn tl-gallery-btn"
           aria-label="Session images"
           title="Session images"
@@ -151,6 +168,7 @@ export const SessionView: Component<{
             onStop={stop}
             onResolve={resolve}
             sendToTerminal={coarse() ? sendBytesToPty : undefined}
+            onOpenPreview={(path) => void preview.open(path)}
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
@@ -179,6 +197,10 @@ export const SessionView: Component<{
         <div class="tl-drop-overlay" aria-hidden="true">
           Drop files — paths are typed into the session (images join its gallery)
         </div>
+      </Show>
+
+      <Show when={preview.isOpen()}>
+        <FilePreview store={preview} />
       </Show>
     </div>
   );

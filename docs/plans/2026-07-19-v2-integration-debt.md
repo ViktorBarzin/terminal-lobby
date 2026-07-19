@@ -27,6 +27,31 @@ blockers here. Repo-canonical (not published).
 - [ ] `keyRepeat` hold-to-repeat needs a roamed pref + master kill when the mobile settings surface lands. *(wave 5)*
 - [ ] Ctrl/Cmd+J dropped the vanilla scratch-shell dock (v2 uses it for the view toggle) — revisit with the dock pillar. *(wave 4)*
 
+### File preview (pillar #6) — wave 8 (PREVIEW surface built; editor deferred)
+- [ ] **file-api ROUTE PREFIX — ingress must route `/files/*` VERBATIM (no strip)** to
+  file-api (`:7686`), + Authentik auth injecting `X-Authentik-Username`. file-api's own
+  routes already carry the prefix (`/files/list`,`/files/read`,`/files/write` — see
+  `file-api/main.go`), so this mirrors **session-events' root-path mapping, NOT
+  tmux-api's `/api`-strip / clipboard's `/clipboard`-strip.** Frontend uses
+  `FILE_API_PREFIX="/files"` (config.ts) and the dev proxy forwards verbatim
+  (`TL_FILE_API`, no rewrite). *Do NOT strip `/files`.* *(wave 6/integration)*
+- [ ] **file-api must be RUNNING + deployed** (systemd sibling of tmux-api /
+  clipboard-upload / session-events; sudo-as-mapped-OS-user wiring at deploy) for the
+  preview surface to work live. Endpoints exist + tested on master; not wired live. *(wave 6/integration)*
+- [ ] **PENDING DECISION — editor engine (Monaco vs CodeMirror).** This wave is
+  **PREVIEW-ONLY** (read-only). Monaco is deferred because it **breaks the single-file
+  build**: its worker/AMD loader + bulk don't fit `viteSingleFile`'s one-file /
+  no-sidecar / no-store constraint. Likely pick: **CodeMirror 6** (ESM, tree-shakeable,
+  inlineable). When the editor lands, reuse `POST /files/write` (already on master) +
+  the file-preview store. Preview's read-only highlight uses **highlight.js** (core + 20
+  curated langs, lazy dynamic import folded into the single file, +~36 KB gzip / +3.5%). *(next wave)*
+- [ ] Transcript path chips render only on **visible** tool rows; folded (settled-turn)
+  Read/Edit/Write rows hide the chip until the fold is expanded — the recent-files strip
+  covers those. Fine as-is; note if a "preview from folded row" ask appears. *(minor)*
+- [ ] Browse (`GET /files/list`) needs a loaded file to seed its parent dir; **idle
+  browse has no home root** (file-api `/list` requires an absolute dir). Seed from a
+  `/whoami`-style home or a default dir when that surface lands. *(wave 6, minor)*
+
 ### Deferred (need dedicated passes)
 - [ ] Gestures: pinch-to-font + session-swipe — red-line-adjacent, need real-device CDP probing per BATTERY.md. *(wave 5)*
 - [ ] Ctrl+J scratch-shell dock (inventory Cat.8: dock/orphan-reclaim/resize-gutter) — NOT built; Ctrl+J is the v2 view-toggle → needs a keybinding-conflict decision first. *(wave 7)*

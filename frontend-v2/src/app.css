@@ -460,6 +460,13 @@ body {
   align-items: center;
   gap: 8px;
   width: 100%;
+  font-size: 13px;
+}
+.tl-tool-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
   border: 0;
   background: transparent;
   color: var(--text-primary);
@@ -469,7 +476,7 @@ body {
   cursor: pointer;
   text-align: left;
 }
-.tl-tool-head:hover {
+.tl-tool-toggle:hover {
   background: var(--hover-tint);
 }
 .tl-tool-caret {
@@ -480,8 +487,29 @@ body {
   font-family: var(--font-mono);
   font-weight: 500;
 }
+/* Clickable Read/Edit/Write path -> opens the file-preview overlay. */
+.tl-tool-pathchip {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-page);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.tl-tool-pathchip:hover {
+  border-color: var(--accent);
+  background: var(--bg-card-hover);
+}
 .tl-tool-tick {
   margin-left: auto;
+  padding-right: 10px;
   font-family: var(--font-mono);
 }
 .tl-tool-tick[data-status="ok"] {
@@ -1235,4 +1263,289 @@ body {
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
   pointer-events: none;
+}
+
+/* ---- file preview overlay (pillar #6) --------------------------------- */
+/* z-order 69: above the gallery(66)/lightbox(67)/drop(68) but below toasts(70). */
+.tl-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 69;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.65);
+}
+.tl-preview-panel {
+  box-sizing: border-box;
+  width: min(1000px, 92vw);
+  max-width: 92vw;
+  height: min(85vh, 920px);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 8px);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.35),
+    var(--surface-shadow);
+  font-family: var(--font-ui);
+  overflow: hidden;
+}
+.tl-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-preview-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-preview-size {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tl-preview-head-spacer {
+  flex: 1 1 auto;
+}
+.tl-preview-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.tl-preview-toggle button {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.tl-preview-toggle button.on {
+  background: var(--accent);
+  color: #fff;
+}
+.tl-preview-close {
+  flex: 0 0 auto;
+}
+.tl-preview-pathbar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-preview-pathinput {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+}
+.tl-preview-pathinput:focus {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+.tl-preview-recents {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-preview-recents-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.tl-preview-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-preview-chip:hover {
+  border-color: var(--accent);
+}
+.tl-preview-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tl-preview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+}
+.tl-preview-note {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 8px 2px;
+}
+.tl-preview-error {
+  color: var(--danger);
+}
+.tl-preview-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+}
+.tl-preview-image img {
+  max-width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.tl-preview-iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 62vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+.tl-preview-md {
+  overflow-wrap: anywhere;
+}
+.tl-codeview {
+  white-space: pre;
+  overflow-x: auto;
+}
+/* directory browse (GET /files/list) */
+.tl-preview-browse {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tl-preview-browse-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tl-preview-browse-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.tl-preview-entries {
+  display: flex;
+  flex-direction: column;
+}
+.tl-preview-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.tl-preview-entry:hover {
+  background: var(--hover-tint);
+}
+.tl-preview-entry.dir .tl-preview-entry-name {
+  color: var(--accent);
+}
+.tl-preview-entry-name {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* highlight.js tokens mapped to the active theme's vars (theme-aware, minimal —
+   avoids shipping a full hljs theme stylesheet). The .hljs container is
+   transparent so the .tl-code surface shows through. */
+.hljs {
+  color: var(--text-primary);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-doctag,
+.hljs-name,
+.hljs-meta .hljs-keyword {
+  color: var(--state-awaiting);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-meta .hljs-string {
+  color: var(--success);
+}
+.hljs-number,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-bullet,
+.hljs-link {
+  color: var(--danger);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-function .hljs-title,
+.hljs-built_in,
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-attr {
+  color: var(--accent);
+}
+.hljs-symbol,
+.hljs-meta,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-tag {
+  color: var(--text-muted);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 700;
+}
+.hljs-deletion {
+  color: var(--danger);
 }
