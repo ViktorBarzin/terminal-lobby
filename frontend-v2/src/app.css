@@ -1438,6 +1438,43 @@ body {
   white-space: pre;
   overflow-x: auto;
 }
+/* quick-edit mode (roadmap pillar #6 editor) */
+.tl-preview-edit,
+.tl-preview-save,
+.tl-preview-view {
+  flex: 0 0 auto;
+}
+.tl-preview-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tl-preview-dirty {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+  color: transparent;
+  transition: color 0.12s ease;
+}
+.tl-preview-dirty.on {
+  color: var(--accent);
+}
+.tl-editor {
+  height: 100%;
+  min-height: 60vh;
+  overflow: hidden;
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.tl-editor .cm-editor {
+  height: 100%;
+}
+.tl-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.tl-editor .cm-scroller {
+  overflow: auto;
+}
 /* directory browse (GET /files/list) */
 .tl-preview-browse {
   display: flex;

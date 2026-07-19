@@ -14,6 +14,7 @@ import { HTML_SANDBOX, dirname } from "../store/preview.logic";
 import { fileReadUrl } from "../lib/config";
 import { Markdown } from "./Markdown";
 import { CodeView } from "./CodeView";
+import { CodeEditor } from "./CodeEditor";
 
 /**
  * The file-preview overlay (roadmap pillar #6). A pure view over the preview
@@ -46,13 +47,22 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
     setImgError(false);
   });
 
-  // Escape steps out of Browse, else closes. Capture + stop so it never leaks to
-  // the shell's other Escape handlers.
+  // Keyboard handling (capture + stop so it never leaks to the shell's other
+  // handlers). Cmd/Ctrl-S saves while editing (regardless of focus in the
+  // overlay); Escape steps out of edit → browse → close, in that order.
   const onKey = (e: KeyboardEvent): void => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) {
+      if (!s.editing()) return; // let the browser keep native Ctrl-S elsewhere
+      e.preventDefault();
+      e.stopPropagation();
+      void s.save();
+      return;
+    }
     if (e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
-    if (s.browsing()) s.closeBrowse();
+    if (s.editing()) s.requestExitEdit();
+    else if (s.browsing()) s.closeBrowse();
     else s.close();
   };
   onMount(() => document.addEventListener("keydown", onKey, true));
@@ -80,7 +90,8 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
             <span class="tl-preview-size">{fmtBytes(s.size())}</span>
           </Show>
           <span class="tl-preview-head-spacer" />
-          <Show when={s.modeApplies()}>
+          {/* raw|rendered toggle (md/html) — hidden while editing raw source. */}
+          <Show when={s.modeApplies() && !s.editing()}>
             <div class="tl-preview-toggle" role="group" aria-label="View mode">
               <button
                 type="button"
@@ -99,6 +110,48 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                 Raw
               </button>
             </div>
+          </Show>
+          {/* Edit ⇄ View toggle + Save — only for editable, loaded files. */}
+          <Show when={s.canEdit() && !s.browsing()}>
+            <Show
+              when={s.editing()}
+              fallback={
+                <button
+                  type="button"
+                  class="tl-btn tl-preview-edit"
+                  title="Edit this file"
+                  onClick={() => s.beginEdit()}
+                >
+                  Edit
+                </button>
+              }
+            >
+              <span
+                class="tl-preview-dirty"
+                classList={{ on: s.unsaved() }}
+                title={s.unsaved() ? "Unsaved changes" : "Saved"}
+                aria-hidden="true"
+              >
+                ●
+              </span>
+              <button
+                type="button"
+                class="tl-btn tl-btn-approve tl-preview-save"
+                title="Save (Ctrl/Cmd-S)"
+                disabled={!s.dirty()}
+                onClick={() => void s.save()}
+              >
+                {s.saving() ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                class="tl-btn tl-preview-view"
+                title="Back to preview"
+                onClick={() => s.requestExitEdit()}
+              >
+                View
+              </button>
+            </Show>
           </Show>
           <button
             class="tl-icon-btn tl-preview-close"
@@ -227,8 +280,18 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
               <div class="tl-preview-note tl-preview-error">{s.error()}</div>
             </Match>
 
-            {/* ---- loaded: render by kind -------------------------------- */}
+            {/* ---- loaded: render by kind (or the editor) --------------- */}
             <Match when={s.status() === "loaded"}>
+              {/* quick-edit mode swaps the read-only body for CodeMirror. */}
+              <Show when={s.editing()}>
+                <CodeEditor
+                  initialText={s.text()}
+                  language={s.editLanguage()}
+                  onChange={(txt) => s.setDraft(txt)}
+                  onSave={() => void s.save()}
+                />
+              </Show>
+              <Show when={!s.editing()}>
               <Switch>
                 <Match when={s.kind() === "image"}>
                   <Show
@@ -292,6 +355,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                   </div>
                 </Match>
               </Switch>
+              </Show>
             </Match>
           </Switch>
         </div>
