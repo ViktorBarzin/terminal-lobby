@@ -1,18 +1,56 @@
-import { defineConfig, type ProxyOptions } from "vite";
+import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 import solid from "vite-plugin-solid";
 import { viteSingleFile } from "vite-plugin-singlefile";
 import type { ClientRequest } from "node:http";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Build id — replaces the vanilla app's `__TL_BUILD__` sed (design §8: sed lacks
 // `g` and breaks under minification, so we inject via Vite `define` instead).
 // Read at runtime by the (future) stale-tab healer and for diagnostics.
 const BUILD_ID = process.env.TL_BUILD || new Date().toISOString();
 
+// term.html — the ttyd terminal-mode page the SPA's iframe attaches against
+// (config.TERMINAL_BASE = "/term.html"). It is deliberately NOT part of the
+// Solid bundle: viteSingleFile inlines ONLY the SPA entry (index.html), and the
+// terminal page pulls xterm from a CDN + speaks the ttyd binary WS protocol —
+// wholly outside this app. term.html ships as its OWN static dist asset (like
+// public/sw.js) so the iframe never recursively loads the SPA. Its canonical
+// source lives beside the vanilla page it derives from (../frontend/term.html);
+// this plugin copies it into dist/ on `vite build` and stamps the build id the
+// same way the SPA does (define __TL_BUILD__), keeping the two artifacts in sync.
+const TERM_HTML_SRC = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../frontend/term.html",
+);
+function copyTermHtml(): Plugin {
+  return {
+    name: "tl-copy-term-html",
+    apply: "build",
+    writeBundle(options) {
+      const outDir =
+        options.dir ?? resolve(dirname(fileURLToPath(import.meta.url)), "dist");
+      let html: string;
+      try {
+        html = readFileSync(TERM_HTML_SRC, "utf8");
+      } catch {
+        this.error(
+          `term.html not found at ${TERM_HTML_SRC} — the terminal iframe page must ship as a dist asset`,
+        );
+        return;
+      }
+      writeFileSync(join(outDir, "term.html"), html.replace(/__TL_BUILD__/g, BUILD_ID));
+    },
+  };
+}
+
 // Dev-proxy targets. In production the SPA is same-origin behind the ingress,
-// which routes /events,/prompt,/cancel,/permission -> session-events and /api/*
-// -> tmux-api (root). For local dev we reproduce both mappings so a real
-// session-events + tmux-api on the box (or the dev-harness) is reachable
-// without CORS. Override the origins with TL_SESSION_EVENTS / TL_TMUX_API.
+// which routes /events,/prompt,/cancel,/permission -> session-events and
+// /api/sessions/* -> tmux-api (stripping the whole prefix). For local dev we
+// reproduce both mappings so a real session-events + tmux-api on the box (or the
+// dev-harness) is reachable without CORS. Override the origins with
+// TL_SESSION_EVENTS / TL_TMUX_API.
 const SESSION_EVENTS = process.env.TL_SESSION_EVENTS || "http://127.0.0.1:7685";
 const TMUX_API = process.env.TL_TMUX_API || "http://127.0.0.1:7684";
 // clipboard-upload (image store): the ingress routes /clipboard/* here stripping
@@ -23,6 +61,13 @@ const CLIPBOARD_UPLOAD = process.env.TL_CLIPBOARD_UPLOAD || "http://127.0.0.1:76
 // WITHOUT stripping (its own routes already carry the /files prefix), so the dev
 // proxy forwards verbatim. Override with TL_FILE_API.
 const FILE_API = process.env.TL_FILE_API || "http://127.0.0.1:7686";
+// ttyd (the terminal attach): the terminal-mode page (term.html, the iframe)
+// opens /ws (WebSocket) + /token same-origin, and in prod the ingress routes
+// "everything else" -> ttyd (:7681). The dev proxy reproduces that so `vite
+// preview` is a COMPLETE same-origin harness — SPA at /, term.html at /term.html,
+// and a live terminal — which the postMessage bridge REQUIRES (it rejects any
+// cross-origin frame). Override with TL_TTYD (e.g. a scratch dev-harness ttyd).
+const TTYD = process.env.TL_TTYD || "http://127.0.0.1:7681";
 // Both backends resolve the OS user from the X-Authentik-Username header that
 // the ingress injects in prod. For local dev, TL_DEV_AUTH lets the proxy stand
 // in for the ingress so the dev server actually authenticates. Injected via the
@@ -30,9 +75,14 @@ const FILE_API = process.env.TL_FILE_API || "http://127.0.0.1:7686";
 const DEV_AUTH = process.env.TL_DEV_AUTH || "";
 const injectAuth: ProxyOptions["configure"] = (proxy) => {
   if (!DEV_AUTH) return;
-  proxy.on("proxyReq", (proxyReq: ClientRequest) => {
+  const setHeader = (proxyReq: ClientRequest) => {
     proxyReq.setHeader("X-Authentik-Username", DEV_AUTH);
-  });
+  };
+  proxy.on("proxyReq", setHeader);
+  // WebSocket upgrades (the ttyd /ws attach) fire proxyReqWs, NOT proxyReq — the
+  // header must be injected on both or ttyd's -H auth sees no user and the
+  // terminal fails to attach.
+  proxy.on("proxyReqWs", setHeader);
 };
 
 // session-events lives at the root paths; each is proxied verbatim (no rewrite).
@@ -50,11 +100,15 @@ const proxy: Record<string, ProxyOptions> = {
   "/prompt": sessionEventsProxy,
   "/cancel": sessionEventsProxy,
   "/permission": sessionEventsProxy,
-  // tmux-api lobby data API: /api/* -> tmux-api root (strip the /api prefix).
-  "/api": {
+  // tmux-api lobby data API: /api/sessions/* -> tmux-api root (strip the whole
+  // /api/sessions prefix, mirroring the PROD ingress `PathPrefix /api/sessions/`).
+  // Covers whoami/sessions/layout/dirs/prefs/projects/users/shares AND Web Push
+  // (/api/sessions/push*, spelled out verbatim in pwa/push.ts) — all hit tmux-api
+  // at its root.
+  "/api/sessions": {
     target: TMUX_API,
     changeOrigin: true,
-    rewrite: (p: string) => p.replace(/^\/api/, ""),
+    rewrite: (p: string) => p.replace(/^\/api\/sessions/, ""),
     configure: injectAuth,
   },
   // clipboard-upload image store: /clipboard/* -> service root (strip prefix).
@@ -71,6 +125,28 @@ const proxy: Record<string, ProxyOptions> = {
     ws: false,
     configure: injectAuth,
   },
+  // ttyd terminal attach — lets `vite preview` browser-verify TERMINAL mode.
+  // term.html opens these same-origin; the ingress maps them to ttyd in prod.
+  // /ws is the ttyd WebSocket (ws:true); /token is its pre-attach token fetch.
+  "/ws": {
+    target: TTYD,
+    changeOrigin: true,
+    ws: true,
+    configure: injectAuth,
+  },
+  "/token": {
+    target: TTYD,
+    changeOrigin: true,
+    ws: false,
+    configure: injectAuth,
+  },
+  // Webfonts: clipboard-upload serves /fonts/*.woff2 in prod (deploy.sh), and
+  // term.html's @font-face sources them. Verbatim (no strip), no auth needed.
+  "/fonts": {
+    target: CLIPBOARD_UPLOAD,
+    changeOrigin: true,
+    ws: false,
+  },
 };
 
 export default defineConfig({
@@ -82,6 +158,9 @@ export default defineConfig({
     // emitted chunk/css files — so the build emits exactly ONE file.
     // `removeViteModuleLoader` strips the now-unused Vite preloader.
     viteSingleFile({ removeViteModuleLoader: true }),
+    // Emit dist/term.html (the terminal iframe page) as a separate static asset,
+    // after viteSingleFile has finished with the SPA entry.
+    copyTermHtml(),
   ],
   define: {
     __TL_BUILD__: JSON.stringify(BUILD_ID),
