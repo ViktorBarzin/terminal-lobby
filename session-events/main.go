@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
 	"os/signal"
+	"os/user"
 	"syscall"
 	"time"
 )
@@ -19,11 +21,17 @@ func main() {
 	permDeadline := flag.Duration("perm-deadline", 5*time.Minute, "max wait for a web permission decision (then fail-closed deny)")
 	flag.Parse()
 
+	self, err := user.Current()
+	if err != nil {
+		log.Fatalf("cannot determine current user: %v", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	rg := newRegistry(ctx, *poll, *homeBase)
 	broker := NewPermissionBroker(*permDeadline)
+	injector := &Injector{selfUser: self.Username}
 
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()
@@ -36,8 +44,33 @@ func main() {
 		writeSSE(w, r, fs, *hb)
 	})
 	web.HandleFunc("POST /permission/{id}", permissionResolveHandler(broker))
-	web.HandleFunc("POST /prompt/{session}", notYetWired)  // task 8: tmux injection
-	web.HandleFunc("POST /cancel/{session}", notYetWired)  // task 8: interrupt
+	web.HandleFunc("POST /prompt/{session}", func(w http.ResponseWriter, r *http.Request) {
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Text == "" {
+			http.Error(w, "bad body (need text)", http.StatusBadRequest)
+			return
+		}
+		if injector.State(osUser, session) == stateRunning {
+			http.Error(w, "turn in progress", http.StatusConflict)
+			return
+		}
+		if err := injector.Prompt(osUser, session, body.Text); err != nil {
+			http.Error(w, "inject failed", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	web.HandleFunc("POST /cancel/{session}", func(w http.ResponseWriter, r *http.Request) {
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		if err := injector.Cancel(osUser, session); err != nil {
+			http.Error(w, "cancel failed", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
@@ -60,6 +93,4 @@ func main() {
 	}
 }
 
-func notYetWired(w http.ResponseWriter, _ *http.Request) {
-	http.Error(w, "not yet wired (pillar #1 task 8: tmux injection)", http.StatusNotImplemented)
-}
+const stateRunning = "running"
