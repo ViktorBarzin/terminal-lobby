@@ -21,6 +21,7 @@ import {
   type WorkingRow,
 } from "./timeline.logic";
 import { Markdown } from "./Markdown";
+import { basename, parseToolPath } from "../store/preview.logic";
 
 function formatDuration(ms: number | undefined): string {
   if (!ms || ms <= 0) return "";
@@ -66,26 +67,46 @@ const MessageRowView: Component<{ row: MessageRow }> = (props) => (
   </div>
 );
 
-const ToolRowView: Component<{ row: ToolRow }> = (props) => {
+const ToolRowView: Component<{
+  row: ToolRow;
+  onOpenPreview?: (path: string) => void;
+}> = (props) => {
   const [open, setOpen] = createSignal(false);
   const status = () =>
     !props.row.done ? "running" : props.row.isError ? "error" : "ok";
   const tick = () =>
     !props.row.done ? "…" : props.row.isError ? "✗" : "✓";
+  // A Read/Edit/Write file path becomes a preview link when a handler is wired.
+  const previewPath = () =>
+    props.onOpenPreview ? parseToolPath(props.row.tool, props.row.input) : null;
   return (
     <div class="tl-row tl-row-tool" data-status={status()}>
-      <button
-        type="button"
-        class="tl-tool-head"
-        aria-expanded={open()}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span class="tl-tool-caret">{open() ? "▾" : "▸"}</span>
-        <span class="tl-tool-name">{props.row.tool || "tool"}</span>
+      <div class="tl-tool-head">
+        <button
+          type="button"
+          class="tl-tool-toggle"
+          aria-expanded={open()}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span class="tl-tool-caret">{open() ? "▾" : "▸"}</span>
+          <span class="tl-tool-name">{props.row.tool || "tool"}</span>
+        </button>
+        <Show when={previewPath()}>
+          {(p) => (
+            <button
+              type="button"
+              class="tl-tool-pathchip"
+              title={`Preview ${p()}`}
+              onClick={() => props.onOpenPreview?.(p())}
+            >
+              {basename(p())}
+            </button>
+          )}
+        </Show>
         <span class="tl-tool-tick" data-status={status()}>
           {tick()}
         </span>
-      </button>
+      </div>
       <Show when={open()}>
         <div class="tl-tool-raw">
           <Show when={props.row.input}>
@@ -165,7 +186,11 @@ const TurnFoldRowView: Component<{
  * rows expand in place; tool rows expand to raw I/O. Fine-grained Solid `<For>`
  * updates only changed rows — no full re-render on stream append.
  */
-export const MessagesTimeline: Component<{ events: Event[] }> = (props) => {
+export const MessagesTimeline: Component<{
+  events: Event[];
+  /** open a file path in the preview overlay (Read/Edit/Write tool rows). */
+  onOpenPreview?: (path: string) => void;
+}> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   const rows = createMemo<TimelineRow[]>(() =>
     visibleRows(deriveRows(props.events), expandedTurns()),
@@ -185,7 +210,7 @@ export const MessagesTimeline: Component<{ events: Event[] }> = (props) => {
       case "message":
         return <MessageRowView row={row} />;
       case "tool":
-        return <ToolRowView row={row} />;
+        return <ToolRowView row={row} onOpenPreview={props.onOpenPreview} />;
       case "permission":
         return <PermissionRowView row={row} />;
       case "error":

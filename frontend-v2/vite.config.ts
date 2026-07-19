@@ -19,6 +19,10 @@ const TMUX_API = process.env.TL_TMUX_API || "http://127.0.0.1:7684";
 // the prefix, so the dev proxy reproduces that mapping. Override with
 // TL_CLIPBOARD_UPLOAD.
 const CLIPBOARD_UPLOAD = process.env.TL_CLIPBOARD_UPLOAD || "http://127.0.0.1:7683";
+// file-api (per-user file read/list/write): the ingress routes /files/* here
+// WITHOUT stripping (its own routes already carry the /files prefix), so the dev
+// proxy forwards verbatim. Override with TL_FILE_API.
+const FILE_API = process.env.TL_FILE_API || "http://127.0.0.1:7686";
 // Both backends resolve the OS user from the X-Authentik-Username header that
 // the ingress injects in prod. For local dev, TL_DEV_AUTH lets the proxy stand
 // in for the ingress so the dev server actually authenticates. Injected via the
@@ -58,6 +62,13 @@ const proxy: Record<string, ProxyOptions> = {
     target: CLIPBOARD_UPLOAD,
     changeOrigin: true,
     rewrite: (p: string) => p.replace(/^\/clipboard/, ""),
+    configure: injectAuth,
+  },
+  // file-api: /files/* -> service verbatim (no rewrite; routes carry /files).
+  "/files": {
+    target: FILE_API,
+    changeOrigin: true,
+    ws: false,
     configure: injectAuth,
   },
 };
