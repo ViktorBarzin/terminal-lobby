@@ -17,10 +17,12 @@ export const TextView: Component<{
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Mobile: forward composed bytes to the live pty (bracketed paste + submit). */
   sendToTerminal?: (bytes: string) => void;
+  /** open a file path in the preview overlay (transcript Read/Edit/Write rows). */
+  onOpenPreview?: (path: string) => void;
 }> = (props) => {
   return (
     <div class="tl-textview">
-      <MessagesTimeline events={props.events} />
+      <MessagesTimeline events={props.events} onOpenPreview={props.onOpenPreview} />
       <Composer
         working={props.working}
         pending={props.pending}
