@@ -1,7 +1,16 @@
 /**
- * Runtime config. The session-events service is a sibling of tmux-api on the
- * devvm; in production the SPA is same-origin behind the ingress, so the default
- * base is "" (relative). Override via `?api=` for local dev against a remote box.
+ * Runtime config. Two backends sit behind the same-origin ingress in production:
+ *
+ *   - session-events — the normalized event stream + prompt/cancel/permission
+ *     control channel, served at the ROOT paths /events, /prompt, /cancel,
+ *     /permission (see session-events/main.go).
+ *   - tmux-api — the lobby data API (sessions, layout, whoami, projects …),
+ *     reached under the /api/* prefix (the ingress strips /api → tmux-api root;
+ *     see the runtime-topology diagram in the feature inventory). The vite dev
+ *     proxy reproduces both mappings for local dev (vite.config.ts).
+ *
+ * `?api=<base>` overrides the origin for BOTH surfaces so a laptop can point at a
+ * remote devvm; default is "" (same-origin).
  */
 function readApiBase(): string {
   if (typeof window === "undefined") return "";
@@ -16,6 +25,9 @@ function readApiBase(): string {
 
 export const API_BASE = readApiBase();
 
+/** The tmux-api prefix. Lobby data calls live under this (ingress strips it). */
+export const TMUX_API_PREFIX = "/api";
+
 /** SSE endpoint for a session's normalized event stream (session-events). */
 export function eventsUrl(session: string, lastEventId: number): string {
   const u = `${API_BASE}/events/${encodeURIComponent(session)}`;
@@ -26,15 +38,26 @@ export function eventsUrl(session: string, lastEventId: number): string {
   return lastEventId > 0 ? `${u}?lastEventId=${lastEventId}` : u;
 }
 
-/** POST target for resolving a permission request by its reqId. */
+/** POST target for resolving a permission request by its reqId (session-events). */
 export function permissionUrl(reqId: string): string {
   return `${API_BASE}/permission/${encodeURIComponent(reqId)}`;
 }
 
-/** Provisional prompt-inject endpoint (pillar #1 control channel, not yet
- * finalized in the backend — see blockers). Send writes into the tmux pty. */
-export function inputUrl(session: string): string {
-  return `${API_BASE}/input/${encodeURIComponent(session)}`;
+/** POST target to inject a prompt into the session's Claude (session-events).
+ *  Body: {text}. 204 on success, 409 if a turn is already running. */
+export function promptUrl(session: string): string {
+  return `${API_BASE}/prompt/${encodeURIComponent(session)}`;
+}
+
+/** POST target to cancel/interrupt the running turn (session-events). No body. */
+export function cancelUrl(session: string): string {
+  return `${API_BASE}/cancel/${encodeURIComponent(session)}`;
+}
+
+/** Build a tmux-api URL under the /api prefix (e.g. apiUrl("/sessions")). */
+export function apiUrl(path: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${TMUX_API_PREFIX}${p}`;
 }
 
 /** ttyd fallback URL for the terminal view (stubbed for the foundation). */
