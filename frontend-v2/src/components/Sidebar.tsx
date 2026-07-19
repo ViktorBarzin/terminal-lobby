@@ -1,9 +1,11 @@
 import {
+  createMemo,
   createSignal,
   For,
   onCleanup,
   onMount,
   Show,
+  type Accessor,
   type Component,
 } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
@@ -11,6 +13,7 @@ import { SHARED_KEY } from "../store/collapse";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
 import { CreateSessionRow } from "./CreateSessionRow";
+import { badgeLabel, flatSessionOrder } from "../keybindings/navigation.logic";
 
 /**
  * The lobby sidebar (inventory Cat.2/3): identity + new-session row, the ordered
@@ -18,8 +21,25 @@ import { CreateSessionRow } from "./CreateSessionRow";
  * sessions, and the New-project / Restore footer. It is a pure view over the
  * store's derived model; all mutation goes back through the store.
  */
-export const Sidebar: Component<{ store: LobbyStore }> = (props) => {
+export const Sidebar: Component<{
+  store: LobbyStore;
+  /** true while Alt is held (engine): overlays numbered chips on the first 10 cards. */
+  altActive?: Accessor<boolean>;
+}> = (props) => {
   const store = props.store;
+
+  // Alt-hold numbered chips: name -> "1".."9","0" for the first ten sidebar
+  // cards, in the same flat paint order Alt+1..0 attaches. Empty while Alt is
+  // not held (or the layer is disabled), so cards render no chip.
+  const badgeMap = createMemo<Map<string, string>>(() => {
+    const m = new Map<string, string>();
+    if (!props.altActive?.()) return m;
+    flatSessionOrder(store.model())
+      .slice(0, 10)
+      .forEach((s, i) => m.set(s.name, badgeLabel(i)));
+    return m;
+  });
+  const badge = (name: string): string | null => badgeMap().get(name) ?? null;
 
   // One shared 1Hz tick drives every running session's working timer (the
   // vanilla app updates only .working-timer textContent; here running cards
@@ -89,7 +109,7 @@ export const Sidebar: Component<{ store: LobbyStore }> = (props) => {
         </Show>
 
         <For each={visibleGroups()}>
-          {(g) => <ProjectGroup store={store} group={g} tick={tick} />}
+          {(g) => <ProjectGroup store={store} group={g} tick={tick} badge={badge} />}
         </For>
 
         <Show when={store.model().foreign.length > 0}>
@@ -116,7 +136,7 @@ export const Sidebar: Component<{ store: LobbyStore }> = (props) => {
             <Show when={!sharedCollapsed()}>
               <div class="tl-group-body">
                 <For each={store.model().foreign}>
-                  {(s) => <SessionCard store={store} session={s} groupName="" tick={tick} />}
+                  {(s) => <SessionCard store={store} session={s} groupName="" tick={tick} badge={badge} />}
                 </For>
               </div>
             </Show>

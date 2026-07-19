@@ -29,6 +29,10 @@ export const SessionView: Component<{
   newCommand?: () => string;
   /** surface control-channel errors to the app's toast stack. */
   notify?: (message: string, kind: NotifyKind) => void;
+  /** a chord fired inside the terminal iframe (tl-command) -> lobby dispatcher. */
+  onFrameCommand?: (command: string) => void;
+  /** the terminal iframe's Alt-hold state (tl-kb-alt) -> lobby badge overlay. */
+  onFrameAlt?: (down: boolean) => void;
 }> = (props) => {
   const session = props.session;
   const store = createSessionStore(session, { notify: props.notify });
@@ -92,6 +96,8 @@ export const SessionView: Component<{
             owner={props.owner}
             active={mode() === "terminal"}
             newCommand={props.newCommand}
+            onFrameCommand={props.onFrameCommand}
+            onFrameAlt={props.onFrameAlt}
           />
         </section>
       </main>
