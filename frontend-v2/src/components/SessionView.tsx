@@ -37,6 +37,8 @@ export const SessionView: Component<{
   onFrameCommand?: (command: string) => void;
   /** the terminal iframe's Alt-hold state (tl-kb-alt) -> lobby badge overlay. */
   onFrameAlt?: (down: boolean) => void;
+  /** the terminal iframe's attention signal (tl-attention) -> lobby tab badge. */
+  onFrameAttention?: (kind: "bell" | "output", session: string | null) => void;
 }> = (props) => {
   const session = props.session;
   const store = createSessionStore(session, { notify: props.notify });
@@ -135,6 +137,7 @@ export const SessionView: Component<{
             newCommand={props.newCommand}
             onFrameCommand={props.onFrameCommand}
             onFrameAlt={props.onFrameAlt}
+            onFrameAttention={props.onFrameAttention}
           />
         </section>
       </main>
