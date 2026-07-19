@@ -47,13 +47,18 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
+	// Subscribe BEFORE replaying so no event appended in between is lost; then
+	// skip any live event whose ID was already covered by the replay (dedup).
+	ch, cancel := src.Subscribe()
+	defer cancel()
+
+	var lastID int64
 	for _, e := range src.Replay(parseLastEventID(r)) {
 		fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, e.JSON())
+		lastID = e.ID
 	}
 	fl.Flush()
 
-	ch, cancel := src.Subscribe()
-	defer cancel()
 	ticker := time.NewTicker(hb)
 	defer ticker.Stop()
 	for {
@@ -64,7 +69,11 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 			if !ok {
 				return
 			}
+			if e.ID <= lastID {
+				continue // already delivered via replay
+			}
 			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, e.JSON())
+			lastID = e.ID
 			fl.Flush()
 		case <-ticker.C:
 			fmt.Fprint(w, ": hb\n\n")
