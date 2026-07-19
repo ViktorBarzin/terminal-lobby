@@ -1,5 +1,6 @@
 import { createEffect, onCleanup, onMount, untrack, type Component } from "solid-js";
 import { terminalUrl } from "../lib/terminal-url";
+import { isBuildStale } from "../deploy/healer.logic";
 
 /**
  * Terminal mode — the live ttyd attach (design pillar #2 fallback view). An
@@ -35,6 +36,10 @@ export const TerminalView: Component<{
   /** the terminal iframe's attention signal (bell / output-while-hidden). The
    *  lobby owns the tab title+favicon, so it decides what to badge. */
   onFrameAttention?: (kind: "bell" | "output", session: string | null) => void;
+  /** the terminal iframe's `tl-build-stale` signal (inventory Cat.10): its own
+   *  reconnect heal saw a new build. TOP-owned reload — the iframe NEVER reloads
+   *  itself, it hands the reload UP to the lobby, which owns the single reload. */
+  onFrameBuildStale?: () => void;
 }> = (props) => {
   let iframe: HTMLIFrameElement | undefined;
   let cover: HTMLDivElement | undefined;
@@ -138,6 +143,10 @@ export const TerminalView: Component<{
       const kind = d.kind === "bell" ? "bell" : "output";
       const session = typeof d.session === "string" ? d.session : null;
       props.onFrameAttention?.(kind, session);
+    } else if (isBuildStale(d)) {
+      // The terminal saw a new build on its reconnect heal and handed the reload
+      // UP (it never reloads itself). Origin + source were validated above.
+      props.onFrameBuildStale?.();
     }
   };
 
