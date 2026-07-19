@@ -7,6 +7,27 @@ import { viteSingleFile } from "vite-plugin-singlefile";
 // Read at runtime by the (future) stale-tab healer and for diagnostics.
 const BUILD_ID = process.env.TL_BUILD || new Date().toISOString();
 
+// Dev-proxy targets. In production the SPA is same-origin behind the ingress,
+// which routes /events,/prompt,/cancel,/permission -> session-events and /api/*
+// -> tmux-api (root). For local dev we reproduce both mappings so a real
+// session-events + tmux-api on the box (or the dev-harness) is reachable
+// without CORS. Override the origins with TL_SESSION_EVENTS / TL_TMUX_API.
+const SESSION_EVENTS = process.env.TL_SESSION_EVENTS || "http://127.0.0.1:7685";
+const TMUX_API = process.env.TL_TMUX_API || "http://127.0.0.1:7684";
+// Both backends resolve the OS user from the X-Authentik-Username header that
+// the ingress injects in prod. For local dev, TL_DEV_AUTH lets the proxy stand
+// in for the ingress so the dev server actually authenticates.
+const DEV_AUTH = process.env.TL_DEV_AUTH || "";
+const devHeaders = DEV_AUTH ? { "X-Authentik-Username": DEV_AUTH } : undefined;
+
+// session-events lives at the root paths; each is proxied verbatim (no rewrite).
+const sessionEventsProxy = {
+  target: SESSION_EVENTS,
+  changeOrigin: true,
+  ws: false,
+  headers: devHeaders,
+} as const;
+
 export default defineConfig({
   plugins: [
     solid(),
@@ -19,6 +40,22 @@ export default defineConfig({
   ],
   define: {
     __TL_BUILD__: JSON.stringify(BUILD_ID),
+  },
+  server: {
+    proxy: {
+      // session-events control + stream surface (root paths, no rewrite).
+      "/events": sessionEventsProxy,
+      "/prompt": sessionEventsProxy,
+      "/cancel": sessionEventsProxy,
+      "/permission": sessionEventsProxy,
+      // tmux-api lobby data API: /api/* -> tmux-api root (strip the /api prefix).
+      "/api": {
+        target: TMUX_API,
+        changeOrigin: true,
+        rewrite: (p: string) => p.replace(/^\/api/, ""),
+        headers: devHeaders,
+      },
+    },
   },
   build: {
     target: "es2022",
