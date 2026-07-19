@@ -12,6 +12,24 @@
     />
     <meta name="theme-color" content="#0d1117" />
     <meta name="color-scheme" content="dark light" />
+    <!-- PWA install metadata (inventory Cat.9). display:standalone lives in the
+         manifest; these metas + icons make the lobby installable and give iOS its
+         Home-Screen identity. status-bar-style='default' (opaque, app laid out
+         BELOW the bar) NOT 'black-translucent' — translucent would draw terminal
+         scrollback under the clock. iOS BAKES these at Add-to-Home-Screen time, so
+         an existing install must be removed + re-added to pick up a change. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Terminal" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <!-- Tab icon; the attention system swaps this href to a canvas-rendered
+         data: URL (icon + a state-colored dot/tick) while a session awaits input
+         or finishes, and restores it on clear (src/notify/favicon.ts). Served as
+         a separate static asset from public/ (never inlined into the singlefile
+         bundle). -->
+    <link rel="icon" type="image/png" href="/icon-192.png" />
     <title>terminal-lobby</title>
   </head>
   <body>
