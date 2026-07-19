@@ -49,6 +49,7 @@ func (s *sessionMap) get(tmux string) (sessionInfo, bool) {
 }
 
 type sessionStartBody struct {
+	User        string `json:"user"`
 	SessionID   string `json:"session_id"`
 	CWD         string `json:"cwd"`
 	TmuxSession string `json:"tmux_session"`
