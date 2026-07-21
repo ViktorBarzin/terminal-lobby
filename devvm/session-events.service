@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 # Binds :7685 on all interfaces so the K8s ingress can reach the AUTHED web
-# surface (/events, /permission, /prompt, /cancel). The /hooks/* endpoints are
-# hard-gated to loopback in code, and the ingress must not route them publicly.
+# surface (/events, /prompt, /cancel). The /hooks/* endpoints are hard-gated to
+# loopback in code, and the ingress must not route them publicly.
 ExecStart=/usr/local/bin/session-events -addr :7685 -usermap /etc/ttyd-user-map -home-base /home
 User=wizard
 Restart=always
