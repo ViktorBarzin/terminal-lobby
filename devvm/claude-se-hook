@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# claude-se-hook — terminal-lobby v2 hook bridging Claude Code to the
+# session-events service (:7685) that drives the text-mode view.
+#
+#   session-start -> register (user, tmux session) -> transcript mapping so
+#                    /events/<session> can find the transcript to tail.
+#
+# Wired org-wide via /etc/claude-code/managed-settings.json (infra repo),
+# alongside claude-tmux-state. Contract with the hook runner:
+#   - MUST exit 0 — a non-zero hook exit can block the tool call.
+#   - session-start MUST stay silent — SessionStart stdout is injected into the
+#     conversation as context.
+#   - No-ops outside tmux ($TMUX unset) — headless / t3 Claude run these too.
+#   - session-events unreachable -> connect-timeout fails fast -> silent no-op.
+#
+# NOTE: the permission-request path (web-mediated PreToolUse permissions) was
+# removed 2026-07-21. Routed through the session-events broker, it returned
+# "ask" for any session not being watched in text-mode, and a PreToolUse "ask"
+# OVERRIDES the allowlist / permission mode — so with v2 paused it forced a
+# prompt on every tool call in every session. Only session registration remains.
+set -u
+
+SE="http://localhost:7685"
+event="${1:-}"
+
+# Outside a tmux pane there is no lobby session to bind to.
+[ -n "${TMUX:-}" ] || exit 0
+command -v tmux >/dev/null 2>&1 || exit 0
+command -v jq   >/dev/null 2>&1 || exit 0
+command -v curl >/dev/null 2>&1 || exit 0
+
+tmux_session="$(tmux display -p '#S' 2>/dev/null || true)"
+[ -n "$tmux_session" ] || exit 0
+
+input="$(cat)"
+
+case "$event" in
+session-start)
+    sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
+    cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)"
+    [ -n "$cwd" ] || cwd="$PWD"
+    [ -n "$sid" ] || exit 0
+    jq -nc --arg u "$USER" --arg s "$sid" --arg c "$cwd" --arg t "$tmux_session" \
+        '{user:$u, session_id:$s, cwd:$c, tmux_session:$t}' 2>/dev/null \
+      | curl -s --connect-timeout 2 --max-time 3 -X POST --data-binary @- \
+        "$SE/hooks/session-start" >/dev/null 2>&1 || true
+    ;;
+esac
+exit 0
