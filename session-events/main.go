@@ -18,7 +18,6 @@ func main() {
 	homeBase := flag.String("home-base", "/home", "base dir holding per-user homes")
 	poll := flag.Duration("poll", 200*time.Millisecond, "transcript tail interval")
 	hb := flag.Duration("heartbeat", 20*time.Second, "SSE heartbeat interval")
-	permDeadline := flag.Duration("perm-deadline", 5*time.Minute, "max wait for a web permission decision (then fail-closed deny)")
 	flag.Parse()
 
 	self, err := user.Current()
@@ -30,7 +29,6 @@ func main() {
 	defer stop()
 
 	rg := newRegistry(ctx, *poll, *homeBase)
-	broker := NewPermissionBroker(*permDeadline)
 	injector := &Injector{selfUser: self.Username}
 
 	// Authed web surface (mounted behind authMiddleware).
@@ -43,7 +41,6 @@ func main() {
 		}
 		writeSSE(w, r, fs, *hb)
 	})
-	web.HandleFunc("POST /permission/{id}", permissionResolveHandler(broker))
 	web.HandleFunc("POST /prompt/{session}", func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		var body struct {
@@ -74,12 +71,10 @@ func main() {
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
-	// Hooks come from the Claude Code hook running as the OS user on THIS box, so
-	// they are hard-gated to loopback: an unauthenticated /hooks/permission-request
-	// from the LAN could otherwise approve tool calls. Defense in depth alongside
-	// the ingress not routing /hooks/* publicly.
+	// The session-start hook runs as the OS user on THIS box, so it is hard-gated
+	// to loopback (defense in depth alongside the ingress not routing /hooks/*
+	// publicly).
 	root.HandleFunc("POST /hooks/session-start", localhostOnly(rg.handleSessionStart()))
-	root.HandleFunc("POST /hooks/permission-request", localhostOnly(permissionRequestHandler(broker, rg.permResolve)))
 	root.Handle("/", authMiddleware(*mapPath, web))
 
 	srv := &http.Server{Addr: *addr, Handler: root}
