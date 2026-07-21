@@ -64,15 +64,6 @@ func (rg *registry) source(osUser, session string) (*fileSource, bool) {
 	return fs, true
 }
 
-// permResolve implements permResolver: (has a web subscriber?, event sink, known?).
-func (rg *registry) permResolve(osUser, session string) (bool, func(Event), bool) {
-	fs, ok := rg.source(osUser, session)
-	if !ok {
-		return false, nil, false
-	}
-	return fs.subscriberCount() > 0, fs.Append, true
-}
-
 // handleSessionStart records the (user, tmux session) → transcript mapping from
 // the SessionStart hook. Localhost only (hooks run as the OS user on the box).
 func (rg *registry) handleSessionStart() http.HandlerFunc {

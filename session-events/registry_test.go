@@ -31,16 +31,6 @@ func TestRegistrySourceRequiresSessionStart(t *testing.T) {
 	if fs.path != "/root/wizard/.claude/projects/-home-wizard-x/s1.jsonl" {
 		t.Fatalf("transcript path = %q", fs.path)
 	}
-
-	// permResolve: known session, no subscribers yet → hasSub=false, ok=true.
-	hasSub, emit, known := rg.permResolve("wizard", "demo")
-	if !known || hasSub || emit == nil {
-		t.Fatalf("permResolve(known) = hasSub:%v emit:%v known:%v", hasSub, emit != nil, known)
-	}
-	// unknown session → not known (falls through to terminal).
-	if _, _, known := rg.permResolve("wizard", "ghost"); known {
-		t.Fatal("unknown session must report not-known")
-	}
 }
 
 func TestRegistryMissingSessionStartFields(t *testing.T) {
