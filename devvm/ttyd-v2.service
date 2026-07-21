@@ -1,0 +1,19 @@
+[Unit]
+Description=ttyd Terminal Service — v2 SolidJS frontend on port 7687 (terminal-dev.viktorbarzin.me)
+After=network.target
+
+[Service]
+# Byte-for-byte the same runtime as ttyd.service (:7681) EXCEPT the port and the
+# -I index it serves: this is a SECOND ttyd that serves the v2 single-file SPA
+# (index-v2.html) so terminal-dev.viktorbarzin.me can run the rewrite while
+# terminal.viktorbarzin.me keeps the stable vanilla page. Both attach the SAME
+# per-uid tmux server via tmux-attach.sh (multi-client, like ttyd + ttyd-ro), so
+# the two frontends share one set of sessions. See ttyd.service for why -P 30 and
+# COLORTERM are set.
+Environment=COLORTERM=truecolor
+ExecStart=/usr/local/bin/ttyd -W -a -H X-authentik-username -P 30 -t enableClipboard=true -I /usr/local/share/ttyd/index-v2.html -p 7687 /usr/local/bin/tmux-attach.sh
+Restart=always
+User=wizard
+
+[Install]
+WantedBy=multi-user.target
