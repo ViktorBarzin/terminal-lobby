@@ -52,7 +52,7 @@ if [[ -n "$cmd_key" && "$cmd_key" != "default" ]]; then
     if [[ -z "$cmd" ]]; then
         case "$cmd_key" in
             claude) cmd="claude" ;;
-            codex)  cmd="codex" ;;
+            codex)  cmd="codex --yolo" ;;
             shell)  plain_shell=yes ;;
         esac
     fi
