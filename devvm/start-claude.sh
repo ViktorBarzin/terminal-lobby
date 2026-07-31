@@ -22,8 +22,9 @@ cd /home/wizard/code
 #   - crash / failed launch (bad model, npx/network hiccup -> non-zero) -> fall
 #     through to an interactive shell, so the freshly-created session isn't
 #     destroyed-and-recreated in a ttyd auto-reconnect loop.
+# No --model: inherit the org-wide default from /etc/claude-code/managed-settings.json.
 npx @anthropic-ai/claude-code \
-  --dangerously-skip-permissions --model claude-opus-4-8 "${name_args[@]}"
+  --dangerously-skip-permissions "${name_args[@]}"
 code=$?
 
 if [ "$code" -eq 0 ]; then
