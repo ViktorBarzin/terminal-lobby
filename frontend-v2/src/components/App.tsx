@@ -30,6 +30,8 @@ import { BellIcon } from "./BellIcon";
 import { createGalleryStore } from "../store/gallery";
 import { Gallery } from "./Gallery";
 import { createDeployHealer } from "../deploy/healer";
+import { track, tracker } from "../telemetry/track";
+import { isCoarsePointer } from "../mobile/pointer";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 
@@ -77,6 +79,12 @@ export const App: Component = () => {
   onCleanup(() => store.dispose());
 
   const prefs = createPrefsStore();
+  // One event per tab boot: the denominator every other count is read against.
+  onMount(() => track("app.loaded", { "tl.kind": isCoarsePointer() ? "touch" : "desktop" }));
+  onCleanup(() => {
+    tracker.flushSync();
+    tracker.dispose();
+  });
   onMount(() => void prefs.bootSync());
   onCleanup(() => prefs.dispose());
 
@@ -127,6 +135,7 @@ export const App: Component = () => {
   const [collapsed, setCollapsed] = createSignal(readSidebarCollapsed());
   const toggleSidebar = () => {
     const next = !collapsed();
+    track("sidebar.toggled", { "tl.to": next ? "collapsed" : "expanded" });
     setCollapsed(next);
     try {
       localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0");
@@ -275,7 +284,10 @@ export const App: Component = () => {
             aria-label="Settings"
             title="Settings"
             aria-expanded={settingsOpen()}
-            onClick={() => setSettingsOpen((v) => !v)}
+            onClick={() => {
+              if (!settingsOpen()) track("settings.opened");
+              setSettingsOpen((v) => !v);
+            }}
           >
             ⚙
           </button>

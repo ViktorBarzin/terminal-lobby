@@ -1,4 +1,6 @@
 import { createSignal, type Accessor } from "solid-js";
+// aliased: this module already has its own slow-operation `track`
+import { track as trackEvent } from "../telemetry/track";
 
 /**
  * Toast store + slow-request health coordinator (feature-inventory §7).
@@ -82,6 +84,11 @@ export function createToastController(
   }
 
   function push(t: PushToast): number {
+    // Errors and warnings the user actually saw. The KIND only — a message can
+    // carry a path or a name, and the catalog rule is metadata, not content.
+    if (t.kind === "error" || t.kind === "warning") {
+      trackEvent("app.error", { "tl.kind": t.kind });
+    }
     const id = nextId++;
     const sticky = t.sticky ?? t.kind === "loading";
     const toast: Toast = {

@@ -7,6 +7,7 @@ import {
   flatSessionOrder,
   nextAwaitingTarget,
 } from "./navigation.logic";
+import { track } from "../telemetry/track";
 
 /**
  * The lobby command dispatcher (feature-inventory Cat.2 "tl-command channel +
@@ -45,6 +46,9 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     store.sessions.find((s) => s.name === name)?.state || undefined;
 
   return function runAppCommand(cmd: string): void {
+    // Every command dispatch — palette pick, chord, forwarded shortcut — funnels
+    // through here, so this one line counts them all.
+    track("palette.action", { "tl.key": cmd });
     if (cmd === "palette.toggle") {
       palette.toggle();
       return;

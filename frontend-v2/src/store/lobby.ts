@@ -16,6 +16,7 @@ import {
 import { createCollapseStore, type CollapseStore } from "./collapse";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
 import { emptyLayout, NAME_RE, type Layout, type Session, type Whoami } from "../types/lobby";
+import { track } from "../telemetry/track";
 
 export interface SelectedSession {
   name: string;
@@ -217,6 +218,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   }
 
   function select(name: string, owner?: string): void {
+    track("session.selected", { "tl.session": name, "tl.kind": owner ? "foreign" : "own" });
     setSelected({ name, ...(owner ? { owner } : {}) });
     updateHash({ name, owner });
     // auto-expand the group containing this session
@@ -240,6 +242,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       showToast(`"${n}" already exists`);
       return false;
     }
+    // Creation is a lobby-only act: tmux-api never sees it (the session comes
+    // into being when the terminal attaches), so this is the only record of it.
+    track("session.created", { "tl.session": n, "tl.to": group || "ungrouped" });
     const nowSec = Math.floor(Date.now() / 1000);
     setPending((p) => [
       ...p,
