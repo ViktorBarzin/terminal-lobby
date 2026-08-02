@@ -91,6 +91,13 @@ type Session struct {
 	// for consumers that predate the fields.
 	Command string `json:"pane_current_command,omitempty"`
 	Title   string `json:"pane_title,omitempty"`
+	// Tool is WHICH command the session runs — "claude", "codex" or "shell"
+	// — resolved from the pane's process tree (proc.go), never from Command:
+	// both agents launch through non-exec wrapper scripts, so the pane's
+	// foreground pgroup leader is a shell while the agent runs underneath.
+	// The lobby renders it as a brand mark beside the state dot. Empty when
+	// the /proc scan failed (no mark) — omitempty keeps the old wire shape.
+	Tool string `json:"tool,omitempty"`
 	// PanePID is the session's active-pane process — internal input to
 	// the claude-liveness backstop (proc.go), never serialized.
 	PanePID int `json:"-"`
@@ -339,10 +346,13 @@ func userSessions(osUser string) []Session {
 		return nil
 	}
 	sessions := parseSessions(out)
-	// Liveness backstop: drop states whose claude died without a
-	// SessionEnd hook. A failed /proc scan fails open (states kept).
+	// One /proc snapshot serves two readers: the liveness backstop (drop
+	// states whose claude died without a SessionEnd hook) and the tool mark
+	// (which command each session runs). A failed scan fails open — states
+	// are kept as-is and tools stay empty.
 	if tree, err := procTreeFrom("/proc"); err == nil {
 		clearDeadStates(sessions, tree)
+		annotateTools(sessions, tree)
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
 	}

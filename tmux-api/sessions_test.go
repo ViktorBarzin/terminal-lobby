@@ -96,9 +96,19 @@ func TestSessionsJSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, absent := range []string{"pane_current_command", "pane_title"} {
+	for _, absent := range []string{"pane_current_command", "pane_title", "tool"} {
 		if strings.Contains(string(bare), absent) {
 			t.Fatalf("empty %s must be omitted from the wire: %s", absent, bare)
 		}
+	}
+	// The tool mark travels under its own key — the frontends must never have
+	// to guess it from pane_current_command (which reads "bash" for both
+	// wrapper-launched agents).
+	tooled, err := json.Marshal([]Session{{Name: "w", Tool: toolCodex, Command: "bash"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tooled), `"tool":"codex"`) {
+		t.Fatalf("marshaled session missing the tool key: %s", tooled)
 	}
 }
