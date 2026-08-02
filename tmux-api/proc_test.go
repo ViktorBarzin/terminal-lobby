@@ -62,6 +62,118 @@ func TestHasClaudeUnderFindsDeepDescendant(t *testing.T) {
 	}
 }
 
+// toolUnder answers "which tool is this session running" from the process
+// tree, because pane_current_command cannot: BOTH agents ship non-exec
+// wrapper scripts, so the pane's foreground pgroup leader is a shell while
+// the agent runs underneath. The codex tree below is the REAL one observed on
+// the devvm 2026-08-02:
+//
+//	bash /usr/local/bin/codex   (wrapper script, no exec)
+//	└─ node /usr/bin/codex      (comm "MainThread")
+//	   └─ codex                 (the vendored rust binary)
+//	      └─ codex-code-mode    (host helper)
+func TestToolUnder(t *testing.T) {
+	dir := writeFakeProc(t, map[int]struct {
+		comm string
+		ppid int
+	}{
+		// pane IS the agent (direct exec)
+		100: {"claude", 1},
+		// emo launcher pattern: bash wrapper -> npx shim -> claude
+		200: {"bash", 1},
+		201: {"node", 200},
+		202: {"claude", 201},
+		// the real codex tree behind its bash wrapper
+		300: {"zsh", 1},
+		301: {"bash", 300},
+		302: {"MainThread", 301},
+		303: {"codex", 302},
+		304: {"codex-code-mode", 303},
+		// plain interactive shell, no agent at all
+		400: {"zsh", 1},
+		401: {"vim", 400},
+		// claude session that spawned codex as a subagent: the SESSION's own
+		// command is the shallower one and must win
+		500: {"claude", 1},
+		501: {"bash", 500},
+		502: {"codex", 501},
+		// and the mirror image: codex driving claude
+		600: {"codex", 1},
+		601: {"claude", 600},
+		// both at the SAME depth — resolution must be deterministic, not
+		// dependent on /proc readdir order
+		700: {"zsh", 1},
+		701: {"codex", 700},
+		702: {"claude", 700},
+	})
+	tree, err := procTreeFrom(dir)
+	if err != nil {
+		t.Fatalf("procTreeFrom: %v", err)
+	}
+	cases := []struct {
+		name string
+		pane int
+		want string
+	}{
+		{"pane is claude", 100, toolClaude},
+		{"claude under a non-exec bash wrapper", 200, toolClaude},
+		{"codex under its wrapper + node", 300, toolCodex},
+		{"no agent anywhere under the pane", 400, toolShell},
+		{"claude outranks the codex it spawned", 500, toolClaude},
+		{"codex outranks the claude it spawned", 600, toolCodex},
+		{"tie at equal depth resolves to claude", 700, toolClaude},
+		{"unknown pane pid is not reported as a shell", 0, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tree.toolUnder(tc.pane); got != tc.want {
+				t.Fatalf("toolUnder(%d) = %q, want %q", tc.pane, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnnotateTools(t *testing.T) {
+	dir := writeFakeProc(t, map[int]struct {
+		comm string
+		ppid int
+	}{
+		100: {"bash", 1},
+		101: {"claude", 100},
+		200: {"bash", 1},
+		201: {"codex", 200},
+		300: {"zsh", 1},
+	})
+	tree, err := procTreeFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := []Session{
+		{Name: "agent", PanePID: 100},
+		{Name: "codex", PanePID: 200},
+		{Name: "plain", PanePID: 300},
+		{Name: "no-pane", PanePID: 0},
+	}
+	annotateTools(sessions, tree)
+	want := []string{toolClaude, toolCodex, toolShell, ""}
+	for i, w := range want {
+		if sessions[i].Tool != w {
+			t.Fatalf("%s: Tool = %q, want %q", sessions[i].Name, sessions[i].Tool, w)
+		}
+	}
+}
+
+// A failed /proc scan must leave Tool EMPTY rather than call every session a
+// shell: an empty field renders no icon, whereas a blanket "shell" would
+// silently relabel every live agent row as a bare terminal.
+func TestAnnotateToolsLeavesToolEmptyOnFailedScan(t *testing.T) {
+	sessions := []Session{{Name: "s", PanePID: 100}}
+	annotateTools(sessions, procTree{children: map[int][]int{}, comm: map[int]string{}})
+	if sessions[0].Tool != "" {
+		t.Fatalf("failed scan must not guess a tool, got %q", sessions[0].Tool)
+	}
+}
+
 func TestClearDeadStates(t *testing.T) {
 	dir := writeFakeProc(t, map[int]struct {
 		comm string
@@ -93,6 +205,37 @@ func TestClearDeadStates(t *testing.T) {
 	}
 	if sessions[3].State != "" {
 		t.Fatalf("pane-less session kept state: %+v", sessions[3])
+	}
+}
+
+// @claude_state is stamped by CLAUDE's hooks only, so the liveness backstop
+// stays claude-specific even though tool detection now knows about codex: a
+// codex session must not keep a stale state left behind by a claude that ran
+// in that pane earlier, and a claude nested under codex still counts as live.
+func TestClearDeadStatesIgnoresCodex(t *testing.T) {
+	dir := writeFakeProc(t, map[int]struct {
+		comm string
+		ppid int
+	}{
+		100: {"bash", 1},
+		101: {"codex", 100}, // codex only: no live claude behind the state
+		200: {"codex", 1},
+		201: {"claude", 200}, // claude under codex: still live
+	})
+	tree, err := procTreeFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := []Session{
+		{Name: "codex-only", State: "done", PanePID: 100},
+		{Name: "claude-under-codex", State: "running", PanePID: 200},
+	}
+	clearDeadStates(sessions, tree)
+	if sessions[0].State != "" {
+		t.Fatalf("codex-only session kept a claude state: %+v", sessions[0])
+	}
+	if sessions[1].State != "running" {
+		t.Fatalf("claude under codex was treated as dead: %+v", sessions[1])
 	}
 }
 
