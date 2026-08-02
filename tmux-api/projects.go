@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"terminal-lobby/telemetry"
 )
 
 // GlobalProject is a first-class, multi-owner project. Unlike the per-user
@@ -406,7 +408,20 @@ func createProject(w http.ResponseWriter, r *http.Request, osUser string) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	events.Emit("project.created", osUser, telemetry.Attrs{
+		"tl.project": p.Name, "tl.kind": dirKind(p.Dir), "tl.client": "api",
+	})
 	_ = json.NewEncoder(w).Encode(p)
+}
+
+// dirKind reports whether a project was given a directory, without logging the
+// path itself at creation time (the path shows up in project.dir_changed when
+// it is deliberately set).
+func dirKind(dir string) string {
+	if dir == "" {
+		return "no-dir"
+	}
+	return "with-dir"
 }
 
 var (
@@ -567,6 +582,9 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 	if grant != nil {
 		runCoownAsync(*grant)
 	}
+	events.Emit("project.member_added", osUser, telemetry.Attrs{
+		"tl.project": id, "tl.to": body.OSUser, "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -611,6 +629,9 @@ func removeMember(w http.ResponseWriter, osUser, id, target string) {
 	if revoke != nil {
 		runCoownAsync(*revoke)
 	}
+	events.Emit("project.member_removed", osUser, telemetry.Attrs{
+		"tl.project": id, "tl.to": target, "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -662,6 +683,9 @@ func addSession(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		projectErrStatus(w, osUser, "assign session", err)
 		return
 	}
+	events.Emit("session.moved", osUser, telemetry.Attrs{
+		"tl.session": ref.Name, "tl.to": id, "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -690,6 +714,9 @@ func removeSession(w http.ResponseWriter, osUser, id, owner, name string) {
 		projectErrStatus(w, osUser, "unassign session", err)
 		return
 	}
+	events.Emit("session.moved", osUser, telemetry.Attrs{
+		"tl.session": name, "tl.from": id, "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -759,6 +786,28 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 	for _, op := range coownOpsForPatch(wasCoOwned, oldDir, updated.CoOwned, updated.Dir, memberUsers(updated)) {
 		runCoownAsync(op)
 	}
+	// One PATCH can carry several edits; each is its own event so a dashboard
+	// can count "renames" and "mode flips" separately.
+	if body.Name != nil {
+		events.Emit("project.renamed", osUser, telemetry.Attrs{
+			"tl.project": id, "tl.to": updated.Name, "tl.client": "api",
+		})
+	}
+	if body.Dir != nil {
+		events.Emit("project.dir_changed", osUser, telemetry.Attrs{
+			"tl.project": id, "tl.to": updated.Dir, "tl.client": "api",
+		})
+	}
+	if body.AttachMode != nil {
+		events.Emit("project.mode_changed", osUser, telemetry.Attrs{
+			"tl.project": id, "tl.kind": updated.AttachMode, "tl.client": "api",
+		})
+	}
+	if body.CoOwned != nil {
+		events.Emit("project.coown_changed", osUser, telemetry.Attrs{
+			"tl.project": id, "tl.to": updated.CoOwned, "tl.client": "api",
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(updated)
 }
@@ -788,6 +837,9 @@ func deleteProject(w http.ResponseWriter, osUser, id string) {
 	if revoke != nil {
 		runCoownAsync(*revoke)
 	}
+	events.Emit("project.deleted", osUser, telemetry.Attrs{
+		"tl.project": id, "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

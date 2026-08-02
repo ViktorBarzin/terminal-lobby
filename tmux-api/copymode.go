@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+
+	"terminal-lobby/telemetry"
 )
 
 // Touch copy (Task M.2): soft-key touch clients have no way to drive tmux
@@ -89,6 +91,11 @@ func copyModeSession(w http.ResponseWriter, r *http.Request, osUser, name string
 		http.Error(w, "copy-mode failed", http.StatusInternalServerError)
 		return
 	}
+	// args[0] distinguishes entering copy-mode from relaying a -X command,
+	// which is the interesting split: how often selection is actually driven.
+	events.Emit("terminal.copied", osUser, telemetry.Attrs{
+		"tl.session": name, "tl.kind": args[0], "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
