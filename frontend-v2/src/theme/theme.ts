@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { track } from "../telemetry/track";
 
 /**
  * Theme controller. The canonical name list + the class/meta applier live in
@@ -82,6 +83,7 @@ export { theme };
  * listener (e.g. the terminal view's xterm ITheme sync, once it owns xterm).
  */
 export function setTheme(next: string): void {
+  track("theme.changed", { "tl.to": next });
   const t = THEMES.includes(next) ? next : DEFAULT_THEME;
   try {
     localStorage.setItem(THEME_KEY, t);

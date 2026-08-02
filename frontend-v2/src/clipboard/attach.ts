@@ -3,6 +3,7 @@ import { firstImageBlob } from "./paste";
 import { dragHasFiles } from "./drop";
 import { uploadBlob, uploadField } from "./upload";
 import { showToast, toasts, type ToastKind } from "../store/toast";
+import { track } from "../telemetry/track";
 
 /**
  * The DOM glue for the paste path + drop-target (feature-inventory Cat.4 "Paste
@@ -50,6 +51,7 @@ export function installImageClipboard(
 
   // ---- one uploaded image → its path typed into the pty -------------------
   async function uploadImageToPty(blob: Blob, filename?: string): Promise<void> {
+    track(filename ? "image.dropped" : "image.pasted", { "tl.count": blob.size });
     const loading = toast("Uploading image…", "loading");
     try {
       const path = await upload(blob, {
