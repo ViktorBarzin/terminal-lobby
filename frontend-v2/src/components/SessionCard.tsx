@@ -9,6 +9,7 @@ import type { Session } from "../types/lobby";
 import type { LobbyStore } from "../store/lobby";
 import { formatWorking, relativeTime, stateLabel } from "./lobby.logic";
 import { StateDot } from "./StateDot";
+import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
 
 const isCoarse = (): boolean =>
   typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
@@ -158,7 +159,11 @@ export const SessionCard: Component<{
       role="button"
       tabindex={0}
       draggable={draggable()}
-      aria-label={`session ${s().name}${s().state ? ", " + stateLabel(s().state) : ""}`}
+      aria-label={
+        `session ${s().name}` +
+        (s().tool ? ", " + TOOL_LABELS[s().tool!] : "") +
+        (s().state ? ", " + stateLabel(s().state) : "")
+      }
       onClick={activate}
       onKeyDown={onKey}
       onDblClick={beginRename}
@@ -176,6 +181,7 @@ export const SessionCard: Component<{
         )}
       </Show>
       <StateDot state={s().state} unseen={s().state === "done"} />
+      <ToolIcon tool={s().tool} />
       <Show
         when={!editing()}
         fallback={

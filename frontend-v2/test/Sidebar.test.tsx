@@ -68,6 +68,34 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
+  it("marks each row with the tool it is running, beside the state dot", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [
+      sess("agent", { state: "running", tool: "claude" }),
+      sess("cdx", { state: "", tool: "codex" }),
+      sess("plain", { tool: "shell" }),
+      sess("unknown"), // pre-tool server / failed proc scan
+    ];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["agent", "cdx", "plain", "unknown"] };
+    const { container, store } = mount(api);
+    await store.refresh();
+
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(4));
+    const cards = [...container.querySelectorAll(".tl-card")];
+    expect(cards[0]!.querySelector(".tl-tool-claude")).not.toBeNull();
+    expect(cards[1]!.querySelector(".tl-tool-codex")).not.toBeNull();
+    expect(cards[2]!.querySelector(".tl-tool-shell")).not.toBeNull();
+    expect(cards[3]!.querySelector(".tl-tool")).toBeNull();
+
+    // the state dot keeps the leftmost slot; the mark follows it
+    const first = cards[0]!.querySelector(".tl-state-dot")!;
+    expect(first.nextElementSibling!.classList.contains("tl-tool")).toBe(true);
+
+    // and the row's accessible name says what is running
+    expect(cards[0]!.getAttribute("aria-label")).toMatch(/claude/i);
+    store.dispose();
+  });
+
   it("shows an empty state when there are no sessions or projects", async () => {
     const api = new FakeApi();
     const { getByText, store } = mount(api);
