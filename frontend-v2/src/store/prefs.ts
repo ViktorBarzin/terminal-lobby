@@ -1,5 +1,6 @@
 import { createSignal, type Accessor } from "solid-js";
 import { apiUrl, PREFS_PATH } from "../lib/config";
+import { track } from "../telemetry/track";
 
 /**
  * Roamed preferences — the whole-document, last-writer-wins store that mirrors
@@ -284,6 +285,14 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   }
 
   function setPref(patch: PrefsPatch): void {
+    // Which knobs people actually turn. Keys only, plus scalar values — a pref
+    // value is a setting, never content.
+    for (const [key, value] of Object.entries(patch)) {
+      track("prefs.changed", {
+        "tl.key": key,
+        "tl.to": typeof value === "object" ? Object.keys(value ?? {}).join(",") : String(value),
+      });
+    }
     const cur = prefs();
     const next = coercePrefs(composeDoc(rawDoc, applyPatch(cur, patch)));
     if (JSON.stringify(next) === JSON.stringify(cur)) return; // no-op

@@ -1,4 +1,5 @@
 import { createEffect, createSignal, type Accessor } from "solid-js";
+import { track } from "../telemetry/track";
 
 /**
  * Per-session, per-device view mode (design pillar #2 switch): persist just
@@ -22,6 +23,7 @@ export function loadMode(session: string): ViewMode {
 }
 
 export function saveMode(session: string, mode: ViewMode): void {
+  track("view.switched", { "tl.to": mode, "tl.session": session });
   try {
     // Prune the default so storage only records deviations (T3 partialize idea).
     if (mode === "text") localStorage.removeItem(KEY_PREFIX + session);

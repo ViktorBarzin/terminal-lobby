@@ -1,4 +1,5 @@
 import { createSignal, type Accessor } from "solid-js";
+import { track } from "../telemetry/track";
 
 /**
  * Per-browser collapse state for sidebar groups. Deliberately NOT roamed (it is
@@ -62,6 +63,7 @@ export function createCollapseStore(user: () => string): CollapseStore {
       return current.has(key);
     },
     toggle: (key) => {
+      track("layout.group_toggled", { "tl.key": key });
       sync();
       if (current.has(key)) current.delete(key);
       else current.add(key);

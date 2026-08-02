@@ -6,6 +6,7 @@ import {
   type GalleryView,
   type StoredImage,
 } from "./gallery.logic";
+import { track } from "../telemetry/track";
 
 /**
  * The session image-gallery store (feature-inventory Cat.8). Owns the overlay's
@@ -93,6 +94,7 @@ export function createGalleryStore(deps: GalleryDeps): GalleryStore {
   }
 
   function openLightbox(i: number): void {
+    track("gallery.image_opened", { "tl.count": i });
     if (view() !== "grid") return;
     if (i < 0 || i >= images().length) return;
     setLightboxIndex(i);
