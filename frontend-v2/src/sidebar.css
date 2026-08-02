@@ -435,6 +435,29 @@
   }
 }
 
+/* ---- Tool marks (which command the session runs) ----------------------- */
+/* Claude wears its own brand orange; the OpenAI blossom is a monochrome mark,
+   so inheriting the row's text color is what keeps it legible on light AND
+   dark themes; a shell is the absence of an agent, so it stays muted. The
+   negative margin tightens the pair against the state dot without shrinking
+   the row's 7px rhythm everywhere else. */
+.tl-tool {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: -2px;
+}
+.tl-tool-claude {
+  color: #d97757;
+}
+.tl-tool-codex {
+  color: var(--text-primary);
+}
+.tl-tool-shell {
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
 /* ---- Context / action menu -------------------------------------------- */
 .tl-menu {
   position: absolute;

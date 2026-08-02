@@ -11,6 +11,14 @@ export type ClaudeState = "running" | "awaiting" | "done";
 /** How a viewer may attach a foreign session. */
 export type AttachAccess = "ro" | "rw";
 
+/**
+ * Which command a session is running (tmux-api `tool`, resolved from the
+ * pane's process tree — NOT from pane_current_command, which reads "bash" for
+ * both wrapper-launched agents). Absent when the server predates the field or
+ * its /proc scan failed.
+ */
+export type SessionTool = "claude" | "codex" | "shell";
+
 /** One session as returned by GET /api/sessions. */
 export interface Session {
   name: string;
@@ -27,6 +35,8 @@ export interface Session {
   access?: AttachAccess | "";
   pane_current_command?: string;
   pane_title?: string;
+  /** Which command the session runs; drives the sidebar tool mark. */
+  tool?: SessionTool;
 }
 
 /** A per-user layout project (sidebar grouping + ordering). */
