@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"terminal-lobby/telemetry"
 )
 
 const (
@@ -310,6 +312,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Saved dropped file: %s (%d bytes)", path, header.Size)
+		events.Emit("file.transferred", osUserQuiet(r), telemetry.Attrs{
+			"tl.count": header.Size, "tl.client": "api",
+		})
 		writePath(w, path)
 		return
 	}
@@ -344,6 +349,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("Saved clipboard image: %s (%s, %d bytes)", path, ct, header.Size)
+	events.Emit("image.uploaded", osUser, telemetry.Attrs{
+		"tl.session": session, "tl.kind": ct, "tl.count": header.Size, "tl.client": "api",
+	})
 	writePath(w, path)
 }
 
@@ -414,6 +422,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Already persisted (e.g. show-image on a previously pasted file) —
 	// nothing to copy, answer with the path unchanged.
 	if strings.HasPrefix(src, storeRoot+string(os.PathSeparator)) {
+		events.Emit("image.shown", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.kind": "in-store", "tl.client": "api",
+		})
 		writePath(w, src)
 		return
 	}
@@ -431,6 +442,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("Registered displayed image: %s -> %s (%d bytes)", src, path, info.Size())
+	events.Emit("image.shown", osUser, telemetry.Attrs{
+		"tl.session": session, "tl.kind": "copied", "tl.client": "api",
+	})
 	writePath(w, path)
 }
 
@@ -512,6 +526,9 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 	// pastes immediately.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
+	events.Emit("gallery.opened", osUser, telemetry.Attrs{
+		"tl.session": session, "tl.count": len(images), "tl.client": "api",
+	})
 	json.NewEncoder(w).Encode(images)
 }
 
