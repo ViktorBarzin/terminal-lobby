@@ -230,9 +230,15 @@ export const SessionCard: Component<{
       </Show>
 
       <Show when={menuOpen()}>
+        {/* Rename and Kill lead the menu: they are the actions actually
+            reached for (Viktor, 2026-08-02). Rename stays first so the
+            destructive one is not the item under the opening cursor. */}
         <div class="tl-menu" role="menu" onClick={(e) => e.stopPropagation()}>
           <button class="tl-menu-item" role="menuitem" onClick={() => beginRename()}>
             Rename
+          </button>
+          <button class="tl-menu-item tl-menu-danger" role="menuitem" onClick={() => void kill()}>
+            Kill
           </button>
           <Show when={targets().length > 0}>
             <div class="tl-menu-label">Move to</div>
@@ -244,9 +250,6 @@ export const SessionCard: Component<{
               )}
             </For>
           </Show>
-          <button class="tl-menu-item tl-menu-danger" role="menuitem" onClick={() => void kill()}>
-            Kill
-          </button>
         </div>
       </Show>
     </div>
