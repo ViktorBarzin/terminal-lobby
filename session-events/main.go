@@ -10,6 +10,8 @@ import (
 	"os/user"
 	"syscall"
 	"time"
+
+	"terminal-lobby/telemetry"
 )
 
 func main() {
@@ -39,7 +41,13 @@ func main() {
 			http.Error(w, "session not registered", http.StatusNotFound)
 			return
 		}
+		events.Emit("events.stream_opened", osUserFrom(r.Context()), telemetry.Attrs{
+			"tl.session": r.PathValue("session"), "tl.client": "api",
+		})
 		writeSSE(w, r, fs, *hb)
+		events.Emit("events.stream_closed", osUserFrom(r.Context()), telemetry.Attrs{
+			"tl.session": r.PathValue("session"), "tl.client": "api",
+		})
 	})
 	web.HandleFunc("POST /prompt/{session}", func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
@@ -58,6 +66,10 @@ func main() {
 			http.Error(w, "inject failed", http.StatusBadGateway)
 			return
 		}
+		// tl.count is the prompt LENGTH; the text itself is never recorded.
+		events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.count": len(body.Text), "tl.client": "api",
+		})
 		w.WriteHeader(http.StatusNoContent)
 	})
 	web.HandleFunc("POST /cancel/{session}", func(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +78,9 @@ func main() {
 			http.Error(w, "cancel failed", http.StatusBadGateway)
 			return
 		}
+		events.Emit("claude.cancelled", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.client": "api",
+		})
 		w.WriteHeader(http.StatusNoContent)
 	})
 

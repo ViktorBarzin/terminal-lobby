@@ -19,8 +19,12 @@ cd "$ROOT"
 if [[ -z "${SKIP_BUILD:-}" ]]; then
   echo "==> Building Go binaries (linux/amd64)..."
   mkdir -p out
-  (cd tmux-api          && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../out/tmux-api          .)
-  (cd clipboard-upload  && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../out/clipboard-upload  .)
+  # buildID rides in via -ldflags so every usage event carries the release it
+  # came from (service.version), the same revision the frontend is stamped
+  # with below — a behaviour change in the numbers can be traced to a deploy.
+  GO_LDFLAGS="-X main.buildID=$(git -C "$ROOT" rev-parse --short HEAD)"
+  (cd tmux-api          && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$GO_LDFLAGS" -o ../out/tmux-api          .)
+  (cd clipboard-upload  && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$GO_LDFLAGS" -o ../out/clipboard-upload  .)
 fi
 
 # Locally-patched ttyd (devvm/ttyd-local.patch: pixel size → pty so tmux

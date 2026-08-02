@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"terminal-lobby/telemetry"
 )
 
 const (
@@ -162,6 +164,11 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", http.DetectContentType(head[:n]))
 	w.Header().Set("Cache-Control", "no-store")
+	// The extension is the useful signal: which KINDS of file get previewed
+	// (markdown, code, images) drives what the preview surface should do next.
+	events.Emit("file.previewed", osUser, telemetry.Attrs{
+		"tl.kind": strings.ToLower(filepath.Ext(resolved)), "tl.client": "api",
+	})
 	// ServeContent handles Range/If-Modified-Since and won't override the
 	// Content-Type we set above.
 	http.ServeContent(w, r, "", info.ModTime(), f)
@@ -218,6 +225,10 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	events.Emit("file.saved", osUser, telemetry.Attrs{
+		"tl.kind":  strings.ToLower(filepath.Ext(resolved)),
+		"tl.count": len(body.Content), "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
