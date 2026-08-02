@@ -18,6 +18,7 @@ import {
   type SoftMods,
 } from "../mobile/softmods";
 import { keyBytes, type KeyName } from "../mobile/keybytes";
+import { track } from "../telemetry/track";
 
 /**
  * Mobile soft-key toolbar (design pillar #2 — Mobile/Touch), ported from the
@@ -268,7 +269,10 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
             type="button"
             aria-label="Copy"
             onPointerDown={(e) => e.preventDefault()}
-            onClick={() => props.onCopy?.()}
+            onClick={() => {
+              track("terminal.copied", { "tl.kind": "softkey" });
+              props.onCopy?.();
+            }}
           >
             Copy
           </button>
@@ -276,7 +280,10 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
             type="button"
             aria-label="Paste"
             onPointerDown={(e) => e.preventDefault()}
-            onClick={() => props.onPaste?.()}
+            onClick={() => {
+              track("terminal.pasted", { "tl.kind": "softkey" });
+              props.onPaste?.();
+            }}
           >
             Paste
           </button>

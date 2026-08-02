@@ -26,6 +26,7 @@ import {
   planReload,
   stormOK,
 } from "./healer.logic";
+import { track } from "../telemetry/track";
 
 /** sessionStorage key for the last AUTO-reload timestamp (the storm throttle). */
 export const STORM_KEY = "tl-stale-reload";
@@ -207,6 +208,7 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
       if (!t || hashPage(t) === bootHash) return;
       // A new build is being served — the lobby (this top document) owns the
       // single reload, which replaces the terminal iframe too.
+      track("app.reloaded", { "tl.reason": "self-heal" });
       requestTopReload("self-heal");
     } catch {
       /* transient fetch error — try again on the next check */

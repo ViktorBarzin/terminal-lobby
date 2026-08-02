@@ -55,6 +55,7 @@ import {
   type DeviceSubscriptionState,
 } from "../pwa/push";
 import { NAME_RE } from "../types/lobby";
+import { track } from "../telemetry/track";
 
 type ToastKind = "info" | "error" | "warning" | "success";
 type ToastFn = (message: string, kind: ToastKind) => void;
@@ -338,6 +339,7 @@ export function createNotificationSystem(
     let shown = false;
     try {
       const reg = hasNav ? await navigator.serviceWorker?.getRegistration() : undefined;
+      track("notify.shown", { "tl.kind": reg?.showNotification ? "sw" : "page" });
       if (reg?.showNotification) {
         await reg.showNotification(title, o);
         shown = true;

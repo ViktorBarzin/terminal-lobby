@@ -5,6 +5,7 @@ import {
   type PaletteGroup,
   type PaletteItem,
 } from "./palette.logic";
+import { track } from "../telemetry/track";
 
 /**
  * The reactive controller behind the command palette (feature-inventory Cat.2
@@ -147,6 +148,7 @@ export function createPaletteController(env: PaletteEnv): PaletteController {
   }
 
   function open(): void {
+    track("palette.opened");
     if (isOpen()) return;
     setQuerySig("");
     setSessionsCache(null);

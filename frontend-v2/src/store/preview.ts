@@ -31,6 +31,7 @@ import {
   type EditState,
 } from "./editor.logic";
 import { toasts } from "./toast";
+import { track } from "../telemetry/track";
 
 /** Message shown before discarding unsaved edits (close / switch file / exit). */
 export const DISCARD_MESSAGE = "Discard unsaved changes?";
@@ -256,6 +257,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
   let saveToken = 0;
 
   function beginEdit(): void {
+    track("file.edit_opened", { "tl.kind": kind() });
     if (!canEdit()) return;
     dispatch({ type: "enter", text: text() });
   }
