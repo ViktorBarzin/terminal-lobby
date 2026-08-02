@@ -96,6 +96,25 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
+  it("leads the row menu with Rename then Kill", async () => {
+    // The two actions actually reached for sit at the top (Viktor,
+    // 2026-08-02); Rename first so the destructive one is not under the
+    // cursor as the menu opens.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("solo")];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["solo"] };
+    const { container, getByLabelText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    fireEvent.click(getByLabelText("Session actions"));
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    const labels = [...container.querySelectorAll(".tl-menu-item")].map((b) => b.textContent);
+    expect(labels.slice(0, 2)).toEqual(["Rename", "Kill"]);
+    expect(labels).toContain("work"); // move targets stay available, below
+    store.dispose();
+  });
+
   it("shows an empty state when there are no sessions or projects", async () => {
     const api = new FakeApi();
     const { getByText, store } = mount(api);

@@ -7004,12 +7004,16 @@
                     menuBtn.draggable = false;
                     menuBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
+                        // Rename + Kill lead the menu: they are the actions
+                        // actually reached for (Viktor, 2026-08-02). Rename
+                        // stays first so the destructive one is not the item
+                        // sitting under the opening cursor.
                         openMenu(menuBtn, foreign ? foreignMenuItems(s) : [
-                            ...moveMenuItems(s.name),
-                            { labelHeading: 'Session' },
-                            { label: 'Share…', onClick: () => openShareDialog(s.name) },
                             { label: 'Rename', onClick: () => renameSession(s.name) },
-                            { label: 'Kill', danger: true, onClick: () => killSession(s.name) }
+                            { label: 'Kill', danger: true, onClick: () => killSession(s.name) },
+                            ...moveMenuItems(s.name),
+                            { labelHeading: 'Sharing' },
+                            { label: 'Share…', onClick: () => openShareDialog(s.name) }
                         ]);
                     });
                     actions.appendChild(menuBtn);
@@ -7058,13 +7062,15 @@
                     ctxMenuOpen++;
                     let picked = null;
                     try {
+                        // Same order as the ⋯ menu above: Rename, then Kill,
+                        // then Move to / Sharing.
                         picked = await showContextMenu(x, y, foreign ? foreignMenuItems(s) : [
-                            ...moveMenuItems(s.name),
-                            { labelHeading: 'Session' },
-                            { label: 'Share…', onClick: () => openShareDialog(s.name) },
                             { label: 'Rename', keepFocus: true,
                               onClick: () => startInlineRename(s.name) },
-                            { label: 'Kill', danger: true, onClick: () => killSession(s.name) }
+                            { label: 'Kill', danger: true, onClick: () => killSession(s.name) },
+                            ...moveMenuItems(s.name),
+                            { labelHeading: 'Sharing' },
+                            { label: 'Share…', onClick: () => openShareDialog(s.name) }
                         ]);
                     } finally {
                         ctxMenuOpen--;
