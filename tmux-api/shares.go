@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"terminal-lobby/telemetry"
 )
 
 // Share is a grant letting a non-owner attach one of the owner's sessions.
@@ -239,6 +241,9 @@ func createShare(w http.ResponseWriter, r *http.Request, osUser string) {
 		logAndFail(w, "create share for %s failed: %v", osUser, err)
 		return
 	}
+	events.Emit("share.granted", osUser, telemetry.Attrs{
+		"tl.session": name, "tl.to": guest, "tl.kind": mode, "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -290,6 +295,9 @@ func handleShareByPath(w http.ResponseWriter, r *http.Request) {
 			log.Printf("detach-client %s on %s after revoke: %v: %s", removedTty, owner, derr, strings.TrimSpace(string(out)))
 		}
 	}
+	events.Emit("share.revoked", osUser, telemetry.Attrs{
+		"tl.session": name, "tl.to": guest, "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

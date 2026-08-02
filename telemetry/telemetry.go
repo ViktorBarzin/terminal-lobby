@@ -1,0 +1,129 @@
+// Package telemetry emits the lobby's usage events.
+//
+// WHY IT LOOKS LIKE THIS (docs/adr/0005-usage-telemetry.md): the devvm already
+// ships its journal to the cluster's Loki via promtail, so an event written to
+// stdout is queryable in Grafana seconds later with no new service to run. Each
+// event is therefore ONE line: a fixed marker followed by a JSON object using
+// OpenTelemetry log-record naming (event.name / service.* / user.id / attrs),
+// which keeps the payload swappable for a real OTLP exporter later without
+// touching a single call site.
+//
+// Two constraints shape the format:
+//
+//   - Loki here is a single anonymous tenant with a GLOBAL 5000-active-stream
+//     cap, and promtail deliberately strips labels to stay under it (blowing it
+//     429s new streams for every service in the homelab). So every attribute
+//     lives INSIDE the line; nothing here ever becomes a Loki label.
+//   - Session names, project names and paths are user-supplied. A raw newline
+//     in one would let anyone who can name a session forge telemetry records,
+//     so values are JSON-escaped onto a single line and bounded in size.
+//
+// Never emit conversation content, prompt text, file contents or keystrokes —
+// events record WHICH feature was used, not what was typed.
+package telemetry
+
+import (
+	"encoding/json"
+	"log"
+	"sort"
+	"time"
+)
+
+// Marker prefixes every event line, so LogQL can select events without
+// parsing every log line the services write:
+//
+//	{job="devvm-journal"} |= "TLEVENT" | json
+const Marker = "TLEVENT"
+
+// Bounds on a single event. Generous for real call sites, small enough that a
+// buggy one cannot flood a shared 30-day log store.
+const (
+	MaxAttrs    = 24
+	MaxValueLen = 512
+)
+
+// Attrs are an event's attributes. Keys use the tl.* prefix; values must be
+// JSON scalars (string, number, bool).
+type Attrs map[string]any
+
+// Writer is where finished lines go. Production uses the service logger;
+// tests capture instead.
+type Writer interface{ Write(line string) }
+
+// LogWriter writes through the standard logger, i.e. to the service's journal.
+type LogWriter struct{}
+
+func (LogWriter) Write(line string) { log.Print(line) }
+
+// Emitter stamps events with the resource fields of one service.
+type Emitter struct {
+	service string
+	version string
+	out     Writer
+}
+
+// New builds an Emitter for a service. version is the deployed build id, so a
+// behaviour change can be attributed to a release.
+func New(service, version string, out Writer) *Emitter {
+	if out == nil {
+		out = LogWriter{}
+	}
+	return &Emitter{service: service, version: version, out: out}
+}
+
+// Emit records one event for one OS user. It is deliberately forgiving: a nil
+// Emitter, an unknown event name, or a hostile attribute value is dropped or
+// neutered rather than failing the request that triggered it — telemetry is
+// never worth breaking the app over.
+func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
+	if e == nil || !IsKnown(name) {
+		return
+	}
+	rec := struct {
+		TS      string `json:"ts"`
+		Name    string `json:"event.name"`
+		Service string `json:"service.name"`
+		Version string `json:"service.version,omitempty"`
+		User    string `json:"user.id,omitempty"`
+		Attrs   Attrs  `json:"attrs,omitempty"`
+	}{
+		TS:      time.Now().UTC().Format(time.RFC3339Nano),
+		Name:    name,
+		Service: e.service,
+		Version: e.version,
+		User:    osUser,
+		Attrs:   bound(attrs),
+	}
+	// Marshal (not Encode): one line, every control character escaped.
+	payload, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	e.out.Write(Marker + " " + string(payload))
+}
+
+// bound truncates oversized strings and caps the attribute count, choosing
+// which keys survive deterministically so the same call site always logs the
+// same shape.
+func bound(attrs Attrs) Attrs {
+	if len(attrs) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(attrs))
+	for k := range attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if len(keys) > MaxAttrs {
+		keys = keys[:MaxAttrs]
+	}
+	out := make(Attrs, len(keys))
+	for _, k := range keys {
+		if s, ok := attrs[k].(string); ok && len(s) > MaxValueLen {
+			out[k] = s[:MaxValueLen]
+			continue
+		}
+		out[k] = attrs[k]
+	}
+	return out
+}

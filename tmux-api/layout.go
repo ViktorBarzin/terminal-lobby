@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"terminal-lobby/telemetry"
 )
 
 // Layout is a user's sidebar arrangement: ordered projects with ordered
@@ -342,5 +344,8 @@ func handleLayout(w http.ResponseWriter, r *http.Request) {
 	// /sessions bodies embed the project field — a layout change makes the
 	// cached copy stale.
 	sessionsCacheInstance.invalidate(osUser)
+	events.Emit("layout.reordered", osUser, telemetry.Attrs{
+		"tl.count": len(l.Projects), "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"terminal-lobby/telemetry"
 )
 
 const (
@@ -222,6 +224,7 @@ func main() {
 	http.HandleFunc("/users", handleUsers)
 	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
+	http.HandleFunc("/telemetry", handleTelemetry)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
 	http.HandleFunc("/push/vapid-public", handlePushVAPIDPublic)
 	http.HandleFunc("/push/test", handlePushTest)
@@ -306,6 +309,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("restore for %s: %s", osUser, strings.TrimSpace(string(out)))
 	sessionsCacheInstance.invalidate(osUser)
+	events.Emit("session.restored", osUser, telemetry.Attrs{"tl.client": "api"})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -534,6 +538,7 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 		log.Printf("layout cleanup after killing %s for %s failed: %v", name, osUser, err)
 	}
 	sessionsCacheInstance.invalidate(osUser)
+	events.Emit("session.killed", osUser, telemetry.Attrs{"tl.session": name, "tl.client": "api"})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -576,5 +581,8 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 		log.Printf("layout rename %s→%s for %s failed: %v", oldName, newName, osUser, err)
 	}
 	sessionsCacheInstance.invalidate(osUser)
+	events.Emit("session.renamed", osUser, telemetry.Attrs{
+		"tl.from": oldName, "tl.to": newName, "tl.client": "api",
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
