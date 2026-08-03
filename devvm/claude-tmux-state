@@ -23,12 +23,19 @@ command -v tmux >/dev/null 2>&1 || exit 0
 mode="${1:-}"
 
 stamp() {
+    # Usage event (docs/adr/0006-usage-telemetry.md) on a REAL transition only.
+    # This hook fires on every UserPromptSubmit AND every PreToolUse, all of
+    # which stamp "running" — emitting per call would put thousands of
+    # no-op events a day into a shared 30-day log store. Reading the current
+    # value first costs one tmux show-option, which this script already does
+    # elsewhere. Only $1 (a fixed word from the case below) and the tmux
+    # session name are interpolated; tmux rejects newlines in session names.
+    local prev
+    prev="$(tmux show-option -qv -t "$TMUX_PANE" @claude_state 2>/dev/null || true)"
     tmux set-option -t "$TMUX_PANE" @claude_state "$1" >/dev/null 2>&1 || true
-    # Usage event (docs/adr/0006-usage-telemetry.md): turn transitions are the
-    # shape of how a session is actually worked. Only $1 (a fixed word from the
-    # case below) and the tmux session name reach the JSON; both are safe to
-    # interpolate — the name comes from tmux itself, which rejects newlines.
-    logger -t claude-tmux-state "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event.name\":\"claude.state_changed\",\"service.name\":\"claude-tmux-state\",\"user.id\":\"$(id -un)\",\"attrs\":{\"tl.session\":\"$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null)\",\"tl.to\":\"$1\",\"tl.client\":\"hook\"}}" 2>/dev/null || true
+    if [ "$prev" != "$1" ]; then
+        logger -t claude-tmux-state "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event.name\":\"claude.state_changed\",\"service.name\":\"claude-tmux-state\",\"user.id\":\"$(id -un)\",\"attrs\":{\"tl.session\":\"$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null)\",\"tl.from\":\"${prev:-none}\",\"tl.to\":\"$1\",\"tl.client\":\"hook\"}}" 2>/dev/null || true
+    fi
 }
 
 case "$mode" in
