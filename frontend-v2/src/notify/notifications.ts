@@ -172,6 +172,7 @@ export function createNotificationSystem(
       Date.now() - pending.ts < PENDING_NOTIF_TTL_MS &&
       opts.selected() == null
     ) {
+      track("notify.clicked", { "tl.session": pending.session });
       opts.onActivateSession(pending.session);
     }
   });
