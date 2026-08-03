@@ -1,4 +1,7 @@
-node_modules/
+# no trailing slash: a SYMLINK named node_modules (what a worktree gets
+# when it borrows the main checkout's install) must be ignored too — the
+# directory-only form let one get committed once.
+node_modules
 dist/
 *.local
 .DS_Store
