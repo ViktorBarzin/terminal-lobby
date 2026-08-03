@@ -117,6 +117,7 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
 
   // ---- send a pre-baked key: applyMods → sink → consume -------------------
   const sendKey = (name: KeyName) => {
+    track("terminal.softkey", { "tl.key": name });
     const raw = keyBytes(name);
     props.send(applyMods(raw, mods()));
     setMods(consumeSoftMods(mods()));

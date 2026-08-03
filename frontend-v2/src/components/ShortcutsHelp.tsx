@@ -1,4 +1,5 @@
 import { createSignal, For, type Accessor, type Component } from "solid-js";
+import { track } from "../telemetry/track";
 
 /**
  * The keyboard-shortcuts help overlay (feature-inventory Cat.2 "Keyboard-
@@ -21,7 +22,10 @@ export function createHelpController(): HelpController {
   const [isOpen, setOpen] = createSignal(false);
   return {
     isOpen,
-    open: () => setOpen(true),
+    open: () => {
+      track("help.opened");
+      setOpen(true);
+    },
     close: () => setOpen(false),
     toggle: () => setOpen((v) => !v),
   };

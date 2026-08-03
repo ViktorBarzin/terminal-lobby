@@ -50,11 +50,9 @@ var knownEvents = map[string]bool{
 
 	// -- navigation & keyboard ---------------------------------------------
 	"palette.opened": true,
-	"palette.action": true, // (tl.key = the action id)
-	"shortcut.used":  true, // (tl.key = the chord)
+	"palette.action": true, // ANY command dispatch: palette pick, chord, forwarded shortcut
 	"help.opened":    true,
 	"view.switched":  true, // text-mode <-> terminal (tl.to)
-	"search.used":    true,
 
 	// -- images, clipboard, transfers --------------------------------------
 	"gallery.opened":       true,

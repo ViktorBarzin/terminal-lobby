@@ -468,6 +468,11 @@ func parseSessions(out []byte) []Session {
 // logAndFail logs the operator-facing detail and returns an opaque 500.
 func logAndFail(w http.ResponseWriter, format string, args ...any) {
 	log.Printf(format, args...)
+	// Every unexpected 500 in this service funnels through here, so this is
+	// where "what is breaking for people" gets counted. The format STRING is
+	// the kind (a fixed literal at each call site); the args are not logged as
+	// an attribute — they carry paths and names.
+	events.Emit("api.error", "", telemetry.Attrs{"tl.kind": format})
 	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 

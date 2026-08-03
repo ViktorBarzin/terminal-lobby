@@ -24,6 +24,11 @@ mode="${1:-}"
 
 stamp() {
     tmux set-option -t "$TMUX_PANE" @claude_state "$1" >/dev/null 2>&1 || true
+    # Usage event (docs/adr/0006-usage-telemetry.md): turn transitions are the
+    # shape of how a session is actually worked. Only $1 (a fixed word from the
+    # case below) and the tmux session name reach the JSON; both are safe to
+    # interpolate — the name comes from tmux itself, which rejects newlines.
+    logger -t claude-tmux-state "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event.name\":\"claude.state_changed\",\"service.name\":\"claude-tmux-state\",\"user.id\":\"$(id -un)\",\"attrs\":{\"tl.session\":\"$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null)\",\"tl.to\":\"$1\",\"tl.client\":\"hook\"}}" 2>/dev/null || true
 }
 
 case "$mode" in

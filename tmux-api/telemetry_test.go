@@ -188,7 +188,7 @@ func TestHandleTelemetryCapsBatchSize(t *testing.T) {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		sb.WriteString(`{"name":"shortcut.used","attrs":{"tl.key":"g"}}`)
+		sb.WriteString(`{"name":"palette.action","attrs":{"tl.key":"g"}}`)
 	}
 	sb.WriteString(`]}`)
 
@@ -197,7 +197,7 @@ func TestHandleTelemetryCapsBatchSize(t *testing.T) {
 
 	kept := 0
 	for _, l := range rec.lines {
-		if decodeEvent(t, l)["event.name"] == "shortcut.used" {
+		if decodeEvent(t, l)["event.name"] == "palette.action" {
 			kept++
 		}
 	}
@@ -215,7 +215,7 @@ func TestHandleTelemetryRateLimitsPerUserAndRecovers(t *testing.T) {
 	at := time.Unix(1785700000, 0)
 	withTelemetryClock(t, &at)
 
-	body := `{"client":"lobby-v2","events":[{"name":"shortcut.used","attrs":{"tl.key":"j"}}]}`
+	body := `{"client":"lobby-v2","events":[{"name":"palette.action","attrs":{"tl.key":"j"}}]}`
 	sent := 0
 	for {
 		w := httptest.NewRecorder()
