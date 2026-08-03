@@ -53,10 +53,8 @@ export type TlEvent =
   // navigation & keyboard
   | "palette.opened"
   | "palette.action"
-  | "shortcut.used"
   | "help.opened"
   | "view.switched"
-  | "search.used"
   // images & transfers
   | "gallery.opened"
   | "gallery.image_opened"

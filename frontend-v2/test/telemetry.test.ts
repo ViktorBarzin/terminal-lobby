@@ -52,7 +52,7 @@ describe("createTracker", () => {
   it("caps the buffer, keeping the newest events", async () => {
     const posts: { events: { attrs: Record<string, unknown> }[] }[] = [];
     const t = createTracker({ post: async (b) => void posts.push(b as never), autoFlush: false });
-    for (let i = 0; i < MAX_BUFFER + 10; i++) t.track("shortcut.used", { "tl.key": String(i) });
+    for (let i = 0; i < MAX_BUFFER + 10; i++) t.track("palette.action", { "tl.key": String(i) });
     await t.flush();
     const evs = posts[0]!.events;
     expect(evs).toHaveLength(MAX_BUFFER);
