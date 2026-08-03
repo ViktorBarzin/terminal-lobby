@@ -22,6 +22,36 @@ TLEVENT {"ts":"2026-08-03T00:12:31Z","event.name":"session.selected",
          "attrs":{"tl.session":"worktree","tl.kind":"own","tl.client":"lobby-v2"}}
 ```
 
+```mermaid
+flowchart TD
+    subgraph browser["Browser"]
+        V1["vanilla lobby<br/>tlTrack()"]
+        V2["v2 lobby<br/>track()"]
+    end
+
+    subgraph devvm["devvm services"]
+        API["tmux-api<br/>POST /telemetry<br/>auth · catalog · rate cap"]
+        CU["clipboard-upload"]
+        FA["file-api"]
+        SE["session-events"]
+        AT["tmux-user-attach<br/>(every session start)"]
+    end
+
+    J["journald"]
+    P["promtail.service"]
+    L["Loki<br/>30-day retention"]
+    G["Grafana<br/>Terminal Lobby Usage"]
+
+    V1 -- "batched POST<br/>sendBeacon on pagehide" --> API
+    V2 -- "batched POST<br/>sendBeacon on pagehide" --> API
+    API -- "TLEVENT + JSON" --> J
+    CU --> J
+    FA --> J
+    SE --> J
+    AT -- "logger" --> J
+    J --> P --> L --> G
+```
+
 ## Considered Options
 
 - **Real OTLP into the cluster's Alloy** — Grafana Alloy already runs as a
