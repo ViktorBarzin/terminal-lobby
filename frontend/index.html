@@ -7132,6 +7132,7 @@
                 // (desktop right-click, Android touch-hold) and the 500 ms
                 // pointer timer (iOS, which never fires contextmenu).
                 async function openCardCtxMenu(x, y) {
+                    tlTrack('terminal.gesture', { 'tl.kind': 'card-long-press' });
                     closeMenu();
                     ctxMenuOpen++;
                     let picked = null;
@@ -13374,7 +13375,10 @@
             dragDepth = 0;
             dropOverlay.style.display = 'none';
             const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
-            if (files.length) uploadDroppedFiles(files);
+            if (files.length) {
+                tlTrack('image.dropped', { 'tl.count': files.length });
+                uploadDroppedFiles(files);
+            }
         });
 
         // Live re-theme without an iframe reload (Task 1.7): hand xterm a

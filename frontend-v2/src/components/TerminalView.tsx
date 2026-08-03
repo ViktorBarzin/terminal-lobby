@@ -1,6 +1,7 @@
 import { createEffect, onCleanup, onMount, untrack, type Component } from "solid-js";
 import { terminalUrl } from "../lib/terminal-url";
 import { isBuildStale } from "../deploy/healer.logic";
+import { track } from "../telemetry/track";
 
 /**
  * Terminal mode — the live ttyd attach (design pillar #2 fallback view). An
@@ -206,6 +207,7 @@ export const TerminalView: Component<{
     }
   });
   onCleanup(() => {
+    track("session.detached", { "tl.session": untrack(() => props.session) });
     window.removeEventListener("message", onMessage);
     if (coverTimer) clearTimeout(coverTimer);
     if (themeAckTimer) clearTimeout(themeAckTimer);
