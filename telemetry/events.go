@@ -9,7 +9,7 @@ package telemetry
 // arbitrary records into the shared journal.
 //
 // Adding an event = add it here, in the same commit as the call site, and to
-// the catalog table in docs/adr/0005-usage-telemetry.md.
+// the catalog table in docs/adr/0006-usage-telemetry.md.
 //
 // Attribute conventions: tl.session, tl.project, tl.from, tl.to, tl.key,
 // tl.kind, tl.count, tl.ms, tl.reason, tl.client. NEVER conversation content,

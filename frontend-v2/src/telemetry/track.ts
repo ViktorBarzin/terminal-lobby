@@ -1,5 +1,5 @@
 /**
- * Usage events from the lobby (docs/adr/0005-usage-telemetry.md).
+ * Usage events from the lobby (docs/adr/0006-usage-telemetry.md).
  *
  * The page cannot write to the journal, so events are batched and POSTed to
  * tmux-api's /telemetry intake, which already authenticates the caller and

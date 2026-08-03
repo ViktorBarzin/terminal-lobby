@@ -1,6 +1,6 @@
 // Package telemetry emits the lobby's usage events.
 //
-// WHY IT LOOKS LIKE THIS (docs/adr/0005-usage-telemetry.md): the devvm already
+// WHY IT LOOKS LIKE THIS (docs/adr/0006-usage-telemetry.md): the devvm already
 // ships its journal to the cluster's Loki via promtail, so an event written to
 // stdout is queryable in Grafana seconds later with no new service to run. Each
 // event is therefore ONE line: a fixed marker followed by a JSON object using

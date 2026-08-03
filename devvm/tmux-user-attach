@@ -80,7 +80,7 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
 scope_ok=no
 if systemctl --user show-environment >/dev/null 2>&1; then scope_ok=yes; fi
 logger -t tmux-user-attach "user=$(id -un) name='$name' dir='$start_dir' cmd='${cmd_key:-<none>}' scope=$scope_ok"
-# Usage event (docs/adr/0005-usage-telemetry.md). EVERY session start flows
+# Usage event (docs/adr/0006-usage-telemetry.md). EVERY session start flows
 # through this script — including plain ttyd URLs that never touch the lobby —
 # which makes it the one place that sees them all. Only $name and $cmd_key are
 # interpolated: both are already regex-validated above (NAME_RE / CMD_RE), so
