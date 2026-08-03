@@ -2421,8 +2421,64 @@
         const TL_BUILD = '__TL_BUILD__';
         console.log('terminal-lobby build:', TL_BUILD);
         try { document.documentElement.dataset.tlBuild = TL_BUILD; } catch (e) {}
+        // One event per tab boot — the denominator every other count is read
+        // against. Emitted after tlTrack is defined below via a microtask so
+        // the ordering does not depend on script layout.
+        queueMicrotask(() => tlTrack('app.loaded', {
+            'tl.kind': matchMedia('(pointer: coarse)').matches ? 'touch' : 'desktop'
+        }));
         const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
         const SESSIONS_API = '/api/sessions/sessions';
+        // --- usage events (docs/adr/0006-usage-telemetry.md) -----------------
+        // The page cannot write to the journal, so events are batched and
+        // POSTed to tmux-api's intake, which resolves WHO from the Authentik
+        // header — the browser is never trusted with attribution. From there
+        // promtail carries them to Loki. Rules: telemetry never breaks the page
+        // (every failure swallowed, buffer bounded), and only WHICH feature ran
+        // is recorded — never prompt text, file contents or keystrokes. Names
+        // must exist in telemetry/events.go or the server drops them.
+        const TELEMETRY_API = '/api/sessions/telemetry';
+        const TL_EVENT_MAX = 200;
+        let tlEventBuffer = [];
+        function tlTrack(name, attrs) {
+            tlEventBuffer.push({ name: name, attrs: attrs || {} });
+            if (tlEventBuffer.length > TL_EVENT_MAX) {
+                tlEventBuffer = tlEventBuffer.slice(-TL_EVENT_MAX);
+            }
+        }
+        function tlEventBatch() {
+            return JSON.stringify({
+                client: 'lobby-vanilla', build: TL_BUILD, events: tlEventBuffer
+            });
+        }
+        function tlFlushEvents() {
+            if (!tlEventBuffer.length) return;
+            const body = tlEventBatch();
+            tlEventBuffer = [];   // drop on failure; never retry into a growing buffer
+            fetch(TELEMETRY_API, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' }, body: body
+            }).catch(() => {});
+        }
+        // pagehide (not unload) is the event that actually fires on iOS and on
+        // bfcache navigations, and sendBeacon survives the teardown a fetch
+        // would not.
+        function tlFlushEventsSync() {
+            if (!tlEventBuffer.length) return;
+            const body = tlEventBatch();
+            tlEventBuffer = [];
+            try {
+                if (navigator.sendBeacon) {
+                    navigator.sendBeacon(TELEMETRY_API,
+                        new Blob([body], { type: 'application/json' }));
+                }
+            } catch (e) { /* the tab is going away regardless */ }
+        }
+        setInterval(tlFlushEvents, 10000);
+        window.addEventListener('pagehide', tlFlushEventsSync);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') tlFlushEventsSync();
+        });
         const RESTORE_API  = '/api/sessions/restore';
         const WHOAMI_API   = '/api/sessions/whoami';
         const LAYOUT_API   = '/api/sessions/layout';
@@ -3026,6 +3082,15 @@
         // CustomEvent — localStorage 'storage' events only fire in OTHER
         // windows), and sync up. Returns the resulting doc.
         function setPrefs(patch) {
+            try {
+                for (const key of Object.keys(patch || {})) {
+                    const v = patch[key];
+                    tlTrack('prefs.changed', {
+                        'tl.key': key,
+                        'tl.to': (v && typeof v === 'object') ? Object.keys(v).join(',') : String(v)
+                    });
+                }
+            } catch (e) { /* never let telemetry break a pref write */ }
             const cur = getPrefs();
             const merged = Object.assign({}, cur, patch);
             // Deep-merge nested namespaces (one level): a patch like
@@ -3993,6 +4058,11 @@
         // site works unchanged: ''/undefined type → info, `duration || 3000`
         // matches the old timer default exactly.
         function showToast(msg, type, duration) {
+            // KIND only: a message can carry a path or a session name, and the
+            // catalog rule is metadata, not content.
+            if (type === 'error' || type === 'warning') {
+                tlTrack('app.error', { 'tl.kind': type });
+            }
             tlToast.add({
                 type: type === 'error' || type === 'success' ? type : 'info',
                 title: msg,
@@ -5665,6 +5735,9 @@
                 return lastSessions.some(s => s.name === name);
             }
             function activateSession(name, opts) {
+                tlTrack('session.selected', {
+                    'tl.session': name, 'tl.kind': (opts && opts.owner) ? 'foreign' : 'own'
+                });
                 if (!NAME_RE.test(name)) { showToast('Invalid name', 'error'); return; }
                 // The docked session lives in the bottom panel — targeting it
                 // (card click / Alt+N / cycle) reveals + focuses the dock rather
@@ -6792,6 +6865,7 @@
             // assignment is recorded BEFORE the iframe spawn so the card never
             // flickers through Ungrouped.
             function createSessionInProject(projectName) {
+                tlTrack('session.created', { 'tl.to': projectName || 'ungrouped' });
                 const input = prompt('New session in "' + projectName + '":');
                 if (input === null) return;
                 const name = input.trim();
@@ -7681,6 +7755,7 @@
                 if (typeof updateListClose === 'function') updateListClose();
             }
             function toggleSidebar() {
+                tlTrack('sidebar.toggled');
                 setSidebarCollapsed(!lobbyEl.classList.contains('sidebar-collapsed'));
             }
             toggleEl.addEventListener('click', toggleSidebar);
@@ -7734,6 +7809,7 @@
             });
             function selectTheme(t) {
                 if (!THEMES.includes(t)) return;
+                tlTrack('theme.changed', { 'tl.to': t });
                 try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
                 applyTheme(t);
                 paintSettingsPanel();
@@ -7979,6 +8055,7 @@
                 setTimeout(() => location.replace(location.pathname), 300);
             }
             function openSettings() {
+                tlTrack('settings.opened');
                 const asSheet = sheetPresentationWanted();   // Task M.5
                 const panel = document.createElement('div');
                 panel.className = 'settings-panel';
@@ -9104,6 +9181,7 @@
             }
             const ATTACH_PREFIX = 'session.attach.';
             function runAppCommand(cmd) {
+                tlTrack('palette.action', { 'tl.key': cmd });
                 if (cmd === 'palette.toggle') { palette.toggle(); return; }
                 // Any other command closes an open palette first (its own
                 // items already closed it in runItem; this covers chords
@@ -12909,6 +12987,9 @@
 
                     const blob = item.getAsFile();
                     if (!blob) { showToast('Failed to read image', 'error'); return; }
+                    // Only a real IMAGE paste counts — a text paste reaches this
+                    // listener too and is not the same act.
+                    tlTrack('image.pasted', { 'tl.count': blob.size });
                     showImagePreview(blob);
 
                     showToast('Uploading image...', '');
@@ -13032,6 +13113,7 @@
         }
 
         async function openGallery() {
+            tlTrack('gallery.opened', { 'tl.client': 'lobby-vanilla' });
             if (gallery) return;
             const box = document.createElement('div');
             box.id = 'img-gallery';
