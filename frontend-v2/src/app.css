@@ -361,30 +361,8 @@ body {
   color: var(--text-primary);
 }
 
-/* ---- Deploy self-heal pill (inventory Cat.10) -------------------------- */
-/* Shown only when a new build landed while a terminal is attached + the tab is
-   visible (requestTopReload's DEFER branch). Sticky + tappable; above the toast
-   stack so it is never occluded. */
-.tl-update-pill {
-  position: fixed;
-  left: 50%;
-  bottom: max(16px, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  z-index: 80;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--bg-page);
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  box-shadow: var(--surface-shadow), 0 8px 24px rgba(0, 0, 0, 0.35);
-  padding: 9px 16px;
-  cursor: pointer;
-}
-.tl-update-pill:hover {
-  filter: brightness(1.06);
-}
+/* The deploy "Update ready" pill is deliberately gone (ADR-0007): updates apply
+   themselves at the next open, so there is no pill to style. */
 
 /* ---- Views ------------------------------------------------------------- */
 .tl-views {
