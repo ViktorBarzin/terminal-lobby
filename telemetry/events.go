@@ -17,9 +17,10 @@ package telemetry
 // not what was typed into it.
 var knownEvents = map[string]bool{
 	// -- app lifecycle (browser) --------------------------------------------
-	"app.loaded":   true, // a lobby tab booted (tl.client, tl.build)
-	"app.reloaded": true, // the deploy healer swapped a stale tab (tl.reason)
-	"app.error":    true, // a surfaced failure (tl.kind); no message text
+	"app.loaded":        true, // a lobby tab booted (tl.client, tl.build)
+	"app.reloaded":      true, // a self-update landed (tl.reason, tl.from, tl.to)
+	"app.update_failed": true, // reloads at one asset id never landed (tl.to, tl.count)
+	"app.error":         true, // a surfaced failure (tl.kind); no message text
 
 	// -- session lifecycle --------------------------------------------------
 	"session.created":  true,

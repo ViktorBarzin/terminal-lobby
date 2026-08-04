@@ -6,10 +6,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Build id — replaces the vanilla app's `__TL_BUILD__` sed (design §8: sed lacks
-// `g` and breaks under minification, so we inject via Vite `define` instead).
-// Read at runtime by the (future) stale-tab healer and for diagnostics.
-const BUILD_ID = process.env.TL_BUILD || new Date().toISOString();
+// Build id — injected as the LITERAL placeholder, not a resolved value, so the
+// built artifact is a pure function of the source (ADR-0007). deploy-v2.sh
+// fingerprints that artifact to mint `__TL_ASSET__`, then substitutes both
+// tokens; baking a git SHA or a timestamp in here would make every build unique
+// and defeat the whole point. `define` (a preserved string literal) is what
+// carries the placeholder safely through minification.
+const BUILD_ID = process.env.TL_BUILD || "__TL_BUILD__";
 
 // term.html — the ttyd terminal-mode page the SPA's iframe attaches against
 // (config.TERMINAL_BASE = "/term.html"). It is deliberately NOT part of the

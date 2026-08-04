@@ -1,48 +1,77 @@
 /**
- * Deploy self-heal — the CONTROLLER (inventory Cat.10). Wires the pure logic in
- * ./healer.logic.ts to real fetch / reload / storage / timers / listeners and a
- * reactive `updateReady` signal the shell renders as the sticky "Update ready"
- * pill.
+ * Deploy self-update — the CONTROLLER (inventory Cat.10). Wires the pure logic
+ * in ./healer.logic.ts to real fetch / reload / storage / timers / listeners.
  *
  * The lobby (this SPA, the TOP document) is the ONLY deploy channel — there is
- * no server build header, so it polls its own served bytes on a short timer,
- * re-hashes, and on a real change routes to `requestTopReload`. TOP-owned reload:
- * the embedded terminal iframe (the ttyd page) never reloads itself — on its own
- * reconnect heal it posts `{type:'tl-build-stale'}` UP, TerminalView forwards it
- * to `onBuildStale`, and the lobby drives the SINGLE reload (which replaces the
- * iframe too). The SPA is never itself embedded, so there is no iframe branch
- * here — `reloadIfStale` always routes to `requestTopReload`.
+ * no server build header, so it polls its own served bytes on a short timer and
+ * compares the served `TL_ASSET` against its own. TOP-owned reload: the embedded
+ * terminal iframe (the ttyd page) never reloads itself — on its own reconnect
+ * heal it posts `{type:'tl-build-stale'}` UP, TerminalView forwards it to
+ * `onBuildStale`, and the lobby drives the SINGLE reload (which replaces the
+ * iframe too).
+ *
+ * ZERO-TOUCH (ADR-0007, Viktor 2026-08-04): there is no "Update ready" pill and
+ * no tap. An update applies itself at a boundary that happens anyway — the next
+ * open (back after >= RESUME_AWAY_MS away, a window refocus, a bfcache restore)
+ * or any moment with no terminal attached. While someone is looking at an
+ * attached terminal it waits, silently and indefinitely. A hidden document is
+ * NEVER navigated: a backgrounded reload cannot be confirmed, and it would spend
+ * a full download plus a tmux reattach on a page nobody is looking at.
+ *
+ * Every reload is CONFIRMED rather than fire-and-forget: the target id is
+ * recorded before navigating and checked at the next boot, so a reload that
+ * never lands is counted, reported once, and then dropped instead of retried
+ * forever.
  *
  * Every side-effecting dependency is injectable so the whole controller is
  * unit-testable with fake timers and a stubbed fetch.
  */
-import { createSignal, type Accessor } from "solid-js";
 import { BUILD_ID } from "../lib/config";
 import {
   BUILD_SUBSTRING,
+  MAX_UPDATE_ATTEMPTS,
+  RESUME_AWAY_MS,
   STORM_WINDOW_MS,
   fetchSelf,
-  hashPage,
-  planReload,
-  stormOK,
+  parseAssetId,
+  planUpdate,
 } from "./healer.logic";
-import { track } from "../telemetry/track";
+import { track, type TlAttrs } from "../telemetry/track";
 
 /** sessionStorage key for the last AUTO-reload timestamp (the storm throttle). */
 export const STORM_KEY = "tl-stale-reload";
+/** sessionStorage key for the in-flight update record (the confirmation). */
+export const UPDATE_KEY = "tl-update";
 /** Lobby self-check cadence. Short (the only deploy channel); the 304 keeps it
  *  cheap under `no-cache` against ttyd's strong ETag. */
 export const SELF_CHECK_MS = 5000;
 
-type MinStorage = Pick<Storage, "getItem" | "setItem">;
+/** What the healer wrote before it navigated, read back at the next boot. */
+interface UpdateRecord {
+  /** the asset id this document was reloading TOWARDS. */
+  target: string;
+  /** the asset id it was leaving (telemetry only). */
+  from: string | null;
+  at: number;
+  /** how many reloads have been attempted at `target` without landing. */
+  n: number;
+  /** has the give-up already been reported? (report once, not per boot) */
+  reported?: boolean;
+}
+
+type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type MinTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
 export interface DeployHealerDeps {
   /** Is a terminal attached (a session selected → SessionView/iframe mounted)?
    *  The v2 analog of the vanilla `currentActive`. */
   hasAttachedTerminal: () => boolean;
+  /** this document's own update identity; default: the `tl-asset` meta tag. */
+  assetId?: () => string | null;
   /** default: `() => document.hidden`. */
   isHidden?: () => boolean;
+  /** default: `() => document.hasFocus()`. */
+  isFocused?: () => boolean;
   /** default: bound `window.fetch`. */
   fetchImpl?: typeof fetch;
   /** the URL to self-fetch; default `location.pathname + location.search`. */
@@ -53,7 +82,7 @@ export interface DeployHealerDeps {
   now?: () => number;
   /** default: `sessionStorage` (or null when unavailable). */
   storage?: MinStorage | null;
-  /** default: `window` — for the `pageshow` (bfcache) hook. */
+  /** default: `window` — for the `pageshow` (bfcache) + focus/blur hooks. */
   win?: MinTarget | null;
   /** default: `document` — for the `visibilitychange` hook. */
   doc?: MinTarget | null;
@@ -61,25 +90,25 @@ export interface DeployHealerDeps {
   intervalMs?: number;
   /** default: {@link STORM_WINDOW_MS}. */
   stormWindowMs?: number;
+  /** default: {@link RESUME_AWAY_MS}. */
+  resumeAwayMs?: number;
   /** default: `no-cache` (lobby: revalidate against ttyd's strong ETag → 304). */
   cacheMode?: RequestCache;
-  /** arm the baseline + start the poll/listeners immediately (default true). */
+  /** arm the confirmation + start the poll/listeners immediately (default true). */
   autostart?: boolean;
   /** default: `console.log`. */
   log?: (...args: unknown[]) => void;
+  /** default: the telemetry `track`. */
+  emit?: (event: "app.reloaded" | "app.update_failed", attrs: TlAttrs) => void;
 }
 
 export interface DeployHealer {
-  /** reactive: is the sticky "Update ready — tap to refresh" pill up? */
-  updateReady: Accessor<boolean>;
-  /** the pill tap — an EXPLICIT action, so NEVER storm-gated. */
-  applyUpdate(): void;
   /** the tl-build-stale bridge destination (a terminal saw a new build). */
   onBuildStale(): void;
   /** run one lobby self-check now (skipped while hidden). */
-  checkNow(): Promise<void>;
-  /** (re)arm the content-hash baseline from the current served bytes. */
-  armBaseline(): Promise<void>;
+  checkNow(opts?: { justResumed?: boolean }): Promise<void>;
+  /** read back the record the previous page life wrote before it navigated. */
+  confirmBoot(): void;
   dispose(): void;
 }
 
@@ -92,12 +121,22 @@ function safeSessionStorage(): MinStorage | null {
   return null;
 }
 
+/** This document's own `TL_ASSET`, read from the head. Null when unstamped. */
+function metaAssetId(): string | null {
+  if (typeof document === "undefined") return null;
+  const el = document.querySelector('meta[name="tl-asset"]');
+  const v = el?.getAttribute("content")?.trim();
+  return !v || v.includes("__TL_") ? null : v;
+}
+
 /**
  * The build-id marker: log `terminal-lobby build: <id>` and stamp
- * `documentElement.dataset.tlBuild`. Logging `BUILD_SUBSTRING` is what plants the
- * marker literal in the served single-file HTML — `fetchSelf` validates that
- * exact substring, and a per-deploy git SHA in `<id>` is what flips the content
- * hash so the healer fires. Call once at boot.
+ * `documentElement.dataset.tlBuild`. `TL_BUILD` is PROVENANCE (which commit is
+ * deployed) — it is what telemetry reports and what a human reads in the
+ * console. It is deliberately NOT what update detection compares; that is
+ * `TL_ASSET` (ADR-0007). Logging `BUILD_SUBSTRING` is what plants the marker
+ * literal in the served single-file HTML, which `fetchSelf` validates. Call once
+ * at boot.
  */
 export function logBuildId(
   id: string = BUILD_ID,
@@ -115,13 +154,15 @@ export function logBuildId(
 export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
   const isHidden =
     deps.isHidden ?? (() => (typeof document !== "undefined" ? document.hidden : false));
+  const isFocused =
+    deps.isFocused ??
+    (() => (typeof document !== "undefined" && document.hasFocus ? document.hasFocus() : true));
+  const assetId = deps.assetId ?? metaAssetId;
   const fetchImpl =
-    deps.fetchImpl ??
-    (typeof fetch !== "undefined" ? fetch.bind(globalThis) : undefined);
+    deps.fetchImpl ?? (typeof fetch !== "undefined" ? fetch.bind(globalThis) : undefined);
   const selfUrl =
     deps.selfUrl ??
-    (() =>
-      typeof location !== "undefined" ? location.pathname + location.search : "/");
+    (() => (typeof location !== "undefined" ? location.pathname + location.search : "/"));
   const reload =
     deps.reload ??
     (() => {
@@ -130,15 +171,21 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
   const now = deps.now ?? (() => Date.now());
   const storage = deps.storage === undefined ? safeSessionStorage() : deps.storage;
   const win = deps.win === undefined ? (typeof window !== "undefined" ? window : null) : deps.win;
-  const doc = deps.doc === undefined ? (typeof document !== "undefined" ? document : null) : deps.doc;
+  const doc =
+    deps.doc === undefined ? (typeof document !== "undefined" ? document : null) : deps.doc;
   const intervalMs = deps.intervalMs ?? SELF_CHECK_MS;
   const stormWindowMs = deps.stormWindowMs ?? STORM_WINDOW_MS;
+  const resumeAwayMs = deps.resumeAwayMs ?? RESUME_AWAY_MS;
   const cacheMode: RequestCache = deps.cacheMode ?? "no-cache";
   const log = deps.log ?? ((...a: unknown[]) => console.log(...a));
+  const emit =
+    deps.emit ??
+    ((event: "app.reloaded" | "app.update_failed", attrs: TlAttrs) => track(event, attrs));
 
-  const [updateReady, setUpdateReady] = createSignal(false);
-  let bootHash: string | null = null;
-  let updatePending = false;
+  const runningAsset = assetId();
+  const bootAt = now();
+  /** when the document went away (hidden or blurred); null while it is here. */
+  let awaySince: number | null = null;
   let timer: ReturnType<typeof setInterval> | undefined;
 
   function lastReloadAt(): number | null {
@@ -158,117 +205,153 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
       /* no storage */
     }
   }
+  function readRecord(): UpdateRecord | null {
+    if (!storage) return null;
+    try {
+      const raw = storage.getItem(UPDATE_KEY);
+      if (!raw) return null;
+      const rec = JSON.parse(raw) as UpdateRecord;
+      return typeof rec?.target === "string" ? rec : null;
+    } catch {
+      return null;
+    }
+  }
+  function writeRecord(rec: UpdateRecord | null): void {
+    if (!storage) return;
+    try {
+      if (rec) storage.setItem(UPDATE_KEY, JSON.stringify(rec));
+      else storage.removeItem(UPDATE_KEY);
+    } catch {
+      /* no storage */
+    }
+  }
 
-  function doAutoReload(why: string): void {
+  /** Reloads already attempted at THIS target without landing (0 for a new one). */
+  function attemptsFor(target: string): number {
+    const rec = readRecord();
+    return rec && rec.target === target ? rec.n : 0;
+  }
+
+  /**
+   * The apply step. Records the target FIRST (so the next boot can tell whether
+   * the navigation landed), then the storm timestamp, then navigates.
+   */
+  function applyUpdate(target: string, why: string): void {
+    writeRecord({ target, from: runningAsset, at: now(), n: attemptsFor(target) + 1 });
     recordReload(now());
-    log("deploy detected (" + why + ") — reloading");
+    log("update " + target + " (" + why + ") — reloading");
     reload();
   }
 
-  /** The top-owned reload policy (see planReload). */
-  function requestTopReload(why: string): void {
-    const plan = planReload({
+  /** One evaluation of the whole policy against the currently served page. */
+  async function evaluate(justResumed: boolean, why: string): Promise<void> {
+    if (!fetchImpl) return;
+    if (isHidden()) return; // never fetch (or navigate) for a backgrounded page
+    let served: string | null = null;
+    try {
+      const text = await fetchSelf(fetchImpl, selfUrl(), cacheMode);
+      served = text ? parseAssetId(text) : null;
+    } catch {
+      return; // transient fetch error — try again on the next check
+    }
+    if (!served) return;
+    const plan = planUpdate({
+      runningAsset,
+      servedAsset: served,
       attached: deps.hasAttachedTerminal(),
-      hidden: isHidden(),
-      updatePending,
+      visible: !isHidden() && isFocused(),
+      justResumed,
+      attempts: attemptsFor(served),
       now: now(),
       lastReloadAt: lastReloadAt(),
       stormWindowMs,
+      storageAvailable: !!storage,
+      uptimeMs: now() - bootAt,
     });
-    if (plan === "reload") {
-      doAutoReload(why);
-    } else if (plan === "show-pill") {
-      updatePending = true;
-      setUpdateReady(true);
-    }
-    // "throttled" (storm-gated) / "pill-pending" (already up) → no-op.
+    if (plan === "reload") applyUpdate(served, why);
+    // "defer" — a real update is waiting for the next open; nothing is shown.
+    // "none" / "give-up" — nothing to do (give-up was already reported at boot).
   }
 
-  async function armBaseline(): Promise<void> {
-    if (!fetchImpl) return;
-    try {
-      const t = await fetchSelf(fetchImpl, selfUrl(), cacheMode);
-      if (t) bootHash = hashPage(t);
-      else log("stale-tab healer: baseline fetch failed — will retry on next check");
-    } catch {
-      /* offline / transient — a failed baseline re-arms on the next check */
-    }
-  }
-
-  async function reloadIfStale(): Promise<void> {
-    if (!fetchImpl) return;
-    // A failed boot baseline must not disarm the healer forever: re-arm now,
-    // compare on the NEXT check.
-    if (bootHash === null) {
-      await armBaseline();
-      return;
-    }
-    try {
-      const t = await fetchSelf(fetchImpl, selfUrl(), cacheMode);
-      if (!t || hashPage(t) === bootHash) return;
-      // A new build is being served — the lobby (this top document) owns the
-      // single reload, which replaces the terminal iframe too.
-      track("app.reloaded", { "tl.reason": "self-heal" });
-      requestTopReload("self-heal");
-    } catch {
-      /* transient fetch error — try again on the next check */
-    }
-  }
-
-  async function checkNow(): Promise<void> {
-    if (isHidden()) return;
-    await reloadIfStale();
+  async function checkNow(opts: { justResumed?: boolean } = {}): Promise<void> {
+    await evaluate(!!opts.justResumed, opts.justResumed ? "resume" : "poll");
   }
 
   function onBuildStale(): void {
     // A terminal iframe saw a new build on its reconnect heal and handed the
-    // reload UP. The top owns the single reload.
-    requestTopReload("terminal signal");
+    // decision UP. The top owns the single reload; the plan is idempotent, so a
+    // reconnect storm collapses to at most one.
+    void evaluate(false, "terminal signal");
   }
 
-  function applyUpdate(): void {
-    // The pill tap is an EXPLICIT user action — never storm-gate it (that guard
-    // exists only to break AUTO-reload loops; gating the tap would leave the
-    // pill stuck when two deploys land <2 min apart).
-    updatePending = false;
-    setUpdateReady(false);
-    reload();
+  /**
+   * Read back what the previous page life was reloading towards. Landed → clear
+   * and report; did not land → keep the count, and once it hits the cap report
+   * that ONCE and let `planUpdate` go quiet for that target.
+   */
+  function confirmBoot(): void {
+    const rec = readRecord();
+    if (!rec) return;
+    if (runningAsset && rec.target === runningAsset) {
+      writeRecord(null);
+      emit("app.reloaded", {
+        "tl.reason": "update",
+        "tl.from": rec.from,
+        "tl.to": runningAsset,
+      });
+      return;
+    }
+    if (rec.n >= MAX_UPDATE_ATTEMPTS && !rec.reported) {
+      writeRecord({ ...rec, reported: true });
+      emit("app.update_failed", { "tl.to": rec.target, "tl.count": rec.n });
+    }
+  }
+
+  /** Away → here. Only a real absence counts as "the next open". */
+  function returned(): void {
+    const away = awaySince;
+    awaySince = null;
+    if (isHidden() || !isFocused()) return; // not actually back yet
+    void evaluate(away !== null && now() - away >= resumeAwayMs, "resume");
+  }
+  function left(): void {
+    if (awaySince === null) awaySince = now();
   }
 
   const onVisibility = (): void => {
-    if (isHidden()) {
-      // A deferred update fires the moment the tab hides — nothing left to
-      // interrupt (storm-gated, like any auto reload).
-      if (updatePending && stormOK(now(), lastReloadAt(), stormWindowMs)) {
-        updatePending = false;
-        setUpdateReady(false);
-        doAutoReload("deferred-on-hide");
-      }
-      return;
-    }
-    // Resume: re-check immediately (iOS suspends background timers hard).
-    void checkNow();
+    if (isHidden()) left();
+    else returned();
   };
+  const onFocus = (): void => returned();
+  const onBlur = (): void => left();
   const onPageShow = (e: Event): void => {
     // bfcache restore: the page comes back frozen, not reloaded — a whole deploy
-    // may have landed while it slept.
-    if ((e as PageTransitionEvent).persisted) void checkNow();
+    // may have landed while it slept. Always an open.
+    if ((e as PageTransitionEvent).persisted) {
+      awaySince = null;
+      void evaluate(true, "bfcache");
+    }
   };
 
   function start(): void {
-    void armBaseline();
+    confirmBoot();
+    void checkNow();
     timer = setInterval(() => void checkNow(), intervalMs);
     doc?.addEventListener("visibilitychange", onVisibility);
     win?.addEventListener("pageshow", onPageShow);
+    win?.addEventListener("focus", onFocus);
+    win?.addEventListener("blur", onBlur);
   }
 
   function dispose(): void {
     if (timer !== undefined) clearInterval(timer);
     doc?.removeEventListener("visibilitychange", onVisibility);
     win?.removeEventListener("pageshow", onPageShow);
+    win?.removeEventListener("focus", onFocus);
+    win?.removeEventListener("blur", onBlur);
   }
 
   if (deps.autostart !== false) start();
 
-  return { updateReady, applyUpdate, onBuildStale, checkNow, armBaseline, dispose };
+  return { onBuildStale, checkNow, confirmBoot, dispose };
 }

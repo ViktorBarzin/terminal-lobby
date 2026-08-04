@@ -12,6 +12,13 @@
     />
     <meta name="theme-color" content="#0d1117" />
     <meta name="color-scheme" content="dark light" />
+    <!-- The UPDATE IDENTITY (ADR-0007): a fingerprint of this frontend's own
+         content, stamped by deploy-v2.sh. A running page compares it against the
+         served one to decide whether a real update exists — which is why a
+         backend-only deploy (same frontend bytes, new git SHA) is silent. Vite
+         copies the head through verbatim, so the placeholder survives the build
+         and the deploy script substitutes it. -->
+    <meta name="tl-asset" content="__TL_ASSET__" />
     <!-- PWA install metadata (inventory Cat.9). display:standalone lives in the
          manifest; these metas + icons make the lobby installable and give iOS its
          Home-Screen identity. status-bar-style='default' (opaque, app laid out
