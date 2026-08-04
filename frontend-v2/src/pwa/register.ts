@@ -24,14 +24,65 @@ import { NAME_RE } from "../types/lobby";
 export interface PendingNotif {
   session: string;
   ts: number;
+  /** true when sw.js wrote it from an actual notificationclick, not push receipt. */
+  tapped?: boolean;
 }
 
 /**
  * 2 min: wide enough for a realistic tap→cold-launch, tight enough that a plain
- * icon launch rarely falls inside a stale stash window (the stash records push
- * RECEIPT, not the tap — no tap signal survives an iOS cold launch).
+ * icon launch rarely falls inside a stale stash window (a push-time record is the
+ * RECEIPT, not the tap — a guess that the user is about to act on it).
  */
 export const PENDING_NOTIF_TTL_MS = 120 * 1000;
+
+/**
+ * The outer window a stash may still land a launch on (15 min). It covers the two
+ * cases where a receipt's 2 min is simply wrong:
+ *   - `tapped:true` — sw.js routed an actual click here (its openWindow branch),
+ *     so intent is certain and only the launch is pending;
+ *   - a receipt whose notification is NO LONGER DISPLAYED. Viktor's case: a push
+ *     arrives, the phone stays locked, and the banner is tapped twenty minutes
+ *     later — far outside 2 min, so boot ignored it and landed on the last-active
+ *     session instead of the one that called. iOS clears a notification when it is
+ *     tapped, so "stash present + banner gone" reads that tap after the fact;
+ *     while the banner still sits there untapped, an icon launch must NOT jump.
+ */
+export const STASH_MAX_AGE_MS = 15 * 60 * 1000;
+
+/** How many notifications carrying `tag` are still displayed; null = unknowable. */
+async function displayedForTag(tag: string): Promise<number | null> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg?.getNotifications) return null;
+  return (await reg.getNotifications({ tag })).length;
+}
+
+/**
+ * Is a stashed record still worth landing the launch on? Conservative on every
+ * unknown: an unreadable registration must never become a jump the user did not
+ * ask for. `now`/`openNotifications` are injectable for tests only.
+ */
+export async function stashIsActionable(
+  rec: PendingNotif | null,
+  opts: {
+    now?: number;
+    openNotifications?: (tag: string) => Promise<number | null>;
+  } = {},
+): Promise<boolean> {
+  if (!rec || typeof rec.session !== "string" || !NAME_RE.test(rec.session)) return false;
+  if (typeof rec.ts !== "number") return false;
+  const age = (opts.now ?? Date.now()) - rec.ts;
+  if (age < 0 || age > STASH_MAX_AGE_MS) return false;
+  if (rec.tapped) return true; // an actual click routed here
+  if (age < PENDING_NOTIF_TTL_MS) return true; // fresh receipt (the iOS tap window)
+  // Older receipt: land only if its banner is gone (tapped or dismissed).
+  try {
+    const open = await (opts.openNotifications ?? displayedForTag)("tl-" + rec.session);
+    return open === 0;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Read AND consume (one-shot delete) the SW's pending-session stash. Best-effort:
