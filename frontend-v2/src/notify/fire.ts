@@ -2,11 +2,15 @@
  * fireNotification (inventory Cat.9, high-risk) — show ONE foreground OS
  * notification for a session transition. Ported from the vanilla frontend.
  *
- * The tag `tl-<session>` is load-bearing: it is IDENTICAL to the server's
- * background-push tag (tmux-api buildPushPayload/buildDonePayload), so a
- * foreground notification and a background push for the same session COALESCE —
- * the user is alerted at most once, and a later 'awaiting' replaces an earlier
- * 'done' for that session (sw.js omits `renotify`, so a repeat never re-alerts).
+ * The tag `tl-<session>` keeps ONE entry per session: a later 'awaiting' replaces
+ * an earlier 'done' for that session (sw.js omits `renotify`, so a repeat never
+ * re-alerts). It is identical to the server's background-push tag (tmux-api
+ * buildPushPayload/buildDonePayload) — but the tag is NOT what keeps the two
+ * delivery paths from double-alerting: iOS raises a fresh banner for a same-tag
+ * notification once the first is off screen, which is how one turn completing
+ * produced two identical banners on Viktor's iPhone. Dedupe across paths is the
+ * caller's `pushDelivers` gate (transitions.ts): where the server pushes, the
+ * page does not fire at all.
  *
  * Delivery prefers the SW registration's `showNotification` (Android Chrome
  * REQUIRES SW-backed notifications; the bare constructor throws there — the

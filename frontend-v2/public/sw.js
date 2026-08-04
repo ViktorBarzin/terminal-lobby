@@ -20,6 +20,15 @@
 const VAPID_PUBLIC_API = '/api/sessions/push/vapid-public';
 const PUSH_SUBS_API = '/api/sessions/push-subscriptions';
 
+// Take over IMMEDIATELY on update. Without these two, a new worker sits in
+// 'waiting' until every client of the app is closed — on an installed PWA that
+// can be days, so a fix to the notification-tap routing below stays dormant on
+// the very device it was written for. Safe here precisely because this worker is
+// push-only: with no fetch handler and no Cache Storage, an activating worker
+// cannot serve a page anything stale (the reason skipWaiting is risky elsewhere).
+self.addEventListener('install', () => { self.skipWaiting(); });
+self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
+
 function urlB64ToUint8Array(base64url) {
     const pad = '='.repeat((4 - (base64url.length % 4)) % 4);
     const b64 = (base64url + pad).replace(/-/g, '+').replace(/_/g, '/');
@@ -38,9 +47,16 @@ function urlB64ToUint8Array(base64url) {
 // boot to land on the right session. Best-effort: never blocks or breaks
 // showNotification (iOS revokes notification permission if a push shows nothing).
 // Contract with index.html: db 'tl-notif', store 'pending', key 'last', value
-// { session, ts }. Only real awaiting/done pushes carry a session; the
+// { session, ts, tapped }. Only real awaiting/done pushes carry a session; the
 // session-less /push/test payload is skipped so a test push never stashes.
-function stashPendingSession(session) {
+//
+// `tapped` says WHICH of the two writers left the record, and boot trusts them
+// differently. A push-time write (tapped:false) is a GUESS — the user may never
+// tap it — so boot honours it only for a couple of minutes. A click-time write
+// (tapped:true, from notificationclick below) is an explicit intent, so boot
+// honours it far longer: the launch it belongs to may be seconds away, and
+// landing on the session the user actually tapped is the whole point.
+function stashPendingSession(session, tapped) {
     return new Promise((resolve) => {
         let req;
         try { req = indexedDB.open('tl-notif', 1); } catch (e) { resolve(); return; }
@@ -50,7 +66,7 @@ function stashPendingSession(session) {
             const db = req.result;
             try {
                 const tx = db.transaction('pending', 'readwrite');
-                tx.objectStore('pending').put({ session, ts: Date.now() }, 'last');
+                tx.objectStore('pending').put({ session, ts: Date.now(), tapped: !!tapped }, 'last');
                 // Resolve on complete/error/ABORT: a transaction can abort with
                 // no preceding error (storage pressure, forced close), and an
                 // unhandled abort would leave this Promise pending forever.
@@ -79,7 +95,7 @@ self.addEventListener('push', (event) => {
         // or delay showNotification — kick both off and allSettled so a stalled
         // or aborted stash can't hold up (or reject away) the notification.
         const tasks = [self.registration.showNotification(title, options)];
-        if (data.session) tasks.push(stashPendingSession(data.session));
+        if (data.session) tasks.push(stashPendingSession(data.session, false));
         await Promise.allSettled(tasks);
     })());
 });
@@ -139,7 +155,22 @@ self.addEventListener('notificationclick', (event) => {
         // session-less test tap just opens the lobby. (On iOS a KILLED PWA
         // cold-launches at start_url and can drop this hash — a documented WebKit
         // limitation, not fixable from the click handler.)
-        if (self.clients.openWindow) await self.clients.openWindow(session ? '/#' + session : '/');
+        //
+        // Re-stash, marked as a tap: this is the branch where the hash can be
+        // dropped, and the record left at push time may by now be minutes old and
+        // no longer trusted by boot. openWindow is called FIRST and the stash
+        // started immediately after — never the other way round: openWindow needs
+        // the click's transient activation, which awaiting an IndexedDB write
+        // could spend. The write still lands long before a launching page can
+        // parse the app and read it. Best-effort throughout (allSettled).
+        const opening = self.clients.openWindow
+            ? self.clients.openWindow(session ? '/#' + session : '/')
+            : Promise.resolve();
+        if (session) {
+            await Promise.allSettled([stashPendingSession(session, true), opening]);
+        } else {
+            await opening;
+        }
     })());
 });
 
