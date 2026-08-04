@@ -15,6 +15,7 @@ const gate = (over: Partial<TransitionGate> = {}): TransitionGate => ({
   activeSession: null,
   onAwaiting: true,
   onDone: true,
+  pushDelivers: false,
   ...over,
 });
 
@@ -100,6 +101,34 @@ describe("computeTransitions", () => {
         gate({ away: false, activeSession: "a" }),
       );
       expect(fires).toEqual([{ session: "b", kind: "done" }]);
+    });
+  });
+
+  describe("pushDelivers (the double-alert fix)", () => {
+    // Viktor, 2026-08-04: an iPhone showed TWO identical banners seconds apart
+    // for one turn completing — the page's own notification AND the server's
+    // background push. The shared tl-<session> tag coalesces them on
+    // Android/desktop but NOT on iOS, where the later same-tag notification
+    // raises a second banner. So when this device is registered for background
+    // push, the SERVER is the single notifier and the page must stay silent.
+    it("fires nothing at all when the server pushes to this device", () => {
+      expect(
+        computeTransitions(
+          prevOf(["a", "running"], ["b", "running"]),
+          [S("a", "awaiting"), S("b", "done")],
+          gate({ pushDelivers: true }),
+        ),
+      ).toEqual([]);
+    });
+
+    it("still fires when this device is NOT registered for push", () => {
+      expect(
+        computeTransitions(
+          prevOf(["a", "running"]),
+          [S("a", "done")],
+          gate({ pushDelivers: false }),
+        ),
+      ).toEqual([{ session: "a", kind: "done" }]);
     });
   });
 });

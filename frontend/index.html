@@ -5313,7 +5313,12 @@
                 updateFavicon();
             }
             document.addEventListener('visibilitychange', () => {
-                if (!document.hidden) clearAttention();
+                if (document.hidden) return;
+                clearAttention();
+                // Re-confirm push delivery on return-to-foreground (throttled): a
+                // long-lived tab whose endpoint the server pruned would otherwise
+                // stay silent forever, believing push still covers it.
+                if (Date.now() - lastPushCheck > PUSH_RECHECK_MS) syncPushDelivery();
             });
             window.addEventListener('focus', clearAttention);
 
@@ -5331,15 +5336,48 @@
             // cold-launches a KILLED PWA at start_url with no hash and does not
             // fire notificationclick, so the SW cannot route the tap; sw.js's
             // push handler saved the notified session (db 'tl-notif', store
-            // 'pending', key 'last', value { session, ts }) and boot reads it
-            // here. read-and-CONSUME (one-shot delete) so a later plain launch
+            // 'pending', key 'last', value { session, ts, tapped }) and boot reads
+            // it here. read-and-CONSUME (one-shot delete) so a later plain launch
             // never replays it. Best-effort: any failure resolves null and boot
             // silently falls back to the MF-5 last-active reland.
             // 2 min: wide enough for a realistic tap→cold-launch, tight enough
             // that a plain icon launch rarely falls inside a stale stash window
-            // (the stash records push RECEIPT, not the tap — no tap signal
-            // survives an iOS cold launch, so this window is the only guard).
+            // (a push-time record is the RECEIPT, not the tap — a guess that the
+            // user is about to act on it, so it expires fast).
             const PENDING_NOTIF_TTL_MS = 120 * 1000;
+            // The outer window a stash may still land a launch on (15 min). It
+            // covers the two cases where a receipt's 2 min is simply wrong:
+            //   - tapped:true — sw.js routed an actual click here (its openWindow
+            //     branch), so intent is certain and only the launch is pending;
+            //   - a receipt whose notification is NO LONGER DISPLAYED. Viktor's
+            //     case: a push arrives, the phone stays locked, and the banner is
+            //     tapped twenty minutes later — far outside 2 min, so boot used to
+            //     ignore it and land on the last-active session instead of the one
+            //     that called. iOS clears a notification when it is tapped, so
+            //     "stash present + banner gone" reads that tap after the fact;
+            //     while the banner is still sitting there untapped, an icon launch
+            //     must NOT jump (the check below is what keeps that true).
+            const STASH_MAX_AGE_MS = 15 * 60 * 1000;
+            // Is a stashed record still worth landing on? Async only because the
+            // banner check is; the fast paths resolve without touching the SW.
+            async function stashIsActionable(rec) {
+                if (!rec || typeof rec.session !== 'string' || !NAME_RE.test(rec.session) ||
+                    typeof rec.ts !== 'number') return false;
+                const age = Date.now() - rec.ts;
+                if (age < 0 || age > STASH_MAX_AGE_MS) return false;
+                if (rec.tapped) return true;              // an actual click routed here
+                if (age < PENDING_NOTIF_TTL_MS) return true; // fresh receipt (the iOS tap window)
+                // Older receipt: land only if its banner is gone (tapped/dismissed).
+                // Conservative on every failure — an unreadable registration must
+                // not turn into a jump the user never asked for.
+                try {
+                    if (!('serviceWorker' in navigator)) return false;
+                    const reg = await navigator.serviceWorker.getRegistration();
+                    if (!reg || !reg.getNotifications) return false;
+                    const open = await reg.getNotifications({ tag: 'tl-' + rec.session });
+                    return open.length === 0;
+                } catch (e) { return false; }
+            }
             function readAndClearPendingSession() {
                 return new Promise((resolve) => {
                     let req;
@@ -5396,6 +5434,10 @@
                     // flip the mobile list view forward to the terminal (what a
                     // tap for the current session must do); it self-guards the
                     // equal case, so there is no reload.
+                    // Tracked here rather than in sw.js: a service worker cannot
+                    // reach the telemetry batcher, and without this event "did my
+                    // tap land on the right session?" is unanswerable afterwards.
+                    tlTrack('notify.clicked', { 'tl.session': d.session });
                     activateSession(d.session);
                     // Warm tap handled — consume any stash sw.js wrote for this
                     // push so a later plain (icon) launch won't replay it.
@@ -5471,6 +5513,20 @@
                     });
                 } catch (e) { /* best-effort; the server prunes dead endpoints on 404/410 */ }
             }
+            // Does the SERVER notify this device? While true the page fires NO OS
+            // notifications of its own — the background push is the single alert
+            // per edge (see notifyTransitions). Server-CONFIRMED, not merely "the
+            // browser holds a subscription": an endpoint the server pruned or
+            // never received would otherwise silence the page with nothing taking
+            // its place. Starts false and is resolved asynchronously, which is
+            // safe because the first poll after load seeds quietly anyway.
+            let pushDelivers = false;
+            let lastPushCheck = 0;
+            const PUSH_RECHECK_MS = 5 * 60 * 1000;
+            async function syncPushDelivery() {
+                lastPushCheck = Date.now();
+                pushDelivers = (await deviceSubscriptionState()) === 'yes';
+            }
             // Self-diagnosis (settings Notifications section): is THIS
             // device/browser actually registered for background push on the
             // server? Compares this browser's live pushManager endpoint against
@@ -5503,6 +5559,10 @@
                     icon: FAVICON_HREF,
                     data: { session }
                 };
+                // One event per page-fired notification: paired with the server's
+                // "sent <kind>" log line, the journal shows at a glance whether an
+                // edge alerted once or twice on a device.
+                tlTrack('notify.shown', { 'tl.kind': swRegistration ? 'sw' : 'page' });
                 // Prefer the SW registration (Android + desktop); its
                 // notificationclick routing lives in sw.js.
                 if (swRegistration) {
@@ -5533,10 +5593,23 @@
                 // nothing on the desktop" — the old blanket !away() return
                 // suppressed every OS notification while focused). The
                 // ACTIVE session stays quiet when focused (you are looking
-                // at it); the shared tl-<session> tag still coalesces with
-                // any background push, so nothing double-alerts.
+                // at it).
                 if (!notifyOptedIn() || typeof Notification === 'undefined' ||
                     Notification.permission !== 'granted') return;
+                // ONE alert per edge per device. This page and the server's
+                // pushsender poll the same states independently, so when both
+                // deliver, one turn completing raises TWO banners a few seconds
+                // apart (Viktor's iPhone, 2026-08-04). The shared tl-<session>
+                // tag was meant to merge them, and does on Android/desktop — but
+                // iOS raises a fresh banner for a same-tag notification once the
+                // first is off screen, so it merged the entries in Notification
+                // Center while alerting twice. A tag can never be the dedupe
+                // across delivery paths: where the server pushes to this device,
+                // the server is the only notifier. In-app affordances (title,
+                // favicon, toasts) are untouched, and the page path still covers
+                // every device push cannot reach (dark VAPID server, no
+                // PushManager, never subscribed).
+                if (pushDelivers) return;
                 // Per-user roamed gate (mirrors the server's parseNotifyPrefs):
                 // onAwaiting/onDone default true, so an untouched doc notifies
                 // on both — the bell opt-in + permission above still gate on top.
@@ -5608,7 +5681,10 @@
                     if (notifyOptedIn() && Notification.permission === 'granted') {
                         try { localStorage.setItem(NOTIFY_KEY, '0'); } catch (e) {}
                         paintNotifyToggle();
-                        unsubscribePush();  // drop this device's background push too
+                        // Drop this device's background push too, then re-read
+                        // delivery so the page path takes over again on a later
+                        // re-enable.
+                        unsubscribePush().then(syncPushDelivery);
                         return;
                     }
                     let perm = Notification.permission;
@@ -5636,7 +5712,10 @@
                     showToast('You will be notified when a session needs input', 'success', 3000);
                     // Also register for BACKGROUND push (works when no tab is
                     // open); best-effort, foreground already works without it.
-                    subscribePush();
+                    // Then re-read delivery so this device hands OS notifications
+                    // over to the server straight away instead of double-alerting
+                    // until the next load.
+                    subscribePush().then(syncPushDelivery);
                 });
             }
             paintNotifyToggle();
@@ -5647,10 +5726,17 @@
             // stayed dead forever while the server kept 201-ing into the
             // void. One best-effort refresh per load keeps this device''s
             // endpoint current whenever the bell is on + permission granted.
-            if (notifyOptedIn() && typeof Notification !== 'undefined' &&
-                Notification.permission === 'granted') {
-                try { subscribePush(); } catch (e) {}
-            }
+            // The delivery read runs AFTER the self-heal, so a device that just
+            // re-registered is recognised as push-backed on this very load —
+            // checking first would read "no" and leave the page double-alerting
+            // for the whole session.
+            (async () => {
+                if (notifyOptedIn() && typeof Notification !== 'undefined' &&
+                    Notification.permission === 'granted') {
+                    try { await subscribePush(); } catch (e) {}
+                }
+                await syncPushDelivery();
+            })();
 
             // Item 2: header ⟳ — a plain reload, mirrored by the settings
             // panel "Reload app" row. Handy in the installed PWA, where
@@ -9458,19 +9544,19 @@
                 // opted out of reopen-last. Prefer a FRESH stashed tap target,
                 // else the MF-5 last-active reland; the read consumes the stash
                 // (one-shot). (A present-but-invalid hash takes neither, as before.)
-                readAndClearPendingSession().then(rec => {
+                readAndClearPendingSession().then(async rec => {
                     if (currentActive) return; // a card tap won the race
-                    const fresh = rec && typeof rec.session === 'string' && NAME_RE.test(rec.session) &&
-                                  typeof rec.ts === 'number' && (Date.now() - rec.ts) < PENDING_NOTIF_TTL_MS;
-                    if (!fresh) { relandLastActive(); return; }
+                    if (!await stashIsActionable(rec)) { relandLastActive(); return; }
                     // Attach the notified session only if it still exists; a dead
                     // session falls back to the reland.
                     fetch(SESSIONS_API, { credentials: 'same-origin' })
                         .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
                         .then(list => {
                             if (currentActive) return;
-                            if (list.some(s => s.name === rec.session)) activateSession(rec.session);
-                            else relandLastActive();
+                            if (list.some(s => s.name === rec.session)) {
+                                tlTrack('notify.clicked', { 'tl.session': rec.session });
+                                activateSession(rec.session);
+                            } else relandLastActive();
                         })
                         .catch(() => relandLastActive());
                 });
