@@ -42,10 +42,30 @@ else
   echo "==> No out/ttyd — skipping ttyd binary (./scripts/build-ttyd.sh to build it)"
 fi
 
-echo "==> Stamping frontend build id..."
+echo "==> Stamping frontend build id + asset fingerprint..."
+# TWO stamps, deliberately different things (ADR-0007):
+#   TL_BUILD — PROVENANCE. The git short SHA: which commit is deployed. Read by
+#     telemetry and printed to the console; it moves on every deploy.
+#   TL_ASSET — UPDATE IDENTITY. A fingerprint of the frontend's OWN content,
+#     computed from the UNSTAMPED source (both placeholders still in place), so
+#     it moves if and only if the page a user runs actually changed. A
+#     backend-only deploy therefore ships an identical id and no client updates
+#     — which is the whole point: the pill used to fire on every commit,
+#     including the 55% that never touched this file. Hashing the SOURCE rather
+#     than a git object also catches a deploy of uncommitted frontend edits,
+#     which deploy.sh has always supported (it seds the working tree, not HEAD).
 REV=$(git -C "$ROOT" rev-parse --short HEAD)
+ASSET=$(sha256sum frontend/index.html | cut -c1-12)
 mkdir -p out
-sed "s/__TL_BUILD__/${REV}/" frontend/index.html > out/index.html
+sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${ASSET}/g" frontend/index.html > out/index.html
+# A surviving placeholder means the page ships without an identity: detection
+# reads it as "no information" and the app would never self-update again. Fail
+# the deploy instead of shipping a silently un-updatable page.
+if grep -q '__TL_[A-Z]*__' out/index.html; then
+  echo "deploy.sh: unsubstituted __TL_*__ placeholder in out/index.html" >&2
+  exit 1
+fi
+echo "    build=${REV} asset=${ASSET}"
 
 # Web Push VAPID keypair (Notifications Part 2): fetched from Vault at deploy
 # time and installed as a systemd EnvironmentFile, so the private key never
@@ -146,7 +166,14 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   # user; world-readable by design (ADR-0005: isolation is API-enforced,
   # OS-level reads follow OS permissions).
   sudo install -d -o wizard -g wizard -m 0755 /var/lib/clipboard-store
-  sudo install -m 0644 /tmp/index.html               /usr/local/share/ttyd/index.html
+  # Skip a byte-identical re-install: ttyd's ETag is size+mtime (NOT a content
+  # hash), so an unconditional install bumps mtime and turns every client's
+  # cheap 304 poll into a full ~800 KB 200 for no content change.
+  if ! sudo cmp -s /tmp/index.html /usr/local/share/ttyd/index.html; then
+    sudo install -m 0644 /tmp/index.html             /usr/local/share/ttyd/index.html
+  else
+    echo "    index.html unchanged — leaving it (and its ETag) alone"
+  fi
   # Push service worker (Item 4): served no-cache by clipboard-upload's
   # /sw.js whitelist entry, reached through the public asset ingress route.
   sudo install -m 0644 /tmp/sw.js                    /usr/local/share/ttyd/sw.js

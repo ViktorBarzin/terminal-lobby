@@ -341,19 +341,8 @@ export const App: Component = () => {
         <Gallery store={gallery} />
       </Show>
 
-      {/* Deploy self-heal pill (inventory Cat.10): a new build landed while a
-          terminal is attached + the tab is visible. Sticky + tappable — an
-          EXPLICIT tap reloads (never storm-gated); it also fires on tab-hide /
-          bfcache resume. A new build NEVER yanks the page from an active viewer. */}
-      <Show when={healer.updateReady()}>
-        <button
-          type="button"
-          class="tl-update-pill"
-          onClick={() => healer.applyUpdate()}
-        >
-          Update ready — tap to refresh
-        </button>
-      </Show>
+      {/* No update UI, by design (ADR-0007): a new build applies itself at the
+          next open. Nothing to tap, nothing to dismiss. */}
 
       <Toaster controller={toasts} />
     </div>
