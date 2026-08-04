@@ -21,6 +21,20 @@
  * every other session still raises an OS notification. When away (hidden or
  * unfocused) every session notifies.
  *
+ * The PUSH gate (`pushDelivers`) — Viktor's iPhone, 2026-08-04: "I'm getting
+ * notifications twice, duplicates for the same session completing". Both paths
+ * fired for one edge: this page's notification AND the server's background push,
+ * a few seconds apart (the two pollers are independent). The shared
+ * `tl-<session>` tag was supposed to coalesce them, and does on Android/desktop
+ * — but iOS raises a fresh banner for a same-tag notification once the first is
+ * no longer on screen, so the tag only merged them in Notification Center while
+ * the user was alerted twice. A tag can therefore never be the dedupe mechanism
+ * ACROSS delivery paths. So: when this device is registered for background push
+ * on the server, the server is the SINGLE notifier and the page stays silent
+ * (in-app affordances — tab title, favicon badge, toasts — are unaffected).
+ * The page path remains the fallback wherever push cannot deliver: a dark VAPID
+ * server, no PushManager, or a device that never subscribed.
+ *
  * This module is PURE (no Notification/permission/opt-in checks): those are
  * all-or-nothing browser gates the caller applies as an early return, exactly as
  * the vanilla code did (it advanced `prevStates` and THEN checked opt-in). The
@@ -50,6 +64,12 @@ export interface TransitionGate {
   onAwaiting: boolean;
   /** roamed notify.onDone (default true). */
   onDone: boolean;
+  /**
+   * This device is registered for background push ON THE SERVER — so the server
+   * (pushsender.go) already notifies on these same edges and the page must not
+   * add a second alert. See the double-alert note below.
+   */
+  pushDelivers: boolean;
 }
 
 /** Snapshot the current poll's states — the map to carry into the next call. */
@@ -69,6 +89,9 @@ export function computeTransitions(
   gate: TransitionGate,
 ): Transition[] {
   if (prev === null) return []; // first poll after load seeds quietly
+  // ONE alert per edge per device: when the server pushes to this device, it is
+  // the single notifier and the page adds nothing (see the module header).
+  if (gate.pushDelivers) return [];
   const out: Transition[] = [];
   for (const s of sessions) {
     const was = prev.get(s.name);

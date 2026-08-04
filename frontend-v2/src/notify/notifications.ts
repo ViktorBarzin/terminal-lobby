@@ -10,7 +10,8 @@
  *     opt-in/permission state;
  *   - fire foreground OS notifications on each poll's running→awaiting /
  *     running→done transitions (gated by opt-in + permission + roamed prefs + the
- *     per-session away gate);
+ *     per-session away gate — and skipped entirely on a device the server pushes
+ *     to, which is the single notifier there);
  *   - repaint the tab title + favicon badge from the session list and the
  *     attention latch (bell/output signals forwarded up from the terminal iframe,
  *     cleared on visibility/focus return);
@@ -43,9 +44,9 @@ import {
 import { fireNotification } from "./fire";
 import { notifyOptedIn, setNotifyOptIn } from "./opt-in";
 import {
-  PENDING_NOTIF_TTL_MS,
   readAndClearPendingSession,
   registerServiceWorker,
+  stashIsActionable,
 } from "../pwa/register";
 import {
   deviceSubscriptionState,
@@ -54,7 +55,6 @@ import {
   unsubscribePush,
   type DeviceSubscriptionState,
 } from "../pwa/push";
-import { NAME_RE } from "../types/lobby";
 import { track } from "../telemetry/track";
 
 type ToastKind = "info" | "error" | "warning" | "success";
@@ -108,6 +108,9 @@ export interface NotificationSystem {
   dispose: () => void;
 }
 
+/** How stale a push-delivery answer may get before a foregrounded tab re-checks. */
+const PUSH_RECHECK_MS = 5 * 60 * 1000;
+
 const hasDoc = typeof document !== "undefined";
 const hasWin = typeof window !== "undefined";
 const hasNav = typeof navigator !== "undefined";
@@ -148,6 +151,20 @@ export function createNotificationSystem(
     DeviceSubscriptionState | "checking"
   >("checking");
 
+  // Is the SERVER notifying this device (a subscription it has actually stored)?
+  // While true the page fires NO OS notifications — the server push is the single
+  // alert per edge (transitions.ts `pushDelivers`, Viktor's duplicate-banner fix).
+  // Server-CONFIRMED, not merely "the browser has a subscription": an endpoint the
+  // server pruned or never received would otherwise silence the page with nothing
+  // taking its place. Resolved asynchronously — false until the first check lands,
+  // which is safe because the first poll after load seeds quietly anyway.
+  const [pushDelivers, setPushDelivers] = createSignal(false);
+  let lastPushCheck = 0;
+  const syncPushDelivery = async (): Promise<void> => {
+    lastPushCheck = Date.now();
+    setPushDelivers((await deviceSubscriptionState()) === "yes");
+  };
+
   const bellOn = () => optedIn() && permission() === "granted";
   const bellTitle = () =>
     bellOn()
@@ -155,8 +172,15 @@ export function createNotificationSystem(
       : "Notify me when Claude finishes or needs input. Per device + browser — enable on each device you want notified.";
 
   // ---- service worker + notification-tap handoff -------------------------
+  // The WARM tap (app resident, sw.js postMessage) is tracked here rather than in
+  // the SW: a service worker cannot reach the telemetry batcher, and without this
+  // event "did my tap land on the right session?" was unanswerable from the
+  // journal — the cold/stash path below has always emitted it.
   const sw = registerServiceWorker({
-    onActivateSession: opts.onActivateSession,
+    onActivateSession: (name) => {
+      track("notify.clicked", { "tl.session": name });
+      opts.onActivateSession(name);
+    },
   });
   onCleanup(() => sw.dispose());
 
@@ -165,25 +189,24 @@ export function createNotificationSystem(
   // there, but only when fresh and nothing else is already selected.
   onMount(async () => {
     const pending = await readAndClearPendingSession();
-    if (
-      pending &&
-      typeof pending.session === "string" &&
-      NAME_RE.test(pending.session) &&
-      Date.now() - pending.ts < PENDING_NOTIF_TTL_MS &&
-      opts.selected() == null
-    ) {
-      track("notify.clicked", { "tl.session": pending.session });
-      opts.onActivateSession(pending.session);
+    if ((await stashIsActionable(pending)) && opts.selected() == null) {
+      const session = pending!.session;
+      track("notify.clicked", { "tl.session": session });
+      opts.onActivateSession(session);
     }
   });
 
   // Self-heal the background subscription every load (the desktop-silent fix):
   // subscribePush is idempotent, so a lapsed/rotated endpoint is refreshed
-  // whenever the bell is on + permission granted.
-  onMount(() => {
+  // whenever the bell is on + permission granted. The delivery check runs AFTER
+  // it, so a device that just re-registered is recognised as push-backed on this
+  // very load (checking first would read "no" and re-open the double-alert
+  // window for a whole session).
+  onMount(async () => {
     if (notifyOptedIn() && hasNotificationApi && Notification.permission === "granted") {
-      void subscribePush();
+      await subscribePush();
     }
+    await syncPushDelivery();
   });
 
   // ---- foreground transition notifications -------------------------------
@@ -212,9 +235,14 @@ export function createNotificationSystem(
       activeSession: untrack(opts.selected),
       onAwaiting: prefs.onAwaiting,
       onDone: prefs.onDone,
+      pushDelivers: untrack(pushDelivers),
     });
     const hasReg = !!sw.registration();
     for (const f of fires) {
+      // One event per page-fired notification: paired with the server's "sent
+      // <kind>" log line, the journal shows at a glance whether an edge alerted
+      // once or twice on a device.
+      track("notify.shown", { "tl.kind": hasReg ? "sw" : "page" });
       void fireNotification(f.session, f.kind, {
         hasRegistration: hasReg,
         onActivate: opts.onActivateSession,
@@ -259,7 +287,12 @@ export function createNotificationSystem(
     setAttention((s) => clearAttention(s));
   };
   const onVisibility = (): void => {
-    if (hasDoc && !document.hidden) clear();
+    if (!hasDoc || document.hidden) return;
+    clear();
+    // Re-confirm on return-to-foreground (throttled): a long-lived tab whose
+    // endpoint the server pruned would otherwise stay silent forever, believing
+    // push still covers it.
+    if (Date.now() - lastPushCheck > PUSH_RECHECK_MS) void syncPushDelivery();
   };
   onMount(() => {
     if (hasDoc) document.addEventListener("visibilitychange", onVisibility);
@@ -276,7 +309,10 @@ export function createNotificationSystem(
     if (notifyOptedIn() && Notification.permission === "granted") {
       setNotifyOptIn(false);
       setOptedIn(false);
-      void unsubscribePush(); // drop this device's background push too
+      // Drop this device's background push too, then re-read delivery: with the
+      // subscription gone the page path takes over again (it is gated by the
+      // opt-in that just went off, so this only matters on a later re-enable).
+      void unsubscribePush().then(syncPushDelivery);
       return;
     }
     let perm = Notification.permission;
@@ -301,7 +337,9 @@ export function createNotificationSystem(
     setNotifyOptIn(true);
     setOptedIn(true);
     opts.toast("You'll be notified when a session needs input", "success");
-    void subscribePush(); // also register for background push (best-effort)
+    // Register for background push (best-effort), then re-read delivery so this
+    // device hands OS notifications over to the server straight away.
+    void subscribePush().then(syncPushDelivery);
   };
 
   const showInstallHint = (): void => {
