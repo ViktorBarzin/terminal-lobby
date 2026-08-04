@@ -25,6 +25,7 @@ export type TlEvent =
   // app lifecycle
   | "app.loaded"
   | "app.reloaded"
+  | "app.update_failed"
   | "app.error"
   // session lifecycle
   | "session.created"

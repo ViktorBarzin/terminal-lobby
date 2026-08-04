@@ -105,7 +105,7 @@ who it is, and a tab cannot attribute an event to another user.
 | `file-api` | file preview, file save (by extension) |
 | `session-events` | prompt sent, cancel, SSE stream open/close |
 | `tmux-user-attach` | `session.attached` — **every** session start flows through this script, including plain ttyd URLs that never touch the lobby |
-| both lobbies | tab boot, selection, creation, palette/commands, view switch, sidebar + group collapse, theme, prefs, gallery/editor opens, paste/drop, soft keys, notification opt-in/delivery, self-heal reloads, errors the user saw |
+| both lobbies | tab boot, selection, creation, palette/commands, view switch, sidebar + group collapse, theme, prefs, gallery/editor opens, paste/drop, soft keys, notification opt-in/delivery, self-updates applied (`app.reloaded`) or given up on (`app.update_failed`, ADR-0007), errors the user saw |
 
 Client events deliberately do **not** duplicate what a service already
 records. Kills, renames, moves, shares, saves and uploads are emitted
