@@ -31,9 +31,10 @@ By default the ttyd child attaches an ISOLATED scratch tmux server
 (`tmux -L tl-dev`, session `main`) that is torn down on exit, so harness
 and battery runs never touch the user's real tmux sessions (`--no-scratch`
 restores the old attach-the-default-server behavior). The served page is a
-build of --index with the deploy.sh stamp sed applied
-(`__TL_BUILD__` -> `DEV-<git short sha>`, written to out/index.html) so the
-console prints a recognizable `terminal-lobby build: DEV-...` line.
+build of --index with the deploy.sh stamp seds applied (`__TL_BUILD__` ->
+`DEV-<git short sha>` and `__TL_ASSET__` -> the source fingerprint, written to
+out/index.html) so the console prints a recognizable
+`terminal-lobby build: DEV-...` line and the self-update path is live.
 
 Usage:
     python3 scripts/dev-harness.py [--index PATH] [--session NAME]
@@ -53,6 +54,7 @@ scratch mode the tl-dev tmux server with it). Everything binds to
 
 import argparse
 import asyncio
+import hashlib
 import os
 import signal
 import socket
@@ -126,12 +128,19 @@ def ensure_tmux_session(session: str, socket_name: str | None = None) -> None:
 
 
 def build_stamped_index(src: str) -> str:
-    """Mirror deploy.sh's stamp sed: __TL_BUILD__ → DEV-<git short sha>.
+    """Mirror deploy.sh's stamps: __TL_BUILD__ and __TL_ASSET__.
 
     Written to out/index.html (gitignored, same spot deploy.sh uses and
     unconditionally regenerates). Lets the page log a recognizable
     `terminal-lobby build: DEV-…` so battery runs can assert which build
     the browser actually loaded.
+
+    Both stamps matter (ADR-0007): TL_BUILD is provenance, TL_ASSET is the
+    UPDATE IDENTITY, fingerprinted from the unstamped source exactly as
+    deploy.sh does it. Leaving __TL_ASSET__ unsubstituted would ship a page
+    with no identity — detection reads that as "no information" and the
+    self-update path is dead for the whole harness run, which is precisely
+    the behaviour a battery run needs to exercise.
     """
     try:
         rev = subprocess.run(
@@ -143,10 +152,11 @@ def build_stamped_index(src: str) -> str:
     stamp = f"DEV-{rev}"
     with open(src, encoding="utf-8") as f:
         html = f.read()
+    asset = hashlib.sha256(html.encode("utf-8")).hexdigest()[:12]
     os.makedirs(os.path.dirname(STAMPED_INDEX), exist_ok=True)
     with open(STAMPED_INDEX, "w", encoding="utf-8") as f:
-        f.write(html.replace("__TL_BUILD__", stamp))
-    log(f"stamped {src} → {STAMPED_INDEX} (build {stamp})")
+        f.write(html.replace("__TL_BUILD__", stamp).replace("__TL_ASSET__", asset))
+    log(f"stamped {src} → {STAMPED_INDEX} (build {stamp}, asset {asset})")
     return STAMPED_INDEX
 
 
