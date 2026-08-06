@@ -5,12 +5,15 @@ import {
   addSessionToGroup,
   deleteProject,
   deriveSidebar,
+  materializeUngrouped,
   moveGroup,
   moveSession,
+  moveSessionToAnchor,
   removeSessionFromLayout,
   renameProject,
   renameSessionInLayout,
   reorderGroups,
+  type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
@@ -51,7 +54,8 @@ export interface LobbyStore {
   create(name: string, group: string): Promise<boolean>;
   rename(oldName: string, newName: string): Promise<boolean>;
   kill(name: string): Promise<void>;
-  move(name: string, group: string, index?: number): Promise<void>;
+  /** Move into `group`; with an anchor, immediately above/below that card. */
+  move(name: string, group: string, anchor?: DropAnchor): Promise<void>;
   moveGroupBy(groupName: string, dir: -1 | 1): Promise<void>;
   reorderGroupsTo(from: number, to: number): Promise<void>;
   createProject(name: string, dir?: string): Promise<boolean>;
@@ -134,11 +138,20 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
 
   const model = createMemo<SidebarModel>(() => deriveSidebar(layout(), mergedSessions(), me()));
 
-  function allNames(): Set<string> {
-    const set = new Set<string>(mergedSessions().map((s) => s.name));
-    for (const p of layout().projects) for (const n of p.sessions) set.add(n);
-    for (const n of layout().ungrouped) set.add(n);
-    return set;
+  const ungroupedRender = (): string[] =>
+    model()
+      .groups.find((g) => g.kind === "ungrouped")
+      ?.sessions.map((s) => s.name) ?? [];
+
+  /**
+   * Names that are actually TAKEN: live sessions plus this tab's optimistic
+   * pending ones. Deliberately NOT the layout's names — a layout entry outlives
+   * the session it points at (removeSession runs only on an explicit UI kill),
+   * and treating those orphans as taken burns the name with no way to free it.
+   * Matches the vanilla page's `sessionExists`, which reads the live manifest.
+   */
+  function takenNames(): Set<string> {
+    return new Set<string>(mergedSessions().map((s) => s.name));
   }
 
   function trackWorking(next: Session[]): void {
@@ -238,7 +251,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       showToast("Session names use letters, numbers, _ and - (max 32)");
       return false;
     }
-    if (allNames().has(n)) {
+    if (takenNames().has(n)) {
       showToast(`"${n}" already exists`);
       return false;
     }
@@ -287,8 +300,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       showToast("Couldn't kill session");
       return;
     }
-    // The backend drops it from the server layout on a UI kill; mirror locally.
-    applyLocalLayout(removeSessionFromLayout(layout(), name));
+    // The backend drops it from the server layout on a UI kill — but only when
+    // tmux still had the session; a kill that 404s (already dead) leaves the
+    // entry behind, and the next poll would pull it back. PUT it ourselves.
+    await saveLayout(removeSessionFromLayout(layout(), name));
     setSessions((prev) => prev.filter((s) => s.name !== name));
     setPending((p) => p.filter((s) => s.name !== name));
     if (selected()?.name === name) {
@@ -298,8 +313,14 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     await refresh();
   }
 
-  async function move(name: string, group: string, index = -1): Promise<void> {
-    await saveLayout(moveSession(layout(), name, group, index));
+  async function move(name: string, group: string, anchor?: DropAnchor): Promise<void> {
+    // Ungrouped's leftovers occupy rendered positions they have no raw entry
+    // for, so nothing can be placed relative to them (nor after them) until
+    // they are materialized.
+    const base = group === "" ? materializeUngrouped(layout(), ungroupedRender()) : layout();
+    await saveLayout(
+      anchor ? moveSessionToAnchor(base, name, group, anchor) : moveSession(base, name, group),
+    );
   }
 
   async function moveGroupBy(groupName: string, dir: -1 | 1): Promise<void> {

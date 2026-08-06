@@ -27,6 +27,12 @@ LOG_PREFIX="[qa-release ${BRANCH}]"
 
 log() { echo "${LOG_PREFIX} $*"; }
 die() { echo "${LOG_PREFIX} FAILED: $*" >&2; exit 1; }
+# Indented list output. NOT `sed "s/^/${LOG_PREFIX}   /"`: every lane branch is
+# wizard/<topic>, and that slash closes sed's s/// early — the whole script then
+# died on the first list it tried to print, under `set -o pipefail`.
+# `return 0`: a blank final line would leave the loop's status at 1 and `set -e`
+# would kill the script on a purely cosmetic print.
+log_list() { while IFS= read -r _l; do [[ -n "$_l" ]] && log "  $_l"; done <<<"$1"; return 0; }
 
 exec 9>"$LOCK"
 log "waiting for the release lock…"
@@ -48,7 +54,7 @@ git rev-parse --verify -q "$BRANCH" >/dev/null || die "no such branch: $BRANCH"
 # What does this lane touch? Decides both the gates and the release scope.
 CHANGED=$(git diff --name-only master.."$BRANCH")
 [[ -n "$CHANGED" ]] || die "branch has no changes against master"
-log "changed files:"; echo "$CHANGED" | sed "s/^/${LOG_PREFIX}   /"
+log "changed files:"; log_list "$CHANGED"
 
 touches() { echo "$CHANGED" | grep -qE "$1"; }
 
@@ -96,7 +102,7 @@ fi
 # ---- release ---------------------------------------------------------------
 if [[ -n "$SHARED_HITS" ]]; then
   log "NOT DEPLOYING — this lane touches shared components:"
-  echo "$SHARED_HITS" | sed "s/^/${LOG_PREFIX}   /"
+  log_list "$SHARED_HITS"
   log "landed on master; deploying it needs Viktor's explicit go (plan decision 2)"
   exit 0
 fi

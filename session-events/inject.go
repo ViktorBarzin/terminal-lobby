@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"os/exec"
 	"strings"
 )
@@ -39,9 +40,29 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 	return in.cmd(osUser, "send-keys", "-t", session, "Enter").Run()
 }
 
-// Cancel sends Ctrl-C (interrupt) to the session.
+// Cancel sends Ctrl-C (interrupt) to the session, then re-derives
+// @claude_state: an interrupt ends the turn WITHOUT firing Claude's Stop hook,
+// which is the only writer of "done" (/etc/claude-code/managed-settings.json).
+// Nothing else clears the stamp, so without this it latches at "running" and
+// main.go's /prompt gate answers 409 for the life of the session, with the pane
+// sitting idle at its prompt. Whoever injects the interrupt owns the transition
+// (docs/adr/0001-claude-state-via-hooks.md).
+//
+// An unstamped session is left unstamped — no Claude ran in it, and a stamp
+// would grow a state dot in the sidebar for a plain shell. The stamp write is
+// best-effort: the interrupt already landed, so a failure here must not fail
+// the cancel, but it silently re-creates the latch, so it is logged.
 func (in *Injector) Cancel(osUser, session string) error {
-	return in.cmd(osUser, "send-keys", "-t", session, "C-c").Run()
+	if err := in.cmd(osUser, "send-keys", "-t", session, "C-c").Run(); err != nil {
+		return err
+	}
+	if in.State(osUser, session) == "" {
+		return nil
+	}
+	if err := in.cmd(osUser, "set-option", "-t", session, "@claude_state", stateDone).Run(); err != nil {
+		log.Printf("cancel %s/%s: clearing @claude_state failed: %v", osUser, session, err)
+	}
+	return nil
 }
 
 // State returns the @claude_state option value (running/awaiting/done/"") for the
