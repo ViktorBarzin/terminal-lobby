@@ -77,6 +77,19 @@ export const SessionView: Component<{
   });
   const textDot = createMemo(() => mode() !== "text" && maxId() > seenText());
 
+  // The mirror dot: pty output (or a BEL) that arrived while the TERMINAL view
+  // was hidden. There is no event stream to diff for it the way textDot diffs
+  // event ids — the terminal is a live attach, so the signal is the iframe's own
+  // `tl-attention` message. Latch it here and clear it when you look.
+  const [terminalDot, setTerminalDot] = createSignal(false);
+  const onAttention = (kind: "bell" | "output", from: string | null): void => {
+    if (mode() !== "terminal") setTerminalDot(true);
+    props.onFrameAttention?.(kind, from);
+  };
+  createEffect(() => {
+    if (mode() === "terminal") setTerminalDot(false);
+  });
+
   const onKey = (e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "j" || e.key === "J")) {
       e.preventDefault();
@@ -86,7 +99,27 @@ export const SessionView: Component<{
   onMount(() => window.addEventListener("keydown", onKey, true));
   onCleanup(() => window.removeEventListener("keydown", onKey, true));
 
-  const send = (t: string) => void store.send(t);
+  // The listener above only ever sees a keydown that landed in the LOBBY
+  // document; the same chord pressed with focus in the terminal comes back as a
+  // `view.toggle` tl-command through the lobby dispatcher. Publish the toggle so
+  // that dispatcher can reach it without the shell owning the view mode (the
+  // bridge pattern TerminalView already uses for __tlForwardToTerminal). Without
+  // this the chord was strictly one-way: the SPA focuses the iframe the moment
+  // the terminal becomes active, so every press after the first was invisible.
+  const toggleView = (): boolean => {
+    toggleMode();
+    return true;
+  };
+  let prevToggleView: (() => boolean) | undefined;
+  onMount(() => {
+    prevToggleView = window.__tlToggleView;
+    window.__tlToggleView = toggleView;
+  });
+  onCleanup(() => {
+    if (window.__tlToggleView === toggleView) window.__tlToggleView = prevToggleView;
+  });
+
+  const send = (t: string) => store.send(t);
   const stop = () => void store.interrupt();
   const resolve = (reqId: string, d: PermissionDecision) =>
     void store.resolvePermission(reqId, d);
@@ -162,7 +195,12 @@ export const SessionView: Component<{
         >
           🖼
         </button>
-        <ViewSwitch mode={mode()} onSet={setMode} textDot={textDot()} />
+        <ViewSwitch
+          mode={mode()}
+          onSet={setMode}
+          textDot={textDot()}
+          terminalDot={terminalDot()}
+        />
       </div>
 
       <main class="tl-views">
@@ -186,7 +224,7 @@ export const SessionView: Component<{
             newCommand={props.newCommand}
             onFrameCommand={props.onFrameCommand}
             onFrameAlt={props.onFrameAlt}
-            onFrameAttention={props.onFrameAttention}
+            onFrameAttention={onAttention}
             onFrameBuildStale={props.onFrameBuildStale}
           />
         </section>

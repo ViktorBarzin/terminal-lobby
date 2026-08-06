@@ -30,6 +30,11 @@ export interface CommandDeps {
   openGallery: () => void;
   /** post a terminal-document command DOWN to the active iframe; false if none. */
   forwardToTerminal: (cmd: string) => boolean;
+  /** flip the mounted session between its text and terminal view; false if no
+   *  SessionView is mounted. Defaults to the `window.__tlToggleView` bridge the
+   *  mounted SessionView installs (same pattern as __tlForwardToTerminal) — the
+   *  lobby shell does not own the per-session view mode. */
+  toggleView?: () => boolean;
   /** confirm/prompt seams (window.* by default; injectable for tests). */
   confirm?: (message: string) => boolean;
   prompt?: (message: string, def?: string) => string | null;
@@ -39,6 +44,7 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
   const { store, palette, help } = deps;
   const confirmFn = deps.confirm ?? ((m: string) => window.confirm(m));
   const promptFn = deps.prompt ?? ((m: string, d?: string) => window.prompt(m, d));
+  const toggleViewFn = deps.toggleView ?? (() => window.__tlToggleView?.() ?? false);
 
   const current = (): string | null => store.selected()?.name ?? null;
   const order = () => flatSessionOrder(store.model());
@@ -106,6 +112,16 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
       if (next && next.trim() && next.trim() !== sel.name) {
         void store.rename(sel.name, next.trim());
       }
+      return;
+    }
+
+    if (cmd === "view.toggle") {
+      // Ctrl/Cmd-J. The lobby only ever sees this command when it was pressed
+      // INSIDE the terminal iframe (a keydown never crosses a frame boundary,
+      // so term.html forwards it up as a tl-command); with focus in the lobby
+      // chrome SessionView's own listener handles the chord directly. Both ends
+      // land on the same toggle, which is what makes the chord two-way.
+      if (!toggleViewFn()) deps.notify("Open a session first", "error");
       return;
     }
 
