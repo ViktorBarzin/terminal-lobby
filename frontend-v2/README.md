@@ -134,8 +134,9 @@ src/
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
     Composer.tsx         Prompt input + Send↔Stop morph + mobile submit split
     PermissionPanel.tsx  INERT. Approve/Deny UI kept for a future gated
-                         re-enable; its server side was removed in 575d4f5 and
-                         nothing renders it today (see the header comment)
+                         re-enable; its server side was removed in 575d4f5, so
+                         Composer still mounts it but it always renders nothing
+                         — no `permission_request` can arrive (header comment)
     TerminalView.tsx     Terminal mode: the ttyd iframe + eager attach
     Gallery.tsx          Session image-gallery overlay + shared lightbox
     FilePreview.tsx      File-preview overlay (markdown/HTML/image/code/binary)
