@@ -105,4 +105,8 @@ func main() {
 	}
 }
 
-const stateRunning = "running"
+// Claude turn states as stamped into @claude_state (docs/adr/0001-claude-state-via-hooks.md).
+const (
+	stateRunning = "running"
+	stateDone    = "done"
+)
