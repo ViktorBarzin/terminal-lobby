@@ -3089,19 +3089,29 @@
                 }).catch(() => { /* offline/api down: localStorage still holds it */ });
             }, 400);
         }
+        // Dotted paths whose scalar value differs between two normalized prefs
+        // docs, each with its NEW value — one level of nesting, matching the
+        // shape of PREF_VALID.
+        function changedPrefPaths(prev, next) {
+            const out = [];
+            const base = (prev && typeof prev === 'object') ? prev : {};
+            for (const k of Object.keys(next || {})) {
+                const b = next[k];
+                if (b && typeof b === 'object' && !Array.isArray(b)) {
+                    const a = (base[k] && typeof base[k] === 'object') ? base[k] : {};
+                    for (const sub of Object.keys(b)) {
+                        if (a[sub] !== b[sub]) out.push([k + '.' + sub, String(b[sub])]);
+                    }
+                } else if (base[k] !== b) {
+                    out.push([k, String(b)]);
+                }
+            }
+            return out;
+        }
         // Merge a patch in, persist both keys, notify this window (same-tab
         // CustomEvent — localStorage 'storage' events only fire in OTHER
         // windows), and sync up. Returns the resulting doc.
         function setPrefs(patch) {
-            try {
-                for (const key of Object.keys(patch || {})) {
-                    const v = patch[key];
-                    tlTrack('prefs.changed', {
-                        'tl.key': key,
-                        'tl.to': (v && typeof v === 'object') ? Object.keys(v).join(',') : String(v)
-                    });
-                }
-            } catch (e) { /* never let telemetry break a pref write */ }
             const cur = getPrefs();
             const merged = Object.assign({}, cur, patch);
             // Deep-merge nested namespaces (one level): a patch like
@@ -3115,6 +3125,18 @@
             }
             const next = normalizePrefs(merged);
             if (JSON.stringify(next) === JSON.stringify(cur)) return cur;
+            // Which knobs people actually turn. telemetry/events.go documents
+            // prefs.changed as "tl.key = pref path, tl.to = new value", so it
+            // is the DIFF that gets reported, not the patch: walking the patch
+            // sent {tl.key:'session', tl.to:'newCommand'} for a
+            // session.newCommand change — namespace as the key, sub-key NAME as
+            // the value, the new value nowhere. Emitted after the no-op guard
+            // so a re-picked <select> records nothing.
+            try {
+                for (const [path, value] of changedPrefPaths(cur, next)) {
+                    tlTrack('prefs.changed', { 'tl.key': path, 'tl.to': value });
+                }
+            } catch (e) { /* never let telemetry break a pref write */ }
             prefsDirty = true;
             try { localStorage.setItem(PREFS_DIRTY_KEY, String(Date.now())); } catch (e) {}
             try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch (e) {}
