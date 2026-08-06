@@ -120,7 +120,10 @@ export const Sidebar: Component<{
         </For>
 
         <Show when={store.model().foreign.length > 0}>
-          <div class="tl-group">
+          {/* hand-rolled rather than a <ProjectGroup> (it is read-only and has
+              no actions), so it has to carry the collapsed class itself — the
+              chevron rotation hangs off it. */}
+          <div class="tl-group" classList={{ "tl-group-collapsed": sharedCollapsed() }}>
             <div
               class="tl-group-header"
               role="button"
