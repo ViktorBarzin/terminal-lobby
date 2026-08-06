@@ -8,6 +8,7 @@ import {
   type Component,
 } from "solid-js";
 import { createSessionStore, type NotifyKind } from "../store/session";
+import type { SseStatus } from "../sse/client";
 import { createViewMode } from "../store/viewmode";
 import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
 import type { PermissionDecision } from "../types/events";
@@ -20,6 +21,20 @@ import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer } from "../mobile/pointer";
 import { installViewportSync } from "../mobile/viewport";
 import { installImageClipboard } from "../clipboard/attach";
+
+/**
+ * The stream badge's wording. Every status but one reads fine as-is; a session
+ * with no Claude transcript is not a broken connection, so it must not borrow
+ * the vocabulary of one (it keeps the base muted-grey `.tl-conn` styling — the
+ * colour overrides in app.css only cover the connection states).
+ */
+const connLabel = (s: SseStatus): string =>
+  s === "no-transcript" ? "no transcript" : s;
+
+const connTitle = (s: SseStatus): string =>
+  s === "no-transcript"
+    ? "no Claude transcript for this session — it streams as soon as one starts"
+    : `stream: ${s}`;
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -175,8 +190,12 @@ export const SessionView: Component<{
         <span class="tl-session" title="session">
           {session}
         </span>
-        <span class="tl-conn" data-status={store.status()} title={`stream: ${store.status()}`}>
-          {store.status()}
+        <span
+          class="tl-conn"
+          data-status={store.status()}
+          title={connTitle(store.status())}
+        >
+          {connLabel(store.status())}
         </span>
         <span class="tl-session-bar-spacer" />
         <button
