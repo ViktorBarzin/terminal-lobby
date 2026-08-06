@@ -133,6 +133,45 @@ func TestPublicAssetMaskableIconPreShipped(t *testing.T) {
 	}
 }
 
+// /term.html is the terminal-mode page the v2 SPA frames
+// (config.TERMINAL_BASE). It reached this service before it was in the table —
+// both hosts route Path(`/term.html`) here — and fell through to the mux as a
+// 404, which is what left the SPA Terminal view blank. Same shape as the
+// maskable icon: 404 while the file is not installed, 200 once deploy-v2.sh
+// ships it, no code change in between. Served no-cache so a browser cannot pin
+// a terminal page that has been replaced under it.
+func TestPublicAssetTermHTML(t *testing.T) {
+	dir := fixtureAssetDir(t)
+
+	rec := assetServe(t, http.MethodGet, "/term.html")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /term.html before deploy-v2.sh installs it: got %d, want 404", rec.Code)
+	}
+
+	const body = "<!DOCTYPE html><html><head><title>Terminal</title></head><body></body></html>"
+	if err := os.WriteFile(filepath.Join(dir, "term.html"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The SPA asks for it WITH a query (`?arg=<session>`), so the lookup must
+	// key off the path alone. Both spellings must serve the page.
+	for _, target := range []string{"/term.html", "/term.html?arg=qa-1&arg=default"} {
+		rec = assetServe(t, http.MethodGet, target)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: got %d, want 200 (body %q)", target, rec.Code, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+			t.Fatalf("GET %s content-type: got %q, want %q", target, ct, "text/html; charset=utf-8")
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+			t.Fatalf("GET %s cache-control: got %q, want no-cache", target, cc)
+		}
+		if got, err := io.ReadAll(rec.Result().Body); err != nil || string(got) != body {
+			t.Fatalf("GET %s body: got %q (err %v), want %q", target, got, err, body)
+		}
+	}
+}
+
 // GET and HEAD only. HEAD must work — the infra acceptance (`curl -sI`) and
 // the walloff probe use it. Everything else: 405.
 func TestPublicAssetsMethodGuard(t *testing.T) {
@@ -202,6 +241,8 @@ func TestPublicAssetsFallthrough(t *testing.T) {
 		{http.MethodGet, "/manifest.webmanifest", false},
 		{http.MethodGet, "/fonts/JetBrainsMono-Bold.woff2", false},
 		{http.MethodGet, "/sw.js", false},
+		// The regression itself: /term.html used to fall through to the mux.
+		{http.MethodGet, "/term.html", false},
 	} {
 		called := false
 		next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
