@@ -181,6 +181,93 @@ describe("lobby store", () => {
     });
   });
 
+  it("move: an anchored drop resolves the anchor against the RAW layout", async () => {
+    // raw ['d1','d2','a','b'] renders as ['a','b'] — a rendered index would
+    // splice between the dead refs and leave the render untouched.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("a"), sess("b")];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["d1", "d2", "a", "b"] }],
+    };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      await store.move("a", "work", { name: "b", side: "below" });
+      expect(api.puts.at(-1)!.projects[0]!.sessions).toEqual(["d1", "d2", "b", "a"]);
+      const work = store.model().groups.find((g) => g.name === "work")!;
+      expect(work.sessions.map((s) => s.name)).toEqual(["b", "a"]);
+    });
+  });
+
+  it("move: an anchored drop in Ungrouped materializes the leftovers it needs", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [
+      sess("alpha", { created: 1 }),
+      sess("beta", { created: 2 }),
+      sess("gamma", { created: 3 }),
+    ];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["alpha"] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      // beta and gamma are leftovers: live, referenced by no group.
+      expect(names(store)).toEqual(["alpha", "beta", "gamma"]);
+      await store.move("beta", "", { name: "gamma", side: "below" });
+      expect(api.puts.at(-1)!.ungrouped).toEqual(["alpha", "gamma", "beta"]);
+      expect(names(store)).toEqual(["alpha", "gamma", "beta"]);
+    });
+  });
+
+  it("move: an un-anchored move into Ungrouped lands after the leftovers, not before", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [
+      sess("alpha", { created: 1 }),
+      sess("beta", { created: 2 }),
+      sess("inproj", { created: 3 }),
+    ];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["inproj"] }],
+      ungrouped: ["alpha"],
+    };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      await store.move("inproj", ""); // the ⋯ "Move to → Ungrouped" path
+      expect(api.puts.at(-1)!.ungrouped).toEqual(["alpha", "beta", "inproj"]);
+      const ungrouped = store.model().groups.find((g) => g.kind === "ungrouped")!;
+      expect(ungrouped.sessions.map((s) => s.name)).toEqual(["alpha", "beta", "inproj"]);
+    });
+  });
+
+  it("create: a name left in the layout by a session that died outside the API is free again", async () => {
+    // The session is gone from tmux but its layout entry survives (removeSession
+    // runs only on an explicit UI kill), so the name must not stay burnt.
+    const api = new FakeApi();
+    api.sessionsVal = [];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "old", sessions: ["orphan"] }] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      expect(await store.create("orphan", "")).toBe(true);
+      expect(store.toast()).toBeNull();
+      const put = api.puts.at(-1)!;
+      expect(put.ungrouped).toEqual(["orphan"]);
+      expect(put.projects[0]!.sessions).toEqual([]); // the stale ref is gone
+    });
+  });
+
+  it("kill: PUTs the layout so the entry cannot come back on the next poll", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("a"), sess("b")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["a", "b"] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      await store.kill("a");
+      // The server doc — not just the local signal — must lose the entry, or
+      // the next poll (past the 4s grace) pulls it straight back.
+      expect(api.layoutVal.ungrouped).toEqual(["b"]);
+      expect(api.puts.at(-1)!.ungrouped).toEqual(["b"]);
+    });
+  });
+
   it("createProject / deleteProject go through the layout PUT", async () => {
     const api = new FakeApi();
     await withStore(api, async (store) => {
