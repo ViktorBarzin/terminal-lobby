@@ -49,7 +49,7 @@ function copyTermHtml(): Plugin {
 }
 
 // Dev-proxy targets. In production the SPA is same-origin behind the ingress,
-// which routes /events,/prompt,/cancel,/permission -> session-events and
+// which routes /events,/prompt,/cancel -> session-events and
 // /api/sessions/* -> tmux-api (stripping the whole prefix). For local dev we
 // reproduce both mappings so a real session-events + tmux-api on the box (or the
 // dev-harness) is reachable without CORS. Override the origins with
@@ -102,7 +102,10 @@ const proxy: Record<string, ProxyOptions> = {
   "/events": sessionEventsProxy,
   "/prompt": sessionEventsProxy,
   "/cancel": sessionEventsProxy,
-  "/permission": sessionEventsProxy,
+  // No /permission entry: 575d4f5 removed the web-mediated permission broker
+  // from session-events, so proxying it here would forward local dev to a 404
+  // the prod ingress does not even route. This list mirrors the routes the
+  // service registers (session-events/main.go).
   // tmux-api lobby data API: /api/sessions/* -> tmux-api root (strip the whole
   // /api/sessions prefix, mirroring the PROD ingress `PathPrefix /api/sessions/`).
   // Covers whoami/sessions/layout/dirs/prefs/projects/users/shares AND Web Push
