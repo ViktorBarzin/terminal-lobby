@@ -50,6 +50,55 @@ QA_NAME = re.compile(r"^qa-[A-Za-z0-9_-]{1,29}$")
 
 SEVERITIES = ("critical", "high", "medium", "low")
 
+# The devvm has 32 cores but shares ~10 GB of free RAM with everyone's real
+# sessions, and a chromium runs 200-400 MB. Agent count and browser count are
+# decoupled here: however many sweep agents the workflow starts, only this many
+# hold a browser at once, and the rest block in __enter__ until a slot frees.
+BROWSER_SLOTS = int(os.environ.get("QA_BROWSER_SLOTS", "6"))
+_SLOT_DIR = Path(os.environ.get("QA_SLOT_DIR", "/tmp/qa-browser-slots"))
+
+
+class _BrowserSlot:
+    """A cross-process semaphore over N lock files (agents are separate
+    processes, so an in-process semaphore would not see them)."""
+
+    def __init__(self, slots: int = BROWSER_SLOTS) -> None:
+        self.slots = max(1, slots)
+        self._fh = None
+        _SLOT_DIR.mkdir(parents=True, exist_ok=True)
+
+    def acquire(self, timeout: float = 900.0) -> None:
+        import fcntl
+        deadline = time.time() + timeout
+        waited = False
+        while time.time() < deadline:
+            for i in range(self.slots):
+                fh = open(_SLOT_DIR / f"slot-{i}", "a+")
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self._fh = fh
+                    if waited:
+                        print(f"[qa_driver] got browser slot {i}", flush=True)
+                    return
+                except OSError:
+                    fh.close()
+            if not waited:
+                print(f"[qa_driver] all {self.slots} browser slots busy, "
+                      f"waiting…", flush=True)
+                waited = True
+            time.sleep(2.0)
+        raise TimeoutError(
+            f"no browser slot within {timeout:g}s (QA_BROWSER_SLOTS={self.slots})")
+
+    def release(self) -> None:
+        if self._fh:
+            import fcntl
+            try:
+                fcntl.flock(self._fh, fcntl.LOCK_UN)
+            finally:
+                self._fh.close()
+                self._fh = None
+
 
 @dataclass
 class Finding:
@@ -89,6 +138,8 @@ class QaAgent:
     # ---- lifecycle --------------------------------------------------------
 
     def __enter__(self) -> "QaAgent":
+        self._slot = _BrowserSlot()
+        self._slot.acquire()
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
             headless=self.headless, slow_mo=self.slow_mo,
@@ -122,6 +173,8 @@ class QaAgent:
                     pass
             if self._pw:
                 self._pw.stop()
+            if getattr(self, "_slot", None):
+                self._slot.release()
 
     def _wire_capture(self, page: Page) -> None:
         page.on("console", lambda m: self.console.append(
