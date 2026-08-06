@@ -198,6 +198,10 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
   // ask has to be POSSIBLE: .gitignore / .env / .bashrc are files file-api
   // deliberately lets you edit, and the pane could not name one.
   const [showHidden, setShowHidden] = createSignal(false);
+  // The last open() failed because the path is a DIRECTORY. The error message
+  // sends the user to Browse, so Browse has to land inside that path rather
+  // than in its parent — see browseStart(). Cleared on every open().
+  const [pathIsDir, setPathIsDir] = createSignal(false);
 
   // ---- quick-edit state (roadmap pillar #6) -------------------------------
   const [editState, setEditState] = createSignal<EditState>(initialEditState);
@@ -249,6 +253,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     setOpen(true);
     setBrowsing(false);
     setEditState(initialEditState);
+    setPathIsDir(false); // a fresh open is a file until the server says otherwise
     setPath(target);
     setName(basename(target));
     setKind(null);
@@ -281,6 +286,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
             ? err.message
             : String(err),
       );
+      setPathIsDir(err instanceof FileApiError && err.isDirectory);
       setStatus("error");
     }
   }
@@ -378,14 +384,19 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
 
   /**
    * The Browse button. Starts from the best directory we already know — the
-   * loaded file's, else wherever the pane was last, else the newest file the
-   * transcript mentions — and only then asks where home is. That last hop is
-   * what makes Browse usable on a plain shell session, which has no loaded file
-   * and no transcript to mine.
+   * path box's own value when the server already told us it is a directory,
+   * else the loaded file's directory, else wherever the pane was last, else the
+   * newest file the transcript mentions — and only then asks where home is.
+   * That last hop is what makes Browse usable on a plain shell session, which
+   * has no loaded file and no transcript to mine.
+   *
+   * The directory case is not a nicety: the read error for a folder says "press
+   * Browse to list what's inside it", and dirname() would have listed the
+   * folder's PARENT — the sentence would be wrong by one click.
    */
   async function browseStart(): Promise<void> {
     const p = path();
-    if (p) return browse(dirname(p));
+    if (p) return browse(pathIsDir() ? p : dirname(p));
     const last = browseDir();
     if (last) return browse(last);
     const recent = recentFiles()[0];

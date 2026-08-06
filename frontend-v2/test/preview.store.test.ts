@@ -448,6 +448,58 @@ describe("preview store — browseStart, the cold-open entry", () => {
     dispose();
   });
 
+  // The folder message tells the user to "press Browse to list what's inside
+  // it". browseStart() assumes path() is a FILE and lists dirname(path) — so
+  // the button listed the folder's PARENT and the sentence was a lie by one
+  // click. The failed read already told us it is a directory; use that.
+  it("lists the typed folder ITSELF when the read failed because it is one", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({
+      listDir,
+      loadFile: async () => {
+        throw new FileApiError(400, readErrorMessage(400, "path is a directory\n"), true);
+      },
+    });
+    await s.open("/home/u/proj/sub");
+    expect(s.error()).toMatch(/is a folder/i);
+    await s.browseStart();
+    expect(listDir).toHaveBeenCalledWith("/home/u/proj/sub", false);
+    expect(s.browseDir()).toBe("/home/u/proj/sub");
+    dispose();
+  });
+
+  it("goes back to dirname once a real file loads over the folder error", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    let dir = true;
+    const [s, dispose] = withStore({
+      listDir,
+      loadFile: async () => {
+        if (dir) throw new FileApiError(400, "folder", true);
+        return { kind: "code", text: "x" } as LoadedFile;
+      },
+    });
+    await s.open("/home/u/proj/sub");
+    dir = false;
+    await s.open("/home/u/proj/main.ts");
+    await s.browseStart();
+    expect(listDir).toHaveBeenCalledWith("/home/u/proj", false);
+    dispose();
+  });
+
+  it("a non-directory 400 does not turn the path into a browse target", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({
+      listDir,
+      loadFile: async () => {
+        throw new FileApiError(400, readErrorMessage(400, "invalid path\n"));
+      },
+    });
+    await s.open("/etc/passwd");
+    await s.browseStart();
+    expect(listDir).toHaveBeenCalledWith("/etc", false);
+    dispose();
+  });
+
   it("falls back to the most recent transcript file's directory", async () => {
     const listDir = vi.fn(async () => [] as FileEntry[]);
     const events = (): Event[] => [
