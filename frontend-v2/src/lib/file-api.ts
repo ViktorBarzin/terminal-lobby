@@ -17,6 +17,11 @@ export class FileApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** the 400 was "path is a directory" — the ONE refusal whose message names
+     *  itself, and the one the preview store acts on (it points Browse at that
+     *  path instead of at its parent, so "press Browse to list what's inside
+     *  it" is true rather than one click short). False for every other error. */
+    public readonly isDirectory = false,
   ) {
     super(message);
     this.name = "FileApiError";
@@ -128,7 +133,11 @@ export async function readFile(path: string, name = path): Promise<LoadedFile> {
     let body = "";
     if (resp.status === 400) body = await resp.text().catch(() => "");
     else await resp.body?.cancel().catch(() => {});
-    throw new FileApiError(resp.status, readErrorMessage(resp.status, body));
+    throw new FileApiError(
+      resp.status,
+      readErrorMessage(resp.status, body),
+      resp.status === 400 && body.trim() === DIRECTORY_400_BODY,
+    );
   }
   const contentType = resp.headers.get("content-type") ?? "";
   const k = classifyFile(name, contentType);
