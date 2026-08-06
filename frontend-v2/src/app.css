@@ -543,6 +543,15 @@ body {
   color: var(--text-muted);
   margin: 8px 0 4px;
 }
+/* An expanded tool result is bounded: the Read of a 300-line file rendered
+   5,666px tall inside a 552px timeline and buried the rest of the transcript.
+   `.tl-code` only declares overflow-x — the overflow-y a browser reports there
+   is the used value the spec forces from it, not an author rule — so the clamp
+   needs the axis spelled out alongside the height. */
+.tl-tool-raw .tl-code {
+  max-height: 320px;
+  overflow-y: auto;
+}
 
 /* fold / working / permission / error / status */
 .tl-row-fold {

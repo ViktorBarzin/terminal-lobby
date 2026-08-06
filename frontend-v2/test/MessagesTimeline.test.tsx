@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import type { Event } from "../src/types/events";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
 
@@ -52,5 +53,107 @@ describe("<MessagesTimeline> (smoke)", () => {
   it("renders an empty state with no events", () => {
     const { getByText } = render(() => <MessagesTimeline events={[]} />);
     expect(getByText(/No messages yet/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * Row identity across a stream append.
+ *
+ * `<For>` reconciles by object REFERENCE and deriveRows allocates fresh rows on
+ * every call, so a single SSE event tore down and rebuilt the whole timeline:
+ * measured in a browser, an expanded tool row snapped shut mid-turn and every
+ * mermaid diagram re-mounted (its generated svg id walked tl-mmd-5 → 6 → 8 in
+ * one turn). Node identity is the testable core of that: a diagram can only
+ * re-render if the subtree holding it was re-created.
+ */
+describe("<MessagesTimeline> row identity", () => {
+  /** A running turn — rows render unfolded, so the tool row is reachable. */
+  const LIVE: Event[] = [
+    ev({ id: 1, kind: "user", body: "read the notes" }),
+    ev({ id: 2, kind: "text", body: "on it" }),
+    ev({
+      id: 3,
+      kind: "tool_use",
+      tool: "Read",
+      toolId: "t1",
+      body: '{"file_path":"notes.txt"}',
+    }),
+  ];
+
+  it("keeps every existing row's DOM node when an event arrives", () => {
+    const [events, setEvents] = createSignal<Event[]>(LIVE);
+    const { container } = render(() => <MessagesTimeline events={events()} />);
+
+    const before = [...container.querySelectorAll(".tl-row")];
+    expect(before.length).toBeGreaterThan(2);
+
+    setEvents([...LIVE, ev({ id: 4, kind: "text", body: "here it is" })]);
+
+    const after = [...container.querySelectorAll(".tl-row")];
+    expect(after).toHaveLength(before.length + 1);
+    for (const node of before) {
+      expect(
+        after.includes(node),
+        `${node.className} was re-created instead of updated in place`,
+      ).toBe(true);
+    }
+  });
+
+  it("leaves an expanded tool row expanded when its own result lands", () => {
+    const [events, setEvents] = createSignal<Event[]>(LIVE);
+    const { container } = render(() => <MessagesTimeline events={events()} />);
+
+    const tool = container.querySelector(".tl-row-tool")!;
+    const toggle = tool.querySelector(".tl-tool-toggle")!;
+    fireEvent.click(toggle);
+    expect(tool.querySelector(".tl-code")).not.toBeNull();
+    expect(tool.getAttribute("data-status")).toBe("running");
+
+    setEvents([
+      ...LIVE,
+      ev({ id: 4, kind: "tool_result", toolId: "t1", body: "line one" }),
+    ]);
+
+    expect(container.querySelector(".tl-row-tool")).toBe(tool);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    // …and the row updated in place rather than being replaced.
+    expect(tool.getAttribute("data-status")).toBe("ok");
+    expect(tool.textContent).toContain("line one");
+  });
+});
+
+/**
+ * Turn folds toggle both ways. Expanding used to remove the fold row from the
+ * DOM, so nothing could put the turn back short of a reload — while the tool
+ * rows right next to it toggled correctly in the same component.
+ */
+describe("<MessagesTimeline> turn fold", () => {
+  const SETTLED: Event[] = [
+    ev({ id: 1, kind: "user", body: "do it" }),
+    ev({ id: 2, kind: "text", body: "thinking" }),
+    ev({ id: 3, kind: "tool_use", tool: "Bash", toolId: "t1", body: "ls" }),
+    ev({ id: 4, kind: "text", body: "all done" }),
+    ev({ id: 5, kind: "turn_end" }),
+  ];
+
+  it("expands and re-folds, with the caret and aria-expanded following state", () => {
+    const { container } = render(() => <MessagesTimeline events={SETTLED} />);
+    const fold = container.querySelector(".tl-fold-btn")!;
+    const caret = () => container.querySelector(".tl-fold-caret")!.textContent;
+
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    expect(caret()).toBe("▸");
+    expect(container.querySelector(".tl-row-tool")).toBeNull();
+
+    fireEvent.click(fold);
+    expect(container.querySelector(".tl-row-tool")).not.toBeNull();
+    expect(container.querySelector(".tl-fold-btn")).toBe(fold);
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
+    expect(caret()).toBe("▾");
+
+    fireEvent.click(fold);
+    expect(container.querySelector(".tl-row-tool")).toBeNull();
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    expect(caret()).toBe("▸");
   });
 });
