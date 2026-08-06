@@ -249,6 +249,63 @@ describe("the README's Layout map is the whole source tree", () => {
   });
 });
 
+interface GoPointer {
+  /** The v2 source file doing the naming, relative to `frontend-v2/`. */
+  readonly from: string;
+  /** The repo-root-relative Go path it names. */
+  readonly path: string;
+}
+
+/** Absolute paths of every file under `frontend-v2/src`. */
+function srcTree(dir: string = FE("src")): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) out.push(...srcTree(p));
+    else out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Every `<service>/<file>.go` path named in a v2 source file. frontend-v2 owns
+ * no Go, so such a path is always a "source of truth" pointer in a docstring,
+ * aimed at a sibling service at the repo root.
+ */
+function goPointers(): GoPointer[] {
+  const out: GoPointer[] = [];
+  for (const file of srcTree()) {
+    for (const path of captures(
+      /\b([a-z][a-z0-9-]*\/[a-z0-9_.-]+\.go)\b/g,
+      readFileSync(file, "utf8"),
+    )) {
+      out.push({ from: relative(FE("."), file), path });
+    }
+  }
+  return out;
+}
+
+describe("the wire-contract docstrings point at Go that exists", () => {
+  it("finds the cross-service pointers to check", () => {
+    const pointers = goPointers();
+    expect(pointers.length).toBeGreaterThanOrEqual(5);
+    expect(pointers.map((p) => p.path)).toContain("session-events/event.go");
+  });
+
+  it("names no Go file that is not on disk", () => {
+    // A deleted service file leaves its callers compiling and its READERS
+    // stranded: `575d4f5` removed session-events/permission.go, and
+    // types/events.ts — the module that DEFINES the permission_request /
+    // permission_resolved wire shape — kept citing it as the source of truth.
+    // Every sibling pointer of that class was corrected in 8c1b6fb; this is
+    // the check that would have caught the one that was missed.
+    const dangling = goPointers()
+      .filter((p) => !existsSync(REPO(p.path)))
+      .map((p) => `${p.from} names ${p.path}`);
+    expect(dangling, "v2 source citing a Go file that no longer exists").toEqual([]);
+  });
+});
+
 describe("the README documents the dev proxy that exists", () => {
   it("names every prefix vite.config.ts proxies", () => {
     const prefixes = proxiedPrefixes();

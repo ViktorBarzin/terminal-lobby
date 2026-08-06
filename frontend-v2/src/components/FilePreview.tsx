@@ -229,6 +229,22 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                   <span class="tl-preview-browse-dir" title={s.browseDir() ?? ""}>
                     {s.browseDir()}
                   </span>
+                  {/* file-api hides dotfiles unless the listing asks for them
+                      (&all=1), and nothing in the app ever asked — so the
+                      .gitignore / .env / .bashrc that file-api deliberately
+                      lets you edit could not be found by browsing. Reuses the
+                      app's generic checkbox-row layout. */}
+                  <label
+                    class="tl-settings-check"
+                    title="Show dotfiles (.gitignore, .env, …)"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={s.showHidden()}
+                      onChange={() => void s.toggleHidden()}
+                    />
+                    <span>Hidden</span>
+                  </label>
                   <button type="button" class="tl-btn" onClick={() => s.closeBrowse()}>
                     Done
                   </button>
