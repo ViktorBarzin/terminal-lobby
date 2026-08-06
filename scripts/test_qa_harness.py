@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Tests for qa-harness.py.
+"""Tests for the QA harness — the proxy (qa-harness.py) and its driver
+(qa_driver.py).
 
 The guard is the only thing standing between a QA fleet and wizard's live
 sessions, so it gets tested as logic rather than trusted as prose. Most of this
-file is pure — no proxy, no network, no tmux. The last section is not: two of
-the harness's defects lived in the WIRING rather than in the guard, so those
-tests run the real app over fake upstreams. They still touch no live backend.
+file is pure — no proxy, no network, no tmux. The last two sections are not:
+some of the harness's defects lived in the WIRING rather than in the guard, so
+those tests run the real app over fake upstreams, and the driver's browser
+launch is verified by launching one. They still touch no live backend and never
+reach the dev tier.
 
     python3 -m pytest scripts/test_qa_harness.py -q
 """
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import aiohttp
@@ -234,6 +238,77 @@ def test_reads_and_lists_allowed_anywhere(guard):
     assert guard.check_files("GET", "/files/list", b"") is None
 
 
+# --- the scratch root must be somewhere file-api will actually write -------
+# file-api confines every path to /home/<osUser> (auth.go: homeBase="/home",
+# userHome()). A scratch outside that root makes the two allowed sets DISJOINT:
+# the guard permits the write, file-api rejects it 400 "invalid path", and the
+# editor surfaces the whole thing as "Not authorized to save this file." — which
+# reads exactly like a product permissions bug. The default has to satisfy both.
+
+FILE_API_HOME_BASE = "/home"  # file-api/auth.go:28
+
+
+def test_the_shipped_default_scratch_is_inside_file_api_containment():
+    """The default a fleet gets with no flags must be writable end to end."""
+    default = qa.build_parser().parse_args([]).scratch
+    root = os.path.join(FILE_API_HOME_BASE, qa.proxy_os_user())
+    assert os.path.normpath(default).startswith(root + os.sep), (
+        f"--scratch defaults to {default!r}, which is outside file-api's "
+        f"containment root {root!r} — every POST /files/write through the "
+        f"harness would 400 'invalid path' no matter what the app does")
+
+
+def test_the_shipped_default_scratch_passes_its_own_guard():
+    """The other half: a path inside the default must survive the guard."""
+    default = qa.build_parser().parse_args([]).scratch
+    g = qa.Guard(default)
+    assert g.check_files(
+        "POST", "/files/write", body(path=f"{default}/probe.txt")) is None
+
+
+def test_write_traversing_out_of_scratch_blocked():
+    """A `..` must not walk out of the scratch.
+
+    This is load-bearing now that the scratch lives inside /home/<osUser>: a
+    single `..` lands somewhere file-api is perfectly happy to write, so a
+    string-prefix check alone would hand the fleet the whole home directory.
+    """
+    g = qa.Guard("/home/wizard/qa-harness-scratch")
+    reason = g.check_files(
+        "POST", "/files/write",
+        body(path="/home/wizard/qa-harness-scratch/../.bashrc"))
+    assert reason and "confined to" in reason
+
+
+def test_deep_traversal_out_of_scratch_blocked():
+    g = qa.Guard("/tmp/qa-scratch")
+    assert g.check_files(
+        "POST", "/files/write",
+        body(path="/tmp/qa-scratch/../../home/wizard/.ssh/authorized_keys")
+    ) is not None
+
+
+def test_noise_inside_the_scratch_is_still_allowed():
+    """Normalising must not reject a legitimate path that merely looks messy."""
+    g = qa.Guard("/tmp/qa-scratch")
+    assert g.check_files(
+        "POST", "/files/write", body(path="/tmp/qa-scratch/./sub//a.md")) is None
+
+
+def test_relative_paths_blocked():
+    """file-api resolves a relative path against the home; the guard cannot
+    tell where it lands, so it refuses rather than guesses."""
+    g = qa.Guard("/tmp/qa-scratch")
+    assert g.check_files(
+        "POST", "/files/write", body(path="qa-scratch/a.md")) is not None
+
+
+def test_writing_the_scratch_directory_itself_blocked():
+    g = qa.Guard("/tmp/qa-scratch")
+    assert g.check_files(
+        "POST", "/files/write", body(path="/tmp/qa-scratch")) is not None
+
+
 # --- terminal attach ------------------------------------------------------
 
 class FakeQuery:
@@ -439,3 +514,75 @@ async def test_restore_refused_when_the_live_set_cannot_be_read(monkeypatch):
         assert forwarded == []
     finally:
         await api.close()
+
+
+# ==========================================================================
+# qa_driver's browser launch.
+#
+# The driver grants the notifications permission up front so the prompt cannot
+# eat a click. Under Playwright's DEFAULT headless build that grant is a no-op
+# at the `Notification` API: permissions.query() reports "granted" while
+# Notification.permission still reads "denied", because the headless shell ships
+# no notification presenter. The app's notification code returns early on
+# `Notification.permission !== "granted"`, so the entire feature reads as dead to
+# a sweep agent — a blindfold that manufactures app bugs that do not exist.
+# (BATTERY.md line 2619 hit the same wall in 2026-07 and stubbed `Notification`
+# with addInitScript; a real browser build is better than a stub.)
+#
+# Launching a browser is slow but hermetic: a throwaway local HTTP server stands
+# in for the dev tier, so this reaches no backend and needs no harness running.
+# ==========================================================================
+
+def serve_blank_page():
+    """A one-page HTTP origin. `Notification` needs a real origin — the grant is
+    origin-scoped and about:/data: URLs cannot carry one."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<!doctype html><title>qa</title>ok")
+
+        def log_message(self, *a):  # keep pytest output clean
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+@pytest.fixture
+def driver(monkeypatch, tmp_path):
+    """qa_driver with its browser-slot lockfiles and artifacts redirected, so a
+    test never contends with a live fleet for one of the six slots."""
+    qa_driver = pytest.importorskip("qa_driver")
+    monkeypatch.setattr(qa_driver, "_SLOT_DIR", tmp_path / "slots")
+    monkeypatch.setattr(qa_driver, "ARTIFACTS", tmp_path / "artifacts")
+    return qa_driver
+
+
+def test_a_fresh_agent_can_actually_use_notifications(driver):
+    """The acceptance for the blindfold: a stock QaAgent must see a permission
+    the page's own code will accept, not one only permissions.query() believes."""
+    srv, origin = serve_blank_page()
+    try:
+        with driver.QaAgent("selftest-notifications", harness=origin) as agent:
+            agent.goto("/")
+            assert agent.page.evaluate("Notification.permission") == "granted", (
+                "Notification.permission is not 'granted' after "
+                "grant_permissions(['notifications']) — the app's notification "
+                "code returns early on exactly this check, so every sweep of "
+                "area 11 runs blindfolded")
+            assert agent.page.evaluate(
+                "navigator.permissions.query({name:'notifications'})"
+                ".then(s => s.state)") == "granted"
+            # The API must be usable, not merely reported as permitted.
+            assert agent.page.evaluate(
+                "(() => { try { new Notification('qa'); return 'ok'; } "
+                "catch (e) { return String(e); } })()") == "ok"
+            agent.findings.clear()  # nothing here is an app finding
+    finally:
+        srv.shutdown()
