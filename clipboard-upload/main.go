@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,20 +25,29 @@ import (
 
 const (
 	fileDir   = "/tmp/clipboard-files"
-	storeRoot = "/var/lib/clipboard-store"
 	maxUpload = 100 << 20 // 100MB
 	// maxRegister bounds files accepted via /register — big enough for any
 	// real screenshot or photo, small enough that a stray path can't
 	// balloon the store.
 	maxRegister = 25 << 20 // 25MB
 	listenAddr  = "0.0.0.0:7683"
-	mapPath     = "/etc/ttyd-user-map"
 	authHeader  = "X-Authentik-Username"
 	// unsortedSession is the store bucket for writes that arrive without a
 	// (valid) session name. Nothing ties its contents to a session's
 	// lifetime, so the cleaner (devvm/clipboard-store-clean) ages it out on
 	// a fixed clock instead.
 	unsortedSession = "_unsorted"
+)
+
+// storeRoot is the per-(user, session) image store; mapPath is the
+// Authentik→OS-user map resolveOSUser reads. Vars (not consts) purely as test
+// seams — the upload tests point them at temp fixtures so the real
+// header→user→store path runs hermetically, without reading /etc or writing
+// next to a user's real screenshots. Same seam tmux-api/main.go uses for its
+// own mapPath. Production never reassigns them.
+var (
+	storeRoot = "/var/lib/clipboard-store"
+	mapPath   = "/etc/ttyd-user-map"
 )
 
 // Session names: same charset as tmux-api and the frontend's NAME_RE.
@@ -366,6 +377,21 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Not an image", http.StatusBadRequest)
 		return
 	}
+	// ...and the label alone is not evidence: the browser derives it from the
+	// filename, and any client can set it outright. Trusting it let 39 bytes of
+	// plain text named .png into the store, where the gallery drew it as a dead
+	// thumbnail with no way to remove it. Check the bytes before writing.
+	sniffed, err := sniffContentType(file)
+	if err != nil {
+		log.Printf("sniff pasted image for %s failed: %v", osUser, err)
+		http.Error(w, "Failed to read upload", http.StatusInternalServerError)
+		return
+	}
+	if !strings.HasPrefix(sniffed, "image/") {
+		http.Error(w, fmt.Sprintf("Not an image: the file says %s but its content is %s", ct, sniffed),
+			http.StatusBadRequest)
+		return
+	}
 	session := storeSession(r.FormValue("session"))
 	name := fmt.Sprintf("pasted-%s-%s%s", stamp(), randToken(), imageExt(ct))
 	path, err := saveToStore(osUser, session, name, file)
@@ -472,6 +498,99 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		"tl.session": session, "tl.kind": "copied", "tl.client": "api",
 	})
 	writePath(w, path)
+}
+
+// sniffContentType reports what the first 512 bytes of an upload actually
+// are, per http.DetectContentType, and rewinds so the caller can still copy
+// the whole part. /upload's image branch gates the store write on this.
+//
+// No filename-extension fallback, deliberately — unlike isImage below. The
+// extension is client-supplied exactly like the Content-Type header, so
+// honouring it would wave the same mislabelled bytes straight back in. The one
+// format that costs is SVG, which sniffs as text/xml: it could never render in
+// the gallery anyway (imageExt has no svg case, so it is stored as .png, and
+// /img re-sniffs on serve and hands the <img> tag text/xml).
+//
+// This answers "are these bytes an image", NOT "does this image decode". A
+// truncated PNG keeps its magic bytes and passes; image.DecodeConfig would
+// pass it too (the IHDR is complete by byte 33) while rejecting webp and avif
+// that browsers render fine. Files that pass here and still fail to paint are
+// handled by the gallery's onError fallback in
+// frontend-v2/src/components/Gallery.tsx.
+//
+// DetectContentType's table is also incomplete — it knows png/jpeg/gif/webp/
+// bmp/ico and nothing else — so the ISO-BMFF image brands are recognised
+// separately by isoBMFFImageType. Without that, a real AVIF sniffs as
+// application/octet-stream and this gate refuses a format every current
+// browser decodes.
+func sniffContentType(f multipart.File) (string, error) {
+	head := make([]byte, 512)
+	n, err := f.Read(head)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	head = head[:n]
+	if ct := http.DetectContentType(head); strings.HasPrefix(ct, "image/") {
+		return ct, nil
+	}
+	if ct := isoBMFFImageType(head); ct != "" {
+		return ct, nil
+	}
+	return http.DetectContentType(head), nil
+}
+
+// isoBMFFImageBrands are the ISO base media file brands that mean "this is a
+// still image" — the AV1 (AVIF) and HEVC/HEIF families. Deliberately a closed
+// list rather than "any ftyp": the same container carries mp4 video, which is
+// not a gallery image.
+var isoBMFFImageBrands = map[string]bool{
+	"avif": true, "avis": true, // AV1 still image / image sequence
+	"heic": true, "heix": true, "heim": true, "heis": true, // HEVC still
+	"hevc": true, "hevx": true, "hevm": true, "hevs": true, // HEVC sequence
+	"mif1": true, "msf1": true, // generic HEIF still / sequence
+}
+
+// isoBMFFImageType reports the content type of an ISO base media file whose
+// major or compatible brands name a still-image format, or "" for anything
+// else. Layout: [4-byte box size]["ftyp"][major brand][minor version][compat
+// brands…], all brands four bytes.
+//
+// This exists because http.DetectContentType predates AVIF/HEIF and returns
+// application/octet-stream for both. Measured 2026-08-06: a 24x24 AVIF served
+// with that very content type still renders in chromium (naturalWidth 24) —
+// browsers decode images by content, not by the declared type — so refusing
+// the upload would break a format that works today. Dragging a downloaded
+// .avif into the terminal sets File.type "image/avif", which
+// frontend-v2/src/clipboard/upload.ts routes to the store branch.
+//
+// HEIF rides along on the same container check. Chromium does not decode it,
+// so such a tile falls to the gallery's onError placeholder — degraded, which
+// is what the client half is for, rather than refused.
+func isoBMFFImageType(head []byte) string {
+	if len(head) < 12 || string(head[4:8]) != "ftyp" {
+		return ""
+	}
+	// The box size bounds the brand list; clamp to what was actually read.
+	end := int(binary.BigEndian.Uint32(head[0:4]))
+	if end > len(head) || end <= 0 {
+		end = len(head)
+	}
+	brands := []string{string(head[8:12])} // major brand
+	for i := 16; i+4 <= end; i += 4 {      // compatible brands
+		brands = append(brands, string(head[i:i+4]))
+	}
+	for _, b := range brands {
+		if isoBMFFImageBrands[b] {
+			if strings.HasPrefix(b, "avi") {
+				return "image/avif"
+			}
+			return "image/heif"
+		}
+	}
+	return ""
 }
 
 // isImage sniffs the first 512 bytes (http.DetectContentType) and falls
