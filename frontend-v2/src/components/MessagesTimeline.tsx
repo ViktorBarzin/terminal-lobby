@@ -1,14 +1,17 @@
 import {
+  createEffect,
   createMemo,
   createSignal,
   For,
   Show,
+  type Accessor,
   type Component,
   type JSX,
 } from "solid-js";
 import type { Event } from "../types/events";
 import {
   deriveRows,
+  sameRow,
   visibleRows,
   type ErrorRow,
   type MessageRow,
@@ -160,15 +163,17 @@ const WorkingRowView: Component<{ row: WorkingRow }> = () => (
 
 const TurnFoldRowView: Component<{
   row: TurnFoldRow;
-  onExpand: (turnKey: string) => void;
+  expanded: boolean;
+  onToggle: (turnKey: string) => void;
 }> = (props) => (
   <div class="tl-row tl-row-fold">
     <button
       type="button"
       class="tl-fold-btn"
-      onClick={() => props.onExpand(props.row.turnKey)}
+      aria-expanded={props.expanded}
+      onClick={() => props.onToggle(props.row.turnKey)}
     >
-      <span class="tl-fold-caret">▸</span>
+      <span class="tl-fold-caret">{props.expanded ? "▾" : "▸"}</span>
       <span class="tl-fold-label">
         {props.row.durationMs
           ? `Worked for ${formatDuration(props.row.durationMs)}`
@@ -180,11 +185,24 @@ const TurnFoldRowView: Component<{
   </div>
 );
 
+/** How far off the bottom still counts as "reading the live end". */
+const PIN_SLACK_PX = 40;
+
+const sameKeys = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((k, i) => k === b[i]);
+
 /**
  * Structured text-mode renderer. Derives folded rows from the raw event stream
  * (pure logic in timeline.logic) and maps each row kind to a view. Turn-fold
- * rows expand in place; tool rows expand to raw I/O. Fine-grained Solid `<For>`
- * updates only changed rows — no full re-render on stream append.
+ * rows expand and re-fold in place; tool rows expand to raw I/O.
+ *
+ * Rows are reconciled by KEY, not by object reference. deriveRows allocates
+ * fresh row objects on every call, so a reference-keyed `<For each={rows()}>`
+ * rebuilt the entire timeline DOM on every stream event — an expanded tool row
+ * snapped shut mid-turn and every mermaid diagram re-mounted. `<For>` therefore
+ * maps over the row KEYS (reconciled by value), and each view reads its row
+ * back through a per-key memo whose equality is `sameRow`: an unchanged row
+ * never notifies, a changed one updates its existing node in place.
  */
 export const MessagesTimeline: Component<{
   events: Event[];
@@ -192,45 +210,119 @@ export const MessagesTimeline: Component<{
   onOpenPreview?: (path: string) => void;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
+  /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
+  const derived = createMemo<TimelineRow[]>(() => deriveRows(props.events));
   const rows = createMemo<TimelineRow[]>(() =>
-    visibleRows(deriveRows(props.events), expandedTurns()),
+    visibleRows(derived(), expandedTurns()),
   );
 
-  const expand = (turnKey: string) =>
+  /** The rows indexed by a render key, unique even if an event id repeats. */
+  const keyed = createMemo(() => {
+    const keys: string[] = [];
+    const byKey = new Map<string, TimelineRow>();
+    for (const row of rows()) {
+      let key = row.key;
+      for (let n = 1; byKey.has(key); n++) key = `${row.key}#${n}`;
+      keys.push(key);
+      byKey.set(key, row);
+    }
+    return { keys, byKey };
+  });
+  const keys = createMemo<string[]>(() => keyed().keys, [], {
+    equals: sameKeys,
+  });
+
+  /** One row, held stable while its content is unchanged. */
+  const rowAt = (key: string): Accessor<TimelineRow> => {
+    let last = keyed().byKey.get(key)!;
+    return createMemo<TimelineRow>(
+      () => {
+        // A row leaving the list can still be read once before its node is
+        // disposed; hold the last value rather than crashing on undefined.
+        const row = keyed().byKey.get(key);
+        if (row) last = row;
+        return last;
+      },
+      last,
+      { equals: sameRow },
+    );
+  };
+
+  const toggleTurn = (turnKey: string) =>
     setExpandedTurns((prev) => {
       const next = new Set(prev);
-      next.add(turnKey);
+      if (!next.delete(turnKey)) next.add(turnKey);
       return next;
     });
 
-  const renderRow = (row: TimelineRow): JSX.Element => {
-    switch (row.kind) {
+  // The row kind is encoded in its key, so a node never changes kind under
+  // itself and the switch can run once, at creation.
+  const renderRow = (key: string): JSX.Element => {
+    const row = rowAt(key);
+    switch (row().kind) {
       case "user":
-        return <UserRowView row={row} />;
+        return <UserRowView row={row() as UserRow} />;
       case "message":
-        return <MessageRowView row={row} />;
+        return <MessageRowView row={row() as MessageRow} />;
       case "tool":
-        return <ToolRowView row={row} onOpenPreview={props.onOpenPreview} />;
+        return (
+          <ToolRowView
+            row={row() as ToolRow}
+            onOpenPreview={props.onOpenPreview}
+          />
+        );
       case "permission":
-        return <PermissionRowView row={row} />;
+        return <PermissionRowView row={row() as PermissionRow} />;
       case "error":
-        return <ErrorRowView row={row} />;
+        return <ErrorRowView row={row() as ErrorRow} />;
       case "status":
-        return <StatusRowView row={row} />;
+        return <StatusRowView row={row() as StatusRow} />;
       case "working":
-        return <WorkingRowView row={row} />;
+        return <WorkingRowView row={row() as WorkingRow} />;
       case "turn-fold":
-        return <TurnFoldRowView row={row} onExpand={expand} />;
+        return (
+          <TurnFoldRowView
+            row={row() as TurnFoldRow}
+            expanded={expandedTurns().has((row() as TurnFoldRow).turnKey)}
+            onToggle={toggleTurn}
+          />
+        );
     }
   };
 
+  // A transcript is read from its newest end. Events arrive over SSE well after
+  // mount, so the entry position cannot be set once — the view stays pinned to
+  // the bottom while it is at the bottom, and lets go the moment the operator
+  // scrolls up to read something.
+  let scroller: HTMLDivElement | undefined;
+  const [pinned, setPinned] = createSignal(true);
+  const onScroll = () => {
+    const el = scroller;
+    if (el) {
+      setPinned(el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX);
+    }
+  };
+  createEffect(() => {
+    derived(); // the TRANSCRIPT grew — follow it. Expanding a fold must not
+    // move the viewport: you clicked to read what was hidden.
+    const el = scroller;
+    if (!el || !pinned()) return;
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+  });
+
   return (
-    <div class="tl-timeline" role="log" aria-label="Session transcript">
+    <div
+      class="tl-timeline"
+      role="log"
+      aria-label="Session transcript"
+      ref={scroller}
+      onScroll={onScroll}
+    >
       <Show
-        when={rows().length > 0}
+        when={keys().length > 0}
         fallback={<div class="tl-empty-state">No messages yet.</div>}
       >
-        <For each={rows()}>{(row) => renderRow(row)}</For>
+        <For each={keys()}>{(key) => renderRow(key)}</For>
       </Show>
     </div>
   );
