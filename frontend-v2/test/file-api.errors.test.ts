@@ -130,6 +130,26 @@ describe("readFile — reads the 400 body so a directory is reported as one", ()
       message: "File not found.",
     });
   });
+
+  // The message points at Browse, and Browse has to be able to act on it: the
+  // store lists dirname(path) unless it knows the path IS the directory.
+  it("flags the directory case on the error so Browse can list that path", async () => {
+    stubError(400, "path is a directory\n");
+    await expect(readFile("/home/u/proj/sub", "sub")).rejects.toMatchObject({
+      isDirectory: true,
+    });
+  });
+
+  it("leaves isDirectory false for every other refusal", async () => {
+    stubError(400, "invalid path\n");
+    await expect(readFile("/etc/passwd", "passwd")).rejects.toMatchObject({
+      isDirectory: false,
+    });
+    stubError(404, "not found\n");
+    await expect(readFile("/home/u/gone.txt", "gone.txt")).rejects.toMatchObject({
+      isDirectory: false,
+    });
+  });
 });
 
 // A LISTING that 400s means "not a directory" / outside home / not absolute.
