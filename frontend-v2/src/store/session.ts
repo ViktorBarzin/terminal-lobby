@@ -14,8 +14,10 @@ export interface SessionStore {
     reqId: string,
     decision: PermissionDecision,
   ) => Promise<boolean>;
-  /** Send a prompt (provisional control endpoint — see blockers). */
-  send: (text: string) => Promise<void>;
+  /** Send a prompt (provisional control endpoint — see blockers). Resolves
+   *  false when the session refused it (409 mid-turn, 5xx, unreachable) so the
+   *  composer can hand the typed text back instead of destroying it. */
+  send: (text: string) => Promise<boolean>;
   /** Interrupt the running turn (provisional control endpoint). */
   interrupt: () => Promise<void>;
   close: () => void;
@@ -75,7 +77,7 @@ export function createSessionStore(
     }
   };
 
-  const send = async (text: string): Promise<void> => {
+  const send = async (text: string): Promise<boolean> => {
     try {
       const res = await fetch(promptUrl(session), {
         method: "POST",
@@ -92,9 +94,11 @@ export function createSessionStore(
           "error",
         );
       }
+      return res.ok;
     } catch {
       /* the prompt still shows once the transcript tails */
       opts.notify?.("Couldn't reach the session", "error");
+      return false;
     }
   };
 

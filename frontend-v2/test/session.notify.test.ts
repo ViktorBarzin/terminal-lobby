@@ -64,7 +64,8 @@ describe("session store — control-channel error toasts", () => {
       const store = createSessionStore("s", {
         notify: (msg, kind) => notes.push({ msg, kind }),
       });
-      await expect(store.send("hi")).resolves.toBeUndefined(); // never throws
+      // Never throws; resolves false so the composer can keep the typed text.
+      await expect(store.send("hi")).resolves.toBe(false);
       dispose();
     });
     expect(notes.some((n) => n.kind === "error")).toBe(true);
@@ -88,7 +89,7 @@ describe("session store — control-channel error toasts", () => {
     g.fetch = respondWith(false, 409);
     await createRoot(async (dispose) => {
       const store = createSessionStore("s");
-      await expect(store.send("hi")).resolves.toBeUndefined();
+      await expect(store.send("hi")).resolves.toBe(false);
       dispose();
     });
   });
