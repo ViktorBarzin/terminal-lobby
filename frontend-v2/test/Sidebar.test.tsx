@@ -1,8 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
+import { onCleanup } from "solid-js";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { Sidebar } from "../src/components/Sidebar";
 import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
+import { createPrefsStore, PREFS_KEY, type PrefsStore } from "../src/store/prefs";
 import { emptyLayout, type Layout, type Session, type Whoami } from "../src/types/lobby";
 
 const sess = (name: string, over: Partial<Session> = {}): Session => ({
@@ -32,7 +34,11 @@ class FakeApi implements LobbyApi {
     this.puts.push(l);
     this.layoutVal = l;
   }
-  async killSession() {}
+  kills: string[] = [];
+  async killSession(n: string) {
+    this.kills.push(n);
+    this.sessionsVal = this.sessionsVal.filter((s) => s.name !== n);
+  }
   async renameSession() {
     throw new ApiError(404, "no");
   }
@@ -42,15 +48,49 @@ class FakeApi implements LobbyApi {
   }
 }
 
-/** Render <Sidebar> with a freshly-built store; returns utils + the store. */
-function mount(api: LobbyApi) {
+/**
+ * Render <Sidebar> with a freshly-built store + prefs store; returns utils and
+ * both. The prefs store seeds itself from localStorage and never reaches the
+ * network (its PUT is debounced past the end of the test).
+ */
+function mount(api: LobbyApi, over: { confirm?: (message: string) => boolean } = {}) {
   let store!: LobbyStore;
+  let prefs!: PrefsStore;
   const utils = render(() => {
     store = createLobbyStore({ api, autoStart: false, syncHash: false });
-    return <Sidebar store={store} />;
+    prefs = createPrefsStore({
+      fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+      putDebounceMs: 10_000,
+    });
+    onCleanup(() => prefs.dispose());
+    return <Sidebar store={store} prefs={prefs} confirm={over.confirm} />;
   });
-  return { ...utils, store: store! };
+  return { ...utils, store: store!, prefs: prefs! };
 }
+
+/** jsdom has no layout: give a card a real box so the drop edge is decidable. */
+function stubRect(el: Element, top: number, height = 20): void {
+  (el as HTMLElement).getBoundingClientRect = () =>
+    ({
+      top,
+      bottom: top + height,
+      height,
+      left: 0,
+      right: 100,
+      width: 100,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    }) as DOMRect;
+}
+
+beforeEach(() => {
+  try {
+    localStorage.clear();
+  } catch {
+    /* ignore */
+  }
+});
 
 describe("<Sidebar>", () => {
   it("renders grouped sessions with the right state dots", async () => {
@@ -163,6 +203,107 @@ describe("<Sidebar>", () => {
     await waitFor(() => expect(queryByText("inwork")).toBeNull());
     expect(store.collapse.isCollapsed("work")).toBe(true);
     store.dispose();
+  });
+
+  it("drops a card where the indicator promised, past dead layout refs", async () => {
+    // The project holds two dead refs before the live cards, so the rendered
+    // index and the layout index disagree by two.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("a"), sess("b"), sess("c")];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["d1", "d2", "a", "b", "c"] }],
+    };
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(3));
+
+    const cards = [...container.querySelectorAll(".tl-card")];
+    stubRect(cards[1]!, 0, 20);
+    fireEvent.dragStart(cards[0]!); // drag "a"
+    fireEvent.dragOver(cards[1]!, { clientY: 15 }); // lower half of "b" → below
+    expect(cards[1]!.classList.contains("tl-drop-below")).toBe(true);
+    fireEvent.drop(cards[1]!);
+
+    await waitFor(() => expect(api.puts.length).toBe(1));
+    expect(api.puts[0]!.projects[0]!.sessions).toEqual(["d1", "d2", "b", "a", "c"]);
+    expect([...container.querySelectorAll(".tl-card-name")].map((n) => n.textContent)).toEqual([
+      "b",
+      "a",
+      "c",
+    ]);
+    store.dispose();
+  });
+
+  it("confirms before killing from the ⋯ menu, and honours a dismissal", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("doomed")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["doomed"] };
+    const asked: string[] = [];
+    const { container, getByLabelText, getByText, store } = mount(api, {
+      confirm: (m) => {
+        asked.push(m);
+        return false; // user cancels
+      },
+    });
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    fireEvent.click(getByLabelText("Session actions"));
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    fireEvent.click(getByText("Kill"));
+
+    await waitFor(() => expect(asked).toHaveLength(1));
+    expect(asked[0]).toBe('Kill session "doomed"?');
+    expect(api.kills).toEqual([]); // dismissed → the session lives
+    expect(container.querySelector(".tl-card")).not.toBeNull();
+    store.dispose();
+  });
+
+  it("kills from the ⋯ menu once the confirm is accepted", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("doomed")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["doomed"] };
+    const { container, getByLabelText, getByText, store } = mount(api, { confirm: () => true });
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    fireEvent.click(getByLabelText("Session actions"));
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    fireEvent.click(getByText("Kill"));
+    await waitFor(() => expect(api.kills).toEqual(["doomed"]));
+    store.dispose();
+  });
+
+  it("binds the create-row command dropdown to the roamed pref", async () => {
+    const api = new FakeApi();
+    const { getByLabelText, store, prefs } = mount(api);
+    await store.refresh();
+
+    const select = getByLabelText("Command for new session") as HTMLSelectElement;
+    expect(select.value).toBe("claude");
+    fireEvent.change(select, { target: { value: "shell" } });
+    expect(prefs.prefs().session.newCommand).toBe("shell");
+    store.dispose();
+  });
+
+  it("reflects the roamed pref in the dropdown, showing 'default' as claude", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "codex" } }));
+    const api = new FakeApi();
+    const first = mount(api);
+    await first.store.refresh();
+    expect((first.getByLabelText("Command for new session") as HTMLSelectElement).value).toBe("codex");
+    first.store.dispose();
+    first.unmount();
+
+    // 'default' is a valid backing value for launcher accounts: show claude
+    // without overwriting the pref.
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "default" } }));
+    const second = mount(api);
+    await second.store.refresh();
+    expect((second.getByLabelText("Command for new session") as HTMLSelectElement).value).toBe("claude");
+    expect(second.prefs.prefs().session.newCommand).toBe("default");
+    second.store.dispose();
   });
 
   it("lists foreign sessions under Shared with me", async () => {

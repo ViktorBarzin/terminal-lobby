@@ -238,3 +238,191 @@ describe("preview store — show + directory browse", () => {
     dispose();
   });
 });
+
+// file-api contains every path to the user's home; anything above it is a 400.
+// The Up button used to climb past that root, stranding the pane on /home, then
+// /, then the relative "." — each an empty list plus an error, with no entry to
+// click back into. The floor is learned from the server's own refusal.
+describe("preview store — browseUp stops at the containment root", () => {
+  /** A lister that mimics file-api: everything under `home` lists, the rest 400s. */
+  function containedLister(home: string, calls: string[] = []) {
+    return async (dir: string): Promise<FileEntry[]> => {
+      calls.push(dir);
+      if (dir === home || dir.startsWith(`${home}/`)) {
+        return [{ name: "f.ts", path: `${dir}/f.ts`, size: 1, mtime: 0, isDir: false }];
+      }
+      throw new FileApiError(400, "Can't list this folder.");
+    };
+  }
+
+  it("an Up walk stops at the root instead of stranding on /home, / and '.'", async () => {
+    const calls: string[] = [];
+    const [s, dispose] = withStore({
+      listDir: containedLister("/home/wizard", calls),
+    });
+    await s.browse("/home/wizard/.qa-verify-scratch");
+    expect(s.browseDir()).toBe("/home/wizard/.qa-verify-scratch");
+
+    await s.browseUp(); // -> /home/wizard, the containment root
+    expect(s.browseDir()).toBe("/home/wizard");
+    expect(s.browseStatus()).toBe("loaded");
+
+    // Every further click must leave the pane exactly where it is.
+    for (let i = 0; i < 3; i++) {
+      await s.browseUp();
+      expect(s.browseDir()).toBe("/home/wizard");
+      expect(s.browseStatus()).toBe("loaded"); // never an error pane
+      expect(s.browseEntries().length).toBeGreaterThan(0); // never an empty list
+    }
+    // Nothing reports the containment root to the client, so it is learned:
+    // the parent above the root is probed ONCE and never again, and the walk
+    // never reaches / or the relative "." beyond it.
+    expect(calls.filter((c) => c === "/home")).toHaveLength(1);
+    expect(calls).not.toContain("/");
+    expect(calls).not.toContain(".");
+    dispose();
+  });
+
+  it("canBrowseUp goes false once the root is known, and the button stays live below it", async () => {
+    const [s, dispose] = withStore({ listDir: containedLister("/home/wizard") });
+    await s.browse("/home/wizard/deep/dir");
+    expect(s.canBrowseUp()).toBe(true);
+    await s.browseUp();
+    expect(s.canBrowseUp()).toBe(true); // /home/wizard/deep
+    await s.browseUp();
+    expect(s.browseDir()).toBe("/home/wizard");
+    await s.browseUp(); // probes /home once, learns the floor
+    expect(s.canBrowseUp()).toBe(false);
+    dispose();
+  });
+
+  it("a refused climb restores the pane it interrupted, error and all", async () => {
+    const [s, dispose] = withStore({
+      listDir: async (dir: string) => {
+        if (dir === "/home/wizard/gone") throw new FileApiError(404, "Folder not found.");
+        throw new FileApiError(400, "Can't list this folder.");
+      },
+    });
+    await s.browse("/home/wizard/gone");
+    expect(s.browseStatus()).toBe("error");
+    await s.browseUp(); // parent refused — must not flip the pane to "Empty directory"
+    expect(s.browseStatus()).toBe("error");
+    expect(s.browseError()).toBe("Folder not found.");
+    dispose();
+  });
+
+  it("a transient (non-400) failure is surfaced, not mistaken for the root", async () => {
+    let first = true;
+    const [s, dispose] = withStore({
+      listDir: async (dir: string) => {
+        if (first && dir === "/home/wizard/x") {
+          first = false;
+          return [{ name: "f", path: "/home/wizard/x/f", size: 0, mtime: 0, isDir: false }];
+        }
+        throw new FileApiError(500, "Couldn't load folder (HTTP 500).");
+      },
+    });
+    await s.browse("/home/wizard/x");
+    await s.browseUp();
+    expect(s.browseStatus()).toBe("error");
+    expect(s.browseError()).toMatch(/HTTP 500/);
+    expect(s.canBrowseUp()).toBe(true); // a blip must not disable Up forever
+    dispose();
+  });
+});
+
+// Browse used to be reachable only after a file was already loaded, so a plain
+// shell session (no transcript, no path) had no way into the picker at all.
+describe("preview store — browseStart, the cold-open entry", () => {
+  it("starts at the loaded file's directory when there is one", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({
+      listDir,
+      loadFile: async () => ({ kind: "code", text: "x" }),
+    });
+    await s.open("/home/u/proj/main.ts");
+    await s.browseStart();
+    expect(listDir).toHaveBeenCalledWith("/home/u/proj");
+    dispose();
+  });
+
+  it("falls back to the most recent transcript file's directory", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const events = (): Event[] => [
+      ev({ id: 1, kind: "tool_use", tool: "Read", body: '{"file_path":"/home/u/a/one.ts"}' }),
+    ];
+    const [s, dispose] = withStore({ listDir, events });
+    s.show();
+    await s.browseStart();
+    expect(listDir).toHaveBeenCalledWith("/home/u/a");
+    dispose();
+  });
+
+  it("with no path and no transcript, falls back to the user's home", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({
+      listDir,
+      homeDir: async () => "/home/wizard",
+    });
+    s.show();
+    await s.browseStart();
+    expect(s.browsing()).toBe(true);
+    expect(listDir).toHaveBeenCalledWith("/home/wizard");
+    expect(s.browseDir()).toBe("/home/wizard");
+    // Home IS the containment root, so Up is inert straight away.
+    expect(s.canBrowseUp()).toBe(false);
+    dispose();
+  });
+
+  it("opens the browse pane with an explanation when even home is unknown", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({ listDir, homeDir: async () => null });
+    s.show();
+    await s.browseStart();
+    expect(s.browsing()).toBe(true);
+    expect(s.browseStatus()).toBe("error");
+    expect(s.browseError()).toBeTruthy();
+    expect(listDir).not.toHaveBeenCalled();
+    dispose();
+  });
+});
+
+// The chip is set once at load and was never recomputed, so after saving a file
+// that grew 59 -> 82 bytes the header still advertised the old size.
+describe("preview store — the size chip follows a save", () => {
+  it("save() recomputes size in bytes from the saved draft", async () => {
+    const original = "# héllo wörld — ünïcødé ✅\n\nnaïve café résumé\n"; // 59 bytes
+    const [s, dispose] = withStore({
+      loadFile: async () => ({ kind: "markdown", text: original, size: 59 }),
+      writeFile: async () => {},
+      notify: () => {},
+    });
+    await s.open("/home/u/utf8.md");
+    expect(s.size()).toBe(59);
+
+    const grown = `${original}añadido — twenty-three more bytes\n`;
+    s.beginEdit();
+    s.setDraft(grown);
+    await s.save();
+    expect(s.text()).toBe(grown);
+    expect(s.size()).toBe(new TextEncoder().encode(grown).length);
+    expect(s.size()).toBeGreaterThan(59);
+    dispose();
+  });
+
+  it("a FAILED save leaves the size untouched", async () => {
+    const [s, dispose] = withStore({
+      loadFile: async () => ({ kind: "code", text: "abc", size: 3 }),
+      writeFile: async () => {
+        throw new FileApiError(413, "File is too large to save (max 10MB).");
+      },
+      notify: () => {},
+    });
+    await s.open("/home/u/a.ts");
+    s.beginEdit();
+    s.setDraft("abcdefghij");
+    await s.save();
+    expect(s.size()).toBe(3);
+    dispose();
+  });
+});

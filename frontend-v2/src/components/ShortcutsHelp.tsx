@@ -62,7 +62,7 @@ function buildGroups(altLabel: string, isMac: boolean): HelpGroup[] {
       [
         [[`${ALT}+Shift+S`], "Toggle sidebar"],
         [["Ctrl+Shift+K"], "Command palette"],
-        [[`${MOD}+J`], "Toggle text / terminal view"],
+        [[`${MOD}+J`], "Toggle text / terminal view (works in a session)"],
         [["/", "?", `${ALT}+/`], `Show this help (${ALT}+/ works in a session)`],
         [["Esc"], "Close menus"],
       ],
