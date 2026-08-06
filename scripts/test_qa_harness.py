@@ -586,3 +586,30 @@ def test_a_fresh_agent_can_actually_use_notifications(driver):
             agent.findings.clear()  # nothing here is an app finding
     finally:
         srv.shutdown()
+
+
+# --- valid JSON that is not an object -------------------------------------
+# `json.loads("[]").get(...)` raises AttributeError, not ValueError, so a body
+# like `[]` or `"x"` or `null` escaped the except clause and surfaced as a 500
+# from the proxy — which an agent would reasonably mis-file as "save returns
+# 500" against file-api. A guard must refuse it, not crash on it.
+
+@pytest.mark.parametrize("payload", [b"[]", b'"x"', b"null", b"3", b"true"])
+def test_rename_with_non_object_json_is_refused_not_crashed(guard, payload):
+    reason = guard.check_tmux_api("POST", "sessions/qa-old/rename", payload)
+    assert reason, f"{payload!r} must be refused"
+
+
+@pytest.mark.parametrize("payload", [b"[]", b'"x"', b"null"])
+def test_project_create_with_non_object_json_is_refused(guard, payload):
+    assert guard.check_tmux_api("POST", "projects", payload) is not None
+
+
+@pytest.mark.parametrize("payload", [b"[]", b'"x"', b"null"])
+def test_write_with_non_object_json_is_refused(guard, payload):
+    assert guard.check_files("POST", "/files/write", payload) is not None
+
+
+def test_record_project_survives_non_object_response(guard):
+    guard.record_project(b"{}", b"[]")
+    assert guard.own_projects == set()
