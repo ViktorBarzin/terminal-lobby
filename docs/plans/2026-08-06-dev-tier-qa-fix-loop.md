@@ -85,6 +85,21 @@ panel is a live UI in front of a removed backend — worth reporting as that, bu
 restoring the route or the handler re-introduces the flood and is Viktor's call,
 scoped to the dev host if it happens at all. This plan does not authorize it.
 
+**RESOLVED — Viktor, 2026-08-06: make the UI honest, do not restore the
+backend.** A lane should stop the panel pretending it can do something it
+cannot: either hide it when no permission source exists, or state plainly that
+web-mediated approvals are unavailable and approvals happen in the terminal.
+Whichever reads better in the UI — that is the implementer's call.
+
+Explicitly NOT authorized: re-adding `permission.go` / `hooks.go`, re-adding the
+`/permission/` ingress rule, or wiring any `PreToolUse` hook. Those bring the
+box-wide prompt flood back for every user including bob.
+
+Also not chosen: deleting `PermissionPanel` outright. It stays in the tree, so a
+future scoped backend does not have to rebuild it — it just must not present
+itself as functional today. The harness's `--permission-shim` exists only to
+exercise the component in isolation and is not evidence the feature works.
+
 ### C — two services have no deploy path
 
 `session-events` and `file-api` are shipped by neither script. Both binaries were

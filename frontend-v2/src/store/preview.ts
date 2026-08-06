@@ -70,6 +70,8 @@ export interface PreviewStore {
   browseError: Accessor<string | null>;
   /** whether ⬆ Up can still climb — false at the containment root and at "/". */
   canBrowseUp: Accessor<boolean>;
+  /** whether listings ask file-api for dotfiles (&all=1). Off by default. */
+  showHidden: Accessor<boolean>;
 
   // ---- quick-edit mode (roadmap pillar #6) --------------------------------
   /** whether the loaded kind can be edited (code/markdown/html, not img/binary). */
@@ -115,6 +117,9 @@ export interface PreviewStore {
   browseStart: () => Promise<void>;
   /** go to the parent of the current browse dir; inert at the containment root. */
   browseUp: () => Promise<void>;
+  /** flip the dotfile filter, re-listing the open directory so the pane follows
+   *  the switch instead of waiting for the next navigation. */
+  toggleHidden: () => Promise<void>;
   /** leave browse mode, back to the loaded file / idle. */
   closeBrowse: () => void;
 }
@@ -189,6 +194,14 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
   // learned: seeded from the home lookup when we use it, otherwise recorded the
   // first time a parent listing comes back 400.
   const [browseFloor, setBrowseFloor] = createSignal<string | null>(null);
+  // Dotfiles are off by default (file-api hides them unless asked), but the
+  // ask has to be POSSIBLE: .gitignore / .env / .bashrc are files file-api
+  // deliberately lets you edit, and the pane could not name one.
+  const [showHidden, setShowHidden] = createSignal(false);
+  // The last open() failed because the path is a DIRECTORY. The error message
+  // sends the user to Browse, so Browse has to land inside that path rather
+  // than in its parent — see browseStart(). Cleared on every open().
+  const [pathIsDir, setPathIsDir] = createSignal(false);
 
   // ---- quick-edit state (roadmap pillar #6) -------------------------------
   const [editState, setEditState] = createSignal<EditState>(initialEditState);
@@ -240,6 +253,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     setOpen(true);
     setBrowsing(false);
     setEditState(initialEditState);
+    setPathIsDir(false); // a fresh open is a file until the server says otherwise
     setPath(target);
     setName(basename(target));
     setKind(null);
@@ -272,6 +286,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
             ? err.message
             : String(err),
       );
+      setPathIsDir(err instanceof FileApiError && err.isDirectory);
       setStatus("error");
     }
   }
@@ -356,7 +371,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     setBrowseError(null);
     setBrowseStatus("loading");
     try {
-      const entries = await listDir(dir);
+      const entries = await listDir(dir, showHidden());
       if (token !== browseToken) return;
       setBrowseEntries(entries);
       setBrowseStatus("loaded");
@@ -369,14 +384,19 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
 
   /**
    * The Browse button. Starts from the best directory we already know — the
-   * loaded file's, else wherever the pane was last, else the newest file the
-   * transcript mentions — and only then asks where home is. That last hop is
-   * what makes Browse usable on a plain shell session, which has no loaded file
-   * and no transcript to mine.
+   * path box's own value when the server already told us it is a directory,
+   * else the loaded file's directory, else wherever the pane was last, else the
+   * newest file the transcript mentions — and only then asks where home is.
+   * That last hop is what makes Browse usable on a plain shell session, which
+   * has no loaded file and no transcript to mine.
+   *
+   * The directory case is not a nicety: the read error for a folder says "press
+   * Browse to list what's inside it", and dirname() would have listed the
+   * folder's PARENT — the sentence would be wrong by one click.
    */
   async function browseStart(): Promise<void> {
     const p = path();
-    if (p) return browse(dirname(p));
+    if (p) return browse(pathIsDir() ? p : dirname(p));
     const last = browseDir();
     if (last) return browse(last);
     const recent = recentFiles()[0];
@@ -416,7 +436,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     const restore = browseStatus(); // what the pane shows if the climb is refused
     setBrowseStatus("loading");
     try {
-      const entries = await listDir(parent);
+      const entries = await listDir(parent, showHidden());
       if (token !== browseToken) return;
       setBrowseDir(parent);
       setBrowseEntries(entries);
@@ -434,6 +454,17 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
       setBrowseError(err instanceof Error ? err.message : String(err));
       setBrowseStatus("error");
     }
+  }
+
+  /**
+   * Flip the dotfile filter. Re-lists the directory that is on screen, because
+   * a filter that only takes effect on the NEXT navigation reads as a dead
+   * control. With the pane closed it just records the preference.
+   */
+  async function toggleHidden(): Promise<void> {
+    setShowHidden((v) => !v);
+    const d = browseDir();
+    if (browsing() && d) await browse(d);
   }
 
   function closeBrowse(): void {
@@ -460,6 +491,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     browseStatus,
     browseError,
     canBrowseUp,
+    showHidden,
     canEdit,
     editing,
     dirty,
@@ -480,6 +512,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     browse,
     browseStart,
     browseUp,
+    toggleHidden,
     closeBrowse,
   };
 }
