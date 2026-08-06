@@ -177,6 +177,58 @@ export function moveSession(
   };
 }
 
+/** Where a card was dropped: the card it landed on, and which side of it. */
+export interface DropAnchor {
+  /** name of the card the drop landed on. */
+  name: string;
+  side: "above" | "below";
+}
+
+/**
+ * Fold the RENDERED Ungrouped order back into layout.ungrouped, appending the
+ * leftovers (live own sessions referenced by no group, which deriveSidebar
+ * sweeps in after layout.ungrouped) in the order they render.
+ *
+ * Render-order preserving by construction: the sweep puts the leftovers after
+ * every resolved entry, so appending them keeps the same live sequence. This is
+ * how a leftover acquires the raw position it has never had — needed before an
+ * anchored insert, because an anchor with no raw index cannot be resolved.
+ */
+export function materializeUngrouped(layout: Layout, renderedUngrouped: string[]): Layout {
+  const have = new Set(layout.ungrouped);
+  const missing = renderedUngrouped.filter((n) => !have.has(n));
+  if (missing.length === 0) return layout;
+  return { ...layout, ungrouped: [...layout.ungrouped, ...missing] };
+}
+
+/**
+ * Move `name` into `targetGroup` ("" = ungrouped) immediately above/below the
+ * card it was dropped on.
+ *
+ * The rendered order and the raw layout arrays deliberately diverge (see the
+ * header): dead refs are filtered OUT of the render and leftovers swept IN, so a
+ * rendered index is not a layout index and splicing by one silently corrupts the
+ * other. Resolving the anchor here, against the raw list the splice targets,
+ * is what keeps a drop landing where the indicator promised. An anchor that is
+ * not in the target list appends.
+ */
+export function moveSessionToAnchor(
+  layout: Layout,
+  name: string,
+  targetGroup: string,
+  anchor: DropAnchor,
+): Layout {
+  const list =
+    targetGroup === ""
+      ? layout.ungrouped
+      : (layout.projects.find((p) => p.name === targetGroup)?.sessions ?? []);
+  // moveSession strips `name` before splicing, so the anchor's index has to be
+  // read from the list in that same post-strip shape.
+  const at = list.filter((s) => s !== name).indexOf(anchor.name);
+  if (at < 0) return moveSession(layout, name, targetGroup);
+  return moveSession(layout, name, targetGroup, anchor.side === "below" ? at + 1 : at);
+}
+
 /** Reorder the group sequence by moving the token at fromSeq to toSeq. */
 export function reorderGroups(layout: Layout, fromSeq: number, toSeq: number): Layout {
   const tokens = groupSeqTokens(layout);

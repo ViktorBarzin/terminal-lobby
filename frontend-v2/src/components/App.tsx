@@ -244,7 +244,7 @@ export const App: Component = () => {
   return (
     <div class="tl-shell" classList={{ "tl-shell-collapsed": collapsed() }}>
       <aside class="tl-shell-sidebar">
-        <Sidebar store={store} altActive={engine.altActive} />
+        <Sidebar store={store} prefs={prefs} altActive={engine.altActive} />
       </aside>
 
       <div class="tl-shell-content">
