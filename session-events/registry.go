@@ -17,7 +17,18 @@ type userState struct {
 	root   string // /home/<osUser>/.claude/projects
 	sm     *sessionMap
 	mu     sync.Mutex
-	srcs   map[string]*fileSource // key: tmux session name
+	srcs   map[string]*liveSource // key: tmux session name
+}
+
+// liveSource is a running fileSource plus the handle that stops its tail. A
+// source is evicted when the tmux name it is keyed by starts pointing at a
+// different transcript, and eviction has to stop the goroutine or every reused
+// session name leaks one tailer for the life of the process. done is closed
+// once that goroutine has returned, which is what makes the stop observable.
+type liveSource struct {
+	fs   *fileSource
+	stop context.CancelFunc
+	done <-chan struct{}
 }
 
 // registry lazily manages per-user state and per-session sources.
@@ -39,7 +50,7 @@ func (rg *registry) user(osUser string) *userState {
 	us, ok := rg.users[osUser]
 	if !ok {
 		root := filepath.Join(rg.homeBase, osUser, ".claude", "projects")
-		us = &userState{osUser: osUser, root: root, sm: newSessionMap(root), srcs: map[string]*fileSource{}}
+		us = &userState{osUser: osUser, root: root, sm: newSessionMap(root), srcs: map[string]*liveSource{}}
 		rg.users[osUser] = us
 	}
 	return us
@@ -47,21 +58,44 @@ func (rg *registry) user(osUser string) *userState {
 
 // source returns the live fileSource for a registered session, lazily creating +
 // starting its tail. ok=false if the session was never registered (SessionStart).
+//
+// The cache is keyed by tmux session name, but a name outlives the Claude
+// session that claimed it: kill a session and start another in the same window
+// and SessionStart re-registers the name against a new transcript. A
+// fileSource's path is fixed at construction, so the cached entry is only still
+// valid while it points at the transcript the sessionMap currently holds —
+// otherwise it is a tailer on a dead session's file and has to be replaced.
 func (rg *registry) source(osUser, session string) (*fileSource, bool) {
 	us := rg.user(osUser)
 	us.mu.Lock()
 	defer us.mu.Unlock()
-	if fs, ok := us.srcs[session]; ok {
-		return fs, true
-	}
 	info, ok := us.sm.get(session)
 	if !ok {
 		return nil, false
 	}
-	fs := newFileSource(session, info.Transcript, rg.poll)
-	us.srcs[session] = fs
-	go fs.Run(rg.ctx)
-	return fs, true
+	if ls, ok := us.srcs[session]; ok {
+		if ls.fs.path == info.Transcript {
+			return ls.fs, true
+		}
+		ls.stop()
+		delete(us.srcs, session)
+	}
+	ls := rg.start(session, info.Transcript)
+	us.srcs[session] = ls
+	return ls.fs, true
+}
+
+// start builds a fileSource and runs its tail under a context of its own, so
+// this one source can be stopped without taking down the rest of the process.
+func (rg *registry) start(session, transcript string) *liveSource {
+	ctx, stop := context.WithCancel(rg.ctx)
+	fs := newFileSource(session, transcript, rg.poll)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fs.Run(ctx)
+	}()
+	return &liveSource{fs: fs, stop: stop, done: done}
 }
 
 // handleSessionStart records the (user, tmux session) → transcript mapping from
