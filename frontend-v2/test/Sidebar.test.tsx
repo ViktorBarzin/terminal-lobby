@@ -68,6 +68,21 @@ function mount(api: LobbyApi, over: { confirm?: (message: string) => boolean } =
   return { ...utils, store: store!, prefs: prefs! };
 }
 
+/** jsdom has no PointerEvent; a bubbling MouseEvent stands in for the dismiss
+ *  listener, which only reads `target`. */
+function firePointerDown(el: Node): void {
+  el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+}
+
+/** Three polls' worth of fresh, genuinely-moved payload. */
+async function poll(api: FakeApi, store: LobbyStore, times = 3): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    api.sessionsVal = api.sessionsVal.map((s) => ({ ...s, lastActivity: s.lastActivity + 1 }));
+    api.layoutVal = structuredClone(api.layoutVal);
+    await store.refresh();
+  }
+}
+
 /** jsdom has no layout: give a card a real box so the drop edge is decidable. */
 function stubRect(el: Element, top: number, height = 20): void {
   (el as HTMLElement).getBoundingClientRect = () =>
@@ -313,6 +328,185 @@ describe("<Sidebar>", () => {
     await store.refresh();
     await waitFor(() => expect(getByText("Shared with me")).toBeInTheDocument());
     expect(getByText("theirs")).toBeInTheDocument();
+    store.dispose();
+  });
+
+  it("keeps an open card ⋯ menu, and its DOM node, across three polls", async () => {
+    // hold() exists for exactly this ("rename/drag/menu"), but the menu was
+    // the one case that never took it — so the poll rebuilt the subtree and
+    // the menu vanished within 5s of opening.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("alpha"), sess("beta")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["alpha", "beta"] };
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(2));
+
+    const card = container.querySelector(".tl-card")!;
+    fireEvent.click(card.querySelector(".tl-card-actions")!);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+
+    await poll(api, store);
+
+    expect(container.querySelector(".tl-card")).toBe(card); // same node, not a clone
+    expect(container.querySelector(".tl-menu")).not.toBeNull();
+    store.dispose();
+  });
+
+  it("keeps an open group ⋯ menu across three polls", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("inwork")];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["inwork"] }] };
+    const { container, getByLabelText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    const group = container.querySelector(".tl-group")!;
+    fireEvent.click(getByLabelText("Group actions"));
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+
+    await poll(api, store);
+
+    expect(container.querySelector(".tl-group")).toBe(group);
+    expect(container.querySelector(".tl-menu")).not.toBeNull();
+    store.dispose();
+  });
+
+  it("keeps a half-typed in-project session name across three polls", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("inwork")];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["inwork"] }] };
+    const { container, getByLabelText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    fireEvent.click(getByLabelText("New session in project"));
+    await waitFor(() => expect(container.querySelector(".tl-add-input")).not.toBeNull());
+    const input = container.querySelector(".tl-add-input") as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "qa-halftyped" } });
+
+    await poll(api, store);
+
+    expect(container.querySelector(".tl-add-input")).toBe(input);
+    expect(input.value).toBe("qa-halftyped");
+    store.dispose();
+  });
+
+  it("releases the poll hold when the menu closes", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("alpha")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["alpha"] };
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    const actions = container.querySelector(".tl-card-actions")!;
+    fireEvent.click(actions);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    fireEvent.click(actions); // toggle shut
+    await waitFor(() => expect(container.querySelector(".tl-menu")).toBeNull());
+
+    api.sessionsVal = [sess("alpha"), sess("beta")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["alpha", "beta"] };
+    await store.refresh();
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(2));
+    store.dispose();
+  });
+
+  it("dismisses the card menu on Escape and on an outside pointerdown", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("alpha")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["alpha"] };
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+    const actions = container.querySelector(".tl-card-actions")!;
+
+    fireEvent.click(actions);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(container.querySelector(".tl-menu")).toBeNull());
+
+    fireEvent.click(actions);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    firePointerDown(document.body);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).toBeNull());
+    store.dispose();
+  });
+
+  it("dismisses the group menu on Escape and on an outside pointerdown", async () => {
+    const api = new FakeApi();
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }] };
+    const { container, getByLabelText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-group")).not.toBeNull());
+
+    fireEvent.click(getByLabelText("Group actions"));
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(container.querySelector(".tl-menu")).toBeNull());
+
+    fireEvent.click(getByLabelText("Group actions"));
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    firePointerDown(document.body);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).toBeNull());
+    store.dispose();
+  });
+
+  it("a pointerdown inside the open menu leaves it open", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("alpha")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["alpha"] };
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    fireEvent.click(container.querySelector(".tl-card-actions")!);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    firePointerDown(container.querySelector(".tl-menu-item")!);
+    expect(container.querySelector(".tl-menu")).not.toBeNull();
+    store.dispose();
+  });
+
+  it("a collapsed group header keeps its member count beside the state chips", async () => {
+    // Chips only cover members that HAVE a Claude state; dropping the total
+    // hides everything else in the group.
+    const api = new FakeApi();
+    api.sessionsVal = [
+      sess("r", { state: "running" }),
+      sess("d", { state: "done" }),
+      sess("plain"),
+    ];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["r", "d", "plain"] }],
+    };
+    const { container, getByText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(3));
+    expect(container.querySelector(".tl-group-count")!.textContent).toBe("3");
+
+    fireEvent.click(getByText("work"));
+    await waitFor(() => expect(container.querySelector(".tl-card")).toBeNull());
+
+    expect(container.querySelector(".tl-group-count")!.textContent).toBe("3");
+    expect(container.querySelectorAll(".tl-chip").length).toBe(2);
+    store.dispose();
+  });
+
+  it("marks the Shared-with-me section collapsed, so its chevron rotates", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("theirs", { owner: "bob", access: "rw" })];
+    const { getByText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(getByText("Shared with me")).toBeInTheDocument());
+
+    const group = getByText("Shared with me").closest(".tl-group")!;
+    expect(group.classList.contains("tl-group-collapsed")).toBe(false);
+
+    fireEvent.click(getByText("Shared with me"));
+    await waitFor(() => expect(group.classList.contains("tl-group-collapsed")).toBe(true));
+    expect(group.querySelector(".tl-card")).toBeNull();
     store.dispose();
   });
 });
