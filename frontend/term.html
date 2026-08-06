@@ -10,6 +10,8 @@
          executes and no service worker is registered. Deltas vs index.html: the
          tl-* postMessage bridge is extended for the SPA — {type:'tl-input',
          bytes} -> mirrorLineReset()+sendInput(), {type:'tl-refit'} -> refit(),
+         {type:'tl-view',hidden} -> setViewHidden() (the SPA CSS-hides this
+         frame rather than unmounting it, so document.hidden cannot see it),
          and tl-command 'terminal.copy'. Keep the terminal branch in sync with
          index.html until the SPA fully replaces the vanilla lobby, after which
          this becomes the canonical terminal page. Do NOT edit index.html to
@@ -3362,16 +3364,29 @@
                     return /mac/i.test(p);
                 } catch (e) { return false; }
             })();
+            // Are we inside somebody's terminal iframe? The ONLY page that
+            // frames /term.html is the frontend-v2 SPA — the vanilla lobby
+            // (this file's own no-?arg= mode, and index.html) frames /?arg=,
+            // i.e. index.html. So framed ⟹ the v2 SPA is our parent.
+            const FRAMED_BY_LOBBY = (() => {
+                try { return window.parent !== window; } catch (e) { return false; }
+            })();
             // ALWAYS-ON bindings: fire regardless of the opt-in `enabled`
             // flag AND for every user (they bypass the layer gate). Kept
             // separate from KB_DEFAULT_BINDINGS, which stay opt-in and
-            // user-overridable. Ctrl+J / Cmd+J → open a new plain shell.
+            // user-overridable.
+            // Ctrl+J / Cmd+J: `session.new.shell` (open a new plain shell in
+            // the dock) in our own lobby mode, but `view.toggle` when the v2
+            // SPA frames us — it has no dock, and its dispatcher had no
+            // `session.new.shell` branch, so the chord was swallowed here and
+            // then dropped there: pressed inside the terminal it did nothing
+            // at all, not even emit the LF byte it is on every other terminal.
             // `lobbyOpen` is true in the lobby top window AND in a framed
             // terminal (isFramed); false in a bare deep-linked ?arg= tab, where
             // there is no dock — so there Ctrl+J falls through to the pty as a
             // normal newline instead of being swallowed.
             const KB_ALWAYS_BINDINGS = [
-                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: 'lobbyOpen && !galleryOpen' },
+                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: FRAMED_BY_LOBBY ? 'view.toggle' : 'session.new.shell', when: 'lobbyOpen && !galleryOpen' },
                 // ⌥⇧⌫ kills the attached session from ANYWHERE the lobby owns keys —
                 // including while typing in a framed terminal (forwarded like the
                 // new-shell chord above), so you don't have to click back to the
@@ -10135,14 +10150,13 @@
         // is signalled upward over the existing postMessage channel and the
         // lobby decides what to badge. Two signals, neither parses output:
         //   bell   — xterm's parser saw BEL (term.onBell);
-        //   output — the fact THAT pty bytes arrived while the tab was
-        //            hidden (latched once per hidden period, re-armed on
-        //            return to visibility, so the hot output path pays one
-        //            boolean check per chunk).
+        //   output — the fact THAT pty bytes arrived while nobody was looking
+        //            (latched once per hidden period, re-armed on return to
+        //            visibility, so the hot output path pays one boolean
+        //            check per chunk).
         // A direct top-level /?arg= tab has no lobby to tell: fall back to
         // prefixing its own title, cleared on return to visibility.
         const isFramed = window.parent !== window;
-        let hiddenOutputSignaled = false;
         function signalAttention(kind) {
             if (isFramed) {
                 try {
@@ -10154,10 +10168,38 @@
                 document.title = '● ' + document.title;
             }
         }
+        // >>> tl-attention-kernel
+        // "Nobody is looking" is bigger than `document.hidden`. That flag is
+        // the TAB's visibility, but this page also spends its life CSS-hidden
+        // inside the frontend-v2 lobby whenever the SPA shows its text view —
+        // the tab is wide open, the terminal is not on screen, and output
+        // arriving THEN is exactly what should dot the [Terminal] segment.
+        // Gating on document.hidden alone meant that signal was never sent and
+        // the segment's dot could never light. The lobby announces the view
+        // state over `tl-view`; either kind of hidden arms the latch, and
+        // becoming visible again (tab OR view) re-arms it for the next period.
+        let hiddenOutputSignaled = false;
+        let viewHidden = false;
+        function attentionHidden() { return !!document.hidden || viewHidden; }
+        function rearmHiddenOutput() {
+            if (!attentionHidden()) hiddenOutputSignaled = false;
+        }
+        function setViewHidden(v) {
+            viewHidden = !!v;
+            rearmHiddenOutput();
+        }
+        // Called on every output frame: one signal per hidden period, content
+        // is never inspected.
+        function noteHiddenOutput() {
+            if (!attentionHidden() || hiddenOutputSignaled) return;
+            hiddenOutputSignaled = true;
+            signalAttention('output');
+        }
+        // <<< tl-attention-kernel
         term.onBell(() => signalAttention('bell'));
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) return;
-            hiddenOutputSignaled = false;
+            rearmHiddenOutput();
             if (!isFramed && document.title.startsWith('● ')) {
                 document.title = document.title.slice(2);
             }
@@ -13345,6 +13387,13 @@
                 // change. Belt-and-braces alongside this page's own
                 // visualViewport listeners. Parent-only, like tl-input.
                 if (e.source === window.parent) refit();
+            } else if (e.data.type === 'tl-view') {
+                // frontend-v2 view switch (TerminalView): both views stay
+                // mounted, so this iframe is merely CSS-hidden while the text
+                // view shows — invisible to document.hidden. Feed it to the
+                // attention kernel so output produced behind the text view
+                // still dots the [Terminal] segment. Parent-only, like tl-input.
+                if (e.source === window.parent) setViewHidden(!!e.data.hidden);
             }
         });
 
@@ -13884,12 +13933,10 @@
                                         setTimeout(maybeRevealTerminal, 120);
                                     }
                                     // Attention (Task 2.1): note THAT output
-                                    // arrived while hidden — once per hidden
-                                    // period; content is never inspected.
-                                    if (document.hidden && !hiddenOutputSignaled) {
-                                        hiddenOutputSignaled = true;
-                                        signalAttention('output');
-                                    }
+                                    // arrived while hidden — the TAB hidden, or
+                                    // the lobby showing its text view over us
+                                    // (tl-attention-kernel).
+                                    noteHiddenOutput();
                                     // Task 3.5: counted write (flow control)
                                     // unless the kill-switch says plain.
                                     if (flowOn) writeData(payload);
