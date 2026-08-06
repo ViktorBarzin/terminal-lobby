@@ -82,7 +82,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, withPublicAssets(http.DefaultServeMux)))
 }
 
-// --- Public PWA / webfont assets ---------------------------------------------
+// --- Static assets served by exact path --------------------------------------
 //
 // PWA install needs /manifest.webmanifest and the icons fetchable WITHOUT
 // credentials (Android WebAPK / iOS icon fetchers run server-side and carry
@@ -91,9 +91,25 @@ func main() {
 // this service with the path unstripped, so they are served unauthenticated
 // by design: fixed public files only (OFL fonts, manifest, icons), no user
 // data, no directory serving.
+//
+// AUTH LIVES AT THE INGRESS, NOT HERE. This table decides WHICH file a path
+// serves; Traefik decides WHO may ask. The PWA carve-out
+// (module.ingress_assets*, auth = "none") lists exactly ten paths — the
+// manifest, three icons, sw.js and five fonts — and every other route on
+// both hosts, including Path(`/term.html`), keeps
+// the authentik-forward-auth middleware. So a path in this table is not
+// thereby public: /term.html is routed here by BOTH hosts' ingresses and stays
+// gated, exactly as infra/stacks/terminal/{main,terminal-dev}.tf says. What
+// the table does grant is a direct unauthenticated hit on :7683 from the box
+// or the cluster network, which bypasses the ingress in the first place —
+// acceptable for term.html on the same grounds as the other entries: a fixed
+// file from the repo, byte-identical for every user, carrying no user data
+// (the page fetches everything it shows through the authed APIs at runtime).
 
-// defaultAssetDir is deploy.sh's install target: manifest + icons sit next
-// to index.html, the woff2 files under fonts/.
+// defaultAssetDir is the deploy scripts' shared install target: manifest +
+// icons sit next to index.html, the woff2 files under fonts/. deploy.sh puts
+// everything here except term.html, which deploy-v2.sh installs alongside them
+// (it is built from frontend-v2, not frontend).
 const defaultAssetDir = "/usr/local/share/ttyd"
 
 // publicAsset describes one servable file — every field fixed at compile time.
@@ -114,12 +130,22 @@ type publicAsset struct {
 // sw.js (the push service worker) is served no-cache: the browser re-fetches
 // the worker bytes on every update check, so a deploy must never be masked
 // by a cached copy.
+// /term.html gets the SAME no-cache treatment for the same reason, one level
+// up: it is the terminal-mode page the v2 SPA frames (config.TERMINAL_BASE),
+// it is redeployed by scripts/deploy-v2.sh, and it carries the zero-touch
+// self-update healer — a browser holding a cached copy would pin a stale
+// terminal that can never notice its own replacement. no-cache is revalidate,
+// not re-download: ServeContent answers a conditional request with 304 while
+// the file is untouched (deploy-v2.sh skips byte-identical installs precisely
+// to keep that mtime stable), so the ~800 KB body only crosses the wire when
+// it actually changed.
 var publicAssets = map[string]publicAsset{
 	"/manifest.webmanifest":  {"manifest.webmanifest", "application/manifest+json", "public,max-age=3600"},
 	"/icon-192.png":          {"icon-192.png", "image/png", "public,max-age=3600"},
 	"/icon-512.png":          {"icon-512.png", "image/png", "public,max-age=3600"},
 	"/icon-512-maskable.png": {"icon-512-maskable.png", "image/png", "public,max-age=3600"},
 	"/sw.js":                 {"sw.js", "application/javascript", "no-cache"},
+	"/term.html":             {"term.html", "text/html; charset=utf-8", "no-cache"},
 
 	"/fonts/JetBrainsMono-Regular.woff2":     {"fonts/JetBrainsMono-Regular.woff2", "font/woff2", "public,max-age=604800"},
 	"/fonts/JetBrainsMono-Bold.woff2":        {"fonts/JetBrainsMono-Bold.woff2", "font/woff2", "public,max-age=604800"},

@@ -1,0 +1,19 @@
+[Unit]
+Description=file-api (terminal-lobby v2 file preview/editor backend)
+After=network.target
+
+[Service]
+# Binds :7686 on all interfaces so the K8s ingress can reach the authed
+# surface (/files/list, /files/read, /files/write). Auth is X-Authentik-Username
+# → OS user via /etc/ttyd-user-map; every path is confined to the caller's
+# /home/<osUser> by the four-layer defense in paths.go.
+ExecStart=/usr/local/bin/file-api
+User=wizard
+Restart=always
+# Runs as wizard, sibling to tmux-api (:7684) / clipboard-upload (:7683) /
+# session-events (:7685). Cross-user file ops (serving another user's home)
+# require a sudo-as-mapped-user wiring not yet in files.go — until then this
+# serves the service user's own home. See the v2 integration-debt ledger.
+
+[Install]
+WantedBy=multi-user.target
