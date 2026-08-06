@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
@@ -472,6 +473,83 @@ func TestUploadRejectsSVGWhichCouldNeverRender(t *testing.T) {
 	}
 	if names := storedNames(t, root, "qauser", "qa"); len(names) != 0 {
 		t.Fatalf("a rejected SVG still wrote to the store: %v", names)
+	}
+}
+
+// realAVIF is a genuine 24x24 AVIF (Pillow 12.2 `Image.new("RGB",(24,24)).save`),
+// base64'd here because there is no AVIF encoder in the standard library. Its
+// first bytes are the ISO-BMFF header the check below keys on:
+// 00 00 00 20 "ftyp" "avif" ... "avifmif1".
+const realAVIFBase64 = `AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADrbWV0YQAAAAAAAAAhaGRscgAAAAAA` +
+	`AAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAAAAAAAQAAAB5pbG9jAAAAAEQAAAEAAQAAAAEA` +
+	`AAETAAAAJwAAAChpaW5mAAAAAAABAAAAGmluZmUCAAAAAAEAAGF2MDFDb2xvcgAAAABqaXBycAAA` +
+	`AEtpcGNvAAAAFGlzcGUAAAAAAAAAGAAAABgAAAAQcGl4aQAAAAADCAgIAAAADGF2MUOBAAwAAAAA` +
+	`E2NvbHJuY2x4AAEADQAGgAAAABdpcG1hAAAAAAAAAAEAAQQBAoMEAAAAL21kYXQSAAoJGBEvdogI` +
+	`aDQgMhgUx4eGZQIIIJ5AAACLRzYXX0pdv6c/F6Q=`
+
+func avifBytes(t *testing.T) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(realAVIFBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// REGRESSION GUARD — AVIF must still upload.
+//
+// http.DetectContentType's table stops at png/jpeg/gif/webp/bmp/ico: it has no
+// entry for the ISO-BMFF image family, so a real AVIF sniffs as
+// application/octet-stream. Gating on the sniff alone therefore refuses a
+// format every current browser decodes, and that is a live workflow — dragging
+// a downloaded .avif into the terminal sets File.type "image/avif", which
+// uploadField routes to this very "image" branch
+// (frontend-v2/src/clipboard/upload.ts).
+//
+// Measured 2026-08-06 before this guard existed: the same file uploaded 200
+// against the deployed service, /img served it back as application/octet-stream
+// (stored extensions are advisory there), and headless chromium drew it —
+// naturalWidth 24, onload fired. So refusing it loses something that worked,
+// unlike the SVG and TIFF cases above, which were dead tiles either way.
+//
+// The rest of the ISO-BMFF image brands (heic/heif/…) ride along on the same
+// container check. Where a browser cannot decode one, the gallery's onError
+// placeholder covers it — which is the whole point of the client half.
+func TestUploadAcceptsAVIFWhichSniffsAsOctetStream(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "photo.avif", "image/avif", avifBytes(t)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /upload with a real AVIF: got %d, want 200 — browsers "+
+			"render AVIF, so this is a format the sniffer misses, not a bad file "+
+			"(body %q)", rec.Code, rec.Body.String())
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 1 {
+		t.Fatalf("stored files after an AVIF upload: %v, want exactly one", names)
+	}
+}
+
+// The container check must not become the extension escape hatch by another
+// name: "ftyp" alone is any ISO-BMFF file, and an MP4 is not a gallery image.
+func TestUploadRejectsNonImageISOBMFF(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	// A well-formed ftyp box with the MP4 brand, i.e. a video container.
+	mp4 := []byte("\x00\x00\x00\x20ftypmp42\x00\x00\x00\x00mp42isomavc1")
+	mp4 = append(mp4, make([]byte, 64)...)
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "clip.mp4", "image/png", mp4))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /upload with an MP4 labelled image/png: got %d, want 400 (body %q)",
+			rec.Code, rec.Body.String())
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 0 {
+		t.Fatalf("a rejected MP4 still wrote to the store: %v", names)
 	}
 }
 
