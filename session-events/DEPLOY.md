@@ -1,33 +1,63 @@
 # session-events — deploy & the shared-impact gate
 
-`session-events` (pillar #1) is **built, tested, and landed**, but deploying it
-*meaningfully* is a **gated** step, because two parts touch shared state on the
-multi-user devvm (wizard **and emo**). Do not activate them without Viktor's OK.
+`session-events` (pillar #1) backs the v2 SPA's Text view: the normalized SSE
+transcript stream plus the prompt/cancel control channel. It is **deployed and
+live on the dev tier** (`terminal-dev.viktorbarzin.me`). The vanilla page never
+calls it, which is what keeps its blast radius to v2 only.
 
-## Safe / dormant (auto-deployable)
-1. Cross-build + ship the binary and install the unit:
-   - `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o out/session-events ./session-events`
-   - scp to the devvm, `install -m0755` → `/usr/local/bin/session-events`
-   - `install -m0644 devvm/session-events.service /etc/systemd/system/`, `daemon-reload`, `enable --now`
-   - smoke: `curl -s localhost:7685/health` → `ok`
-   This is **dormant**: nothing routes to it (no ingress yet) and no hooks post to
-   it, so it just idles. Safe on the shared box.
+## Release path
 
-## GATED — needs Viktor's explicit go (shared impact on emo + latency)
-2. **Claude Code hook wiring** (org-wide `managed-settings.json`, infra
-   `scripts/workstation/`): adding
-   - `SessionStart` → `curl -s -m2 localhost:7685/hooks/session-start -d "{\"user\":\"$USER\",\"session_id\":\"$CLAUDE_SESSION_ID\",\"cwd\":\"$PWD\",\"tmux_session\":\"$(tmux display -p '#S')\"}" || true`
-   - `PreToolUse` / `PermissionRequest` → POST `/hooks/permission-request` and honor the returned `permissionDecision`.
+`./scripts/deploy-services.sh` cross-builds and installs session-events (and
+file-api) on the devvm. It skips the restart when the binary is unchanged —
+this service holds every Text-view client's SSE stream open, so a no-op deploy
+must not drop them.
 
-   **Why gated:** this fires in **every** Claude session of **every** user
-   (incl. emo), and the permission hook is *blocking* — a misconfig adds latency
-   or (worst case) stalls tool calls box-wide. The service's fail-closed +
-   fall-through (ask when no web client) contain it, but the blast radius is shared.
-3. **Ingress route** (`infra/stacks/terminal/`): expose only the authed paths
-   (`/events`, `/permission`, `/prompt`, `/cancel`) → devvm:7685 behind
-   Authentik. **Never** route `/hooks/*`.
+```bash
+./scripts/deploy-services.sh                  # cross-build + install both
+SKIP_BUILD=1 ./scripts/deploy-services.sh     # reuse ./out/ binaries
+```
 
-## Live promotion
-Only meaningful once **pillar #2 (frontend-v2)** consumes the stream. Until then,
-keep steps 2–3 unshipped. Presence-claim the devvm before any install; deploy
-behind the canary + golden-master gate per the v2 roadmap.
+The unit file is `devvm/session-events.service`; smoke with
+`curl -s localhost:7685/health` → `ok`. Presence-claim the devvm before any
+install.
+
+## What is wired today
+
+| Piece | State |
+|---|---|
+| systemd unit on the devvm | installed, `enable --now`, listening on `:7685` |
+| Ingress | `terminal-dev.viktorbarzin.me` routes `PathPrefix(/events/)`, `/prompt/` and `/cancel/` here behind Authentik (`infra/stacks/terminal/terminal-dev.tf`). No strip — the service serves those at its root |
+| `SessionStart` hook | wired org-wide: `/usr/local/bin/claude-se-hook session-start` in `/etc/claude-code/managed-settings.json`, installed by `scripts/deploy.sh`. It registers (user, tmux session) so the SSE handler can find the transcript to tail |
+
+`/hooks/*` is **never** routed publicly, and the session-start handler is
+additionally hard-gated to loopback in `main.go` — it runs as the OS user on
+this box, so the ingress is not its only guard.
+
+## Removed: web-mediated permissions (575d4f5, 2026-07-21)
+
+The `PreToolUse` half of this service — a broker that asked the web client to
+approve each tool call — was **removed**, not disabled. Earlier revisions of
+this file told operators to wire a permission-request hook and to expose the
+resolve route through the ingress. Do not follow that from the history:
+
+- the broker answered "ask" for any session nobody was watching in Text mode,
+  and a `PreToolUse` "ask" **overrides** the allowlist / permission mode rather
+  than deferring to the normal flow — so with v2 paused it forced a permission
+  prompt on **every** tool call in **every** session on the shared devvm
+  (wizard, emo, ancamilea);
+- the fall-through that was supposed to contain that is what caused it. This
+  file used to describe "fail-closed + fall-through (ask when no web client)"
+  as a containment measure; it was the failure mode, and the sentence is
+  withdrawn.
+
+Gone with the broker: its hook and resolve routes, `registry.permResolve`,
+`fileSource.subscriberCount`, and the ingress route that fronted them.
+`claude-se-hook` is session-start-only. The `permission_request` /
+`permission_resolved` event kinds survive in `event.go` as unused vocabulary,
+as do the client-side `PermissionPanel.tsx` + `permissionUrl()` in frontend-v2
+(both annotated as inert, kept for a possible gated re-enable).
+
+**Any `PreToolUse` wiring needs Viktor's explicit go.** It fires in every Claude
+session of every user on this box and is *blocking*: a misconfig adds latency or
+stalls tool calls box-wide. A revival needs a per-session gate — "only ask when
+this session is actually being watched" — designed first.
