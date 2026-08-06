@@ -8,8 +8,10 @@ import {
   formatWorking,
   groupSeqTokens,
   isOwn,
+  materializeUngrouped,
   moveGroup,
   moveSession,
+  moveSessionToAnchor,
   removeSessionFromLayout,
   renameProject,
   renameSessionInLayout,
@@ -148,6 +150,92 @@ describe("moveSession", () => {
   it("moves an unreferenced session into a project (adds it to the layout)", () => {
     const l = layout({ projects: [{ name: "a", sessions: [] }] });
     expect(moveSession(l, "new", "a").projects[0]!.sessions).toEqual(["new"]);
+  });
+});
+
+// A drop lands on a CARD, and a card's position is a RENDERED one: deriveSidebar
+// has already filtered dead refs out and swept leftovers in, so a rendered index
+// is NOT a layout index. These cover the translation both ways.
+describe("materializeUngrouped", () => {
+  it("folds the leftovers into layout.ungrouped without changing the render", () => {
+    const l = layout({ ungrouped: ["alpha"] });
+    const live = [
+      sess("alpha", { created: 1 }),
+      sess("beta", { created: 2 }),
+      sess("gamma", { created: 3 }),
+    ];
+    const rendered = deriveSidebar(l, live, ME).groups[0]!.sessions.map((s) => s.name);
+    expect(rendered).toEqual(["alpha", "beta", "gamma"]);
+
+    const out = materializeUngrouped(l, rendered);
+    expect(out.ungrouped).toEqual(["alpha", "beta", "gamma"]);
+    expect(deriveSidebar(out, live, ME).groups[0]!.sessions.map((s) => s.name)).toEqual(rendered);
+  });
+
+  it("keeps dead refs and returns the same layout when nothing is missing", () => {
+    const l = layout({ ungrouped: ["dead", "alpha"] });
+    expect(materializeUngrouped(l, ["alpha"])).toBe(l);
+  });
+});
+
+describe("moveSessionToAnchor", () => {
+  it("lands below the anchor when dead refs precede the drop point", () => {
+    // raw ['d1','d2','a','b','c'] renders as ['a','b','c'] — a rendered index of
+    // 2 would splice between the two dead refs.
+    const l = layout({ projects: [{ name: "work", sessions: ["d1", "d2", "a", "b", "c"] }] });
+    const out = moveSessionToAnchor(l, "a", "work", { name: "b", side: "below" });
+    expect(out.projects[0]!.sessions).toEqual(["d1", "d2", "b", "a", "c"]);
+
+    const live = [sess("a"), sess("b"), sess("c")];
+    expect(
+      deriveSidebar(out, live, ME).groups.find((g) => g.name === "work")!.sessions.map((s) => s.name),
+    ).toEqual(["b", "a", "c"]);
+  });
+
+  it("lands above the anchor when dead refs precede the drop point", () => {
+    const l = layout({ projects: [{ name: "work", sessions: ["d1", "d2", "a", "b", "c"] }] });
+    const out = moveSessionToAnchor(l, "c", "work", { name: "b", side: "above" });
+    expect(out.projects[0]!.sessions).toEqual(["d1", "d2", "a", "c", "b"]);
+  });
+
+  it("places a materialized leftover where it was dropped in Ungrouped", () => {
+    const l = layout({ ungrouped: ["alpha"] });
+    const live = [
+      sess("alpha", { created: 1 }),
+      sess("beta", { created: 2 }),
+      sess("gamma", { created: 3 }),
+    ];
+    const rendered = deriveSidebar(l, live, ME).groups[0]!.sessions.map((s) => s.name);
+    const out = moveSessionToAnchor(
+      materializeUngrouped(l, rendered),
+      "beta",
+      "",
+      { name: "gamma", side: "below" },
+    );
+    expect(out.ungrouped).toEqual(["alpha", "gamma", "beta"]);
+    expect(deriveSidebar(out, live, ME).groups[0]!.sessions.map((s) => s.name)).toEqual([
+      "alpha",
+      "gamma",
+      "beta",
+    ]);
+  });
+
+  it("a cross-group drop onto a card lands at the anchor, not at the end", () => {
+    const l = layout({
+      projects: [
+        { name: "a", sessions: ["x"] },
+        { name: "b", sessions: ["dead", "p", "q"] },
+      ],
+    });
+    const out = moveSessionToAnchor(l, "x", "b", { name: "p", side: "above" });
+    expect(out.projects[0]!.sessions).toEqual([]);
+    expect(out.projects[1]!.sessions).toEqual(["dead", "x", "p", "q"]);
+  });
+
+  it("appends when the anchor is not in the target list", () => {
+    const l = layout({ projects: [{ name: "work", sessions: ["a", "b"] }] });
+    const out = moveSessionToAnchor(l, "a", "work", { name: "ghost", side: "below" });
+    expect(out.projects[0]!.sessions).toEqual(["b", "a"]);
   });
 });
 

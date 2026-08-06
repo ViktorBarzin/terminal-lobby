@@ -9,6 +9,7 @@ import {
   type Component,
 } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
+import type { PrefsStore } from "../store/prefs";
 import { SHARED_KEY } from "../store/collapse";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
@@ -23,8 +24,12 @@ import { badgeLabel, flatSessionOrder } from "../keybindings/navigation.logic";
  */
 export const Sidebar: Component<{
   store: LobbyStore;
+  /** roamed prefs — the create row's command dropdown is one of its knobs. */
+  prefs: PrefsStore;
   /** true while Alt is held (engine): overlays numbered chips on the first 10 cards. */
   altActive?: Accessor<boolean>;
+  /** confirm seam for the destructive card actions (tests inject it). */
+  confirm?: (message: string) => boolean;
 }> = (props) => {
   const store = props.store;
 
@@ -91,7 +96,7 @@ export const Sidebar: Component<{
         </Show>
       </div>
 
-      <CreateSessionRow store={store} />
+      <CreateSessionRow store={store} prefs={props.prefs} />
 
       <div class="tl-sidebar-scroll">
         <Show when={store.loadError()}>
@@ -109,7 +114,9 @@ export const Sidebar: Component<{
         </Show>
 
         <For each={visibleGroups()}>
-          {(g) => <ProjectGroup store={store} group={g} tick={tick} badge={badge} />}
+          {(g) => (
+            <ProjectGroup store={store} group={g} tick={tick} badge={badge} confirm={props.confirm} />
+          )}
         </For>
 
         <Show when={store.model().foreign.length > 0}>
