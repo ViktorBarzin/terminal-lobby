@@ -5,9 +5,11 @@ import {
   visibleRows,
   pendingPermissions,
   sessionWorking,
+  sameRow,
   type ToolRow,
   type MessageRow,
   type TurnFoldRow,
+  type TimelineRow,
 } from "../src/components/timeline.logic";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
@@ -88,8 +90,117 @@ describe("deriveRows", () => {
     expect(collapsed.some((r) => r.kind === "turn-fold")).toBe(true);
     expect(collapsed.some((r) => r.kind === "tool")).toBe(false);
     const expanded = visibleRows(rows, new Set([fold.turnKey]));
-    expect(expanded.some((r) => r.kind === "turn-fold")).toBe(false);
     expect(expanded.some((r) => r.kind === "tool")).toBe(true);
+  });
+
+  // Expanding used to SPLICE the fold row out, which removed the only control
+  // that could put the turn back — expansion was one-way until a reload.
+  it("keeps the fold control in place when the turn is expanded", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "do it" }),
+      ev({ id: 2, kind: "text", body: "thinking" }),
+      ev({ id: 3, kind: "tool_use", tool: "Bash", toolId: "t1", body: "ls" }),
+      ev({ id: 4, kind: "text", body: "all done" }),
+      ev({ id: 5, kind: "turn_end" }),
+    ]);
+    const fold = rows.find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    const expanded = visibleRows(rows, new Set([fold.turnKey]));
+
+    expect(expanded.filter((r) => r.kind === "turn-fold")).toHaveLength(1);
+    // …and it heads the block it holds, so the control reads as its handle.
+    const at = expanded.findIndex((r) => r.kind === "turn-fold");
+    expect(expanded.slice(at + 1, at + 1 + fold.hidden.length)).toEqual(
+      fold.hidden,
+    );
+  });
+
+  // The fold row holds the work that came AFTER the visible message here, so
+  // putting it first printed the announcement below the call it announced.
+  it("orders rows chronologically when a turn's last work item is a tool call", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "touch a marker file", at: 1000 }),
+      ev({
+        id: 2,
+        kind: "text",
+        body: "I'll create /tmp/marker.txt using touch.",
+        at: 2000,
+      }),
+      ev({
+        id: 3,
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: "t1",
+        body: '{"command":"touch /tmp/marker.txt"}',
+        at: 3000,
+      }),
+      ev({ id: 4, kind: "tool_result", toolId: "t1", body: "", isError: true, at: 4000 }),
+      ev({ id: 5, kind: "turn_end", at: 4000 }),
+    ]);
+
+    expect(rows.map((r) => r.kind)).toEqual(["user", "message", "turn-fold"]);
+    const fold = rows[2] as TurnFoldRow;
+    expect(fold.hidden.map((r) => r.kind)).toEqual(["tool"]);
+  });
+
+  // The common shape is unchanged: work first, then the answer it produced.
+  it("keeps the fold above the answer when the turn ends in prose", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "do it" }),
+      ev({ id: 2, kind: "text", body: "thinking" }),
+      ev({ id: 3, kind: "tool_use", tool: "Bash", toolId: "t1", body: "ls" }),
+      ev({ id: 4, kind: "text", body: "all done" }),
+      ev({ id: 5, kind: "turn_end" }),
+    ]);
+    expect(rows.map((r) => r.kind)).toEqual(["user", "turn-fold", "message"]);
+  });
+
+  const rowsFor = (extra: Parameters<typeof deriveRows>[0] = []) =>
+    deriveRows([
+      ev({ id: 1, kind: "user", body: "go", at: 1000 }),
+      ev({ id: 2, kind: "text", body: "on it", at: 2000 }),
+      ev({ id: 3, kind: "tool_use", tool: "Read", toolId: "t1", body: "{}", at: 3000 }),
+      ...extra,
+    ]);
+  const byKey = (rows: TimelineRow[], key: string) =>
+    rows.find((r) => r.key === key)!;
+
+  // `<For>` reconciles by object reference and deriveRows allocates fresh rows
+  // on every call, so one stream event used to rebuild the whole timeline DOM:
+  // an expanded tool row snapped shut and every mermaid diagram re-rendered.
+  // The renderer now reconciles by row key and holds each row behind a memo
+  // whose equality is sameRow — an unchanged row never notifies its view.
+  it("treats two derivations of an unchanged row as the same row", () => {
+    const a = rowsFor();
+    const b = rowsFor();
+    for (const row of a) {
+      const other = byKey(b, row.key);
+      expect(other).not.toBe(row);
+      expect(sameRow(row, other), `row ${row.key} should compare equal`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("reports a tool row as changed once its result lands", () => {
+    const before = byKey(rowsFor(), "tool-t1");
+    const after = byKey(
+      rowsFor([ev({ id: 4, kind: "tool_result", toolId: "t1", body: "hi", at: 4000 })]),
+      "tool-t1",
+    );
+    expect(sameRow(before, after)).toBe(false);
+  });
+
+  it("reports a fold row as changed when its hidden contents change", () => {
+    const settled = (body: string) =>
+      deriveRows([
+        ev({ id: 1, kind: "user", body: "go" }),
+        ev({ id: 2, kind: "text", body }),
+        ev({ id: 3, kind: "tool_use", tool: "Read", toolId: "t1", body: "{}" }),
+        ev({ id: 4, kind: "text", body: "done" }),
+        ev({ id: 5, kind: "turn_end" }),
+      ]).find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    expect(sameRow(settled("a"), settled("a"))).toBe(true);
+    expect(sameRow(settled("a"), settled("b"))).toBe(false);
   });
 
   it("groups multiple user messages into separate turns", () => {
