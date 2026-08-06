@@ -12,7 +12,8 @@ export const TextView: Component<{
   events: Event[];
   working: boolean;
   pending: PendingPermission[];
-  onSend: (text: string) => void;
+  /** resolves false when the session refused the prompt (the composer keeps it). */
+  onSend: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Mobile: forward composed bytes to the live pty (bracketed paste + submit). */
