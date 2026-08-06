@@ -231,9 +231,14 @@ class QaAgent:
 
         Use this for SETUP — when an area needs a session to exist so it can
         test something else. `create_session` (the /term.html attach) is the
-        path under test and should stay the one areas 4 and 7 exercise; it also
-        cannot work while finding A is open, and a sweep should not be blocked
-        on the bug it is meant to report.
+        path under test and should stay the one areas 4 and 7 exercise; keeping
+        setup off it means a sweep of some OTHER area is not blocked whenever
+        the attach path regresses.
+
+        That path does work now: finding A's /term.html 404 is fixed, and as of
+        2026-08-06 the harness authenticates the /ws upgrade too (before that it
+        dialled ttyd anonymously, ttyd hung up, and every attach in the fleet
+        sat at "Reconnecting…").
         """
         if not QA_NAME.match(name):
             raise ValueError(f"{name!r} is not a qa-* name")
