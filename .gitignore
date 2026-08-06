@@ -25,3 +25,9 @@ scripts/devserve/baseline/
 
 # Python bytecode from the QA harness/driver
 __pycache__/
+
+# Ad-hoc reproduction scripts written by QA sweep agents. These land in the
+# SHARED main checkout, and qa-release.sh refuses to land on a dirty tree — so
+# one stray repro file blocks every lane in the fleet, not just its author.
+scripts/qa-repro-*
+/tmp-qa-*
