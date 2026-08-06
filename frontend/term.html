@@ -10098,7 +10098,43 @@
         const bootTermContainer = document.getElementById('terminal');
         bootTermContainer.style.opacity = '0';
         term.open(bootTermContainer);
-        fitAddon.fit();
+
+        // >>> tl-fit-guard
+        // Every fit in this page goes through here.
+        //
+        // The frontend-v2 lobby keeps this iframe MOUNTED but `display:none`
+        // while its Text view shows (SessionView's .tl-hidden) — deliberately,
+        // so the tl-view attention signal keeps working. A display:none frame
+        // has a 0x0 viewport, so fitting xterm against it computes a ~13x7 grid,
+        // xterm emits that as a resize, and ttyd's tmux client drags the REAL
+        // window down to 13 columns — squeezing every other client attached to
+        // that session. A fit only means something once the container has a box,
+        // so skip it while the box is zero and remember that one is OWED; the
+        // next real-box moment (the resize the browser fires when display:none
+        // lifts, or the lobby's tl-view visibility message) settles the geometry.
+        function createFitGuard(measure, doFit) {
+            let owed = false;
+            return {
+                fit() {
+                    const box = measure();
+                    if (!box || !(box.width > 0) || !(box.height > 0)) {
+                        owed = true;
+                        return false;
+                    }
+                    owed = false;
+                    doFit();
+                    return true;
+                },
+                owed() { return owed; },
+            };
+        }
+        // <<< tl-fit-guard
+        const fitGuard = createFitGuard(
+            () => ({ width: bootTermContainer.clientWidth, height: bootTermContainer.clientHeight }),
+            () => fitAddon.fit(),
+        );
+        const safeFit = () => fitGuard.fit();
+        safeFit();
         // Nothing else focuses the terminal on load — without this,
         // keystrokes on desktop are dead until the user clicks.
         term.focus();
@@ -10132,7 +10168,7 @@
             // unsolicited fit here just churns tmux (and, before the
             // opacity reveal, could fight the hold). The atlas rebuild
             // stays unconditional — a newly-loaded face must repaint.
-            if (!booted) fitAddon.fit();
+            if (!booted) safeFit();
             term.clearTextureAtlas?.();
         });
 
@@ -10157,6 +10193,30 @@
         // A direct top-level /?arg= tab has no lobby to tell: fall back to
         // prefixing its own title, cleared on return to visibility.
         const isFramed = window.parent !== window;
+
+        // >>> tl-framed-chrome
+        // The frontend-v2 lobby draws its OWN gallery / paste / upload / font
+        // controls in the shell bar, so a framed term.html painting the same
+        // cluster ~50px below them is a duplicate: two 🖼 buttons over one image
+        // store, two dismissal scopes. A STANDALONE /term.html tab keeps the
+        // cluster — it is the only chrome that page has. The elements stay in
+        // the DOM either way: they remain the function owners the soft-key row
+        // and the lobby's forwarded commands click through.
+        const FRAMED_CHROME_IDS = ['paste-btn', 'img-btn', 'gallery-btn', 'font-inc-btn', 'font-dec-btn'];
+        function hideFramedChrome(doc, framed) {
+            if (!framed) return [];
+            const hidden = [];
+            for (const id of FRAMED_CHROME_IDS) {
+                const el = doc.getElementById(id);
+                if (!el) continue;
+                el.classList.add('hidden');
+                hidden.push(id);
+            }
+            return hidden;
+        }
+        // <<< tl-framed-chrome
+        hideFramedChrome(document, isFramed);
+
         function signalAttention(kind) {
             if (isFramed) {
                 try {
@@ -12454,7 +12514,7 @@
         //     reflects it), so a CSS height:100% terminal renders its bottom
         //     rows — the prompt — behind the keyboard. Driving height off
         //     visualViewport keeps the prompt visible.
-        //   refit() — debounced fitAddon.fit(). fit() emits a tmux resize on
+        //   refit() — debounced safeFit(). A fit emits a tmux resize on
         //     every call; the keyboard animates over ~250ms firing a burst of
         //     resize/scroll events, so we coalesce them into a single resize
         //     instead of thrashing tmux (the "glitchy resize" on mobile).
@@ -12504,7 +12564,7 @@
             }
             clearTimeout(fitTimer);
             fitTimer = setTimeout(() => {
-                try { fitAddon.fit(); } catch (e) { console.warn('fit failed:', e); }
+                try { safeFit(); } catch (e) { console.warn('fit failed:', e); }
             }, 120);
         }
         window.addEventListener('resize', refit);
@@ -12516,7 +12576,7 @@
         // Seed offset + height + an immediate fit on first frame so floating
         // elements and the terminal are sized correctly before any event fires.
         syncViewport();
-        try { fitAddon.fit(); } catch (e) {}
+        try { safeFit(); } catch (e) {}
         // Items 3b/3c: the boot-end fit is reached — grid geometry is now
         // settled. Mark booted (gates the loadingdone refit, 3c) and try
         // the opacity reveal (3b; still waits on the first WS frame).
@@ -13182,7 +13242,7 @@
         }
 
         // Apply the validated prefs doc to the live terminal (Task 2.6).
-        // Geometry-affecting options route through fitAddon.fit() — the
+        // Geometry-affecting options route through safeFit() — the
         // exact window-resize path (sendResize with pixel size) that
         // ADR-0003 already declares safe — and cursor/weight swaps are
         // pure repaints. Never touches mouse/wheel/scroll options (red
@@ -13197,7 +13257,7 @@
             if (term.options.fontWeightBold !== p.fontWeightBold) term.options.fontWeightBold = p.fontWeightBold;
             if (needFit) {
                 maskFitBurst();   // Task M.8: dim the container through the metric swap
-                try { fitAddon.fit(); } catch (e) { console.warn('prefs fit failed:', e); }
+                try { safeFit(); } catch (e) { console.warn('prefs fit failed:', e); }
             }
             // Task M.6: toolbar visibility — device-local
             // tl:input.toolbarHidden:v1 (toolbar-fix; formerly the roamed
@@ -13393,7 +13453,14 @@
                 // view shows — invisible to document.hidden. Feed it to the
                 // attention kernel so output produced behind the text view
                 // still dots the [Terminal] segment. Parent-only, like tl-input.
-                if (e.source === window.parent) setViewHidden(!!e.data.hidden);
+                if (e.source === window.parent) {
+                    setViewHidden(!!e.data.hidden);
+                    // Coming back on screen is also the moment a fit skipped by
+                    // the zero-size guard becomes possible. Settle the geometry
+                    // here instead of relying on whatever resize the browser
+                    // happens to emit when display:none lifts.
+                    if (!e.data.hidden && fitGuard.owed()) refit();
+                }
             }
         });
 

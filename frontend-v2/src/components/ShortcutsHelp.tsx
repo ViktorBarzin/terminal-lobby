@@ -18,23 +18,46 @@ export interface HelpController {
   toggle: () => void;
 }
 
-export function createHelpController(): HelpController {
+export interface HelpOptions {
+  /** hand keyboard focus back to the terminal on every dismiss path. */
+  refocus?: () => void;
+}
+
+/**
+ * Every dismiss path funnels through `close()` — the backdrop click, the shell's
+ * Escape handler, the "/" toggle and the palette action — so the focus handback
+ * lives there once rather than at four call sites. Closing an already-closed
+ * overlay is a no-op and must not steal focus from wherever it is.
+ */
+export function createHelpController(opts: HelpOptions = {}): HelpController {
   const [isOpen, setOpen] = createSignal(false);
+  const open = (): void => {
+    track("help.opened");
+    setOpen(true);
+  };
+  const close = (): void => {
+    if (!isOpen()) return;
+    setOpen(false);
+    opts.refocus?.();
+  };
   return {
     isOpen,
-    open: () => {
-      track("help.opened");
-      setOpen(true);
-    },
-    close: () => setOpen(false),
-    toggle: () => setOpen((v) => !v),
+    open,
+    close,
+    toggle: () => (isOpen() ? close() : open()),
   };
 }
 
-type HelpRow = [keys: string[], desc: string];
-type HelpGroup = [label: string, rows: HelpRow[]];
+export type HelpRow = [keys: string[], desc: string];
+export type HelpGroup = [label: string, rows: HelpRow[]];
 
-function buildGroups(altLabel: string, isMac: boolean): HelpGroup[] {
+/**
+ * The enumerated chord table this overlay paints. Exported so the always-on
+ * exemptions can be checked against KB_ALWAYS_BINDINGS: a chord that survives
+ * the ⚙ "App shortcuts" toggle has to SAY so here, or the checkbox reads as a
+ * master switch it is not.
+ */
+export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup[] {
   const ALT = altLabel; // "Option" on Mac, else "Alt"
   const MOD = isMac ? "Cmd" : "Ctrl";
   return [
@@ -54,7 +77,13 @@ function buildGroups(altLabel: string, isMac: boolean): HelpGroup[] {
         [[`${ALT}+Shift+N`], "New session"],
         [[`${ALT}+Shift+W`], "Kill current session"],
         [[`${ALT}+Shift+R`], "Rename current session"],
-        [[`${ALT}+Shift+Backspace`], "Kill attached session (works in a session)"],
+        // ALWAYS ON by design (KB_ALWAYS_BINDINGS): it bypasses the ⚙ toggle so
+        // the escape hatch out of a wedged session survives a disabled layer.
+        // It still opens the confirm that names the session.
+        [
+          [`${ALT}+Shift+Backspace`],
+          "Kill attached session (works in a session; always on, asks first)",
+        ],
       ],
     ],
     [
@@ -63,7 +92,13 @@ function buildGroups(altLabel: string, isMac: boolean): HelpGroup[] {
         [[`${ALT}+Shift+S`], "Toggle sidebar"],
         [["Ctrl+Shift+K"], "Command palette"],
         [[`${MOD}+J`], "Toggle text / terminal view (works in a session)"],
-        [["/", "?", `${ALT}+/`], `Show this help (${ALT}+/ works in a session)`],
+        // Bare "/" and "?" are a separate window listener in the shell (App),
+        // not a table binding, so they never consult the ⚙ toggle either. Only
+        // Alt+/ is part of the toggleable layer.
+        [
+          ["/", "?", `${ALT}+/`],
+          `Show this help (${ALT}+/ works in a session; / and ? always on)`,
+        ],
         [["Esc"], "Close menus"],
       ],
     ],
@@ -75,7 +110,7 @@ export const ShortcutsHelp: Component<{
   altLabel: string;
   isMac: boolean;
 }> = (props) => {
-  const groups = () => buildGroups(props.altLabel, props.isMac);
+  const groups = () => buildShortcutGroups(props.altLabel, props.isMac);
   return (
     <div
       class="tl-cmdpalette-backdrop"
@@ -105,7 +140,8 @@ export const ShortcutsHelp: Component<{
           </For>
         </div>
         <div class="tl-schelp-note">
-          On by default — toggle “App shortcuts” in ⚙ Settings. Press Esc or / to close.
+          On by default — toggle “App shortcuts” in ⚙ Settings. The rows marked
+          “always on” ignore that toggle. Press Esc or / to close.
         </div>
       </div>
     </div>
