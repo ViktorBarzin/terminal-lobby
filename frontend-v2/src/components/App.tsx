@@ -21,6 +21,7 @@ import { toasts } from "../store/toast";
 import { createKeybindingEngine } from "../keybindings/engine";
 import { createPaletteController, type PaletteAction } from "../keybindings/palette-controller";
 import { createRunAppCommand } from "../keybindings/commands";
+import { refocusTerminal } from "../keybindings/refocus";
 import { flatSessionOrder } from "../keybindings/navigation.logic";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutsHelp, createHelpController } from "./ShortcutsHelp";
@@ -154,7 +155,11 @@ export const App: Component = () => {
   // tl-command (onFrameCommand -> runAppCommand) and its Alt state over
   // tl-kb-alt (onFrameAlt -> engine.setFrameAlt) for the Alt-hold badges.
   const engine = createKeybindingEngine();
-  const help = createHelpController();
+  // Both overlays render OUTSIDE the terminal iframe, so dismissing one leaves
+  // focus on <body> and the pty deaf. refocusTerminal calls the bridge the
+  // mounted TerminalView publishes; it is a no-op with no session selected or
+  // while the text view owns the keyboard.
+  const help = createHelpController({ refocus: refocusTerminal });
 
   // Session rows for the palette (recents-first is applied inside the palette).
   const paletteSessions = () => {
@@ -175,7 +180,7 @@ export const App: Component = () => {
       const t = flatSessionOrder(store.model()).find((s) => s.name === name);
       store.select(name, t?.owner);
     },
-    refocus: () => {},
+    refocus: refocusTerminal,
     actions: () => {
       const cur = store.selected()?.name ?? null;
       const acts: PaletteAction[] = [
@@ -324,7 +329,11 @@ export const App: Component = () => {
         <SettingsPanel
           prefs={prefs}
           onClose={() => setSettingsOpen(false)}
-          keybindings={{ enabled: engine.enabled, setEnabled: engine.setEnabled }}
+          keybindings={{
+            enabled: engine.enabled,
+            setEnabled: engine.setEnabled,
+            altLabel: engine.altLabel,
+          }}
           notifications={notifications}
         />
       </Show>

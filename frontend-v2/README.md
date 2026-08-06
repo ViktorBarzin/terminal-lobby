@@ -159,6 +159,8 @@ src/
     navigation.logic.ts  PURE Alt+1..9/0 attach-Nth + next/prev/next-awaiting
     palette.logic.ts     PURE palette ranking / filtering / recents-first
     palette-controller.ts Reactive palette state (open, query, selection)
+    refocus.ts           Hand the keyboard back to the terminal iframe when a
+                         lobby overlay closes (window.__tlFocusTerminal)
   notify/
     transitions.ts       PURE poll→poll state edges that deserve a notification
     fire.ts              Show ONE foreground OS notification per session edge
