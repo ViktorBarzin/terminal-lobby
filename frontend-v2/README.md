@@ -124,6 +124,7 @@ src/
     StateDot.tsx         Claude state dot (running / awaiting / done)
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
     CreateSessionRow.tsx New-session input + the Claude/Codex/shell picker
+    menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot

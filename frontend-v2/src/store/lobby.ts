@@ -1,5 +1,5 @@
 import { createMemo, createSignal, type Accessor } from "solid-js";
-import { createStore } from "solid-js/store";
+import { createStore, reconcile } from "solid-js/store";
 import {
   addProject,
   addSessionToGroup,
@@ -13,6 +13,7 @@ import {
   renameProject,
   renameSessionInLayout,
   reorderGroups,
+  sameLayout,
   type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
@@ -82,13 +83,57 @@ export interface LobbyStoreOptions {
 
 const LAYOUT_GRACE_MS = 4000;
 
+/**
+ * Vanilla's STATES_KEY (frontend/index.html `trackStateChanges`): epoch ms at
+ * which each live session was FIRST seen in its current Claude state. No
+ * backend exposes a real state-change time — a session object carries only
+ * created/lastActivity — so this observation is the only anchor the working
+ * timer has, and it must outlive the page or every reload restarts a
+ * long-running session's clock at 0:00.
+ */
+const STATES_KEY = "tl:session-states:v1";
+
+interface StateStamp {
+  state: string;
+  at: number;
+}
+
+function loadStates(): Record<string, StateStamp> {
+  const out: Record<string, StateStamp> = {};
+  try {
+    const raw = localStorage.getItem(STATES_KEY);
+    if (!raw) return out;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return out;
+    for (const [name, rec] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!rec || typeof rec !== "object") continue;
+      const { state, at } = rec as { state?: unknown; at?: unknown };
+      if (typeof state === "string" && typeof at === "number") out[name] = { state, at };
+    }
+  } catch {
+    /* private mode / corrupt entry */
+  }
+  return out;
+}
+
+function persistStates(states: Record<string, StateStamp>): void {
+  try {
+    localStorage.setItem(STATES_KEY, JSON.stringify(states));
+  } catch {
+    /* private mode / no storage */
+  }
+}
+
 export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   const api = opts.api ?? lobbyApi;
   const pollMs = opts.pollMs ?? 5000;
   const syncHash = opts.syncHash ?? true;
 
   const [whoami, setWhoami] = createSignal<Whoami | null>(null);
-  const [layout, setLayout] = createSignal<Layout>(emptyLayout());
+  // Structural equality, not reference: a poll re-parses the same document into
+  // a fresh object every 5s, and a bare signal would call that a change and
+  // rebuild the whole sidebar under the user.
+  const [layout, setLayout] = createSignal<Layout>(emptyLayout(), { equals: sameLayout });
   const [sessions, setSessions] = createStore<Session[]>([]);
   const [pending, setPending] = createSignal<Session[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -103,8 +148,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   const me = () => whoami()?.osUser ?? "";
   const collapse = createCollapseStore(me);
 
-  const workingSinceMap = new Map<string, number>();
-  const workingSince = (name: string) => workingSinceMap.get(name);
+  const states = loadStates();
+  const workingSince = (name: string): number | undefined => {
+    const rec = states[name];
+    return rec && rec.state === "running" ? rec.at : undefined;
+  };
 
   let graceUntil = 0;
   let holds = 0;
@@ -154,19 +202,26 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return new Set<string>(mergedSessions().map((s) => s.name));
   }
 
-  function trackWorking(next: Session[]): void {
+  /** Stamp state transitions and prune dead sessions (vanilla trackStateChanges). */
+  function trackStates(next: Session[]): void {
     const live = new Set(next.map((s) => s.name));
     const now = Date.now();
-    for (const s of next) {
-      if (s.state === "running") {
-        if (!workingSinceMap.has(s.name)) workingSinceMap.set(s.name, now);
-      } else {
-        workingSinceMap.delete(s.name);
+    let dirty = false;
+    for (const name of Object.keys(states)) {
+      if (!live.has(name)) {
+        delete states[name];
+        dirty = true;
       }
     }
-    for (const name of [...workingSinceMap.keys()]) {
-      if (!live.has(name)) workingSinceMap.delete(name);
+    for (const s of next) {
+      const cur = s.state ?? "";
+      const rec = states[s.name];
+      if (!rec || rec.state !== cur) {
+        states[s.name] = { state: cur, at: now };
+        dirty = true;
+      }
     }
+    if (dirty) persistStates(states);
   }
 
   async function refresh(): Promise<void> {
@@ -185,8 +240,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
     const [sRes, lRes] = await Promise.allSettled([api.listSessions(), api.getLayout()]);
     if (sRes.status === "fulfilled") {
-      trackWorking(sRes.value);
-      setSessions(sRes.value);
+      trackStates(sRes.value);
+      // Reconcile by name rather than replace: a re-parsed but unchanged
+      // payload must write nothing, or every memo downstream recomputes and
+      // <For> re-creates every group and card (taking open menus with it).
+      setSessions(reconcile(sRes.value, { key: "name" }));
       // drop optimistic pending that the server now knows about
       const known = new Set(sRes.value.map((s) => s.name));
       const stillPending = pending().filter((p) => !known.has(p.name));
@@ -207,7 +265,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     graceUntil = Date.now() + LAYOUT_GRACE_MS;
   }
 
-  async function saveLayout(next: Layout): Promise<void> {
+  /** PUT the layout; false when the write did not land (local state rolled back). */
+  async function saveLayout(next: Layout): Promise<boolean> {
     const prev = layout();
     applyLocalLayout(next);
     try {
@@ -217,7 +276,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       graceUntil = 0;
       showToast("Couldn't save layout");
       await refresh();
+      return false;
     }
+    return true;
   }
 
   function updateHash(sel: SelectedSession | null): void {
@@ -263,10 +324,19 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       ...p,
       { name: n, owner: me(), attached: 0, lastActivity: nowSec, created: nowSec, state: "" },
     ]);
-    await saveLayout(addSessionToGroup(layout(), n, group));
+    const saved = await saveLayout(addSessionToGroup(layout(), n, group));
+    if (!saved) {
+      // The layout PUT is the only record a create makes, so a write that did
+      // not land created nothing. Keeping the optimistic card would strand a
+      // phantom the poll can never resolve — and pending names count as taken,
+      // so it would burn the name too. Selecting still happens: attaching the
+      // terminal is what actually brings the session into being, and that path
+      // is unaffected when it is only the layout endpoint that is down.
+      setPending((p) => p.filter((s) => s.name !== n));
+    }
     select(n);
     quickRefreshBurst();
-    return true;
+    return saved;
   }
 
   async function rename(oldName: string, newName: string): Promise<boolean> {
@@ -356,12 +426,16 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       showToast(`Project "${n}" already exists`);
       return false;
     }
-    await saveLayout(renameProject(layout(), oldName, n));
-    return true;
+    // Collapse is keyed on the project NAME (a per-browser view preference, not
+    // layout), so the key has to travel with the rename — and only once the
+    // write has landed, or a rollback would leave the two disagreeing.
+    const saved = await saveLayout(renameProject(layout(), oldName, n));
+    if (saved) collapse.rename(oldName, n);
+    return saved;
   }
 
   async function deleteProjectAction(name: string): Promise<void> {
-    await saveLayout(deleteProject(layout(), name));
+    if (await saveLayout(deleteProject(layout(), name))) collapse.remove(name);
   }
 
   async function restore(): Promise<void> {
