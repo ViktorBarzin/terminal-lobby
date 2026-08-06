@@ -27,6 +27,8 @@ export const SessionCard: Component<{
   tick: Accessor<number>;
   /** Alt-hold chip label for this card ("1".."9","0"), or null when inactive. */
   badge?: (name: string) => string | null;
+  /** confirm seam (window.confirm by default; injectable for tests). */
+  confirm?: (message: string) => boolean;
 }> = (props) => {
   const s = () => props.session;
   const foreign = () => !!s().owner && s().owner !== props.store.me();
@@ -85,8 +87,12 @@ export const SessionCard: Component<{
   };
 
   // ---- actions ----
+  // Killing is unrecoverable, so it confirms here exactly as every sibling path
+  // does (the kill chord, the palette action, Delete project).
   const kill = async () => {
     setMenuOpen(false);
+    const ask = props.confirm ?? ((m: string) => window.confirm(m));
+    if (!ask(`Kill session "${s().name}"?`)) return;
     await props.store.kill(s().name);
   };
   const moveTo = async (group: string) => {
@@ -138,13 +144,13 @@ export const SessionCard: Component<{
     if (!dragging || dragging === s().name) return;
     e.preventDefault();
     e.stopPropagation();
-    // index within THIS group's rendered order.
-    const group = props.store.model().groups.find((g) => g.name === props.groupName && (props.groupName !== "" || g.kind === "ungrouped"));
-    const names = group ? group.sessions.map((x) => x.name).filter((n) => n !== dragging) : [];
-    let idx = names.indexOf(s().name);
-    if (idx < 0) idx = names.length;
-    if (edge === "below") idx += 1;
-    await props.store.move(dragging, props.groupName, idx);
+    // Hand the store the CARD the drop landed on, never a rendered index: the
+    // render is a filtered view of the layout, so the two coordinate systems
+    // disagree wherever a dead ref or a leftover sits.
+    await props.store.move(dragging, props.groupName, {
+      name: s().name,
+      side: edge ?? "below",
+    });
   };
 
   return (
