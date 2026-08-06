@@ -304,6 +304,40 @@ export function removeSessionFromLayout(layout: Layout, name: string): Layout {
   return stripEverywhere(layout, name);
 }
 
+function sameList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/**
+ * Structural equality for two layouts.
+ *
+ * Every poll re-parses GET /api/layout into a FRESH object, so reference
+ * equality says "changed" on data that is byte-identical — and the sidebar's
+ * <For> (reference-keyed) then tears down and re-creates every group. This is
+ * the layout signal's `equals`, so an unchanged document is a no-op.
+ */
+export function sameLayout(a: Layout, b: Layout): boolean {
+  if (a === b) return true;
+  if (a.version !== b.version || a.ungroupedIndex !== b.ungroupedIndex) return false;
+  if (!sameList(a.ungrouped, b.ungrouped)) return false;
+  if (a.projects.length !== b.projects.length) return false;
+  for (let i = 0; i < a.projects.length; i++) {
+    const p = a.projects[i]!;
+    const q = b.projects[i]!;
+    if (p.name !== q.name || (p.dir ?? "") !== (q.dir ?? "")) return false;
+    if (!sameList(p.sessions, q.sessions)) return false;
+  }
+  const ad = a.dock;
+  const bd = b.dock;
+  if (!ad !== !bd) return false;
+  if (ad && bd) {
+    if (ad.session !== bd.session || ad.visible !== bd.visible || (ad.dir ?? "") !== (bd.dir ?? "")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // ---- Display helpers -----------------------------------------------------
 
 /** Ported verbatim from the vanilla app (frontend/index.html relativeTime). */
