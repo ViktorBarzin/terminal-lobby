@@ -22,3 +22,6 @@ scripts/devserve/baseline/
 # Optional local config
 .env
 .env.local
+
+# Python bytecode from the QA harness/driver
+__pycache__/
