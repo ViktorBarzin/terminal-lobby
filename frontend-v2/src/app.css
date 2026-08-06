@@ -397,6 +397,14 @@ body {
   flex-direction: column;
   gap: 14px;
 }
+/* Rows keep their natural height; the overflow goes to the scrollbar, not into
+   the rows. Without this an overflowing flex column shrinks its children toward
+   min-content first — and `.tl-row-tool` clips its overflow, which leaves it no
+   min-content floor at all, so a collapsed tool row flattened to its 2px border
+   and its expand toggle stopped being clickable. */
+.tl-timeline > * {
+  flex-shrink: 0;
+}
 .tl-empty-state,
 .tl-empty {
   color: var(--text-muted);
