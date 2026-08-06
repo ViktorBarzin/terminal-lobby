@@ -194,17 +194,28 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 
 ## Deployment
 
-For now: **manual deploy via `./scripts/deploy.sh`** from a workstation
-that can SSH `wizard@192.0.2.10`. The script cross-builds the Go
-binaries, SCPs all artefacts, installs them under `sudo`, runs
-`daemon-reload`, restarts services, and smoke-tests `/whoami` +
-`/health`.
+For now: **manual deploy**, from a workstation that can SSH
+`wizard@192.0.2.10`. There are **three** scripts, split by blast radius — each
+cross-builds what it owns, SCPs to `/tmp`, installs under `sudo`, runs
+`daemon-reload`, and smoke-tests what it just shipped. Nothing is shipped by
+two of them:
+
+| Script | Ships | Restarts | Blast radius |
+|---|---|---|---|
+| `./scripts/deploy.sh` | vanilla `index.html`, PWA assets + webfonts, `tmux-api`, `clipboard-upload`, the patched `ttyd`, the devvm helper scripts + `/etc` config | `ttyd`, `ttyd-ro`, `tmux-api`, `clipboard-upload` | **Shared** — both hosts, every user |
+| `./scripts/deploy-v2.sh` | `index-v2.html`, `ttyd-v2.service`, `term.html` | `ttyd-v2` only | terminal-dev only |
+| `./scripts/deploy-services.sh` | `session-events` (:7685), `file-api` (:7686) + their units | those two only | terminal-dev only (the vanilla page calls neither) |
 
 ```bash
 ./scripts/deploy.sh                      # full deploy
 DEVVM=192.0.2.10 ./scripts/deploy.sh     # explicit host
 SKIP_BUILD=1 ./scripts/deploy.sh         # reuse ./out/ binaries
 ```
+
+`deploy.sh` cross-builds **`tmux-api` and `clipboard-upload`** (not every Go
+service in the tree — `session-events` and `file-api` are
+`deploy-services.sh`'s), ships the patched `ttyd` only if `out/ttyd` exists,
+and smoke-tests `/whoami` + `/health` + the public assets.
 
 ### Two frontends (terminal + terminal-dev)
 
@@ -216,13 +227,30 @@ The vanilla page (`frontend/index.html`) and the SolidJS **v2** rewrite
 | `terminal.viktorbarzin.me` | `ttyd` :7681 | `index.html` (vanilla) | `./scripts/deploy.sh` |
 | `terminal-dev.viktorbarzin.me` | `ttyd-v2` :7687 | `index-v2.html` (v2 SPA) | `./scripts/deploy-v2.sh` |
 
-`deploy-v2.sh` is **strictly additive** — it builds `frontend-v2` (vite
-single-file) into `index-v2.html`, installs `devvm/ttyd-v2.service`, and restarts
-**only ttyd-v2**. It never touches ttyd :7681 or the shared backends, so the
-vanilla page is unaffected. Both frontends attach the SAME per-uid tmux server
-(like `ttyd` + `ttyd-ro`), so sessions/clipboard/prefs are shared: opening the
-same session on both hosts at once makes tmux clamp to the smaller client's
-viewport (use different sessions, or one host at a time).
+`deploy-v2.sh` builds `frontend-v2` (vite single-file) into `index-v2.html`,
+installs `devvm/ttyd-v2.service`, and **restarts only ttyd-v2** — never ttyd
+:7681, ttyd-ro, or any shared backend, so the vanilla page is unaffected. It
+also installs **`term.html`**, the terminal-mode page the SPA frames
+(`config.TERMINAL_BASE = "/term.html"`, emitted by the `copyTermHtml` plugin in
+`frontend-v2/vite.config.ts`): that one file lands in the *shared* asset dir
+`/usr/local/share/ttyd/`, where **clipboard-upload** serves it from its
+exact-path whitelist — so no service is restarted for it, and only the v2 SPA
+ever fetches it (the vanilla page has no reference to `/term.html`).
+
+Both artefacts are stamped independently (`__TL_BUILD__` = git SHA,
+`__TL_ASSET__` = a fingerprint of the file's own bytes, ADR-0007) because each
+runs the zero-touch self-update healer against its *own* identity. Two skips
+keep repeated deploys cheap: `npm ci` is skipped while `package-lock.json`
+hashes the same as the last install (stamp at
+`frontend-v2/node_modules/.tl-lock-hash`), and the `ttyd-v2` restart is skipped
+when the installed artefacts were byte-identical — an unnecessary restart drops
+every attached terminal's WebSocket. `enable --now` still runs either way, so a
+stopped unit comes back up.
+
+Both frontends attach the SAME per-uid tmux server (like `ttyd` + `ttyd-ro`), so
+sessions/clipboard/prefs are shared: opening the same session on both hosts at
+once makes tmux clamp to the smaller client's viewport (use different sessions,
+or one host at a time).
 
 The k8s routing for `terminal-dev` (its own ingress + per-path routes + PWA
 carve-out, all reusing the shared backend Services) lives in
@@ -231,8 +259,33 @@ in `infra/stacks/authentik/admin-services-restriction.tf` (`ADMIN_ONLY_HOSTS`).
 
 ```bash
 ./scripts/deploy-v2.sh                    # build frontend-v2 + (re)deploy ttyd-v2
-SKIP_BUILD=1 ./scripts/deploy-v2.sh       # reuse frontend-v2/dist/index.html
+SKIP_BUILD=1 ./scripts/deploy-v2.sh       # reuse frontend-v2/dist/{index,term}.html
 ```
+
+### v2-only backends (session-events + file-api)
+
+`session-events` (:7685, the Text view's SSE transcript stream + `/prompt` +
+`/cancel`) and `file-api` (:7686, the file preview/editor) back **only** the v2
+SPA — the vanilla page calls neither. They were installed by hand until
+`deploy-services.sh` gave them a release path:
+
+```bash
+./scripts/deploy-services.sh                    # cross-build + install both
+DEVVM=192.0.2.10 ./scripts/deploy-services.sh   # explicit host
+SKIP_BUILD=1 ./scripts/deploy-services.sh       # reuse ./out/ binaries
+```
+
+It installs each binary and unit only when the bytes differ, and **restarts a
+service only if something about it changed** — a needless `session-events`
+restart drops every text-view client's open SSE stream. Verification is
+`systemctl is-active` plus, per service, `/health` (unauthenticated by design)
+and an unauthenticated hit on the authed surface that must answer `401`. It
+deliberately does **not** touch `ttyd`, `ttyd-ro`, `tmux-api` or
+`clipboard-upload`: those are shared with the stable tier and are `deploy.sh`'s
+to release.
+
+Hook wiring and the ingress routes for session-events are gated separately —
+see `session-events/DEPLOY.md`.
 
 ### ttyd (patched)
 
