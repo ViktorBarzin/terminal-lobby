@@ -171,7 +171,20 @@ echo "==> Verifying..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" '
   set -euo pipefail
   systemctl is-active ttyd-v2
-  curl -sf -H "X-authentik-username: alice" http://localhost:7687/ -o /dev/null && echo "ttyd-v2 serving the v2 SPA OK" || { echo "ttyd-v2 NOT serving"; exit 1; }
+  # Poll, do not probe once. A restart takes ttyd a moment to bind :7687, and
+  # index-v2.html changes on EVERY deploy (TL_BUILD carries the git SHA, so the
+  # bytes differ even when TL_ASSET — the identity clients compare — does not),
+  # which means the restart branch is the normal path and a single immediate
+  # curl races it. That race reported "NOT serving" for a deploy that had in
+  # fact succeeded.
+  ok=0
+  for _ in $(seq 1 30); do
+    if curl -sf -m 3 -H "X-authentik-username: alice" http://localhost:7687/ -o /dev/null; then
+      ok=1; break
+    fi
+    sleep 0.5
+  done
+  [ "$ok" = "1" ] && echo "ttyd-v2 serving the v2 SPA OK" || { echo "ttyd-v2 NOT serving after 15s"; exit 1; }
   test -f /usr/local/share/ttyd/term.html || { echo "term.html NOT installed"; exit 1; }
   # Installing term.html is what this script does; SERVING it is clipboard-upload
   # (:7683), whose exact-path whitelist must carry a /term.html entry. That
