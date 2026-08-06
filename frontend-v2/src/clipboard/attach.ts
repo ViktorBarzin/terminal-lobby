@@ -38,6 +38,27 @@ export interface ImageClipboard {
   dispose: () => void;
 }
 
+/**
+ * The bytes one or more uploaded paths type at the pty input line: the paths,
+ * space-separated, plus a TRAILING space.
+ *
+ * The path is deliberately left sitting on the input line — that is how a user
+ * attaches an image to the prompt they are about to write. Nothing submits it
+ * and nothing clears the line, so whatever is written next lands immediately
+ * after it: the composer's /prompt inject (session-events pastes into the live
+ * line), the mobile bracketed-paste branch, a second image, or the user's own
+ * typing. Without the trailing separator those fuse into ONE token and the
+ * user's prompt is destroyed — measured on the dev tier as
+ * `…/pasted-….pngecho COMPOSER-MARKER`, which ran a garbage command in a shell
+ * and submitted an unreadable line to a Claude REPL.
+ *
+ * A space, not a newline: a newline would SUBMIT the bare path, which is the
+ * opposite of leaving it there to be attached. Separate, don't erase.
+ */
+function ptyPathBytes(paths: string[]): string {
+  return paths.join(" ") + " ";
+}
+
 export function installImageClipboard(
   deps: ImageClipboardDeps,
 ): ImageClipboard {
@@ -60,7 +81,7 @@ export function installImageClipboard(
         ...(filename ? { filename } : {}),
       });
       dismiss(loading);
-      deps.sendToPty(path);
+      deps.sendToPty(ptyPathBytes([path]));
       toast("Pasted: " + path, "success", 4000);
     } catch (err) {
       dismiss(loading);
@@ -100,7 +121,7 @@ export function installImageClipboard(
     if (paths.length) {
       // Stored names are sanitized (no spaces/shell specials), so paths are
       // safe to insert verbatim, space-separated — same as the vanilla flow.
-      deps.sendToPty(paths.join(" "));
+      deps.sendToPty(ptyPathBytes(paths));
       toast(
         `Added ${paths.length} path${paths.length > 1 ? "s" : ""}`,
         "success",
