@@ -29,6 +29,8 @@ export const ProjectGroup: Component<{
   tick: Accessor<number>;
   /** Alt-hold chip label lookup, threaded down to each session card. */
   badge?: (name: string) => string | null;
+  /** confirm seam, threaded down to each session card (tests inject it). */
+  confirm?: (message: string) => boolean;
 }> = (props) => {
   const isUngrouped = () => props.group.kind === "ungrouped";
   const token = () => (isUngrouped() ? "u" : "p:" + props.group.name);
@@ -209,6 +211,7 @@ export const ProjectGroup: Component<{
                 groupName={isUngrouped() ? "" : props.group.name}
                 tick={props.tick}
                 badge={props.badge}
+                confirm={props.confirm}
               />
             )}
           </For>
