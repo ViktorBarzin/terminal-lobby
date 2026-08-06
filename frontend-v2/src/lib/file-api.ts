@@ -8,6 +8,7 @@
  */
 import { fileListUrl, fileReadUrl, fileWriteUrl } from "./config";
 import {
+  byteLength,
   classifyFile,
   type RendererKind,
 } from "../store/preview.logic";
@@ -42,7 +43,18 @@ export interface LoadedFile {
   contentType?: string;
 }
 
-/** Human message for an HTTP status from /files/read. */
+/**
+ * Human message for an HTTP status from GET /files/read.
+ *
+ * file-api answers 400 to FOUR different read refusals — "invalid path"
+ * (resolves outside the home containment root), "path must be absolute", "path
+ * is a directory" and "not a regular file" — and its body never says which, on
+ * purpose (files.go pathHTTPError: the message must not let a probe tell
+ * "outside home" from "does not exist"). The sentence therefore has to cover
+ * all four without claiming one; the old wording asserted the file-type case,
+ * so /etc/passwd and a ../../etc/shadow traversal both read as complaints about
+ * the file's type rather than about being out of reach.
+ */
 export function readErrorMessage(status: number): string {
   switch (status) {
     case 404:
@@ -50,12 +62,32 @@ export function readErrorMessage(status: number): string {
     case 413:
       return "File is too large to preview (max 10MB).";
     case 400:
-      return "Can't preview this path (not a regular file).";
+      return "Can't open this path — it's outside your home folder, or not a readable file.";
     case 401:
     case 403:
       return "Not authorized to read this file.";
     default:
       return `Couldn't load file (HTTP ${status}).`;
+  }
+}
+
+/**
+ * Human message for an HTTP status from GET /files/list. A LISTING fails for
+ * directory-shaped reasons — "not a directory", outside the home containment
+ * root, or not absolute — so it needs its own vocabulary. Reusing the read
+ * table told the user their directory was "not a regular file".
+ */
+export function listErrorMessage(status: number): string {
+  switch (status) {
+    case 404:
+      return "Folder not found.";
+    case 400:
+      return "Can't list this folder — it's outside your home folder, or not a directory.";
+    case 401:
+    case 403:
+      return "Not authorized to list this folder.";
+    default:
+      return `Couldn't load folder (HTTP ${status}).`;
   }
 }
 
@@ -98,7 +130,10 @@ export async function readFile(path: string, name = path): Promise<LoadedFile> {
     kind: k.kind,
     ...(k.language ? { language: k.language } : {}),
     text,
-    size: text.length,
+    // BYTES, not characters — `text.length` is UTF-16 code units and
+    // under-reports every non-ASCII file. Counted from the decoded text rather
+    // than Content-Length so it survives chunked/compressed transfer.
+    size: byteLength(text),
     contentType,
   };
 }
@@ -109,7 +144,7 @@ export async function listDir(dir: string, all = false): Promise<FileEntry[]> {
   const resp = await fetch(fileListUrl(dir, all), { credentials: "same-origin" });
   if (!resp.ok) {
     await resp.body?.cancel().catch(() => {});
-    throw new FileApiError(resp.status, readErrorMessage(resp.status));
+    throw new FileApiError(resp.status, listErrorMessage(resp.status));
   }
   const data = (await resp.json()) as unknown;
   return Array.isArray(data) ? (data as FileEntry[]) : [];
