@@ -86,7 +86,11 @@ export const Composer: Component<{
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    // `isComposing` excludes the Enter an IME sends to COMMIT a candidate
+    // (Japanese/Chinese/Korean, and WebKit/iOS autocomplete): that keystroke
+    // belongs to the input method, not to us, and submitting on it sends a
+    // half-composed message and wipes the field.
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       submit();
     }
