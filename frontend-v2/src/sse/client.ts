@@ -1,6 +1,52 @@
 import { parseEvent, type Event } from "../types/events";
 
-export type SseStatus = "connecting" | "open" | "reconnecting" | "closed";
+/**
+ * Connection status.
+ *
+ * `no-transcript` is NOT a failure: session-events answers
+ * `404 session not registered` for a tmux session no Claude ever ran in
+ * (session-events/main.go), and Text mode is the default view for EVERY
+ * session — so a plain shell lands on this state by design. It is terminal
+ * until the session registers, which is why it is distinct from
+ * `reconnecting`.
+ */
+export type SseStatus =
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "no-transcript"
+  | "closed";
+
+/** The status session-events returns when a session has no event stream. */
+const NO_STREAM_STATUS = 404;
+
+/**
+ * Read the stream endpoint's HTTP status without consuming it. EventSource
+ * hides the status behind an opaque `error` event, so this is the only way the
+ * client can tell "there is nothing here" from "the connection dropped".
+ * Returns null when the endpoint could not be reached at all (unknown → treat
+ * as transient).
+ */
+async function probeViaFetch(url: string): Promise<number | null> {
+  if (typeof fetch === "undefined") return null;
+  try {
+    const res = await fetch(url, {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "text/event-stream" },
+    });
+    // A 200 here is a LIVE stream; cancelling releases it immediately so the
+    // EventSource — not this probe — is what actually reads the events.
+    try {
+      await res.body?.cancel();
+    } catch {
+      /* already closed */
+    }
+    return res.status;
+  } catch {
+    return null;
+  }
+}
 
 /** Minimal EventSource surface — abstracted so tests inject a fake. */
 export interface EventSourceLike {
@@ -18,11 +64,16 @@ export interface SseClientOptions {
   onStatus?: (s: SseStatus) => void;
   /** injectable for tests; defaults to the browser EventSource. */
   createSource?: (url: string) => EventSourceLike;
+  /** reads the stream URL's HTTP status (null = unreachable). Injectable so
+   *  tests and Node callers can supply the ingress' auth header. */
+  probeStatus?: (url: string) => Promise<number | null>;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (id: ReturnType<typeof setTimeout>) => void;
   random?: () => number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /** how often to re-check a session whose stream does not exist yet. */
+  probeIntervalMs?: number;
 }
 
 /**
@@ -32,6 +83,10 @@ export interface SseClientOptions {
  *   recreate the source on every reconnect — see lib/config.eventsUrl).
  * - Reconnects with exponential backoff + jitter; native EventSource auto-retry
  *   is disabled (we close on error and drive reconnection ourselves).
+ * - Classifies a failure before reacting to it: a 404 means the session has no
+ *   transcript to stream, so the ladder stops and the status says so instead of
+ *   retrying a permanent condition forever. A slow re-probe keeps a session
+ *   that registers LATER from being stranded.
  * - Instant retry when the tab becomes visible or the network comes back
  *   online — the two moments a mobile client most wants to catch up fast.
  * - Dedups by id: the server replays from the cursor, so a resumed connection
@@ -62,11 +117,13 @@ export class SseClient {
       onEvent: opts.onEvent,
       onStatus: opts.onStatus,
       createSource: opts.createSource,
+      probeStatus: opts.probeStatus ?? probeViaFetch,
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
       clearTimer: opts.clearTimer ?? ((id) => clearTimeout(id)),
       random: opts.random ?? Math.random,
       baseDelayMs: opts.baseDelayMs ?? 500,
       maxDelayMs: opts.maxDelayMs ?? 15000,
+      probeIntervalMs: opts.probeIntervalMs ?? 30000,
     };
   }
 
@@ -112,6 +169,26 @@ export class SseClient {
   private onError(): void {
     if (this.stopped) return;
     this.closeSource();
+    void this.classifyFailure();
+  }
+
+  /**
+   * Ask the server what the failure MEANT before reacting to it. EventSource
+   * reports every failure identically, so without this a permanent 404 ("this
+   * session has no transcript") is indistinguishable from a dropped connection
+   * and gets the same endless retry ladder.
+   */
+  private async classifyFailure(): Promise<void> {
+    const status = await this.o.probeStatus(
+      this.o.url(this.o.session, this.lastEventId),
+    );
+    // close() or an instantRetry may have overtaken the probe.
+    if (this.stopped || this.source) return;
+    if (status === NO_STREAM_STATUS) this.enterNoTranscript();
+    else this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
     this.attempt += 1;
     const backoff = Math.min(
       this.o.maxDelayMs,
@@ -125,6 +202,32 @@ export class SseClient {
       this.timer = null;
       this.connect();
     }, delay);
+  }
+
+  /**
+   * There is no stream for this session. Leave the retry ladder, report the
+   * state honestly, and re-check on a slow timer — a session becomes
+   * registered the moment a Claude starts in it (POST /hooks/session-start),
+   * and that must still be picked up.
+   */
+  private enterNoTranscript(): void {
+    this.attempt = 0; // the next real connect is a first attempt, not a retry
+    this.setStatus("no-transcript");
+    this.clearTimer();
+    this.timer = this.o.setTimer(() => {
+      this.timer = null;
+      void this.reprobe();
+    }, this.o.probeIntervalMs);
+  }
+
+  private async reprobe(): Promise<void> {
+    if (this.stopped || this.source) return;
+    const status = await this.o.probeStatus(
+      this.o.url(this.o.session, this.lastEventId),
+    );
+    if (this.stopped || this.source) return;
+    if (status === NO_STREAM_STATUS) this.enterNoTranscript();
+    else this.connect(); // registered (or unknown) → back to the normal path
   }
 
   /** Reconnect now, resetting backoff — used on tab-visible / network-online. */
