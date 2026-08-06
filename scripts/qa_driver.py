@@ -360,6 +360,53 @@ class QaAgent:
               f"{self.dir}", flush=True)
 
 
+DESTRUCTIVE_TMUX = {
+    "kill-session", "kill-server", "kill-window", "kill-pane",
+    "rename-session", "send-keys", "respawn-pane", "respawn-window",
+}
+
+
+def tmux(*argv: str, check: bool = True):
+    """Run tmux with the same qa-* rule the proxy enforces.
+
+    THE HARNESS GUARD IS PROXY-ONLY. It sees HTTP; it cannot see a script that
+    shells out to `tmux kill-session`. On 2026-08-06 a sweep script did exactly
+    that and killed a live session (`rewrite`) because the name it computed had
+    been reshuffled by concurrent fleet churn — it was restored from the
+    tmux-resurrect snapshot with its Claude conversation intact, but the
+    scrollback did not survive.
+
+    Route every tmux call through here. Destructive verbs must target a qa-*
+    session; anything else raises before tmux runs. Read-only verbs
+    (list-sessions, capture-pane, display) pass through untouched.
+    """
+    import subprocess
+    argv = tuple(str(a) for a in argv)
+    verb = argv[0] if argv else ""
+    if verb in DESTRUCTIVE_TMUX:
+        target = None
+        for i, a in enumerate(argv):
+            if a == "-t" and i + 1 < len(argv):
+                target = argv[i + 1]
+                break
+        # A destructive verb with no -t hits the *current* session, which in a
+        # fleet context is whatever happens to be attached. Never allow it.
+        if target is None:
+            raise PermissionError(
+                f"qa_driver.tmux: refusing `tmux {verb}` with no -t target — "
+                f"it would act on the current session")
+        base = target.split(":", 1)[0].lstrip("=")
+        if not QA_NAME.match(base):
+            raise PermissionError(
+                f"qa_driver.tmux: refusing `tmux {verb} -t {target}` — {base!r} "
+                f"is not a qa-* session. Compute targets from names you created, "
+                f"never from an index into a list the rest of the fleet is "
+                f"mutating underneath you.")
+    return subprocess.run(argv if argv[0] == "tmux" else ("tmux",) + argv,
+                          capture_output=True, text=True,
+                          check=False if not check else False)
+
+
 def harness_up(harness: str = HARNESS) -> bool:
     try:
         with urllib.request.urlopen(f"{harness}/api/sessions/whoami",
