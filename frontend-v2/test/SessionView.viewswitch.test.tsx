@@ -12,7 +12,20 @@ import { SessionView } from "../src/components/SessionView";
  * drive that message rather than the latch directly.
  */
 
-const g = globalThis as unknown as { EventSource?: unknown };
+const g = globalThis as unknown as { EventSource?: unknown; fetch?: unknown };
+
+interface FakeSource {
+  onopen: ((ev: unknown) => void) | null;
+  onerror: ((ev: unknown) => void) | null;
+  onmessage: ((ev: { data: string }) => void) | null;
+}
+const eventSources: FakeSource[] = [];
+
+/** Let the SSE client's async failure classification settle. */
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+const conn = (root: HTMLElement): HTMLElement | null =>
+  root.querySelector<HTMLElement>(".tl-conn");
 
 const segments = (root: HTMLElement): HTMLButtonElement[] =>
   Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"));
@@ -40,11 +53,14 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   let origES: unknown;
   beforeEach(() => {
     origES = g.EventSource;
+    eventSources.length = 0;
     g.EventSource = class {
-      onopen: unknown = null;
-      onerror: unknown = null;
-      onmessage: unknown = null;
-      constructor(public url: string) {}
+      onopen: ((ev: unknown) => void) | null = null;
+      onerror: ((ev: unknown) => void) | null = null;
+      onmessage: ((ev: { data: string }) => void) | null = null;
+      constructor(public url: string) {
+        eventSources.push(this);
+      }
       close(): void {}
     };
     localStorage.clear();
@@ -86,6 +102,42 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     fireEvent.click(segments(container)[1]!); // [Terminal]
     expect(mode(container)).toBe("terminal");
     expect(dots(container)).toEqual([false, false]);
+  });
+
+  // Text mode is the DEFAULT view, so a plain shell session (no Claude, hence
+  // no transcript registered with session-events) opens straight onto this
+  // badge. It used to sit on RECONNECTING forever while the client hammered a
+  // permanent 404.
+  it("badges a session with no transcript as such, not as a failing connection", async () => {
+    const origFetch = g.fetch;
+    g.fetch = async () => new Response(null, { status: 404 });
+    try {
+      const { container } = render(() => <SessionView session="qa-vs" />);
+      expect(conn(container)?.textContent).toBe("connecting");
+
+      eventSources[0]!.onerror?.(null); // the 404 the browser reports opaquely
+      await flush();
+
+      expect(conn(container)?.getAttribute("data-status")).toBe("no-transcript");
+      expect(conn(container)?.textContent).toBe("no transcript");
+      expect(conn(container)?.getAttribute("title")).toContain("no Claude transcript");
+    } finally {
+      g.fetch = origFetch;
+    }
+  });
+
+  it("still says reconnecting when the stream is merely unreachable", async () => {
+    const origFetch = g.fetch;
+    g.fetch = async () => new Response(null, { status: 502 });
+    try {
+      const { container } = render(() => <SessionView session="qa-vs" />);
+      eventSources[0]!.onerror?.(null);
+      await flush();
+      expect(conn(container)?.getAttribute("data-status")).toBe("reconnecting");
+      expect(conn(container)?.textContent).toBe("reconnecting");
+    } finally {
+      g.fetch = origFetch;
+    }
   });
 
   it("still forwards the attention signal to the lobby (tab badge)", () => {
