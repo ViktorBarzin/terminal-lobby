@@ -2,6 +2,7 @@ import {
   createMemo,
   createSignal,
   For,
+  onCleanup,
   Show,
   type Accessor,
   type Component,
@@ -10,6 +11,7 @@ import type { RenderGroup } from "./lobby.logic";
 import { countStates, groupSeqTokens } from "./lobby.logic";
 import type { LobbyStore } from "../store/lobby";
 import { UNGROUPED_KEY } from "../store/collapse";
+import { createDismissableMenu } from "./menu";
 import { SessionCard } from "./SessionCard";
 import { StateDot } from "./StateDot";
 
@@ -40,6 +42,15 @@ export const ProjectGroup: Component<{
   const [adding, setAdding] = createSignal(false);
   const [dragOver, setDragOver] = createSignal(false);
   let addInput: HTMLInputElement | undefined;
+  // The half-typed name lives in the DOM node, so the poll must not rebuild the
+  // group while the box is open — the same hold rename and drag take.
+  let releaseAdd: (() => void) | null = null;
+  const endAdd = () => {
+    setAdding(false);
+    releaseAdd?.();
+    releaseAdd = null;
+  };
+  onCleanup(endAdd);
 
   const seqPos = createMemo(() => {
     const tokens = groupSeqTokens(props.store.layout());
@@ -48,7 +59,7 @@ export const ProjectGroup: Component<{
   const canUp = () => seqPos().pos > 0;
   const canDown = () => seqPos().pos >= 0 && seqPos().pos < seqPos().len - 1;
 
-  const [menuOpen, setMenuOpen] = createSignal(false);
+  const menu = createDismissableMenu(() => props.store.hold());
   const counts = () => countStates(props.group.sessions);
 
   const toggleCollapse = () => props.store.collapse.toggle(collapseKey());
@@ -62,6 +73,8 @@ export const ProjectGroup: Component<{
   // ---- new session in this group ----
   const beginAdd = (e: Event) => {
     e.stopPropagation();
+    menu.close();
+    if (!adding()) releaseAdd = props.store.hold();
     setAdding(true);
     props.store.collapse.expand(collapseKey());
     queueMicrotask(() => addInput?.focus());
@@ -69,31 +82,31 @@ export const ProjectGroup: Component<{
   const commitAdd = async () => {
     const name = addInput?.value.trim() ?? "";
     if (!name) {
-      setAdding(false);
+      endAdd();
       return;
     }
     const ok = await props.store.create(name, isUngrouped() ? "" : props.group.name);
-    if (ok) setAdding(false);
+    if (ok) endAdd();
   };
 
   // ---- project actions ----
   const rename = async () => {
-    setMenuOpen(false);
+    menu.close();
     const next = window.prompt("Rename project", props.group.name);
     if (next) await props.store.renameProjectAction(props.group.name, next);
   };
   const del = async () => {
-    setMenuOpen(false);
+    menu.close();
     const n = props.group.sessions.length;
     const msg = n > 0 ? `Delete project "${props.group.name}"? Its ${n} session(s) move to Ungrouped (not killed).` : `Delete project "${props.group.name}"?`;
     if (window.confirm(msg)) await props.store.deleteProjectAction(props.group.name);
   };
   const moveUp = async () => {
-    setMenuOpen(false);
+    menu.close();
     await props.store.moveGroupBy(isUngrouped() ? "" : props.group.name, -1);
   };
   const moveDown = async () => {
-    setMenuOpen(false);
+    menu.close();
     await props.store.moveGroupBy(isUngrouped() ? "" : props.group.name, 1);
   };
 
@@ -152,8 +165,13 @@ export const ProjectGroup: Component<{
       >
         <span class="tl-chev">▾</span>
         <span class="tl-group-title">{isUngrouped() ? "Ungrouped" : props.group.name}</span>
+        {/* The count is unconditional (as the vanilla header is): the chips
+            only cover members that HAVE a Claude state, so a collapsed group
+            that showed chips alone hid both its total and every member
+            without one. */}
         <span class="tl-group-badges">
-          <Show when={collapsed()} fallback={<span class="tl-group-count">{props.group.sessions.length}</span>}>
+          <span class="tl-group-count">{props.group.sessions.length}</span>
+          <Show when={collapsed()}>
             <Show when={counts().running > 0}>
               <span class="tl-chip"><StateDot state="running" size={7} title={false} />{counts().running}</span>
             </Show>
@@ -163,12 +181,9 @@ export const ProjectGroup: Component<{
             <Show when={counts().done > 0}>
               <span class="tl-chip"><StateDot state="done" size={7} title={false} />{counts().done}</span>
             </Show>
-            <Show when={counts().running + counts().awaiting + counts().done === 0}>
-              <span class="tl-group-count">{props.group.sessions.length}</span>
-            </Show>
           </Show>
         </span>
-        <span class="tl-group-actions">
+        <span class="tl-group-actions" ref={menu.anchor}>
           <Show when={!isUngrouped()}>
             <button class="tl-icon-btn" aria-label="New session in project" title="New session in project" draggable={false} onClick={beginAdd}>
               +
@@ -181,12 +196,12 @@ export const ProjectGroup: Component<{
             draggable={false}
             onClick={(e) => {
               e.stopPropagation();
-              setMenuOpen(!menuOpen());
+              menu.toggle();
             }}
           >
             ⋯
           </button>
-          <Show when={menuOpen()}>
+          <Show when={menu.open()}>
             <div class="tl-menu" role="menu" onClick={(e) => e.stopPropagation()}>
               <Show when={!isUngrouped()}>
                 <button class="tl-menu-item" role="menuitem" onClick={() => void rename()}>Rename project</button>
@@ -222,9 +237,9 @@ export const ProjectGroup: Component<{
               placeholder="new session name…"
               onKeyDown={(e) => {
                 if (e.key === "Enter") void commitAdd();
-                else if (e.key === "Escape") setAdding(false);
+                else if (e.key === "Escape") endAdd();
               }}
-              onBlur={() => setAdding(false)}
+              onBlur={endAdd}
             />
           </Show>
         </div>

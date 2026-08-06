@@ -16,6 +16,7 @@ import {
   renameProject,
   renameSessionInLayout,
   reorderGroups,
+  sameLayout,
   stateLabel,
 } from "../src/components/lobby.logic";
 import type { Layout, Session } from "../src/types/lobby";
@@ -325,5 +326,47 @@ describe("display helpers", () => {
   it("isOwn treats missing owner as own", () => {
     expect(isOwn(sess("a", { owner: undefined }), ME)).toBe(true);
     expect(isOwn(sess("a", { owner: "bob" }), ME)).toBe(false);
+  });
+});
+
+describe("sameLayout", () => {
+  const base = (): Layout => ({
+    version: 1,
+    projects: [{ name: "work", sessions: ["a", "b"], dir: "/srv" }],
+    ungrouped: ["c"],
+    ungroupedIndex: 1,
+    dock: { session: "dock", visible: false },
+  });
+
+  it("is true for two freshly-parsed copies of the same document", () => {
+    const a = base();
+    const b = JSON.parse(JSON.stringify(a)) as Layout;
+    expect(a).not.toBe(b);
+    expect(sameLayout(a, b)).toBe(true);
+  });
+
+  it("is false for every field that changes the render", () => {
+    const changes: ((l: Layout) => void)[] = [
+      (l) => (l.version = 2),
+      (l) => (l.ungroupedIndex = 0),
+      (l) => l.ungrouped.push("d"),
+      (l) => (l.ungrouped = ["d"]),
+      (l) => (l.projects[0]!.name = "play"),
+      (l) => (l.projects[0]!.dir = "/other"),
+      (l) => (l.projects[0]!.sessions = ["b", "a"]),
+      (l) => l.projects.push({ name: "extra", sessions: [] }),
+      (l) => (l.dock = { session: "dock", visible: true }),
+      (l) => delete l.dock,
+    ];
+    for (const mutate of changes) {
+      const b = base();
+      mutate(b);
+      expect(sameLayout(base(), b)).toBe(false);
+    }
+  });
+
+  it("treats an absent optional as equal to an absent optional", () => {
+    const a: Layout = { version: 1, projects: [{ name: "p", sessions: [] }], ungrouped: [], ungroupedIndex: 0 };
+    expect(sameLayout(a, JSON.parse(JSON.stringify(a)) as Layout)).toBe(true);
   });
 });
