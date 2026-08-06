@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,7 +19,8 @@ import (
 //     tool_result are the harness feeding Claude back its own tool output, not
 //     the human speaking, and stay inside the running turn.
 //   - a turn CLOSES when Claude's message stops for a reason other than
-//     continuing (see endsTurn), which emits one KindTurnEnd.
+//     continuing (see endsTurn), or when the operator interrupts it (see
+//     interruptNotice), which emits one KindTurnEnd.
 //   - work that appears after a turn closed without a new prompt (a Stop hook
 //     continuing the agent) opens a fresh turn, so it is never filed under a
 //     turn the renderer has already settled.
@@ -100,6 +102,19 @@ func (n *Normalizer) Line(b []byte) []Event {
 	blocks := decodeContent(rl.Message.Content)
 	at := parseAt(rl.Timestamp)
 
+	// An interrupt is the transcript reporting a key press, not a prompt: it
+	// settles the turn it landed in instead of opening one.
+	if notice, ok := interruptNotice(role, rl.IsMeta, blocks); ok {
+		e := n.emit(KindState, at)
+		e.Body = notice
+		out := []Event{e}
+		if !n.turnDone {
+			n.turnDone, n.doneMsg = true, ""
+			out = append(out, n.emit(KindTurnEnd, at))
+		}
+		return out
+	}
+
 	// isPrompt: the human actually said something (see the turn model above).
 	// isMeta lines are skill/system text injected as if the user typed it.
 	isPrompt := role == "user" && !rl.IsMeta && hasBlock(blocks, "text")
@@ -155,6 +170,33 @@ func endsTurn(stopReason string) bool {
 		return false
 	}
 	return true
+}
+
+// interruptMarker opens the notice Claude appends when the operator presses ESC
+// or the composer's Stop: "[Request interrupted by user]" and
+// "[Request interrupted by user for tool use]".
+const interruptMarker = "[Request interrupted by user"
+
+// interruptNotice reports the interrupt notice carried by a transcript line.
+//
+// Claude writes it as a user-ROLE text line with no isMeta key, so the ordinary
+// prompt test claims it: the notice renders as the operator's own words, and it
+// opens a turn that never closes — the response it interrupted stopped at
+// stop_reason "tool_use", which endsTurn treats as a continuation, so nothing
+// settles either turn and the renderer shows "Working…" forever.
+func interruptNotice(role string, isMeta bool, blocks []rawBlock) (string, bool) {
+	if role != "user" || isMeta {
+		return "", false
+	}
+	for _, b := range blocks {
+		if b.Type != "text" {
+			continue
+		}
+		if text := strings.TrimSpace(b.Text); strings.HasPrefix(text, interruptMarker) {
+			return text, true
+		}
+	}
+	return "", false
 }
 
 // hasBlock reports whether the content carries a block of any of these types.

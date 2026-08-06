@@ -294,29 +294,36 @@ export function deriveRows(events: Event[]): TimelineRow[] {
       // Keep the last assistant message visible (the turn's "answer"); fold the
       // rest behind a "Worked for Ns" row. Fall back to the last work row when
       // the turn produced no assistant text.
-      let visible: LeafRow | undefined;
+      let visibleAt = -1;
       for (let i = work.length - 1; i >= 0; i--) {
-        const r = work[i]!;
-        if (r.kind === "message") {
-          visible = r;
+        if (work[i]!.kind === "message") {
+          visibleAt = i;
           break;
         }
       }
-      if (!visible) visible = work[work.length - 1];
-      const hidden = work.filter((r) => r !== visible);
-      if (hidden.length > 0) {
-        out.push({
-          kind: "turn-fold",
-          key: `fold-${turn.key}`,
-          turnKey: turn.key,
-          count: hidden.length,
-          hidden,
-          ...(turnDuration(turn) !== undefined
-            ? { durationMs: turnDuration(turn) }
-            : {}),
-        });
-      }
+      if (visibleAt < 0) visibleAt = work.length - 1;
+      const visible = work[visibleAt];
+      const hidden = work.filter((_, i) => i !== visibleAt);
+      const fold: TurnFoldRow | null =
+        hidden.length > 0
+          ? {
+              kind: "turn-fold",
+              key: `fold-${turn.key}`,
+              turnKey: turn.key,
+              count: hidden.length,
+              hidden,
+              ...(turnDuration(turn) !== undefined
+                ? { durationMs: turnDuration(turn) }
+                : {}),
+            }
+          : null;
+      // Chronology: the fold stands for the run of hidden rows that begins at
+      // the first one, so it goes above the visible message only when hidden
+      // work preceded it. A turn whose last item is a tool call keeps the
+      // message that ANNOUNCED the call above the fold holding it.
+      if (fold && visibleAt > 0) out.push(fold);
       if (visible) out.push(visible);
+      if (fold && visibleAt === 0) out.push(fold);
     } else {
       for (const r of work) out.push(r);
     }
@@ -344,20 +351,57 @@ export function deriveRows(events: Event[]): TimelineRow[] {
   return out;
 }
 
-/** Expand folded turns: replace each expanded turn-fold row with its children. */
+/**
+ * Expand folded turns: an expanded turn-fold row is followed by its children.
+ *
+ * The fold row STAYS — it is the only control that can put the turn back, and
+ * splicing it out made expansion one-way until a reload.
+ */
 export function visibleRows(
   rows: TimelineRow[],
   expandedTurns: ReadonlySet<string>,
 ): TimelineRow[] {
   const out: TimelineRow[] = [];
   for (const r of rows) {
+    out.push(r);
     if (r.kind === "turn-fold" && expandedTurns.has(r.turnKey)) {
       for (const h of r.hidden) out.push(h);
-    } else {
-      out.push(r);
     }
   }
   return out;
+}
+
+/**
+ * Structural equality for two derivations of the same row.
+ *
+ * deriveRows allocates fresh objects on every call, so the renderer cannot use
+ * reference identity to tell "this row changed" from "this row was recomputed".
+ * It holds each row behind a memo whose equality is this function: an unchanged
+ * row then never notifies its view, which is what keeps an expanded tool row
+ * open and a rendered mermaid diagram mounted across a stream append.
+ */
+export function sameRow(a: TimelineRow, b: TimelineRow): boolean {
+  if (a === b) return true;
+  if (a.kind !== b.kind || a.key !== b.key) return false;
+  const fa = a as unknown as Record<string, unknown>;
+  const fb = b as unknown as Record<string, unknown>;
+  const names = Object.keys(fa);
+  if (names.length !== Object.keys(fb).length) return false;
+  for (const name of names) {
+    const va = fa[name];
+    const vb = fb[name];
+    if (va === vb) continue;
+    // `hidden` — the only nested field; compare its rows the same way.
+    if (Array.isArray(va) && Array.isArray(vb)) {
+      if (va.length !== vb.length) return false;
+      for (let i = 0; i < va.length; i++) {
+        if (!sameRow(va[i] as TimelineRow, vb[i] as TimelineRow)) return false;
+      }
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 export interface PendingPermission {

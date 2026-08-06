@@ -325,6 +325,108 @@ func TestNormalizeTwoTurnsWireShape(t *testing.T) {
 	}
 }
 
+// --- interrupts -------------------------------------------------------------
+//
+// Pressing ESC at a permission prompt, or the composer's Stop, makes Claude
+// append the interrupt notice to the transcript as a user-ROLE text line:
+//
+//	{"type":"user","message":{"role":"user","content":[
+//	  {"type":"text","text":"[Request interrupted by user for tool use]"}]}}
+//
+// It carries no isMeta key, so the plain "role==user && has a text block" test
+// reads it as the human speaking. That is wrong twice over: it renders the
+// notice as the operator's own words in a right-hand bubble, and it OPENS a turn
+// that nothing ever closes — the interrupted response stopped at
+// stop_reason "tool_use", which endsTurn deliberately treats as a continuation.
+// The renderer then shows a permanent "Working…" row and a composer stuck on
+// Stop, while tmux already reports the session as idle.
+
+// The interrupt notice belongs to the turn it interrupted, and closes it.
+func TestNormalizeInterruptClosesTheInterruptedTurn(t *testing.T) {
+	for _, notice := range []string{
+		"[Request interrupted by user for tool use]",
+		"[Request interrupted by user]",
+	} {
+		t.Run(notice, func(t *testing.T) {
+			n := NewNormalizer("demo")
+			var out []Event
+			out = append(out, n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"count to 60"}]},"timestamp":"2026-08-06T10:00:00Z"}`))...)
+			out = append(out, n.Line([]byte(`{"type":"assistant","message":{"id":"msg_1","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{}}]},"timestamp":"2026-08-06T10:00:01Z"}`))...)
+			turn := out[0].TurnID
+			at := len(out)
+			out = append(out, n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"`+notice+`"}]},"timestamp":"2026-08-06T10:00:02Z"}`))...)
+
+			produced := out[at:]
+			if len(produced) == 0 {
+				t.Fatalf("the interrupt line produced no events; the renderer needs one to settle the turn")
+			}
+			for _, e := range produced {
+				if e.Kind == KindUser {
+					t.Fatalf("interrupt notice classified as a user prompt: %+v", e)
+				}
+				if e.TurnID != turn {
+					t.Fatalf("interrupt notice landed in turn %q, want the interrupted turn %q (kinds=%v)", e.TurnID, turn, kinds(out))
+				}
+			}
+			if got := countKind(out, KindTurnEnd); got != 1 {
+				t.Fatalf("got %d turn_end for the interrupted turn, want exactly 1 (kinds=%v)", got, kinds(out))
+			}
+			if last := out[len(out)-1]; last.Kind != KindTurnEnd {
+				t.Fatalf("last event = %v, want %v to settle the turn (kinds=%v)", last.Kind, KindTurnEnd, kinds(out))
+			}
+			// The notice itself still reaches the renderer, as a meta line.
+			body := ""
+			for _, e := range produced {
+				if e.Kind == KindState {
+					body = e.Body
+				}
+			}
+			if body != notice {
+				t.Fatalf("notice body = %q, want %q carried on a %v event (produced=%+v)", body, notice, KindState, produced)
+			}
+			if got := countKind(produced, KindText); got != 0 {
+				t.Fatalf("interrupt notice emitted %d text events; it must not read as assistant prose", got)
+			}
+		})
+	}
+}
+
+// The next real prompt after an interrupt still opens its own turn.
+func TestNormalizePromptAfterInterruptOpensANewTurn(t *testing.T) {
+	n := NewNormalizer("demo")
+	var out []Event
+	out = append(out, n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"count to 60"}]},"timestamp":"2026-08-06T10:00:00Z"}`))...)
+	out = append(out, n.Line([]byte(`{"type":"assistant","message":{"id":"msg_1","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{}}]},"timestamp":"2026-08-06T10:00:01Z"}`))...)
+	first := out[0].TurnID
+	out = append(out, n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"timestamp":"2026-08-06T10:00:02Z"}`))...)
+	out = append(out, n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"never mind, say hi"}]},"timestamp":"2026-08-06T10:00:09Z"}`))...)
+
+	next := out[len(out)-1]
+	if next.Kind != KindUser {
+		t.Fatalf("prompt after an interrupt = %v, want %v (kinds=%v)", next.Kind, KindUser, kinds(out))
+	}
+	if next.TurnID == first || next.TurnID == "" {
+		t.Fatalf("prompt after an interrupt reused turn %q (interrupted turn %q)", next.TurnID, first)
+	}
+}
+
+// An interrupt whose turn already closed normally must not emit a second
+// turn_end — one turn, one settlement.
+func TestNormalizeInterruptAfterTurnEndDoesNotDoubleClose(t *testing.T) {
+	n := NewNormalizer("demo")
+	var out []Event
+	out = append(out, n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"timestamp":"2026-08-06T10:00:00Z"}`))...)
+	out = append(out, n.Line([]byte(`{"type":"assistant","message":{"id":"msg_1","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"hello"}]},"timestamp":"2026-08-06T10:00:01Z"}`))...)
+	out = append(out, n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"timestamp":"2026-08-06T10:00:02Z"}`))...)
+
+	if got := countKind(out, KindTurnEnd); got != 1 {
+		t.Fatalf("got %d turn_end, want 1 (kinds=%v)", got, kinds(out))
+	}
+	if got := countKind(out, KindUser); got != 1 {
+		t.Fatalf("got %d user events, want 1 — the interrupt notice is not a prompt (kinds=%v)", got, kinds(out))
+	}
+}
+
 func countKind(evs []Event, k Kind) int {
 	n := 0
 	for _, e := range evs {
