@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# qa-release.sh — land ONE fix lane and ship it to the dev tier, serialized.
+#
+# The QA→fix loop runs lanes in parallel worktrees but releases per lane, so
+# without a mutex two lanes would merge, push and run deploy-v2.sh over each
+# other's build. Every lane calls this; flock makes them queue.
+#
+# It also enforces the release scope the plan fixed
+# (docs/plans/2026-08-06-dev-tier-qa-fix-loop.md, decision 2): the SPA,
+# session-events and file-api may ship unattended because the vanilla tier
+# never calls them. A lane touching tmux-api, clipboard-upload or ttyd is
+# LANDED but NOT deployed — those are shared with terminal.viktorbarzin.me and
+# with bob/carol, and need Viktor's explicit go.
+#
+# Usage:
+#   scripts/qa-release.sh <branch>            # merge, gate, push, deploy
+#   scripts/qa-release.sh <branch> --no-push  # rehearse everything but the push
+set -euo pipefail
+
+BRANCH="${1:?usage: qa-release.sh <branch> [--no-push]}"
+NO_PUSH=""
+[[ "${2:-}" == "--no-push" ]] && NO_PUSH=1
+
+REPO="${QA_REPO:-/home/wizard/code/terminal-lobby}"
+LOCK="${QA_RELEASE_LOCK:-/tmp/qa-release.lock}"
+LOG_PREFIX="[qa-release ${BRANCH}]"
+
+log() { echo "${LOG_PREFIX} $*"; }
+die() { echo "${LOG_PREFIX} FAILED: $*" >&2; exit 1; }
+
+exec 9>"$LOCK"
+log "waiting for the release lock…"
+flock 9
+log "holding the release lock"
+
+cd "$REPO"
+
+# The main checkout is the landing surface; all lane work happens in worktrees,
+# so it must be clean. Refuse rather than stash someone else's work.
+[[ -z "$(git status --porcelain)" ]] || die "main checkout is dirty — refusing to land"
+
+git fetch -q origin
+git checkout -q master
+git pull -q --ff-only origin master || die "master is not fast-forwardable"
+
+git rev-parse --verify -q "$BRANCH" >/dev/null || die "no such branch: $BRANCH"
+
+# What does this lane touch? Decides both the gates and the release scope.
+CHANGED=$(git diff --name-only master.."$BRANCH")
+[[ -n "$CHANGED" ]] || die "branch has no changes against master"
+log "changed files:"; echo "$CHANGED" | sed "s/^/${LOG_PREFIX}   /"
+
+touches() { echo "$CHANGED" | grep -qE "$1"; }
+
+SHARED_HITS=$(echo "$CHANGED" | grep -E '^(tmux-api|clipboard-upload)/|^devvm/ttyd(\.service|-ro\.service|-local\.patch)' || true)
+
+log "merging into master"
+git merge -q --no-ff "$BRANCH" -m "merge($BRANCH): dev-tier QA fix loop" \
+  || die "merge conflict — lane partitioning let two lanes share a file"
+
+# ---- gates -----------------------------------------------------------------
+if touches '^frontend-v2/'; then
+  log "gate: frontend-v2 typecheck + vitest"
+  ( cd frontend-v2 && npm run -s typecheck ) || die "tsc --noEmit"
+  ( cd frontend-v2 && npm test -- --run ) || die "vitest"
+fi
+for svc in tmux-api clipboard-upload session-events file-api; do
+  if touches "^${svc}/"; then
+    log "gate: go test ./${svc}"
+    ( cd "$svc" && go test ./... ) || die "go test in ${svc}"
+  fi
+done
+if touches '^scripts/.*\.py$'; then
+  log "gate: harness guard tests"
+  python3 -m pytest scripts/test_qa_harness.py -q || die "guard tests"
+fi
+if touches '^scripts/.*\.sh$'; then
+  log "gate: shell syntax"
+  for s in $(echo "$CHANGED" | grep -E '^scripts/.*\.sh$'); do
+    bash -n "$s" || die "bash -n $s"
+  done
+fi
+
+# ---- push ------------------------------------------------------------------
+if [[ -n "$NO_PUSH" ]]; then
+  log "--no-push: leaving the merge local"
+else
+  log "pushing master"
+  if ! git push -q origin HEAD:master; then
+    log "push rejected (another lane landed first) — rebasing onto origin/master"
+    git pull -q --rebase origin master || die "rebase onto origin/master"
+    git push -q origin HEAD:master || die "push after rebase"
+  fi
+fi
+
+# ---- release ---------------------------------------------------------------
+if [[ -n "$SHARED_HITS" ]]; then
+  log "NOT DEPLOYING — this lane touches shared components:"
+  echo "$SHARED_HITS" | sed "s/^/${LOG_PREFIX}   /"
+  log "landed on master; deploying it needs Viktor's explicit go (plan decision 2)"
+  exit 0
+fi
+
+DEPLOYED=""
+if touches '^(frontend-v2|frontend)/'; then
+  log "deploying the SPA (deploy-v2.sh)"
+  ./scripts/deploy-v2.sh || die "deploy-v2.sh"
+  DEPLOYED="spa"
+fi
+if touches '^(session-events|file-api)/'; then
+  if [[ -x scripts/deploy-services.sh ]]; then
+    log "deploying session-events / file-api"
+    ./scripts/deploy-services.sh || die "deploy-services.sh"
+    DEPLOYED="${DEPLOYED:+$DEPLOYED+}services"
+  else
+    die "lane changes a v2-only service but scripts/deploy-services.sh is missing"
+  fi
+fi
+
+if [[ -z "$DEPLOYED" ]]; then
+  log "nothing deployable changed (docs/tests/harness only) — landed, no release"
+else
+  log "released: ${DEPLOYED}"
+  ASSET=$(curl -s -H "X-authentik-username: alice" http://127.0.0.1:7687/ \
+          | grep -o 'tl-asset" content="[a-f0-9]*"' | head -1 || true)
+  log "dev tier now serving ${ASSET:-<asset id unreadable>}"
+fi
+log "done"
