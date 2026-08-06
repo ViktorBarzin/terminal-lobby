@@ -32,4 +32,19 @@ interface Window {
   // bridge message (the ttyd page already refits on its own visualViewport
   // listeners); belt-and-braces for the SPA-driven resize.
   __tlRefitTerminal?: () => boolean;
+  // Set by the mounted TerminalView — hands keyboard focus BACK to the terminal
+  // after a lobby overlay (command palette, shortcuts help) closes. Those
+  // overlays live outside the iframe, so dismissing one leaves focus on <body>
+  // and the pty deaf until the user clicks. Focuses the frame window and posts
+  // {type:'tl-focus'}, which term.html turns into requestTerminalFocus().
+  // Returns false when the TEXT view owns the keyboard — the terminal must
+  // never steal focus from the composer.
+  __tlFocusTerminal?: () => boolean;
+  // Set by the mounted TerminalView — the live prefs bridge, the sibling of
+  // __tlThemeLive. store/prefs.ts calls it after persisting a change so the
+  // attached terminal applies the new font size (etc.) immediately instead of
+  // at its next boot. Posts {type:'tl-prefs',prefs} + {type:'tl-font-size',size}
+  // (term.html reads localStorage as the truth; the payload covers a failed
+  // write). Returns true when a frame was available to receive it.
+  __tlPrefsLive?: (prefs: { fontSize: number }) => boolean;
 }
