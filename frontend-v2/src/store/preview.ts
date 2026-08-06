@@ -70,6 +70,8 @@ export interface PreviewStore {
   browseError: Accessor<string | null>;
   /** whether ⬆ Up can still climb — false at the containment root and at "/". */
   canBrowseUp: Accessor<boolean>;
+  /** whether listings ask file-api for dotfiles (&all=1). Off by default. */
+  showHidden: Accessor<boolean>;
 
   // ---- quick-edit mode (roadmap pillar #6) --------------------------------
   /** whether the loaded kind can be edited (code/markdown/html, not img/binary). */
@@ -115,6 +117,9 @@ export interface PreviewStore {
   browseStart: () => Promise<void>;
   /** go to the parent of the current browse dir; inert at the containment root. */
   browseUp: () => Promise<void>;
+  /** flip the dotfile filter, re-listing the open directory so the pane follows
+   *  the switch instead of waiting for the next navigation. */
+  toggleHidden: () => Promise<void>;
   /** leave browse mode, back to the loaded file / idle. */
   closeBrowse: () => void;
 }
@@ -189,6 +194,10 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
   // learned: seeded from the home lookup when we use it, otherwise recorded the
   // first time a parent listing comes back 400.
   const [browseFloor, setBrowseFloor] = createSignal<string | null>(null);
+  // Dotfiles are off by default (file-api hides them unless asked), but the
+  // ask has to be POSSIBLE: .gitignore / .env / .bashrc are files file-api
+  // deliberately lets you edit, and the pane could not name one.
+  const [showHidden, setShowHidden] = createSignal(false);
 
   // ---- quick-edit state (roadmap pillar #6) -------------------------------
   const [editState, setEditState] = createSignal<EditState>(initialEditState);
@@ -356,7 +365,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     setBrowseError(null);
     setBrowseStatus("loading");
     try {
-      const entries = await listDir(dir);
+      const entries = await listDir(dir, showHidden());
       if (token !== browseToken) return;
       setBrowseEntries(entries);
       setBrowseStatus("loaded");
@@ -416,7 +425,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     const restore = browseStatus(); // what the pane shows if the climb is refused
     setBrowseStatus("loading");
     try {
-      const entries = await listDir(parent);
+      const entries = await listDir(parent, showHidden());
       if (token !== browseToken) return;
       setBrowseDir(parent);
       setBrowseEntries(entries);
@@ -434,6 +443,17 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
       setBrowseError(err instanceof Error ? err.message : String(err));
       setBrowseStatus("error");
     }
+  }
+
+  /**
+   * Flip the dotfile filter. Re-lists the directory that is on screen, because
+   * a filter that only takes effect on the NEXT navigation reads as a dead
+   * control. With the pane closed it just records the preference.
+   */
+  async function toggleHidden(): Promise<void> {
+    setShowHidden((v) => !v);
+    const d = browseDir();
+    if (browsing() && d) await browse(d);
   }
 
   function closeBrowse(): void {
@@ -460,6 +480,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     browseStatus,
     browseError,
     canBrowseUp,
+    showHidden,
     canEdit,
     editing,
     dirty,
@@ -480,6 +501,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     browse,
     browseStart,
     browseUp,
+    toggleHidden,
     closeBrowse,
   };
 }
