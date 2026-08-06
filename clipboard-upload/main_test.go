@@ -1,11 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -254,5 +264,309 @@ func TestPublicAssetsFallthrough(t *testing.T) {
 		if called != c.fallsThrough {
 			t.Fatalf("%s %s: fell through = %v, want %v", c.method, c.path, called, c.fallsThrough)
 		}
+	}
+}
+
+// --- /upload: the bytes must actually be an image ----------------------------
+//
+// /upload's image branch trusted the multipart part's Content-Type, which the
+// browser fills in from the file's extension and a client can set to anything.
+// So 39 bytes of plain text labelled image/png were accepted, written into the
+// per-(user, session) store, and listed by /list forever — the gallery then
+// drew them as a dead thumbnail with no way to remove them. These tests pin the
+// content check that closes that, and record which shapes it does and does not
+// catch.
+
+// withUserMap points resolveOSUser's map file (mapPath — a var purely for this
+// seam) at a fixture, so upload tests run the REAL X-Authentik-Username →
+// OS-user path hermetically instead of depending on /etc/ttyd-user-map.
+func withUserMap(t *testing.T, content string) {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "user-map")
+	if err := os.WriteFile(f, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := mapPath
+	mapPath = f
+	t.Cleanup(func() { mapPath = old })
+}
+
+// withStore redirects the image store (storeRoot — a var for the same reason)
+// at a temp dir, so a test upload can never land in the real
+// /var/lib/clipboard-store next to a user's actual screenshots.
+func withStore(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	old := storeRoot
+	storeRoot = dir
+	t.Cleanup(func() { storeRoot = old })
+	return dir
+}
+
+// realPNG is a complete, valid 1x1 PNG — encoded rather than hard-coded so the
+// signature, IHDR, IDAT and IEND are all genuine.
+func realPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{R: 10, G: 20, B: 30, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// imageUpload builds exactly what the SPA sends for a clipboard paste or an
+// image drop (frontend-v2/src/clipboard/upload.ts): a multipart POST whose
+// "image" part carries the BROWSER-DECLARED content type — the value the bug
+// trusted — alongside the session field and the ingress's identity header.
+func imageUpload(t *testing.T, session, filename, declaredType string, body []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="image"; filename=%q`, filename))
+	h.Set("Content-Type", declaredType)
+	part, err := mw.CreatePart(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("session", session); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set(authHeader, "qa.tester")
+	return req
+}
+
+// storedNames lists what actually landed in the store for one (user, session)
+// — the durable damage a bad accept leaves behind.
+func storedNames(t *testing.T, root, osUser, session string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, osUser, session))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return names
+}
+
+// The reported bug, measured in QA session qa-vimg3: 39 bytes of plain text
+// labelled image/png were accepted on the strength of the label alone. The
+// bytes must be inspected, the request refused, and NOTHING written to the
+// store — a store write is the part that cannot be undone from the UI.
+func TestUploadRejectsNonImageBytesLabelledAsImage(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	body := []byte("this is definitely not a png at all :-)") // 39 bytes, as measured
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "screenshot.png", "image/png", body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /upload, text labelled image/png: got %d, want 400 (body %q)",
+			rec.Code, rec.Body.String())
+	}
+	// The body becomes a toast in the SPA (uploadBlob throws the response text),
+	// so it has to say what was actually wrong.
+	if msg := rec.Body.String(); !strings.Contains(msg, "text/plain") {
+		t.Fatalf("rejection message %q should name the sniffed type", msg)
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 0 {
+		t.Fatalf("a rejected upload still wrote to the store: %v", names)
+	}
+}
+
+// The other half: a genuine PNG still uploads, still lands in the caller's
+// per-session store, and still answers with the {"path": …} the frontend types
+// into the pty.
+func TestUploadAcceptsRealPNG(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "shot.png", "image/png", realPNG(t)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /upload with a real PNG: got %d, want 200 (body %q)",
+			rec.Code, rec.Body.String())
+	}
+	names := storedNames(t, root, "qauser", "qa")
+	if len(names) != 1 || !strings.HasSuffix(names[0], ".png") {
+		t.Fatalf("stored files after a good upload: %v, want one *.png", names)
+	}
+	if !strings.Contains(rec.Body.String(), filepath.Join(root, "qauser", "qa", names[0])) {
+		t.Fatalf("response %q should carry the stored path", rec.Body.String())
+	}
+}
+
+// DOCUMENTED DECISION — a truncated PNG is ACCEPTED.
+//
+// The QA repro dropped the first 40 bytes of a valid PNG; its magic bytes are
+// intact, so http.DetectContentType calls it image/png and this check passes.
+// That is deliberate. The check answers "are these bytes an image", not "does
+// this image decode": image.DecodeConfig would accept the same 40 bytes (the
+// IHDR is complete by byte 33) while REJECTING webp and avif, which the
+// browser renders perfectly — a strictly worse trade. Files that pass here and
+// still fail to paint are the gallery's onError fallback's job
+// (frontend-v2/src/components/Gallery.tsx), which is why this fix has two
+// halves. If this ever flips to a reject, the failure mode to weigh is a real
+// screenshot refused mid-copy, not a smarter sniff.
+func TestUploadAcceptsTruncatedPNG(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	full := realPNG(t)
+	if len(full) < 40 {
+		t.Fatalf("fixture PNG is only %d bytes; cannot truncate to 40", len(full))
+	}
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "trunc.png", "image/png", full[:40]))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /upload with a truncated PNG: got %d, want 200 — the magic "+
+			"bytes make it image/png and this check is a sniff, not a decode (body %q)",
+			rec.Code, rec.Body.String())
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 1 {
+		t.Fatalf("stored files: %v, want exactly one", names)
+	}
+}
+
+// A CONSEQUENCE worth pinning: SVG is refused, because the check has no
+// filename-extension escape hatch (unlike isImage, which /register uses — the
+// extension is client-supplied too, so honouring it would wave the same
+// mislabelled bytes straight back in).
+//
+// Nothing that worked is lost. An SVG on this path could never render: /upload
+// names it by imageExt(ct), which has no svg case and falls through to ".png",
+// and /img re-sniffs on serve and hands the <img> tag "text/xml", which no
+// browser draws. Accepting SVG here only ever produced the dead tile this lane
+// is fixing. Reversing the decision means giving SVG a real path — an svg case
+// in imageExt and an explicit content type on serve — not loosening this check.
+func TestUploadRejectsSVGWhichCouldNeverRender(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	svg := []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" ` +
+		`width="8" height="8"><rect width="8" height="8"/></svg>`)
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "diagram.svg", "image/svg+xml", svg))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /upload with an SVG: got %d, want 400 (body %q)",
+			rec.Code, rec.Body.String())
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 0 {
+		t.Fatalf("a rejected SVG still wrote to the store: %v", names)
+	}
+}
+
+// realAVIF is a genuine 24x24 AVIF (Pillow 12.2 `Image.new("RGB",(24,24)).save`),
+// base64'd here because there is no AVIF encoder in the standard library. Its
+// first bytes are the ISO-BMFF header the check below keys on:
+// 00 00 00 20 "ftyp" "avif" ... "avifmif1".
+const realAVIFBase64 = `AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADrbWV0YQAAAAAAAAAhaGRscgAAAAAA` +
+	`AAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAAAAAAAQAAAB5pbG9jAAAAAEQAAAEAAQAAAAEA` +
+	`AAETAAAAJwAAAChpaW5mAAAAAAABAAAAGmluZmUCAAAAAAEAAGF2MDFDb2xvcgAAAABqaXBycAAA` +
+	`AEtpcGNvAAAAFGlzcGUAAAAAAAAAGAAAABgAAAAQcGl4aQAAAAADCAgIAAAADGF2MUOBAAwAAAAA` +
+	`E2NvbHJuY2x4AAEADQAGgAAAABdpcG1hAAAAAAAAAAEAAQQBAoMEAAAAL21kYXQSAAoJGBEvdogI` +
+	`aDQgMhgUx4eGZQIIIJ5AAACLRzYXX0pdv6c/F6Q=`
+
+func avifBytes(t *testing.T) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(realAVIFBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// REGRESSION GUARD — AVIF must still upload.
+//
+// http.DetectContentType's table stops at png/jpeg/gif/webp/bmp/ico: it has no
+// entry for the ISO-BMFF image family, so a real AVIF sniffs as
+// application/octet-stream. Gating on the sniff alone therefore refuses a
+// format every current browser decodes, and that is a live workflow — dragging
+// a downloaded .avif into the terminal sets File.type "image/avif", which
+// uploadField routes to this very "image" branch
+// (frontend-v2/src/clipboard/upload.ts).
+//
+// Measured 2026-08-06 before this guard existed: the same file uploaded 200
+// against the deployed service, /img served it back as application/octet-stream
+// (stored extensions are advisory there), and headless chromium drew it —
+// naturalWidth 24, onload fired. So refusing it loses something that worked,
+// unlike the SVG and TIFF cases above, which were dead tiles either way.
+//
+// The rest of the ISO-BMFF image brands (heic/heif/…) ride along on the same
+// container check. Where a browser cannot decode one, the gallery's onError
+// placeholder covers it — which is the whole point of the client half.
+func TestUploadAcceptsAVIFWhichSniffsAsOctetStream(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "photo.avif", "image/avif", avifBytes(t)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /upload with a real AVIF: got %d, want 200 — browsers "+
+			"render AVIF, so this is a format the sniffer misses, not a bad file "+
+			"(body %q)", rec.Code, rec.Body.String())
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 1 {
+		t.Fatalf("stored files after an AVIF upload: %v, want exactly one", names)
+	}
+}
+
+// The container check must not become the extension escape hatch by another
+// name: "ftyp" alone is any ISO-BMFF file, and an MP4 is not a gallery image.
+func TestUploadRejectsNonImageISOBMFF(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	// A well-formed ftyp box with the MP4 brand, i.e. a video container.
+	mp4 := []byte("\x00\x00\x00\x20ftypmp42\x00\x00\x00\x00mp42isomavc1")
+	mp4 = append(mp4, make([]byte, 64)...)
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "clip.mp4", "image/png", mp4))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /upload with an MP4 labelled image/png: got %d, want 400 (body %q)",
+			rec.Code, rec.Body.String())
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 0 {
+		t.Fatalf("a rejected MP4 still wrote to the store: %v", names)
+	}
+}
+
+// An empty part is not an image either — DetectContentType calls zero bytes
+// text/plain — and must not create a 0-byte tile in the gallery.
+func TestUploadRejectsEmptyImagePart(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "empty.png", "image/png", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /upload with an empty image part: got %d, want 400 (body %q)",
+			rec.Code, rec.Body.String())
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 0 {
+		t.Fatalf("a rejected empty upload still wrote to the store: %v", names)
 	}
 }

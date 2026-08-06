@@ -29,6 +29,26 @@ and profile, so twelve of these run at once without seeing each other.
 Artifacts land in --artifacts (default /tmp/qa-run/<area>/): findings.json,
 console.log, and a PNG per finding. Sessions the agent created are killed on
 exit, even on exception.
+
+KNOWN HARNESS LIMITS — do not file these as app findings
+--------------------------------------------------------
+Background PUSH cannot be exercised here. Every agent runs in an incognito
+browser context, and Chrome refuses `pushManager.subscribe()` there:
+`AbortError: Registration failed - permission denied`, with the console note
+"Chrome currently does not support the Push API in incognito mode
+(crbug.com/401439)". So Settings always reads **Subscribed here: no**, and the
+bell's best-effort `subscribePush()` always fails — in the harness, not in the
+product. Measured 2026-08-06: the same page in a PERSISTENT profile subscribes
+fine and gets a real FCM endpoint, and /api/sessions/push/vapid-public returns
+200 with a real key, so neither the code nor the VAPID setup is at fault.
+
+The driver deliberately does NOT switch to a persistent profile to buy this
+back: a subscription made here is registered in wizard's REAL push store, and
+the proxy guard refuses DELETE /push-subscriptions (it cannot tell a QA
+endpoint from a real device), so every round would leave dead FCM endpoints the
+server keeps trying to deliver to. Foreground notifications are unaffected and
+DO work — `pushDelivers` is false, so the page path fires, which is the path
+worth sweeping.
 """
 from __future__ import annotations
 
@@ -100,6 +120,27 @@ class _BrowserSlot:
                 self._fh = None
 
 
+def _shm_args() -> list[str]:
+    """Decide whether chromium should avoid /dev/shm — by measuring, not by habit.
+
+    `--disable-dev-shm-usage` is a container workaround for the 64 MB /dev/shm
+    Docker hands out. It makes chromium put its shared memory in TMPDIR
+    instead. On this box that is exactly backwards: /tmp is a 2 GB tmpfs shared
+    with everything else on the devvm and the fleet filled it, while /dev/shm is
+    16 GB and essentially untouched. A full /tmp gave
+    `net::ERR_INSUFFICIENT_RESOURCES` and `Target crashed` mid-sweep, which
+    QaAgent.__exit__ then filed as bogus "sweep crashed" findings.
+
+    So: pass the flag only when /dev/shm is genuinely too small to use.
+    """
+    try:
+        st = os.statvfs("/dev/shm")
+        free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
+    except OSError:
+        return ["--disable-dev-shm-usage"]
+    return [] if free_mb >= 512 else ["--disable-dev-shm-usage"]
+
+
 @dataclass
 class Finding:
     area: str
@@ -143,14 +184,24 @@ class QaAgent:
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
             headless=self.headless, slow_mo=self.slow_mo,
-            args=["--no-sandbox", "--disable-dev-shm-usage"])
+            # channel="chromium" = the full browser build, still headless.
+            # Playwright's DEFAULT headless build is the headless SHELL, which
+            # ships no notification presenter: it pins Notification.permission
+            # to "denied" no matter what is granted, while
+            # navigator.permissions.query() cheerfully reports "granted". The
+            # app's notification code gates on Notification.permission, so on
+            # the shell the whole feature reads as dead and the bell as
+            # permanently un-optable — two app bugs that do not exist.
+            channel="chromium",
+            args=["--no-sandbox", *_shm_args()])
         self._context = self._browser.new_context(
             viewport={"width": self.viewport[0], "height": self.viewport[1]},
             permissions=["clipboard-read", "clipboard-write"],
-            # The lobby asks for notification permission (area 11). Granting it
-            # up front keeps the prompt from eating clicks.
             base_url=self.harness,
         )
+        # The lobby asks for notification permission (area 11). Granting it up
+        # front keeps the prompt from eating clicks — and with the full browser
+        # build above, the grant is visible to Notification.permission too.
         self._context.grant_permissions(["notifications"], origin=self.harness)
         self.page = self._context.new_page()
         self._wire_capture(self.page)

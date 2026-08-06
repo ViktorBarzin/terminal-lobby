@@ -49,7 +49,8 @@ Blocked (403):
   4. POST /projects with a non-qa name; PUT/DELETE of a project this run
      did not create
   5. POST /prompt/<s>, /cancel/<s>      unless s is qa-*
-  6. POST /files/write                  unless the path is under --scratch
+  6. POST /files/write                  unless the NORMALISED path is under
+                                        --scratch (see THE SCRATCH below)
   7. WS upgrade whose first ?arg= is not qa-*   (a ttyd attach is WRITABLE:
      `tmux new-session -A` would both create the session and hand the agent a
      live keyboard into it)
@@ -72,10 +73,26 @@ sidebar arrangement and roamed preferences. Both are snapshotted at startup and
 written back on shutdown, so a fleet that drag-reorders everything and cycles
 all nine themes leaves the sidebar as it found it.
 
+THE SCRATCH
+-----------
+--scratch defaults to /home/<osUser>/qa-harness-scratch, created at startup.
+It has to sit INSIDE file-api's own containment root — file-api confines every
+path to /home/<osUser> (file-api/auth.go: homeBase "/home", userHome()) — or
+the guard and the server permit disjoint sets and no write can land anywhere.
+That is what the original /tmp default did: the guard allowed the write and
+file-api answered 400 "invalid path", which the editor renders as "Can't save
+this path (not a regular file)." (frontend-v2/src/lib/file-api.ts,
+writeErrorMessage); aim at the home instead and the guard's own 403 renders as
+"Not authorized to save this file.". Either way the save looks like a product
+bug. Because the scratch now shares a root with everything else the
+caller owns, the guard matches on the NORMALISED path: one ".." would otherwise
+leave the scratch and still land somewhere file-api writes happily.
+
 Usage:
     python3 scripts/qa-harness.py                  # :7998, user alice
     python3 scripts/qa-harness.py --port 7999      # a second, isolated fleet
     python3 scripts/qa-harness.py --no-restore     # keep whatever the fleet did
+    python3 scripts/qa-harness.py --scratch DIR    # only if DIR is under /home/<osUser>
 """
 from __future__ import annotations
 
@@ -177,6 +194,30 @@ def proxy_os_user() -> str:
     return pwd.getpwuid(os.getuid()).pw_name
 
 
+# file-api's containment root is /home/<osUser> (file-api/auth.go: homeBase
+# "/home", userHome()). Mirrored here rather than read from passwd, because
+# file-api joins the literal "/home" with the mapped user name and never
+# consults pw_dir — a user whose passwd home is elsewhere would still be
+# confined to /home/<name>.
+FILE_API_HOME_BASE = "/home"
+
+
+def default_scratch() -> str:
+    """The only tree /files/write may target, by default.
+
+    It has to satisfy BOTH gates or no write can ever land: the guard below,
+    and file-api's own /home/<osUser> containment. A /tmp scratch satisfies
+    only the guard — file-api answers 400 "invalid path", the editor renders
+    that as "Can't save this path (not a regular file).", and the save
+    round-trip looks like a product bug to every sweep agent.
+
+    Keyed on the OS user this proxy RUNS as, which is also the user whose home
+    it can create the directory in. When --user maps to a different OS user
+    (tmux-api /whoami disagrees; arm_reaper logs it), pass --scratch explicitly.
+    """
+    return os.path.join(FILE_API_HOME_BASE, proxy_os_user(), "qa-harness-scratch")
+
+
 def sessions_to_reap(before: list[str], after: list[str]) -> list[str]:
     """Sessions a /restore brought back that were not there before it, minus the
     qa-* ones (area 7 restoring a qa-* session it killed is the point)."""
@@ -189,7 +230,7 @@ class Guard:
     be edited and deleted by it."""
 
     def __init__(self, scratch: str, *, can_reap: bool = False) -> None:
-        self.scratch = scratch.rstrip("/") + "/"
+        self.scratch = os.path.normpath(scratch).rstrip("/") + "/"
         self.own_projects: set[str] = set()
         self.blocked: list[str] = []
         # Armed at startup once the proxy has proved it can undo a /restore.
@@ -222,7 +263,7 @@ class Guard:
             new = ""
             try:
                 new = str(json.loads(body or b"{}").get("name", "")).strip()
-            except ValueError:
+            except (ValueError, AttributeError):
                 return "rename body was not JSON, refusing to guess the target name"
             if not is_qa(new):
                 return (f"refusing to rename {old!r} to {new!r} — the new name must "
@@ -235,7 +276,7 @@ class Guard:
         if tail == "projects" and method == "POST":
             try:
                 name = str(json.loads(body or b"{}").get("name", "")).strip()
-            except ValueError:
+            except (ValueError, AttributeError):
                 return "project body was not JSON, refusing to guess the name"
             if not is_qa(name):
                 return f"refusing to create project {name!r} — name must be qa-*"
@@ -270,9 +311,16 @@ class Guard:
         if path == "/files/write" and method == "POST":
             try:
                 target = str(json.loads(body or b"{}").get("path", ""))
-            except ValueError:
+            except (ValueError, AttributeError):
                 return "write body was not JSON, refusing to guess the target path"
-            if not target.startswith(self.scratch):
+            # Compare the NORMALISED path. The scratch lives inside
+            # /home/<osUser>, which is file-api's whole containment root, so a
+            # single ".." walks out of the scratch onto a path file-api is
+            # perfectly happy to write — a raw prefix check would hand the
+            # fleet the entire home directory. A relative path normalises to
+            # something that cannot match the absolute scratch, so it is
+            # refused rather than guessed at.
+            if not os.path.normpath(target).startswith(self.scratch):
                 return (f"refusing to write {target!r} — writes are confined to "
                         f"{self.scratch}")
         return None
@@ -612,7 +660,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
     return app
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port", type=int, default=7998, help="proxy listen port")
@@ -620,8 +668,11 @@ def main() -> None:
                    help="value injected as X-Authentik-Username")
     p.add_argument("--ttyd-port", type=int, default=7687,
                    help="ttyd serving the SPA (7687 = the deployed v2 tier)")
-    p.add_argument("--scratch", default="/tmp/qa-harness-scratch",
-                   help="the only tree /files/write may target")
+    p.add_argument("--scratch", default=default_scratch(),
+                   help="the only tree /files/write may target (default: "
+                        "%(default)s). Must live inside file-api's containment "
+                        "root /home/<osUser>, or file-api answers 400 'invalid "
+                        "path' and no write can land however the guard is set")
     # Default OFF = what production does. The shim cannot make the permission
     # panel work — session-events has no /permission handler — so leaving it on
     # bought nothing but a divergence from the tier under test.
@@ -637,7 +688,11 @@ def main() -> None:
     p.add_argument("--no-restore", action="store_true",
                    help="do not snapshot/restore /layout and /prefs")
     p.add_argument("--quiet", action="store_true")
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     os.makedirs(args.scratch, exist_ok=True)
 

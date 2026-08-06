@@ -81,6 +81,29 @@ function assistantText(text: string): string {
   });
 }
 
+/**
+ * The status probe the browser client uses, with the header the ingress injects.
+ * Reads ONLY the status line and discards the body, so a probe that lands on a
+ * live stream does not consume it.
+ */
+function probeWith(headers: Record<string, string>) {
+  return async (url: string): Promise<number | null> => {
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "text/event-stream", ...headers },
+      });
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* already closed */
+      }
+      return res.status;
+    } catch {
+      return null;
+    }
+  };
+}
+
 /** Register a (tmux session → transcript) mapping via the localhost-only hook. */
 async function registerSession(
   tmuxSession: string,
@@ -275,4 +298,104 @@ describe("SseClient ⇄ real session-events", () => {
       client.close();
     }
   }, 20000);
+
+  // A plain tmux session no Claude ever ran in is NOT registered, so the real
+  // service answers `404 session not registered`. Text mode is the default view
+  // for every session, so this is the first thing such a session shows.
+  it("reports no-transcript for an unregistered session instead of retrying the 404 forever", async () => {
+    const session = "unregistered_sess";
+    const sources: EventSourceLike[] = [];
+    const statuses: string[] = [];
+    const probed: string[] = [];
+    const probe = probeWith(AUTH_HEADERS);
+
+    // The bare 404 the client has to classify, straight off the wire.
+    const direct = await fetch(`${baseUrl}${eventsUrl(session, 0)}`, {
+      headers: AUTH_HEADERS,
+    });
+    expect(direct.status).toBe(404);
+    expect(await direct.text()).toContain("session not registered");
+
+    const make = makeFetchEventSource(AUTH_HEADERS);
+    const client = new SseClient({
+      session,
+      url: (s, id) => baseUrl + eventsUrl(s, id),
+      onEvent: () => {},
+      onStatus: (s) => statuses.push(s),
+      createSource: (url) => {
+        const src = make(url);
+        sources.push(src);
+        return src;
+      },
+      probeStatus: (url) => {
+        probed.push(url);
+        return probe(url);
+      },
+      random: () => 0,
+      baseDelayMs: 20, // the ladder would storm at ~30ms/attempt
+      maxDelayMs: 40,
+      probeIntervalMs: 300,
+    });
+    client.start();
+
+    try {
+      await until(() => statuses.includes("no-transcript"), 6000);
+      expect(statuses).not.toContain("reconnecting");
+
+      // Sit in the absent state well past a dozen ladder attempts: the client
+      // must NOT keep opening connections, only re-probe on its slow timer.
+      const t0 = Date.now();
+      await new Promise((r) => setTimeout(r, 1500));
+      const elapsed = Date.now() - t0;
+      expect(sources).toHaveLength(1); // the one attempt that discovered the 404
+      // One probe per interval (+ the classification, + slack) — NOT the
+      // ~1-per-30ms the backoff ladder would have produced. Measured against
+      // real elapsed time so a loaded box slows the client, never the check.
+      expect(probed.length).toBeLessThanOrEqual(2 + Math.ceil(elapsed / 300));
+      expect(statuses[statuses.length - 1]).toBe("no-transcript");
+    } finally {
+      client.close();
+    }
+  }, 30000);
+
+  it("comes alive when a previously-unregistered session registers later", async () => {
+    const session = "late_sess";
+    const cwd = "/itest/late";
+    const claudeID = "late-0001";
+    const received: Event[] = [];
+    const statuses: string[] = [];
+
+    const client = new SseClient({
+      session,
+      url: (s, id) => baseUrl + eventsUrl(s, id),
+      onEvent: (e) => received.push(e),
+      onStatus: (s) => statuses.push(s),
+      createSource: makeFetchEventSource(AUTH_HEADERS),
+      probeStatus: probeWith(AUTH_HEADERS),
+      random: () => 0,
+      baseDelayMs: 20,
+      maxDelayMs: 40,
+      probeIntervalMs: 300,
+    });
+    client.start();
+
+    try {
+      await until(() => statuses.includes("no-transcript"), 6000);
+
+      // The session starts a Claude: the SessionStart hook registers it.
+      const file = transcriptPath(cwd, claudeID);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "");
+      await registerSession(session, cwd, claudeID);
+      fs.appendFileSync(file, assistantText("hello from a late start") + "\n");
+
+      // The slow re-probe must find the stream and hand it back to the ladder.
+      await until(() => received.length >= 1, 8000);
+      expect(received[0]!.body).toBe("hello from a late start");
+      expect(statuses).toContain("open");
+      expect(statuses[statuses.length - 1]).toBe("open");
+    } finally {
+      client.close();
+    }
+  }, 30000);
 });

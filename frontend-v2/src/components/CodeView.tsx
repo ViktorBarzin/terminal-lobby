@@ -12,7 +12,20 @@ import { createSignal, onMount, Show, type Component } from "solid-js";
  * Safety: highlight.js HTML-escapes its input and emits ONLY its own
  * `<span class="hljs-*">` markup — source HTML is never passed through — so the
  * injected string carries no user HTML. Same reviewed pattern as Mermaid's SVG.
+ *
+ * Size guard: highlighting is synchronous, so its cost is a freeze of the whole
+ * lobby — no scrolling, no clicks, no stream updates — until it returns. On the
+ * deployed build, opening a 9 MB .txt (file-api allows 10 MB and the 413 copy
+ * advertises it, so this is a file the app promises to preview) blocked the main
+ * thread for 156 s; 1 MB blocked 9.9 s. Past the ceilings below we therefore
+ * keep the plain-text render, which is the same thing the view shows first
+ * anyway. `highlightAuto` runs every registered grammar and costs ~6x a known
+ * one per byte — measured, warm V8: 128 KiB auto 1185 ms vs 236 ms for
+ * typescript; 16 KiB auto 172 ms — so it gets the lower ceiling. Both sit near a
+ * ~200 ms budget on the worst content measured.
  */
+const HIGHLIGHT_MAX_CHARS = 128 * 1024;
+const HIGHLIGHT_AUTO_MAX_CHARS = 16 * 1024;
 
 type HljsModule = typeof import("highlight.js/lib/core")["default"];
 let hljsReady: Promise<HljsModule> | null = null;
@@ -99,13 +112,26 @@ export const CodeView: Component<{ code: string; language?: string }> = (
 ) => {
   const [markup, setMarkup] = createSignal<string>("");
   const [ready, setReady] = createSignal(false);
+  const [skipped, setSkipped] = createSignal(false);
 
   onMount(async () => {
     try {
+      // Over the larger ceiling nothing can highlight this, so don't even pay
+      // for the grammars.
+      if (props.code.length > HIGHLIGHT_MAX_CHARS) {
+        setSkipped(true);
+        return;
+      }
       const hljs = await loadHljs();
       const lang = props.language;
+      const known = lang ? hljs.getLanguage(lang) : undefined;
+      // Auto-detection runs every registered grammar, so it stops sooner.
+      if (!known && props.code.length > HIGHLIGHT_AUTO_MAX_CHARS) {
+        setSkipped(true);
+        return;
+      }
       const out =
-        lang && hljs.getLanguage(lang)
+        known && lang
           ? hljs.highlight(props.code, { language: lang }).value
           : hljs.highlightAuto(props.code).value;
       setMarkup(out);
@@ -119,9 +145,21 @@ export const CodeView: Component<{ code: string; language?: string }> = (
     <Show
       when={ready()}
       fallback={
-        <pre class="tl-code tl-codeview hljs" data-lang={props.language || undefined}>
-          <code>{props.code}</code>
-        </pre>
+        <>
+          <Show when={skipped()}>
+            <div class="tl-preview-note tl-codeview-skipped">
+              Syntax highlighting is off — this file is too large to colour
+              without freezing the page.
+            </div>
+          </Show>
+          <pre
+            class="tl-code tl-codeview hljs"
+            data-lang={props.language || undefined}
+            data-highlight={skipped() ? "skipped" : undefined}
+          >
+            <code>{props.code}</code>
+          </pre>
+        </>
       }
     >
       <pre class="tl-code tl-codeview hljs" data-lang={props.language || undefined}>
