@@ -24,6 +24,12 @@ import { track } from "../telemetry/track";
  *    WebSocket reaches ttyd, so we must navigate even while text mode is showing.
  *  - Live theme: window.__tlThemeLive posts `{type:'tl-theme',name}` into the
  *    frame and reloads it if no `tl-theme-ack` arrives within 1000ms.
+ *  - Live prefs: window.__tlPrefsLive posts `{type:'tl-prefs',prefs}` +
+ *    `{type:'tl-font-size',size}` (no ack, no navigation) so a settings change
+ *    reaches the attached terminal without dropping its WebSocket.
+ *  - Focus handback: window.__tlFocusTerminal focuses the frame and posts
+ *    `{type:'tl-focus'}` so a closing lobby overlay returns the keyboard to the
+ *    pty. Declines while the text view is active.
  */
 export const TerminalView: Component<{
   session: string;
@@ -116,18 +122,24 @@ export const TerminalView: Component<{
   };
   createEffect(() => postViewState());
 
-  // Focus the terminal when it becomes the active view. Focus the frame window
-  // AND post tl-focus so the terminal page's own handler focuses xterm's input.
+  // Focus the frame window AND post tl-focus so the terminal page's own handler
+  // focuses xterm's input. Declines while the TEXT view is showing: the composer
+  // owns the keyboard there, and this iframe is CSS-hidden anyway.
+  const focusFrame = (): boolean => {
+    if (!props.active) return false;
+    try {
+      iframe?.contentWindow?.focus();
+    } catch {
+      /* cross-frame focus blocked */
+    }
+    postToFrame({ type: "tl-focus" });
+    return true;
+  };
+
+  // Focus the terminal when it becomes the active view.
   createEffect(() => {
     if (!props.active) return;
-    requestAnimationFrame(() => {
-      try {
-        iframe?.contentWindow?.focus();
-      } catch {
-        /* cross-frame focus blocked */
-      }
-      postToFrame({ type: "tl-focus" });
-    });
+    requestAnimationFrame(() => void focusFrame());
   });
 
   const onMessage = (e: MessageEvent): void => {
@@ -196,6 +208,22 @@ export const TerminalView: Component<{
   };
   let prevRefit: (() => boolean) | undefined;
 
+  // Live prefs bridge — store/prefs.ts calls window.__tlPrefsLive after it has
+  // PERSISTED a change. The v2 rewrite carried the theme half of the bridge and
+  // dropped this one, so "Terminal font size" moved a readout and a localStorage
+  // key and nothing else: the receiver (term.html's tl-prefs -> applyTermPrefs
+  // -> fit, tl-font-size -> applyFontSize) has been waiting for a sender all
+  // along. Both messages go out, like the vanilla lobby's: tl-prefs is the
+  // current contract, tl-font-size keeps a pre-2.6 frame in step. No ACK and no
+  // navigation — the WebSocket must survive a font step.
+  const onPrefsLive = (prefs: { fontSize: number }): boolean => {
+    if (!iframe?.contentWindow) return false;
+    postToFrame({ type: "tl-prefs", prefs });
+    postToFrame({ type: "tl-font-size", size: prefs.fontSize });
+    return true;
+  };
+  let prevPrefsLive: ((p: { fontSize: number }) => boolean) | undefined;
+
   // Live theme bridge — theme.ts calls window.__tlThemeLive on every switch.
   const onThemeLive = (name: string): void => {
     postToFrame({ type: "tl-theme", name });
@@ -207,6 +235,7 @@ export const TerminalView: Component<{
   };
 
   let prevThemeLive: ((t: string) => void) | undefined;
+  let prevFocus: (() => boolean) | undefined;
   onMount(() => {
     window.addEventListener("message", onMessage);
     if (typeof window !== "undefined") {
@@ -218,6 +247,10 @@ export const TerminalView: Component<{
       window.__tlSendToTerminal = sendBytesToFrame;
       prevRefit = window.__tlRefitTerminal;
       window.__tlRefitTerminal = refitFrame;
+      prevFocus = window.__tlFocusTerminal;
+      window.__tlFocusTerminal = focusFrame;
+      prevPrefsLive = window.__tlPrefsLive;
+      window.__tlPrefsLive = onPrefsLive;
     }
   });
   onCleanup(() => {
@@ -236,6 +269,12 @@ export const TerminalView: Component<{
     }
     if (typeof window !== "undefined" && window.__tlRefitTerminal === refitFrame) {
       window.__tlRefitTerminal = prevRefit;
+    }
+    if (typeof window !== "undefined" && window.__tlFocusTerminal === focusFrame) {
+      window.__tlFocusTerminal = prevFocus;
+    }
+    if (typeof window !== "undefined" && window.__tlPrefsLive === onPrefsLive) {
+      window.__tlPrefsLive = prevPrefsLive;
     }
   });
 

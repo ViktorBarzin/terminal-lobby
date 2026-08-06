@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   altLabel,
+  KB_ALWAYS_BINDINGS,
   KB_COMMANDS,
   KB_DEFAULT_BINDINGS,
   matchesAppChord,
@@ -10,6 +11,7 @@ import {
   type MatchInput,
 } from "../src/keybindings/bindings.logic";
 import type { ChordEventLike } from "../src/keybindings/chords.logic";
+import { buildShortcutGroups } from "../src/components/ShortcutsHelp";
 
 function ev(over: Partial<ChordEventLike>): ChordEventLike {
   return {
@@ -75,6 +77,25 @@ describe("resolveBindings", () => {
     const resolved = resolveBindings({});
     const pal = resolved.find((b) => b.command === "palette.toggle")!;
     expect(pal.chord).toEqual({ ctrl: true, shift: true, alt: false, meta: false, key: "k" });
+  });
+});
+
+describe("the help overlay tells the truth about the always-on layer", () => {
+  // The bug this pins: the layer can be switched off in Settings and
+  // Alt+Shift+Backspace still kills the attached session. That exemption is
+  // deliberate (KB_ALWAYS_BINDINGS) — the copy claiming otherwise was not. Bind
+  // the two together so adding an always-on chord without documenting it fails.
+  it("marks every KB_ALWAYS_BINDINGS chord as always on in the help", () => {
+    const rows = buildShortcutGroups(altLabel(false), false).flatMap(([, r]) => r);
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+    for (const binding of KB_ALWAYS_BINDINGS) {
+      const row = rows.find(([keys]) => keys.some((k) => norm(k) === norm(binding.key)));
+      expect(row, `a help row for the always-on chord ${binding.key}`).toBeDefined();
+      expect(
+        row?.[1].toLowerCase(),
+        `the ${binding.key} row must say it survives the Settings toggle`,
+      ).toContain("always on");
+    }
   });
 });
 

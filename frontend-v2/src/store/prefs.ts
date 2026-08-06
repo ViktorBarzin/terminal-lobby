@@ -154,6 +154,29 @@ export function mergeAdopt(
   return merged;
 }
 
+/**
+ * The dotted paths whose value actually changed between two typed docs, each
+ * with its NEW value — the shape telemetry/events.go documents for
+ * prefs.changed ("tl.key = pref path, tl.to = new value").
+ *
+ * The old loop walked the PATCH instead: a nested patch reported the namespace
+ * as the key and the sub-key NAMES as the value, so `session.newCommand`
+ * codex→shell went out as {tl.key:"session", tl.to:"newCommand"} — the one thing
+ * a reader needs (which value it moved to) was the one thing missing. Diffing
+ * before-vs-after also drops the phantom events a re-picked <select> produced.
+ */
+export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
+  const out: [string, string][] = [];
+  const diff = (path: string, a: unknown, b: unknown): void => {
+    if (a !== b) out.push([path, String(b)]);
+  };
+  diff("fontSize", prev.fontSize, next.fontSize);
+  diff("session.newCommand", prev.session.newCommand, next.session.newCommand);
+  diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
+  diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
+  return out;
+}
+
 /** Merge a typed patch into a typed Prefs (deep one level), returns the next. */
 export function applyPatch(cur: Prefs, patch: PrefsPatch): Prefs {
   return {
@@ -284,22 +307,35 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
     }, putDebounceMs);
   }
 
-  function setPref(patch: PrefsPatch): void {
-    // Which knobs people actually turn. Keys only, plus scalar values — a pref
-    // value is a setting, never content.
-    for (const [key, value] of Object.entries(patch)) {
-      track("prefs.changed", {
-        "tl.key": key,
-        "tl.to": typeof value === "object" ? Object.keys(value ?? {}).join(",") : String(value),
-      });
+  /**
+   * Tell the attached terminal iframe about a change we have already persisted.
+   * term.html reads localStorage as the truth and treats the payload as the
+   * failed-write fallback, so this MUST run after persist().
+   */
+  function pushLive(next: Prefs): void {
+    if (typeof window === "undefined") return;
+    try {
+      window.__tlPrefsLive?.(next);
+    } catch {
+      /* a detached frame must never break a pref write */
     }
+  }
+
+  function setPref(patch: PrefsPatch): void {
     const cur = prefs();
     const next = coercePrefs(composeDoc(rawDoc, applyPatch(cur, patch)));
     if (JSON.stringify(next) === JSON.stringify(cur)) return; // no-op
+    // Which knobs people actually turn. Paths and scalar values only — a pref
+    // value is a setting, never content. Emitted AFTER the no-op guard, so an
+    // onChange that re-picks the current value records nothing.
+    for (const [path, value] of changedPrefPaths(cur, next)) {
+      track("prefs.changed", { "tl.key": path, "tl.to": value });
+    }
     rawDoc = composeDoc(rawDoc, next);
     setPrefsSignal(next);
     markDirty();
     persist();
+    pushLive(next);
     schedulePut();
   }
 
@@ -313,6 +349,9 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
     rawDoc = composeDoc(merged, next);
     setPrefsSignal(next);
     persist(); // NO schedulePut: adoption is not a user change (no PUT-back).
+    // A roamed font size adopted at boot still has to reach the terminal — the
+    // vanilla lobby pushes on adoption for the same reason.
+    pushLive(next);
   }
 
   async function bootSync(): Promise<void> {
