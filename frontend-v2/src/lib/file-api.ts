@@ -17,6 +17,11 @@ export class FileApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** the 400 was "path is a directory" — the ONE refusal whose message names
+     *  itself, and the one the preview store acts on (it points Browse at that
+     *  path instead of at its parent, so "press Browse to list what's inside
+     *  it" is true rather than one click short). False for every other error. */
+    public readonly isDirectory = false,
   ) {
     super(message);
     this.name = "FileApiError";
@@ -44,25 +49,42 @@ export interface LoadedFile {
 }
 
 /**
- * Human message for an HTTP status from GET /files/read.
+ * The one 400 body from GET /files/read that is safe to repeat back. file-api
+ * emits it (files.go) only AFTER the path has already resolved inside the home
+ * containment root, and GET /files/list will list that same directory one click
+ * away — so naming it discloses nothing Browse doesn't already.
+ */
+const DIRECTORY_400_BODY = "path is a directory";
+
+/**
+ * Human message for an HTTP status from GET /files/read. `body` is the server's
+ * plain-text response body when one was read (readFile passes it for 400 only).
  *
  * file-api answers 400 to FOUR different read refusals — "invalid path"
  * (resolves outside the home containment root), "path must be absolute", "path
- * is a directory" and "not a regular file" — and its body never says which, on
- * purpose (files.go pathHTTPError: the message must not let a probe tell
- * "outside home" from "does not exist"). The sentence therefore has to cover
- * all four without claiming one; the old wording asserted the file-type case,
- * so /etc/passwd and a ../../etc/shadow traversal both read as complaints about
- * the file's type rather than about being out of reach.
+ * is a directory" and "not a regular file". Three of them stay behind one vague
+ * sentence on purpose (files.go pathHTTPError: the message must not let a probe
+ * tell "outside home" from "does not exist"), and the sentence has to cover them
+ * without claiming any one; the old wording asserted the file-type case, so
+ * /etc/passwd and a ../../etc/shadow traversal both read as complaints about the
+ * file's type rather than about being out of reach.
+ *
+ * "path is a directory" is the exception, and it is the common typo: the vague
+ * sentence told the user their own in-home directory was out of reach while the
+ * Browse button beside the path box listed it happily — two opposite answers for
+ * one path. Naming it costs no secrecy (see DIRECTORY_400_BODY) and points at
+ * the control that does work.
  */
-export function readErrorMessage(status: number): string {
+export function readErrorMessage(status: number, body = ""): string {
   switch (status) {
     case 404:
       return "File not found.";
     case 413:
       return "File is too large to preview (max 10MB).";
     case 400:
-      return "Can't open this path — it's outside your home folder, or not a readable file.";
+      return body.trim() === DIRECTORY_400_BODY
+        ? "That path is a folder — press Browse to list what's inside it."
+        : "Can't open this path — it's outside your home folder, or not a readable file.";
     case 401:
     case 403:
       return "Not authorized to read this file.";
@@ -104,9 +126,18 @@ export async function readFile(path: string, name = path): Promise<LoadedFile> {
 
   const resp = await fetch(fileReadUrl(path), { credentials: "same-origin" });
   if (!resp.ok) {
-    // Drain so the connection can be reused.
-    await resp.body?.cancel().catch(() => {});
-    throw new FileApiError(resp.status, readErrorMessage(resp.status));
+    // 400 is the only status whose body distinguishes anything worth saying (a
+    // directory, vs the three refusals that stay deliberately vague), so it is
+    // the only one we read. Every other body is drained unread so the
+    // connection can be reused.
+    let body = "";
+    if (resp.status === 400) body = await resp.text().catch(() => "");
+    else await resp.body?.cancel().catch(() => {});
+    throw new FileApiError(
+      resp.status,
+      readErrorMessage(resp.status, body),
+      resp.status === 400 && body.trim() === DIRECTORY_400_BODY,
+    );
   }
   const contentType = resp.headers.get("content-type") ?? "";
   const k = classifyFile(name, contentType);
