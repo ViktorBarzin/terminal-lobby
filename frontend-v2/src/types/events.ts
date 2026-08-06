@@ -1,8 +1,12 @@
 /**
  * Shared event types — mirror the Go wire contract EXACTLY.
  *
- * Source of truth: session-events/event.go (`type Event struct`) and
- * session-events/permission.go. Field names, optionality and the `kind`
+ * Source of truth: session-events/event.go (`type Event struct`) — all of it.
+ * This file used to cite a second source, the web-mediated permission broker;
+ * 575d4f5 deleted that broker, and the file it lived in. event.go still
+ * declares the permission_request / permission_resolved kinds, so the union
+ * below stays faithful to the wire, but nothing emits them today and there is
+ * no route to resolve one. Field names, optionality and the `kind`
  * discriminator strings are load-bearing across the wire — do not rename.
  *
  * Go → TS mapping notes:
