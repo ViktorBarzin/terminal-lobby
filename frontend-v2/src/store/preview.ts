@@ -10,6 +10,7 @@ import {
 } from "../lib/file-api";
 import {
   basename,
+  byteLength,
   dirname,
   extractRecentFiles,
   isAbsolutePath,
@@ -19,6 +20,7 @@ import {
   type RecentFile,
   type RendererKind,
 } from "./preview.logic";
+import { whoami as apiWhoami } from "../lib/lobby-api";
 import {
   canEdit as kindCanEdit,
   cmLanguageForPath,
@@ -66,6 +68,8 @@ export interface PreviewStore {
   browseEntries: Accessor<FileEntry[]>;
   browseStatus: Accessor<PreviewStatus>;
   browseError: Accessor<string | null>;
+  /** whether ⬆ Up can still climb — false at the containment root and at "/". */
+  canBrowseUp: Accessor<boolean>;
 
   // ---- quick-edit mode (roadmap pillar #6) --------------------------------
   /** whether the loaded kind can be edited (code/markdown/html, not img/binary). */
@@ -105,8 +109,12 @@ export interface PreviewStore {
   requestExitEdit: () => boolean;
   /** list a directory into the browse pane. */
   browse: (dir: string) => Promise<void>;
-  /** go to the parent of the current browse dir. */
-  browseUp: () => void;
+  /** open the browse pane from the best directory we know (the Browse button).
+   *  Works with no file loaded — that is the only door in for a session with no
+   *  transcript. */
+  browseStart: () => Promise<void>;
+  /** go to the parent of the current browse dir; inert at the containment root. */
+  browseUp: () => Promise<void>;
   /** leave browse mode, back to the loaded file / idle. */
   closeBrowse: () => void;
 }
@@ -120,16 +128,39 @@ export interface PreviewDeps {
   listDir?: (dir: string, all?: boolean) => Promise<FileEntry[]>;
   /** injectable file writer (defaults to the file-api client). */
   writeFile?: (path: string, content: string) => Promise<void>;
+  /** injectable "where does this user's home live" lookup, used only as the
+   *  cold-open Browse starting point (defaults to /whoami → HOME_BASE/osUser). */
+  homeDir?: () => Promise<string | null>;
   /** surface a save result (defaults to the app-wide toast stack). */
   notify?: (message: string, kind: "success" | "error") => void;
   /** confirm-before-discard (defaults to window.confirm; injected in tests). */
   confirm?: (message: string) => boolean;
 }
 
+/**
+ * Parent of every user's home, mirroring file-api's `homeBase` (auth.go: the
+ * containment root is homeBase/<osUser>). Only ever a STARTING GUESS for the
+ * directory picker — the server re-derives and enforces the real root on every
+ * request, so a wrong guess degrades to the browse pane's error, never to
+ * access the client shouldn't have.
+ */
+const HOME_BASE = "/home";
+
+/** Default home lookup: ask tmux-api who we are, then mirror file-api's layout. */
+async function defaultHomeDir(): Promise<string | null> {
+  try {
+    const me = await apiWhoami();
+    return me.osUser ? `${HOME_BASE}/${me.osUser}` : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
   const loadFile = deps.loadFile ?? apiReadFile;
   const listDir = deps.listDir ?? apiListDir;
   const writeFile = deps.writeFile ?? apiWriteFile;
+  const homeDir = deps.homeDir ?? defaultHomeDir;
   const notify =
     deps.notify ?? ((message, kind) => toasts.push({ kind, message }));
   const confirm =
@@ -153,6 +184,11 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
   const [browseEntries, setBrowseEntries] = createSignal<FileEntry[]>([]);
   const [browseStatus, setBrowseStatus] = createSignal<PreviewStatus>("idle");
   const [browseError, setBrowseError] = createSignal<string | null>(null);
+  // The shallowest directory the server will list — file-api's containment
+  // root. The client can't know it up front (nothing reports it), so it is
+  // learned: seeded from the home lookup when we use it, otherwise recorded the
+  // first time a parent listing comes back 400.
+  const [browseFloor, setBrowseFloor] = createSignal<string | null>(null);
 
   // ---- quick-edit state (roadmap pillar #6) -------------------------------
   const [editState, setEditState] = createSignal<EditState>(initialEditState);
@@ -166,6 +202,13 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
   const modeApplies = createMemo(() => {
     const k = kind();
     return k !== null && kindModeApplies(k);
+  });
+
+  const canBrowseUp = createMemo(() => {
+    const d = browseDir();
+    if (!d) return false;
+    if (d === browseFloor()) return false; // at the containment root
+    return dirname(d) !== d; // "/" is its own parent — nowhere left to go
   });
 
   const canEdit = createMemo(() => status() === "loaded" && kindCanEdit(kind()));
@@ -290,6 +333,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
       if (token !== saveToken) return; // superseded by a switch/close
       dispatch({ type: "saveOk", text: sent });
       setText(sent); // the read-only view now reflects the saved content
+      setSize(byteLength(sent)); // ...and so does the header's size chip
       notify("Saved", "success");
     } catch (err) {
       if (token !== saveToken) return;
@@ -323,9 +367,73 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     }
   }
 
-  function browseUp(): void {
+  /**
+   * The Browse button. Starts from the best directory we already know — the
+   * loaded file's, else wherever the pane was last, else the newest file the
+   * transcript mentions — and only then asks where home is. That last hop is
+   * what makes Browse usable on a plain shell session, which has no loaded file
+   * and no transcript to mine.
+   */
+  async function browseStart(): Promise<void> {
+    const p = path();
+    if (p) return browse(dirname(p));
+    const last = browseDir();
+    if (last) return browse(last);
+    const recent = recentFiles()[0];
+    if (recent) return browse(dirname(recent.path));
+
+    const home = await homeDir();
+    if (home) {
+      setBrowseFloor(home); // home IS the containment root — Up is inert there
+      return browse(home);
+    }
+    // Nothing to go on. Say so in the pane rather than leaving a dead button.
+    setBrowsing(true);
+    setBrowseDir(null);
+    setBrowseEntries([]);
+    setBrowseStatus("error");
+    setBrowseError("Couldn't work out where to start — type a path above.");
+  }
+
+  /**
+   * Climb one level, but never out of the containment root. Unlike browse(),
+   * the move is committed only once the listing succeeds: a 400 from the parent
+   * IS the server telling us the current directory is the root, so we record
+   * the floor and leave the pane exactly where it was. Without this, two clicks
+   * put the picker on /home, then /, then the relative "." — each an empty list
+   * plus an error, with no entry left to click back into.
+   */
+  async function browseUp(): Promise<void> {
     const d = browseDir();
-    if (d) void browse(dirname(d));
+    if (!d) return;
+    if (d === browseFloor()) return; // already at the root — a no-op, not a probe
+    const parent = dirname(d);
+    if (parent === d) {
+      setBrowseFloor(d); // "/" is its own parent
+      return;
+    }
+    const token = ++browseToken;
+    const restore = browseStatus(); // what the pane shows if the climb is refused
+    setBrowseStatus("loading");
+    try {
+      const entries = await listDir(parent);
+      if (token !== browseToken) return;
+      setBrowseDir(parent);
+      setBrowseEntries(entries);
+      setBrowseError(null);
+      setBrowseStatus("loaded");
+    } catch (err) {
+      if (token !== browseToken) return;
+      if (err instanceof FileApiError && err.status === 400) {
+        setBrowseFloor(d);
+        setBrowseStatus(restore); // put back exactly what was on screen
+        return;
+      }
+      // A real failure (network, 500, 403) is not a floor — show it, and leave
+      // Up enabled so a retry is possible.
+      setBrowseError(err instanceof Error ? err.message : String(err));
+      setBrowseStatus("error");
+    }
   }
 
   function closeBrowse(): void {
@@ -351,6 +459,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     browseEntries,
     browseStatus,
     browseError,
+    canBrowseUp,
     canEdit,
     editing,
     dirty,
@@ -369,6 +478,7 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
     toggleEdit,
     requestExitEdit,
     browse,
+    browseStart,
     browseUp,
     closeBrowse,
   };

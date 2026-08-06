@@ -68,10 +68,22 @@ does not mention it.
 
 `permissionUrl()` posts to `/permission/<reqId>`. The session-events IngressRoute
 matches `PathPrefix(/events/) || PathPrefix(/prompt/) || PathPrefix(/cancel/)`
-only, so `/permission/…` falls to the ttyd-v2 catch-all. Independently,
+only, so `/permission/…` falls to the ttyd-v2 catch-all — and session-events
+would 404 it anyway, having no such handler (measured 2026-08-06 straight at
+`127.0.0.1:7685`). Independently,
 `/etc/claude-code/managed-settings.json` has no references to `:7685`, so the
 `PreToolUse` hook that would emit a permission request is not wired — the panel
 currently has neither an input nor an output path.
+
+Both halves are **absent by decision, not by omission**. Commit `575d4f5`
+(2026-07-21, *"remove web-mediated PreToolUse permission feature"*) deleted
+`session-events/permission.go`, `hooks.go` and their tests; the managed-settings
+wiring and the `/permission/` ingress rule went with it, after the hook's
+`ask` decision made every Claude session on the shared box prompt on every tool
+call. `frontend-v2/src/lib/config.ts:7` already says so in a comment. So the
+panel is a live UI in front of a removed backend — worth reporting as that, but
+restoring the route or the handler re-introduces the flood and is Viktor's call,
+scoped to the dev host if it happens at all. This plan does not authorize it.
 
 ### C — two services have no deploy path
 
@@ -126,7 +138,7 @@ flowchart TD
   PX -->|"/ (catch-all)"| TTYD["ttyd-v2 :7687<br/>the DEPLOYED index-v2.html"]
   PX -->|"/api/sessions/* (strip)"| TAPI["tmux-api :7684"]
   PX -->|"/clipboard/* (strip)"| CLIP["clipboard-upload :7683"]
-  PX -->|"/events /prompt /cancel /permission"| SEV["session-events :7685"]
+  PX -->|"/events /prompt /cancel"| SEV["session-events :7685"]
   PX -->|"/files/*"| FAPI["file-api :7686"]
   PX -->|"/term.html + PWA assets"| CLIP
 
@@ -139,10 +151,18 @@ flowchart TD
   class TTYD,TAPI,CLIP,SEV,FAPI svc;
 ```
 
-The proxy deliberately routes `/permission` to session-events even though the
-production ingress does not — that is finding B, and routing it locally is what
-lets the fleet exercise the panel while the ingress fix is in flight. The
-divergence is recorded so the post-deploy replay checks the real path.
+`/permission` is **not** shimmed. An earlier revision of this plan said the
+proxy would route it to session-events so the fleet could exercise the panel
+while the ingress fix was in flight; that was wrong, and the harness docstring
+repeated it. session-events has no `/permission` handler to route to — its
+whole route table is `GET /events/{session}`, `POST /prompt/{session}`,
+`POST /cancel/{session}`, `GET /health` and a localhost-only
+`POST /hooks/session-start`. Measured 2026-08-06: `POST /permission/<id>`
+against `127.0.0.1:7685` as vbarzin returns `404 page not found`, the same 404
+the shimmed proxy returned. So the shim only chose which 404 came back, and the
+harness now falls through to the ttyd-v2 catch-all exactly as production does
+(`--permission-shim` opts back in, for the day a handler exists). Finding B
+needs a handler *and* an ingress rule, not a proxy route.
 
 ## The loop
 

@@ -1497,6 +1497,13 @@ body {
   align-items: center;
   gap: 8px;
 }
+/* ⬆ Up is disabled at the containment root. .tl-btn sets colour/background/
+   cursor explicitly, so the UA's default disabled look never shows through —
+   say it here or the dead button still reads as clickable. */
+.tl-preview-browse-bar .tl-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .tl-preview-browse-dir {
   flex: 1 1 auto;
   min-width: 0;
