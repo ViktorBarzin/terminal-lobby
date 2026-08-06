@@ -16,15 +16,23 @@ terminal-dev.viktorbarzin.me serves.
       ├─ /clipboard/*            → :7683 clipboard-upload, prefix stripped, authed
       ├─ /events/*               → :7685 session-events, no strip, authed, STREAMED
       ├─ /prompt/*  /cancel/*    → :7685 session-events, no strip, authed
-      ├─ /permission/*           → :7685 session-events, no strip, authed  (†)
+      ├─ /permission/*           → :7687 ttyd-v2 catch-all, as in production (†)
       ├─ /files/*                → :7686 file-api, no strip, authed
       └─ everything else + /ws   → :7687 ttyd-v2, the DEPLOYED index-v2.html
 
-(†) The production ingress does NOT route /permission — its session-events rule
-matches only /events/, /prompt/, /cancel/. That gap is finding B of
-docs/plans/2026-08-06-dev-tier-qa-fix-loop.md. Routing it here lets the fleet
-exercise the panel while the ingress fix is in flight; --no-permission-shim
-turns the shim off to reproduce production behaviour exactly.
+(†) /permission has no working destination anywhere, and this proxy cannot
+invent one. The production ingress does not route it — the session-events rule
+matches only /events/, /prompt/, /cancel/ — and session-events has no
+/permission handler either: its whole route table is GET /events/{session},
+POST /prompt/{session}, POST /cancel/{session}, GET /health and a
+localhost-only POST /hooks/session-start. Measured 2026-08-06: POST
+/permission/<id> straight at 127.0.0.1:7685 as vbarzin returns
+`404 page not found`. So routing /permission to session-events would NOT let
+the fleet exercise the panel (an earlier version of this docstring and of
+the plan claimed it would); it would only swap ttyd-v2's HTML 404 for
+session-events' text/plain 404. The default is therefore production-faithful:
+/permission falls through to the ttyd-v2 catch-all. --permission-shim routes
+it to session-events anyway, for the day a handler lands there.
 
 THE GUARD
 ---------
@@ -46,6 +54,18 @@ Blocked (403):
      `tmux new-session -A` would both create the session and hand the agent a
      live keyboard into it)
   8. DELETE /push-subscriptions         (would unsubscribe real devices)
+  9. POST /restore, but only when the reaper is disarmed — see below
+
+POST /restore is the one mutation that cannot be scoped by name: it shells
+`tmux-persist restore <osUser>`, which recreates EVERY session in that user's
+manifest that is not currently live, each resuming its Claude conversation. One
+agent clicking Restore would resurrect the sessions the rest of the fleet just
+killed, and on this box the ones wizard deliberately killed too. Blanket-403 is
+wrong (area 7 is chartered to exercise Restore), so instead the proxy snapshots
+the live session set, forwards the request, and kills whatever came back that is
+new AND not qa-*. If it cannot do that — the injected identity maps to a
+different OS user, or `tmux list-sessions` fails — the reaper is disarmed and
+/restore gets the 403 instead.
 
 Allowed, but restored on exit: PUT /layout and PUT /prefs rewrite wizard's real
 sidebar arrangement and roamed preferences. Both are snapshotted at startup and
@@ -62,8 +82,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import pwd
 import re
 import signal
+import subprocess
 import sys
 from typing import Optional
 from urllib.parse import unquote
@@ -117,15 +140,62 @@ def is_qa(name: str) -> bool:
     return bool(QA_NAME.match(name or ""))
 
 
+def tmux_session_names() -> Optional[list[str]]:
+    """Live sessions on THIS OS user's tmux server, or None if unreadable.
+
+    Uncached on purpose: tmux-api caches /sessions for 5 s, and a stale baseline
+    would make the reaper mistake a session created moments ago for one the
+    restore resurrected — and kill it.
+    """
+    try:
+        r = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        # No server at all is a real, empty answer; anything else is a failure
+        # we must not paper over with an empty baseline.
+        if "no server running" in (r.stderr or "").lower():
+            return []
+        return None
+    return [line for line in r.stdout.splitlines() if line.strip()]
+
+
+def tmux_kill_session(name: str) -> bool:
+    """`=name` is tmux's exact-match form — no prefix or fnmatch surprises."""
+    try:
+        r = subprocess.run(["tmux", "kill-session", "-t", f"={name}"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
+def proxy_os_user() -> str:
+    """The OS user whose tmux server this process can actually reach — read
+    from the uid, not from $USER, which a launcher can set to anything."""
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def sessions_to_reap(before: list[str], after: list[str]) -> list[str]:
+    """Sessions a /restore brought back that were not there before it, minus the
+    qa-* ones (area 7 restoring a qa-* session it killed is the point)."""
+    return sorted(set(after) - set(before) - {n for n in after if is_qa(n)})
+
+
 class Guard:
     """Decides which mutations are allowed. Pure except for the set of project
     ids this run created, which it tracks so a project the fleet made can also
     be edited and deleted by it."""
 
-    def __init__(self, scratch: str) -> None:
+    def __init__(self, scratch: str, *, can_reap: bool = False) -> None:
         self.scratch = scratch.rstrip("/") + "/"
         self.own_projects: set[str] = set()
         self.blocked: list[str] = []
+        # Armed at startup once the proxy has proved it can undo a /restore.
+        # Default off: a Guard that has not proved it refuses.
+        self.can_reap = can_reap
+        self.reaped: list[str] = []
 
     def record_project(self, body: bytes, response: bytes) -> None:
         """After a permitted POST /projects, remember the new id."""
@@ -177,6 +247,11 @@ class Guard:
                 return (f"refusing to {method} project {pid!r} — this run did not "
                         f"create it")
 
+        if tail == "restore" and method == "POST" and not self.can_reap:
+            return ("refusing to restore — a restore resurrects every saved "
+                    "session of the OS user, and this proxy cannot undo it "
+                    "(the reaper is disarmed; see the startup log for why)")
+
         if tail.startswith("push-subscriptions") and method == "DELETE":
             return "refusing to delete push subscriptions — real devices are subscribed"
 
@@ -220,6 +295,7 @@ class Guard:
 
 def build_app(args: argparse.Namespace) -> web.Application:
     guard = Guard(args.scratch)
+    restore_lock = asyncio.Lock()
     app = web.Application()
     app["guard"] = guard
 
@@ -304,12 +380,58 @@ def build_app(args: argparse.Namespace) -> web.Application:
         return await forward(request, f"{SESSION_EVENTS}{request.rel_url.raw_path}",
                              auth=True, label=path, body=body)
 
+    async def restore_proxy(request: web.Request, body: bytes) -> web.StreamResponse:
+        """Forward POST /restore, then undo what it resurrected behind us.
+
+        The restore itself must really run — area 7 tests the button, and a
+        faked response would test nothing. What is put back is the blast
+        radius: every non-qa-* session that was not live a moment ago.
+        """
+        # Two agents restoring at once would each snapshot, then each try to
+        # reap the other's resurrections — same end state, but a confusing log
+        # full of "KILL FAILED" for sessions the other one already killed.
+        async with restore_lock:
+            return await _restore_once(request, body)
+
+    async def _restore_once(request: web.Request, body: bytes) -> web.StreamResponse:
+        # tmux is a subprocess: off the event loop, or a hung one freezes every
+        # agent sharing this proxy for the whole timeout.
+        before = await asyncio.to_thread(tmux_session_names)
+        if before is None:
+            return guard.deny(
+                "refusing to restore — could not list the live sessions first, "
+                "so anything it resurrected could not be identified or undone",
+                "/api/sessions/restore")
+        resp = await forward(request, f"{TMUX_API}/restore", auth=True,
+                             label="/api/sessions/restore", body=body)
+        after = await asyncio.to_thread(tmux_session_names)
+        if after is None:
+            log("restore: could NOT re-list sessions — NOTHING was reaped; "
+                "check `tmux ls` by hand")
+            return resp
+        # Log the whole delta, not just the reaped part: when everything it
+        # brought back is qa-* the reaper stays silent, and an operator reading
+        # the log cannot otherwise tell that apart from a restore that did
+        # nothing (or from a re-list that ran too early to see it).
+        brought_back = sorted(set(after) - set(before))
+        if brought_back:
+            log(f"restore brought back {len(brought_back)} session(s): "
+                f"{', '.join(brought_back)}")
+        for name in sessions_to_reap(before, after):
+            killed = await asyncio.to_thread(tmux_kill_session, name)
+            guard.reaped.append(name if killed else f"{name} (KILL FAILED)")
+            log(f"restore resurrected {name!r} (not qa-*) → "
+                f"{'reaped' if killed else 'KILL FAILED, still live'}")
+        return resp
+
     async def api_proxy(request: web.Request) -> web.StreamResponse:
         tail = request.match_info["tail"]
         body = await request.read()
         reason = guard.check_tmux_api(request.method, tail, body)
         if reason:
             return guard.deny(reason, f"/api/sessions/{tail}")
+        if tail == "restore" and request.method == "POST":
+            return await restore_proxy(request, body)
         resp = await forward(request, f"{TMUX_API}/{tail}", auth=True,
                              label=f"/api/sessions/{tail}", body=body)
         if tail == "projects" and request.method == "POST" and resp.status < 300:
@@ -353,8 +475,14 @@ def build_app(args: argparse.Namespace) -> web.Application:
         if request.rel_url.query_string:
             url += "?" + request.rel_url.query_string
         try:
+            # ttyd-v2 runs `-H X-authentik-username`, so the UPGRADE is authed
+            # exactly like every HTTP leg. Miss this and ttyd drops the dial
+            # while the browser socket is already open, which surfaces as
+            # "Reconnecting… (attempt N)" in term.html and nothing in the log
+            # except this handler's failure line.
             ws_up = await request.app["client"].ws_connect(
-                url, protocols=offered or ("tty",))
+                url, protocols=offered or ("tty",),
+                headers={"X-Authentik-Username": args.user})
         except aiohttp.ClientError as exc:
             log(f"WS {request.rel_url} → upstream connect failed: {exc}")
             await ws_client.close()
@@ -425,13 +553,42 @@ def build_app(args: argparse.Namespace) -> web.Application:
             except aiohttp.ClientError as exc:
                 log(f"FAILED to restore /{name}: {exc}")
 
+    async def arm_reaper(app: web.Application) -> None:
+        """A /restore may only be forwarded if we can reap its collateral, and
+        we can only reap in OUR OWN tmux server. tmux-api resolves the injected
+        identity through /etc/ttyd-user-map, so ask it which OS user that is
+        rather than assuming the mapping is the identity."""
+        try:
+            async with app["client"].get(
+                f"{TMUX_API}/whoami",
+                headers={"X-Authentik-Username": args.user},
+            ) as r:
+                os_user = (await r.json()).get("osUser") if r.status == 200 else None
+        except (aiohttp.ClientError, ValueError) as exc:
+            log(f"reaper DISARMED — tmux-api /whoami failed ({exc}); "
+                f"POST /restore will be refused")
+            return
+        me = proxy_os_user()
+        if os_user != me:
+            log(f"reaper DISARMED — {args.user!r} maps to OS user "
+                f"{os_user!r}, but this proxy runs as {me!r} and could not "
+                f"reap in that tmux server; POST /restore will be refused")
+            return
+        guard.can_reap = True
+        log(f"reaper armed for OS user {me!r} — POST /restore is forwarded, "
+            f"then non-qa-* resurrections are killed")
+
     async def on_startup(app: web.Application) -> None:
         app["client"] = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=None, sock_connect=10))
+        await arm_reaper(app)
         await snapshot(app)
 
     async def on_cleanup(app: web.Application) -> None:
         await restore(app)
+        if guard.reaped:
+            log(f"reaped {len(guard.reaped)} session(s) a /restore "
+                f"resurrected: {', '.join(guard.reaped)}")
         if guard.blocked:
             log(f"guard blocked {len(guard.blocked)} request(s):")
             for entry in guard.blocked:
@@ -465,16 +622,23 @@ def main() -> None:
                    help="ttyd serving the SPA (7687 = the deployed v2 tier)")
     p.add_argument("--scratch", default="/tmp/qa-harness-scratch",
                    help="the only tree /files/write may target")
+    # Default OFF = what production does. The shim cannot make the permission
+    # panel work — session-events has no /permission handler — so leaving it on
+    # bought nothing but a divergence from the tier under test.
+    p.add_argument("--permission-shim", dest="permission_shim",
+                   action="store_true", default=False,
+                   help="route /permission to session-events instead of the "
+                        "ttyd-v2 catch-all. Off by default: session-events has "
+                        "no /permission handler, so this only changes which 404 "
+                        "comes back (finding B)")
     p.add_argument("--no-permission-shim", dest="permission_shim",
                    action="store_false",
-                   help="do NOT route /permission to session-events, reproducing "
-                        "the production ingress gap (finding B)")
+                   help="accepted for compatibility — this is now the default")
     p.add_argument("--no-restore", action="store_true",
                    help="do not snapshot/restore /layout and /prefs")
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args()
 
-    import os
     os.makedirs(args.scratch, exist_ok=True)
 
     app = build_app(args)
