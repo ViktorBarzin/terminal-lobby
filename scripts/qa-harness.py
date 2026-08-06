@@ -263,7 +263,7 @@ class Guard:
             new = ""
             try:
                 new = str(json.loads(body or b"{}").get("name", "")).strip()
-            except ValueError:
+            except (ValueError, AttributeError):
                 return "rename body was not JSON, refusing to guess the target name"
             if not is_qa(new):
                 return (f"refusing to rename {old!r} to {new!r} — the new name must "
@@ -276,7 +276,7 @@ class Guard:
         if tail == "projects" and method == "POST":
             try:
                 name = str(json.loads(body or b"{}").get("name", "")).strip()
-            except ValueError:
+            except (ValueError, AttributeError):
                 return "project body was not JSON, refusing to guess the name"
             if not is_qa(name):
                 return f"refusing to create project {name!r} — name must be qa-*"
@@ -311,7 +311,7 @@ class Guard:
         if path == "/files/write" and method == "POST":
             try:
                 target = str(json.loads(body or b"{}").get("path", ""))
-            except ValueError:
+            except (ValueError, AttributeError):
                 return "write body was not JSON, refusing to guess the target path"
             # Compare the NORMALISED path. The scratch lives inside
             # /home/<osUser>, which is file-api's whole containment root, so a
