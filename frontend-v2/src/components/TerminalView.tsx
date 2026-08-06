@@ -105,6 +105,17 @@ export const TerminalView: Component<{
     if (url !== currentUrl) navigate(url);
   });
 
+  // Tell the terminal page whether its view is on screen. Both views stay
+  // mounted, so while text mode shows this iframe is merely CSS-hidden — inside
+  // it `document.hidden` is false and its output-attention signal never fires,
+  // which is why the [Terminal] segment's activity dot could never light. Re-sent
+  // on every (re)attach because a freshly loaded document boots up assuming it
+  // is visible.
+  const postViewState = (): void => {
+    postToFrame({ type: "tl-view", hidden: !props.active });
+  };
+  createEffect(() => postViewState());
+
   // Focus the terminal when it becomes the active view. Focus the frame window
   // AND post tl-focus so the terminal page's own handler focuses xterm's input.
   createEffect(() => {
@@ -128,6 +139,7 @@ export const TerminalView: Component<{
     if (!d || typeof d !== "object") return;
     if (d.type === "tl-terminal-ready") {
       hideCover();
+      postViewState(); // the fresh document assumes it is visible
     } else if (d.type === "tl-theme-ack") {
       if (themeAckTimer) clearTimeout(themeAckTimer);
     } else if (d.type === "tl-command") {
@@ -167,8 +179,10 @@ export const TerminalView: Component<{
   //   window 'message', origin-scoped to location.origin, source === parent:
   //     {type:'tl-input',  bytes:string}  -> mirrorLineReset() + sendInput(bytes)
   //     {type:'tl-refit'}                  -> refit()  (re-fit xterm)
-  // term.html handles all three (tl-input / tl-refit / tl-command 'terminal.copy')
-  // in its terminal-mode message handler, closing the bridge end-to-end.
+  //     {type:'tl-view',   hidden:boolean} -> setViewHidden() (attention kernel)
+  // term.html handles all four (tl-input / tl-refit / tl-view / tl-command
+  // 'terminal.copy') in its terminal-mode message handler, closing the bridge
+  // end-to-end.
   const sendBytesToFrame = (bytes: string): boolean => {
     if (!iframe?.contentWindow) return false;
     postToFrame({ type: "tl-input", bytes });

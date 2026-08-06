@@ -26,7 +26,9 @@ import { splitComposeSubmit } from "../mobile/compose";
 export const Composer: Component<{
   working: boolean;
   pending: PendingPermission[];
-  onSend: (text: string) => void;
+  /** resolves false when the session refused the prompt (409 mid-turn, 5xx,
+   *  unreachable), which puts the typed text back in the field. */
+  onSend: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Mobile bridge: forward raw pty bytes to the live terminal iframe. When
@@ -41,21 +43,36 @@ export const Composer: Component<{
     ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
   };
 
+  const clear = () => {
+    if (!ta) return;
+    ta.value = "";
+    autosize();
+  };
+
   const submit = () => {
-    const t = (ta?.value ?? "").trim();
+    const raw = ta?.value ?? "";
+    const t = raw.trim();
     if (!t) return;
     if (props.sendToTerminal) {
       // Bracketed paste (soft newlines) + a SEPARATE trailing submit frame.
+      // The pty bridge is fire-and-forget — there is no result to wait for.
       const { paste, submit: cr } = splitComposeSubmit(t);
       props.sendToTerminal(paste);
       props.sendToTerminal(cr);
-    } else {
-      props.onSend(t);
+      clear();
+      return;
     }
-    if (ta) {
-      ta.value = "";
+    // Clear optimistically (the field must feel instant), then put the text
+    // BACK if the session refused it — a 409 "a turn is already running" used
+    // to destroy the prompt outright, because this is a direct write to the DOM
+    // ref and no state anywhere else held it. Only restore into a field the user
+    // has not since typed into.
+    clear();
+    void props.onSend(t).then((ok) => {
+      if (ok || !ta || ta.value !== "") return;
+      ta.value = raw;
       autosize();
-    }
+    });
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
