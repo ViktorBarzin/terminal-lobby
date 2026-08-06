@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { createRoot } from "solid-js";
 import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
@@ -25,6 +25,7 @@ class FakeApi implements LobbyApi {
   renameError?: number;
   killError = false;
   layoutError = false;
+  putError = false;
 
   async whoami() {
     return this.whoamiVal;
@@ -37,6 +38,7 @@ class FakeApi implements LobbyApi {
     return this.layoutVal;
   }
   async putLayout(l: Layout) {
+    if (this.putError) throw new ApiError(500, "nope");
     this.puts.push(l);
     this.layoutVal = l;
   }
@@ -57,6 +59,20 @@ class FakeApi implements LobbyApi {
   }
   async listDirs() {
     return [];
+  }
+}
+
+/**
+ * The same fake, but handing out FRESH objects on every call the way `fetch` +
+ * `JSON.parse` does. Returning the stored reference would make an unchanged
+ * poll look stable for free and hide the rebuild this file asserts against.
+ */
+class FreshApi extends FakeApi {
+  override async listSessions() {
+    return structuredClone(await super.listSessions());
+  }
+  override async getLayout() {
+    return structuredClone(await super.getLayout());
   }
 }
 
@@ -87,6 +103,10 @@ beforeEach(() => {
   } catch {
     /* ignore */
   }
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("lobby store", () => {
@@ -316,6 +336,164 @@ describe("lobby store", () => {
       await store.refresh();
       await store.restore();
       expect(api.restores).toBe(1);
+    });
+  });
+
+  it("a poll that changes nothing leaves the render model reference-identical", async () => {
+    // The 5s poll re-parses the same JSON into fresh objects. If those land in
+    // the store as-is, every memo downstream recomputes and <For> (which keys
+    // on reference) tears down and re-creates every group and card — taking
+    // any open menu or half-typed input with it.
+    const api = new FreshApi();
+    api.sessionsVal = [sess("a", { state: "running" }), sess("b")];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["a"] }],
+      ungrouped: ["b"],
+    };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const model = store.model();
+      const layoutRef = store.layout();
+      const group = model.groups[0]!;
+      const card = group.sessions[0]!;
+
+      await store.refresh();
+      await store.refresh();
+      await store.refresh();
+
+      expect(store.layout()).toBe(layoutRef);
+      expect(store.model()).toBe(model);
+      expect(store.model().groups[0]).toBe(group);
+      expect(store.model().groups[0]!.sessions[0]).toBe(card);
+    });
+  });
+
+  it("a poll that DOES change something still repaints", async () => {
+    const api = new FreshApi();
+    api.sessionsVal = [sess("a")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["a"] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      api.sessionsVal = [sess("a"), sess("b")];
+      api.layoutVal = { ...api.layoutVal, ungrouped: ["a", "b"] };
+      await store.refresh();
+      expect(names(store)).toEqual(["a", "b"]);
+
+      api.sessionsVal = [sess("b", { state: "running" })];
+      api.layoutVal = { ...api.layoutVal, ungrouped: ["b"] };
+      await store.refresh();
+      expect(names(store)).toEqual(["b"]);
+      expect(store.model().groups[0]!.sessions[0]!.state).toBe("running");
+    });
+  });
+
+  it("survives two sessions sharing a name under different owners", async () => {
+    // The manifest spans OS users and tmux names are only unique per user, so
+    // the reconcile key is not unique — neither entry may be dropped.
+    const api = new FreshApi();
+    api.sessionsVal = [sess("main"), sess("main", { owner: "bob", access: "ro" })];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      await store.refresh();
+      expect(names(store)).toEqual(["main"]);
+      expect(store.model().foreign.map((s) => s.name)).toEqual(["main"]);
+      expect(store.model().foreign[0]!.owner).toBe("bob");
+    });
+  });
+
+  it("the working timer's anchor survives a reload", async () => {
+    // The anchor is our own first observation (no backend exposes a real
+    // state-change time), so it has to be persisted or every page load
+    // restarts a long-running session's timer at 0:00.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-06T10:00:00Z"));
+    const api = new FakeApi();
+    api.sessionsVal = [sess("busy", { state: "running" })];
+    let first: number | undefined;
+    await withStore(api, async (store) => {
+      await store.refresh();
+      first = store.workingSince("busy");
+      expect(first).toBe(Date.now());
+    });
+
+    vi.setSystemTime(new Date("2026-08-06T10:00:30Z"));
+    await withStore(api, async (store) => {
+      await store.refresh();
+      expect(store.workingSince("busy")).toBe(first);
+    });
+  });
+
+  it("the working-timer anchor re-arms when the session stops running", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-06T10:00:00Z"));
+    const api = new FakeApi();
+    api.sessionsVal = [sess("busy", { state: "running" })];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      api.sessionsVal = [sess("busy", { state: "done" })];
+      await store.refresh();
+      expect(store.workingSince("busy")).toBeUndefined();
+
+      vi.setSystemTime(new Date("2026-08-06T10:01:00Z"));
+      api.sessionsVal = [sess("busy", { state: "running" })];
+      await store.refresh();
+      expect(store.workingSince("busy")).toBe(Date.now());
+    });
+  });
+
+  it("a project rename carries its collapsed state; a delete drops the key", async () => {
+    // Collapse is keyed on the project NAME, so a rename that leaves the key
+    // behind pops the group open and hands the stale key to the next project
+    // that reuses the name.
+    const api = new FakeApi();
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "old", sessions: [] }] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.collapse.toggle("old");
+      expect(store.collapse.isCollapsed("old")).toBe(true);
+
+      expect(await store.renameProjectAction("old", "fresh")).toBe(true);
+      expect(store.collapse.isCollapsed("fresh")).toBe(true);
+      expect(store.collapse.isCollapsed("old")).toBe(false);
+      expect(localStorage.getItem("tmux-collapsed-wizard")).toBe('["fresh"]');
+
+      await store.deleteProjectAction("fresh");
+      expect(store.collapse.isCollapsed("fresh")).toBe(false);
+      expect(localStorage.getItem("tmux-collapsed-wizard")).toBe("[]");
+    });
+  });
+
+  it("a rename whose layout write fails leaves the collapse key where it was", async () => {
+    const api = new FakeApi();
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "old", sessions: [] }] };
+    api.putError = true;
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.collapse.toggle("old");
+      expect(await store.renameProjectAction("old", "fresh")).toBe(false);
+      expect(store.collapse.isCollapsed("old")).toBe(true);
+      expect(store.collapse.isCollapsed("fresh")).toBe(false);
+    });
+  });
+
+  it("create: a layout write that fails reports failure and leaves no phantom card", async () => {
+    // The layout PUT is the only record a create makes (tmux-api never sees
+    // it), so a failed write means nothing was created. Reporting success
+    // clears the input and strands an optimistic card that never resolves —
+    // and, because pending names count as taken, burns the name too.
+    const api = new FakeApi();
+    api.putError = true;
+    await withStore(api, async (store) => {
+      await store.refresh();
+      expect(await store.create("ghost", "")).toBe(false);
+      expect(names(store)).not.toContain("ghost");
+      expect(store.toast()).toMatch(/layout/i);
+
+      // the name is not burnt: it is free again the moment the write can land
+      api.putError = false;
+      expect(await store.create("ghost", "")).toBe(true);
+      expect(names(store)).toContain("ghost");
     });
   });
 });
