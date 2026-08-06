@@ -21,7 +21,12 @@ export const SettingsPanel: Component<{
   prefs: PrefsStore;
   onClose: () => void;
   /** the keybinding layer's opt-in toggle (per-device, not roamed). */
-  keybindings?: { enabled: Accessor<boolean>; setEnabled: (on: boolean) => void };
+  keybindings?: {
+    enabled: Accessor<boolean>;
+    setEnabled: (on: boolean) => void;
+    /** platform label for the Alt/Option modifier, for the exemption note. */
+    altLabel?: string;
+  };
   /** the PWA notification system (per-device readouts + test actions). */
   notifications?: NotificationSystem;
 }> = (props) => {
@@ -197,8 +202,14 @@ export const SettingsPanel: Component<{
                 />
                 <span>App shortcuts (Alt+1–0, Ctrl+Shift+K, dev-flow chords)</span>
               </label>
+              {/* Two things outlive this checkbox and the label used to imply
+                  otherwise: the always-on kill chord (KB_ALWAYS_BINDINGS) and
+                  the bare "/" help opener, which is a shell window listener
+                  rather than a table binding. Say so where the switch is. */}
               <div class="tl-settings-hint">
-                This device only. Press <kbd>/</kbd> for the full list.
+                This device only. Press <kbd>/</kbd> for the full list.{" "}
+                <kbd>{kb().altLabel ?? "Alt"}+Shift+Backspace</kbd> (kill the attached
+                session, asks first) and <kbd>/</kbd> stay always on.
               </div>
             </section>
           )}
