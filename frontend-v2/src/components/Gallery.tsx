@@ -4,9 +4,11 @@ import {
   Show,
   Switch,
   createMemo,
+  createSignal,
   onCleanup,
   onMount,
   type Component,
+  type JSX,
 } from "solid-js";
 import type { GalleryStore } from "../store/gallery";
 import { badgeLabel } from "../store/gallery.logic";
@@ -24,12 +26,63 @@ import { clipboardImgUrl } from "../lib/config";
  * gallery is open. mousedown is preventDefault'd so browsing never steals focus
  * from the terminal iframe (the vanilla focus-return trick), while clicks still
  * fire.
+ *
+ * A thumbnail that fails to decode falls back to a labelled placeholder. The
+ * store can hold files no browser will draw — /upload now refuses bytes that
+ * are not an image, but a truncated PNG still passes its sniff by design, and
+ * files accepted before that check exist already. Without a fallback those
+ * render as an empty cell (measured: 141x141, naturalWidth 0) that looks
+ * identical to a slow load, and the gallery is list+lightbox only, so there is
+ * no delete control to clear it.
  */
+
+// Placeholder styling is inline rather than in app.css so this fix stays inside
+// the one component that owns the behaviour — app.css is shared by every other
+// surface, and .tl-gallery-broken has no reuse outside these two spots.
+const brokenTileStyle: JSX.CSSProperties = {
+  display: "flex",
+  "flex-direction": "column",
+  "align-items": "center",
+  "justify-content": "center",
+  gap: "4px",
+  width: "100%",
+  height: "100%",
+  padding: "6px",
+  "box-sizing": "border-box",
+  color: "var(--text-muted)",
+  "font-size": "11px",
+  "line-height": "1.3",
+  "text-align": "center",
+  "overflow-wrap": "anywhere",
+};
+
+const brokenLightboxStyle: JSX.CSSProperties = {
+  display: "flex",
+  "flex-direction": "column",
+  "align-items": "center",
+  gap: "8px",
+  padding: "24px",
+  color: "var(--text-muted)",
+  "font-size": "14px",
+  "text-align": "center",
+  "overflow-wrap": "anywhere",
+};
+
 export const Gallery: Component<{ store: GalleryStore }> = (props) => {
   const s = props.store;
 
   const src = (name: string): string => clipboardImgUrl(s.session() ?? "", name);
   const current = createMemo(() => s.images()[s.lightboxIndex()]);
+
+  // Names whose <img> reported an error. Keyed by name (unique per session —
+  // the store stamps every write) so a thumbnail failure and its lightbox agree
+  // without re-fetching. Resets on close: the component unmounts with the
+  // overlay, so a re-upload under a new name always gets a fresh try.
+  const [failed, setFailed] = createSignal<ReadonlySet<string>>(new Set());
+  const isBroken = (name: string): boolean => failed().has(name);
+  const markBroken = (name: string): void => {
+    setFailed((prev) => (prev.has(name) ? prev : new Set(prev).add(name)));
+  };
 
   // Escape steps back one view; while the lightbox is up it lands on the grid,
   // from the grid it closes. Capture + stop so it never leaks to other chrome.
@@ -74,10 +127,32 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
                     <button
                       type="button"
                       class="tl-gallery-cell"
-                      title={im.name}
+                      title={
+                        isBroken(im.name)
+                          ? `${im.name} — not a readable image`
+                          : im.name
+                      }
                       onClick={() => s.openLightbox(i())}
                     >
-                      <img loading="lazy" alt={im.name} src={src(im.name)} />
+                      <Show
+                        when={!isBroken(im.name)}
+                        fallback={
+                          <span class="tl-gallery-broken" style={brokenTileStyle}>
+                            <span aria-hidden="true" style={{ "font-size": "18px" }}>
+                              ⚠
+                            </span>
+                            <span>{im.name}</span>
+                            <span>not a readable image</span>
+                          </span>
+                        }
+                      >
+                        <img
+                          loading="lazy"
+                          alt={im.name}
+                          src={src(im.name)}
+                          onError={() => markBroken(im.name)}
+                        />
+                      </Show>
                       <Show when={badgeLabel(im)}>
                         {(label) => (
                           <span class="tl-gallery-badge">{label()}</span>
@@ -99,7 +174,24 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => s.stepBack()}
           >
-            <img alt={img().name} src={src(img().name)} />
+            <Show
+              when={!isBroken(img().name)}
+              fallback={
+                <div class="tl-gallery-broken" style={brokenLightboxStyle}>
+                  <span aria-hidden="true" style={{ "font-size": "32px" }}>
+                    ⚠
+                  </span>
+                  <span>{img().name}</span>
+                  <span>This file is not a readable image.</span>
+                </div>
+              }
+            >
+              <img
+                alt={img().name}
+                src={src(img().name)}
+                onError={() => markBroken(img().name)}
+              />
+            </Show>
             <Show when={s.images().length > 1}>
               <div class="tl-lightbox-chip">
                 {s.lightboxIndex() + 1}/{s.images().length}
