@@ -75,6 +75,16 @@ would 404 it anyway, having no such handler (measured 2026-08-06 straight at
 `PreToolUse` hook that would emit a permission request is not wired — the panel
 currently has neither an input nor an output path.
 
+Both halves are **absent by decision, not by omission**. Commit `575d4f5`
+(2026-07-21, *"remove web-mediated PreToolUse permission feature"*) deleted
+`session-events/permission.go`, `hooks.go` and their tests; the managed-settings
+wiring and the `/permission/` ingress rule went with it, after the hook's
+`ask` decision made every Claude session on the shared box prompt on every tool
+call. `frontend-v2/src/lib/config.ts:7` already says so in a comment. So the
+panel is a live UI in front of a removed backend — worth reporting as that, but
+restoring the route or the handler re-introduces the flood and is Viktor's call,
+scoped to the dev host if it happens at all. This plan does not authorize it.
+
 ### C — two services have no deploy path
 
 `session-events` and `file-api` are shipped by neither script. Both binaries were
