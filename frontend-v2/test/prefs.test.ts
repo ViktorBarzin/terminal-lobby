@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createRoot } from "solid-js";
 import {
+  changedPrefPaths,
   clampFontSize,
   coercePrefs,
   composeDoc,
@@ -14,6 +15,14 @@ import {
   FONT_SIZE_MIN,
   FONT_SIZE_MAX,
 } from "../src/store/prefs";
+
+/** Every `track()` prefs.ts emits, in order. */
+const tracked: { name: string; attrs?: Record<string, unknown> }[] = [];
+vi.mock("../src/telemetry/track", () => ({
+  track: (name: string, attrs?: Record<string, unknown>) => void tracked.push({ name, attrs }),
+}));
+const prefsEvents = (): Record<string, unknown>[] =>
+  tracked.filter((e) => e.name === "prefs.changed").map((e) => e.attrs ?? {});
 
 describe("clampFontSize", () => {
   it("clamps to [6,22], rounds, defaults garbage", () => {
@@ -108,6 +117,132 @@ describe("applyPatch — one-level deep merge", () => {
     expect(next.notify).toEqual({ onDone: true, onAwaiting: false });
     expect(next.session).toEqual(PREF_DEFAULTS.session);
     expect(next.fontSize).toBe(PREF_DEFAULTS.fontSize);
+  });
+});
+
+describe("changedPrefPaths — dotted path + new value, changes only", () => {
+  it("names the leaf that moved, not the namespace it lives in", () => {
+    const prev = PREF_DEFAULTS;
+    const next = applyPatch(prev, { session: { newCommand: "shell" } });
+    expect(changedPrefPaths(prev, next)).toEqual([["session.newCommand", "shell"]]);
+  });
+
+  it("reports booleans as their value, never as the sub-key name", () => {
+    const prev = applyPatch(PREF_DEFAULTS, { notify: { onAwaiting: false } });
+    const next = applyPatch(prev, { notify: { onAwaiting: true } });
+    expect(changedPrefPaths(prev, next)).toEqual([["notify.onAwaiting", "true"]]);
+  });
+
+  it("is silent when nothing moved, and lists every leaf that did", () => {
+    expect(changedPrefPaths(PREF_DEFAULTS, PREF_DEFAULTS)).toEqual([]);
+    const next = applyPatch(PREF_DEFAULTS, {
+      fontSize: 21,
+      notify: { onDone: false },
+    });
+    expect(changedPrefPaths(PREF_DEFAULTS, next)).toEqual([
+      ["fontSize", "21"],
+      ["notify.onDone", "false"],
+    ]);
+  });
+});
+
+describe("createPrefsStore — prefs.changed carries the value, not the key name", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    tracked.length = 0;
+  });
+
+  const okJson = (body: unknown) => ({ ok: true, json: async () => body });
+
+  it("emits the dotted path and the NEW VALUE for a session change", () => {
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      store.setPref({ session: { newCommand: "shell" } });
+      expect(prefsEvents()).toEqual([{ "tl.key": "session.newCommand", "tl.to": "shell" }]);
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("emits the boolean for a notify change (on/off must be knowable)", () => {
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      store.setPref({ notify: { onAwaiting: false } });
+      expect(prefsEvents()).toEqual([{ "tl.key": "notify.onAwaiting", "tl.to": "false" }]);
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("keeps the already-usable fontSize shape", () => {
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      store.setFontSize(21);
+      expect(prefsEvents()).toEqual([{ "tl.key": "fontSize", "tl.to": "21" }]);
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("emits NOTHING for a write that changes nothing", () => {
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      store.setPref({ session: { newCommand: PREF_DEFAULTS.session.newCommand } });
+      expect(prefsEvents()).toEqual([]);
+      store.dispose();
+      dispose();
+    });
+  });
+});
+
+describe("createPrefsStore — live push into the terminal iframe", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    tracked.length = 0;
+    delete window.__tlPrefsLive;
+  });
+
+  const okJson = (body: unknown) => ({ ok: true, json: async () => body });
+
+  it("pushes the new prefs to the attached terminal AFTER persisting them", () => {
+    const seen: { fontSize: number; stored: string | null }[] = [];
+    window.__tlPrefsLive = (p) => {
+      // term.html reads localStorage as the truth, so the write must already be
+      // durable by the time it is told to look.
+      seen.push({ fontSize: p.fontSize, stored: localStorage.getItem("tl-font-size") });
+      return true;
+    };
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      store.setFontSize(6);
+      expect(seen).toEqual([{ fontSize: 6, stored: "6" }]);
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("pushes an adopted server doc too (the roamed size must land live)", async () => {
+    const sizes: number[] = [];
+    window.__tlPrefsLive = (p) => {
+      sizes.push(p.fontSize);
+      return true;
+    };
+    await createRoot(async (dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({ fontSize: 20 }) });
+      await store.bootSync();
+      expect(sizes).toEqual([20]);
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("survives a change made with no terminal mounted", () => {
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      expect(() => store.setFontSize(12)).not.toThrow();
+      store.dispose();
+      dispose();
+    });
   });
 });
 

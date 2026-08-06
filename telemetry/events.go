@@ -77,8 +77,13 @@ var knownEvents = map[string]bool{
 
 	// -- settings -----------------------------------------------------------
 	"settings.opened": true,
-	"prefs.changed":   true, // (tl.key = pref path, tl.to = new value)
-	"theme.changed":   true, // (tl.to)
+	// tl.key is the DOTTED PATH of the single field that changed
+	// ("fontSize", "session.newCommand", "notify.onAwaiting") and tl.to is its
+	// new scalar value — one event per changed leaf, none when a write is a
+	// no-op. Never the namespace with the sub-key NAME as the value: that shape
+	// made "which value did it move to" unanswerable.
+	"prefs.changed": true,
+	"theme.changed": true, // (tl.to)
 
 	// -- notifications ------------------------------------------------------
 	"notify.opt_in":            true,
