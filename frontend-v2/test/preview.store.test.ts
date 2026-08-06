@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRoot, createSignal } from "solid-js";
 import { createPreviewStore, type PreviewStore } from "../src/store/preview";
-import { FileApiError, type FileEntry, type LoadedFile } from "../src/lib/file-api";
+import {
+  FileApiError,
+  readErrorMessage,
+  type FileEntry,
+  type LoadedFile,
+} from "../src/lib/file-api";
 import type { Event } from "../src/types/events";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
@@ -197,6 +202,103 @@ describe("preview store — recent files from the transcript", () => {
   });
 });
 
+// Typing an in-home DIRECTORY into the path box used to answer "it's outside
+// your home folder, or not a readable file" — while the Browse button one click
+// away listed that same directory happily. Two opposite answers for one path.
+describe("preview store — a directory typed into the path box", () => {
+  it("reports a FOLDER instead of the containment error", async () => {
+    const [s, dispose] = withStore({
+      loadFile: async () => {
+        throw new FileApiError(400, readErrorMessage(400, "path is a directory\n"));
+      },
+    });
+    await s.open("/home/wizard/proj/sub");
+    expect(s.status()).toBe("error");
+    expect(s.error()).toMatch(/is a folder/i);
+    expect(s.error()).not.toMatch(/outside your home/i);
+    dispose();
+  });
+
+  it("leaves an out-of-home path on the deliberately vague message", async () => {
+    const [s, dispose] = withStore({
+      loadFile: async () => {
+        throw new FileApiError(400, readErrorMessage(400, "invalid path\n"));
+      },
+    });
+    await s.open("/etc/passwd");
+    expect(s.status()).toBe("error");
+    expect(s.error()).toBe(readErrorMessage(400));
+    expect(s.error()).not.toMatch(/is a folder/i);
+    dispose();
+  });
+});
+
+// listDir has carried an `all` parameter (→ &all=1) since it was written, and
+// the shipped app never passed it — so the Browse pane could not ask for the
+// dotfiles file-api's own comment names as editable (.gitignore, .env, .bashrc).
+describe("preview store — the show-hidden toggle", () => {
+  const entries = (...names: string[]): FileEntry[] =>
+    names.map((name) => ({ name, path: `/d/${name}`, size: 0, mtime: 0, isDir: false }));
+
+  /** Mirrors file-api: dotfiles only when the caller asks for them. */
+  const lister = () =>
+    vi.fn(async (_dir: string, all = false) =>
+      all ? entries(".hidden.txt", "sample.md") : entries("sample.md"),
+    );
+
+  it("defaults to off and asks for a plain listing", async () => {
+    const listDir = lister();
+    const [s, dispose] = withStore({ listDir });
+    expect(s.showHidden()).toBe(false);
+    await s.browse("/d");
+    expect(listDir).toHaveBeenCalledWith("/d", false);
+    expect(s.browseEntries().map((e) => e.name)).toEqual(["sample.md"]);
+    dispose();
+  });
+
+  it("turning it on re-lists the current directory with dotfiles", async () => {
+    const listDir = lister();
+    const [s, dispose] = withStore({ listDir });
+    await s.browse("/d");
+    await s.toggleHidden();
+    expect(s.showHidden()).toBe(true);
+    expect(listDir).toHaveBeenLastCalledWith("/d", true);
+    expect(s.browseEntries().map((e) => e.name)).toContain(".hidden.txt");
+    dispose();
+  });
+
+  it("turning it back off restores exactly today's listing", async () => {
+    const listDir = lister();
+    const [s, dispose] = withStore({ listDir });
+    await s.browse("/d");
+    await s.toggleHidden();
+    await s.toggleHidden();
+    expect(s.showHidden()).toBe(false);
+    expect(listDir).toHaveBeenLastCalledWith("/d", false);
+    expect(s.browseEntries().map((e) => e.name)).toEqual(["sample.md"]);
+    dispose();
+  });
+
+  it("browseUp carries the flag to the parent listing", async () => {
+    const listDir = lister();
+    const [s, dispose] = withStore({ listDir });
+    await s.browse("/d/deep");
+    await s.toggleHidden();
+    await s.browseUp();
+    expect(listDir).toHaveBeenLastCalledWith("/d", true);
+    dispose();
+  });
+
+  it("toggling with the pane closed changes the flag without a request", async () => {
+    const listDir = lister();
+    const [s, dispose] = withStore({ listDir });
+    await s.toggleHidden();
+    expect(s.showHidden()).toBe(true);
+    expect(listDir).not.toHaveBeenCalled();
+    dispose();
+  });
+});
+
 describe("preview store — show + directory browse", () => {
   it("show() opens the overlay idle (no file)", () => {
     const [s, dispose] = withStore({});
@@ -221,7 +323,7 @@ describe("preview store — show + directory browse", () => {
     expect(s.browseEntries()).toHaveLength(2);
 
     await s.browseUp();
-    expect(listDir).toHaveBeenLastCalledWith("/a");
+    expect(listDir).toHaveBeenLastCalledWith("/a", false);
     expect(s.browseDir()).toBe("/a");
     dispose();
   });
@@ -342,7 +444,7 @@ describe("preview store — browseStart, the cold-open entry", () => {
     });
     await s.open("/home/u/proj/main.ts");
     await s.browseStart();
-    expect(listDir).toHaveBeenCalledWith("/home/u/proj");
+    expect(listDir).toHaveBeenCalledWith("/home/u/proj", false);
     dispose();
   });
 
@@ -354,7 +456,7 @@ describe("preview store — browseStart, the cold-open entry", () => {
     const [s, dispose] = withStore({ listDir, events });
     s.show();
     await s.browseStart();
-    expect(listDir).toHaveBeenCalledWith("/home/u/a");
+    expect(listDir).toHaveBeenCalledWith("/home/u/a", false);
     dispose();
   });
 
@@ -367,7 +469,7 @@ describe("preview store — browseStart, the cold-open entry", () => {
     s.show();
     await s.browseStart();
     expect(s.browsing()).toBe(true);
-    expect(listDir).toHaveBeenCalledWith("/home/wizard");
+    expect(listDir).toHaveBeenCalledWith("/home/wizard", false);
     expect(s.browseDir()).toBe("/home/wizard");
     // Home IS the containment root, so Up is inert straight away.
     expect(s.canBrowseUp()).toBe(false);

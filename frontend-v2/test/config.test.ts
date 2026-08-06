@@ -4,6 +4,7 @@ import {
   apiUrl,
   TERMINAL_BASE,
   clipboardUrl,
+  fileListUrl,
   fileReadUrl,
   eventsUrl,
   promptUrl,
@@ -46,6 +47,30 @@ describe("config — tmux-api prefix (PROD ingress: PathPrefix /api/sessions/ ->
   it("clipboard + file-api keep their own prefixes (not moved by the fix)", () => {
     expect(clipboardUrl("/upload")).toBe("/clipboard/upload");
     expect(fileReadUrl("/home/x/f")).toBe("/files/read?path=%2Fhome%2Fx%2Ff");
+  });
+});
+
+// The Browse pane's show-hidden toggle rides on this one query parameter, so the
+// contract is pinned here: the flag is opt-in, and off must produce byte-identical
+// URLs to the ones the app has always sent.
+describe("config — fileListUrl carries the dotfile opt-in", () => {
+  const dir = "/home/wizard/qa-verify-fp";
+  const enc = encodeURIComponent(dir);
+
+  it("omits all=1 by default and when explicitly off", () => {
+    expect(fileListUrl(dir)).toBe(`/files/list?dir=${enc}`);
+    expect(fileListUrl(dir, false)).toBe(`/files/list?dir=${enc}`);
+  });
+
+  it("appends &all=1 when hidden files are requested", () => {
+    expect(fileListUrl(dir, true)).toBe(`/files/list?dir=${enc}&all=1`);
+  });
+
+  it("keeps the directory percent-encoded so spaces and & survive", () => {
+    const odd = "/home/wizard/a b&c";
+    expect(fileListUrl(odd, true)).toBe(
+      `/files/list?dir=${encodeURIComponent(odd)}&all=1`,
+    );
   });
 });
 

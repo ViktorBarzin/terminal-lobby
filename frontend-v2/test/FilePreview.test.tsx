@@ -3,7 +3,7 @@ import { render, fireEvent } from "@solidjs/testing-library";
 import { createRoot } from "solid-js";
 import { FilePreview } from "../src/components/FilePreview";
 import { createPreviewStore, type PreviewStore } from "../src/store/preview";
-import type { LoadedFile } from "../src/lib/file-api";
+import type { FileEntry, LoadedFile } from "../src/lib/file-api";
 import { FileApiError } from "../src/lib/file-api";
 import type { Event } from "../src/types/events";
 
@@ -200,7 +200,7 @@ describe("<FilePreview> — recent files + explicit path entry", () => {
     fireEvent.click(browse);
     await Promise.resolve();
     await Promise.resolve();
-    expect(listDir).toHaveBeenCalledWith("/home/wizard");
+    expect(listDir).toHaveBeenCalledWith("/home/wizard", false);
   });
 
   it("opens the path typed into the path box", async () => {
@@ -214,5 +214,45 @@ describe("<FilePreview> — recent files + explicit path entry", () => {
     // Submit the form directly (jsdom's implicit submit-on-click is unreliable).
     fireEvent.submit(input.closest("form")!);
     expect(loadFile).toHaveBeenCalledWith("/typed/path.go", "path.go");
+  });
+});
+
+// The browse pane's only control was the path box, so the dotfiles file-api
+// deliberately allows you to edit (.gitignore, .env, .bashrc) could never be
+// listed — listDir's `all` parameter existed and was never passed.
+describe("<FilePreview> — the browse bar's hidden-files toggle", () => {
+  const entry = (name: string): FileEntry => ({
+    name,
+    path: `/d/${name}`,
+    size: 0,
+    mtime: 0,
+    isDir: false,
+  });
+
+  it("is off by default, and switching it on lists the dotfiles", async () => {
+    // Mirrors file-api: dotfiles come back only when &all=1 is asked for.
+    const listDir = vi.fn(async (_dir: string, all = false) =>
+      all ? [entry(".hidden.txt"), entry("sample.md")] : [entry("sample.md")],
+    );
+    const store = makeStore({ listDir });
+    await store.browse("/d");
+    const { getByRole, queryByText, findByText } = render(() => (
+      <FilePreview store={store} />
+    ));
+
+    expect(queryByText(".hidden.txt")).toBeNull();
+    const toggle = getByRole("checkbox", { name: /hidden/i }) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.click(toggle);
+    expect(await findByText(".hidden.txt")).toBeInTheDocument();
+    expect(listDir).toHaveBeenLastCalledWith("/d", true);
+    expect(toggle.checked).toBe(true);
+  });
+
+  it("only exists inside the browse pane", async () => {
+    const store = await loaded(async () => ({ kind: "code", text: "x" }), "/a/x.ts");
+    const { queryByRole } = render(() => <FilePreview store={store} />);
+    expect(queryByRole("checkbox", { name: /hidden/i })).toBeNull();
   });
 });
