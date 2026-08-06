@@ -122,13 +122,32 @@ export function basename(path: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-/** Parent directory of a POSIX path ("/a/b.txt" -> "/a", "/a" -> "/"). */
+/**
+ * Parent directory of a POSIX path ("/a/b.txt" -> "/a", "/a" -> "/").
+ *
+ * The root is its OWN parent — `dirname("/") === "/"` — so a repeated walk up
+ * has a fixed point to stop on. Returning the relative "." there (what
+ * stripping the trailing slash used to leave) sent the browse pane to a path
+ * the file-api rejects outright as non-absolute.
+ */
 export function dirname(path: string): string {
   const p = path.replace(/\/+$/, "");
+  if (p === "") return path.startsWith("/") ? "/" : ".";
   const i = p.lastIndexOf("/");
   if (i < 0) return ".";
   if (i === 0) return "/";
   return p.slice(0, i);
+}
+
+/**
+ * Size of `text` in UTF-8 BYTES — what the file occupies on disk and what the
+ * size chip claims to show. `String.length` counts UTF-16 code units, so it
+ * under-reports every non-ASCII file (and halves astral-plane characters).
+ * Derived from the text itself rather than a Content-Length header so it stays
+ * correct under chunked or compressed transfer, and after an unsaved edit.
+ */
+export function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 /** highlight.js language id for a path, or undefined (plaintext / unknown). */

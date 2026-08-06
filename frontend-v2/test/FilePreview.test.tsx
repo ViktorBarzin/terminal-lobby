@@ -130,6 +130,44 @@ describe("<FilePreview> — renders per kind + states", () => {
   });
 });
 
+describe("<FilePreview> — the size chip", () => {
+  it("shows the byte size of a loaded file", async () => {
+    const store = await loaded(
+      async () => ({ kind: "code", text: "abc", size: 59 }),
+      "/a/utf8.md",
+    );
+    const { container } = render(() => <FilePreview store={store} />);
+    expect(container.querySelector(".tl-preview-size")?.textContent).toBe("59 B");
+  });
+
+  // fmtBytes returned "" for 0, so an empty file rendered the chip element with
+  // nothing in it — a stray gap in the header rather than an honest "0 B".
+  it("renders '0 B' for an empty file, not an empty chip", async () => {
+    const store = await loaded(
+      async () => ({ kind: "code", text: "", size: 0 }),
+      "/a/empty.txt",
+    );
+    const { container } = render(() => <FilePreview store={store} />);
+    expect(container.querySelector(".tl-preview-size")?.textContent).toBe("0 B");
+  });
+
+  it("updates after a save that changes the byte count", async () => {
+    const store = makeStore({
+      loadFile: async () => ({ kind: "code", text: "abc", size: 3 }),
+      writeFile: async () => {},
+      notify: () => {},
+    });
+    await store.open("/a/x.ts");
+    const { container } = render(() => <FilePreview store={store} />);
+    expect(container.querySelector(".tl-preview-size")?.textContent).toBe("3 B");
+
+    store.beginEdit();
+    store.setDraft("abcdefghij"); // 10 bytes
+    await store.save();
+    expect(container.querySelector(".tl-preview-size")?.textContent).toBe("10 B");
+  });
+});
+
 describe("<FilePreview> — recent files + explicit path entry", () => {
   it("shows transcript-derived recent files and opens one on click", async () => {
     const loadFile = vi.fn(async () => ({ kind: "code", text: "x" }) as LoadedFile);
@@ -146,6 +184,23 @@ describe("<FilePreview> — recent files + explicit path entry", () => {
     expect(chip).toBeInTheDocument();
     fireEvent.click(chip);
     expect(loadFile).toHaveBeenCalledWith("/a/two.md", "two.md");
+  });
+
+  // A plain shell session has no transcript and no loaded path, and Browse was
+  // gated behind `s.path()` — so the directory picker could only be reached by
+  // first typing a full absolute file path, which is what the picker is for.
+  it("offers Browse with no file loaded, and it opens the picker", async () => {
+    const listDir = vi.fn(async () => []);
+    const store = makeStore({ listDir, homeDir: async () => "/home/wizard" });
+    store.show();
+    const { getByRole } = render(() => <FilePreview store={store} />);
+
+    const browse = getByRole("button", { name: "Browse" });
+    expect(browse).toBeInTheDocument();
+    fireEvent.click(browse);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(listDir).toHaveBeenCalledWith("/home/wizard");
   });
 
   it("opens the path typed into the path box", async () => {

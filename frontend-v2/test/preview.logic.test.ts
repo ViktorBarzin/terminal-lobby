@@ -3,6 +3,7 @@ import type { Event } from "../src/types/events";
 import {
   HTML_SANDBOX,
   basename,
+  byteLength,
   classifyFile,
   dirname,
   extOf,
@@ -90,9 +91,37 @@ describe("extOf / basename / dirname / languageForPath", () => {
     expect(dirname("/a")).toBe("/");
     expect(dirname("/a/b/")).toBe("/a");
   });
+  // The browse pane walks up with dirname. Returning the RELATIVE "." for the
+  // root turned the fourth ⬆ Up click into a navigation to ".", which file-api
+  // rejects (errNotAbsolute → 400) and the pane labelled as a "." directory.
+  // The root is its own parent, so the walk has a fixed point to stop on.
+  it("dirname of the root is the root, never the relative '.'", () => {
+    expect(dirname("/")).toBe("/");
+    expect(dirname("//")).toBe("/");
+    expect(dirname("///")).toBe("/");
+  });
   it("languageForPath maps by extension", () => {
     expect(languageForPath("x.rs")).toBe("rust");
     expect(languageForPath("x.unknownext")).toBeUndefined();
+  });
+});
+
+describe("byteLength", () => {
+  // The size chip is a BYTE count. JS string length counts UTF-16 code units,
+  // so any non-ASCII file reported short (the fixture below is 59 bytes on
+  // disk, 45 JS characters).
+  it("counts UTF-8 bytes, not JS characters", () => {
+    const utf8 = "# héllo wörld — ünïcødé ✅\n\nnaïve café résumé\n";
+    expect(utf8.length).toBe(45); // what the old `text.length` reported
+    expect(byteLength(utf8)).toBe(59); // what `wc -c` reports
+  });
+  it("is 0 for the empty string and exact for pure ASCII", () => {
+    expect(byteLength("")).toBe(0);
+    expect(byteLength("hello")).toBe(5);
+  });
+  it("counts an astral-plane character as its four UTF-8 bytes", () => {
+    expect("𝄞".length).toBe(2); // surrogate pair
+    expect(byteLength("𝄞")).toBe(4);
   });
 });
 
