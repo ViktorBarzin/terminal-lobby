@@ -113,6 +113,110 @@ describe("term.html — the framed Ctrl+J chord reaches the v2 dispatcher", () =
   });
 });
 
+interface FitGuard {
+  fit: () => boolean;
+  owed: () => boolean;
+}
+
+/** term.html's fit guard, wired to a settable box and a counting fit. */
+function loadFitGuard(box: { width: number; height: number }): {
+  guard: FitGuard;
+  fits: () => number;
+} {
+  let fits = 0;
+  const src = sliceKernel(html(), "tl-fit-guard");
+  const guard = runInNewContext(
+    `${src}; createFitGuard(measure, doFit)`,
+    { measure: () => box, doFit: () => void fits++ },
+  ) as FitGuard;
+  return { guard, fits: () => fits };
+}
+
+describe("term.html — a fit is never taken against a zero-size viewport", () => {
+  // The v2 lobby keeps this iframe MOUNTED but display:none while its Text view
+  // shows (SessionView's .tl-hidden). Fitting xterm against that 0x0 box yields
+  // a ~13x7 grid, xterm emits it as a resize, and ttyd's tmux client drags the
+  // REAL window — and every other client attached to it — down to 13 columns.
+  it("skips the fit while the container has no box, and records one is owed", () => {
+    const { guard, fits } = loadFitGuard({ width: 0, height: 0 });
+    expect(guard.fit()).toBe(false);
+    expect(fits()).toBe(0);
+    expect(guard.owed()).toBe(true);
+  });
+
+  it("skips on a zero height alone (a collapsed row is still unmeasurable)", () => {
+    const { guard, fits } = loadFitGuard({ width: 1180, height: 0 });
+    expect(guard.fit()).toBe(false);
+    expect(fits()).toBe(0);
+  });
+
+  it("fits — and clears the debt — once a real box exists", () => {
+    const box = { width: 0, height: 0 };
+    const { guard, fits } = loadFitGuard(box);
+    guard.fit(); // hidden boot: skipped
+    box.width = 1180;
+    box.height = 814;
+    expect(guard.fit()).toBe(true);
+    expect(fits()).toBe(1);
+    expect(guard.owed()).toBe(false);
+  });
+
+  it("routes EVERY fit through the guard — no bare fitAddon.fit() is left", () => {
+    // Five call sites shared one unguarded fitAddon.fit(): the post-open boot
+    // fit, the late-font refit, the debounced resize refit, the boot-end fit and
+    // the prefs metric swap. Guarding one and leaving four is not a fix, so the
+    // invariant is pinned as "the page calls fitAddon.fit() in exactly one
+    // place" — inside the guard.
+    const sites = html().match(/fitAddon\.fit\(\)/g) ?? [];
+    expect(sites).toHaveLength(1);
+  });
+});
+
+interface FramedChrome {
+  FRAMED_CHROME_IDS: string[];
+  hideFramedChrome: (doc: unknown, framed: boolean) => string[];
+}
+
+/** term.html's framed-chrome kernel + a fake document of the five buttons. */
+function loadFramedChrome(): { kernel: FramedChrome; classes: Record<string, string[]> } {
+  const src = sliceKernel(html(), "tl-framed-chrome");
+  const kernel = runInNewContext(
+    `${src}; ({ FRAMED_CHROME_IDS, hideFramedChrome })`,
+    {},
+  ) as FramedChrome;
+  const classes: Record<string, string[]> = {};
+  for (const id of kernel.FRAMED_CHROME_IDS) classes[id] = [];
+  return { kernel, classes };
+}
+
+function fakeDoc(classes: Record<string, string[]>): {
+  getElementById: (id: string) => { classList: { add: (c: string) => void } } | null;
+} {
+  return {
+    getElementById: (id) =>
+      classes[id]
+        ? { classList: { add: (c: string) => void classes[id]!.push(c) } }
+        : null,
+  };
+}
+
+describe("term.html — the in-frame image/font cluster yields to the lobby's own", () => {
+  it("hides the whole cluster when the v2 SPA is the frame", () => {
+    const { kernel, classes } = loadFramedChrome();
+    const hidden = kernel.hideFramedChrome(fakeDoc(classes), true);
+    expect(hidden.sort()).toEqual(
+      ["font-dec-btn", "font-inc-btn", "gallery-btn", "img-btn", "paste-btn"],
+    );
+    for (const id of kernel.FRAMED_CHROME_IDS) expect(classes[id]).toContain("hidden");
+  });
+
+  it("leaves a STANDALONE /term.html tab its only chrome", () => {
+    const { kernel, classes } = loadFramedChrome();
+    expect(kernel.hideFramedChrome(fakeDoc(classes), false)).toEqual([]);
+    for (const id of kernel.FRAMED_CHROME_IDS) expect(classes[id]).toEqual([]);
+  });
+});
+
 interface AttentionKernel {
   attentionHidden: () => boolean;
   setViewHidden: (v: boolean) => void;
