@@ -8,6 +8,7 @@ import {
 import type { Session } from "../types/lobby";
 import type { LobbyStore } from "../store/lobby";
 import { formatWorking, relativeTime, stateLabel } from "./lobby.logic";
+import { createDismissableMenu } from "./menu";
 import { StateDot } from "./StateDot";
 import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
 
@@ -37,7 +38,7 @@ export const SessionCard: Component<{
     (props.store.selected()?.owner ?? "") === (foreign() ? s().owner ?? "" : "");
 
   const [editing, setEditing] = createSignal(false);
-  const [menuOpen, setMenuOpen] = createSignal(false);
+  const menu = createDismissableMenu(() => props.store.hold());
   const [dropEdge, setDropEdge] = createSignal<"above" | "below" | null>(null);
   let releaseHold: (() => void) | null = null;
   let inputEl: HTMLInputElement | undefined;
@@ -53,6 +54,7 @@ export const SessionCard: Component<{
 
   // ---- activation ----
   const activate = (e: Event) => {
+    menu.close(); // a click on the row is a click away from the menu
     if (editing()) return;
     if ((e as MouseEvent).detail > 1) return; // dblclick → rename, not activate
     props.store.select(s().name, foreign() ? s().owner : undefined);
@@ -71,7 +73,7 @@ export const SessionCard: Component<{
     e?.stopPropagation();
     releaseHold = props.store.hold();
     setEditing(true);
-    setMenuOpen(false);
+    menu.close();
     queueMicrotask(() => inputEl?.focus());
     queueMicrotask(() => inputEl?.select());
   };
@@ -90,13 +92,13 @@ export const SessionCard: Component<{
   // Killing is unrecoverable, so it confirms here exactly as every sibling path
   // does (the kill chord, the palette action, Delete project).
   const kill = async () => {
-    setMenuOpen(false);
+    menu.close();
     const ask = props.confirm ?? ((m: string) => window.confirm(m));
     if (!ask(`Kill session "${s().name}"?`)) return;
     await props.store.kill(s().name);
   };
   const moveTo = async (group: string) => {
-    setMenuOpen(false);
+    menu.close();
     await props.store.move(s().name, group);
   };
   const targets = () => {
@@ -109,8 +111,7 @@ export const SessionCard: Component<{
   };
   const toggleMenu = (e: Event) => {
     e.stopPropagation();
-    const next = !menuOpen();
-    setMenuOpen(next);
+    menu.toggle();
   };
 
   // ---- drag reorder ----
@@ -155,6 +156,9 @@ export const SessionCard: Component<{
 
   return (
     <div
+      // the ⋯ button and its popup both live in here, so the row is the menu's
+      // anchor: a press anywhere else on the page dismisses it.
+      ref={menu.anchor}
       class="tl-card"
       classList={{
         "tl-card-active": isActive(),
@@ -235,7 +239,7 @@ export const SessionCard: Component<{
         </button>
       </Show>
 
-      <Show when={menuOpen()}>
+      <Show when={menu.open()}>
         {/* Rename and Kill lead the menu: they are the actions actually
             reached for (Viktor, 2026-08-02). Rename stays first so the
             destructive one is not the item under the opening cursor. */}

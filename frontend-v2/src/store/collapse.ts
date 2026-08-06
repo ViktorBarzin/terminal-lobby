@@ -39,6 +39,12 @@ export interface CollapseStore {
   toggle: (key: string) => void;
   /** expand a group (used by auto-expand-on-activate). */
   expand: (key: string) => void;
+  /** follow a project rename — the key IS the project name, so a rename that
+   *  leaves it behind pops the group open and hands the stale key to the next
+   *  project that reuses the name. */
+  rename: (from: string, to: string) => void;
+  /** drop a deleted project's key, for the same reason. */
+  remove: (key: string) => void;
   version: Accessor<number>;
 }
 
@@ -77,6 +83,20 @@ export function createCollapseStore(user: () => string): CollapseStore {
         persist(currentUser, current);
         setVersion((v) => v + 1);
       }
+    },
+    rename: (from, to) => {
+      sync();
+      if (!current.has(from)) return;
+      current.delete(from);
+      current.add(to);
+      persist(currentUser, current);
+      setVersion((v) => v + 1);
+    },
+    remove: (key) => {
+      sync();
+      if (!current.delete(key)) return;
+      persist(currentUser, current);
+      setVersion((v) => v + 1);
     },
     version,
   };
