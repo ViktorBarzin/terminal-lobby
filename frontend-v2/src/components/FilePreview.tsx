@@ -10,7 +10,7 @@ import {
   type Component,
 } from "solid-js";
 import type { PreviewStore } from "../store/preview";
-import { HTML_SANDBOX, dirname } from "../store/preview.logic";
+import { HTML_SANDBOX } from "../store/preview.logic";
 import { fileReadUrl } from "../lib/config";
 import { Markdown } from "./Markdown";
 import { CodeView } from "./CodeView";
@@ -30,7 +30,10 @@ import { CodeEditor } from "./CodeEditor";
  * execution. It must never run against the authed lobby origin.
  */
 function fmtBytes(n: number | null): string {
-  if (n === null || n <= 0) return "";
+  // 0 is a real size — an empty file reads "0 B". Only "no size known" (null,
+  // or a nonsense negative) renders nothing; `n <= 0` used to put an EMPTY chip
+  // in the header for every empty file.
+  if (n === null || n < 0) return "";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
@@ -178,15 +181,13 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
           <button type="submit" class="tl-btn">
             Open
           </button>
-          <Show when={s.path()}>
-            <button
-              type="button"
-              class="tl-btn"
-              onClick={() => void s.browse(dirname(s.path()!))}
-            >
-              Browse
-            </button>
-          </Show>
+          {/* Always available: the picker is how you find a path you don't
+              already know, so gating it on an already-loaded file locked out
+              exactly the sessions that need it (no transcript, no path). The
+              store picks the starting directory. */}
+          <button type="button" class="tl-btn" onClick={() => void s.browseStart()}>
+            Browse
+          </button>
         </form>
 
         <Show when={s.recentFiles().length > 0 && !s.browsing()}>
@@ -214,7 +215,15 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
             <Match when={s.browsing()}>
               <div class="tl-preview-browse">
                 <div class="tl-preview-browse-bar">
-                  <button type="button" class="tl-btn" onClick={() => s.browseUp()}>
+                  <button
+                    type="button"
+                    class="tl-btn"
+                    disabled={!s.canBrowseUp()}
+                    title={
+                      s.canBrowseUp() ? "Parent folder" : "Already at the top folder"
+                    }
+                    onClick={() => void s.browseUp()}
+                  >
                     ⬆ Up
                   </button>
                   <span class="tl-preview-browse-dir" title={s.browseDir() ?? ""}>
