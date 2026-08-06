@@ -242,8 +242,8 @@ def test_reads_and_lists_allowed_anywhere(guard):
 # file-api confines every path to /home/<osUser> (auth.go: homeBase="/home",
 # userHome()). A scratch outside that root makes the two allowed sets DISJOINT:
 # the guard permits the write, file-api rejects it 400 "invalid path", and the
-# editor surfaces the whole thing as "Not authorized to save this file." — which
-# reads exactly like a product permissions bug. The default has to satisfy both.
+# editor surfaces that as "Can't save this path (not a regular file)." — which
+# reads exactly like a product bug. The default has to satisfy both.
 
 FILE_API_HOME_BASE = "/home"  # file-api/auth.go:28
 

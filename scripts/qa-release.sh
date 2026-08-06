@@ -52,7 +52,16 @@ git pull -q --ff-only origin master || die "master is not fast-forwardable"
 git rev-parse --verify -q "$BRANCH" >/dev/null || die "no such branch: $BRANCH"
 
 # What does this lane touch? Decides both the gates and the release scope.
-CHANGED=$(git diff --name-only master.."$BRANCH")
+#
+# THREE dots, deliberately. For git diff, master..BRANCH is tip-to-tip, so a
+# branch that is merely BEHIND master is charged with the reversal of everything
+# master gained meanwhile. That is not cosmetic: SHARED_HITS is computed from
+# this set, so a lane that branched before a clipboard-upload/ or tmux-api/
+# landing would match it, print "NOT DEPLOYING - this lane touches shared
+# components", and exit 0 looking like a correct policy decision while quietly
+# shipping nothing. master...BRANCH asks the merge-base question we actually
+# mean: what did THIS lane change?
+CHANGED=$(git diff --name-only master..."$BRANCH")
 [[ -n "$CHANGED" ]] || die "branch has no changes against master"
 log "changed files:"; log_list "$CHANGED"
 

@@ -120,6 +120,27 @@ class _BrowserSlot:
                 self._fh = None
 
 
+def _shm_args() -> list[str]:
+    """Decide whether chromium should avoid /dev/shm — by measuring, not by habit.
+
+    `--disable-dev-shm-usage` is a container workaround for the 64 MB /dev/shm
+    Docker hands out. It makes chromium put its shared memory in TMPDIR
+    instead. On this box that is exactly backwards: /tmp is a 2 GB tmpfs shared
+    with everything else on the devvm and the fleet filled it, while /dev/shm is
+    16 GB and essentially untouched. A full /tmp gave
+    `net::ERR_INSUFFICIENT_RESOURCES` and `Target crashed` mid-sweep, which
+    QaAgent.__exit__ then filed as bogus "sweep crashed" findings.
+
+    So: pass the flag only when /dev/shm is genuinely too small to use.
+    """
+    try:
+        st = os.statvfs("/dev/shm")
+        free_mb = (st.f_bavail * st.f_frsize) / (1024 * 1024)
+    except OSError:
+        return ["--disable-dev-shm-usage"]
+    return [] if free_mb >= 512 else ["--disable-dev-shm-usage"]
+
+
 @dataclass
 class Finding:
     area: str
@@ -172,7 +193,7 @@ class QaAgent:
             # the shell the whole feature reads as dead and the bell as
             # permanently un-optable — two app bugs that do not exist.
             channel="chromium",
-            args=["--no-sandbox", "--disable-dev-shm-usage"])
+            args=["--no-sandbox", *_shm_args()])
         self._context = self._browser.new_context(
             viewport={"width": self.viewport[0], "height": self.viewport[1]},
             permissions=["clipboard-read", "clipboard-write"],

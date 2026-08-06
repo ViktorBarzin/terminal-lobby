@@ -79,10 +79,12 @@ THE SCRATCH
 It has to sit INSIDE file-api's own containment root — file-api confines every
 path to /home/<osUser> (file-api/auth.go: homeBase "/home", userHome()) — or
 the guard and the server permit disjoint sets and no write can land anywhere.
-That is what the original /tmp default did: the guard allowed the write,
-file-api answered 400 "invalid path", and the editor rendered the pair as
-"Not authorized to save this file.", which reads exactly like a product
-permissions bug. Because the scratch now shares a root with everything else the
+That is what the original /tmp default did: the guard allowed the write and
+file-api answered 400 "invalid path", which the editor renders as "Can't save
+this path (not a regular file)." (frontend-v2/src/lib/file-api.ts,
+writeErrorMessage); aim at the home instead and the guard's own 403 renders as
+"Not authorized to save this file.". Either way the save looks like a product
+bug. Because the scratch now shares a root with everything else the
 caller owns, the guard matches on the NORMALISED path: one ".." would otherwise
 leave the scratch and still land somewhere file-api writes happily.
 
@@ -206,8 +208,8 @@ def default_scratch() -> str:
     It has to satisfy BOTH gates or no write can ever land: the guard below,
     and file-api's own /home/<osUser> containment. A /tmp scratch satisfies
     only the guard — file-api answers 400 "invalid path", the editor renders
-    that as "Not authorized to save this file.", and the save round-trip looks
-    like a product permissions bug to every sweep agent.
+    that as "Can't save this path (not a regular file).", and the save
+    round-trip looks like a product bug to every sweep agent.
 
     Keyed on the OS user this proxy RUNS as, which is also the user whose home
     it can create the directory in. When --user maps to a different OS user
