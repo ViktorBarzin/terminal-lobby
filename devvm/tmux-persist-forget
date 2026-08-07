@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Installed at /usr/local/bin/tmux-persist-forget (root:root, mode 0755).
+#
+# Drop ONE session from a terminal user's tmux-persist RESTORE MANIFEST
+# (/var/lib/tmux-persist/<user>.tsv) — the "forget" half of a deliberate kill
+# (tmux-api killSession, i.e. DELETE /sessions/<name> from the web UI).
+#
+# Why this has to exist: `tmux-persist restore <user>` — what the sidebar's
+# Restore button ultimately runs, via tmux-restore-user — recreates EVERY
+# manifest row that is not currently live, and the manifest is only rewritten
+# every 5 minutes by tmux-persist-save.timer. So without this, a session the
+# user just chose to kill stays listed and Restore brings it straight back; a
+# row carrying a claude uuid comes back as `claude --resume <uuid>`, restarting
+# a conversation the user deliberately ended.
+#
+# What it deliberately does NOT do: touch <user>.history.tsv. The history is the
+# "pick which one to bring back" surface (`tmux-persist restore-one`) and never
+# loses a dead session on purpose — so an accidental kill is still explicitly
+# recoverable, it just stops being recreated by the blanket Restore. Sessions
+# that die OUT of band (OOM, a crashed tmux server) never go through tmux-api's
+# kill path, so they stay in the manifest and the crash recovery this whole
+# feature exists for is untouched.
+#
+# Invoked ONLY by the tmux-api service (running as wizard) through the
+# passwordless grant in /etc/sudoers.d/ttyd-users:
+#     wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-persist-forget
+#
+# Why root: the manifest is root-owned 0600.
+#
+# Trust model — the same shape as tmux-restore-user and tmux-user-setfacl:
+# ordinary input validation, so this root tool cannot become an arbitrary-file
+# line-deleter. It takes exactly two arguments; the user is re-validated against
+# /etc/ttyd-user-map (so it can only ever edit a real terminal user's OWN
+# manifest); the session name must match tmux-api's own session-name charset
+# (sessionNameRe: alnum, '_' and '-' only, ≤32) which admits no '/', no '..'
+# and no shell metacharacter; and the name is passed to awk as DATA (-v) and
+# compared for equality, never interpolated into a program or a path. The only
+# file written is derived from the validated user name.
+#
+# Usage: tmux-persist-forget <user> <session>
+# Exit: 0 also when there is nothing to forget (no manifest, or no such row) —
+# the caller kills best-effort and must not see a spurious failure.
+set -euo pipefail
+
+STATE_DIR=/var/lib/tmux-persist
+MAP=/etc/ttyd-user-map
+
+u="${1:-}"
+sess="${2:-}"
+[[ $# -eq 2 ]] || { echo "usage: tmux-persist-forget <user> <session>" >&2; exit 2; }
+[[ "$u" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "tmux-persist-forget: invalid user '$u'" >&2; exit 2; }
+# Mirrors tmux-api's sessionNameRe — anything outside it cannot name a session.
+[[ "$sess" =~ ^[a-zA-Z0-9_-]{1,32}$ ]] || { echo "tmux-persist-forget: invalid session '$sess'" >&2; exit 2; }
+
+# os_user = right-hand side of the map, minus any optional :cwd suffix
+# (mirrors tmux-api's loadUserMap parsing, and tmux-restore-user's check).
+if ! cut -d= -f2 "$MAP" | sed 's/:.*//' | grep -qxF "$u"; then
+  echo "tmux-persist-forget: '$u' is not a terminal user (not in $MAP)" >&2
+  exit 2
+fi
+
+f="$STATE_DIR/$u.tsv"
+[[ -f "$f" ]] || exit 0   # nothing saved yet — nothing to forget
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+# Manifest row: name<TAB>cwd<TAB>uuid. Keep every row whose name isn't $sess.
+#
+# The `""` on both sides forces a STRING compare. Session names are only
+# constrained to sessionNameRe (alnum/_/-), so a name can look numeric — and a
+# bare `$1 != s` makes awk compare two numeric-looking strnums as NUMBERS.
+# Without the coercion, forgetting "7" also drops a row named "007", and
+# forgetting "100" drops one named "1e2": an unrequested write to a root-owned
+# manifest, which is exactly what this wrapper's trust model promises not to do.
+awk -F'\t' -v s="$sess" '$1"" != s""' "$f" > "$tmp"
+if cmp -s "$tmp" "$f"; then
+  echo "tmux-persist-forget: $u:$sess was not in the restore manifest"
+  exit 0
+fi
+# No -o/-g: install gives the new file the invoking user, which is root here.
+install -m 0600 "$tmp" "$f"
+echo "tmux-persist-forget: dropped $u:$sess from the restore manifest"
