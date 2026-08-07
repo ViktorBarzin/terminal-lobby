@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { Show, createRoot } from "solid-js";
-import { FilePreview } from "../src/components/FilePreview";
+import { FilePreview, fmtBytes } from "../src/components/FilePreview";
 import { createPreviewStore, type PreviewStore } from "../src/store/preview";
 import type { FileEntry, LoadedFile } from "../src/lib/file-api";
 import { FileApiError } from "../src/lib/file-api";
@@ -542,5 +542,39 @@ describe("<FilePreview> — the Browse button reads the path box", () => {
 
     fireEvent.click(getByRole("button", { name: "Browse" }));
     await waitFor(() => expect(listDir).toHaveBeenCalledWith("/home/u/vfpx", false));
+  });
+});
+
+describe("fmtBytes — the header's size chip", () => {
+  it("names the sizes it is given", () => {
+    expect(fmtBytes(null)).toBe("");
+    expect(fmtBytes(-1)).toBe("");
+    expect(fmtBytes(0)).toBe("0 B"); // an empty file has a real size
+    expect(fmtBytes(1023)).toBe("1023 B");
+    expect(fmtBytes(1024)).toBe("1.0 KB");
+    expect(fmtBytes(1048576)).toBe("1.0 MB");
+  });
+
+  // The KB branch tested the RAW byte count while the label printed the ROUNDED
+  // one, so every size that rounds up to 1024.0 KB was shown in a unit nobody
+  // uses. Exactly 51 sizes fall in that window, 1 MiB-1 among them.
+  it("rolls over to MB as soon as the rounded label would read 1024 KB", () => {
+    expect(fmtBytes(1048524)).toBe("1023.9 KB"); // the last honest KB size
+    expect(fmtBytes(1048525)).toBe("1.0 MB"); // first of the 51
+    expect(fmtBytes(1048575)).toBe("1.0 MB"); // 1 MiB - 1, the reported case
+  });
+
+  it("never prints a number the next unit up should have absorbed", () => {
+    // Swept rather than spot-checked: the defect is a boundary, and a boundary
+    // is what point samples miss. Collected into ONE assertion so the sweep
+    // costs a few ms instead of 300k expect() calls.
+    const chip = /^(\d+(?:\.\d)?) (B|KB|MB)$/;
+    const bad: string[] = [];
+    for (let n = 0; n <= 2 * 1024 * 1024; n += 7) {
+      const out = fmtBytes(n);
+      const m = out.match(chip);
+      if (!m || (m[2] !== "MB" && Number(m[1]) >= 1024)) bad.push(`${n} -> ${out}`);
+    }
+    expect(bad).toEqual([]);
   });
 });
