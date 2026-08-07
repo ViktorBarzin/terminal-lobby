@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   addProject,
   addSessionToGroup,
@@ -12,6 +12,7 @@ import {
   moveGroup,
   moveSession,
   moveSessionToAnchor,
+  relativeTime,
   removeSessionFromLayout,
   renameProject,
   renameSessionInLayout,
@@ -326,6 +327,40 @@ describe("display helpers", () => {
   it("isOwn treats missing owner as own", () => {
     expect(isOwn(sess("a", { owner: undefined }), ME)).toBe(true);
     expect(isOwn(sess("a", { owner: "bob" }), ME)).toBe(false);
+  });
+});
+
+describe("relativeTime", () => {
+  const NOW_MS = Date.parse("2026-08-06T10:00:00Z");
+  const NOW = Math.floor(NOW_MS / 1000);
+  const at = (epochSec: number): string => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW_MS);
+    return relativeTime(epochSec);
+  };
+  afterEach(() => vi.useRealTimers());
+
+  it("renders the four buckets for a past timestamp", () => {
+    expect(at(NOW - 30)).toBe("30s ago");
+    expect(at(NOW - 300)).toBe("5m ago");
+    expect(at(NOW - 7200)).toBe("2h ago");
+    expect(at(NOW - 172_800)).toBe("2d ago");
+  });
+
+  it("clamps a future timestamp to 0 instead of counting backwards", () => {
+    // lastActivity comes off the server clock, Date.now() off the viewer's. A
+    // viewer whose clock trails the server's puts every freshly-active card in
+    // its own future; the age must floor at zero, not render "-239s ago".
+    expect(at(NOW + 240)).toBe("0s ago");
+    expect(at(NOW + 1)).toBe("0s ago");
+    expect(at(NOW)).toBe("0s ago");
+    expect(at(NOW + 86_400)).toBe("0s ago");
+  });
+
+  it("keeps the blank render for a missing timestamp", () => {
+    // Deliberate no-timestamp guard, ported from the vanilla helper: an unknown
+    // time renders as an empty cell, never as "0s ago".
+    expect(at(0)).toBe("");
   });
 });
 

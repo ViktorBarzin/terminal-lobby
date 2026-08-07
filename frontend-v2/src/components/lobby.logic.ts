@@ -340,10 +340,16 @@ export function sameLayout(a: Layout, b: Layout): boolean {
 
 // ---- Display helpers -----------------------------------------------------
 
-/** Ported verbatim from the vanilla app (frontend/index.html relativeTime). */
+/**
+ * Ported verbatim from the vanilla app (frontend/index.html relativeTime),
+ * plus a floor at zero: `epochSec` is stamped by the server clock and
+ * `Date.now()` reads the viewer's, so a viewer whose clock trails the server's
+ * sees freshly-active sessions in its own future and would render "-239s ago".
+ * `!epochSec` stays a blank cell — that is the no-timestamp case, not age 0.
+ */
 export function relativeTime(epochSec: number): string {
   if (!epochSec) return "";
-  const diff = Math.floor(Date.now() / 1000) - epochSec;
+  const diff = Math.max(0, Math.floor(Date.now() / 1000) - epochSec);
   if (diff < 60) return diff + "s ago";
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";
   if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
