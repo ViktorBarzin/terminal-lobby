@@ -8,7 +8,7 @@ import {
   type Component,
 } from "solid-js";
 import type { RenderGroup } from "./lobby.logic";
-import { countStates, groupSeqTokens } from "./lobby.logic";
+import { countStates, groupSeqTokens, groupToken, visibleGroupSeqTokens } from "./lobby.logic";
 import type { LobbyStore } from "../store/lobby";
 import { UNGROUPED_KEY } from "../store/collapse";
 import { createDismissableMenu } from "./menu";
@@ -35,7 +35,7 @@ export const ProjectGroup: Component<{
   confirm?: (message: string) => boolean;
 }> = (props) => {
   const isUngrouped = () => props.group.kind === "ungrouped";
-  const token = () => (isUngrouped() ? "u" : "p:" + props.group.name);
+  const token = () => groupToken(props.group);
   const collapseKey = () => (isUngrouped() ? UNGROUPED_KEY : props.group.name);
   const collapsed = () => props.store.collapse.isCollapsed(collapseKey());
 
@@ -52,9 +52,15 @@ export const ProjectGroup: Component<{
   };
   onCleanup(endAdd);
 
+  // Bounds are measured in VISIBLE space. An empty Ungrouped keeps its slot in
+  // the layout (the capture/reorder contract needs it) but renders nothing, so
+  // counting it here offered the edge group a neighbour the user cannot see:
+  // "Move up" came up enabled, the click only shifted the hidden sentinel, and
+  // the item then greyed out having moved nothing.
+  const visibleSeq = createMemo(() => visibleGroupSeqTokens(props.store.model()));
   const seqPos = createMemo(() => {
-    const tokens = groupSeqTokens(props.store.layout());
-    return { pos: tokens.indexOf(token()), len: tokens.length };
+    const vis = visibleSeq();
+    return { pos: vis.indexOf(token()), len: vis.length };
   });
   const canUp = () => seqPos().pos > 0;
   const canDown = () => seqPos().pos >= 0 && seqPos().pos < seqPos().len - 1;
@@ -101,14 +107,24 @@ export const ProjectGroup: Component<{
     const msg = n > 0 ? `Delete project "${props.group.name}"? Its ${n} session(s) move to Ungrouped (not killed).` : `Delete project "${props.group.name}"?`;
     if (window.confirm(msg)) await props.store.deleteProjectAction(props.group.name);
   };
-  const moveUp = async () => {
+  // One click, one VISIBLE slot: land on the seat of the neighbour the user can
+  // see, rather than stepping one raw token (which an invisible sentinel eats).
+  // With Ungrouped on screen the two are the same move, so it still reorders
+  // past it exactly as before.
+  const moveBy = async (dir: -1 | 1) => {
     menu.close();
-    await props.store.moveGroupBy(isUngrouped() ? "" : props.group.name, -1);
+    const pos = seqPos().pos;
+    if (pos < 0) return;
+    const neighbour = visibleSeq()[pos + dir];
+    if (neighbour === undefined) return;
+    const tokens = groupSeqTokens(props.store.layout());
+    const from = tokens.indexOf(token());
+    const to = tokens.indexOf(neighbour);
+    if (from < 0 || to < 0) return;
+    await props.store.reorderGroupsTo(from, to);
   };
-  const moveDown = async () => {
-    menu.close();
-    await props.store.moveGroupBy(isUngrouped() ? "" : props.group.name, 1);
-  };
+  const moveUp = () => moveBy(-1);
+  const moveDown = () => moveBy(1);
 
   // ---- session drop target (append into this group) + header drag reorder ----
   const headerDraggable = () => !isCoarse();
