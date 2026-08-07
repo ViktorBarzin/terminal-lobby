@@ -83,8 +83,13 @@ export { theme };
  * listener (e.g. the terminal view's xterm ITheme sync, once it owns xterm).
  */
 export function setTheme(next: string): void {
-  track("theme.changed", { "tl.to": next });
   const t = THEMES.includes(next) ? next : DEFAULT_THEME;
+  // Emitted AFTER the clamp and only on a real change, so re-clicking the
+  // active swatch records nothing and the event always carries the value that
+  // was APPLIED, never the one that was asked for. The write-through below
+  // stays unconditional: a re-click must still repair localStorage and re-push
+  // to __tlThemeLive.
+  if (t !== theme()) track("theme.changed", { "tl.to": t });
   try {
     localStorage.setItem(THEME_KEY, t);
   } catch {
