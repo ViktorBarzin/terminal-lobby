@@ -143,6 +143,32 @@ describe("<FilePreview> — Escape follows the stack you can see", () => {
     expect(store.draft()).toBe("baseline\nDRAFT-KEEPME");
   });
 
+  // The browse pane REPLACES the body, so CodeMirror is unmounted while it is
+  // open and rebuilt when it closes — from `initialText`, which was the last
+  // SAVED text. The store still held the draft (dirty dot on, Save enabled), so
+  // the editor came back showing the file on disk while the app was one Save
+  // away from writing something else. Only reachable through Done before
+  // Escape stopped discarding the draft; now it is the normal way back.
+  it("brings the draft back with the editor when Browse closes", async () => {
+    const store = await openFile(() => true);
+    const { container } = render(() => <FilePreview store={store} />);
+
+    store.beginEdit();
+    await waitFor(() => expect(container.querySelector(".cm-content")).toBeTruthy());
+    store.setDraft("baseline\nDRAFT-KEEPME");
+    await store.browse(dir);
+    expect(container.querySelector(".cm-content")).toBeNull(); // covered by Browse
+
+    esc(); // back to the editor
+
+    await waitFor(() =>
+      expect(container.querySelector(".cm-content")?.textContent).toContain(
+        "DRAFT-KEEPME",
+      ),
+    );
+    expect(store.unsaved()).toBe(true);
+  });
+
   it("prompts only once the editor is the layer on screen", async () => {
     const confirm = vi.fn(() => true);
     const store = await openFile(confirm);
