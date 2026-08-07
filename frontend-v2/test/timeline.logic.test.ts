@@ -203,6 +203,48 @@ describe("deriveRows", () => {
     expect(sameRow(settled("a"), settled("b"))).toBe(false);
   });
 
+  // A fold hides the steps of a settled turn. When one of those steps FAILED,
+  // the collapsed row is the only thing on screen standing for it, so the row
+  // has to carry the fact — TurnFoldRowView cannot re-derive it from a count.
+  it("flags a fold row that hides a failed tool call", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "read the missing file" }),
+      ev({ id: 2, kind: "text", body: "reading it" }),
+      ev({ id: 3, kind: "tool_use", tool: "Read", toolId: "t1", body: '{"file_path":"/nope.txt"}' }),
+      ev({ id: 4, kind: "tool_result", toolId: "t1", body: "ENOENT", isError: true }),
+      ev({ id: 5, kind: "text", body: "the read failed: no such file" }),
+      ev({ id: 6, kind: "turn_end" }),
+    ]);
+    const fold = rows.find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    expect(fold.hidden.some((r) => r.kind === "tool" && r.isError)).toBe(true);
+    expect(fold.hasError).toBe(true);
+  });
+
+  it("flags a fold row that hides an error row", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      ev({ id: 2, kind: "error", body: "stream aborted" }),
+      ev({ id: 3, kind: "tool_use", tool: "Bash", toolId: "t1", body: "ls" }),
+      ev({ id: 4, kind: "text", body: "recovered" }),
+      ev({ id: 5, kind: "turn_end" }),
+    ]);
+    const fold = rows.find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    expect(fold.hasError).toBe(true);
+  });
+
+  it("leaves hasError false when every hidden step succeeded", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "do it" }),
+      ev({ id: 2, kind: "text", body: "thinking" }),
+      ev({ id: 3, kind: "tool_use", tool: "Bash", toolId: "t1", body: "ls" }),
+      ev({ id: 4, kind: "tool_result", toolId: "t1", body: "ok", isError: false }),
+      ev({ id: 5, kind: "text", body: "all done" }),
+      ev({ id: 6, kind: "turn_end" }),
+    ]);
+    const fold = rows.find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    expect(fold.hasError).toBe(false);
+  });
+
   it("groups multiple user messages into separate turns", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "first" }),

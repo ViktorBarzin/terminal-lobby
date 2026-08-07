@@ -466,6 +466,11 @@ body {
   background: var(--bg-card);
   overflow: hidden;
 }
+/* The ✗ tick alone carried the failure; the row itself read as a neutral card.
+   Border it, so an expanded turn shows WHICH step failed at a glance. */
+.tl-row-tool[data-status="error"] {
+  border-color: var(--danger);
+}
 .tl-tool-head {
   display: flex;
   align-items: center;
@@ -573,6 +578,14 @@ body {
 .tl-fold-btn:hover {
   color: var(--text-primary);
   background: var(--hover-tint);
+}
+/* A fold hiding a failed step says so on the collapsed row. */
+.tl-fold-btn[data-has-error="true"] {
+  border-color: var(--danger);
+}
+.tl-fold-error {
+  color: var(--danger);
+  font-family: var(--font-mono);
 }
 .tl-row-working {
   display: flex;
