@@ -51,6 +51,9 @@ export const SessionView: Component<{
    *  the terminal attach is what brings its tmux into being, so it must not wait
    *  for the Terminal view the way an existing session's attach does. */
   creating?: boolean;
+  /** the owning project's base directory, so a session born here starts in the
+   *  project rather than in $HOME (the attach URL's arg3). */
+  dir?: string;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** surface control-channel errors to the app's toast stack. */
@@ -259,6 +262,7 @@ export const SessionView: Component<{
             owner={props.owner}
             active={mode() === "terminal"}
             creating={props.creating}
+            dir={props.dir}
             newCommand={props.newCommand}
             onFrameCommand={props.onFrameCommand}
             onFrameAlt={props.onFrameAlt}
