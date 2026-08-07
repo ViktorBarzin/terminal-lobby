@@ -159,6 +159,65 @@ describe("<MessagesTimeline> turn fold", () => {
 });
 
 /**
+ * Fenced blocks are wrapped exactly once.
+ *
+ * solid-markdown renders every fence as its own default `pre` and puts the
+ * `code` component inside it. Our `code` override returns BLOCK elements — a
+ * <pre class="tl-code"> for a normal fence, a <div class="tl-mermaid"> for a
+ * mermaid one — so each fence came out as <pre><pre class="tl-code">…</pre>
+ * </pre> and each diagram as <pre><div class="tl-mermaid">. <pre>'s content
+ * model is phrasing content, so a <pre>, <div> or <svg> inside one is invalid.
+ *
+ * It is inert today only because `.tl-markdown pre` sets nothing but a margin,
+ * which collapses with the child's. The day anyone gives `.tl-code` a
+ * background, padding or border on its natural selector, every code block
+ * doubles it and every diagram gets boxed in a code-block surface.
+ */
+describe("<MessagesTimeline> fenced blocks", () => {
+  const said = (body: string): Event[] => [
+    ev({ id: 1, kind: "user", body: "show me" }),
+    ev({ id: 2, kind: "text", body }),
+    ev({ id: 3, kind: "turn_end" }),
+  ];
+
+  it("renders a code fence as exactly one <pre class=tl-code>", () => {
+    const { container } = render(() => (
+      <MessagesTimeline events={said("```bash\nls -la\n```")} />
+    ));
+    const md = container.querySelector(".tl-markdown")!;
+    const pres = [...md.querySelectorAll("pre")];
+    expect(pres.map((p) => p.className)).toEqual(["tl-code"]);
+    expect(pres[0]!.getAttribute("data-lang")).toBe("bash");
+    expect(pres[0]!.querySelector("code")!.textContent).toBe("ls -la");
+    // …and nothing wraps it in a second <pre>.
+    expect(pres[0]!.parentElement!.closest("pre")).toBeNull();
+  });
+
+  it("renders a mermaid fence with no <pre> ancestor", () => {
+    const { container } = render(() => (
+      <MessagesTimeline events={said("```mermaid\ngraph TD;\nA-->B;\n```")} />
+    ));
+    const md = container.querySelector(".tl-markdown")!;
+    const diagram = md.querySelector(".tl-mermaid")!;
+    expect(diagram).not.toBeNull();
+    expect(diagram.closest("pre")).toBeNull();
+    expect(md.querySelectorAll("pre")).toHaveLength(0);
+  });
+
+  it("keeps prose and inline code out of it", () => {
+    const { container } = render(() => (
+      <MessagesTimeline events={said("run `ls` first\n\n```\nplain\n```")} />
+    ));
+    const md = container.querySelector(".tl-markdown")!;
+    expect(md.querySelector(".tl-inline-code")!.textContent).toBe("ls");
+    expect(md.querySelector(".tl-inline-code")!.closest("pre")).toBeNull();
+    const pres = [...md.querySelectorAll("pre")];
+    expect(pres.map((p) => p.className)).toEqual(["tl-code"]);
+    expect(pres[0]!.getAttribute("data-lang")).toBeNull();
+  });
+});
+
+/**
  * A collapsed fold that hides a FAILED step used to read exactly
  * "▸ Worked for 5s · 1 step" — count and duration, nothing else. The failure
  * was still narrated by the visible assistant message and still visible on
