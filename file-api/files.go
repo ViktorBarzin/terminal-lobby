@@ -162,7 +162,18 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", http.DetectContentType(head[:n]))
+	// SVG is the one previewable image the sniffer cannot name: it has no
+	// binary signature, so DetectContentType calls the source text/plain — and
+	// Chrome will not parse an SVG out of an <img> unless the type is exactly
+	// image/svg+xml (it content-sniffs raster formats regardless, which is why
+	// this is one extension and not a table). The preview routes .svg to the
+	// image kind and offers no Raw/Edit fallback there, so the mislabel left
+	// SVGs unviewable anywhere in the app.
+	ct := http.DetectContentType(head[:n])
+	if strings.EqualFold(filepath.Ext(resolved), ".svg") {
+		ct = "image/svg+xml"
+	}
+	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "no-store")
 	// The extension is the useful signal: which KINDS of file get previewed
 	// (markdown, code, images) drives what the preview surface should do next.
