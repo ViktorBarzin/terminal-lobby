@@ -1,6 +1,24 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, fireEvent } from "@solidjs/testing-library";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { SessionView } from "../src/components/SessionView";
+
+/** The lazily-imported CodeMirror host, faked so a draft edit is drivable. */
+let cmChange: ((text: string) => void) | null = null;
+vi.mock("../src/components/codemirror-view", () => ({
+  createEditorView: (o: { onChange: (t: string) => void }) => {
+    cmChange = o.onChange;
+    return { destroy: () => {} };
+  },
+}));
+
+/** file-api reads: serve one small text file, no network. */
+vi.mock("../src/lib/file-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/file-api")>();
+  return {
+    ...actual,
+    readFile: async () => ({ kind: "code", language: "typescript", text: "baseline\n" }),
+  };
+});
 
 /**
  * The per-session view surface: the Ctrl/Cmd-J bridge the lobby dispatcher needs
@@ -140,6 +158,43 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     }
   });
 
+  // Attaching a live session resizes ITS tmux window to whatever the iframe
+  // measures, so merely selecting a card must not attach: the Text view is the
+  // default, and a passive click used to squeeze a real 200x50 client to 80x24.
+  it("does not attach the terminal until the [Terminal] segment is opened", () => {
+    const nav: string[] = [];
+    const desc = Object.getOwnPropertyDescriptor(
+      HTMLIFrameElement.prototype,
+      "contentWindow",
+    );
+    const fakes = new WeakMap<HTMLIFrameElement, unknown>();
+    Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
+      configurable: true,
+      get(this: HTMLIFrameElement) {
+        let f = fakes.get(this);
+        if (!f) {
+          f = {
+            location: { replace: (u: string) => void nav.push(u) },
+            postMessage: () => {},
+            focus: () => {},
+          };
+          fakes.set(this, f);
+        }
+        return f;
+      },
+    });
+    try {
+      const { container } = render(() => <SessionView session="qa-vs" />);
+      expect(mode(container)).toBe("text");
+      expect(nav).toEqual([]);
+
+      fireEvent.click(segments(container)[1]!); // [Terminal]
+      expect(nav).toEqual(["/term.html?arg=qa-vs"]);
+    } finally {
+      if (desc) Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", desc);
+    }
+  });
+
   it("still forwards the attention signal to the lobby (tab badge)", () => {
     const seen: string[] = [];
     const { container } = render(() => (
@@ -147,5 +202,52 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     ));
     fromFrame(container, { type: "tl-attention", kind: "output", session: "qa-vs" });
     expect(seen).toEqual(["output"]);
+  });
+
+  /**
+   * The file-preview store is created HERE, per session, so a session switch
+   * disposes it and any unsaved draft inside it. The shell owns the chords that
+   * switch session, and it cannot see this store — so the overlay's open+dirty
+   * state has to travel up, and it has to be reset when this view goes away or a
+   * stale "dirty" would jam every later chord.
+   */
+  it("publishes the file-preview's open + dirty state to the shell", async () => {
+    const seen: { open: boolean; dirty: boolean }[] = [];
+    const { container, unmount } = render(() => (
+      <SessionView session="qa-vs" onPreviewState={(s) => void seen.push(s)} />
+    ));
+    expect(seen.at(-1)).toEqual({ open: false, dirty: false });
+
+    // A Read in the transcript puts a file in the preview's recent list.
+    eventSources[0]!.onmessage?.({
+      data: JSON.stringify({
+        id: 1,
+        kind: "tool_use",
+        session: "qa-vs",
+        tool: "Read",
+        body: JSON.stringify({ file_path: "/tmp/qa-harness-scratch/notes.txt" }),
+      }),
+    });
+
+    fireEvent.click(container.querySelector('[aria-label="File preview"]')!);
+    await waitFor(() => expect(seen.at(-1)?.open).toBe(true));
+    expect(seen.at(-1)).toEqual({ open: true, dirty: false });
+
+    // Open it, edit it, leave it unsaved.
+    fireEvent.click(container.querySelector(".tl-preview-recents button")!);
+    const editBtn = (): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent?.trim() === "Edit",
+      );
+    await waitFor(() => expect(editBtn()).toBeTruthy());
+    fireEvent.click(editBtn()!);
+    await waitFor(() => expect(cmChange).toBeTruthy());
+    cmChange!("SWITCH-LOSS\n");
+    await waitFor(() => expect(seen.at(-1)?.dirty).toBe(true));
+
+    // Unmounting IS the session switch — the shell must not be left holding a
+    // dirty flag for a view that no longer exists.
+    unmount();
+    expect(seen.at(-1)).toEqual({ open: false, dirty: false });
   });
 });
