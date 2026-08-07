@@ -90,3 +90,46 @@ func TestCancelReDerivesStateAfterInterrupt(t *testing.T) {
 		})
 	}
 }
+
+// A prompt must submit exactly what the composer sent, and nothing the pane
+// happened to be holding.
+//
+// Stop is what makes this bite: Claude Code puts the interrupted prompt BACK on
+// its input line, so the next composer prompt was submitted concatenated onto
+// it — measured 2026-08-06 as the transcript recording one user line reading
+// "Write out the numbers 1 to 400, one per line, nothing else.PING" when the
+// operator had typed only PING. The cancelled work re-ran, so Stop was
+// effectively undone. A draft a human left in the pane from the Terminal view
+// did the same thing, silently.
+func TestPromptSubmitsOnlyItsOwnTextWhenThePaneHoldsADraft(t *testing.T) {
+	in, osUser, sock := scratchSession(t)
+
+	// Whatever the pane was already holding — a restored prompt, a human's draft.
+	if err := exec.Command("tmux", "-L", sock, "send-keys", "-t", "demo", "LEFTOVER-DRAFT").Run(); err != nil {
+		t.Fatalf("seed draft: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if err := in.Prompt(osUser, "demo", "echo PING123"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	time.Sleep(600 * time.Millisecond)
+
+	out, err := exec.Command("tmux", "-L", sock, "capture-pane", "-p", "-t", "demo").Output()
+	if err != nil {
+		t.Fatalf("capture-pane: %v", err)
+	}
+	pane := string(out)
+	found := false
+	for _, line := range strings.Split(pane, "\n") {
+		if strings.TrimSpace(line) == "PING123" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the prompt did not run on its own; pane:\n%s", pane)
+	}
+	if strings.Contains(pane, "LEFTOVER-DRAFTecho") {
+		t.Fatalf("the pane's draft was submitted together with the prompt; pane:\n%s", pane)
+	}
+}
