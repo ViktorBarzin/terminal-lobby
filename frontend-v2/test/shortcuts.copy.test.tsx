@@ -17,6 +17,12 @@ import { PREF_DEFAULTS, type Prefs, type PrefsStore } from "../src/store/prefs";
  * being able to destroy a session is defensible; saying otherwise is not. These
  * tests hold the copy to what the code actually does.
  *
+ * Ctrl/Cmd+J is a third exemption, and the one the copy used to miss:
+ * SessionView registers it as an unconditional capture-phase window listener,
+ * and term.html carries it in the iframe's own KB_ALWAYS_BINDINGS ahead of the
+ * `enabled` gate — so the view toggle keeps firing with the layer off, from
+ * both the lobby and inside the terminal.
+ *
  * The overlays also owe the terminal its keyboard back when they close — the
  * palette declares that contract and the help overlay never had one. It owes
  * the keyboard in the other direction too: opened while the terminal iframe
@@ -24,6 +30,14 @@ import { PREF_DEFAULTS, type Prefs, type PrefsStore } from "../src/store/prefs";
  * could only be dismissed with the mouse and a stray Escape interrupted the
  * running turn.
  */
+
+/**
+ * Every chord that survives the ⚙ "App shortcuts" opt-out, measured against the
+ * running build with the layer off: "/" and "?" open this help,
+ * Alt+Shift+Backspace prompts the kill confirm, Ctrl+J toggles the view. Each
+ * one has to carry the marker in the table, and nothing else may.
+ */
+const ALWAYS_ON_CHORDS = ["/", "?", "Alt+Shift+Backspace", "Ctrl+J"];
 
 function fakePrefs(): PrefsStore {
   const [prefs] = createSignal<Prefs>(structuredClone(PREF_DEFAULTS));
@@ -58,27 +72,60 @@ describe("shortcuts help — the always-on exemptions are stated", () => {
     expect(slash?.[1].toLowerCase()).toContain("always on");
   });
 
+  it("marks the view-toggle row as always on", () => {
+    const rows = buildShortcutGroups("Alt", false).flatMap(([, r]) => r);
+    const toggle = rows.find(([keys]) => keys.includes("Ctrl+J"));
+    expect(toggle, "a Ctrl+J row").toBeDefined();
+    expect(toggle?.[1].toLowerCase()).toContain("always on");
+  });
+
+  it("marks EXACTLY the rows that survive the toggle — no more, no fewer", () => {
+    for (const [keys, desc] of buildShortcutGroups("Alt", false).flatMap(([, r]) => r)) {
+      const survives = keys.some((k) => ALWAYS_ON_CHORDS.includes(k));
+      expect(
+        desc.toLowerCase().includes("always on"),
+        `${keys.join(" ")} → "${desc}" ${
+          survives
+            ? "survives the ⚙ toggle but carries no always-on marker"
+            : "is marked always-on, but the ⚙ toggle does kill it"
+        }`,
+      ).toBe(survives);
+    }
+  });
+
   it("does not tell the reader the ⚙ toggle governs everything", () => {
     expect(helpText().toLowerCase()).toContain("always on");
   });
 });
 
 describe("Settings — the App shortcuts checkbox says what it does not cover", () => {
-  it("names the exemptions next to the toggle", () => {
+  const keyboardGroupText = (altLabel: string): string => {
     const { container } = render(() => (
       <SettingsPanel
         prefs={fakePrefs()}
         onClose={() => {}}
-        keybindings={{ enabled: () => true, setEnabled: () => {}, altLabel: "Alt" }}
+        keybindings={{ enabled: () => true, setEnabled: () => {}, altLabel }}
       />
     ));
     const group = Array.from(container.querySelectorAll(".tl-settings-group")).find((g) =>
       (g.textContent ?? "").includes("App shortcuts"),
     );
     expect(group, "the Keyboard settings group").toBeTruthy();
-    const text = (group?.textContent ?? "").toLowerCase();
+    return (group?.textContent ?? "").toLowerCase();
+  };
+
+  it("names the exemptions next to the toggle", () => {
+    const text = keyboardGroupText("Alt");
     expect(text).toContain("alt+shift+backspace");
     expect(text).toContain("always on");
+  });
+
+  it("names the view toggle too — the exemption the hint used to omit", () => {
+    expect(keyboardGroupText("Alt")).toContain("ctrl+j");
+  });
+
+  it("localizes the view toggle to Cmd on a Mac", () => {
+    expect(keyboardGroupText("Option")).toContain("cmd+j");
   });
 });
 
