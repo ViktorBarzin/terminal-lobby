@@ -10,6 +10,7 @@ import { Mermaid } from "./Mermaid";
  *   - remark-gfm: tables, task lists, strikethrough, autolinks.
  *   - rehype-sanitize: the transcript can carry arbitrary HTML, so sanitize.
  *   - custom `code`: ```mermaid → <Mermaid>; other fences → <pre>.
+ *   - custom `pre`: pass-through, so a fence is wrapped exactly once.
  *   - custom `img`: lazy, constrained inline images.
  */
 
@@ -40,6 +41,16 @@ function hastLang(node: HastNode | undefined): string {
 }
 
 const components: SolidMarkdownComponents = {
+  // solid-markdown renders every code block through its own default `pre` and
+  // puts the `code` component inside it — but the `code` override below returns
+  // the BLOCK itself (a <pre class="tl-code">, or a <div>/<svg> mermaid
+  // diagram), so each fence came out double-wrapped: <pre><pre class="tl-code">
+  // and <pre><div class="tl-mermaid">. <pre>'s content model is phrasing
+  // content, so all three of those nestings are invalid HTML. Pass the child
+  // through instead. A code block — fenced or indented — is the only thing that
+  // reaches this component: raw HTML never becomes elements here (no
+  // rehype-raw), so nothing else can lose its <pre>.
+  pre: (props) => <>{props.children}</>,
   code: (props) => {
     const node = props.node as unknown as HastNode;
     const text = hastText(node).replace(/\n$/, "");
