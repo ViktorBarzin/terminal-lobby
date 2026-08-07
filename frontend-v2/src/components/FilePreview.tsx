@@ -10,7 +10,7 @@ import {
   type Component,
 } from "solid-js";
 import type { PreviewStore } from "../store/preview";
-import { HTML_SANDBOX } from "../store/preview.logic";
+import { HTML_SANDBOX, dirname } from "../store/preview.logic";
 import { fileReadUrl } from "../lib/config";
 import { IMAGE_DECODE_MESSAGE, imageErrorMessage } from "../lib/file-api";
 import { Markdown } from "./Markdown";
@@ -72,6 +72,13 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
    * for the real status and replace it: missing / too large / out of reach read
    * exactly as they do for a text file. Only the error path pays for the probe.
    */
+  /** Directory of the previewed document — what a RELATIVE markdown image
+   *  reference resolves against. Undefined with nothing loaded. */
+  const mdBase = (): string | undefined => {
+    const p = s.path();
+    return p ? dirname(p) : undefined;
+  };
+
   const onImgError = (): void => {
     const p = s.path();
     setImgError(IMAGE_DECODE_MESSAGE);
@@ -447,7 +454,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                     fallback={<CodeView code={s.text()} language="markdown" />}
                   >
                     <div class="tl-preview-md">
-                      <Markdown text={s.text()} />
+                      <Markdown text={s.text()} base={mdBase()} />
                     </div>
                   </Show>
                 </Match>
