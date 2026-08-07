@@ -65,6 +65,10 @@ export const SessionView: Component<{
   onFrameBuildStale?: () => void;
   /** open the session image gallery (🖼) — owned by the lobby shell. */
   onOpenGallery?: () => void;
+  /** the file-preview overlay's open + unsaved-draft state, published UP so the
+   *  shell's keybinding context can refuse to switch session out from under an
+   *  unsaved edit (the preview store is per-session and dies with this view). */
+  onPreviewState?: (state: { open: boolean; dirty: boolean }) => void;
 }> = (props) => {
   const session = props.session;
   const store = createSessionStore(session, { notify: props.notify });
@@ -85,6 +89,16 @@ export const SessionView: Component<{
     // Left undefined the store falls back to the app-wide toast singleton.
     notify: props.notify,
   });
+
+  // Publish the overlay's state to the shell. The shell cannot read this store
+  // (it is created here, per session), and it is the shell that owns the chords
+  // which would unmount us mid-edit — so the state has to travel up. Reset on
+  // unmount: this component's disposal IS the switch, and a stale "dirty" left
+  // behind would jam every later chord.
+  createEffect(() => {
+    props.onPreviewState?.({ open: preview.isOpen(), dirty: preview.dirty() });
+  });
+  onCleanup(() => props.onPreviewState?.({ open: false, dirty: false }));
 
   const maxId = createMemo(() => {
     const last = store.events[store.events.length - 1];
