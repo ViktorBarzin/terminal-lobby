@@ -161,6 +161,12 @@ export const App: Component = () => {
     return !store.sessions.some((s) => s.name === name);
   });
 
+  // The mounted session's file-preview overlay, published up by SessionView.
+  // A session switch disposes that view and the unsaved draft inside it, so the
+  // keyboard routes into a switch have to know about it (the mouse route
+  // already does — it goes through the overlay's own discard confirm).
+  const [previewState, setPreviewState] = createSignal({ open: false, dirty: false });
+
   // ---- keybinding engine + command palette + shortcuts help (pillar #2) ----
   // The lobby SPA is always the "lobby" side: it owns the sidebar, palette and
   // session switching. The terminal iframe forwards its chords up over
@@ -189,6 +195,12 @@ export const App: Component = () => {
     current: () => store.selected()?.name ?? null,
     attach: (name) => {
       if (store.selected()?.name === name) return;
+      // Same guard the switch chords carry: the palette is reachable over the
+      // open preview, and picking a session here would bin the draft too.
+      if (previewState().dirty) {
+        notify("Unsaved changes in the file editor — save or discard them first", "warning");
+        return;
+      }
       const t = flatSessionOrder(store.model()).find((s) => s.name === name);
       store.select(name, t?.owner);
     },
@@ -233,6 +245,8 @@ export const App: Component = () => {
       terminalFocus: false,
       lobbyOpen: true,
       galleryOpen: gallery.view() !== "closed",
+      previewOpen: previewState().open,
+      previewDirty: previewState().dirty,
     }),
     runCommand: (cmd) => run(cmd),
   });
@@ -332,6 +346,7 @@ export const App: Component = () => {
                 onFrameAttention={notifications.onFrameAttention}
                 onFrameBuildStale={() => healer.onBuildStale()}
                 onOpenGallery={() => void gallery.open()}
+                onPreviewState={setPreviewState}
               />
             )}
           </Show>
