@@ -1,4 +1,11 @@
-import { createEffect, onCleanup, onMount, untrack, type Component } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  onCleanup,
+  onMount,
+  untrack,
+  type Component,
+} from "solid-js";
 import { terminalUrl } from "../lib/terminal-url";
 import { isBuildStale } from "../deploy/healer.logic";
 import { track } from "../telemetry/track";
@@ -20,8 +27,14 @@ import { track } from "../telemetry/track";
  *  - An INSTANT `#frame-cover` (themed panel) hides the reload flash; it fades
  *    out on the terminal's `tl-terminal-ready` postMessage, or a 1800ms fallback
  *    (outliving the terminal's own 1500ms reveal cap) for slow/errored attaches.
- *  - Eager attach on mount: a NEW session's tmux is born only once the iframe's
- *    WebSocket reaches ttyd, so we must navigate even while text mode is showing.
+ *  - LAZY attach: an existing session is attached only once the Terminal view
+ *    has actually been shown. Attaching resizes the tmux WINDOW to whatever this
+ *    iframe measures — ttyd's INIT handshake serialises the construction-default
+ *    cols/rows and that sizes the pty at spawn — so an eager attach silently
+ *    reflowed a real 200x50 client down to 80x24 just because a card was
+ *    clicked. `creating` opts back in for the one case that needs it: a session
+ *    the app is bringing into being, whose tmux is born by this very attach.
+ *    Once attached we never detach — the CSS-hidden frame keeps its WebSocket.
  *  - Live theme: window.__tlThemeLive posts `{type:'tl-theme',name}` into the
  *    frame and reloads it if no `tl-theme-ack` arrives within 1000ms.
  *  - Live prefs: window.__tlPrefsLive posts `{type:'tl-prefs',prefs}` +
@@ -35,6 +48,13 @@ export const TerminalView: Component<{
   session: string;
   owner?: string;
   active: boolean;
+  /** TRUE only while the app is CREATING this session: it has no tmux session
+   *  yet, so the attach is what brings it into being and cannot wait for the
+   *  Terminal view. Every other session attaches lazily. */
+  creating?: boolean;
+  /** arg3 — the owning project's base directory, read ONCE at attach. `tmux -A`
+   *  ignores -c on a live session, so sending it every time is harmless. */
+  dir?: string;
   /** current roamed newCommand, read ONCE at attach (never re-navigates live). */
   newCommand?: () => string;
   /** a chord fired inside the terminal iframe, forwarded up (tl-command). */
@@ -96,15 +116,25 @@ export const TerminalView: Component<{
     }
   };
 
+  // One-way latch: the terminal may attach once it has been asked for (the view
+  // was shown) or once it is the only thing that can create the session. It
+  // never un-latches — the attach outlives every swap back to the text view.
+  const [attachAllowed, setAttachAllowed] = createSignal(false);
+  createEffect(() => {
+    if (props.active || props.creating) setAttachAllowed(true);
+  });
+
   // Attach (and re-attach if the session/owner target changes). newCommand is
   // read UNTRACKED: it only shapes a NEW session's command, and a pref change
   // must never re-navigate a live terminal (that would drop the WebSocket).
   createEffect(() => {
     const session = props.session;
     const owner = props.owner;
+    if (!attachAllowed()) return;
     const url = untrack(() =>
       terminalUrl(session, {
         cmd: props.newCommand?.(),
+        dir: props.dir || undefined,
         owner: owner || undefined,
       }),
     );
@@ -254,7 +284,12 @@ export const TerminalView: Component<{
     }
   });
   onCleanup(() => {
-    track("session.detached", { "tl.session": untrack(() => props.session) });
+    // Only a terminal that actually attached can detach — a lazily-mounted view
+    // that never reached ttyd must not fake the other half of the
+    // session.attached/detached pair (ADR-0006).
+    if (untrack(attachAllowed)) {
+      track("session.detached", { "tl.session": untrack(() => props.session) });
+    }
     window.removeEventListener("message", onMessage);
     if (coverTimer) clearTimeout(coverTimer);
     if (themeAckTimer) clearTimeout(themeAckTimer);

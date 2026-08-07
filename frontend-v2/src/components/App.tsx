@@ -11,7 +11,7 @@ import {
   type NotifyKind,
   type SelectedSession,
 } from "../store/lobby";
-import { NAME_RE } from "../types/lobby";
+import { NAME_RE, type Layout } from "../types/lobby";
 import { Sidebar } from "./Sidebar";
 import { SessionView } from "./SessionView";
 import { SettingsPanel } from "./SettingsPanel";
@@ -59,6 +59,19 @@ function readSidebarCollapsed(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The base directory a session should be born in: the `dir` of the layout
+ * project that owns it. /api/layout has carried a project dir all along and the
+ * attach URL has an arg3 slot for it (terminal-url.ts) — the two were simply
+ * never joined, so a session created inside a project started in $HOME. A
+ * project with no dir, an ungrouped session, or an unknown name all yield
+ * undefined and no arg3 is sent.
+ */
+export function projectDirFor(layout: Layout, session: string): string | undefined {
+  const project = layout.projects.find((p) => p.sessions.includes(session));
+  return project?.dir || undefined;
 }
 
 /**
@@ -149,6 +162,29 @@ export const App: Component = () => {
   const selectedName = createMemo(() => store.selected()?.name ?? null);
   const newCommand = () => prefs.prefs().session.newCommand;
 
+  // A selected session the poll has never returned does not exist in tmux yet:
+  // `store.create` only writes the layout, and the session comes into being when
+  // a terminal attaches. That one terminal must attach immediately; every other
+  // session's waits for the Terminal view, because attaching resizes the tmux
+  // WINDOW to the iframe and would reflow a wide client already using it.
+  // `loading` covers the pre-first-poll window, where everything looks unseen.
+  const selectedIsCreating = createMemo(() => {
+    const name = selectedName();
+    if (!name || store.loading()) return false;
+    return !store.sessions.some((s) => s.name === name);
+  });
+
+  const selectedDir = createMemo(() => {
+    const name = selectedName();
+    return name ? projectDirFor(store.layout(), name) : undefined;
+  });
+
+  // The mounted session's file-preview overlay, published up by SessionView.
+  // A session switch disposes that view and the unsaved draft inside it, so the
+  // keyboard routes into a switch have to know about it (the mouse route
+  // already does — it goes through the overlay's own discard confirm).
+  const [previewState, setPreviewState] = createSignal({ open: false, dirty: false });
+
   // ---- keybinding engine + command palette + shortcuts help (pillar #2) ----
   // The lobby SPA is always the "lobby" side: it owns the sidebar, palette and
   // session switching. The terminal iframe forwards its chords up over
@@ -177,6 +213,12 @@ export const App: Component = () => {
     current: () => store.selected()?.name ?? null,
     attach: (name) => {
       if (store.selected()?.name === name) return;
+      // Same guard the switch chords carry: the palette is reachable over the
+      // open preview, and picking a session here would bin the draft too.
+      if (previewState().dirty) {
+        notify("Unsaved changes in the file editor — save or discard them first", "warning");
+        return;
+      }
       const t = flatSessionOrder(store.model()).find((s) => s.name === name);
       store.select(name, t?.owner);
     },
@@ -221,6 +263,8 @@ export const App: Component = () => {
       terminalFocus: false,
       lobbyOpen: true,
       galleryOpen: gallery.view() !== "closed",
+      previewOpen: previewState().open,
+      previewDirty: previewState().dirty,
     }),
     runCommand: (cmd) => run(cmd),
   });
@@ -312,6 +356,8 @@ export const App: Component = () => {
               <SessionView
                 session={name}
                 owner={store.selected()?.owner}
+                creating={selectedIsCreating()}
+                dir={selectedDir()}
                 newCommand={newCommand}
                 notify={notify}
                 onFrameCommand={(cmd) => run(cmd)}
@@ -319,6 +365,7 @@ export const App: Component = () => {
                 onFrameAttention={notifications.onFrameAttention}
                 onFrameBuildStale={() => healer.onBuildStale()}
                 onOpenGallery={() => void gallery.open()}
+                onPreviewState={setPreviewState}
               />
             )}
           </Show>
