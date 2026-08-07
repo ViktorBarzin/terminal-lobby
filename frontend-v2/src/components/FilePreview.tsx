@@ -12,6 +12,7 @@ import {
 import type { PreviewStore } from "../store/preview";
 import { HTML_SANDBOX } from "../store/preview.logic";
 import { fileReadUrl } from "../lib/config";
+import { IMAGE_DECODE_MESSAGE, imageErrorMessage } from "../lib/file-api";
 import { Markdown } from "./Markdown";
 import { CodeView } from "./CodeView";
 import { CodeEditor } from "./CodeEditor";
@@ -43,13 +44,30 @@ function fmtBytes(n: number | null): string {
 export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
   const s = props.store;
   const [pathInput, setPathInput] = createSignal("");
-  const [imgError, setImgError] = createSignal(false);
+  // null while the image is fine; otherwise the message to show in its place.
+  const [imgError, setImgError] = createSignal<string | null>(null);
 
   // Reset the image-error latch whenever the previewed path changes.
   createEffect(() => {
     s.path();
-    setImgError(false);
+    setImgError(null);
   });
+
+  /**
+   * An <img> failed. It cannot say why on its own — and readFile skips the
+   * fetch for a name-classified image, so nothing else knows either. Show the
+   * decode message at once (something is always on screen), then ask the server
+   * for the real status and replace it: missing / too large / out of reach read
+   * exactly as they do for a text file. Only the error path pays for the probe.
+   */
+  const onImgError = (): void => {
+    const p = s.path();
+    setImgError(IMAGE_DECODE_MESSAGE);
+    if (!p) return;
+    void imageErrorMessage(p).then((message) => {
+      if (s.path() === p) setImgError(message); // ignore a superseded file
+    });
+  };
 
   // Keyboard handling (capture + stop so it never leaks to the shell's other
   // handlers). Cmd/Ctrl-S saves while editing (regardless of focus in the
@@ -329,10 +347,10 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
               <Switch>
                 <Match when={s.kind() === "image"}>
                   <Show
-                    when={!imgError()}
+                    when={imgError() === null}
                     fallback={
                       <div class="tl-preview-note tl-preview-error">
-                        Couldn't load image.
+                        {imgError()}
                       </div>
                     }
                   >
@@ -340,7 +358,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                       <img
                         src={fileReadUrl(s.path()!)}
                         alt={s.name()}
-                        onError={() => setImgError(true)}
+                        onError={onImgError}
                       />
                     </div>
                   </Show>
