@@ -47,6 +47,17 @@ export interface KbDoc {
 }
 
 /**
+ * The when-clause every chord that SWITCHES SESSION carries. Switching unmounts
+ * the whole session surface, and with it the per-session file-preview store —
+ * so an unsaved editor draft dies with it. The mouse route is already guarded
+ * (clicking another session goes through the preview backdrop's "Discard unsaved
+ * changes?" confirm); these chords bypassed every overlay and destroyed the
+ * draft in silence. While one is dirty they are inert, and the visible,
+ * confirmable routes (the backdrop, Esc, Ctrl/Cmd+S) stay the way out.
+ */
+const SWITCH_WHEN = "!galleryOpen && !previewDirty";
+
+/**
  * Opt-in-toggleable, user-overridable bindings. Chord choices follow the vanilla
  * plan: Ctrl+Shift+K avoids TUI-owned Ctrl+K/Ctrl+F; Alt+Shift+[ ] avoids the
  * browser tab chords; the dev-flow letters/Enter carry `e.code` aliases so they
@@ -54,20 +65,20 @@ export interface KbDoc {
  */
 export const KB_DEFAULT_BINDINGS: Binding[] = [
   { key: "ctrl+shift+k", command: "palette.toggle", when: "!galleryOpen" },
-  { key: "alt+1", command: "session.attach.1", when: "!galleryOpen" },
-  { key: "alt+2", command: "session.attach.2", when: "!galleryOpen" },
-  { key: "alt+3", command: "session.attach.3", when: "!galleryOpen" },
-  { key: "alt+4", command: "session.attach.4", when: "!galleryOpen" },
-  { key: "alt+5", command: "session.attach.5", when: "!galleryOpen" },
-  { key: "alt+6", command: "session.attach.6", when: "!galleryOpen" },
-  { key: "alt+7", command: "session.attach.7", when: "!galleryOpen" },
-  { key: "alt+8", command: "session.attach.8", when: "!galleryOpen" },
-  { key: "alt+9", command: "session.attach.9", when: "!galleryOpen" },
-  { key: "alt+0", command: "session.attach.10", when: "!galleryOpen" },
-  { key: "alt+shift+[", command: "session.prev", when: "!galleryOpen" },
-  { key: "alt+shift+]", command: "session.next", when: "!galleryOpen" },
+  { key: "alt+1", command: "session.attach.1", when: SWITCH_WHEN },
+  { key: "alt+2", command: "session.attach.2", when: SWITCH_WHEN },
+  { key: "alt+3", command: "session.attach.3", when: SWITCH_WHEN },
+  { key: "alt+4", command: "session.attach.4", when: SWITCH_WHEN },
+  { key: "alt+5", command: "session.attach.5", when: SWITCH_WHEN },
+  { key: "alt+6", command: "session.attach.6", when: SWITCH_WHEN },
+  { key: "alt+7", command: "session.attach.7", when: SWITCH_WHEN },
+  { key: "alt+8", command: "session.attach.8", when: SWITCH_WHEN },
+  { key: "alt+9", command: "session.attach.9", when: SWITCH_WHEN },
+  { key: "alt+0", command: "session.attach.10", when: SWITCH_WHEN },
+  { key: "alt+shift+[", command: "session.prev", when: SWITCH_WHEN },
+  { key: "alt+shift+]", command: "session.next", when: SWITCH_WHEN },
   // Dev-flow chords (Alt+Shift namespace).
-  { key: "alt+shift+enter", command: "session.next.awaiting", when: "lobbyOpen && !galleryOpen" },
+  { key: "alt+shift+enter", command: "session.next.awaiting", when: `lobbyOpen && ${SWITCH_WHEN}` },
   { key: "alt+shift+s", command: "sidebar.toggle", when: "lobbyOpen && !galleryOpen" },
   { key: "alt+shift+n", command: "session.new", when: "lobbyOpen && !galleryOpen" },
   { key: "alt+shift+w", command: "session.kill.current", when: "lobbyOpen && !galleryOpen" },
