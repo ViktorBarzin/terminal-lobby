@@ -77,8 +77,12 @@ export const Sidebar: Component<{
   const visibleGroups = () =>
     store.model().groups.filter((g) => g.kind === "project" || g.sessions.length > 0);
 
+  // "No sessions yet." is a claim about fetched data, so a load error disowns
+  // it: refresh() can bail before /sessions is ever called (denied whoami), and
+  // an empty model then means "nothing known", not "nothing there".
   const isEmpty = () =>
     !store.loading() &&
+    !store.loadError() &&
     store.model().groups.every((g) => g.sessions.length === 0) &&
     store.model().foreign.length === 0 &&
     store.layout().projects.length === 0;
