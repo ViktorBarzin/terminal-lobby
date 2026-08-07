@@ -19,9 +19,12 @@ tmux/Claude session:
   user bubbles, and a composer that injects prompts and cancels the running turn.
 - **Terminal mode (fallback)** — a live pty attach to the *same* tmux session:
   an iframe pointed at the ttyd-served `/term.html` page, navigated by
-  `contentWindow.location.replace()` and attached eagerly on mount (that attach
-  is what BIRTHS the tmux session behind a freshly-created card, via
-  `new-session -A`). The `?arg=` positional contract lives in
+  `contentWindow.location.replace()`. The attach is **lazy** — it waits until
+  this view is first shown, because attaching resizes the tmux window to the
+  iframe and would squeeze a wider client already using it. The exception is a
+  session the app is CREATING: that attach is what BIRTHS its tmux (via
+  `new-session -A`), so it happens immediately. The `?arg=` positional
+  contract — name, command, **project dir**, owner — lives in
   `lib/terminal-url.ts`. xterm stays **external** (never bundled), per the
   deploy decision.
 
@@ -138,7 +141,8 @@ src/
                          re-enable; its server side was removed in 575d4f5, so
                          Composer still mounts it but it always renders nothing
                          — no `permission_request` can arrive (header comment)
-    TerminalView.tsx     Terminal mode: the ttyd iframe + eager attach
+    TerminalView.tsx     Terminal mode: the ttyd iframe + lazy attach (eager
+                         only for the session being created)
     Gallery.tsx          Session image-gallery overlay + shared lightbox
     FilePreview.tsx      File-preview overlay (markdown/HTML/image/code/binary)
     CodeView.tsx         Read-only highlighted code (lazy highlight.js)

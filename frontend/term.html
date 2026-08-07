@@ -10240,9 +10240,27 @@
         // becoming visible again (tab OR view) re-arms it for the next period.
         let hiddenOutputSignaled = false;
         let viewHidden = false;
+        // Which reasons for being hidden were true when the current one-shot
+        // was spent — a NEW one opens a NEW period (see rearmHiddenOutput).
+        let spentTabHidden = false;
+        let spentViewHidden = false;
         function attentionHidden() { return !!document.hidden || viewHidden; }
         function rearmHiddenOutput() {
-            if (!attentionHidden()) hiddenOutputSignaled = false;
+            if (!hiddenOutputSignaled) return;
+            // Fully back on screen: the period is over.
+            if (!attentionHidden()) { hiddenOutputSignaled = false; return; }
+            // Still hidden, but hidden for a reason that was NOT true when the
+            // shot was spent — the tab going away on top of an already-hidden
+            // view. That matters because the lobby only latches its tab badge
+            // for a signal that arrives while the tab is away: a shot burned
+            // earlier in the period (the attach paint, or the redraw the view
+            // switch itself causes) was discarded on arrival, and must not
+            // silence the first real output of the away period. The reverse —
+            // the tab coming BACK while the view stays hidden — is not a new
+            // period: you still cannot see the terminal.
+            if ((!!document.hidden && !spentTabHidden) || (viewHidden && !spentViewHidden)) {
+                hiddenOutputSignaled = false;
+            }
         }
         function setViewHidden(v) {
             viewHidden = !!v;
@@ -10253,13 +10271,17 @@
         function noteHiddenOutput() {
             if (!attentionHidden() || hiddenOutputSignaled) return;
             hiddenOutputSignaled = true;
+            spentTabHidden = !!document.hidden;
+            spentViewHidden = viewHidden;
             signalAttention('output');
         }
         // <<< tl-attention-kernel
         term.onBell(() => signalAttention('bell'));
         document.addEventListener('visibilitychange', () => {
-            if (document.hidden) return;
+            // Re-arm in BOTH directions: becoming hidden can open a new period
+            // just as much as becoming visible closes one.
             rearmHiddenOutput();
+            if (document.hidden) return;
             if (!isFramed && document.title.startsWith('● ')) {
                 document.title = document.title.slice(2);
             }

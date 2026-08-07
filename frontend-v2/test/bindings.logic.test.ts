@@ -145,6 +145,58 @@ describe("matchesAppChord — gating", () => {
     expect(kill).toBeNull();
   });
 
+  // A session switch tears the whole SessionView down, taking the per-session
+  // file-preview store — and any unsaved editor draft — with it. The MOUSE path
+  // is guarded: clicking another session hits the preview backdrop, which runs
+  // the "Discard unsaved changes?" confirm. The keyboard path had no such gate,
+  // so Alt+Shift+] threw the draft away without a word.
+  describe("a dirty file-preview draft blocks the session-switch chords", () => {
+    const dirtyCtx = { ...LOBBY_CTX, previewOpen: true, previewDirty: true };
+    const cleanCtx = { ...LOBBY_CTX, previewOpen: true, previewDirty: false };
+
+    const switchChords: [string, ChordEventLike][] = [
+      ["session.next", ev({ altKey: true, shiftKey: true, key: "}", code: "BracketRight" })],
+      ["session.prev", ev({ altKey: true, shiftKey: true, key: "{", code: "BracketLeft" })],
+      ["session.attach.2", ev({ altKey: true, key: "2", code: "Digit2" })],
+      [
+        "session.next.awaiting",
+        ev({ altKey: true, shiftKey: true, key: "Enter", code: "Enter" }),
+      ],
+    ];
+
+    for (const [command, e] of switchChords) {
+      it(`gates ${command} out while the draft is dirty`, () => {
+        expect(matchesAppChord(e, input({ ctx: cleanCtx }))?.command).toBe(command);
+        expect(matchesAppChord(e, input({ ctx: dirtyCtx }))).toBeNull();
+      });
+    }
+
+    it("leaves the non-switching chords alone (they do not unmount the draft)", () => {
+      expect(
+        matchesAppChord(
+          ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }),
+          input({ ctx: dirtyCtx }),
+        )?.command,
+      ).toBe("palette.toggle");
+      expect(
+        matchesAppChord(
+          ev({ altKey: true, shiftKey: true, key: "S", code: "KeyS" }),
+          input({ ctx: dirtyCtx }),
+        )?.command,
+      ).toBe("sidebar.toggle");
+    });
+
+    it("every session-switch binding carries the guard", () => {
+      const switching = KB_DEFAULT_BINDINGS.filter(
+        (b) => /^session\.(attach\.\d+|prev|next)$/.test(b.command) || b.command === "session.next.awaiting",
+      );
+      expect(switching.length).toBe(13); // 10 attach slots + prev + next + next.awaiting
+      for (const b of switching) {
+        expect(b.when, `${b.command} must be gated on !previewDirty`).toContain("!previewDirty");
+      }
+    });
+  });
+
   it("ignores non-keydown events", () => {
     const b = matchesAppChord(
       ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK", type: "keyup" }),
