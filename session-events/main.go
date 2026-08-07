@@ -30,8 +30,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	rg := newRegistry(ctx, *poll, *homeBase)
 	injector := &Injector{selfUser: self.Username}
+	rg := newRegistry(ctx, *poll, *homeBase, injector)
 
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()
