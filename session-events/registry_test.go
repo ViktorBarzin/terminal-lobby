@@ -13,7 +13,8 @@ import (
 func TestRegistrySourceRequiresSessionStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, "/root")
+	opts := newFakeTmuxOptions("wizard/demo")
+	rg := newRegistry(ctx, time.Millisecond, "/root", opts)
 
 	if _, ok := rg.source("wizard", "demo"); ok {
 		t.Fatal("unregistered session must not resolve")
@@ -32,6 +33,21 @@ func TestRegistrySourceRequiresSessionStart(t *testing.T) {
 	}
 	if fs.path != "/root/wizard/.claude/projects/-home-wizard-x/s1.jsonl" {
 		t.Fatalf("transcript path = %q", fs.path)
+	}
+}
+
+// A SessionStart that cannot be recorded must not answer 204: the hook would
+// then have every reason to believe the session is watchable when it is not.
+func TestRegistrySessionStartFailsWhenItCannotRecord(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, "/root", newFakeTmuxOptions()) // no live sessions
+
+	w := httptest.NewRecorder()
+	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
+		strings.NewReader(`{"user":"wizard","session_id":"s1","cwd":"/home/wizard/x","tmux_session":"ghost"}`)))
+	if w.Code != 500 {
+		t.Fatalf("unrecordable session-start: want 500, got %d (%s)", w.Code, w.Body.String())
 	}
 }
 
@@ -74,11 +90,96 @@ func bodies(fs *fileSource) []string {
 	return out
 }
 
+// register drives the SessionStart hook endpoint the way claude-se-hook does.
+func register(t *testing.T, rg *registry, osUser, claudeID, cwd, tmuxSession string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
+		strings.NewReader(`{"user":"`+osUser+`","session_id":"`+claudeID+
+			`","cwd":"`+cwd+`","tmux_session":"`+tmuxSession+`"}`)))
+	if w.Code != 204 {
+		t.Fatalf("session-start %s: want 204, got %d (%s)", claudeID, w.Code, w.Body.String())
+	}
+}
+
+// THE restart defect: every deploy restarts this service, and a registry that
+// lives only in the process's memory turns each restart into
+// "404 session not registered" for every Claude session already running —
+// measured 2026-08-06 as 9 of 9 live sessions rendering an empty Text view.
+// The mapping has to be recovered by a process that never saw the hook fire.
+func TestRegistryResolvesSessionsRegisteredBeforeARestart(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-restart"
+	)
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-SURVIVES-RESTART")
+	opts := newFakeTmuxOptions(osUser + "/" + tmux)
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	before := newRegistry(ctxA, time.Millisecond, homeBase, opts)
+	register(t, before, osUser, "aaaa-1111", cwd, tmux)
+	if _, ok := before.source(osUser, tmux); !ok {
+		t.Fatal("session should resolve in the process that received the hook")
+	}
+	cancelA() // the service exits — deploy, crash, restart, all the same
+
+	after := newRegistry(context.Background(), time.Millisecond, homeBase, opts)
+	fs, ok := after.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve after a restart — the Text view renders NO TRANSCRIPT")
+	}
+	waitForMarker(t, fs, "MARKER-SURVIVES-RESTART")
+}
+
+// The other half: a mapping must not outlive the tmux session it describes.
+// Kill a registered Claude session, start a plain shell under the same name,
+// and the pane must stop serving the dead conversation — and the tail that was
+// reading it has to stop with it.
+func TestRegistryStopsServingAfterTheTmuxSessionIsReplaced(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-vstale"
+	)
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-DEAD-SESSION")
+	opts := newFakeTmuxOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts)
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session should resolve after SessionStart")
+	}
+	waitForMarker(t, fs, "MARKER-DEAD-SESSION")
+
+	us := rg.user(osUser)
+	us.mu.Lock()
+	live := us.srcs[tmux]
+	us.mu.Unlock()
+
+	opts.kill(osUser, tmux)  // tmux kill-session
+	opts.start(osUser, tmux) // same name, a plain shell this time
+
+	if _, ok := rg.source(osUser, tmux); ok {
+		t.Fatal("the reused tmux name still serves the dead Claude session's transcript")
+	}
+	select {
+	case <-live.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the dead session's tail goroutine is still running — leaked")
+	}
+}
+
 // Reusing a tmux session name — kill a Claude session, start a new one in the
 // same tmux window — must re-resolve the transcript. fileSource.path is fixed at
 // construction, so a source cached under the tmux name keeps serving the DEAD
 // session's transcript for the rest of the process lifetime unless source()
-// re-checks it against the sessionMap.
+// re-checks it against the registry.
 func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
 	const (
 		osUser = "wizard"
@@ -88,23 +189,13 @@ func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
 	homeBase := t.TempDir()
 	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-TRANSCRIPT-A")
 	pathB := writeTranscript(t, homeBase, osUser, cwd, "bbbb-2222", "MARKER-TRANSCRIPT-B")
+	opts := newFakeTmuxOptions(osUser + "/" + tmux)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase)
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts)
 
-	register := func(claudeID, tmuxSession string) {
-		t.Helper()
-		w := httptest.NewRecorder()
-		rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
-			strings.NewReader(`{"user":"`+osUser+`","session_id":"`+claudeID+
-				`","cwd":"`+cwd+`","tmux_session":"`+tmuxSession+`"}`)))
-		if w.Code != 204 {
-			t.Fatalf("session-start %s: want 204, got %d (%s)", claudeID, w.Code, w.Body.String())
-		}
-	}
-
-	register("aaaa-1111", tmux)
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
 	first, ok := rg.source(osUser, tmux)
 	if !ok {
 		t.Fatal("session should resolve after SessionStart")
@@ -120,7 +211,7 @@ func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
 		t.Fatal("no live source cached under the tmux name")
 	}
 
-	register("bbbb-2222", tmux) // same tmux name, a brand-new Claude session
+	register(t, rg, osUser, "bbbb-2222", cwd, tmux) // same tmux name, a brand-new Claude session
 
 	second, ok := rg.source(osUser, tmux)
 	if !ok {
@@ -149,18 +240,14 @@ func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
 func TestRegistrySourceKeptWhenTranscriptUnchanged(t *testing.T) {
 	homeBase := t.TempDir()
 	writeTranscript(t, homeBase, "wizard", "/home/wizard/qa", "aaaa-1111", "MARKER-TRANSCRIPT-A")
+	opts := newFakeTmuxOptions("wizard/qa-stable")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase)
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts)
 
-	body := `{"user":"wizard","session_id":"aaaa-1111","cwd":"/home/wizard/qa","tmux_session":"qa-stable"}`
 	for i := 0; i < 2; i++ {
-		w := httptest.NewRecorder()
-		rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start", strings.NewReader(body)))
-		if w.Code != 204 {
-			t.Fatalf("session-start: want 204, got %d", w.Code)
-		}
+		register(t, rg, "wizard", "aaaa-1111", "/home/wizard/qa", "qa-stable")
 	}
 
 	first, _ := rg.source("wizard", "qa-stable")
@@ -173,7 +260,7 @@ func TestRegistrySourceKeptWhenTranscriptUnchanged(t *testing.T) {
 func TestRegistryMissingSessionStartFields(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, "/root")
+	rg := newRegistry(ctx, time.Millisecond, "/root", newFakeTmuxOptions())
 	w := httptest.NewRecorder()
 	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"user":"wizard"}`)))
 	if w.Code != 400 {
