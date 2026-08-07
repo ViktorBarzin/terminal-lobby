@@ -271,3 +271,131 @@ describe("<ProjectGroup> header drag-reorder", () => {
     store.dispose();
   });
 });
+
+/**
+ * An empty Ungrouped renders nothing (Sidebar drops it) but deliberately keeps
+ * its slot in the layout, so the token sequence the ⋯ menu measured was one
+ * longer than the list on screen. The edge project's Move item was enabled on
+ * the strength of a neighbour nobody can see, and the click was spent shuffling
+ * the sentinel: the list did not move, the item then greyed out, and the user
+ * had to click twice to move once.
+ *
+ * Bounds and steps belong in VISIBLE space. The sentinel stays in the layout —
+ * the capture/reorder contract in lobby.logic.ts depends on it.
+ */
+describe("<ProjectGroup> ⋯ move with an empty Ungrouped", () => {
+  /** twoProjects, with the (empty) Ungrouped sentinel parked at `at`. */
+  function sentinelAt(api: FakeApi, at: number): void {
+    twoProjects(api);
+    api.layoutVal = { ...api.layoutVal, ungroupedIndex: at };
+  }
+
+  type Mounted = ReturnType<typeof mount>;
+
+  /**
+   * Open the ⋯ menu of the i-th VISIBLE group; the returned getter reads its
+   * items by label. One open per call — the ⋯ button toggles, so re-opening to
+   * read a second item would shut the menu instead.
+   */
+  async function openMenu(m: Mounted, i: number): Promise<(label: string) => HTMLButtonElement> {
+    fireEvent.click(m.getAllByLabelText("Group actions")[i]!);
+    await waitFor(() => expect(m.container.querySelector(".tl-menu")).not.toBeNull());
+    return (label) =>
+      [...m.container.querySelectorAll<HTMLButtonElement>(".tl-menu-item")].find(
+        (b) => b.textContent === label,
+      )!;
+  }
+
+  /** Open group i's menu and hand back one item. */
+  const menuItem = async (m: Mounted, i: number, label: string): Promise<HTMLButtonElement> =>
+    (await openMenu(m, i))(label);
+
+  it("does not enable the top project's Move up (the sentinel above it is invisible)", async () => {
+    const api = new FakeApi();
+    sentinelAt(api, 0); // tokens [u, alpha, bravo] — but "u" renders nothing
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(titles(m.container)).toEqual(["alpha", "bravo"]));
+
+    expect((await menuItem(m, 0, "Move up")).disabled).toBe(true);
+    m.store.dispose();
+  });
+
+  it("does not enable the bottom project's Move down (the sentinel below it is invisible)", async () => {
+    const api = new FakeApi();
+    sentinelAt(api, 2); // tokens [alpha, bravo, u]
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(titles(m.container)).toEqual(["alpha", "bravo"]));
+
+    expect((await menuItem(m, 1, "Move down")).disabled).toBe(true);
+    m.store.dispose();
+  });
+
+  it.each([0, 1])(
+    "disables both ends for a lone project with the hidden sentinel at %i",
+    async (at) => {
+      const api = new FakeApi();
+      api.sessionsVal = [sess("a1")];
+      api.layoutVal = {
+        ...emptyLayout(),
+        projects: [{ name: "alpha", sessions: ["a1"] }],
+        ungroupedIndex: at,
+      };
+      const m = mount(api);
+      await m.store.refresh();
+      await waitFor(() => expect(titles(m.container)).toEqual(["alpha"]));
+
+      const item = await openMenu(m, 0);
+      expect(item("Move up").disabled).toBe(true);
+      expect(item("Move down").disabled).toBe(true);
+      m.store.dispose();
+    },
+  );
+
+  it("spends one click on one VISIBLE slot when the hidden sentinel sits between", async () => {
+    const api = new FakeApi();
+    sentinelAt(api, 1); // tokens [alpha, u, bravo] — alpha's Move down met "u" first
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(titles(m.container)).toEqual(["alpha", "bravo"]));
+
+    fireEvent.click(await menuItem(m, 0, "Move down"));
+
+    await waitFor(() => expect(titles(m.container)).toEqual(["bravo", "alpha"]));
+    expect(api.puts.length).toBe(1); // one click, one write, one visible slot
+    m.store.dispose();
+  });
+
+  it("spends one click on one VISIBLE slot moving up past the hidden sentinel", async () => {
+    const api = new FakeApi();
+    sentinelAt(api, 1); // tokens [alpha, u, bravo]
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(titles(m.container)).toEqual(["alpha", "bravo"]));
+
+    fireEvent.click(await menuItem(m, 1, "Move up"));
+
+    await waitFor(() => expect(titles(m.container)).toEqual(["bravo", "alpha"]));
+    expect(api.puts.length).toBe(1);
+    m.store.dispose();
+  });
+
+  it("control: a NON-empty Ungrouped is visible, so it keeps taking its own slot", async () => {
+    // The sentinel is not being removed — when it renders it reorders exactly as
+    // it does today, and a project moving past it costs the click it always did.
+    const api = new FakeApi();
+    twoProjects(api);
+    api.sessionsVal = [...api.sessionsVal, sess("loose")];
+    api.layoutVal = { ...api.layoutVal, ungrouped: ["loose"], ungroupedIndex: 0 };
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(titles(m.container)).toEqual(["Ungrouped", "alpha", "bravo"]));
+
+    fireEvent.click(await menuItem(m, 1, "Move up")); // alpha, above Ungrouped
+
+    await waitFor(() => expect(titles(m.container)).toEqual(["alpha", "Ungrouped", "bravo"]));
+    expect(api.puts[0]!.ungroupedIndex).toBe(1);
+    m.store.dispose();
+  });
+});

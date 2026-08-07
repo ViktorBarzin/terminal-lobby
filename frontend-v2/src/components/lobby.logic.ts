@@ -13,7 +13,9 @@
  *    restore regroups them — but not rendered).
  *  - Ungrouped members are layout.ungrouped (live) followed by any live own
  *    session referenced by no group. Ungrouped hides while empty but keeps its
- *    slot (the sentinel stays in the sequence for reordering/capture).
+ *    slot (the sentinel stays in the sequence for reordering/capture) — so the
+ *    reorder CONTROLS must measure `visibleGroupSeqTokens`, not the raw token
+ *    sequence, or they offer the user a step onto a slot nobody can see.
  *  - foreign sessions (owner ≠ me) are a separate Shared-with-me list, owner-major.
  *  - the dock session (hidden scratch shell) is never rendered and never touched.
  */
@@ -60,6 +62,27 @@ export function groupSeqTokens(layout: Layout): string[] {
     if (i < n) seq.push("p:" + layout.projects[i]!.name);
   }
   return seq;
+}
+
+/** The token a rendered group occupies in the sequence above. */
+export function groupToken(g: RenderGroup): string {
+  return g.kind === "ungrouped" ? "u" : "p:" + g.name;
+}
+
+/**
+ * Does this group render? Projects always do (so they can be seen and dropped
+ * into); the Ungrouped sentinel hides while empty. The sidebar's filter and the
+ * move-up/down bounds read this one predicate deliberately — measuring the menu
+ * in token space while the user reads visible space is what made an edge
+ * group's Move item enabled and its first click a no-op.
+ */
+export function isGroupVisible(g: RenderGroup): boolean {
+  return g.kind === "project" || g.sessions.length > 0;
+}
+
+/** The group sequence as the USER sees it: tokens minus the hidden sentinel. */
+export function visibleGroupSeqTokens(model: SidebarModel): string[] {
+  return model.groups.filter(isGroupVisible).map(groupToken);
 }
 
 /** Rebuild {projects order, ungroupedIndex} from a reordered token sequence. */
