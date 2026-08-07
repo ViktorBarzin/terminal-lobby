@@ -47,6 +47,10 @@ export const SessionView: Component<{
   session: string;
   /** real OS-user owner when this is a shared/foreign attach (else undefined). */
   owner?: string;
+  /** TRUE while the app is CREATING this session (the poll has never seen it):
+   *  the terminal attach is what brings its tmux into being, so it must not wait
+   *  for the Terminal view the way an existing session's attach does. */
+  creating?: boolean;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** surface control-channel errors to the app's toast stack. */
@@ -240,6 +244,7 @@ export const SessionView: Component<{
             session={session}
             owner={props.owner}
             active={mode() === "terminal"}
+            creating={props.creating}
             newCommand={props.newCommand}
             onFrameCommand={props.onFrameCommand}
             onFrameAlt={props.onFrameAlt}
