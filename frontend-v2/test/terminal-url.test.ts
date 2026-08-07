@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildTerminalUrl, terminalUrl } from "../src/lib/terminal-url";
+import { projectDirFor } from "../src/components/App";
+import { LAYOUT_VERSION, type Layout } from "../src/types/lobby";
 
 describe("buildTerminalUrl — ttyd positional ?arg= contract", () => {
   it("own session, defaults: only arg1 (name)", () => {
@@ -86,5 +88,44 @@ describe("terminalUrl — config-bound (default /term.html base, avoids SPA recu
     expect(terminalUrl("foo", { cmd: "claude" })).toBe(
       "/term.html?arg=foo&arg=claude",
     );
+  });
+});
+
+/**
+ * The arg3 slot had a correct builder branch and NO caller: the one call site
+ * (TerminalView) passed only {cmd, owner}, so a session created inside a project
+ * with a `dir` opened in $HOME even though /api/layout carried the directory and
+ * the attach script honours it. This pins the lookup that feeds arg3.
+ */
+describe("projectDirFor — the layout directory a session should be born in", () => {
+  const layout = (): Layout => ({
+    version: LAYOUT_VERSION,
+    projects: [
+      { name: "qa-vdirp", sessions: ["qa-vdirs"], dir: "/tmp/qa-harness-scratch" },
+      { name: "nodir", sessions: ["plain"] },
+    ],
+    ungrouped: ["loose"],
+    ungroupedIndex: 0,
+  });
+
+  it("returns the owning project's dir", () => {
+    expect(projectDirFor(layout(), "qa-vdirs")).toBe("/tmp/qa-harness-scratch");
+  });
+
+  it("returns undefined for a session in a project that has no dir", () => {
+    expect(projectDirFor(layout(), "plain")).toBeUndefined();
+  });
+
+  it("returns undefined for an ungrouped session and for an unknown one", () => {
+    expect(projectDirFor(layout(), "loose")).toBeUndefined();
+    expect(projectDirFor(layout(), "never-heard-of-it")).toBeUndefined();
+  });
+
+  it("feeds buildTerminalUrl's arg3 branch", () => {
+    expect(
+      buildTerminalUrl("/term.html", "qa-vdirs", {
+        dir: projectDirFor(layout(), "qa-vdirs"),
+      }),
+    ).toBe("/term.html?arg=qa-vdirs&arg=default&arg=%2Ftmp%2Fqa-harness-scratch");
   });
 });

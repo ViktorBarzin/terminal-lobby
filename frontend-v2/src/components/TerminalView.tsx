@@ -52,6 +52,9 @@ export const TerminalView: Component<{
    *  yet, so the attach is what brings it into being and cannot wait for the
    *  Terminal view. Every other session attaches lazily. */
   creating?: boolean;
+  /** arg3 — the owning project's base directory, read ONCE at attach. `tmux -A`
+   *  ignores -c on a live session, so sending it every time is harmless. */
+  dir?: string;
   /** current roamed newCommand, read ONCE at attach (never re-navigates live). */
   newCommand?: () => string;
   /** a chord fired inside the terminal iframe, forwarded up (tl-command). */
@@ -131,6 +134,7 @@ export const TerminalView: Component<{
     const url = untrack(() =>
       terminalUrl(session, {
         cmd: props.newCommand?.(),
+        dir: props.dir || undefined,
         owner: owner || undefined,
       }),
     );

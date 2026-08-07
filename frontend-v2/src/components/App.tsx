@@ -11,7 +11,7 @@ import {
   type NotifyKind,
   type SelectedSession,
 } from "../store/lobby";
-import { NAME_RE } from "../types/lobby";
+import { NAME_RE, type Layout } from "../types/lobby";
 import { Sidebar } from "./Sidebar";
 import { SessionView } from "./SessionView";
 import { SettingsPanel } from "./SettingsPanel";
@@ -59,6 +59,19 @@ function readSidebarCollapsed(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The base directory a session should be born in: the `dir` of the layout
+ * project that owns it. /api/layout has carried a project dir all along and the
+ * attach URL has an arg3 slot for it (terminal-url.ts) — the two were simply
+ * never joined, so a session created inside a project started in $HOME. A
+ * project with no dir, an ungrouped session, or an unknown name all yield
+ * undefined and no arg3 is sent.
+ */
+export function projectDirFor(layout: Layout, session: string): string | undefined {
+  const project = layout.projects.find((p) => p.sessions.includes(session));
+  return project?.dir || undefined;
 }
 
 /**
@@ -159,6 +172,11 @@ export const App: Component = () => {
     const name = selectedName();
     if (!name || store.loading()) return false;
     return !store.sessions.some((s) => s.name === name);
+  });
+
+  const selectedDir = createMemo(() => {
+    const name = selectedName();
+    return name ? projectDirFor(store.layout(), name) : undefined;
   });
 
   // The mounted session's file-preview overlay, published up by SessionView.
@@ -339,6 +357,7 @@ export const App: Component = () => {
                 session={name}
                 owner={store.selected()?.owner}
                 creating={selectedIsCreating()}
+                dir={selectedDir()}
                 newCommand={newCommand}
                 notify={notify}
                 onFrameCommand={(cmd) => run(cmd)}
