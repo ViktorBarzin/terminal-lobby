@@ -288,7 +288,11 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
               already know, so gating it on an already-loaded file locked out
               exactly the sessions that need it (no transcript, no path). The
               store picks the starting directory. */}
-          <button type="button" class="tl-btn" onClick={() => void s.browseStart()}>
+          <button
+            type="button"
+            class="tl-btn"
+            onClick={() => void s.browseStart(pathInput())}
+          >
             Browse
           </button>
         </form>
