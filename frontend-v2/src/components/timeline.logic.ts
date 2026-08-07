@@ -80,6 +80,8 @@ export interface TurnFoldRow {
   count: number;
   durationMs?: number;
   hidden: LeafRow[];
+  /** At least one hidden row is a failure — the collapsed row must say so. */
+  hasError: boolean;
 }
 export interface WorkingRow {
   kind: "working";
@@ -137,6 +139,11 @@ function groupTurns(events: Event[]): Turn[] {
     if (i < turns.length - 1) t.ended = true;
   });
   return turns;
+}
+
+/** A leaf row that stands for something that went wrong. */
+function leafFailed(row: LeafRow): boolean {
+  return row.kind === "error" || (row.kind === "tool" && row.isError);
 }
 
 function turnDuration(turn: Turn): number | undefined {
@@ -312,6 +319,7 @@ export function deriveRows(events: Event[]): TimelineRow[] {
               turnKey: turn.key,
               count: hidden.length,
               hidden,
+              hasError: hidden.some(leafFailed),
               ...(turnDuration(turn) !== undefined
                 ? { durationMs: turnDuration(turn) }
                 : {}),
