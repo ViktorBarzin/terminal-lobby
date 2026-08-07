@@ -113,6 +113,7 @@ scp -o BatchMode=yes \
   devvm/tmux-user-dirlist \
   devvm/tmux-user-setfacl \
   devvm/tmux-restore-user \
+  devvm/tmux-persist-forget \
   devvm/claude-tmux-state \
   devvm/claude-se-hook \
   devvm/show-image \
@@ -156,6 +157,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   sudo install -m 0755 /tmp/tmux-user-dirlist /usr/local/bin/tmux-user-dirlist
   sudo install -m 0755 /tmp/tmux-user-setfacl /usr/local/bin/tmux-user-setfacl
   sudo install -m 0755 /tmp/tmux-restore-user /usr/local/bin/tmux-restore-user
+  sudo install -m 0755 /tmp/tmux-persist-forget /usr/local/bin/tmux-persist-forget
   sudo install -m 0755 /tmp/claude-tmux-state /usr/local/bin/claude-tmux-state
   sudo install -m 0755 /tmp/claude-se-hook    /usr/local/bin/claude-se-hook
   sudo install -m 0755 /tmp/show-image        /usr/local/bin/show-image
@@ -220,7 +222,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
   sudo systemctl enable --now clipboard-cleanup.timer
-  rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-user-dirlist /tmp/tmux-user-setfacl /tmp/tmux-restore-user /tmp/claude-tmux-state /tmp/claude-se-hook /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html /tmp/sw.js
+  rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-user-dirlist /tmp/tmux-user-setfacl /tmp/tmux-restore-user /tmp/tmux-persist-forget /tmp/claude-tmux-state /tmp/claude-se-hook /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html /tmp/sw.js
   rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png /tmp/icon-512-maskable.png
   rm -f /tmp/JetBrainsMono-Regular.woff2 /tmp/JetBrainsMono-Bold.woff2 /tmp/JetBrainsMono-Italic.woff2 /tmp/JetBrainsMono-BoldItalic.woff2 /tmp/dm-sans-latin-wght-normal.woff2 /tmp/tl-symbols.woff2
   rm -f /tmp/ttyd-user-map /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users /tmp/vapid.env
