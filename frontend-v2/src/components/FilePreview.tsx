@@ -12,6 +12,7 @@ import {
 import type { PreviewStore } from "../store/preview";
 import { HTML_SANDBOX } from "../store/preview.logic";
 import { fileReadUrl } from "../lib/config";
+import { IMAGE_DECODE_MESSAGE, imageErrorMessage } from "../lib/file-api";
 import { Markdown } from "./Markdown";
 import { CodeView } from "./CodeView";
 import { CodeEditor } from "./CodeEditor";
@@ -23,7 +24,8 @@ import { CodeEditor } from "./CodeEditor";
  * loaded file by kind — rendered markdown (reusing the Markdown+Mermaid stack),
  * a SANDBOXED iframe for HTML (srcdoc + sandbox="" — no scripts, no
  * same-origin), a read-only highlighted CodeView for code/text, and inline
- * images. Escape / backdrop click closes (Escape steps out of Browse first).
+ * images. Escape / backdrop click closes; Escape steps down the stack the user
+ * can see — Browse, then the editor, then the overlay.
  *
  * SECURITY: user HTML is rendered ONLY via <iframe srcdoc> with the empty
  * sandbox (HTML_SANDBOX), giving it a unique opaque origin and no script
@@ -41,18 +43,66 @@ function fmtBytes(n: number | null): string {
 
 export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
   const s = props.store;
+  let panelEl: HTMLDivElement | undefined;
+  let inputEl: HTMLInputElement | undefined;
   const [pathInput, setPathInput] = createSignal("");
-  const [imgError, setImgError] = createSignal(false);
+  // null while the image is fine; otherwise the message to show in its place.
+  const [imgError, setImgError] = createSignal<string | null>(null);
 
   // Reset the image-error latch whenever the previewed path changes.
   createEffect(() => {
     s.path();
-    setImgError(false);
+    setImgError(null);
   });
+
+  // Keep the path box on the file that is actually on screen. Only typing used
+  // to write it, so every other way in — a Browse entry, a recent chip, a
+  // transcript click — left the PREVIOUS path in the box: two filenames visible
+  // at once, and Enter silently re-opened the older one. Nothing here fights
+  // the user's typing: s.path() only changes when a file is opened.
+  createEffect(() => {
+    const p = s.path();
+    if (p !== null) setPathInput(p);
+  });
+
+  /**
+   * An <img> failed. It cannot say why on its own — and readFile skips the
+   * fetch for a name-classified image, so nothing else knows either. Show the
+   * decode message at once (something is always on screen), then ask the server
+   * for the real status and replace it: missing / too large / out of reach read
+   * exactly as they do for a text file. Only the error path pays for the probe.
+   */
+  const onImgError = (): void => {
+    const p = s.path();
+    setImgError(IMAGE_DECODE_MESSAGE);
+    if (!p) return;
+    void imageErrorMessage(p).then((message) => {
+      if (s.path() === p) setImgError(message); // ignore a superseded file
+    });
+  };
+
+  /** Tabbable descendants of the panel, in DOM order (disabled ones drop out). */
+  const tabbable = (): HTMLElement[] =>
+    panelEl
+      ? [
+          ...panelEl.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ]
+      : [];
 
   // Keyboard handling (capture + stop so it never leaks to the shell's other
   // handlers). Cmd/Ctrl-S saves while editing (regardless of focus in the
-  // overlay); Escape steps out of edit → browse → close, in that order.
+  // overlay); Tab is trapped inside the panel; Escape steps out of
+  // browse → edit → close, in that order.
+  //
+  // That order is the VISIBLE stack, and it has to be: the body switch renders
+  // <Match when={s.browsing()}> first and the header hides Edit/Save/View while
+  // browsing, so an editor open behind the browse pane is off-screen — and
+  // browse() never touches editState, so it stays open there. Asking the
+  // editor first meant Escape prompted "Discard unsaved changes?" about a layer
+  // the user could not see, threw the draft away on OK, and changed nothing on
+  // screen; the loss only showed up on Done.
   const onKey = (e: KeyboardEvent): void => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) {
       if (!s.editing()) return; // let the browser keep native Ctrl-S elsewhere
@@ -61,15 +111,53 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
       void s.save();
       return;
     }
+    // aria-modal="true" tells assistive tech Tab cannot leave this dialog, so
+    // it must not: the backdrop is opaque, and Tab used to walk out of it into
+    // the composer, the sidebar and the view switch — all invisible. Wrap at
+    // both ends instead. CodeMirror's own Tab (indent) is untouched: its
+    // contenteditable is not in the tabbable run, so this leaves it alone.
+    if (e.key === "Tab" && panelEl) {
+      const items = tabbable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      const outside = !panelEl.contains(active);
+      if (!first || !last) {
+        e.preventDefault();
+        panelEl.focus();
+      } else if (e.shiftKey && (outside || active === first || active === panelEl)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (outside || active === last)) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     if (e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
-    if (s.editing()) s.requestExitEdit();
-    else if (s.browsing()) s.closeBrowse();
+    if (s.browsing()) s.closeBrowse();
+    else if (s.editing()) s.requestExitEdit();
     else s.close();
   };
   onMount(() => document.addEventListener("keydown", onKey, true));
   onCleanup(() => document.removeEventListener("keydown", onKey, true));
+
+  // Focus. The panel's own empty state says "Type an absolute file path above",
+  // so opening it puts the caret there — blind typing lands in the box instead
+  // of in the session composer behind the backdrop. Every close path unmounts
+  // the overlay (SessionView renders it under <Show when={preview.isOpen()}>),
+  // so returning focus to the opener belongs in onCleanup and covers the ✕, the
+  // backdrop and Escape alike. Mirrors SettingsPanel/CommandPalette.
+  let opener: HTMLElement | null = null;
+  onMount(() => {
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    queueMicrotask(() => (inputEl ?? panelEl)?.focus());
+  });
+  onCleanup(() => {
+    if (opener && opener !== document.body && opener.isConnected) opener.focus();
+  });
 
   const submitPath = (e: SubmitEvent): void => {
     e.preventDefault();
@@ -84,7 +172,14 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
         if (e.target === e.currentTarget) s.close();
       }}
     >
-      <div class="tl-preview-panel" role="dialog" aria-label="File preview">
+      <div
+        ref={panelEl}
+        class="tl-preview-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="File preview"
+        tabindex="-1"
+      >
         <div class="tl-preview-head">
           <span class="tl-preview-name" title={s.path() ?? ""}>
             {s.name() || "File preview"}
@@ -168,6 +263,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
 
         <form class="tl-preview-pathbar" onSubmit={submitPath}>
           <input
+            ref={inputEl}
             class="tl-preview-pathinput"
             type="text"
             placeholder="/absolute/path/to/file"
@@ -309,8 +405,16 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
             <Match when={s.status() === "loaded"}>
               {/* quick-edit mode swaps the read-only body for CodeMirror. */}
               <Show when={s.editing()}>
+                {/* Seeded from the DRAFT, not the last saved text: the browse
+                    pane replaces this whole body, so CodeMirror is torn down
+                    and rebuilt around it. Seeding from s.text() brought the
+                    editor back showing the file on disk while the store still
+                    held the draft — a dirty dot over the wrong content, one
+                    Save away from writing something the user could not see.
+                    On a fresh Edit the two are equal (entering seeds
+                    draft = text), so nothing else changes. */}
                 <CodeEditor
-                  initialText={s.text()}
+                  initialText={s.draft()}
                   language={s.editLanguage()}
                   onChange={(txt) => s.setDraft(txt)}
                   onSave={() => void s.save()}
@@ -320,10 +424,10 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
               <Switch>
                 <Match when={s.kind() === "image"}>
                   <Show
-                    when={!imgError()}
+                    when={imgError() === null}
                     fallback={
                       <div class="tl-preview-note tl-preview-error">
-                        Couldn't load image.
+                        {imgError()}
                       </div>
                     }
                   >
@@ -331,7 +435,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                       <img
                         src={fileReadUrl(s.path()!)}
                         alt={s.name()}
-                        onError={() => setImgError(true)}
+                        onError={onImgError}
                       />
                     </div>
                   </Show>

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent } from "@solidjs/testing-library";
-import { createRoot } from "solid-js";
+import { render, fireEvent, waitFor } from "@solidjs/testing-library";
+import { Show, createRoot } from "solid-js";
 import { FilePreview } from "../src/components/FilePreview";
 import { createPreviewStore, type PreviewStore } from "../src/store/preview";
 import type { FileEntry, LoadedFile } from "../src/lib/file-api";
@@ -15,6 +15,7 @@ const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
 const roots: Array<() => void> = [];
 afterEach(() => {
   while (roots.length) roots.pop()!();
+  vi.unstubAllGlobals();
 });
 
 function makeStore(deps: Parameters<typeof createPreviewStore>[0]): PreviewStore {
@@ -130,6 +131,60 @@ describe("<FilePreview> — renders per kind + states", () => {
   });
 });
 
+// An <img> that fails says nothing about WHY on its own, and readFile never
+// fetched a name-classified image, so all three server refusals — missing, too
+// large, out of the home root — landed on one sentence about a broken image.
+describe("<FilePreview> — a failed image says what the server said", () => {
+  /** Stub the onerror probe's GET with a fixed non-OK status. */
+  function stubProbe(status: number, body = ""): ReturnType<typeof vi.fn> {
+    const spy = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status,
+          headers: { get: () => null },
+          text: async () => body,
+          body: { cancel: async () => {} },
+        }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", spy as unknown as typeof fetch);
+    return spy;
+  }
+
+  it("a 413 image reads as too large, not as a broken image", async () => {
+    stubProbe(413);
+    const store = await loaded(async () => ({ kind: "image" }), "/a/huge.png");
+    const { container, findByText } = render(() => <FilePreview store={store} />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(await findByText(/too large to preview/i)).toBeInTheDocument();
+  });
+
+  it("a 404 image reads as not found", async () => {
+    stubProbe(404);
+    const store = await loaded(async () => ({ kind: "image" }), "/a/nope.png");
+    const { container, findByText } = render(() => <FilePreview store={store} />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(await findByText("File not found.")).toBeInTheDocument();
+  });
+
+  it("an out-of-home image reads as out of reach", async () => {
+    stubProbe(400, "invalid path\n");
+    const store = await loaded(async () => ({ kind: "image" }), "/etc/logo.png");
+    const { container, findByText } = render(() => <FilePreview store={store} />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(await findByText(/outside your home folder/i)).toBeInTheDocument();
+  });
+
+  it("a healthy image costs no probe request", async () => {
+    const spy = stubProbe(404);
+    const store = await loaded(async () => ({ kind: "image" }), "/a/ok.png");
+    const { container } = render(() => <FilePreview store={store} />);
+    expect(container.querySelector("img")).toBeTruthy();
+    await Promise.resolve();
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
 describe("<FilePreview> — the size chip", () => {
   it("shows the byte size of a loaded file", async () => {
     const store = await loaded(
@@ -203,6 +258,62 @@ describe("<FilePreview> — recent files + explicit path entry", () => {
     expect(listDir).toHaveBeenCalledWith("/home/wizard", false);
   });
 
+  // The box is the app's own record of "which file is this". It was written
+  // only by typing, so opening a file any other way (a Browse entry, a recent
+  // chip, a transcript click) left the PREVIOUS path sitting in it: two
+  // filenames on screen at once, and Enter re-opened the older one.
+  it("follows the file on screen when one is opened from Browse", async () => {
+    const bodies: Record<string, string> = {
+      "/vfp/notes.txt": "baseline\n",
+      "/vfp/hello.md": "hello\n\nsecond file",
+    };
+    const loadFile = vi.fn(
+      async (p: string) => ({ kind: "code", text: bodies[p] ?? "" }) as LoadedFile,
+    );
+    const listDir = vi.fn(async () => [
+      { name: "hello.md", path: "/vfp/hello.md", size: 3, mtime: 0, isDir: false },
+    ]);
+    const store = makeStore({ loadFile, listDir });
+    const { getByLabelText, getByRole, findByRole } = render(() => (
+      <FilePreview store={store} />
+    ));
+    const input = getByLabelText("File path") as HTMLInputElement;
+
+    // Typed the first path, as a user does.
+    fireEvent.input(input, { target: { value: "/vfp/notes.txt" } });
+    fireEvent.submit(input.closest("form")!);
+    await Promise.resolve();
+    expect(input.value).toBe("/vfp/notes.txt");
+
+    // Browse → click the other file.
+    fireEvent.click(getByRole("button", { name: "Browse" }));
+    fireEvent.click(await findByRole("button", { name: /hello\.md/ }));
+    await Promise.resolve();
+
+    // The box names the file that is actually on screen …
+    expect(store.path()).toBe("/vfp/hello.md");
+    expect(input.value).toBe("/vfp/hello.md");
+
+    // … so Enter re-opens THAT file, not the one before it.
+    loadFile.mockClear();
+    fireEvent.submit(input.closest("form")!);
+    expect(loadFile).toHaveBeenCalledWith("/vfp/hello.md", "hello.md");
+  });
+
+  it("still lets you type a different path over it", async () => {
+    const loadFile = vi.fn(async () => ({ kind: "code", text: "x" }) as LoadedFile);
+    const store = makeStore({ loadFile });
+    await store.open("/vfp/notes.txt");
+    const { getByLabelText } = render(() => <FilePreview store={store} />);
+    const input = getByLabelText("File path") as HTMLInputElement;
+    expect(input.value).toBe("/vfp/notes.txt");
+
+    fireEvent.input(input, { target: { value: "/vfp/other.go" } });
+    expect(input.value).toBe("/vfp/other.go"); // typing is not overwritten
+    fireEvent.submit(input.closest("form")!);
+    expect(loadFile).toHaveBeenLastCalledWith("/vfp/other.go", "other.go");
+  });
+
   it("opens the path typed into the path box", async () => {
     const loadFile = vi.fn(async () => ({ kind: "code", text: "x" }) as LoadedFile);
     const store = makeStore({ loadFile });
@@ -220,6 +331,97 @@ describe("<FilePreview> — recent files + explicit path entry", () => {
 // The browse pane's only control was the path box, so the dotfiles file-api
 // deliberately allows you to edit (.gitignore, .env, .bashrc) could never be
 // listed — listDir's `all` parameter existed and was never passed.
+/**
+ * The panel is a modal over an opaque backdrop and its own empty state says
+ * "Type an absolute file path above" — but nothing focused the box, and Tab
+ * walked straight out into the session composer and the sidebar behind the
+ * backdrop (measured: 26 of 30 Tab presses landed outside the panel; reaching
+ * the path box took 7). Mirrors SettingsPanel.focus.test.tsx, whose panel makes
+ * — and keeps — the same three promises.
+ */
+describe("<FilePreview> — focus management", () => {
+  /** Mount an opener button + the <Show>-gated overlay, as SessionView wires it. */
+  function openPreview(store: PreviewStore) {
+    const utils = render(() => (
+      <>
+        <button type="button" class="tl-icon-btn tl-preview-btn" aria-label="File preview">
+          📄
+        </button>
+        <Show when={store.isOpen()}>
+          <FilePreview store={store} />
+        </Show>
+      </>
+    ));
+    const opener = utils.getByLabelText("File preview") as HTMLButtonElement;
+    opener.focus(); // a real click focuses the button; jsdom does not
+    store.show();
+    return { ...utils, opener };
+  }
+
+  async function ready(container: HTMLElement): Promise<HTMLElement> {
+    await waitFor(() => expect(container.querySelector(".tl-preview-panel")).not.toBeNull());
+    const panel = container.querySelector(".tl-preview-panel") as HTMLElement;
+    await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+    return panel;
+  }
+
+  it("puts the caret in the path box on open, so blind typing lands there", async () => {
+    const store = makeStore({});
+    const { container, getByLabelText } = openPreview(store);
+    await ready(container);
+    const input = getByLabelText("File path") as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+
+    // What a user typing straight after opening actually produces.
+    fireEvent.input(input, { target: { value: "/tmp/x" } });
+    expect(input.value).toBe("/tmp/x");
+  });
+
+  it("declares itself modal, which is what makes the Tab trap a promise", async () => {
+    const store = makeStore({});
+    const { container } = openPreview(store);
+    const panel = await ready(container);
+    expect(panel.getAttribute("role")).toBe("dialog");
+    expect(panel.getAttribute("aria-modal")).toBe("true");
+  });
+
+  it("keeps Tab inside the panel instead of walking into the app behind", async () => {
+    const store = makeStore({});
+    const { container } = openPreview(store);
+    const panel = await ready(container);
+
+    const tabbable = [
+      ...panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ];
+    const first = tabbable[0]!;
+    const last = tabbable[tabbable.length - 1]!;
+    expect(tabbable.length).toBeGreaterThan(1);
+
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+
+    first.focus();
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
+
+  it("gives focus back to the button that opened it", async () => {
+    const store = makeStore({});
+    const { container, opener, getByLabelText } = openPreview(store);
+    await ready(container);
+
+    const close = getByLabelText("Close preview") as HTMLButtonElement;
+    close.focus(); // what a real click does before the handler runs
+    fireEvent.click(close);
+
+    await waitFor(() => expect(container.querySelector(".tl-preview-panel")).toBeNull());
+    expect(document.activeElement).toBe(opener);
+  });
+});
+
 describe("<FilePreview> — the browse bar's hidden-files toggle", () => {
   const entry = (name: string): FileEntry => ({
     name,

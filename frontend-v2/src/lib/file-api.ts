@@ -94,6 +94,44 @@ export function readErrorMessage(status: number, body = ""): string {
 }
 
 /**
+ * What a failed <img> says when the server is not the reason — the bytes came
+ * back fine and the DECODE failed (corrupt or unsupported image), or the probe
+ * below could not run at all.
+ */
+export const IMAGE_DECODE_MESSAGE = "Couldn't load image.";
+
+/**
+ * Why did an <img> fail? readFile() classifies images by NAME and returns
+ * WITHOUT a fetch — the <img> element does the only round-trip — so the
+ * 404/413/400 vocabulary above never reached an image: a missing PNG, a 12MB
+ * PNG and a PNG outside the home root all read "Couldn't load image.", as if
+ * the file were damaged. The 413 is the one that costs the reader something:
+ * a readable file over the preview limit, with an actionable workaround,
+ * described as corruption.
+ *
+ * This resolves the real status on the ERROR path only, so the happy path
+ * keeps its single request: one GET whose body is cancelled unread (the 400
+ * body is read, as in readFile, because it is the only one that distinguishes
+ * anything). A 2xx here means the server was happy and the decode was not —
+ * the one case IMAGE_DECODE_MESSAGE actually describes.
+ */
+export async function imageErrorMessage(path: string): Promise<string> {
+  try {
+    const resp = await fetch(fileReadUrl(path), { credentials: "same-origin" });
+    if (resp.ok) {
+      await resp.body?.cancel().catch(() => {});
+      return IMAGE_DECODE_MESSAGE;
+    }
+    let body = "";
+    if (resp.status === 400) body = await resp.text().catch(() => "");
+    else await resp.body?.cancel().catch(() => {});
+    return readErrorMessage(resp.status, body);
+  } catch {
+    return IMAGE_DECODE_MESSAGE; // offline / aborted — no status to report
+  }
+}
+
+/**
  * Human message for an HTTP status from GET /files/list. A LISTING fails for
  * directory-shaped reasons — "not a directory", outside the home containment
  * root, or not absolute — so it needs its own vocabulary. Reusing the read
