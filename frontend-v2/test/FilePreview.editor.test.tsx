@@ -95,3 +95,146 @@ describe("<FilePreview> — quick-edit mode", () => {
     expect(queryByRole("button", { name: "Raw" })).toBeNull();
   });
 });
+
+/**
+ * Escape must step down the stack the user can SEE. The browse pane is the
+ * top <Match> of the body switch and hides the Edit/Save/View controls, so an
+ * editor open behind it is off-screen — yet Escape used to ask "Discard unsaved
+ * changes?" about that invisible editor, and accepting it destroyed the draft
+ * with nothing on screen changing at all. The user found out at Done.
+ */
+describe("<FilePreview> — Escape follows the stack you can see", () => {
+  const dir = "/tmp/qa-harness-scratch/vfp";
+
+  /** A loaded, editable file with an empty browse listing available. */
+  async function openFile(
+    confirm: (m: string) => boolean,
+  ): Promise<PreviewStore> {
+    const store = makeStore({
+      loadFile: codeFile("baseline\n"),
+      listDir: async () => [],
+      writeFile: vi.fn(async () => {}),
+      notify: vi.fn(),
+      confirm,
+    });
+    await store.open(`${dir}/notes.txt`);
+    return store;
+  }
+
+  const esc = (): boolean => fireEvent.keyDown(document, { key: "Escape" });
+
+  it("closes Browse first and leaves the dirty editor — and its draft — intact", async () => {
+    const confirm = vi.fn(() => true);
+    const store = await openFile(confirm);
+    render(() => <FilePreview store={store} />);
+
+    store.beginEdit();
+    store.setDraft("baseline\nDRAFT-KEEPME");
+    await store.browse(dir);
+    expect(store.browsing()).toBe(true);
+
+    esc();
+
+    // The layer on screen is the one that closed; nothing was discarded.
+    expect(store.browsing()).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(store.editing()).toBe(true);
+    expect(store.unsaved()).toBe(true);
+    expect(store.draft()).toBe("baseline\nDRAFT-KEEPME");
+  });
+
+  // The browse pane REPLACES the body, so CodeMirror is unmounted while it is
+  // open and rebuilt when it closes — from `initialText`, which was the last
+  // SAVED text. The store still held the draft (dirty dot on, Save enabled), so
+  // the editor came back showing the file on disk while the app was one Save
+  // away from writing something else. Only reachable through Done before
+  // Escape stopped discarding the draft; now it is the normal way back.
+  it("brings the draft back with the editor when Browse closes", async () => {
+    const store = await openFile(() => true);
+    const { container } = render(() => <FilePreview store={store} />);
+
+    store.beginEdit();
+    await waitFor(() => expect(container.querySelector(".cm-content")).toBeTruthy());
+    store.setDraft("baseline\nDRAFT-KEEPME");
+    await store.browse(dir);
+    expect(container.querySelector(".cm-content")).toBeNull(); // covered by Browse
+
+    esc(); // back to the editor
+
+    await waitFor(() =>
+      expect(container.querySelector(".cm-content")?.textContent).toContain(
+        "DRAFT-KEEPME",
+      ),
+    );
+    expect(store.unsaved()).toBe(true);
+  });
+
+  it("prompts only once the editor is the layer on screen", async () => {
+    const confirm = vi.fn(() => true);
+    const store = await openFile(confirm);
+    render(() => <FilePreview store={store} />);
+
+    store.beginEdit();
+    store.setDraft("baseline\nDRAFT-KEEPME");
+    await store.browse(dir);
+
+    esc(); // 1 — Browse
+    expect(confirm).not.toHaveBeenCalled();
+    esc(); // 2 — the editor, now visible: this one is allowed to ask
+    expect(confirm).toHaveBeenCalledWith("Discard unsaved changes?");
+    expect(store.editing()).toBe(false);
+    expect(store.isOpen()).toBe(true); // the overlay survives the discard
+  });
+
+  it("keeps the draft when the discard prompt is declined", async () => {
+    const confirm = vi.fn(() => false);
+    const store = await openFile(confirm);
+    render(() => <FilePreview store={store} />);
+
+    store.beginEdit();
+    store.setDraft("baseline\nDRAFT-KEEPME");
+    await store.browse(dir);
+
+    esc(); // Browse
+    esc(); // the editor — declined
+    expect(store.editing()).toBe(true);
+    expect(store.draft()).toBe("baseline\nDRAFT-KEEPME");
+  });
+
+  it("takes exactly two Escapes for the two visible layers (Browse over a file)", async () => {
+    const store = await openFile(() => true);
+    render(() => <FilePreview store={store} />);
+
+    await store.browse(dir);
+    esc();
+    expect(store.browsing()).toBe(false);
+    expect(store.isOpen()).toBe(true);
+    esc();
+    expect(store.isOpen()).toBe(false);
+  });
+
+  it("never spends an Escape on an invisible layer (clean editor behind Browse)", async () => {
+    const store = await openFile(() => true);
+    render(() => <FilePreview store={store} />);
+
+    store.beginEdit(); // clean — no draft typed
+    await store.browse(dir);
+
+    // Every press changes something the user can see: Browse, then the editor
+    // it was hiding, then the overlay. No silent no-op in the ladder.
+    esc();
+    expect([store.browsing(), store.editing(), store.isOpen()]).toEqual([
+      false,
+      true,
+      true,
+    ]);
+    esc();
+    expect([store.browsing(), store.editing(), store.isOpen()]).toEqual([
+      false,
+      false,
+      true,
+    ]);
+    esc();
+    expect(store.isOpen()).toBe(false);
+  });
+});
