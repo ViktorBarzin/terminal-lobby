@@ -510,3 +510,37 @@ describe("<FilePreview> — relative images in a previewed markdown file", () =>
     ]);
   });
 });
+
+describe("<FilePreview> — the Browse button reads the path box", () => {
+  it("lists the directory typed beside it, not the loaded file's", async () => {
+    // The button sits next to the path box and ignored it: with code.ts open,
+    // typing a sibling folder and pressing Browse listed code.ts's own folder.
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const store = makeStore({
+      listDir,
+      loadFile: async () => ({ kind: "code", text: "x" }),
+    });
+    await store.open("/home/u/vfpx/code.ts");
+    const { getByRole, getByLabelText } = render(() => <FilePreview store={store} />);
+
+    const box = getByLabelText("File path") as HTMLInputElement;
+    expect(box.value).toBe("/home/u/vfpx/code.ts"); // the box mirrors the file
+    fireEvent.input(box, { target: { value: "/home/u/vfpx/sub" } });
+    fireEvent.click(getByRole("button", { name: "Browse" }));
+
+    await waitFor(() => expect(listDir).toHaveBeenCalledWith("/home/u/vfpx/sub", false));
+  });
+
+  it("still lists the loaded file's folder when the box was left alone", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const store = makeStore({
+      listDir,
+      loadFile: async () => ({ kind: "code", text: "x" }),
+    });
+    await store.open("/home/u/vfpx/code.ts");
+    const { getByRole } = render(() => <FilePreview store={store} />);
+
+    fireEvent.click(getByRole("button", { name: "Browse" }));
+    await waitFor(() => expect(listDir).toHaveBeenCalledWith("/home/u/vfpx", false));
+  });
+});
