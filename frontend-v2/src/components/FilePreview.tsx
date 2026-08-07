@@ -23,7 +23,8 @@ import { CodeEditor } from "./CodeEditor";
  * loaded file by kind — rendered markdown (reusing the Markdown+Mermaid stack),
  * a SANDBOXED iframe for HTML (srcdoc + sandbox="" — no scripts, no
  * same-origin), a read-only highlighted CodeView for code/text, and inline
- * images. Escape / backdrop click closes (Escape steps out of Browse first).
+ * images. Escape / backdrop click closes; Escape steps down the stack the user
+ * can see — Browse, then the editor, then the overlay.
  *
  * SECURITY: user HTML is rendered ONLY via <iframe srcdoc> with the empty
  * sandbox (HTML_SANDBOX), giving it a unique opaque origin and no script
@@ -52,7 +53,15 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
 
   // Keyboard handling (capture + stop so it never leaks to the shell's other
   // handlers). Cmd/Ctrl-S saves while editing (regardless of focus in the
-  // overlay); Escape steps out of edit → browse → close, in that order.
+  // overlay); Escape steps out of browse → edit → close, in that order.
+  //
+  // That order is the VISIBLE stack, and it has to be: the body switch renders
+  // <Match when={s.browsing()}> first and the header hides Edit/Save/View while
+  // browsing, so an editor open behind the browse pane is off-screen — and
+  // browse() never touches editState, so it stays open there. Asking the
+  // editor first meant Escape prompted "Discard unsaved changes?" about a layer
+  // the user could not see, threw the draft away on OK, and changed nothing on
+  // screen; the loss only showed up on Done.
   const onKey = (e: KeyboardEvent): void => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) {
       if (!s.editing()) return; // let the browser keep native Ctrl-S elsewhere
@@ -64,8 +73,8 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
     if (e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
-    if (s.editing()) s.requestExitEdit();
-    else if (s.browsing()) s.closeBrowse();
+    if (s.browsing()) s.closeBrowse();
+    else if (s.editing()) s.requestExitEdit();
     else s.close();
   };
   onMount(() => document.addEventListener("keydown", onKey, true));
