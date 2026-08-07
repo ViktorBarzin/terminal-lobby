@@ -70,15 +70,18 @@ export function installImageClipboard(
 
   const [dropActive, setDropActive] = createSignal(false);
 
-  // ---- one uploaded image → its path typed into the pty -------------------
-  async function uploadImageToPty(blob: Blob, filename?: string): Promise<void> {
-    track(filename ? "image.dropped" : "image.pasted", { "tl.count": blob.size });
+  // ---- one PASTED image → its path typed into the pty ----------------------
+  // Paste-only: the drop path is uploadDropped, which handles many files of any
+  // type. A `filename` parameter here once made this look shared, and its
+  // telemetry branched on it — but no caller ever passed one, so the
+  // "image.dropped" arm was unreachable and every drop went unrecorded.
+  async function uploadImageToPty(blob: Blob): Promise<void> {
+    track("image.pasted", { "tl.count": blob.size });
     const loading = toast("Uploading image…", "loading");
     try {
       const path = await upload(blob, {
         session: deps.session(),
         field: "image",
-        ...(filename ? { filename } : {}),
       });
       dismiss(loading);
       deps.sendToPty(ptyPathBytes([path]));
@@ -100,6 +103,11 @@ export function installImageClipboard(
 
   // ---- drop: many files, images to the gallery, rest to /tmp --------------
   async function uploadDropped(files: File[]): Promise<void> {
+    // Up front, and counting the files DROPPED rather than the ones that
+    // uploaded: the event records the gesture (ADR-0006 attributes paste/drop
+    // to both lobbies), so a failing intake must not erase the drop from the
+    // stream. Same shape the vanilla page emits.
+    track("image.dropped", { "tl.count": files.length });
     const loading = toast(
       `Uploading ${files.length} file${files.length > 1 ? "s" : ""}…`,
       "loading",
