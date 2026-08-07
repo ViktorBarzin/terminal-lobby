@@ -91,7 +91,15 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
       [
         [[`${ALT}+Shift+S`], "Toggle sidebar"],
         [["Ctrl+Shift+K"], "Command palette"],
-        [[`${MOD}+J`], "Toggle text / terminal view (works in a session)"],
+        // ALWAYS ON by design, on both sides of the iframe boundary and by two
+        // separate mechanisms: SessionView registers an unconditional
+        // capture-phase window listener that never consults the engine, and
+        // term.html carries ctrl+j/meta+j in the terminal page's own
+        // KB_ALWAYS_BINDINGS, evaluated ahead of its `enabled` gate.
+        [
+          [`${MOD}+J`],
+          "Toggle text / terminal view (works in a session; always on)",
+        ],
         // Bare "/" and "?" are a separate window listener in the shell (App),
         // not a table binding, so they never consult the ⚙ toggle either. Only
         // Alt+/ is part of the toggleable layer.
