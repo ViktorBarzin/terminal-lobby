@@ -29,7 +29,23 @@ func (in *Injector) cmd(osUser string, args ...string) *exec.Cmd {
 }
 
 // Prompt injects text as a bracketed paste, then submits with Enter.
+//
+// It clears the pane's input line first, so what is submitted is exactly what
+// the composer sent. The pane is rarely empty: Claude Code puts an interrupted
+// prompt BACK on its input line, so after a Stop the next prompt used to be
+// submitted concatenated onto the one the operator had just cancelled — the
+// cancelled work re-ran and the new prompt was mangled. A draft left in the
+// pane from the Terminal view did the same thing.
+//
+// C-e then C-u, not C-u alone: in Claude Code's input C-u kills only to the
+// start of the line, so a cursor left mid-text (measured) leaves the tail
+// behind. Going to the end first makes the kill total. In a plain shell the
+// C-e is a literal control character in the line buffer, which the C-u then
+// erases along with everything else.
 func (in *Injector) Prompt(osUser, session, text string) error {
+	if err := in.cmd(osUser, "send-keys", "-t", session, "C-e", "C-u").Run(); err != nil {
+		return err
+	}
 	if err := in.cmd(osUser, "set-buffer", "--", text).Run(); err != nil {
 		return err
 	}
@@ -68,9 +84,32 @@ func (in *Injector) Cancel(osUser, session string) error {
 // State returns the @claude_state option value (running/awaiting/done/"") for the
 // session, used to gate prompt injection. Empty on any error (fail-open to allow).
 func (in *Injector) State(osUser, session string) string {
-	out, err := in.cmd(osUser, "display-message", "-p", "-t", session, "#{@claude_state}").Output()
+	v, _ := in.Option(osUser, session, "@claude_state")
+	return v
+}
+
+// Option reads a tmux session option, empty when it is unset. ok=false means
+// the read did not land on the session that was asked for — a different answer
+// from "set to nothing".
+//
+// The answer is self-validating because tmux does NOT fail an unknown target:
+// `display-message -p -t no-such-session` exits 0 (measured on tmux 3.4), so
+// the requested name is printed back alongside the value and has to match, or
+// the value is not this session's to serve.
+func (in *Injector) Option(osUser, session, name string) (string, bool) {
+	out, err := in.cmd(osUser, "display-message", "-p", "-t", session,
+		"#{session_name}\n#{"+name+"}").Output()
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return strings.TrimSpace(string(out))
+	got, value, found := strings.Cut(strings.TrimSuffix(string(out), "\n"), "\n")
+	if !found || got != session {
+		return "", false
+	}
+	return strings.TrimSpace(value), true
+}
+
+// SetOption stamps a tmux session option. It fails if the session does not exist.
+func (in *Injector) SetOption(osUser, session, name, value string) error {
+	return in.cmd(osUser, "set-option", "-t", session, name, value).Run()
 }
