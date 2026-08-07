@@ -112,9 +112,10 @@ export interface PreviewStore {
   /** list a directory into the browse pane. */
   browse: (dir: string) => Promise<void>;
   /** open the browse pane from the best directory we know (the Browse button).
-   *  Works with no file loaded — that is the only door in for a session with no
-   *  transcript. */
-  browseStart: () => Promise<void>;
+   *  `typed` is the path box's current text, which wins when the user has
+   *  actually typed something. Works with no file loaded — that is the only door
+   *  in for a session with no transcript. */
+  browseStart: (typed?: string) => Promise<void>;
   /** go to the parent of the current browse dir; inert at the containment root. */
   browseUp: () => Promise<void>;
   /** flip the dotfile filter, re-listing the open directory so the pane follows
@@ -383,18 +384,26 @@ export function createPreviewStore(deps: PreviewDeps = {}): PreviewStore {
   }
 
   /**
-   * The Browse button. Starts from the best directory we already know — the
-   * path box's own value when the server already told us it is a directory,
-   * else the loaded file's directory, else wherever the pane was last, else the
-   * newest file the transcript mentions — and only then asks where home is.
-   * That last hop is what makes Browse usable on a plain shell session, which
-   * has no loaded file and no transcript to mine.
+   * The Browse button. Starts from the best directory we already know — what
+   * the user typed in the path box, else the loaded file's own directory, else
+   * wherever the pane was last, else the newest file the transcript mentions —
+   * and only then asks where home is. That last hop is what makes Browse usable
+   * on a plain shell session, which has no loaded file and no transcript.
+   *
+   * `typed` outranks everything because the box sits directly beside the button
+   * and the button used to ignore it: typing a folder and pressing Browse
+   * listed the loaded file's directory and dropped the typed text silently.
+   * "Typed" means DIFFERENT from the open file — an effect keeps the box
+   * mirroring path(), so a box that still matches is a box nobody has touched,
+   * and the rules below stand.
    *
    * The directory case is not a nicety: the read error for a folder says "press
    * Browse to list what's inside it", and dirname() would have listed the
    * folder's PARENT — the sentence would be wrong by one click.
    */
-  async function browseStart(): Promise<void> {
+  async function browseStart(typed?: string): Promise<void> {
+    const t = (typed ?? "").trim();
+    if (t && t !== path()) return browse(t);
     const p = path();
     if (p) return browse(pathIsDir() ? p : dirname(p));
     const last = browseDir();

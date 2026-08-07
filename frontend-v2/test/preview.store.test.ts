@@ -528,6 +528,60 @@ describe("preview store — browseStart, the cold-open entry", () => {
     dispose();
   });
 
+  // The path box sits directly beside the Browse button, and the button never
+  // read it: typing a folder and pressing Browse listed the LOADED file's
+  // directory instead, discarding the typed text with no signal.
+  it("lists what the user typed, in preference to the loaded file's directory", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({
+      listDir,
+      loadFile: async () => ({ kind: "code", text: "x" }),
+    });
+    await s.open("/home/u/proj/main.ts");
+    await s.browseStart("/home/u/proj/sub");
+    expect(listDir).toHaveBeenCalledWith("/home/u/proj/sub", false);
+    expect(s.browseDir()).toBe("/home/u/proj/sub");
+    dispose();
+  });
+
+  it("lists what the user typed even with no file loaded at all", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({ listDir, homeDir: async () => "/home/u" });
+    s.show();
+    await s.browseStart("  /home/u/typed  ");
+    expect(listDir).toHaveBeenCalledWith("/home/u/typed", false);
+    dispose();
+  });
+
+  // The box MIRRORS the open file (an effect keeps it in sync), so a box that
+  // still equals path() means nothing was typed — the old behaviour stands, and
+  // the deliberate folder route below keeps working.
+  it("treats a box that still mirrors the open file as nothing typed", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({
+      listDir,
+      loadFile: async () => ({ kind: "code", text: "x" }),
+    });
+    await s.open("/home/u/proj/main.ts");
+    await s.browseStart("/home/u/proj/main.ts");
+    expect(listDir).toHaveBeenCalledWith("/home/u/proj", false);
+    dispose();
+  });
+
+  it("keeps the folder-Open → Browse route when the box mirrors that folder", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const [s, dispose] = withStore({
+      listDir,
+      loadFile: async () => {
+        throw new FileApiError(400, readErrorMessage(400, "path is a directory\n"), true);
+      },
+    });
+    await s.open("/home/u/proj/sub");
+    await s.browseStart("/home/u/proj/sub");
+    expect(listDir).toHaveBeenCalledWith("/home/u/proj/sub", false);
+    dispose();
+  });
+
   it("opens the browse pane with an explanation when even home is unknown", async () => {
     const listDir = vi.fn(async () => [] as FileEntry[]);
     const [s, dispose] = withStore({ listDir, homeDir: async () => null });
