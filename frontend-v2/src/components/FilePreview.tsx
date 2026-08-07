@@ -43,6 +43,8 @@ function fmtBytes(n: number | null): string {
 
 export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
   const s = props.store;
+  let panelEl: HTMLDivElement | undefined;
+  let inputEl: HTMLInputElement | undefined;
   const [pathInput, setPathInput] = createSignal("");
   // null while the image is fine; otherwise the message to show in its place.
   const [imgError, setImgError] = createSignal<string | null>(null);
@@ -79,9 +81,20 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
     });
   };
 
+  /** Tabbable descendants of the panel, in DOM order (disabled ones drop out). */
+  const tabbable = (): HTMLElement[] =>
+    panelEl
+      ? [
+          ...panelEl.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ]
+      : [];
+
   // Keyboard handling (capture + stop so it never leaks to the shell's other
   // handlers). Cmd/Ctrl-S saves while editing (regardless of focus in the
-  // overlay); Escape steps out of browse → edit → close, in that order.
+  // overlay); Tab is trapped inside the panel; Escape steps out of
+  // browse → edit → close, in that order.
   //
   // That order is the VISIBLE stack, and it has to be: the body switch renders
   // <Match when={s.browsing()}> first and the header hides Edit/Save/View while
@@ -98,6 +111,29 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
       void s.save();
       return;
     }
+    // aria-modal="true" tells assistive tech Tab cannot leave this dialog, so
+    // it must not: the backdrop is opaque, and Tab used to walk out of it into
+    // the composer, the sidebar and the view switch — all invisible. Wrap at
+    // both ends instead. CodeMirror's own Tab (indent) is untouched: its
+    // contenteditable is not in the tabbable run, so this leaves it alone.
+    if (e.key === "Tab" && panelEl) {
+      const items = tabbable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      const outside = !panelEl.contains(active);
+      if (!first || !last) {
+        e.preventDefault();
+        panelEl.focus();
+      } else if (e.shiftKey && (outside || active === first || active === panelEl)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (outside || active === last)) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     if (e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
@@ -107,6 +143,21 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
   };
   onMount(() => document.addEventListener("keydown", onKey, true));
   onCleanup(() => document.removeEventListener("keydown", onKey, true));
+
+  // Focus. The panel's own empty state says "Type an absolute file path above",
+  // so opening it puts the caret there — blind typing lands in the box instead
+  // of in the session composer behind the backdrop. Every close path unmounts
+  // the overlay (SessionView renders it under <Show when={preview.isOpen()}>),
+  // so returning focus to the opener belongs in onCleanup and covers the ✕, the
+  // backdrop and Escape alike. Mirrors SettingsPanel/CommandPalette.
+  let opener: HTMLElement | null = null;
+  onMount(() => {
+    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    queueMicrotask(() => (inputEl ?? panelEl)?.focus());
+  });
+  onCleanup(() => {
+    if (opener && opener !== document.body && opener.isConnected) opener.focus();
+  });
 
   const submitPath = (e: SubmitEvent): void => {
     e.preventDefault();
@@ -121,7 +172,14 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
         if (e.target === e.currentTarget) s.close();
       }}
     >
-      <div class="tl-preview-panel" role="dialog" aria-label="File preview">
+      <div
+        ref={panelEl}
+        class="tl-preview-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="File preview"
+        tabindex="-1"
+      >
         <div class="tl-preview-head">
           <span class="tl-preview-name" title={s.path() ?? ""}>
             {s.name() || "File preview"}
@@ -205,6 +263,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
 
         <form class="tl-preview-pathbar" onSubmit={submitPath}>
           <input
+            ref={inputEl}
             class="tl-preview-pathinput"
             type="text"
             placeholder="/absolute/path/to/file"
