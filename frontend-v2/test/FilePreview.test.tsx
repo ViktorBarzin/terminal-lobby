@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent } from "@solidjs/testing-library";
-import { createRoot } from "solid-js";
+import { render, fireEvent, waitFor } from "@solidjs/testing-library";
+import { Show, createRoot } from "solid-js";
 import { FilePreview } from "../src/components/FilePreview";
 import { createPreviewStore, type PreviewStore } from "../src/store/preview";
 import type { FileEntry, LoadedFile } from "../src/lib/file-api";
@@ -331,6 +331,97 @@ describe("<FilePreview> — recent files + explicit path entry", () => {
 // The browse pane's only control was the path box, so the dotfiles file-api
 // deliberately allows you to edit (.gitignore, .env, .bashrc) could never be
 // listed — listDir's `all` parameter existed and was never passed.
+/**
+ * The panel is a modal over an opaque backdrop and its own empty state says
+ * "Type an absolute file path above" — but nothing focused the box, and Tab
+ * walked straight out into the session composer and the sidebar behind the
+ * backdrop (measured: 26 of 30 Tab presses landed outside the panel; reaching
+ * the path box took 7). Mirrors SettingsPanel.focus.test.tsx, whose panel makes
+ * — and keeps — the same three promises.
+ */
+describe("<FilePreview> — focus management", () => {
+  /** Mount an opener button + the <Show>-gated overlay, as SessionView wires it. */
+  function openPreview(store: PreviewStore) {
+    const utils = render(() => (
+      <>
+        <button type="button" class="tl-icon-btn tl-preview-btn" aria-label="File preview">
+          📄
+        </button>
+        <Show when={store.isOpen()}>
+          <FilePreview store={store} />
+        </Show>
+      </>
+    ));
+    const opener = utils.getByLabelText("File preview") as HTMLButtonElement;
+    opener.focus(); // a real click focuses the button; jsdom does not
+    store.show();
+    return { ...utils, opener };
+  }
+
+  async function ready(container: HTMLElement): Promise<HTMLElement> {
+    await waitFor(() => expect(container.querySelector(".tl-preview-panel")).not.toBeNull());
+    const panel = container.querySelector(".tl-preview-panel") as HTMLElement;
+    await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+    return panel;
+  }
+
+  it("puts the caret in the path box on open, so blind typing lands there", async () => {
+    const store = makeStore({});
+    const { container, getByLabelText } = openPreview(store);
+    await ready(container);
+    const input = getByLabelText("File path") as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+
+    // What a user typing straight after opening actually produces.
+    fireEvent.input(input, { target: { value: "/tmp/x" } });
+    expect(input.value).toBe("/tmp/x");
+  });
+
+  it("declares itself modal, which is what makes the Tab trap a promise", async () => {
+    const store = makeStore({});
+    const { container } = openPreview(store);
+    const panel = await ready(container);
+    expect(panel.getAttribute("role")).toBe("dialog");
+    expect(panel.getAttribute("aria-modal")).toBe("true");
+  });
+
+  it("keeps Tab inside the panel instead of walking into the app behind", async () => {
+    const store = makeStore({});
+    const { container } = openPreview(store);
+    const panel = await ready(container);
+
+    const tabbable = [
+      ...panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ];
+    const first = tabbable[0]!;
+    const last = tabbable[tabbable.length - 1]!;
+    expect(tabbable.length).toBeGreaterThan(1);
+
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+
+    first.focus();
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
+
+  it("gives focus back to the button that opened it", async () => {
+    const store = makeStore({});
+    const { container, opener, getByLabelText } = openPreview(store);
+    await ready(container);
+
+    const close = getByLabelText("Close preview") as HTMLButtonElement;
+    close.focus(); // what a real click does before the handler runs
+    fireEvent.click(close);
+
+    await waitFor(() => expect(container.querySelector(".tl-preview-panel")).toBeNull());
+    expect(document.activeElement).toBe(opener);
+  });
+});
+
 describe("<FilePreview> — the browse bar's hidden-files toggle", () => {
   const entry = (name: string): FileEntry => ({
     name,
