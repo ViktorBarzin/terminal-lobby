@@ -405,8 +405,16 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
             <Match when={s.status() === "loaded"}>
               {/* quick-edit mode swaps the read-only body for CodeMirror. */}
               <Show when={s.editing()}>
+                {/* Seeded from the DRAFT, not the last saved text: the browse
+                    pane replaces this whole body, so CodeMirror is torn down
+                    and rebuilt around it. Seeding from s.text() brought the
+                    editor back showing the file on disk while the store still
+                    held the draft — a dirty dot over the wrong content, one
+                    Save away from writing something the user could not see.
+                    On a fresh Edit the two are equal (entering seeds
+                    draft = text), so nothing else changes. */}
                 <CodeEditor
-                  initialText={s.text()}
+                  initialText={s.draft()}
                   language={s.editLanguage()}
                   onChange={(txt) => s.setDraft(txt)}
                   onSave={() => void s.save()}
