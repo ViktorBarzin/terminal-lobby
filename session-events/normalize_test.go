@@ -436,3 +436,89 @@ func countKind(evs []Event, k Kind) int {
 	}
 	return n
 }
+
+// --- interrupts that never reach the transcript ------------------------------
+//
+// Interrupt AFTER Claude has started streaming and the transcript carries the
+// notice above, which settles the turn. Interrupt BEFORE the first token —
+// reliably reproducible at ~1.2 s — and Claude writes nothing at all: no
+// notice, sometimes not even the prompt line. The transcript is then the only
+// settle rule for a turn the transcript will never mention again, so the
+// composer sat on "Working…" + Stop forever, surviving a full page reload,
+// while tmux already reported @claude_state=done (measured 2026-08-06).
+//
+// So the cancel path settles the turn itself: session-events knows the
+// interrupt landed, and says so on the stream.
+
+// The turn open when the interrupt lands is the turn it settles.
+func TestNormalizerInterruptSettlesTheOpenTurn(t *testing.T) {
+	n := NewNormalizer("demo")
+	out := n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"count to 400"}]},"timestamp":"2026-08-06T10:00:00Z"}`))
+	turn := out[0].TurnID
+
+	e, ok := n.Interrupt(1786053601000)
+	if !ok {
+		t.Fatal("an interrupt during an open turn produced no settle event — the composer stays on Stop")
+	}
+	if e.Kind != KindTurnEnd {
+		t.Fatalf("settle event = %v, want %v", e.Kind, KindTurnEnd)
+	}
+	if e.TurnID != turn {
+		t.Fatalf("settle event closes turn %q, want the open turn %q", e.TurnID, turn)
+	}
+	if e.At != 1786053601000 {
+		t.Fatalf("settle event at = %d, want the interrupt's own timestamp", e.At)
+	}
+}
+
+// A turn that already settled needs nothing: cancelling an idle session must
+// not litter the stream.
+func TestNormalizerInterruptOnASettledTurnEmitsNothing(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"timestamp":"2026-08-06T10:00:00Z"}`))
+	n.Line([]byte(`{"type":"assistant","message":{"id":"msg_1","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"hello"}]},"timestamp":"2026-08-06T10:00:01Z"}`))
+
+	if e, ok := n.Interrupt(1786053601000); ok {
+		t.Fatalf("settled turn produced a second settle event: %+v", e)
+	}
+}
+
+// The race the direct settle cannot cover on its own: the transcript is tailed
+// on a 200 ms tick, so a prompt written just before the interrupt can be read
+// just after it. It opens a turn nobody is working on, and nothing later
+// settles it — the same wedge one poll interval later. A prompt older than the
+// interrupt is therefore born settled.
+func TestNormalizerPromptWrittenBeforeTheInterruptIsBornSettled(t *testing.T) {
+	n := NewNormalizer("demo")
+	// Nothing open yet: the tail has not seen the prompt line.
+	if _, ok := n.Interrupt(mustAt(t, "2026-08-06T10:00:02Z")); ok {
+		t.Fatal("nothing was open; the interrupt should have had nothing to settle")
+	}
+
+	out := n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"count to 400"}]},"timestamp":"2026-08-06T10:00:01Z"}`))
+	if got := kinds(out); len(got) != 2 || got[0] != KindUser || got[1] != KindTurnEnd {
+		t.Fatalf("prompt older than the interrupt produced %v, want [user turn_end]", got)
+	}
+	if out[1].TurnID != out[0].TurnID {
+		t.Fatalf("turn_end closes %q, want the prompt's turn %q", out[1].TurnID, out[0].TurnID)
+	}
+}
+
+// ...and the next real prompt is NOT swallowed by the same watermark.
+func TestNormalizerPromptAfterTheInterruptStaysOpen(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Interrupt(mustAt(t, "2026-08-06T10:00:02Z"))
+	out := n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"PING"}]},"timestamp":"2026-08-06T10:00:03Z"}`))
+	if got := kinds(out); len(got) != 1 || got[0] != KindUser {
+		t.Fatalf("prompt after the interrupt produced %v, want [user] — it is a live turn", got)
+	}
+}
+
+func mustAt(t *testing.T, ts string) int64 {
+	t.Helper()
+	at := parseAt(ts)
+	if at == 0 {
+		t.Fatalf("bad test timestamp %q", ts)
+	}
+	return at
+}

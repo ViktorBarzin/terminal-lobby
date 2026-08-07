@@ -22,6 +22,9 @@ type fileSource struct {
 	subs    map[int]chan Event
 	nextSub int
 
+	// norm is written by the tail AND by Interrupt (an HTTP handler), so it has
+	// its own lock. Order is always normMu -> mu, never the reverse.
+	normMu sync.Mutex
 	norm   *Normalizer
 	offset int64 // touched only by the Run goroutine
 }
@@ -86,10 +89,24 @@ func (f *fileSource) tailOnce() {
 		return // transcript may not exist yet; try again next tick
 	}
 	f.offset = next
+	f.normMu.Lock()
+	defer f.normMu.Unlock()
 	for _, ln := range lines {
 		for _, e := range f.norm.Line([]byte(ln)) {
 			f.Append(e)
 		}
+	}
+}
+
+// Interrupt records an operator interrupt on this session at `at` (epoch ms)
+// and streams the turn_end it implies, if a turn was open. An interrupt that
+// lands before Claude's first token leaves nothing in the transcript, so this
+// is the only way the renderer learns the turn is over (see Normalizer.Interrupt).
+func (f *fileSource) Interrupt(at int64) {
+	f.normMu.Lock()
+	defer f.normMu.Unlock()
+	if e, ok := f.norm.Interrupt(at); ok {
+		f.Append(e)
 	}
 }
 
