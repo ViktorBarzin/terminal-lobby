@@ -65,7 +65,14 @@ f="$STATE_DIR/$u.tsv"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 # Manifest row: name<TAB>cwd<TAB>uuid. Keep every row whose name isn't $sess.
-awk -F'\t' -v s="$sess" '$1 != s' "$f" > "$tmp"
+#
+# The `""` on both sides forces a STRING compare. Session names are only
+# constrained to sessionNameRe (alnum/_/-), so a name can look numeric — and a
+# bare `$1 != s` makes awk compare two numeric-looking strnums as NUMBERS.
+# Without the coercion, forgetting "7" also drops a row named "007", and
+# forgetting "100" drops one named "1e2": an unrequested write to a root-owned
+# manifest, which is exactly what this wrapper's trust model promises not to do.
+awk -F'\t' -v s="$sess" '$1"" != s""' "$f" > "$tmp"
 if cmp -s "$tmp" "$f"; then
   echo "tmux-persist-forget: $u:$sess was not in the restore manifest"
   exit 0
