@@ -243,3 +243,39 @@ describe("<TerminalView> — lazy attach (never resize a pty nobody asked to see
     expect(frames.nav).toEqual(["/term.html?arg=qa-a", "/term.html?arg=qa-b"]);
   });
 });
+
+describe("<TerminalView> — the project directory reaches the attach URL", () => {
+  let frames: ReturnType<typeof withFakeFrames>;
+  beforeEach(() => {
+    frames = withFakeFrames();
+  });
+  afterEach(() => frames.restore());
+
+  it("puts a project dir at arg3 (with the inert arg2 placeholder ahead of it)", () => {
+    render(() => (
+      <TerminalView session="qa-vdirs" active={true} dir="/tmp/qa-harness-scratch" />
+    ));
+    expect(frames.nav).toEqual([
+      "/term.html?arg=qa-vdirs&arg=default&arg=%2Ftmp%2Fqa-harness-scratch",
+    ]);
+  });
+
+  it("keeps the chosen new-session command alongside the dir", () => {
+    render(() => (
+      <TerminalView
+        session="qa-vdirs"
+        active={true}
+        dir="/tmp/qa-harness-scratch"
+        newCommand={() => "claude"}
+      />
+    ));
+    expect(frames.nav).toEqual([
+      "/term.html?arg=qa-vdirs&arg=claude&arg=%2Ftmp%2Fqa-harness-scratch",
+    ]);
+  });
+
+  it("sends no arg3 for a session that belongs to no project", () => {
+    render(() => <TerminalView session="qa-loose" active={true} />);
+    expect(frames.nav).toEqual(["/term.html?arg=qa-loose"]);
+  });
+});
