@@ -112,14 +112,32 @@ export const ProjectGroup: Component<{
 
   // ---- session drop target (append into this group) + header drag reorder ----
   const headerDraggable = () => !isCoarse();
+  // A drag lives in the DOM node being dragged, so the poll must not rebuild
+  // the group set underneath it — the same hold the add box, the menu and a
+  // card drag take. Without it a poll mid-drag detaches the source (the browser
+  // then fires neither drop nor dragend, and the move is silently swallowed) or
+  // reflows a different group under the cursor (the move persists into the
+  // wrong slot, and saveLayout only toasts in its catch, so nothing says so).
+  let releaseHeaderDrag: (() => void) | null = null;
+  const endHeaderDrag = () => {
+    releaseHeaderDrag?.();
+    releaseHeaderDrag = null;
+  };
+  // dragend is not guaranteed: the drop's own reorder re-creates every header,
+  // and a source that is already detached never receives it. Unmount is the
+  // backstop so a missed dragend cannot strand the poll for good.
+  onCleanup(endHeaderDrag);
   const onHeaderDragStart = (e: DragEvent) => {
     if (!headerDraggable()) return;
+    // Guarded like beginAdd above: one drag, one hold, never a second.
+    if (!releaseHeaderDrag) releaseHeaderDrag = props.store.hold();
     props.store.setDragGroup(token());
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
   };
   const onHeaderDragEnd = () => {
     props.store.setDragGroup(null);
     setDragOver(false);
+    endHeaderDrag();
   };
   const onDragOver = (e: DragEvent) => {
     if (props.store.dragName() || props.store.dragGroup()) {
@@ -130,6 +148,9 @@ export const ProjectGroup: Component<{
   const onDragLeave = () => setDragOver(false);
   const onDrop = async (e: DragEvent) => {
     setDragOver(false);
+    // Covers the drop that lands back on the header it started from: no
+    // reorder, so nothing re-creates this node and no unmount follows.
+    endHeaderDrag();
     const sessionName = props.store.dragName() || e.dataTransfer?.getData("text/tl-session");
     const grp = props.store.dragGroup();
     if (grp) {
