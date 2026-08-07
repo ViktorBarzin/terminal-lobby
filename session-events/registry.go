@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -38,10 +39,14 @@ type registry struct {
 	ctx      context.Context
 	poll     time.Duration
 	homeBase string // "/home" (overridable for tests)
+	opts     tmuxOptions
 }
 
-func newRegistry(ctx context.Context, poll time.Duration, homeBase string) *registry {
-	return &registry{users: map[string]*userState{}, ctx: ctx, poll: poll, homeBase: homeBase}
+func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts tmuxOptions) *registry {
+	return &registry{
+		users: map[string]*userState{}, ctx: ctx,
+		poll: poll, homeBase: homeBase, opts: opts,
+	}
 }
 
 func (rg *registry) user(osUser string) *userState {
@@ -50,7 +55,11 @@ func (rg *registry) user(osUser string) *userState {
 	us, ok := rg.users[osUser]
 	if !ok {
 		root := filepath.Join(rg.homeBase, osUser, ".claude", "projects")
-		us = &userState{osUser: osUser, root: root, sm: newSessionMap(root), srcs: map[string]*liveSource{}}
+		us = &userState{
+			osUser: osUser, root: root,
+			sm:   newSessionMap(osUser, root, rg.opts),
+			srcs: map[string]*liveSource{},
+		}
 		rg.users[osUser] = us
 	}
 	return us
@@ -71,6 +80,13 @@ func (rg *registry) source(osUser, session string) (*fileSource, bool) {
 	defer us.mu.Unlock()
 	info, ok := us.sm.get(session)
 	if !ok {
+		// The mapping is gone (the tmux session was killed, or a plain shell
+		// took its name). Anything still tailing the old transcript is reading
+		// a dead session's file — stop it rather than leak the goroutine.
+		if ls, cached := us.srcs[session]; cached {
+			ls.stop()
+			delete(us.srcs, session)
+		}
 		return nil, false
 	}
 	if ls, ok := us.srcs[session]; ok {
@@ -107,7 +123,13 @@ func (rg *registry) handleSessionStart() http.HandlerFunc {
 			http.Error(w, "bad body (need user, session_id, tmux_session)", http.StatusBadRequest)
 			return
 		}
-		rg.user(b.User).sm.put(sessionInfo{TmuxSession: b.TmuxSession, CWD: b.CWD, ClaudeID: b.SessionID})
+		if err := rg.user(b.User).sm.put(sessionInfo{
+			TmuxSession: b.TmuxSession, CWD: b.CWD, ClaudeID: b.SessionID,
+		}); err != nil {
+			log.Printf("session-start %s/%s: %v", b.User, b.TmuxSession, err)
+			http.Error(w, "cannot record session", http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
