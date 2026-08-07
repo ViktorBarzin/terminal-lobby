@@ -68,9 +68,32 @@ func (in *Injector) Cancel(osUser, session string) error {
 // State returns the @claude_state option value (running/awaiting/done/"") for the
 // session, used to gate prompt injection. Empty on any error (fail-open to allow).
 func (in *Injector) State(osUser, session string) string {
-	out, err := in.cmd(osUser, "display-message", "-p", "-t", session, "#{@claude_state}").Output()
+	v, _ := in.Option(osUser, session, "@claude_state")
+	return v
+}
+
+// Option reads a tmux session option, empty when it is unset. ok=false means
+// the read did not land on the session that was asked for — a different answer
+// from "set to nothing".
+//
+// The answer is self-validating because tmux does NOT fail an unknown target:
+// `display-message -p -t no-such-session` exits 0 (measured on tmux 3.4), so
+// the requested name is printed back alongside the value and has to match, or
+// the value is not this session's to serve.
+func (in *Injector) Option(osUser, session, name string) (string, bool) {
+	out, err := in.cmd(osUser, "display-message", "-p", "-t", session,
+		"#{session_name}\n#{"+name+"}").Output()
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return strings.TrimSpace(string(out))
+	got, value, found := strings.Cut(strings.TrimSuffix(string(out), "\n"), "\n")
+	if !found || got != session {
+		return "", false
+	}
+	return strings.TrimSpace(value), true
+}
+
+// SetOption stamps a tmux session option. It fails if the session does not exist.
+func (in *Injector) SetOption(osUser, session, name, value string) error {
+	return in.cmd(osUser, "set-option", "-t", session, name, value).Run()
 }
