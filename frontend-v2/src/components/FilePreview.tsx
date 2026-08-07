@@ -53,6 +53,16 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
     setImgError(null);
   });
 
+  // Keep the path box on the file that is actually on screen. Only typing used
+  // to write it, so every other way in — a Browse entry, a recent chip, a
+  // transcript click — left the PREVIOUS path in the box: two filenames visible
+  // at once, and Enter silently re-opened the older one. Nothing here fights
+  // the user's typing: s.path() only changes when a file is opened.
+  createEffect(() => {
+    const p = s.path();
+    if (p !== null) setPathInput(p);
+  });
+
   /**
    * An <img> failed. It cannot say why on its own — and readFile skips the
    * fetch for a name-classified image, so nothing else knows either. Show the
