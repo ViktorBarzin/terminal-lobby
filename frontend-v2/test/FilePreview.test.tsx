@@ -258,6 +258,62 @@ describe("<FilePreview> — recent files + explicit path entry", () => {
     expect(listDir).toHaveBeenCalledWith("/home/wizard", false);
   });
 
+  // The box is the app's own record of "which file is this". It was written
+  // only by typing, so opening a file any other way (a Browse entry, a recent
+  // chip, a transcript click) left the PREVIOUS path sitting in it: two
+  // filenames on screen at once, and Enter re-opened the older one.
+  it("follows the file on screen when one is opened from Browse", async () => {
+    const bodies: Record<string, string> = {
+      "/vfp/notes.txt": "baseline\n",
+      "/vfp/hello.md": "hello\n\nsecond file",
+    };
+    const loadFile = vi.fn(
+      async (p: string) => ({ kind: "code", text: bodies[p] ?? "" }) as LoadedFile,
+    );
+    const listDir = vi.fn(async () => [
+      { name: "hello.md", path: "/vfp/hello.md", size: 3, mtime: 0, isDir: false },
+    ]);
+    const store = makeStore({ loadFile, listDir });
+    const { getByLabelText, getByRole, findByRole } = render(() => (
+      <FilePreview store={store} />
+    ));
+    const input = getByLabelText("File path") as HTMLInputElement;
+
+    // Typed the first path, as a user does.
+    fireEvent.input(input, { target: { value: "/vfp/notes.txt" } });
+    fireEvent.submit(input.closest("form")!);
+    await Promise.resolve();
+    expect(input.value).toBe("/vfp/notes.txt");
+
+    // Browse → click the other file.
+    fireEvent.click(getByRole("button", { name: "Browse" }));
+    fireEvent.click(await findByRole("button", { name: /hello\.md/ }));
+    await Promise.resolve();
+
+    // The box names the file that is actually on screen …
+    expect(store.path()).toBe("/vfp/hello.md");
+    expect(input.value).toBe("/vfp/hello.md");
+
+    // … so Enter re-opens THAT file, not the one before it.
+    loadFile.mockClear();
+    fireEvent.submit(input.closest("form")!);
+    expect(loadFile).toHaveBeenCalledWith("/vfp/hello.md", "hello.md");
+  });
+
+  it("still lets you type a different path over it", async () => {
+    const loadFile = vi.fn(async () => ({ kind: "code", text: "x" }) as LoadedFile);
+    const store = makeStore({ loadFile });
+    await store.open("/vfp/notes.txt");
+    const { getByLabelText } = render(() => <FilePreview store={store} />);
+    const input = getByLabelText("File path") as HTMLInputElement;
+    expect(input.value).toBe("/vfp/notes.txt");
+
+    fireEvent.input(input, { target: { value: "/vfp/other.go" } });
+    expect(input.value).toBe("/vfp/other.go"); // typing is not overwritten
+    fireEvent.submit(input.closest("form")!);
+    expect(loadFile).toHaveBeenLastCalledWith("/vfp/other.go", "other.go");
+  });
+
   it("opens the path typed into the path box", async () => {
     const loadFile = vi.fn(async () => ({ kind: "code", text: "x" }) as LoadedFile);
     const store = makeStore({ loadFile });
