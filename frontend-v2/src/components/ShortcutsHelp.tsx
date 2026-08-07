@@ -1,4 +1,4 @@
-import { createSignal, For, type Accessor, type Component } from "solid-js";
+import { createSignal, For, onMount, type Accessor, type Component } from "solid-js";
 import { track } from "../telemetry/track";
 
 /**
@@ -91,7 +91,15 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
       [
         [[`${ALT}+Shift+S`], "Toggle sidebar"],
         [["Ctrl+Shift+K"], "Command palette"],
-        [[`${MOD}+J`], "Toggle text / terminal view (works in a session)"],
+        // ALWAYS ON by design, on both sides of the iframe boundary and by two
+        // separate mechanisms: SessionView registers an unconditional
+        // capture-phase window listener that never consults the engine, and
+        // term.html carries ctrl+j/meta+j in the terminal page's own
+        // KB_ALWAYS_BINDINGS, evaluated ahead of its `enabled` gate.
+        [
+          [`${MOD}+J`],
+          "Toggle text / terminal view (works in a session; always on)",
+        ],
         // Bare "/" and "?" are a separate window listener in the shell (App),
         // not a table binding, so they never consult the ⚙ toggle either. Only
         // Alt+/ is part of the toggleable layer.
@@ -111,14 +119,68 @@ export const ShortcutsHelp: Component<{
   isMac: boolean;
 }> = (props) => {
   const groups = () => buildShortcutGroups(props.altLabel, props.isMac);
+  let dialogEl: HTMLDivElement | undefined;
+
+  // Take the keyboard on open, the way the palette does (CommandPalette focuses
+  // its input on mount). Without this the overlay inherits whatever had focus,
+  // and inside a session that is the terminal IFRAME — so every key went to the
+  // pty instead of this dialog: Escape / "/" / "?" could not dismiss it (the
+  // shell's window listener never sees a key pressed inside the iframe), Tab
+  // walked back into the app, and the keys themselves landed in the running
+  // shell (a stray Escape interrupts a Claude turn). Deferred so the node is in
+  // the document by the time it runs.
+  onMount(() => queueMicrotask(() => dialogEl?.focus()));
+
+  // ...and hold it. palette-controller.runItem() closes the palette — which
+  // hands focus back to the terminal — BEFORE running the action that opens
+  // this overlay, and TerminalView's handback finishes a frame or two later
+  // (term.html's requestTerminalFocus fires on rAF/50ms). So the iframe can
+  // pull focus out from under the mount focus above; take it back while open.
+  const onFocusOut = (): void => {
+    // focusout fires BEFORE the new target is focused, and a dismiss unmounts
+    // us — both need the deferral to read the settled state.
+    queueMicrotask(() => {
+      if (!dialogEl?.isConnected) return;
+      if (dialogEl.contains(document.activeElement)) return;
+      dialogEl.focus();
+    });
+  };
+
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === "Escape" || e.key === "/" || e.key === "?") {
+      e.preventDefault();
+      e.stopPropagation();
+      props.controller.close();
+      return;
+    }
+    // aria-modal="true" promises assistive tech that Tab cannot leave the
+    // dialog, and nothing inside it is focusable — so Tab would walk straight
+    // out into the app behind (the terminal iframe included) while the overlay
+    // is still up. Keep it here; the keys above and the backdrop are the exits.
+    if (e.key === "Tab") {
+      e.preventDefault();
+      e.stopPropagation();
+      dialogEl?.focus();
+    }
+  };
+
   return (
     <div
       class="tl-cmdpalette-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget) props.controller.close();
       }}
+      onKeyDown={onKeyDown}
     >
-      <div class="tl-schelp" role="dialog" aria-label="Keyboard shortcuts">
+      <div
+        ref={dialogEl}
+        class="tl-schelp"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
+        tabindex="-1"
+        onFocusOut={onFocusOut}
+      >
         <h2 class="tl-schelp-title">Keyboard shortcuts</h2>
         <div class="tl-schelp-scroll">
           <For each={groups()}>
