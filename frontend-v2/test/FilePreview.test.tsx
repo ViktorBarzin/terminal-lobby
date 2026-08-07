@@ -15,6 +15,7 @@ const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
 const roots: Array<() => void> = [];
 afterEach(() => {
   while (roots.length) roots.pop()!();
+  vi.unstubAllGlobals();
 });
 
 function makeStore(deps: Parameters<typeof createPreviewStore>[0]): PreviewStore {
@@ -127,6 +128,60 @@ describe("<FilePreview> — renders per kind + states", () => {
     }, "/a/missing.ts");
     const { getByText } = render(() => <FilePreview store={store} />);
     expect(getByText("File not found.")).toBeInTheDocument();
+  });
+});
+
+// An <img> that fails says nothing about WHY on its own, and readFile never
+// fetched a name-classified image, so all three server refusals — missing, too
+// large, out of the home root — landed on one sentence about a broken image.
+describe("<FilePreview> — a failed image says what the server said", () => {
+  /** Stub the onerror probe's GET with a fixed non-OK status. */
+  function stubProbe(status: number, body = ""): ReturnType<typeof vi.fn> {
+    const spy = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status,
+          headers: { get: () => null },
+          text: async () => body,
+          body: { cancel: async () => {} },
+        }) as unknown as Response,
+    );
+    vi.stubGlobal("fetch", spy as unknown as typeof fetch);
+    return spy;
+  }
+
+  it("a 413 image reads as too large, not as a broken image", async () => {
+    stubProbe(413);
+    const store = await loaded(async () => ({ kind: "image" }), "/a/huge.png");
+    const { container, findByText } = render(() => <FilePreview store={store} />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(await findByText(/too large to preview/i)).toBeInTheDocument();
+  });
+
+  it("a 404 image reads as not found", async () => {
+    stubProbe(404);
+    const store = await loaded(async () => ({ kind: "image" }), "/a/nope.png");
+    const { container, findByText } = render(() => <FilePreview store={store} />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(await findByText("File not found.")).toBeInTheDocument();
+  });
+
+  it("an out-of-home image reads as out of reach", async () => {
+    stubProbe(400, "invalid path\n");
+    const store = await loaded(async () => ({ kind: "image" }), "/etc/logo.png");
+    const { container, findByText } = render(() => <FilePreview store={store} />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(await findByText(/outside your home folder/i)).toBeInTheDocument();
+  });
+
+  it("a healthy image costs no probe request", async () => {
+    const spy = stubProbe(404);
+    const store = await loaded(async () => ({ kind: "image" }), "/a/ok.png");
+    const { container } = render(() => <FilePreview store={store} />);
+    expect(container.querySelector("img")).toBeTruthy();
+    await Promise.resolve();
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 
