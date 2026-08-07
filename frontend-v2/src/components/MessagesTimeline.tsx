@@ -171,6 +171,7 @@ const TurnFoldRowView: Component<{
       type="button"
       class="tl-fold-btn"
       aria-expanded={props.expanded}
+      data-has-error={props.row.hasError ? "true" : undefined}
       onClick={() => props.onToggle(props.row.turnKey)}
     >
       <span class="tl-fold-caret">{props.expanded ? "▾" : "▸"}</span>
@@ -181,6 +182,11 @@ const TurnFoldRowView: Component<{
         {" · "}
         {props.row.count} {props.row.count === 1 ? "step" : "steps"}
       </span>
+      {/* A fold is the only thing standing for the steps it hides, so a hidden
+          failure has to surface here — in words, not by colour alone. */}
+      <Show when={props.row.hasError}>
+        <span class="tl-fold-error">✗ failed</span>
+      </Show>
     </button>
   </div>
 );

@@ -157,3 +157,77 @@ describe("<MessagesTimeline> turn fold", () => {
     expect(caret()).toBe("▸");
   });
 });
+
+/**
+ * A collapsed fold that hides a FAILED step used to read exactly
+ * "▸ Worked for 5s · 1 step" — count and duration, nothing else. The failure
+ * was still narrated by the visible assistant message and still visible on
+ * expansion (the ✗, the "output (error)" label, the red output), so nothing
+ * malfunctioned; the fold row alone gave the eye no reason to open it.
+ */
+describe("<MessagesTimeline> collapsed failure signal", () => {
+  const FAILED: Event[] = [
+    ev({ id: 1, kind: "user", body: "read the missing file" }),
+    ev({ id: 2, kind: "text", body: "reading it" }),
+    ev({
+      id: 3,
+      kind: "tool_use",
+      tool: "Read",
+      toolId: "t1",
+      body: '{"file_path":"/nope.txt"}',
+    }),
+    ev({
+      id: 4,
+      kind: "tool_result",
+      toolId: "t1",
+      body: "ENOENT: no such file",
+      isError: true,
+    }),
+    ev({ id: 5, kind: "text", body: "the read failed: no such file" }),
+    ev({ id: 6, kind: "turn_end" }),
+  ];
+
+  const HEALTHY: Event[] = [
+    ev({ id: 1, kind: "user", body: "read the notes" }),
+    ev({ id: 2, kind: "text", body: "reading it" }),
+    ev({ id: 3, kind: "tool_use", tool: "Read", toolId: "t1", body: "{}" }),
+    ev({ id: 4, kind: "tool_result", toolId: "t1", body: "hello", isError: false }),
+    ev({ id: 5, kind: "text", body: "here it is" }),
+    ev({ id: 6, kind: "turn_end" }),
+  ];
+
+  it("marks the collapsed fold row when it hides a failure", () => {
+    const { container } = render(() => <MessagesTimeline events={FAILED} />);
+    const btn = container.querySelector(".tl-fold-btn")!;
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    expect(btn.getAttribute("data-has-error")).toBe("true");
+    const signal = container.querySelector(".tl-fold-error");
+    expect(signal).not.toBeNull();
+    expect(signal!.textContent).toContain("✗");
+    // …and the label says so in words, not by colour alone.
+    expect(btn.textContent).toContain("failed");
+  });
+
+  it("renders no failure signal on a healthy turn", () => {
+    const { container } = render(() => <MessagesTimeline events={HEALTHY} />);
+    const btn = container.querySelector(".tl-fold-btn")!;
+    expect(btn.getAttribute("data-has-error")).toBeNull();
+    expect(container.querySelector(".tl-fold-error")).toBeNull();
+    expect(btn.textContent).not.toContain("failed");
+  });
+
+  it("still shows the ✗, the output (error) label and the red output when expanded", () => {
+    const { container } = render(() => <MessagesTimeline events={FAILED} />);
+    fireEvent.click(container.querySelector(".tl-fold-btn")!);
+    const tool = container.querySelector(".tl-row-tool")!;
+    expect(tool.getAttribute("data-status")).toBe("error");
+    expect(tool.querySelector(".tl-tool-tick")!.textContent).toBe("✗");
+
+    fireEvent.click(tool.querySelector(".tl-tool-toggle")!);
+    const labels = [...tool.querySelectorAll(".tl-tool-section-label")].map(
+      (n) => n.textContent,
+    );
+    expect(labels).toContain("output (error)");
+    expect(tool.querySelector(".tl-code-error")!.textContent).toContain("ENOENT");
+  });
+});
