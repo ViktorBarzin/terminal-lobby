@@ -290,3 +290,32 @@ describe("<MessagesTimeline> collapsed failure signal", () => {
     expect(tool.querySelector(".tl-code-error")!.textContent).toContain("ENOENT");
   });
 });
+
+describe("<MessagesTimeline> — image srcs are never rewritten", () => {
+  it("passes an assistant message's image srcs through verbatim", () => {
+    // Markdown is shared with the file preview, which now resolves RELATIVE
+    // image srcs against the previewed file's directory. The transcript passes
+    // no base, and its srcs are already addressed — so nothing here may change.
+    const body = [
+      "![shot](https://example.com/a.png)",
+      "",
+      "![served](/clipboard/img/abc.png)",
+      "",
+      "![bare](pic.png)",
+    ].join("\n");
+    const events: Event[] = [
+      ev({ id: 1, kind: "user", body: "show me" }),
+      ev({ id: 2, kind: "text", body }),
+      ev({ id: 3, kind: "turn_end" }),
+    ];
+
+    const { container } = render(() => <MessagesTimeline events={events} />);
+    expect(
+      [...container.querySelectorAll("img")].map((n) => n.getAttribute("src")),
+    ).toEqual([
+      "https://example.com/a.png",
+      "/clipboard/img/abc.png",
+      "pic.png",
+    ]);
+  });
+});
