@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   FileApiError,
+  IMAGE_DECODE_MESSAGE,
+  imageErrorMessage,
   listDir,
   listErrorMessage,
   readErrorMessage,
@@ -195,6 +197,88 @@ describe("listDir — uses the LIST vocabulary, not the read table", () => {
       status: 404,
       message: listErrorMessage(404),
     });
+  });
+});
+
+// An image is classified by NAME and never fetched by readFile — the <img>
+// element does the only round-trip — so the 404/413/400 vocabulary above was
+// unreachable for images: a missing PNG, a 12MB PNG and a PNG outside the home
+// root all read "Couldn't load image.", as if the bytes were corrupt. Measured
+// on the devvm: nope.png → 404, huge.png → 413, /etc/ssl/certs/logo.png → 400,
+// three identical sentences on screen. The 413 is the one that costs the user
+// something: a perfectly readable file over the preview limit, with an
+// actionable workaround, reported as damage.
+describe("imageErrorMessage — resolves WHY an <img> failed", () => {
+  it("says the same thing a text file would for 404 / 413 / 400", async () => {
+    stubError(404, "not found\n");
+    expect(await imageErrorMessage("/home/u/nope.png")).toBe(readErrorMessage(404));
+    stubError(413, "file too large (max 10MB)\n");
+    expect(await imageErrorMessage("/home/u/huge.png")).toBe(readErrorMessage(413));
+    stubError(400, "invalid path\n");
+    expect(await imageErrorMessage("/etc/ssl/certs/logo.png")).toBe(
+      readErrorMessage(400),
+    );
+  });
+
+  it("gives three DISTINCT messages for the three failures", async () => {
+    stubError(404, "not found\n");
+    const notFound = await imageErrorMessage("/home/u/nope.png");
+    stubError(413, "file too large (max 10MB)\n");
+    const tooBig = await imageErrorMessage("/home/u/huge.png");
+    stubError(400, "invalid path\n");
+    const outside = await imageErrorMessage("/etc/ssl/certs/logo.png");
+    expect(new Set([notFound, tooBig, outside]).size).toBe(3);
+    expect(tooBig).toMatch(/too large/i);
+    expect(notFound).toMatch(/not found/i);
+  });
+
+  it("names a folder when the server says so (the read table's one exception)", async () => {
+    stubError(400, "path is a directory\n");
+    expect(await imageErrorMessage("/home/u/pics")).toMatch(/is a folder/i);
+  });
+
+  it("falls back to the decode message when the bytes ARE readable", async () => {
+    // 200 + an <img> that still failed = a corrupt/unsupported image. That is
+    // the one case the generic sentence actually describes.
+    stubText("\x89PNG-ish", { "content-type": "image/png" });
+    expect(await imageErrorMessage("/home/u/broken.png")).toBe(IMAGE_DECODE_MESSAGE);
+  });
+
+  it("falls back to the decode message when the probe itself fails", async () => {
+    vi.stubGlobal("fetch", (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch);
+    expect(await imageErrorMessage("/home/u/pic.png")).toBe(IMAGE_DECODE_MESSAGE);
+  });
+
+  it("costs exactly one request, and drains the body it does not need", async () => {
+    const cancel = vi.fn(async () => {});
+    const fetchSpy = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      headers: { get: () => null },
+      text: async () => "",
+      body: { cancel },
+    }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchSpy as unknown as typeof fetch);
+    await imageErrorMessage("/home/u/nope.png");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The probe is an ERROR-path cost only. The happy path must stay exactly as it
+// was: readFile classifies by name and returns without touching the network.
+describe("readFile — a name-classified image still costs no request", () => {
+  it("returns kind=image without calling fetch at all", async () => {
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("readFile must not fetch a name-classified image");
+    });
+    vi.stubGlobal("fetch", fetchSpy as unknown as typeof fetch);
+    await expect(readFile("/home/u/pic.png", "pic.png")).resolves.toEqual({
+      kind: "image",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
