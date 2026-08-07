@@ -149,6 +149,18 @@ export const App: Component = () => {
   const selectedName = createMemo(() => store.selected()?.name ?? null);
   const newCommand = () => prefs.prefs().session.newCommand;
 
+  // A selected session the poll has never returned does not exist in tmux yet:
+  // `store.create` only writes the layout, and the session comes into being when
+  // a terminal attaches. That one terminal must attach immediately; every other
+  // session's waits for the Terminal view, because attaching resizes the tmux
+  // WINDOW to the iframe and would reflow a wide client already using it.
+  // `loading` covers the pre-first-poll window, where everything looks unseen.
+  const selectedIsCreating = createMemo(() => {
+    const name = selectedName();
+    if (!name || store.loading()) return false;
+    return !store.sessions.some((s) => s.name === name);
+  });
+
   // ---- keybinding engine + command palette + shortcuts help (pillar #2) ----
   // The lobby SPA is always the "lobby" side: it owns the sidebar, palette and
   // session switching. The terminal iframe forwards its chords up over
@@ -312,6 +324,7 @@ export const App: Component = () => {
               <SessionView
                 session={name}
                 owner={store.selected()?.owner}
+                creating={selectedIsCreating()}
                 newCommand={newCommand}
                 notify={notify}
                 onFrameCommand={(cmd) => run(cmd)}

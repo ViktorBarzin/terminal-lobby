@@ -140,6 +140,43 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     }
   });
 
+  // Attaching a live session resizes ITS tmux window to whatever the iframe
+  // measures, so merely selecting a card must not attach: the Text view is the
+  // default, and a passive click used to squeeze a real 200x50 client to 80x24.
+  it("does not attach the terminal until the [Terminal] segment is opened", () => {
+    const nav: string[] = [];
+    const desc = Object.getOwnPropertyDescriptor(
+      HTMLIFrameElement.prototype,
+      "contentWindow",
+    );
+    const fakes = new WeakMap<HTMLIFrameElement, unknown>();
+    Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
+      configurable: true,
+      get(this: HTMLIFrameElement) {
+        let f = fakes.get(this);
+        if (!f) {
+          f = {
+            location: { replace: (u: string) => void nav.push(u) },
+            postMessage: () => {},
+            focus: () => {},
+          };
+          fakes.set(this, f);
+        }
+        return f;
+      },
+    });
+    try {
+      const { container } = render(() => <SessionView session="qa-vs" />);
+      expect(mode(container)).toBe("text");
+      expect(nav).toEqual([]);
+
+      fireEvent.click(segments(container)[1]!); // [Terminal]
+      expect(nav).toEqual(["/term.html?arg=qa-vs"]);
+    } finally {
+      if (desc) Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", desc);
+    }
+  });
+
   it("still forwards the attention signal to the lobby (tab badge)", () => {
     const seen: string[] = [];
     const { container } = render(() => (
