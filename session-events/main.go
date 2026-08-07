@@ -78,6 +78,13 @@ func main() {
 			http.Error(w, "cancel failed", http.StatusBadGateway)
 			return
 		}
+		// An interrupt that lands before Claude's first token is never written
+		// to the transcript, and the transcript is where every other settle
+		// rule lives — so the turn is settled here, on the stream, or the
+		// composer sits on "Working…" + Stop for the life of the session.
+		if fs, ok := rg.source(osUser, session); ok {
+			fs.Interrupt(time.Now().UnixMilli())
+		}
 		events.Emit("claude.cancelled", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.client": "api",
 		})
