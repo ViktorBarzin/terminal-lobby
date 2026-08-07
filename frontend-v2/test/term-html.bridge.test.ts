@@ -293,3 +293,70 @@ describe("term.html — output attention while the VIEW (not the tab) is hidden"
     expect(signalled).toEqual(["output"]);
   });
 });
+
+/**
+ * THE DEAD PATH: the tab going away while the view was ALREADY hidden.
+ *
+ * The lobby only latches its tab badge for a signal that arrives while the tab
+ * is away — a signal sent while you are looking at the tab is dropped on the
+ * floor. So when the view-hidden period opened with a frame of output (the
+ * attach paint, or the redraw the view switch itself causes) the one-shot was
+ * burned on a signal nobody could use, and every later output — including the
+ * one that arrives after you tab away — was silent. The bell path always worked,
+ * which is what made this look like "output attention is just broken".
+ */
+describe("term.html — the tab going away RE-ARMS an already-hidden view", () => {
+  it("signals again when the tab hides on top of a spent view-hidden shot", () => {
+    const { kernel, doc, signalled } = loadAttentionKernel();
+    kernel.setViewHidden(true); // SPA shows its Text view
+    kernel.noteHiddenOutput(); // the attach paint — lobby drops it (not away)
+    expect(signalled).toEqual(["output"]);
+
+    doc.hidden = true; // the user tabs away
+    kernel.rearmHiddenOutput(); // visibilitychange
+    kernel.noteHiddenOutput(); // `echo probe` lands in the pty
+    expect(signalled).toEqual(["output", "output"]);
+  });
+
+  it("is still one signal per away period, not one per output frame", () => {
+    const { kernel, doc, signalled } = loadAttentionKernel();
+    kernel.setViewHidden(true);
+    doc.hidden = true;
+    kernel.rearmHiddenOutput();
+    kernel.noteHiddenOutput();
+    kernel.noteHiddenOutput();
+    kernel.noteHiddenOutput();
+    expect(signalled).toEqual(["output"]);
+  });
+
+  it("re-arms for the terminal view too (tab hides with the view on screen)", () => {
+    const { kernel, doc, signalled } = loadAttentionKernel();
+    doc.hidden = true;
+    kernel.rearmHiddenOutput();
+    kernel.noteHiddenOutput();
+    doc.hidden = false;
+    kernel.rearmHiddenOutput();
+    doc.hidden = true;
+    kernel.rearmHiddenOutput();
+    kernel.noteHiddenOutput();
+    expect(signalled).toEqual(["output", "output"]);
+  });
+
+  it("the visibilitychange listener re-arms on the way OUT as well as back", () => {
+    // The handler used to `return` before re-arming whenever the tab was going
+    // hidden, so becoming hidden could never open a new period.
+    const src = html();
+    // term.html has several visibilitychange listeners; this is the attention
+    // one — the one that calls rearmHiddenOutput.
+    const rearm = src.indexOf("rearmHiddenOutput();\n", src.indexOf("// <<< tl-attention-kernel"));
+    expect(rearm, "the attention visibilitychange listener").toBeGreaterThan(-1);
+    const start = src.lastIndexOf("document.addEventListener('visibilitychange'", rearm);
+    expect(start, "its addEventListener").toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\n        });", start));
+    expect(body).toContain("rearmHiddenOutput();");
+    expect(body).toContain("if (document.hidden) return;");
+    expect(body.indexOf("rearmHiddenOutput();")).toBeLessThan(
+      body.indexOf("if (document.hidden) return;"),
+    );
+  });
+});
