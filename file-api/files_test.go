@@ -152,6 +152,43 @@ func TestHandleReadHappy(t *testing.T) {
 	}
 }
 
+// SVG is the one previewable image whose type the browser will not guess.
+// http.DetectContentType has no SVG signature, so it sniffs the source as
+// text/plain — and Chrome refuses to parse an SVG document out of an <img>
+// unless the type is exactly image/svg+xml. The preview routes .svg to the
+// image kind (and offers no Raw/Edit fallback there), so a text/plain SVG was
+// unviewable anywhere in the app.
+func TestHandleReadSVGGetsImageSVGContentType(t *testing.T) {
+	_, home := setupUser(t)
+	for _, name := range []string{"pic.svg", "PIC.SVG"} {
+		f := filepath.Join(home, name)
+		writeFile(t, f, `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60"></svg>`)
+		rec := httptest.NewRecorder()
+		handleRead(rec, req(t, http.MethodGet, "/files/read?path="+f, nil, true))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("read %s: got %d (%s)", name, rec.Code, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/svg+xml") {
+			t.Fatalf("%s content-type: got %q, want image/svg+xml", name, ct)
+		}
+	}
+}
+
+// The SVG special case must stay exactly one extension wide: every raster
+// format still gets its sniffed type (and Chrome content-sniffs those in an
+// <img> anyway, so none of them needed help).
+func TestHandleReadRasterKeepsSniffedContentType(t *testing.T) {
+	_, home := setupUser(t)
+	f := filepath.Join(home, "pic.png")
+	// 1x1 PNG: the 8-byte signature is all DetectContentType reads.
+	writeFile(t, f, "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	rec := httptest.NewRecorder()
+	handleRead(rec, req(t, http.MethodGet, "/files/read?path="+f, nil, true))
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/png") {
+		t.Fatalf("png content-type: got %q, want image/png", ct)
+	}
+}
+
 func TestHandleReadMissing404(t *testing.T) {
 	_, home := setupUser(t)
 	rec := httptest.NewRecorder()
