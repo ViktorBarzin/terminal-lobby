@@ -458,3 +458,55 @@ describe("<FilePreview> — the browse bar's hidden-files toggle", () => {
     expect(queryByRole("checkbox", { name: /hidden/i })).toBeNull();
   });
 });
+
+describe("<FilePreview> — relative images in a previewed markdown file", () => {
+  const md = [
+    "![rel](pic.png)",
+    "",
+    "![nested](sub/pic.png)",
+    "",
+    "![absolute](/files/read?path=%2Fa%2Fb%2Fpic.png)",
+    "",
+    "![remote](https://example.com/pic.png)",
+  ].join("\n");
+
+  const srcs = (container: HTMLElement): string[] =>
+    [...container.querySelectorAll(".tl-preview-md img")].map(
+      (n) => n.getAttribute("src") ?? "",
+    );
+
+  it("resolves a relative src against the file's own directory, via the file-api", async () => {
+    // A markdown file is previewed by PATH, but its <img> resolves against the
+    // lobby ORIGIN — so `![x](pic.png)` beside the document asked the lobby for
+    // /pic.png and 404'd, while the same picture referenced absolutely loaded.
+    const store = await loaded(
+      async () => ({ kind: "markdown", text: md }),
+      "/a/b/doc.md",
+    );
+    const { container } = render(() => <FilePreview store={store} />);
+
+    expect(srcs(container)).toEqual([
+      "/files/read?path=%2Fa%2Fb%2Fpic.png",
+      "/files/read?path=%2Fa%2Fb%2Fsub%2Fpic.png",
+      // already a URL — left exactly as written
+      "/files/read?path=%2Fa%2Fb%2Fpic.png",
+      "https://example.com/pic.png",
+    ]);
+  });
+
+  it("leaves every src alone when the markdown has no base (the transcript case)", async () => {
+    // Markdown is shared with the assistant transcript renderer, which passes
+    // no base and whose srcs are already absolute. Rewriting there would be a
+    // regression, so the base must be opt-in.
+    const { Markdown } = await import("../src/components/Markdown");
+    const { container } = render(() => <Markdown text={md} />);
+    expect(
+      [...container.querySelectorAll("img")].map((n) => n.getAttribute("src")),
+    ).toEqual([
+      "pic.png",
+      "sub/pic.png",
+      "/files/read?path=%2Fa%2Fb%2Fpic.png",
+      "https://example.com/pic.png",
+    ]);
+  });
+});
