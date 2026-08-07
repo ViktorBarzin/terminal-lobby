@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { TerminalView } from "../src/components/TerminalView";
@@ -152,5 +153,93 @@ describe("<TerminalView> — window.__tlPrefsLive (live font size / prefs)", () 
     const src = termHtml();
     expect(src).toContain("e.data.type === 'tl-font-size'");
     expect(src).toContain("e.data.type === 'tl-prefs'");
+  });
+});
+
+/**
+ * ATTACH TIMING — attaching a live tmux session resizes ITS window to whatever
+ * this iframe measures. The eager attach therefore squeezed a real 200x50
+ * client down to the iframe's construction-default 80x24 the moment a card was
+ * clicked, without the user ever opening the Terminal view: ttyd's INIT
+ * handshake serialises `columns: term.cols, rows: term.rows` and that sizes the
+ * pty at spawn, before any sendResize() could correct it. So the attach itself
+ * has to wait for the Terminal view — except for a session the app is CREATING,
+ * which has no tmux session until this iframe reaches ttyd.
+ */
+
+/** Route every iframe's contentWindow to a fake so navigations are observable
+ *  (jsdom refuses real frame navigation) and record the URLs each one gets. */
+function withFakeFrames(): {
+  nav: string[];
+  restore: () => void;
+} {
+  const nav: string[] = [];
+  const desc = Object.getOwnPropertyDescriptor(
+    HTMLIFrameElement.prototype,
+    "contentWindow",
+  );
+  const fakes = new WeakMap<HTMLIFrameElement, unknown>();
+  Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
+    configurable: true,
+    get(this: HTMLIFrameElement) {
+      let f = fakes.get(this);
+      if (!f) {
+        f = {
+          location: { replace: (u: string) => void nav.push(u) },
+          postMessage: () => {},
+          focus: () => {},
+        };
+        fakes.set(this, f);
+      }
+      return f;
+    },
+  });
+  return {
+    nav,
+    restore: () => {
+      if (desc) Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", desc);
+    },
+  };
+}
+
+describe("<TerminalView> — lazy attach (never resize a pty nobody asked to see)", () => {
+  let frames: ReturnType<typeof withFakeFrames>;
+  beforeEach(() => {
+    frames = withFakeFrames();
+  });
+  afterEach(() => frames.restore());
+
+  it("does NOT attach an existing session while the Text view is showing", () => {
+    render(() => <TerminalView session="qa-lazy" active={false} />);
+    expect(frames.nav).toEqual([]);
+  });
+
+  it("attaches the moment the Terminal view is first shown", () => {
+    const [active, setActive] = createSignal(false);
+    render(() => <TerminalView session="qa-lazy" active={active()} />);
+    expect(frames.nav).toEqual([]);
+    setActive(true);
+    expect(frames.nav).toEqual(["/term.html?arg=qa-lazy"]);
+  });
+
+  it("stays attached when you go back to Text (the WebSocket must survive)", () => {
+    const [active, setActive] = createSignal(false);
+    render(() => <TerminalView session="qa-lazy" active={active()} />);
+    setActive(true);
+    setActive(false);
+    setActive(true);
+    expect(frames.nav).toEqual(["/term.html?arg=qa-lazy"]);
+  });
+
+  it("attaches EAGERLY for a session the app is creating (nothing else births it)", () => {
+    render(() => <TerminalView session="qa-new" active={false} creating />);
+    expect(frames.nav).toEqual(["/term.html?arg=qa-new"]);
+  });
+
+  it("re-attaches on a session change once it has been shown", () => {
+    const [session, setSession] = createSignal("qa-a");
+    render(() => <TerminalView session={session()} active={true} />);
+    setSession("qa-b");
+    expect(frames.nav).toEqual(["/term.html?arg=qa-a", "/term.html?arg=qa-b"]);
   });
 });
