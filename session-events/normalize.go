@@ -25,12 +25,13 @@ import (
 //     continuing the agent) opens a fresh turn, so it is never filed under a
 //     turn the renderer has already settled.
 type Normalizer struct {
-	session  string
-	seq      int64
-	turnID   string
-	turnN    int
-	turnDone bool   // the current turn has already emitted its turn_end
-	doneMsg  string // message.id of the assistant response that closed it
+	session     string
+	seq         int64
+	turnID      string
+	turnN       int
+	turnDone    bool   // the current turn has already emitted its turn_end
+	doneMsg     string // message.id of the assistant response that closed it
+	interruptAt int64  // epoch ms of an interrupt the transcript has not caught up with
 }
 
 func NewNormalizer(session string) *Normalizer { return &Normalizer{session: session} }
@@ -156,7 +157,41 @@ func (n *Normalizer) Line(b []byte) []Event {
 		n.turnDone, n.doneMsg = true, rl.Message.ID
 		out = append(out, n.emit(KindTurnEnd, at))
 	}
+	// A prompt the operator has already interrupted arrives dead: it opens a
+	// turn nobody is working on, and Claude will write nothing further about
+	// it. Settle it as it opens (see Interrupt).
+	if isPrompt && n.interruptAt > 0 && at > 0 && at <= n.interruptAt {
+		n.interruptAt = 0
+		out = append(out, n.emit(KindTurnEnd, at))
+	}
 	return out
+}
+
+// Interrupt reports that the operator interrupted this session at `at` (epoch
+// ms) and returns the event that settles the turn it landed in, if one is open.
+//
+// It exists because the transcript cannot always tell. Interrupting after
+// Claude has started streaming leaves "[Request interrupted by user]" behind
+// and interruptNotice settles the turn from the file. Interrupting BEFORE the
+// first token leaves nothing at all — no notice, sometimes not even the prompt
+// line — so a turn the renderer has already opened would never close and the
+// composer would sit on "Working…" + Stop for the life of the session. Whoever
+// injects the interrupt owns the transition, the same way Cancel owns
+// @claude_state (see inject.go).
+//
+// The transcript stays the authority for what a turn CONTAINS: this marks no
+// normalizer state as done, so lines still in flight keep landing in the turn
+// they belong to instead of opening a spurious new one. A transcript notice
+// arriving later settles the same turn a second time, which the renderer folds
+// into the same "this turn is over".
+//
+// The timestamp is also kept as a watermark for the tail: see Line.
+func (n *Normalizer) Interrupt(at int64) (Event, bool) {
+	n.interruptAt = at
+	if n.turnID == "" || n.turnDone {
+		return Event{}, false
+	}
+	return n.emit(KindTurnEnd, at), true
 }
 
 // endsTurn reports whether a message stop_reason means Claude is finished.
