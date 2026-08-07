@@ -21,10 +21,15 @@ class FakeApi implements LobbyApi {
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
   puts: Layout[] = [];
+  /** set to make the next whoami/listSessions reject (load-error paths). */
+  whoamiErr: ApiError | null = null;
+  sessionsErr: ApiError | null = null;
   async whoami() {
+    if (this.whoamiErr) throw this.whoamiErr;
     return this.whoamiVal;
   }
   async listSessions() {
+    if (this.sessionsErr) throw this.sessionsErr;
     return this.sessionsVal;
   }
   async getLayout() {
@@ -172,9 +177,69 @@ describe("<Sidebar>", () => {
 
   it("shows an empty state when there are no sessions or projects", async () => {
     const api = new FakeApi();
-    const { getByText, store } = mount(api);
+    const { getByText, container, store } = mount(api);
     await store.refresh();
     await waitFor(() => expect(getByText(/No sessions yet/)).toBeInTheDocument());
+    // control: a healthy brand-new user gets the empty state on its own.
+    expect(container.querySelector(".tl-sidebar-error")).toBeNull();
+    store.dispose();
+  });
+
+  it("does not claim 'No sessions yet' when whoami was denied", async () => {
+    // resolveOSUser 403s an Authentik user with no terminal-account mapping;
+    // refresh() then returns before /sessions or /layout is ever called, so the
+    // sidebar knows nothing about the user's sessions and must not assert there
+    // are none.
+    const api = new FakeApi();
+    api.whoamiErr = new ApiError(403, "denied");
+    const { getByText, queryByText, store } = mount(api);
+    await store.refresh();
+
+    await waitFor(() => expect(getByText(/Access denied \(HTTP 403\)/)).toBeInTheDocument());
+    expect(queryByText(/No sessions yet/)).toBeNull();
+    store.dispose();
+  });
+
+  it("does not claim 'No sessions yet' when a cold /sessions load failed", async () => {
+    // Brand-new user (empty layout) + a transient 500 on the first poll: the
+    // empty layout alone must not be read as "no sessions".
+    const api = new FakeApi();
+    api.sessionsErr = new ApiError(500, "boom");
+    const { getByText, queryByText, store } = mount(api);
+    await store.refresh();
+
+    await waitFor(() => expect(getByText(/Failed to load sessions/)).toBeInTheDocument());
+    expect(queryByText(/No sessions yet/)).toBeNull();
+
+    // …and the suppression is only for as long as the error is: once a poll
+    // succeeds and confirms the account really is empty, the empty state is
+    // back. Deferring the claim, not deleting it.
+    api.sessionsErr = null;
+    await store.refresh();
+    await waitFor(() => expect(getByText(/No sessions yet/)).toBeInTheDocument());
+    expect(queryByText(/Failed to load sessions/)).toBeNull();
+    store.dispose();
+  });
+
+  it("keeps an established user's cards through a failed poll and recovers", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("alive")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["alive"] };
+    const { getByText, queryByText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(getByText("alive")).toBeInTheDocument());
+
+    api.sessionsErr = new ApiError(500, "boom");
+    await store.refresh();
+    await waitFor(() => expect(getByText(/Failed to load sessions/)).toBeInTheDocument());
+    // control: the cards stay put and the empty state never appears over them.
+    expect(getByText("alive")).toBeInTheDocument();
+    expect(queryByText(/No sessions yet/)).toBeNull();
+
+    api.sessionsErr = null;
+    await store.refresh();
+    await waitFor(() => expect(queryByText(/Failed to load sessions/)).toBeNull());
+    expect(getByText("alive")).toBeInTheDocument();
     store.dispose();
   });
 
