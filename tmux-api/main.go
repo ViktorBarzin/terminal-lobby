@@ -20,7 +20,6 @@ import (
 const (
 	listenAddr     = "0.0.0.0:7684"
 	authHeader     = "X-Authentik-Username"
-	sudoBinary     = "/usr/bin/sudo"
 	restoreWrapper = "/usr/local/bin/tmux-restore-user"
 	// @claude_state is stamped by the claude-tmux-state hook script
 	// (ADR-0001). pane_pid feeds the liveness backstop (proc.go): state
@@ -57,6 +56,17 @@ var mapPath = "/etc/ttyd-user-map"
 // codes/stderr, so the full HTTP→tmuxCmd path runs hermetically without a
 // live tmux server (see copymode_test.go). Production never reassigns it.
 var tmuxBinary = "/usr/bin/tmux"
+
+// sudoBinary and persistForgetWrapper are vars for the same reason as
+// tmuxBinary: a test seam. The forget path always needs sudo (its target is
+// root, not the caller), so unlike tmuxCmd it has no sudo-less branch to test
+// through — main_test.go swaps sudoBinary for a stub that records its argv.
+// Production never reassigns either.
+var sudoBinary = "/usr/bin/sudo"
+
+// persistForgetWrapper drops one session from the caller's tmux-persist
+// manifest (devvm/tmux-persist-forget).
+var persistForgetWrapper = "/usr/local/bin/tmux-persist-forget"
 
 var sessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
@@ -292,6 +302,13 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 // `tmux-persist restore <user>`. Idempotent: already-live sessions are left
 // alone, so this only fills in what an OOM/crash killed (the boot-only
 // tmux-persist-restore.service never fires without a reboot).
+//
+// "only what an OOM/crash killed" holds because killSession forgets: restore
+// recreates every row of the manifest that is not live, and a deliberate kill
+// removes its row on the way out. Drop that and this button silently undoes
+// kills for the up-to-5-minutes until tmux-persist-save.timer next rewrites
+// the manifest — including other agents' dead sessions, since one press
+// restores the caller's whole manifest.
 func handleRestore(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -541,6 +558,19 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	// (Deaths outside the API keep theirs so a restore regroups them.)
 	if err := layoutStoreInstance.removeSession(osUser, name); err != nil {
 		log.Printf("layout cleanup after killing %s for %s failed: %v", name, osUser, err)
+	}
+	// …and drop it from the tmux-persist manifest, for the same reason. POST
+	// /restore recreates every manifest row that is not currently live, and the
+	// manifest is only rewritten every 5 min by tmux-persist-save.timer — so
+	// without this the Restore button resurrects a session the user just chose
+	// to kill, relaunching `claude --resume <uuid>` when the row carries one.
+	// Only a kill THROUGH this handler forgets: an OOM or a crashed tmux server
+	// never reaches here, so the recovery restore exists for still works.
+	// Best-effort — tmux is already gone, so a failed forget is a log line, not
+	// a 500 the UI would render as "kill failed".
+	forget := exec.Command(sudoBinary, "-n", persistForgetWrapper, osUser, name)
+	if out, err := forget.CombinedOutput(); err != nil {
+		log.Printf("persist-forget after killing %s for %s failed: %v: %s", name, osUser, err, strings.TrimSpace(string(out)))
 	}
 	sessionsCacheInstance.invalidate(osUser)
 	events.Emit("session.killed", osUser, telemetry.Attrs{"tl.session": name, "tl.client": "api"})
