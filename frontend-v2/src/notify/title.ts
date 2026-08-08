@@ -12,10 +12,11 @@
  *      a command; with nothing active, the base title.
  *
  * Both functions are PURE and unit-tested. The count of unseen-done is supplied
- * by an injectable predicate: real seen/visit tracking is a separate subsystem
- * (inventory Cat.2, not yet ported), so the default treats every `done` session
- * as unseen — consistent with the current SessionCard placeholder. Swap the
- * predicate in once seen-tracking lands.
+ * by an injectable predicate, so this module stays pure: notifications.ts passes
+ * the real one from the visit store (store/visits.ts — a `done` session counts
+ * only until the user looks at it), and the same predicate drives the favicon's
+ * green tick so both badges clear together. The bare default (every `done` is
+ * unseen) is what a caller without a visit store gets.
  */
 
 export type TitleSession = {
