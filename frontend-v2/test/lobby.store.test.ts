@@ -237,6 +237,27 @@ describe("lobby store", () => {
     });
   });
 
+  it("move: an anchored drop inside a PROJECT materializes the members it needs", async () => {
+    // Sessions the layout never placed but whose own record names the project
+    // render there with no raw entry behind them — the same position-with-no-
+    // index Ungrouped's leftovers have. Without materializing first, the anchor
+    // resolves against an empty list and the drop silently appends.
+    const api = new FakeApi();
+    api.sessionsVal = [
+      sess("alpha", { created: 1, project: "work" }),
+      sess("beta", { created: 2, project: "work" }),
+      sess("gamma", { created: 3, project: "work" }),
+    ];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      expect(names(store)).toEqual(["alpha", "beta", "gamma"]);
+      await store.move("alpha", "work", { name: "beta", side: "below" });
+      expect(api.puts.at(-1)!.projects[0]!.sessions).toEqual(["beta", "alpha", "gamma"]);
+      expect(names(store)).toEqual(["beta", "alpha", "gamma"]);
+    });
+  });
+
   it("move: an un-anchored move into Ungrouped lands after the leftovers, not before", async () => {
     const api = new FakeApi();
     api.sessionsVal = [
@@ -369,6 +390,54 @@ describe("lobby store", () => {
     });
   });
 
+  it("a poll that only REORDERS the manifest leaves the render model alone", async () => {
+    // /sessions spans OS users and nothing promises a stable order, so the very
+    // same sessions come back shuffled. The model is rebuilt from that array, so
+    // a shuffle used to hand <For> a whole new set of RenderGroups and re-create
+    // every group and card node — on a sidebar where nothing had changed.
+    const api = new FreshApi();
+    api.sessionsVal = [sess("a"), sess("b"), sess("c")];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["a"] }],
+      ungrouped: ["b", "c"],
+    };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const model = store.model();
+      const work = model.groups.find((g) => g.name === "work")!;
+      const card = work.sessions[0]!;
+
+      for (let i = 0; i < 3; i++) {
+        api.sessionsVal = [...api.sessionsVal].reverse();
+        await store.refresh();
+      }
+
+      expect(store.model()).toBe(model);
+      expect(store.model().groups.find((g) => g.name === "work")).toBe(work);
+      expect(work.sessions[0]).toBe(card);
+      expect(names(store)).toEqual(["b", "c", "a"]); // and the render is unmoved
+    });
+  });
+
+  it("a foreign session appearing does not re-create this user's groups", async () => {
+    // Somebody else's session showing up in the shared manifest is not a change
+    // to any of this user's rows.
+    const api = new FreshApi();
+    api.sessionsVal = [sess("mine")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["mine"] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const ungrouped = store.model().groups[0]!;
+
+      api.sessionsVal = [...api.sessionsVal, sess("theirs", { owner: "bob", access: "ro" })];
+      await store.refresh();
+
+      expect(store.model().groups[0]).toBe(ungrouped);
+      expect(store.model().foreign.map((s) => s.name)).toEqual(["theirs"]);
+    });
+  });
+
   it("a poll that DOES change something still repaints", async () => {
     const api = new FreshApi();
     api.sessionsVal = [sess("a")];
@@ -474,6 +543,131 @@ describe("lobby store", () => {
       expect(await store.renameProjectAction("old", "fresh")).toBe(false);
       expect(store.collapse.isCollapsed("old")).toBe(true);
       expect(store.collapse.isCollapsed("fresh")).toBe(false);
+    });
+  });
+
+  /**
+   * The layout is a whole-document PUT with no concurrency control, so the last
+   * writer wins outright: two tabs open, tab B polls the pre-move document and
+   * writes it back, and tab A's move is gone. That is the backend's contract and
+   * this lane does not change it — but losing the move in SILENCE is what made
+   * it look like the drag never worked. The write we PUT is remembered until the
+   * next poll we accept: a server document that no longer matches it means
+   * somebody else wrote in between, and the user gets told.
+   */
+  describe("layout conflicts between tabs", () => {
+    /** Past the 4s grace, where a poll is allowed to overwrite local layout. */
+    const pastGrace = () => vi.setSystemTime(Date.now() + 5000);
+
+    it("says so when another tab's write reverted this tab's move", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-06T10:00:00Z"));
+      const api = new FreshApi();
+      api.sessionsVal = [sess("a")];
+      api.layoutVal = {
+        ...emptyLayout(),
+        projects: [{ name: "work", sessions: [] }],
+        ungrouped: ["a"],
+      };
+      await withStore(api, async (store) => {
+        await store.refresh();
+        await store.move("a", "work");
+        expect(api.puts).toHaveLength(1);
+
+        // tab B, which never saw the move, PUTs the document it still remembers
+        api.layoutVal = {
+          ...emptyLayout(),
+          projects: [{ name: "work", sessions: [] }],
+          ungrouped: ["a"],
+        };
+        pastGrace();
+        await store.refresh();
+
+        expect(store.toast()).toMatch(/elsewhere/i);
+        expect(names(store)).toEqual(["a"]); // the server document still wins
+      });
+    });
+
+    it("stays quiet when the poll reads back the layout this tab wrote", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-06T10:00:00Z"));
+      const api = new FreshApi();
+      api.sessionsVal = [sess("a")];
+      api.layoutVal = {
+        ...emptyLayout(),
+        projects: [{ name: "work", sessions: [] }],
+        ungrouped: ["a"],
+      };
+      await withStore(api, async (store) => {
+        await store.refresh();
+        await store.move("a", "work");
+        pastGrace();
+        await store.refresh();
+        await store.refresh();
+        expect(store.toast()).toBeNull();
+      });
+    });
+
+    it("does not blame a conflict for a poll with no local write behind it", async () => {
+      // Another tab moving a session while THIS one is only reading is not a
+      // conflict — there is nothing of ours to lose.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-06T10:00:00Z"));
+      const api = new FreshApi();
+      api.sessionsVal = [sess("a")];
+      api.layoutVal = { ...emptyLayout(), ungrouped: ["a"] };
+      await withStore(api, async (store) => {
+        await store.refresh();
+        api.layoutVal = {
+          ...emptyLayout(),
+          projects: [{ name: "elsewhere", sessions: ["a"] }],
+        };
+        pastGrace();
+        await store.refresh();
+        expect(store.toast()).toBeNull();
+        expect(store.layout().projects.map((p) => p.name)).toEqual(["elsewhere"]);
+      });
+    });
+
+    it("reports the conflict once, not on every poll that follows", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-06T10:00:00Z"));
+      const api = new FreshApi();
+      api.sessionsVal = [sess("a")];
+      api.layoutVal = {
+        ...emptyLayout(),
+        projects: [{ name: "work", sessions: [] }],
+        ungrouped: ["a"],
+      };
+      const seen: string[] = [];
+      let dispose: () => void = () => {};
+      await new Promise<void>((resolve, reject) => {
+        createRoot((d) => {
+          dispose = d;
+          const store = createLobbyStore({
+            api,
+            autoStart: false,
+            syncHash: false,
+            notify: (m) => seen.push(m),
+          });
+          void (async () => {
+            await store.refresh();
+            await store.move("a", "work");
+            api.layoutVal = {
+              ...emptyLayout(),
+              projects: [{ name: "work", sessions: [] }],
+              ungrouped: ["a"],
+            };
+            pastGrace();
+            await store.refresh();
+            await store.refresh();
+            await store.refresh();
+            store.dispose();
+          })().then(resolve, reject);
+        });
+      });
+      dispose();
+      expect(seen.filter((m) => /elsewhere/i.test(m))).toHaveLength(1);
     });
   });
 
