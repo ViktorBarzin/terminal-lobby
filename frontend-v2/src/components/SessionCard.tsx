@@ -1,6 +1,7 @@
 import {
   createSignal,
   For,
+  onCleanup,
   Show,
   type Accessor,
   type Component,
@@ -42,6 +43,17 @@ export const SessionCard: Component<{
   const [dropEdge, setDropEdge] = createSignal<"above" | "below" | null>(null);
   let releaseHold: (() => void) | null = null;
   let inputEl: HTMLInputElement | undefined;
+
+  // The rename box and a drag both hold the poll, and only their own end
+  // handlers give it back — so a card that goes away while one is open (its
+  // group collapsing does exactly that, and until the model was stabilized so
+  // did any poll) stranded the sidebar: the hold count never returned to zero
+  // and nothing polled again for the rest of the session. Same backstop
+  // ProjectGroup keeps on its add box and header drag.
+  onCleanup(() => {
+    releaseHold?.();
+    releaseHold = null;
+  });
 
   const rightText = () => {
     props.tick(); // re-run every second
