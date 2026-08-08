@@ -19,6 +19,7 @@ import { Toaster } from "./Toaster";
 import { createPrefsStore } from "../store/prefs";
 import { toasts } from "../store/toast";
 import { createKeybindingEngine } from "../keybindings/engine";
+import { keyContext } from "../keybindings/bindings.logic";
 import { createPaletteController, type PaletteAction } from "../keybindings/palette-controller";
 import { createRunAppCommand } from "../keybindings/commands";
 import { refocusTerminal } from "../keybindings/refocus";
@@ -258,14 +259,25 @@ export const App: Component = () => {
     },
   });
 
-  engine.init({
-    getContext: () => ({
-      terminalFocus: false,
-      lobbyOpen: true,
+  // The shell's when-context, built in ONE place (keyContext) and read by all
+  // three key paths: the engine's window keydown, the terminal iframe's
+  // forwarded commands (engine.allows, below) and SessionView's always-on
+  // Ctrl/Cmd+J. Each of those used to decide for itself what an open overlay
+  // meant, so a chord refused on one path fired on another.
+  const keyCtx = createMemo(() =>
+    keyContext({
+      paletteOpen: palette.isOpen(),
+      helpOpen: help.isOpen(),
+      settingsOpen: settingsOpen(),
       galleryOpen: gallery.view() !== "closed",
       previewOpen: previewState().open,
       previewDirty: previewState().dirty,
     }),
+  );
+  const overlayOpen = () => keyCtx().overlayOpen;
+
+  engine.init({
+    getContext: () => keyCtx(),
     runCommand: (cmd) => run(cmd),
   });
   onCleanup(() => engine.dispose());
@@ -284,6 +296,10 @@ export const App: Component = () => {
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+    // Another overlay owns the keyboard: opening this one over it is the same
+    // context leak the chords carried. This overlay itself is exempt — "/" is
+    // one of its own dismiss keys.
+    if (overlayOpen() && !help.isOpen()) return;
     e.preventDefault();
     help.toggle();
   };
@@ -360,7 +376,15 @@ export const App: Component = () => {
                 dir={selectedDir()}
                 newCommand={newCommand}
                 notify={notify}
-                onFrameCommand={(cmd) => run(cmd)}
+                overlayOpen={overlayOpen}
+                // A chord pressed INSIDE the terminal iframe is matched by
+                // term.html against the TERMINAL page's own context and arrives
+                // here as a bare command name — so it has to clear the same
+                // when-clause the window keydown path clears, or an open
+                // overlay guards exactly one of the two.
+                onFrameCommand={(cmd) => {
+                  if (engine.allows(cmd)) run(cmd);
+                }}
                 onFrameAlt={(down) => engine.setFrameAlt(down)}
                 onFrameAttention={notifications.onFrameAttention}
                 onFrameBuildStale={() => healer.onBuildStale()}
