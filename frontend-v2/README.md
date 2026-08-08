@@ -112,6 +112,9 @@ src/
     lobby.ts             Lobby store: poll + optimistic layout PUT + session CRUD
     viewmode.ts          Per-session/per-device {mode} persistence
     collapse.ts          Per-browser group-collapse (tmux-collapsed-<user>)
+    visits.ts            Per-browser seen/visit tracking (tl:session-visits:v1)
+                         → the unseen-done predicate behind the tab-title (N✓)
+                         badge and the favicon's green tick
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
     toast.ts             Toast stack + the slow-request health coordinator
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
