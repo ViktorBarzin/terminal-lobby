@@ -7,12 +7,12 @@
 ## The reframe
 
 The 12,691-line vanilla `frontend/index.html` was being replaced by a SolidJS + TS
-app. Along the way the *rewrite* quietly became a *new product*: text-mode chat as
+app. Along the way the rewrite grew into a new product: text-mode chat as
 the **primary** view, a new `session-events` SSE backend, a file editor, auto-update,
 a resilient protocol. On 2026-07-20 that text-primary build was cut live to
-`terminal.viktorbarzin.me` and **reverted the same day** — the transcript didn't
+`terminal.viktorbarzin.me` and reverted the same day — the transcript didn't
 stream and the lobby broke (SSE buffered through Cloudflare; never testable because
-the devvm can't hairpin to its own public URL). It "became completely unusable."
+the devvm can't hairpin to its own public URL). In Viktor's assessment it was unusable.
 
 **v1 is the maintainability rewrite, nothing more:** a SolidJS lobby + terminal that
 reproduces today's app. Everything else stays alive on the canary as a later v2.
@@ -21,9 +21,9 @@ reproduces today's app. Everything else stays alive on the canary as a later v2.
 
 | # | Decision | Why |
 |---|----------|-----|
-| 1 | **v1 = terminal-first.** `viewmode.ts` defaults to the Terminal view; text-mode is opt-in per session (`Cmd/Ctrl-J`). | Boots into the app you know. Rides only the transports the vanilla page already uses through Cloudflare (ttyd WS + tmux-api) — the SSE-through-Cloudflare failure cannot recur. |
+| 1 | **v1 = terminal-first.** `viewmode.ts` defaults to the Terminal view; text-mode is opt-in per session (`Cmd/Ctrl-J`). | Boots into the app you know. Rides only the transports the vanilla page already uses through Cloudflare (ttyd WS + tmux-api), which removes the SSE-through-Cloudflare failure mode. |
 | 2 | **Defer** text-mode (`session-events`), the file editor (`file-api`), auto-update, resilient protocol. | The only stated driver was maintainability; the parity rewrite delivers it. The deferred surfaces stay dormant on the canary, promoted in a real v2. |
-| 3 | **Option A — dev-tier first.** Prove terminal-first on `terminal-dev.viktorbarzin.me` (same Cloudflare + Authentik ingress), then swap the main host with instant `.prev` rollback. | Retires the "untested real path" that bit us; the main-host cutover becomes a one-file, reversible move. |
+| 3 | **Option A — dev-tier first.** Prove terminal-first on `terminal-dev.viktorbarzin.me` (same Cloudflare + Authentik ingress), then swap the main host with instant `.prev` rollback. | Retires the untested-real-path exposure behind the 2026-07-20 revert; the main-host cutover becomes a one-file, reversible move. |
 | 4 | **Resume via a capped QA fix-loop**, scoped to the 8 v1 surface areas. | A prior session's loop OOM-killed itself: **agent count (~25–30) was uncapped** — the browser flock only caps browsers at 6. Resumed with ≤5 agents. |
 
 ## The staged migration
