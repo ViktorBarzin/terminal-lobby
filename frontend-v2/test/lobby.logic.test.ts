@@ -8,6 +8,7 @@ import {
   formatWorking,
   groupSeqTokens,
   isOwn,
+  materializeGroup,
   materializeUngrouped,
   moveGroup,
   moveSession,
@@ -18,8 +19,10 @@ import {
   renameSessionInLayout,
   reorderGroups,
   sameLayout,
+  stabilizeModel,
   stateLabel,
   visibleGroupSeqTokens,
+  type SidebarModel,
 } from "../src/components/lobby.logic";
 import type { Layout, Session } from "../src/types/lobby";
 import { emptyLayout } from "../src/types/lobby";
@@ -116,6 +119,129 @@ describe("deriveSidebar", () => {
       .filter((n) => n === "dup").length;
     expect(count).toBe(1);
   });
+
+  it("files an unplaced session under the project its own record names", () => {
+    // tmux-api stamps `project` on the session itself; the layout is the
+    // per-user arrangement of it. A session the layout does not place fell
+    // through to Ungrouped even when it said which project it belonged to —
+    // the project then sat right beside it reading 0.
+    const l = layout({ projects: [{ name: "t3-code", sessions: [] }] });
+    const m = deriveSidebar(l, [sess("t3", { project: "t3-code" })], ME);
+    const proj = m.groups.find((g) => g.name === "t3-code")!;
+    expect(proj.sessions.map((s) => s.name)).toEqual(["t3"]);
+    expect(m.groups.find((g) => g.kind === "ungrouped")!.sessions).toEqual([]);
+  });
+
+  it("keeps the layout's placement when it disagrees with the session's project", () => {
+    // The layout is the arrangement the user made by hand; the session record
+    // is only the fallback for one it has never placed.
+    const l = layout({
+      projects: [
+        { name: "here", sessions: ["s"] },
+        { name: "there", sessions: [] },
+      ],
+    });
+    const m = deriveSidebar(l, [sess("s", { project: "there" })], ME);
+    expect(m.groups.find((g) => g.name === "here")!.sessions.map((s) => s.name)).toEqual(["s"]);
+    expect(m.groups.find((g) => g.name === "there")!.sessions).toEqual([]);
+  });
+
+  it("falls back to Ungrouped when the named project does not exist", () => {
+    const m = deriveSidebar(layout(), [sess("orphan", { project: "gone" })], ME);
+    expect(m.groups.find((g) => g.kind === "ungrouped")!.sessions.map((s) => s.name)).toEqual([
+      "orphan",
+    ]);
+  });
+});
+
+/**
+ * The sidebar's <For> keys on REFERENCE, and deriveSidebar builds fresh
+ * RenderGroup objects on every recompute — so any poll that recomputed the model
+ * tore down and re-created every group and card node, taking the double-click
+ * that was mid-flight on one of them with it. The manifest does not have to
+ * change for that: tmux-api spans OS users, so the same sessions come back in a
+ * different ORDER, and any session appearing anywhere (even a foreign one)
+ * shifts the array.
+ */
+describe("stabilizeModel", () => {
+  const model = (l: Layout, sessions: Session[]) => deriveSidebar(l, sessions, ME);
+
+  it("returns the previous model outright when the derivation says the same thing", () => {
+    const l = layout({ projects: [{ name: "work", sessions: ["a"] }], ungrouped: ["b"] });
+    const a = sess("a");
+    const b = sess("b");
+    const prev = model(l, [a, b]);
+    // same sessions, re-parsed layout, different manifest order
+    const next = model(JSON.parse(JSON.stringify(l)) as Layout, [b, a]);
+    expect(next).not.toBe(prev); // control: the derivation really did re-run
+    expect(stabilizeModel(prev, next)).toBe(prev);
+  });
+
+  it("keeps the untouched groups when one of them changes", () => {
+    const l = layout({
+      projects: [
+        { name: "alpha", sessions: ["a"] },
+        { name: "bravo", sessions: ["b"] },
+      ],
+    });
+    const a = sess("a");
+    const b = sess("b");
+    const prev = stabilizeModel(undefined, model(l, [a, b]));
+    const l2 = layout({
+      projects: [
+        { name: "alpha", sessions: ["a"] },
+        { name: "bravo", sessions: ["b", "b2"] },
+      ],
+    });
+    const out = stabilizeModel(prev, model(l2, [a, b, sess("b2")]));
+    const at = (m: typeof out, name: string) => m.groups.findIndex((g) => g.name === name);
+
+    expect(out).not.toBe(prev);
+    expect(out.groups[at(out, "alpha")]).toBe(prev.groups[at(prev, "alpha")]); // untouched
+    expect(out.groups[at(out, "bravo")]).not.toBe(prev.groups[at(prev, "bravo")]);
+    expect(out.groups[at(out, "bravo")]!.sessions.map((s) => s.name)).toEqual(["b", "b2"]);
+  });
+
+  it("keeps every own group when only the Shared-with-me list moves", () => {
+    // Somebody else's session appearing must not re-create this user's rows.
+    const l = layout({ ungrouped: ["a"] });
+    const a = sess("a");
+    const prev = stabilizeModel(undefined, model(l, [a]));
+    const out = stabilizeModel(prev, model(l, [a, sess("theirs", { owner: "bob" })]));
+
+    expect(out).not.toBe(prev);
+    expect(out.groups[0]).toBe(prev.groups[0]);
+    expect(out.foreign.map((s) => s.name)).toEqual(["theirs"]);
+  });
+
+  it("does not reuse a group whose members were reordered", () => {
+    const l = layout({ ungrouped: ["a", "b"] });
+    const a = sess("a");
+    const b = sess("b");
+    const prev = stabilizeModel(undefined, model(l, [a, b]));
+    const out = stabilizeModel(prev, model(layout({ ungrouped: ["b", "a"] }), [a, b]));
+    expect(out.groups[0]).not.toBe(prev.groups[0]);
+    expect(out.groups[0]!.sessions.map((s) => s.name)).toEqual(["b", "a"]);
+  });
+
+  it("does not reuse a group whose project directory changed", () => {
+    const work = (m: SidebarModel) => m.groups.find((g) => g.name === "work")!;
+    const prev = stabilizeModel(
+      undefined,
+      model(layout({ projects: [{ name: "work", sessions: [] }] }), []),
+    );
+    const out = stabilizeModel(
+      prev,
+      model(layout({ projects: [{ name: "work", sessions: [], dir: "/code" }] }), []),
+    );
+    expect(work(out)).not.toBe(work(prev));
+    expect(work(out).project!.dir).toBe("/code");
+  });
+
+  it("passes the first derivation straight through", () => {
+    const first = model(layout(), [sess("a")]);
+    expect(stabilizeModel(undefined, first)).toBe(first);
+  });
 });
 
 describe("groupSeqTokens", () => {
@@ -211,6 +337,36 @@ describe("materializeUngrouped", () => {
   });
 });
 
+describe("materializeGroup", () => {
+  it("folds a project's swept-in members into its layout list", () => {
+    // Sessions whose own record names the project, which the layout has never
+    // placed: they render in the project with no raw index behind them.
+    const l = layout({ projects: [{ name: "work", sessions: ["a"] }] });
+    const live = [
+      sess("a", { created: 1 }),
+      sess("b", { created: 2, project: "work" }),
+    ];
+    const rendered = deriveSidebar(l, live, ME)
+      .groups.find((g) => g.name === "work")!
+      .sessions.map((s) => s.name);
+    expect(rendered).toEqual(["a", "b"]);
+
+    const out = materializeGroup(l, "work", rendered);
+    expect(out.projects[0]!.sessions).toEqual(["a", "b"]);
+    expect(
+      deriveSidebar(out, live, ME)
+        .groups.find((g) => g.name === "work")!
+        .sessions.map((s) => s.name),
+    ).toEqual(rendered);
+  });
+
+  it("delegates the ungrouped case and no-ops on an unknown group", () => {
+    const l = layout({ ungrouped: ["a"] });
+    expect(materializeGroup(l, "", ["a", "b"]).ungrouped).toEqual(["a", "b"]);
+    expect(materializeGroup(l, "nosuch", ["b"])).toBe(l);
+  });
+});
+
 describe("moveSessionToAnchor", () => {
   it("lands below the anchor when dead refs precede the drop point", () => {
     // raw ['d1','d2','a','b','c'] renders as ['a','b','c'] — a rendered index of
@@ -302,6 +458,24 @@ describe("project CRUD", () => {
     expect(l.projects).toHaveLength(1);
     l = renameProject(l, "work", "job");
     expect(l.projects[0]!.name).toBe("job");
+  });
+
+  it("puts a new project ABOVE Ungrouped, leaving the other groups in place", () => {
+    // ungroupedIndex counts the projects above the sentinel, so appending to
+    // `projects` filed a brand-new project underneath Ungrouped — below the
+    // loose sessions, where the user who just named it was not looking.
+    const l = layout({
+      projects: [{ name: "old", sessions: [] }],
+      ungrouped: ["loose"],
+      ungroupedIndex: 0, // Ungrouped on top, "old" below it
+    });
+    const out = addProject(l, "fresh");
+    expect(groupSeqTokens(out)).toEqual(["p:fresh", "u", "p:old"]);
+  });
+
+  it("keeps a new project above Ungrouped when the sentinel sits last", () => {
+    const l = layout({ projects: [{ name: "old", sessions: [] }], ungroupedIndex: 1 });
+    expect(groupSeqTokens(addProject(l, "fresh"))).toEqual(["p:old", "p:fresh", "u"]);
   });
 
   it("delete moves members to Ungrouped and clamps the slot", () => {

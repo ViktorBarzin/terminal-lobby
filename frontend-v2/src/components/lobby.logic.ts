@@ -133,12 +133,20 @@ export function deriveSidebar(
   for (const p of layout.projects) projectMembers.set(p.name, resolve(p.sessions));
 
   const ungroupedMembers = resolve(layout.ungrouped);
-  // Live own sessions referenced by no group land in Ungrouped, in a stable
-  // order (creation time asc, then name) so the sidebar doesn't jitter.
+  // Live own sessions referenced by no group, in a stable order (creation time
+  // asc, then name) so the sidebar doesn't jitter.
   const leftovers = [...ownByName.values()]
     .filter((s) => !referenced.has(s.name))
     .sort((a, b) => a.created - b.created || a.name.localeCompare(b.name));
-  ungroupedMembers.push(...leftovers);
+  // A leftover that names a project of its own goes there rather than to
+  // Ungrouped. tmux-api stamps `project` on the session record; the layout is
+  // the arrangement the user made of it, so the layout wins wherever it has an
+  // opinion — but a session it has never placed used to fall through to
+  // Ungrouped even while the project it named sat beside it reading 0.
+  for (const s of leftovers) {
+    const claimed = s.project ? projectMembers.get(s.project) : undefined;
+    (claimed ?? ungroupedMembers).push(s);
+  }
 
   const groups: RenderGroup[] = [];
   for (const t of groupSeqTokens(layout)) {
@@ -225,6 +233,29 @@ export function materializeUngrouped(layout: Layout, renderedUngrouped: string[]
 }
 
 /**
+ * The same fold for ANY group ("" = ungrouped). A project has swept-in members
+ * too — the sessions whose own record names it that the layout has never placed
+ * — and they render in positions no raw index backs, so an anchored drop among
+ * them resolves against nothing and silently appends. Same construction, same
+ * guarantee: the sweep renders after every resolved entry, so appending the
+ * missing names preserves the order already on screen.
+ */
+export function materializeGroup(layout: Layout, group: string, rendered: string[]): Layout {
+  if (group === "") return materializeUngrouped(layout, rendered);
+  const project = layout.projects.find((p) => p.name === group);
+  if (!project) return layout;
+  const have = new Set(project.sessions);
+  const missing = rendered.filter((n) => !have.has(n));
+  if (missing.length === 0) return layout;
+  return {
+    ...layout,
+    projects: layout.projects.map((p) =>
+      p.name === group ? { ...p, sessions: [...p.sessions, ...missing] } : p,
+    ),
+  };
+}
+
+/**
  * Move `name` into `targetGroup` ("" = ungrouped) immediately above/below the
  * card it was dropped on.
  *
@@ -271,12 +302,26 @@ export function moveGroup(layout: Layout, groupName: string, dir: -1 | 1): Layou
   return reorderGroups(layout, from, from + dir);
 }
 
-/** Append a new (empty) project. No-op if the name is already taken. */
+/**
+ * Add a new (empty) project directly ABOVE the Ungrouped slot. No-op if the
+ * name is already taken.
+ *
+ * `ungroupedIndex` counts the projects that sit above the sentinel, so a
+ * project appended to `projects` always landed BELOW Ungrouped — the user named
+ * a project and it appeared under the loose sessions, off where they were not
+ * looking. Slotting it in at the sentinel and pushing the sentinel down one
+ * keeps every existing group in the order the user put it in.
+ */
 export function addProject(layout: Layout, name: string, dir?: string): Layout {
   if (layout.projects.some((p) => p.name === name)) return layout;
   const project: LayoutProject = { name, sessions: [] };
   if (dir) project.dir = dir;
-  return { ...layout, projects: [...layout.projects, project] };
+  const at = clamp(layout.ungroupedIndex ?? 0, 0, layout.projects.length);
+  return {
+    ...layout,
+    projects: [...layout.projects.slice(0, at), project, ...layout.projects.slice(at)],
+    ungroupedIndex: at + 1,
+  };
 }
 
 export function renameProject(layout: Layout, oldName: string, newName: string): Layout {
@@ -359,6 +404,55 @@ export function sameLayout(a: Layout, b: Layout): boolean {
     }
   }
   return true;
+}
+
+function sameSessions(a: Session[], b: Session[]): boolean {
+  return a.length === b.length && a.every((s, i) => s === b[i]);
+}
+
+/** Same group, member for member — including the project fields the header reads. */
+function sameGroup(a: RenderGroup, b: RenderGroup): boolean {
+  return (
+    a.kind === b.kind &&
+    a.name === b.name &&
+    (a.project?.dir ?? "") === (b.project?.dir ?? "") &&
+    sameSessions(a.sessions, b.sessions)
+  );
+}
+
+/**
+ * Re-use the PREVIOUS render model's objects wherever the freshly-derived one
+ * says exactly the same thing.
+ *
+ * deriveSidebar allocates a new SidebarModel — and a new RenderGroup per group —
+ * on every recompute, and the sidebar's <For> keys on reference: without this,
+ * every recompute tore down and re-created every group and card node. It did not
+ * take a real change to trigger one. /sessions spans OS users, so the same
+ * sessions come back in a different ORDER; any session appearing or dying
+ * anywhere (someone else's included) shifts the array; and each of those makes
+ * the memo re-run. The user paid for it with an open menu, a half-typed name, a
+ * drag, or the second click of a double-click landing on a node that no longer
+ * existed.
+ *
+ * Session objects are NOT compared field by field: the store reconciles them by
+ * name, so an unchanged session keeps its identity and a changed one updates in
+ * place through the same proxy — which is exactly the granular repaint we want
+ * (a moving timer must not cost a new DOM node either).
+ */
+export function stabilizeModel(
+  prev: SidebarModel | undefined,
+  next: SidebarModel,
+): SidebarModel {
+  if (!prev) return next;
+  const groups =
+    prev.groups.length === next.groups.length
+      ? next.groups.map((g, i) => (sameGroup(prev.groups[i]!, g) ? prev.groups[i]! : g))
+      : next.groups;
+  const foreign = sameSessions(prev.foreign, next.foreign) ? prev.foreign : next.foreign;
+  const groupsUnchanged =
+    groups.length === prev.groups.length && groups.every((g, i) => g === prev.groups[i]);
+  if (groupsUnchanged && foreign === prev.foreign) return prev;
+  return { groups, foreign };
 }
 
 // ---- Display helpers -----------------------------------------------------
