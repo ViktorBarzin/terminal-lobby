@@ -5,7 +5,7 @@ import {
   addSessionToGroup,
   deleteProject,
   deriveSidebar,
-  materializeUngrouped,
+  materializeGroup,
   moveGroup,
   moveSession,
   moveSessionToAnchor,
@@ -14,6 +14,7 @@ import {
   renameSessionInLayout,
   reorderGroups,
   sameLayout,
+  stabilizeModel,
   type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
@@ -155,6 +156,17 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   };
 
   let graceUntil = 0;
+  /**
+   * The document this tab last PUT, held until the next poll that is allowed to
+   * overwrite the local layout. PUT /api/layout takes the whole document with no
+   * version check — last writer wins — so with two tabs open, tab B polling the
+   * pre-move document and writing it back simply erases tab A's move. That
+   * remains the backend's contract; what changes here is that it stops happening
+   * in silence, which is what made a perfectly-executed drag look like it had
+   * never worked. A server document that no longer matches what we wrote means
+   * somebody else wrote in between.
+   */
+  let lastWritten: Layout | null = null;
   let holds = 0;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -184,11 +196,20 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return [...sessions, ...extra];
   });
 
-  const model = createMemo<SidebarModel>(() => deriveSidebar(layout(), mergedSessions(), me()));
+  // stabilizeModel keeps the groups whose content did not change, so the
+  // sidebar's reference-keyed <For> keeps their DOM nodes. deriveSidebar
+  // allocates fresh RenderGroups every run, and it re-runs on things that are
+  // not a change at all — /sessions handing back the same sessions in a
+  // different order, or somebody else's session appearing — each of which used
+  // to re-create every group and card on the screen.
+  const model = createMemo<SidebarModel>((prev) =>
+    stabilizeModel(prev, deriveSidebar(layout(), mergedSessions(), me())),
+  );
 
-  const ungroupedRender = (): string[] =>
+  /** The names a group renders right now ("" = ungrouped). */
+  const groupRender = (group: string): string[] =>
     model()
-      .groups.find((g) => g.kind === "ungrouped")
+      .groups.find((g) => (group === "" ? g.kind === "ungrouped" : g.name === group))
       ?.sessions.map((s) => s.name) ?? [];
 
   /**
@@ -255,6 +276,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
     // A stale poll must not revert an in-flight local layout change.
     if (lRes.status === "fulfilled" && Date.now() >= graceUntil) {
+      if (lastWritten && !sameLayout(lRes.value, lastWritten)) {
+        showToast("Layout changed elsewhere", "warning");
+      }
+      lastWritten = null;
       setLayout(lRes.value);
     }
     setLoading(false);
@@ -263,6 +288,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   function applyLocalLayout(next: Layout): void {
     setLayout(next);
     graceUntil = Date.now() + LAYOUT_GRACE_MS;
+    // Disarm the conflict check: only a document we PUT ourselves can be
+    // compared against the server's. A local mirror of a change the BACKEND
+    // made (rename rewrites the server layout on our behalf) is not one, and
+    // reading it back would accuse the server of a conflict with itself.
+    lastWritten = null;
   }
 
   /** PUT the layout; false when the write did not land (local state rolled back). */
@@ -278,6 +308,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       await refresh();
       return false;
     }
+    lastWritten = next;
     return true;
   }
 
@@ -384,10 +415,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   }
 
   async function move(name: string, group: string, anchor?: DropAnchor): Promise<void> {
-    // Ungrouped's leftovers occupy rendered positions they have no raw entry
-    // for, so nothing can be placed relative to them (nor after them) until
-    // they are materialized.
-    const base = group === "" ? materializeUngrouped(layout(), ungroupedRender()) : layout();
+    // Swept-in members occupy rendered positions they have no raw entry for, so
+    // nothing can be placed relative to them (nor after them) until they are
+    // materialized — Ungrouped's leftovers, and a project's members that only
+    // the session record assigned to it.
+    const base = materializeGroup(layout(), group, groupRender(group));
     await saveLayout(
       anchor ? moveSessionToAnchor(base, name, group, anchor) : moveSession(base, name, group),
     );
