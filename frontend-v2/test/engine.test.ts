@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createKeybindingEngine, type KeybindingEngine } from "../src/keybindings/engine";
-import { KB_KEY } from "../src/keybindings/bindings.logic";
+import { KB_KEY, keyContext } from "../src/keybindings/bindings.logic";
 
 /**
  * Integration test for the capture-phase dispatcher (the "ONE window keydown"
@@ -78,6 +78,61 @@ describe("createKeybindingEngine — capture-phase dispatcher", () => {
     engine.dispose();
     window.dispatchEvent(key({ key: "K", code: "KeyK", ctrlKey: true, shiftKey: true }));
     expect(ran).toEqual([]);
+  });
+});
+
+/**
+ * The SECOND way a command reaches the lobby: focus is inside the terminal
+ * iframe, so the keydown never touches this window at all — term.html matches
+ * the chord itself and posts the command NAME up (tl-command). App hands it to
+ * the same dispatcher the keydown listener uses, so it has to consult the same
+ * live when-context first, or an overlay's guard applies to exactly one of the
+ * two paths (QA #3).
+ */
+describe("createKeybindingEngine — the forwarded-command guard", () => {
+  let engine: KeybindingEngine;
+  let overlay: boolean;
+
+  beforeEach(() => {
+    localStorage.clear();
+    overlay = false;
+    engine = createKeybindingEngine();
+    engine.init({
+      getContext: () =>
+        keyContext({
+          paletteOpen: false,
+          helpOpen: false,
+          settingsOpen: false,
+          galleryOpen: overlay,
+          previewOpen: false,
+          previewDirty: false,
+        }),
+      runCommand: () => {},
+    });
+  });
+  afterEach(() => engine.dispose());
+
+  it("allows a lobby command while nothing owns the keyboard", () => {
+    expect(engine.allows("session.next")).toBe(true);
+    expect(engine.allows("view.toggle")).toBe(true);
+  });
+
+  it("refuses it once an overlay is open", () => {
+    overlay = true;
+    expect(engine.allows("session.next")).toBe(false);
+    expect(engine.allows("view.toggle")).toBe(false);
+  });
+
+  it("reads the LIVE context rather than the one it was initialised with", () => {
+    overlay = true;
+    expect(engine.allows("sidebar.toggle")).toBe(false);
+    overlay = false;
+    expect(engine.allows("sidebar.toggle")).toBe(true);
+  });
+
+  it("does not gate on the enabled flag — an always-on chord still arrives", () => {
+    engine.setEnabled(false);
+    expect(engine.allows("session.kill.current")).toBe(true);
   });
 });
 
