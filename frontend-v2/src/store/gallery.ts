@@ -94,11 +94,13 @@ export function createGalleryStore(deps: GalleryDeps): GalleryStore {
   }
 
   function openLightbox(i: number): void {
-    track("gallery.image_opened", { "tl.count": i });
     if (view() !== "grid") return;
     if (i < 0 || i >= images().length) return;
     setLightboxIndex(i);
     setView("lightbox");
+    // Emit AFTER the guards so a rejected open (not on the grid, or an
+    // out-of-range index) does not report a phantom image_opened. (QA finding.)
+    track("gallery.image_opened", { "tl.count": i });
   }
 
   function stepBack(): void {
