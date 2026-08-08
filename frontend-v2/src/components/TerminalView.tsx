@@ -55,7 +55,8 @@ export const TerminalView: Component<{
   /** arg3 — the owning project's base directory, read ONCE at attach. `tmux -A`
    *  ignores -c on a live session, so sending it every time is harmless. */
   dir?: string;
-  /** current roamed newCommand, read ONCE at attach (never re-navigates live). */
+  /** current roamed newCommand — the command for a session this view is CREATING
+   *  (arg2). Ignored on a re-attach (read ONCE, never re-navigates live). */
   newCommand?: () => string;
   /** a chord fired inside the terminal iframe, forwarded up (tl-command). */
   onFrameCommand?: (command: string) => void;
@@ -133,7 +134,11 @@ export const TerminalView: Component<{
     if (!attachAllowed()) return;
     const url = untrack(() =>
       terminalUrl(session, {
-        cmd: props.newCommand?.(),
+        // arg2 (command) is a CREATE-only concern. On a RE-attach it must be the
+        // inert placeholder: an existing session you `exit` is resurrected by
+        // ttyd's `new-session -A` reconnect, and carrying the live create-dropdown
+        // pref here made it come back as whatever the dropdown then said.
+        cmd: props.creating ? props.newCommand?.() : undefined,
         dir: props.dir || undefined,
         owner: owner || undefined,
       }),
