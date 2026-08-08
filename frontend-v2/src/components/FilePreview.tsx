@@ -10,7 +10,7 @@ import {
   type Component,
 } from "solid-js";
 import type { PreviewStore } from "../store/preview";
-import { HTML_SANDBOX } from "../store/preview.logic";
+import { HTML_SANDBOX, dirname } from "../store/preview.logic";
 import { fileReadUrl } from "../lib/config";
 import { IMAGE_DECODE_MESSAGE, imageErrorMessage } from "../lib/file-api";
 import { Markdown } from "./Markdown";
@@ -31,13 +31,17 @@ import { CodeEditor } from "./CodeEditor";
  * sandbox (HTML_SANDBOX), giving it a unique opaque origin and no script
  * execution. It must never run against the authed lobby origin.
  */
-function fmtBytes(n: number | null): string {
+export function fmtBytes(n: number | null): string {
   // 0 is a real size — an empty file reads "0 B". Only "no size known" (null,
   // or a nonsense negative) renders nothing; `n <= 0` used to put an EMPTY chip
   // in the header for every empty file.
   if (n === null || n < 0) return "";
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  // Decide on the ROUNDED label, not the raw count. Testing `n < 1024*1024`
+  // while printing one decimal place put the 51 sizes from 1048525 up to
+  // 1 MiB-1 in a unit that does not exist: 1048575 bytes read "1024.0 KB".
+  const kb = (n / 1024).toFixed(1);
+  if (Number(kb) < 1024) return `${kb} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
@@ -72,6 +76,13 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
    * for the real status and replace it: missing / too large / out of reach read
    * exactly as they do for a text file. Only the error path pays for the probe.
    */
+  /** Directory of the previewed document — what a RELATIVE markdown image
+   *  reference resolves against. Undefined with nothing loaded. */
+  const mdBase = (): string | undefined => {
+    const p = s.path();
+    return p ? dirname(p) : undefined;
+  };
+
   const onImgError = (): void => {
     const p = s.path();
     setImgError(IMAGE_DECODE_MESSAGE);
@@ -281,7 +292,11 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
               already know, so gating it on an already-loaded file locked out
               exactly the sessions that need it (no transcript, no path). The
               store picks the starting directory. */}
-          <button type="button" class="tl-btn" onClick={() => void s.browseStart()}>
+          <button
+            type="button"
+            class="tl-btn"
+            onClick={() => void s.browseStart(pathInput())}
+          >
             Browse
           </button>
         </form>
@@ -447,7 +462,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                     fallback={<CodeView code={s.text()} language="markdown" />}
                   >
                     <div class="tl-preview-md">
-                      <Markdown text={s.text()} />
+                      <Markdown text={s.text()} base={mdBase()} />
                     </div>
                   </Show>
                 </Match>
