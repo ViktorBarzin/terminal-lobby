@@ -2,6 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import { createRoot, createSignal } from "solid-js";
 import { createGalleryStore, type GalleryStore } from "../src/store/gallery";
 import type { StoredImage } from "../src/store/gallery.logic";
+import { track } from "../src/telemetry/track";
+
+vi.mock("../src/telemetry/track", () => ({ track: vi.fn() }));
 
 const img = (name: string, mtime: number, kind = "pasted"): StoredImage => ({
   name,
@@ -130,6 +133,39 @@ describe("gallery store — session switch closes it", () => {
     setSel("s2");
     await tick(); // effect reacts to the new session
     expect(g.view()).toBe("closed");
+    dispose();
+  });
+});
+
+describe("gallery store — image_opened telemetry fires only on a real open", () => {
+  it("does NOT emit gallery.image_opened for a rejected open", async () => {
+    vi.mocked(track).mockClear();
+    const [g, dispose] = withStore({
+      session: () => "s",
+      fetchList: async () => [img("a", 1), img("b", 2)],
+    });
+    await g.open();
+    g.openLightbox(5); // out of range → rejected
+    g.close();
+    g.openLightbox(0); // not on the grid → rejected
+    expect(vi.mocked(track)).not.toHaveBeenCalledWith(
+      "gallery.image_opened",
+      expect.anything(),
+    );
+    dispose();
+  });
+
+  it("emits gallery.image_opened once, with the index, for a valid open", async () => {
+    vi.mocked(track).mockClear();
+    const [g, dispose] = withStore({
+      session: () => "s",
+      fetchList: async () => [img("a", 1), img("b", 2)],
+    });
+    await g.open();
+    g.openLightbox(1);
+    expect(vi.mocked(track)).toHaveBeenCalledWith("gallery.image_opened", {
+      "tl.count": 1,
+    });
     dispose();
   });
 });
