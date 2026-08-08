@@ -260,11 +260,12 @@ describe("<TerminalView> — the project directory reaches the attach URL", () =
     ]);
   });
 
-  it("keeps the chosen new-session command alongside the dir", () => {
+  it("keeps the chosen new-session command alongside the dir WHEN CREATING", () => {
     render(() => (
       <TerminalView
         session="qa-vdirs"
         active={true}
+        creating
         dir="/tmp/qa-harness-scratch"
         newCommand={() => "claude"}
       />
@@ -277,5 +278,34 @@ describe("<TerminalView> — the project directory reaches the attach URL", () =
   it("sends no arg3 for a session that belongs to no project", () => {
     render(() => <TerminalView session="qa-loose" active={true} />);
     expect(frames.nav).toEqual(["/term.html?arg=qa-loose"]);
+  });
+});
+
+/**
+ * ATTACH COMMAND — arg2 (the new-session command) is a CREATE-only concern.
+ * On a re-attach the URL used to carry the LIVE create-dropdown pref, so a
+ * session you `exit` (which ttyd's `new-session -A` reconnect silently
+ * re-creates) came back as whatever the dropdown then said — a Plain shell
+ * returning as Claude. A re-attach must send the inert placeholder.
+ */
+describe("<TerminalView> — the create-dropdown command only shapes a NEW session", () => {
+  let frames: ReturnType<typeof withFakeFrames>;
+  beforeEach(() => {
+    frames = withFakeFrames();
+  });
+  afterEach(() => frames.restore());
+
+  it("a re-attach of an existing session ignores the create-dropdown command", () => {
+    render(() => (
+      <TerminalView session="qa-exist" active={true} newCommand={() => "claude"} />
+    ));
+    expect(frames.nav).toEqual(["/term.html?arg=qa-exist"]);
+  });
+
+  it("a session being CREATED uses the chosen command", () => {
+    render(() => (
+      <TerminalView session="qa-born" active={false} creating newCommand={() => "codex"} />
+    ));
+    expect(frames.nav).toEqual(["/term.html?arg=qa-born&arg=codex"]);
   });
 });
