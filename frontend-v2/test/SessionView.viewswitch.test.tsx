@@ -103,6 +103,48 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(window.__tlToggleView).toBeUndefined();
   });
 
+  /**
+   * QA #11: the Ctrl/Cmd+J listener is an unconditional capture-phase window
+   * keydown — it fired with the command palette up and focus in its input,
+   * flipping the view behind the overlay and leaving the palette itself
+   * standing. The shell publishes which overlay owns the keyboard; the
+   * always-on toggle has to stand down while one does.
+   */
+  it("does not toggle the view on Ctrl+J while an overlay owns the keyboard", () => {
+    const { container } = render(() => (
+      <SessionView session="qa-vs" overlayOpen={() => true} />
+    ));
+    expect(mode(container)).toBe("terminal");
+
+    const e = new KeyboardEvent("keydown", {
+      key: "j",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(e);
+
+    expect(mode(container)).toBe("terminal");
+    // ...and the key is left alone, so the focused field still gets it.
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("still toggles on Ctrl+J when no overlay is open", () => {
+    const { container } = render(() => (
+      <SessionView session="qa-vs" overlayOpen={() => false} />
+    ));
+    const e = new KeyboardEvent("keydown", {
+      key: "j",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(e);
+
+    expect(mode(container)).toBe("text");
+    expect(e.defaultPrevented).toBe(true);
+  });
+
   it("dots the [Terminal] segment when output arrives while you're in text mode", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
     // Terminal is the default view now, so switch to Text first — the [Terminal]
@@ -127,15 +169,35 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(dots(container)).toEqual([false, false]);
   });
 
+  /**
+   * QA #5: `.tl-conn` reports the TEXT view's SSE transcript stream, and it was
+   * the session bar's only status badge in either view. On the Terminal view —
+   * the v1 default, with the Text view deferred — a plain shell session
+   * therefore sat under a permanent "no transcript" readout about a view the
+   * user cannot use, and said nothing at all about the live terminal. The badge
+   * belongs to the view it describes.
+   */
+  it("shows the transcript badge on the Text view only", () => {
+    const { container } = render(() => <SessionView session="qa-vs" />);
+    expect(mode(container)).toBe("terminal");
+    expect(conn(container)).toBeNull();
+
+    fireEvent.click(segments(container)[0]!); // [Text]
+    expect(conn(container)).not.toBeNull();
+
+    fireEvent.click(segments(container)[1]!); // [Terminal]
+    expect(conn(container)).toBeNull();
+  });
+
   // A plain shell session (no Claude, hence no transcript registered with
-  // session-events) shows this badge in the session bar regardless of the active
-  // view. It used to sit on RECONNECTING forever while the client hammered a
-  // permanent 404.
+  // session-events) reads as such in the Text view's badge. It used to sit on
+  // RECONNECTING forever while the client hammered a permanent 404.
   it("badges a session with no transcript as such, not as a failing connection", async () => {
     const origFetch = g.fetch;
     g.fetch = async () => new Response(null, { status: 404 });
     try {
       const { container } = render(() => <SessionView session="qa-vs" />);
+      fireEvent.click(segments(container)[0]!); // [Text] — the badge's own view
       expect(conn(container)?.textContent).toBe("connecting");
 
       eventSources[0]!.onerror?.(null); // the 404 the browser reports opaquely
@@ -154,6 +216,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     g.fetch = async () => new Response(null, { status: 502 });
     try {
       const { container } = render(() => <SessionView session="qa-vs" />);
+      fireEvent.click(segments(container)[0]!); // [Text] — the badge's own view
       eventSources[0]!.onerror?.(null);
       await flush();
       expect(conn(container)?.getAttribute("data-status")).toBe("reconnecting");

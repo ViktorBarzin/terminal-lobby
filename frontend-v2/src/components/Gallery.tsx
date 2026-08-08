@@ -13,6 +13,7 @@ import {
 import type { GalleryStore } from "../store/gallery";
 import { badgeLabel } from "../store/gallery.logic";
 import { clipboardImgUrl } from "../lib/config";
+import { refocusTerminal } from "../keybindings/refocus";
 
 /**
  * The session image-gallery overlay (feature-inventory Cat.8). A pure view over
@@ -23,9 +24,15 @@ import { clipboardImgUrl } from "../lib/config";
  *
  * Rendered by the shell inside <Show when={store.view() !== "closed"}> so this
  * mounts/unmounts with visibility, and its Escape listener lives only while the
- * gallery is open. mousedown is preventDefault'd so browsing never steals focus
- * from the terminal iframe (the vanilla focus-return trick), while clicks still
- * fire.
+ * gallery is open. mousedown is preventDefault'd so browsing never moves focus
+ * off the panel (the vanilla focus-return trick), while clicks still fire.
+ *
+ * The panel TAKES the keyboard on open and hands it back on close, the way
+ * ShortcutsHelp does. Opened from inside a session it used to inherit the
+ * terminal IFRAME's focus — a separate document, whose keydowns never reach
+ * this one — so the Escape listener below could not fire, the key went to the
+ * pty instead (interrupting whatever was running), and the mouse was the only
+ * way out.
  *
  * A thumbnail that fails to decode falls back to a labelled placeholder. The
  * store can hold files no browser will draw — /upload now refuses bytes that
@@ -95,6 +102,28 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
   onMount(() => document.addEventListener("keydown", onKey, true));
   onCleanup(() => document.removeEventListener("keydown", onKey, true));
 
+  // Take the keyboard on open (deferred so the node is in the document), and
+  // hold it: gallery.open is reachable from the palette, and runItem() closes
+  // the palette — handing focus BACK to the terminal — before running the
+  // action, so the iframe's handback (rAF/50ms inside term.html) lands after
+  // this mount and would pull focus straight out again.
+  let panelEl: HTMLDivElement | undefined;
+  onMount(() => queueMicrotask(() => panelEl?.focus()));
+  const onFocusOut = (): void => {
+    // focusout fires BEFORE the new target is focused, and a dismiss unmounts
+    // us — both need the deferral to read the settled state.
+    queueMicrotask(() => {
+      if (!panelEl?.isConnected) return;
+      if (panelEl.contains(document.activeElement)) return;
+      panelEl.focus();
+    });
+  };
+  // ...and give it back on every dismiss path (Escape, backdrop, lightbox
+  // click, a session switch closing us): this component IS the overlay, so its
+  // disposal is the close. Without the handback, taking focus here would leave
+  // the pty deaf afterwards.
+  onCleanup(() => void refocusTerminal());
+
   return (
     <>
       <div
@@ -104,7 +133,14 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
           if (e.target === e.currentTarget) s.stepBack(); // backdrop only
         }}
       >
-        <div class="tl-gallery-panel" role="dialog" aria-label="Session images">
+        <div
+          ref={panelEl}
+          class="tl-gallery-panel"
+          role="dialog"
+          aria-label="Session images"
+          tabindex="-1"
+          onFocusOut={onFocusOut}
+        >
           <h2 class="tl-gallery-title">Session images</h2>
           <div class="tl-gallery-grid">
             <Switch>

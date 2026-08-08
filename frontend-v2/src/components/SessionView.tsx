@@ -68,6 +68,12 @@ export const SessionView: Component<{
   onFrameBuildStale?: () => void;
   /** open the session image gallery (🖼) — owned by the lobby shell. */
   onOpenGallery?: () => void;
+  /** TRUE while a lobby overlay (palette, shortcuts help, Settings, gallery)
+   *  owns the keyboard. The Ctrl/Cmd+J view toggle below is an always-on window
+   *  listener that answers to no when-clause, so the shell's shared context has
+   *  to travel down to it — flipping the view BEHIND an overlay is invisible and
+   *  leaves the overlay standing. */
+  overlayOpen?: () => boolean;
   /** the file-preview overlay's open + unsaved-draft state, published UP so the
    *  shell's keybinding context can refuse to switch session out from under an
    *  unsaved edit (the preview store is per-session and dies with this view). */
@@ -128,6 +134,10 @@ export const SessionView: Component<{
 
   const onKey = (e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "j" || e.key === "J")) {
+      // An overlay owns the keyboard (the palette's input, the Settings dialog,
+      // …): stand down and leave the key to whatever is focused, rather than
+      // toggling a view nobody can see behind it.
+      if (props.overlayOpen?.()) return;
       e.preventDefault();
       toggleMode();
     }
@@ -211,13 +221,22 @@ export const SessionView: Component<{
         <span class="tl-session" title="session">
           {session}
         </span>
-        <span
-          class="tl-conn"
-          data-status={store.status()}
-          title={connTitle(store.status())}
-        >
-          {connLabel(store.status())}
-        </span>
+        {/* The TEXT view's status, and only its. It reports the SSE transcript
+            stream that feeds that view — on the Terminal view (v1's default,
+            with the text view deferred) it was the bar's ONLY badge, so a plain
+            shell session read as a permanent "no transcript" about a view it
+            cannot use, while saying nothing about the live terminal in front of
+            it. A status for a surface you are not looking at is worse than no
+            status: it reads as the terminal's. */}
+        <Show when={mode() === "text"}>
+          <span
+            class="tl-conn"
+            data-status={store.status()}
+            title={connTitle(store.status())}
+          >
+            {connLabel(store.status())}
+          </span>
+        </Show>
         <span class="tl-session-bar-spacer" />
         <button
           class="tl-icon-btn tl-preview-btn"
