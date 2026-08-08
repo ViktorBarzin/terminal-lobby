@@ -47,6 +47,25 @@ export interface KbDoc {
 }
 
 /**
+ * The when-clause every LOBBY chord carries. `overlayOpen` is the shell's single
+ * reading of "an overlay owns the keyboard" (keyContext below): while the
+ * palette, the shortcuts help, the Settings modal or the image gallery is up,
+ * the lobby must not act BEHIND it. The table used to name the gallery alone, so
+ * with the Settings dialog open — aria-modal, Tab trapped, focus inside it —
+ * Alt+Shift+N still focused the new-session box behind the dialog and
+ * Ctrl+Shift+K still opened the palette over it.
+ */
+const LOBBY_WHEN = "lobbyOpen && !overlayOpen";
+
+/**
+ * ...with ONE exemption: an overlay's own toggle chord must survive that overlay
+ * being the open one, or it stops being a toggle and Escape becomes the only way
+ * out. `evalWhen` has no parentheses, so `a && (b || c)` is spelled as the
+ * OR-of-ANDs `a && b || a && c`.
+ */
+const lobbyOrSelf = (self: string): string => `${LOBBY_WHEN} || lobbyOpen && ${self}`;
+
+/**
  * The when-clause every chord that SWITCHES SESSION carries. Switching unmounts
  * the whole session surface, and with it the per-session file-preview store —
  * so an unsaved editor draft dies with it. The mouse route is already guarded
@@ -55,7 +74,7 @@ export interface KbDoc {
  * draft in silence. While one is dirty they are inert, and the visible,
  * confirmable routes (the backdrop, Esc, Ctrl/Cmd+S) stay the way out.
  */
-const SWITCH_WHEN = "!galleryOpen && !previewDirty";
+const SWITCH_WHEN = "!overlayOpen && !previewDirty";
 
 /**
  * Opt-in-toggleable, user-overridable bindings. Chord choices follow the vanilla
@@ -64,7 +83,11 @@ const SWITCH_WHEN = "!galleryOpen && !previewDirty";
  * survive Mac Option+Shift rendering a symbol and non-US layouts.
  */
 export const KB_DEFAULT_BINDINGS: Binding[] = [
-  { key: "ctrl+shift+k", command: "palette.toggle", when: "!galleryOpen" },
+  // Overlay-scoped on its own overlay (the lobbyOrSelf idea, minus the
+  // lobbyOpen leg this row never carried): Ctrl+Shift+K still closes the
+  // palette it opened, while every OTHER overlay refuses it — a palette over
+  // the Settings modal is exactly the leak `overlayOpen` exists to stop.
+  { key: "ctrl+shift+k", command: "palette.toggle", when: "!overlayOpen || paletteOpen" },
   { key: "alt+1", command: "session.attach.1", when: SWITCH_WHEN },
   { key: "alt+2", command: "session.attach.2", when: SWITCH_WHEN },
   { key: "alt+3", command: "session.attach.3", when: SWITCH_WHEN },
@@ -79,13 +102,16 @@ export const KB_DEFAULT_BINDINGS: Binding[] = [
   { key: "alt+shift+]", command: "session.next", when: SWITCH_WHEN },
   // Dev-flow chords (Alt+Shift namespace).
   { key: "alt+shift+enter", command: "session.next.awaiting", when: `lobbyOpen && ${SWITCH_WHEN}` },
-  { key: "alt+shift+s", command: "sidebar.toggle", when: "lobbyOpen && !galleryOpen" },
-  { key: "alt+shift+n", command: "session.new", when: "lobbyOpen && !galleryOpen" },
-  { key: "alt+shift+w", command: "session.kill.current", when: "lobbyOpen && !galleryOpen" },
-  { key: "alt+shift+r", command: "session.rename.current", when: "lobbyOpen && !galleryOpen" },
+  { key: "alt+shift+s", command: "sidebar.toggle", when: LOBBY_WHEN },
+  { key: "alt+shift+n", command: "session.new", when: LOBBY_WHEN },
+  { key: "alt+shift+w", command: "session.kill.current", when: LOBBY_WHEN },
+  { key: "alt+shift+r", command: "session.rename.current", when: LOBBY_WHEN },
   // Alt+/ (Option+/) opens the shortcuts help from anywhere, incl. inside a
   // session — bare "/" is lobby-only (it must reach the pty inside the terminal).
-  { key: "alt+/", command: "shortcuts.help", when: "lobbyOpen && !galleryOpen" },
+  // Overlay-scoped on its own overlay: the help dialog's Escape/"/" exits read
+  // `e.key`, which Option+/ renders as "÷" on a Mac, so this chord is what
+  // closes it there.
+  { key: "alt+/", command: "shortcuts.help", when: lobbyOrSelf("helpOpen") },
 ];
 
 /**
@@ -95,8 +121,21 @@ export const KB_DEFAULT_BINDINGS: Binding[] = [
  * Option+Backspace for delete-word). `session.kill.current` keeps its confirm.
  */
 export const KB_ALWAYS_BINDINGS: Binding[] = [
-  { key: "alt+shift+backspace", command: "session.kill.current", when: "lobbyOpen && !galleryOpen" },
+  { key: "alt+shift+backspace", command: "session.kill.current", when: LOBBY_WHEN },
 ];
+
+/**
+ * When-clauses for commands that reach the lobby WITHOUT a chord of their own in
+ * this table. A chord pressed inside the terminal iframe is matched by
+ * frontend/term.html's own copy of the table and forwarded up by NAME over
+ * `tl-command` (commands.ts), so the lobby has to be able to look a clause up by
+ * command — and some of those commands (Ctrl/Cmd+J's `view.toggle`, which
+ * SessionView owns on the lobby side) have no row here to look up.
+ */
+const KB_FORWARDED_WHEN: Readonly<Record<string, string>> = {
+  // The view toggle behind an overlay is invisible and leaves the overlay up.
+  "view.toggle": "!overlayOpen",
+};
 
 /** Commands that a user override may target (default bindings only). */
 export const KB_COMMANDS: ReadonlySet<string> = new Set(
@@ -151,13 +190,98 @@ export function resolveAlways(): ResolvedBinding[] {
   }));
 }
 
+/** What the shell knows about its overlays, before it is turned into a context. */
+export interface KeyContextInput {
+  /** the command palette (its own chord may still close it). */
+  paletteOpen: boolean;
+  /** the keyboard-shortcuts help overlay. */
+  helpOpen: boolean;
+  /** the ⚙ Settings dialog (aria-modal, traps Tab). */
+  settingsOpen: boolean;
+  /** the session image gallery. */
+  galleryOpen: boolean;
+  /** the per-session file-preview overlay. */
+  previewOpen: boolean;
+  /** ...with an unsaved editor draft in it. */
+  previewDirty: boolean;
+}
+
+/** The when-context every clause in the table is evaluated against. */
+export interface KeyContext {
+  [flag: string]: boolean;
+  /** false in the lobby SPA — the terminal is a cross-document iframe. */
+  terminalFocus: boolean;
+  /** true: this document IS the lobby (sidebar, palette, session switching). */
+  lobbyOpen: boolean;
+  /** an overlay owns the keyboard; nothing lobby-scoped may fire behind it. */
+  overlayOpen: boolean;
+  /** which overlay it is, for the two chords that toggle their own overlay. */
+  paletteOpen: boolean;
+  helpOpen: boolean;
+  galleryOpen: boolean;
+  previewOpen: boolean;
+  previewDirty: boolean;
+}
+
+/**
+ * Build the when-context from the shell's overlay state — the ONE place that
+ * decides what "an overlay owns the keyboard" means, shared by the window
+ * keydown listener, the iframe-forwarded command path (commandAllowed) and the
+ * Ctrl/Cmd+J view toggle. Keeping it here rather than inline in the shell is
+ * what makes that definition testable and single.
+ *
+ * The file preview is deliberately NOT part of `overlayOpen`. It is a session
+ * surface rather than a lobby modal, and the palette has to stay reachable over
+ * it: the palette's attach route carries the "Unsaved changes in the file
+ * editor" refusal, which is unreachable if the chord that opens it is refused
+ * first. Only the chords that would UNMOUNT the draft are gated, on
+ * `previewDirty`.
+ */
+export function keyContext(s: KeyContextInput): KeyContext {
+  return {
+    terminalFocus: false,
+    lobbyOpen: true,
+    overlayOpen: s.paletteOpen || s.helpOpen || s.settingsOpen || s.galleryOpen,
+    paletteOpen: s.paletteOpen,
+    helpOpen: s.helpOpen,
+    galleryOpen: s.galleryOpen,
+    previewOpen: s.previewOpen,
+    previewDirty: s.previewDirty,
+  };
+}
+
+/**
+ * The when-clause guarding a COMMAND rather than a chord — the always-on table
+ * first, then the default table, then the forwarded-only clauses. Undefined
+ * means "no clause": the command is not context-gated at all.
+ */
+export function commandWhen(command: string): string | undefined {
+  for (const b of KB_ALWAYS_BINDINGS) if (b.command === command) return b.when;
+  for (const b of KB_DEFAULT_BINDINGS) if (b.command === command) return b.when;
+  return KB_FORWARDED_WHEN[command];
+}
+
+/**
+ * May this command run in this context? The chord path gets its guard from the
+ * table row that matched the event; a command forwarded up from the terminal
+ * iframe arrives as a NAME with no event, and term.html matched it against the
+ * TERMINAL page's context — which knows nothing about the lobby's overlays. So
+ * that path skipped every when-clause the lobby owns: with the gallery open and
+ * focus in the terminal, Alt+Shift+] switched session and took the gallery with
+ * it. Re-checking by command name is the same guard, applied to the same
+ * context, on both paths.
+ */
+export function commandAllowed(command: string, ctx: Record<string, boolean>): boolean {
+  return evalWhen(commandWhen(command), ctx);
+}
+
 /** Inputs to the single chord-match decision point. */
 export interface MatchInput {
   /** the opt-in gate (default bindings only; always-on bindings bypass it). */
   enabled: boolean;
   resolvedDefaults: ResolvedBinding[];
   resolvedAlways: ResolvedBinding[];
-  /** the when-context: {terminalFocus, lobbyOpen, galleryOpen, ...}. */
+  /** the when-context (keyContext): {lobbyOpen, overlayOpen, previewDirty, ...}. */
   ctx: Record<string, boolean>;
 }
 

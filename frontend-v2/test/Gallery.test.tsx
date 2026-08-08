@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { render, fireEvent } from "@solidjs/testing-library";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createRoot, createSignal, type Accessor } from "solid-js";
 import { Gallery } from "../src/components/Gallery";
 import type { GalleryStore, GalleryStatus } from "../src/store/gallery";
@@ -171,6 +171,87 @@ describe("<Gallery> — a file the browser cannot decode", () => {
 
     expect(container.querySelectorAll(".tl-gallery-cell img")).toHaveLength(2);
     expect(container.querySelector(".tl-gallery-broken")).toBeNull();
+    dispose();
+  });
+});
+
+/**
+ * QA #2: opened from inside a session, the overlay left `document.activeElement`
+ * on the terminal IFRAME — a separate document, whose keydowns never reach this
+ * one. So the panel painted, Escape went to the pty instead of dismissing the
+ * gallery (and interrupted whatever was running), and the only way out was the
+ * mouse. The overlay has to TAKE the keyboard when it opens and hand it back
+ * when it closes — the contract ShortcutsHelp already carries.
+ */
+describe("<Gallery> — the overlay takes the keyboard while it is open", () => {
+  const w = window as Window & { __tlFocusTerminal?: () => boolean };
+  afterEach(() => {
+    delete w.__tlFocusTerminal;
+  });
+
+  /** The panel, once its deferred mount focus has landed. */
+  async function panelReady(root: HTMLElement): Promise<HTMLElement> {
+    const panel = root.querySelector(".tl-gallery-panel") as HTMLElement;
+    expect(panel, "the .tl-gallery-panel dialog").toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(panel));
+    return panel;
+  }
+
+  it("focuses the panel on open, so Escape reaches the SPA and not the pty", async () => {
+    const { store, dispose } = stubStore([img("a.png")]);
+    const { container } = render(() => <Gallery store={store} />);
+
+    const panel = await panelReady(container);
+    expect(panel.tabIndex).toBe(-1);
+    dispose();
+  });
+
+  it("steps back on an Escape pressed inside the panel", async () => {
+    const { store, dispose } = stubStore([img("a.png")]);
+    const { container } = render(() => <Gallery store={store} />);
+    const panel = await panelReady(container);
+    const stepBack = vi.spyOn(store, "stepBack");
+
+    fireEvent.keyDown(panel, { key: "Escape" });
+
+    expect(stepBack).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it("takes focus back when the terminal handback steals it after open", async () => {
+    // gallery.open is reachable from the palette, and palette.runItem() closes
+    // the palette — refocusing the terminal — BEFORE running the action, so the
+    // iframe's handback lands a frame or two AFTER this overlay mounted.
+    const { store, dispose } = stubStore([img("a.png")]);
+    const { container } = render(() => (
+      <>
+        <input class="tl-test-steal" />
+        <Gallery store={store} />
+      </>
+    ));
+    const panel = await panelReady(container);
+    const steal = container.querySelector(".tl-test-steal") as HTMLInputElement;
+
+    steal.focus();
+    expect(document.activeElement).toBe(steal);
+
+    await waitFor(() => expect(document.activeElement).toBe(panel));
+    dispose();
+  });
+
+  it("hands the keyboard back to the terminal when it closes", async () => {
+    // Taking focus without returning it would leave the pty deaf on dismiss —
+    // the same hole refocusTerminal exists to close for the other overlays.
+    const focus = vi.fn(() => true);
+    w.__tlFocusTerminal = focus;
+    const { store, dispose } = stubStore([img("a.png")]);
+    const { container, unmount } = render(() => <Gallery store={store} />);
+    await panelReady(container);
+    expect(focus).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(focus).toHaveBeenCalledTimes(1);
     dispose();
   });
 });
