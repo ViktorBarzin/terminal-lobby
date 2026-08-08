@@ -1,8 +1,9 @@
-import { type Component } from "solid-js";
+import { createMemo, type Component } from "solid-js";
 import { SolidMarkdown, type SolidMarkdownComponents } from "solid-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Mermaid } from "./Mermaid";
+import { fileReadUrl } from "../lib/config";
 
 /**
  * Assistant markdown renderer (design pillar #2: "full-width assistant markdown
@@ -40,6 +41,37 @@ function hastLang(node: HastNode | undefined): string {
   return found ? found.slice("language-".length) : "";
 }
 
+/**
+ * Resolve a markdown image reference. A document previewed from DISK is
+ * addressed by path, but its <img> resolves against the lobby ORIGIN — so
+ * `![x](pic.png)` beside the file asked the lobby for /pic.png and 404'd while
+ * the same picture referenced absolutely loaded. With a `base` (the file's own
+ * directory) a relative reference is read back through the file-api instead.
+ *
+ * Anything already addressed stays untouched: a full URL, a data:/blob: URI, a
+ * protocol-relative `//host/…`, and a root-relative `/…` — that last one is how
+ * a file-api URL is written by hand, so it must pass through even though it
+ * cannot be told apart from an absolute filesystem path.
+ */
+function resolveImageSrc(src: string | undefined, base?: string): string | undefined {
+  if (!base || !src) return src;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("/")) return src;
+  return fileReadUrl(`${base.replace(/\/+$/, "")}/${src}`);
+}
+
+/** The `img` renderer, bound to a base directory (or to none — the transcript,
+ *  where every src is already absolute). */
+const imgFor =
+  (base?: string): SolidMarkdownComponents["img"] =>
+  (props) => (
+    <img
+      class="tl-md-img"
+      src={resolveImageSrc(props.src, base)}
+      alt={props.alt ?? ""}
+      loading="lazy"
+    />
+  );
+
 const components: SolidMarkdownComponents = {
   // solid-markdown renders every code block through its own default `pre` and
   // puts the `code` component inside it — but the `code` override below returns
@@ -63,14 +95,7 @@ const components: SolidMarkdownComponents = {
       </pre>
     );
   },
-  img: (props) => (
-    <img
-      class="tl-md-img"
-      src={props.src}
-      alt={props.alt ?? ""}
-      loading="lazy"
-    />
-  ),
+  img: imgFor(),
   a: (props) => (
     <a href={props.href} target="_blank" rel="noopener noreferrer">
       {props.children}
@@ -78,14 +103,23 @@ const components: SolidMarkdownComponents = {
   ),
 };
 
-export const Markdown: Component<{ text: string }> = (props) => {
+/**
+ * `base` — the directory a RELATIVE image reference resolves against, set only
+ * by the file preview (which knows the document's path on disk). It defaults to
+ * undefined so the transcript renderer keeps the shared `components` object
+ * verbatim and renders byte-identically.
+ */
+export const Markdown: Component<{ text: string; base?: string }> = (props) => {
+  const comps = createMemo<SolidMarkdownComponents>(() =>
+    props.base ? { ...components, img: imgFor(props.base) } : components,
+  );
   return (
     <div class="tl-markdown">
       <SolidMarkdown
         children={props.text}
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSanitize]}
-        components={components}
+        components={comps()}
         renderingStrategy="memo"
       />
     </div>
