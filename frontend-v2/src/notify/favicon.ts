@@ -11,11 +11,20 @@
  *                  finished, or a bell rang with nothing awaiting (good news, so
  *                  it does not wear the warning color).
  *
+ * The 'done' badge is driven by the SAME `isUnseen` predicate as the tab title's
+ * `(N✓)` count (store/visits.ts), so the two badge and clear together. They used
+ * to disagree: the title badged every finished session while the favicon only
+ * ever went green on a bell, so a session that finished quietly badged the title
+ * and left the icon plain.
+ *
  * `faviconKind` is PURE and unit-tested for its precedence (awaiting OUTRANKS
  * done). The render + swap are DOM/canvas and run only in a real browser.
  */
 
 export type FaviconKind = "" | "awaiting" | "done";
+
+/** The only session fields the badge needs. */
+export type BadgeSession = { name: string; state?: string };
 
 /** The base tab icon; swapped for a badged data: URL, restored to this on clear. */
 export const FAVICON_HREF = "/icon-192.png";
@@ -23,14 +32,18 @@ export const FAVICON_HREF = "/icon-192.png";
 /**
  * The badge to show: any session awaiting input OUTRANKS the finished/bell
  * signal — amber only when action is actually wanted, otherwise the green tick
- * if a bell latched, else no badge.
+ * if a bell latched OR a finished session is still unseen, else no badge.
+ *
+ * `isUnseen` defaults to "every done session is unseen" — the same default as
+ * title.ts, so an un-injected caller badges consistently in both places.
  */
 export function faviconKind(
-  sessions: readonly { state?: string }[],
+  sessions: readonly BadgeSession[],
   attentionBell: boolean,
+  isUnseen: (s: BadgeSession) => boolean = (s) => s.state === "done",
 ): FaviconKind {
   if (sessions.some((s) => s.state === "awaiting")) return "awaiting";
-  if (attentionBell) return "done";
+  if (attentionBell || sessions.some(isUnseen)) return "done";
   return "";
 }
 

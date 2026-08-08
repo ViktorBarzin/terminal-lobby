@@ -36,6 +36,7 @@ import {
 } from "./attention";
 import { createFaviconBadger, faviconKind } from "./favicon";
 import { composeTitle, type TitleSession } from "./title";
+import { createVisitStore } from "../store/visits";
 import {
   computeTransitions,
   snapshotStates,
@@ -78,7 +79,12 @@ export interface NotificationSystemOptions {
   toast: ToastFn;
   /** switch the app to a session (SW tap / boot stash / constructor click). */
   onActivateSession: (session: string) => void;
-  /** counts a done session as unseen for the title badge (default: all done). */
+  /**
+   * Override the unseen-done predicate behind the title/favicon badges. Default:
+   * the visit store this system owns (store/visits.ts) — the badge counts the
+   * sessions that finished since you last looked at them, so viewing one clears
+   * it. Injected only by tests.
+   */
   isUnseen?: (s: TitleSession) => boolean;
 }
 
@@ -251,20 +257,33 @@ export function createNotificationSystem(
   });
 
   // ---- tab title + favicon badge -----------------------------------------
+  // Both badges count the sessions that finished since the user last LOOKED at
+  // them, off one shared predicate — the visit store is owned here (rather than
+  // handed in) because this system already sees every poll and the selection,
+  // which is exactly what a visit is made of.
+  const visits = createVisitStore();
+  const isUnseen = opts.isUnseen ?? ((s: TitleSession) => visits.isUnseen(s));
   const badger = createFaviconBadger();
   createEffect(() => {
     const list = opts.sessions();
+    const active = opts.selected();
     const att = attention();
-    badger.apply(faviconKind(list, att.bell));
+    visits.revision(); // repaint when an out-of-band stamp changes the set
+    // Fold this poll in BEFORE painting: the session on screen is seen by the
+    // time its badge would be drawn. Stamping inside the effect is safe —
+    // `revision` only bumps when the unseen set actually changes, so this
+    // settles after one extra pass instead of looping.
+    visits.observe(list, active);
+    badger.apply(faviconKind(list, att.bell, isUnseen));
     if (hasDoc) {
       const user = opts.osUser();
       document.title = composeTitle({
         sessions: list,
         attentionSession: att.session,
-        activeSession: opts.selected(),
+        activeSession: active,
         osUser: user,
         baseTitle: user ? `tmux sessions (${user})` : "terminal-lobby",
-        isUnseen: opts.isUnseen,
+        isUnseen,
       });
     }
   });
@@ -283,12 +302,17 @@ export function createNotificationSystem(
       }),
     );
   };
-  const clear = (): void => {
+  // Coming back to the tab is a LOOK: it drops the attention latch AND marks the
+  // session on screen seen, so a finished-session badge clears immediately
+  // rather than at the next poll (up to 5s of a badge for something you are
+  // already staring at).
+  const onLook = (): void => {
     setAttention((s) => clearAttention(s));
+    visits.stamp(untrack(opts.selected));
   };
   const onVisibility = (): void => {
     if (!hasDoc || document.hidden) return;
-    clear();
+    onLook();
     // Re-confirm on return-to-foreground (throttled): a long-lived tab whose
     // endpoint the server pruned would otherwise stay silent forever, believing
     // push still covers it.
@@ -296,11 +320,11 @@ export function createNotificationSystem(
   };
   onMount(() => {
     if (hasDoc) document.addEventListener("visibilitychange", onVisibility);
-    if (hasWin) window.addEventListener("focus", clear);
+    if (hasWin) window.addEventListener("focus", onLook);
   });
   onCleanup(() => {
     if (hasDoc) document.removeEventListener("visibilitychange", onVisibility);
-    if (hasWin) window.removeEventListener("focus", clear);
+    if (hasWin) window.removeEventListener("focus", onLook);
   });
 
   // ---- bell toggle (the ONLY requestPermission site) ---------------------
