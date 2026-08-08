@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { Show, createRoot } from "solid-js";
-import { FilePreview } from "../src/components/FilePreview";
+import { FilePreview, fmtBytes } from "../src/components/FilePreview";
 import { createPreviewStore, type PreviewStore } from "../src/store/preview";
 import type { FileEntry, LoadedFile } from "../src/lib/file-api";
 import { FileApiError } from "../src/lib/file-api";
@@ -456,5 +456,125 @@ describe("<FilePreview> — the browse bar's hidden-files toggle", () => {
     const store = await loaded(async () => ({ kind: "code", text: "x" }), "/a/x.ts");
     const { queryByRole } = render(() => <FilePreview store={store} />);
     expect(queryByRole("checkbox", { name: /hidden/i })).toBeNull();
+  });
+});
+
+describe("<FilePreview> — relative images in a previewed markdown file", () => {
+  const md = [
+    "![rel](pic.png)",
+    "",
+    "![nested](sub/pic.png)",
+    "",
+    "![absolute](/files/read?path=%2Fa%2Fb%2Fpic.png)",
+    "",
+    "![remote](https://example.com/pic.png)",
+  ].join("\n");
+
+  const srcs = (container: HTMLElement): string[] =>
+    [...container.querySelectorAll(".tl-preview-md img")].map(
+      (n) => n.getAttribute("src") ?? "",
+    );
+
+  it("resolves a relative src against the file's own directory, via the file-api", async () => {
+    // A markdown file is previewed by PATH, but its <img> resolves against the
+    // lobby ORIGIN — so `![x](pic.png)` beside the document asked the lobby for
+    // /pic.png and 404'd, while the same picture referenced absolutely loaded.
+    const store = await loaded(
+      async () => ({ kind: "markdown", text: md }),
+      "/a/b/doc.md",
+    );
+    const { container } = render(() => <FilePreview store={store} />);
+
+    expect(srcs(container)).toEqual([
+      "/files/read?path=%2Fa%2Fb%2Fpic.png",
+      "/files/read?path=%2Fa%2Fb%2Fsub%2Fpic.png",
+      // already a URL — left exactly as written
+      "/files/read?path=%2Fa%2Fb%2Fpic.png",
+      "https://example.com/pic.png",
+    ]);
+  });
+
+  it("leaves every src alone when the markdown has no base (the transcript case)", async () => {
+    // Markdown is shared with the assistant transcript renderer, which passes
+    // no base and whose srcs are already absolute. Rewriting there would be a
+    // regression, so the base must be opt-in.
+    const { Markdown } = await import("../src/components/Markdown");
+    const { container } = render(() => <Markdown text={md} />);
+    expect(
+      [...container.querySelectorAll("img")].map((n) => n.getAttribute("src")),
+    ).toEqual([
+      "pic.png",
+      "sub/pic.png",
+      "/files/read?path=%2Fa%2Fb%2Fpic.png",
+      "https://example.com/pic.png",
+    ]);
+  });
+});
+
+describe("<FilePreview> — the Browse button reads the path box", () => {
+  it("lists the directory typed beside it, not the loaded file's", async () => {
+    // The button sits next to the path box and ignored it: with code.ts open,
+    // typing a sibling folder and pressing Browse listed code.ts's own folder.
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const store = makeStore({
+      listDir,
+      loadFile: async () => ({ kind: "code", text: "x" }),
+    });
+    await store.open("/home/u/vfpx/code.ts");
+    const { getByRole, getByLabelText } = render(() => <FilePreview store={store} />);
+
+    const box = getByLabelText("File path") as HTMLInputElement;
+    expect(box.value).toBe("/home/u/vfpx/code.ts"); // the box mirrors the file
+    fireEvent.input(box, { target: { value: "/home/u/vfpx/sub" } });
+    fireEvent.click(getByRole("button", { name: "Browse" }));
+
+    await waitFor(() => expect(listDir).toHaveBeenCalledWith("/home/u/vfpx/sub", false));
+  });
+
+  it("still lists the loaded file's folder when the box was left alone", async () => {
+    const listDir = vi.fn(async () => [] as FileEntry[]);
+    const store = makeStore({
+      listDir,
+      loadFile: async () => ({ kind: "code", text: "x" }),
+    });
+    await store.open("/home/u/vfpx/code.ts");
+    const { getByRole } = render(() => <FilePreview store={store} />);
+
+    fireEvent.click(getByRole("button", { name: "Browse" }));
+    await waitFor(() => expect(listDir).toHaveBeenCalledWith("/home/u/vfpx", false));
+  });
+});
+
+describe("fmtBytes — the header's size chip", () => {
+  it("names the sizes it is given", () => {
+    expect(fmtBytes(null)).toBe("");
+    expect(fmtBytes(-1)).toBe("");
+    expect(fmtBytes(0)).toBe("0 B"); // an empty file has a real size
+    expect(fmtBytes(1023)).toBe("1023 B");
+    expect(fmtBytes(1024)).toBe("1.0 KB");
+    expect(fmtBytes(1048576)).toBe("1.0 MB");
+  });
+
+  // The KB branch tested the RAW byte count while the label printed the ROUNDED
+  // one, so every size that rounds up to 1024.0 KB was shown in a unit nobody
+  // uses. Exactly 51 sizes fall in that window, 1 MiB-1 among them.
+  it("rolls over to MB as soon as the rounded label would read 1024 KB", () => {
+    expect(fmtBytes(1048524)).toBe("1023.9 KB"); // the last honest KB size
+    expect(fmtBytes(1048525)).toBe("1.0 MB"); // first of the 51
+    expect(fmtBytes(1048575)).toBe("1.0 MB"); // 1 MiB - 1, the reported case
+  });
+
+  it("never prints a number the next unit up should have absorbed", () => {
+    // Swept rather than spot-checked: the defect is a boundary, and a boundary
+    // is what point samples miss. Collected into ONE assertion so the sweep
+    // costs a few ms instead of 300k expect() calls.
+    const chip = /^(\d+(?:\.\d)?) (B|KB|MB)$/;
+    const bad: string[] = [];
+    for (let n = 0; n <= 2 * 1024 * 1024; n += 7) {
+      const out = fmtBytes(n);
+      const m = out.match(chip);
+      if (!m || (m[2] !== "MB" && Number(m[1]) >= 1024)) bad.push(`${n} -> ${out}`);
+    }
+    expect(bad).toEqual([]);
   });
 });
