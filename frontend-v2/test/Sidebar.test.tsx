@@ -559,6 +559,168 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
+  it("keeps every group and card node when the manifest comes back reordered", async () => {
+    // /sessions spans OS users and promises no order, so the same sessions come
+    // back shuffled. The model was rebuilt from that array and <For> keys on
+    // reference, so a shuffle re-created every group and card on screen — the
+    // idle sidebar rebuilding itself several times a minute, and anything the
+    // user had in flight on one of those nodes going with it.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("a1"), sess("b1"), sess("c1")];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["a1"] }],
+      ungrouped: ["b1", "c1"],
+    };
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(3));
+
+    const groups = [...container.querySelectorAll(".tl-group")];
+    const cards = [...container.querySelectorAll(".tl-card")];
+
+    for (let i = 0; i < 3; i++) {
+      api.sessionsVal = [...api.sessionsVal].reverse();
+      api.layoutVal = structuredClone(api.layoutVal);
+      await store.refresh();
+    }
+
+    [...container.querySelectorAll(".tl-group")].forEach((g, i) => expect(g).toBe(groups[i]));
+    [...container.querySelectorAll(".tl-card")].forEach((c, i) => expect(c).toBe(cards[i]));
+    store.dispose();
+  });
+
+  it("keeps this user's rows when somebody else's session appears", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("mine")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["mine"] };
+    const { container, getByText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+    const card = container.querySelector(".tl-card")!;
+
+    api.sessionsVal = [...api.sessionsVal, sess("theirs", { owner: "bob", access: "ro" })];
+    await store.refresh();
+    await waitFor(() => expect(getByText("Shared with me")).toBeInTheDocument());
+
+    expect(container.querySelector(".tl-card")).toBe(card);
+    store.dispose();
+  });
+
+  it("double-clicking a card that is NOT the selected session opens its rename box", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("chosen"), sess("other")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["chosen", "other"] };
+    const { container, getByText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(2));
+
+    fireEvent.click(getByText("chosen"));
+    expect(store.selected()?.name).toBe("chosen");
+
+    const other = [...container.querySelectorAll(".tl-card")][1]!;
+    fireEvent.dblClick(other);
+
+    await waitFor(() => expect(other.querySelector(".tl-card-rename")).not.toBeNull());
+    expect((other.querySelector(".tl-card-rename") as HTMLInputElement).value).toBe("other");
+    store.dispose();
+  });
+
+  it("still has the same card node to double-click after a poll", async () => {
+    // A double-click is two clicks on ONE node: the browser fires `dblclick` at
+    // the nearest common ancestor of the two targets, so a poll that swaps the
+    // card out between them sends the event to the group instead and the rename
+    // never opens. Nothing here is held — the card is not mid-interaction yet.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("chosen"), sess("other")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["chosen", "other"] };
+    const { container, getByText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(2));
+
+    const other = [...container.querySelectorAll(".tl-card")][1]!;
+    fireEvent.click(getByText("chosen")); // select a DIFFERENT card
+
+    // one poll's worth of churn between the two clicks
+    api.sessionsVal = [...api.sessionsVal].reverse();
+    await store.refresh();
+
+    expect([...container.querySelectorAll(".tl-card")][1]).toBe(other);
+    fireEvent.dblClick(other);
+    await waitFor(() => expect(other.querySelector(".tl-card-rename")).not.toBeNull());
+    store.dispose();
+  });
+
+  it("releases the poll hold when a card is unmounted mid-rename", async () => {
+    // The rename box holds the poll, and only endRename gives it back — so a
+    // card that goes away while the box is open (collapsing its group does
+    // exactly that) stranded the sidebar: no poll, ever again, for the rest of
+    // the session. ProjectGroup already guards its own two holds this way.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("inwork")];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["inwork"] }] };
+    const { container, getByText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    fireEvent.dblClick(container.querySelector(".tl-card")!);
+    await waitFor(() => expect(container.querySelector(".tl-card-rename")).not.toBeNull());
+
+    fireEvent.click(getByText("work")); // collapse — the card unmounts under it
+    await waitFor(() => expect(container.querySelector(".tl-card")).toBeNull());
+    fireEvent.click(getByText("work")); // and back open
+
+    api.sessionsVal = [...api.sessionsVal, sess("late")];
+    api.layoutVal = { ...api.layoutVal, ungrouped: ["late"] };
+    await store.refresh();
+
+    await waitFor(() =>
+      expect([...container.querySelectorAll(".tl-card-name")].map((n) => n.textContent)).toContain(
+        "late",
+      ),
+    );
+    store.dispose();
+  });
+
+  it("puts a newly created project above Ungrouped, not below it", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("loose")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["loose"] };
+    const { container, getByText, getByPlaceholderText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    fireEvent.click(getByText("+ Project"));
+    const input = getByPlaceholderText("new project name…") as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "fresh" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect([...container.querySelectorAll(".tl-group-title")].map((n) => n.textContent)).toEqual([
+        "fresh",
+        "Ungrouped",
+      ]),
+    );
+    store.dispose();
+  });
+
+  it("files a session under the project its own record names", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("t3", { project: "t3-code" })];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "t3-code", sessions: [] }] };
+    const { container, getByText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
+
+    const group = getByText("t3-code").closest(".tl-group")!;
+    expect(group.querySelector(".tl-card-name")!.textContent).toBe("t3");
+    expect(group.querySelector(".tl-group-count")!.textContent).toBe("1");
+    expect([...container.querySelectorAll(".tl-group-title")].map((n) => n.textContent)).toEqual([
+      "t3-code",
+    ]);
+    store.dispose();
+  });
+
   it("marks the Shared-with-me section collapsed, so its chevron rotates", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("theirs", { owner: "bob", access: "rw" })];
