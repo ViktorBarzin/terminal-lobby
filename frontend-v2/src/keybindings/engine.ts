@@ -1,6 +1,7 @@
 import { createSignal, type Accessor } from "solid-js";
 import {
   altLabel as altLabelFor,
+  commandAllowed,
   KB_KEY,
   matchesAppChord as matchesAppChordPure,
   normalizeKeybindings,
@@ -38,6 +39,14 @@ export interface KeybindingEngine {
   isMac: boolean;
   /** the shared match decision point (exposed for parity / future xterm merge). */
   matchesAppChord: (e: ChordEventLike) => ResolvedBinding | null;
+  /**
+   * The same when-clause decision, taken by command NAME against the live
+   * context — for the terminal iframe's forwarded chords (tl-command), which
+   * never produce a keydown in this document and so never reach the listener
+   * above. Independent of the `enabled` gate: term.html applies that itself
+   * before forwarding, and the always-on chords bypass it on both sides.
+   */
+  allows: (command: string) => boolean;
   /** feed the terminal iframe's Alt state up (tl-kb-alt), for the badge overlay. */
   setFrameAlt: (down: boolean) => void;
   /** wire the context + command runner, then install the window listeners. */
@@ -98,13 +107,19 @@ export function createKeybindingEngine(): KeybindingEngine {
     setEnabledSig(doc.enabled);
   }
 
+  const context = (): Record<string, boolean> => (getContextFn ? getContextFn() : {});
+
   function matchesAppChord(e: ChordEventLike): ResolvedBinding | null {
     return matchesAppChordPure(e, {
       enabled: enabled(),
       resolvedDefaults,
       resolvedAlways,
-      ctx: getContextFn ? getContextFn() : {},
+      ctx: context(),
     });
+  }
+
+  function allows(command: string): boolean {
+    return commandAllowed(command, context());
   }
 
   // ---- Alt-hold badge tracker (syncAltBadges port) ------------------------
@@ -208,6 +223,7 @@ export function createKeybindingEngine(): KeybindingEngine {
     altLabel: altLabelFor(isMac),
     isMac,
     matchesAppChord,
+    allows,
     setFrameAlt,
     init,
     dispose,
