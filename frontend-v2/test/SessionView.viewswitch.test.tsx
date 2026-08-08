@@ -92,19 +92,23 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     const { container, unmount } = render(() => <SessionView session="qa-vs" />);
     const toggle = window.__tlToggleView;
     expect(typeof toggle).toBe("function");
-    expect(mode(container)).toBe("text");
+    expect(mode(container)).toBe("terminal");
 
     expect(toggle?.()).toBe(true);
-    expect(mode(container)).toBe("terminal");
-    expect(toggle?.()).toBe(true);
     expect(mode(container)).toBe("text");
+    expect(toggle?.()).toBe(true);
+    expect(mode(container)).toBe("terminal");
 
     unmount();
     expect(window.__tlToggleView).toBeUndefined();
   });
 
-  it("dots the [Terminal] segment when the frame signals output in text mode", () => {
+  it("dots the [Terminal] segment when output arrives while you're in text mode", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
+    // Terminal is the default view now, so switch to Text first — the [Terminal]
+    // dot only latches for output that lands while the terminal is HIDDEN.
+    fireEvent.click(segments(container)[0]!); // [Text]
+    expect(mode(container)).toBe("text");
     expect(dots(container)).toEqual([false, false]);
 
     fromFrame(container, { type: "tl-attention", kind: "output", session: "qa-vs" });
@@ -112,8 +116,9 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(dots(container)).toEqual([false, true]);
   });
 
-  it("clears the dot when you switch to the terminal", () => {
+  it("clears the [Terminal] dot when you switch to the terminal", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
+    fireEvent.click(segments(container)[0]!); // [Text] — so the bell lands while the terminal is hidden
     fromFrame(container, { type: "tl-attention", kind: "bell", session: "qa-vs" });
     expect(dots(container)).toEqual([false, true]);
 
@@ -122,9 +127,9 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(dots(container)).toEqual([false, false]);
   });
 
-  // Text mode is the DEFAULT view, so a plain shell session (no Claude, hence
-  // no transcript registered with session-events) opens straight onto this
-  // badge. It used to sit on RECONNECTING forever while the client hammered a
+  // A plain shell session (no Claude, hence no transcript registered with
+  // session-events) shows this badge in the session bar regardless of the active
+  // view. It used to sit on RECONNECTING forever while the client hammered a
   // permanent 404.
   it("badges a session with no transcript as such, not as a failing connection", async () => {
     const origFetch = g.fetch;
@@ -159,9 +164,12 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   });
 
   // Attaching a live session resizes ITS tmux window to whatever the iframe
-  // measures, so merely selecting a card must not attach: the Text view is the
-  // default, and a passive click used to squeeze a real 200x50 client to 80x24.
-  it("does not attach the terminal until the [Terminal] segment is opened", () => {
+  // measures, so a HIDDEN terminal must not attach: a passive selection used to
+  // squeeze a real 200x50 client to 80x24. Terminal-first means the DEFAULT view
+  // attaches on mount (correctly, at full size); to exercise the laziness we
+  // start this session in Text so the terminal is the hidden one.
+  it("does not attach the terminal while it is the hidden view, only when opened", () => {
+    localStorage.setItem("tl:viewmode:v1:qa-vs", "text"); // start with the terminal hidden
     const nav: string[] = [];
     const desc = Object.getOwnPropertyDescriptor(
       HTMLIFrameElement.prototype,
