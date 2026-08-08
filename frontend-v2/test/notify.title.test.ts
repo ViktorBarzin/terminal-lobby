@@ -66,4 +66,14 @@ describe("composeTitle", () => {
       composeTitle({ ...base, sessions, isUnseen: (s) => s.name === "a" }),
     ).toBe("(1✓) terminal-lobby");
   });
+
+  it("drops the (N✓) badge once every finished session has been seen", () => {
+    const sessions: TitleSession[] = [
+      { name: "a", state: "done" },
+      { name: "b", state: "done" },
+    ];
+    expect(composeTitle({ ...base, sessions, isUnseen: () => false })).toBe(
+      "terminal-lobby",
+    );
+  });
 });
