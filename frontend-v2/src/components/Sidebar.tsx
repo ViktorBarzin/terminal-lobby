@@ -11,6 +11,7 @@ import {
 import type { LobbyStore } from "../store/lobby";
 import type { PrefsStore } from "../store/prefs";
 import { SHARED_KEY } from "../store/collapse";
+import { isGroupVisible } from "./lobby.logic";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
 import { CreateSessionRow } from "./CreateSessionRow";
@@ -73,9 +74,10 @@ export const Sidebar: Component<{
   };
 
   // Ungrouped hides while empty (keeps its slot in the layout); projects always
-  // render so they can be seen and dropped into.
-  const visibleGroups = () =>
-    store.model().groups.filter((g) => g.kind === "project" || g.sessions.length > 0);
+  // render so they can be seen and dropped into. Shared with the move-up/down
+  // bounds — the two reading different predicates is what let a group's Move
+  // item offer a step onto a slot that renders nothing.
+  const visibleGroups = () => store.model().groups.filter(isGroupVisible);
 
   // "No sessions yet." is a claim about fetched data, so a load error disowns
   // it: refresh() can bail before /sessions is ever called (denied whoami), and
