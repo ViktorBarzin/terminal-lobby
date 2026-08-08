@@ -19,6 +19,7 @@ import {
   reorderGroups,
   sameLayout,
   stateLabel,
+  visibleGroupSeqTokens,
 } from "../src/components/lobby.logic";
 import type { Layout, Session } from "../src/types/lobby";
 import { emptyLayout } from "../src/types/lobby";
@@ -130,6 +131,36 @@ describe("groupSeqTokens", () => {
     expect(groupSeqTokens(l0)).toEqual(["u", "p:a"]);
     const l1 = layout({ projects: [{ name: "a", sessions: [] }], ungroupedIndex: 1 });
     expect(groupSeqTokens(l1)).toEqual(["p:a", "u"]);
+  });
+});
+
+describe("visibleGroupSeqTokens", () => {
+  it("drops the empty sentinel the sidebar hides, without touching the raw sequence", () => {
+    const l = layout({
+      projects: [{ name: "a", sessions: ["a1"] }, { name: "b", sessions: ["b1"] }],
+      ungroupedIndex: 1,
+    });
+    const m = deriveSidebar(l, [sess("a1"), sess("b1")], ME);
+    // The slot survives — capture and reorder still need somewhere to put it…
+    expect(groupSeqTokens(l)).toEqual(["p:a", "u", "p:b"]);
+    // …but the user is looking at two groups, so that is what Move up/down counts.
+    expect(visibleGroupSeqTokens(m)).toEqual(["p:a", "p:b"]);
+  });
+
+  it("keeps the sentinel in the visible sequence once it has a member", () => {
+    const l = layout({
+      projects: [{ name: "a", sessions: ["a1"] }],
+      ungrouped: ["u1"],
+      ungroupedIndex: 0,
+    });
+    const m = deriveSidebar(l, [sess("a1"), sess("u1")], ME);
+    expect(visibleGroupSeqTokens(m)).toEqual(["u", "p:a"]);
+  });
+
+  it("keeps an EMPTY project visible — only Ungrouped hides", () => {
+    const l = layout({ projects: [{ name: "a", sessions: [] }], ungroupedIndex: 1 });
+    const m = deriveSidebar(l, [], ME);
+    expect(visibleGroupSeqTokens(m)).toEqual(["p:a"]);
   });
 });
 
