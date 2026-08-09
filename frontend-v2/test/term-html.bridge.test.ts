@@ -360,3 +360,331 @@ describe("term.html — the tab going away RE-ARMS an already-hidden view", () =
     );
   });
 });
+
+/** A `const NAME = <number>;` from the page source. */
+function sliceNumberConst(src: string, name: string): number {
+  const m = new RegExp(`const ${name} = (\\d+);`).exec(src);
+  expect(m, `${name} declaration`).not.toBeNull();
+  return Number(m![1]);
+}
+
+/** A top-level `function name(…) { … }` body, sliced by its 8-space indent. */
+function sliceFunction(src: string, name: string): string {
+  const start = src.indexOf(`        function ${name}(`);
+  expect(start, `${name} declaration`).toBeGreaterThan(-1);
+  const end = src.indexOf("\n        }", start);
+  expect(end, `${name} terminator`).toBeGreaterThan(start);
+  return src.slice(start, end);
+}
+
+/** term.html's retry-delay picker, over a settable attempt count + onLine. */
+function loadRetryDelay(): (attempts: number, onLine: boolean) => number {
+  const src = html();
+  return runInNewContext(
+    `${sliceArrayLiteral(src, "RETRY_DELAYS_MS")}
+     const OFFLINE_RETRY_MS = ${sliceNumberConst(src, "OFFLINE_RETRY_MS")};
+     ${sliceKernel(src, "tl-retry-delay")}
+     (function (a, o) { connAttempts = a; navigator.onLine = o; return nextRetryDelay(); })`,
+    { navigator: { onLine: true }, connAttempts: 0 },
+  ) as (attempts: number, onLine: boolean) => number;
+}
+
+/**
+ * THE THUNDERING HERD: an outage ends for every client in the same instant.
+ *
+ * Unjittered rungs meant every open terminal — every tab, every phone — came
+ * back at ttyd on the same millisecond, and a server that then struggles drops
+ * them all again into the same next rung. And while the browser itself says
+ * there is no network, the bottom rung was still burning a doomed attempt a
+ * second, climbing the ladder out of usefulness before the network returned.
+ */
+describe("term.html — the reconnect ladder is jittered, and parks while offline", () => {
+  it("spreads each rung across [delay/2, delay]", () => {
+    const pick = loadRetryDelay();
+    const rungs = [1000, 2000, 4000, 8000, 16000];
+    rungs.forEach((rung, attempt) => {
+      for (let i = 0; i < 50; i++) {
+        const d = pick(attempt, true);
+        expect(d, `attempt ${attempt}`).toBeGreaterThanOrEqual(rung / 2);
+        expect(d, `attempt ${attempt}`).toBeLessThanOrEqual(rung);
+      }
+    });
+  });
+
+  it("actually varies — a fixed rung would defeat the whole point", () => {
+    const pick = loadRetryDelay();
+    const seen = new Set(Array.from({ length: 100 }, () => pick(0, true)));
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it("holds the top rung past the end of the table", () => {
+    const pick = loadRetryDelay();
+    expect(pick(99, true)).toBeLessThanOrEqual(16000);
+    expect(pick(99, true)).toBeGreaterThanOrEqual(8000);
+  });
+
+  it("parks on the long safety delay when the browser says there is no path", () => {
+    const pick = loadRetryDelay();
+    const offline = sliceNumberConst(html(), "OFFLINE_RETRY_MS");
+    // Not jittered: this one is a safety net, not a rung — onLine lies true
+    // behind a captive portal and some platforms never fire `online` at all,
+    // so the tab must still be able to wake itself.
+    expect(pick(0, false)).toBe(offline);
+    expect(pick(4, false)).toBe(offline);
+    expect(offline).toBeGreaterThan(16000);
+  });
+});
+
+interface PendingInput {
+  frames: ArrayBuffer[];
+  bytes: number;
+  since: number;
+  push(frame: ArrayBuffer): boolean;
+  clear(): void;
+  flush(sock: { send(frame: ArrayBuffer): void }): void;
+}
+
+interface PendingEnv {
+  hasConnectedOnce: boolean;
+  batterySuspended: boolean;
+}
+
+/** term.html's pending-input queue, over a controllable clock. */
+function loadPendingInput(env: Partial<PendingEnv> = {}): {
+  q: PendingInput;
+  ctx: PendingEnv;
+  toasts: string[];
+  sent: ArrayBuffer[];
+  tick: (ms: number) => void;
+} {
+  const toasts: string[] = [];
+  const sent: ArrayBuffer[] = [];
+  let clock = 1_000_000;
+  const ctx = {
+    hasConnectedOnce: env.hasConnectedOnce ?? true,
+    batterySuspended: env.batterySuspended ?? false,
+    showToast: (m: string) => void toasts.push(m),
+    console: { log: () => {} },
+    Date: { now: () => clock },
+  };
+  const q = runInNewContext(
+    `${sliceKernel(html(), "tl-pending-input")}; pendingInput`,
+    ctx,
+  ) as PendingInput;
+  return {
+    q,
+    ctx: ctx as unknown as PendingEnv,
+    toasts,
+    sent,
+    tick: (ms) => {
+      clock += ms;
+    },
+  };
+}
+
+const frame = (bytes: number): ArrayBuffer => new ArrayBuffer(bytes);
+
+/**
+ * THE SWALLOWED KEYSTROKE: typing into a terminal that only LOOKS live.
+ *
+ * A disconnected page still shows tmux's last repaint, so a key that
+ * early-returned out of sendInput vanished with nothing to show for it — the
+ * user finds out a whole command later. Holding the keys is the other half,
+ * and it is the risky half: replayed late they run against a prompt that has
+ * moved on, so the queue is small, same-session, and short-lived by design.
+ */
+describe("term.html — keys typed while the socket is down", () => {
+  it("replays a short blip in order", () => {
+    const { q, sent, tick } = loadPendingInput();
+    const a = frame(1);
+    const b = frame(2);
+    expect(q.push(a)).toBe(true);
+    expect(q.push(b)).toBe(true);
+    tick(900); // a bottom-rung reconnect
+    q.flush({ send: (f) => void sent.push(f) });
+    expect(sent).toEqual([a, b]);
+    expect(q.frames).toHaveLength(0);
+    expect(q.bytes).toBe(0);
+  });
+
+  it("discards — and says so — once the gap outlived the replay window", () => {
+    const src = html();
+    const ttl = sliceNumberConst(src, "PENDING_INPUT_TTL_MS");
+    const { q, sent, toasts, tick } = loadPendingInput();
+    q.push(frame(1));
+    tick(ttl + 1);
+    q.flush({ send: (f) => void sent.push(f) });
+    expect(sent).toHaveLength(0);
+    expect(toasts.join(" ")).toMatch(/discarded/i);
+  });
+
+  it("ages from the FIRST key, so a long burst cannot extend the window", () => {
+    const src = html();
+    const ttl = sliceNumberConst(src, "PENDING_INPUT_TTL_MS");
+    const { q, sent, tick } = loadPendingInput();
+    q.push(frame(1));
+    tick(ttl + 1);
+    q.push(frame(1)); // still typing — but the queue is already stale
+    q.flush({ send: (f) => void sent.push(f) });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("refuses to hold anything before a session has ever attached", () => {
+    // Nothing to replay INTO: the pty does not exist yet, and the boot attach
+    // is the one connect that always retries anyway.
+    const { q } = loadPendingInput({ hasConnectedOnce: false });
+    expect(q.push(frame(1))).toBe(false);
+    expect(q.frames).toHaveLength(0);
+  });
+
+  it("refuses while the battery saver is holding the socket down", () => {
+    // A suspend lasts as long as the tab is away — always past the window.
+    const { q } = loadPendingInput({ batterySuspended: true });
+    expect(q.push(frame(1))).toBe(false);
+  });
+
+  it("caps the queue, and reports the refusal rather than lying about it", () => {
+    const max = sliceNumberConst(html(), "PENDING_INPUT_MAX_BYTES");
+    const { q } = loadPendingInput();
+    expect(q.push(frame(max - 1))).toBe(true);
+    expect(q.push(frame(64))).toBe(false); // would overflow — caller says "lost"
+    expect(q.bytes).toBe(max - 1);
+  });
+
+  it("routes BOTH pty-bound input paths through the queue", () => {
+    // sendInput and term.onBinary each had their own `if (!OPEN) return`.
+    // Fixing one and leaving the other still eats paste and bracketed input.
+    const src = html();
+    expect(sliceFunction(src, "sendInput")).toContain("queueDroppedInput(buf.buffer)");
+    const onBinary = src.slice(src.indexOf("term.onBinary("));
+    expect(onBinary.slice(0, onBinary.indexOf("\n        });"))).toContain(
+      "queueDroppedInput(bytes.buffer)",
+    );
+  });
+
+  it("flushes only after the init handshake and the resize have gone out", () => {
+    const src = html();
+    const open = src.slice(src.indexOf("ws.onopen = () => {"));
+    const body = open.slice(0, open.indexOf("\n                    };"));
+    expect(body.indexOf("ws.send(initMsg)")).toBeLessThan(body.indexOf("pendingInput.flush(ws)"));
+    expect(body.indexOf("sendResize();")).toBeLessThan(body.indexOf("pendingInput.flush(ws)"));
+  });
+
+  it("clears the queue on the two states replay can never be safe from", () => {
+    const src = html();
+    // "Session ended." — there is no pty left to replay into. (Anchored on
+    // the term.write, not the phrase: the phrase also appears in prose above.)
+    const ended = src.indexOf("[33mSession ended.");
+    expect(ended, "the Session ended. write").toBeGreaterThan(-1);
+    expect(src.slice(ended - 400, ended)).toContain("pendingInput.clear()");
+    // A battery suspend lasts until the tab comes back: always stale.
+    const suspend = sliceFunction(src, "suspendForBattery");
+    expect(suspend).toContain("pendingInput.clear()");
+  });
+});
+
+/**
+ * THE FROZEN-BUT-OPEN SOCKET: the signature mobile failure.
+ *
+ * ttyd's -P 30 keepalive runs server-to-client and the browser hides ping and
+ * pong, so a black-holed path leaves readyState === OPEN forever with no
+ * onclose to start the ladder. And a silence rule cannot stand in for one — an
+ * idle terminal is legitimately quiet for hours — so the page has to probe.
+ */
+describe("term.html — the socket has to prove it is alive", () => {
+  it("probes with a ttyd INPUT frame carrying NO payload", () => {
+    // A probe with a payload would be typed into whatever is at the prompt.
+    // Zero-length is a verified no-op in ttyd 1.7.7: protocol.c's INPUT case
+    // hands pty_write a zero-length buffer, so no byte reaches the pty.
+    const src = html();
+    expect(src).toMatch(
+      /const WS_PROBE_FRAME = Uint8Array\.of\(MSG_INPUT\.charCodeAt\(0\)\)\.buffer;/,
+    );
+    expect(src).toMatch(/const MSG_INPUT\s+= '0';/);
+  });
+
+  it("judges reachability on a response of ANY status, not on an ok one", () => {
+    // A 500 from a briefly unhappy ttyd still proves the path carries packets;
+    // treating it as death would reconnect a perfectly good socket.
+    const probe = sliceFunction(html(), "runLivenessProbe");
+    expect(probe).toContain("cache: 'no-store'");
+    expect(probe).toContain(".then(() => true, () => false)");
+    expect(probe).not.toContain(".ok");
+  });
+
+  it("holds its verdict when the tab is hidden at either end of a probe", () => {
+    // Background throttling manufactures both symptoms — a stalled fetch and a
+    // frozen buffer — on a socket that is fine.
+    const probe = sliceFunction(html(), "runLivenessProbe");
+    expect(probe).toContain("if (batterySuspended || document.hidden) return;");
+    expect(probe).toContain("if (document.hidden) return;");
+  });
+
+  it("needs repeated failures before it drops a live-looking socket", () => {
+    const src = html();
+    expect(sliceNumberConst(src, "LIVENESS_STRIKES")).toBeGreaterThanOrEqual(2);
+    const failed = sliceFunction(src, "livenessFailed");
+    expect(failed).toContain("if (livenessStrikes < LIVENESS_STRIKES) return;");
+    // And it must go out through the same door as a real close, or a session
+    // killed elsewhere gets resurrected by `tmux new-session -A`.
+    expect(failed).toContain("reconnectAfterDrop()");
+  });
+
+  it("runs only between an open socket and its teardown", () => {
+    const src = html();
+    expect(sliceFunction(src, "abandonAttempt")).toContain("stopLivenessProbe()");
+    const open = src.slice(src.indexOf("ws.onopen = () => {"));
+    expect(open.slice(0, open.indexOf("\n                    };"))).toContain("startLivenessProbe()");
+    const close = src.slice(src.indexOf("ws.onclose = () => {"));
+    expect(close.slice(0, close.indexOf("\n                    };"))).toContain("stopLivenessProbe()");
+  });
+});
+
+/**
+ * THE UNBOUNDED ATTEMPT: a connect that can hang for minutes.
+ *
+ * /token had no deadline and the WS handshake had none either, so a half-open
+ * path parked the page on "Connecting…" with no ladder behind it. The instant
+ * retries could not rescue it: retryNow started with `if (!retryTimer) return`
+ * and an in-flight attempt leaves no timer, so `back online` and `tab visible`
+ * were no-ops in exactly the case they exist for.
+ */
+describe("term.html — both hops of a connect are bounded", () => {
+  it("gives the /token fetch an abort signal and a deadline", () => {
+    const src = html();
+    expect(src).toContain("fetch(tokenUrl, { credentials: 'same-origin', signal: ctrl.signal })");
+    expect(sliceNumberConst(src, "TOKEN_TIMEOUT_MS")).toBeGreaterThan(0);
+    expect(src).toContain("}, TOKEN_TIMEOUT_MS);");
+  });
+
+  it("gives the handshake a deadline, and clears it on both exits", () => {
+    const src = html();
+    expect(sliceNumberConst(src, "WS_OPEN_TIMEOUT_MS")).toBeGreaterThan(0);
+    expect(src).toContain("if (!ws || ws.readyState !== WebSocket.CONNECTING) return;");
+    // abandonAttempt + onopen + onclose: a deadline left armed would tear down
+    // the NEXT socket.
+    expect(src.match(/clearTimeout\(handshakeTimer\)/g) ?? []).toHaveLength(3);
+  });
+
+  it("lets an instant retry abandon a stalled attempt, not just a pending timer", () => {
+    const retry = sliceFunction(html(), "retryNow");
+    expect(retry).not.toContain("if (!retryTimer) return;");
+    expect(retry).toContain("connAbort !== null");
+    expect(retry).toContain("WebSocket.CONNECTING");
+  });
+
+  it("leaves a healthy open socket alone", () => {
+    // `tab visible` fires on every app switch; reconnecting a live terminal
+    // each time would cost a repaint for nothing.
+    const retry = sliceFunction(html(), "retryNow");
+    expect(retry).toContain("if (!pending && !inFlight) return;");
+  });
+
+  it("stamps every attempt with a generation, so a late reply cannot land", () => {
+    const src = html();
+    expect(sliceFunction(src, "abandonAttempt")).toContain("connGen++");
+    // The token resolution, the handshake deadline, the watchdog verdict and
+    // the kill-guard check all re-read it before acting.
+    expect(src.match(/gen !== connGen/g) ?? []).toHaveLength(5);
+  });
+});

@@ -12482,6 +12482,7 @@
         // for PENDING_INPUT_TTL_MS: in practice that means it saves the
         // bottom rung of the ladder (a ~1s blip, the common case) and drops
         // everything else rather than guess.
+        // >>> tl-pending-input
         const PENDING_INPUT_MAX_BYTES = 4096;
         const PENDING_INPUT_TTL_MS = 3000;
         const pendingInput = {
@@ -12511,6 +12512,7 @@
                 for (let i = 0; i < frames.length; i++) sock.send(frames[i]);
             }
         };
+        // <<< tl-pending-input
         let dropFlashTimer = null;
         let dropToastAt = 0;
         function noteDroppedInput(held) {
@@ -13909,11 +13911,13 @@
             connPill.classList.remove('hidden');
         }
         function hideConnPill() { connPill.classList.add('hidden'); }
+        // >>> tl-retry-delay
         function nextRetryDelay() {
             if (navigator.onLine === false) return OFFLINE_RETRY_MS;
             const delay = RETRY_DELAYS_MS[Math.min(connAttempts, RETRY_DELAYS_MS.length - 1)];
             return delay / 2 + Math.random() * (delay / 2);
         }
+        // <<< tl-retry-delay
         function scheduleReconnect() {
             if (batterySuspended) return; // suspended for battery — reconnect waits for the tab to show
             if (retryTimer) return; // one pending attempt at a time
