@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { createRoot } from "solid-js";
-import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
+import { createLobbyStore, type LobbyStore, type LobbyStoreOptions } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
 import { renameSessionInLayout } from "../src/components/lobby.logic";
 import { emptyLayout, type Layout, type Session, type Whoami } from "../src/types/lobby";
@@ -26,11 +26,17 @@ class FakeApi implements LobbyApi {
   killError = false;
   layoutError = false;
   putError = false;
+  /** thrown by listSessions — a timed-out or refused poll. */
+  sessionsError?: unknown;
+  /** how many times the poll asked for the session list. */
+  sessionCalls = 0;
 
   async whoami() {
     return this.whoamiVal;
   }
   async listSessions() {
+    this.sessionCalls++;
+    if (this.sessionsError) throw this.sessionsError;
     return this.sessionsVal;
   }
   async getLayout() {
@@ -76,13 +82,40 @@ class FreshApi extends FakeApi {
   }
 }
 
-async function withStore(api: LobbyApi, fn: (store: LobbyStore) => Promise<void>): Promise<void> {
+/**
+ * The same fake with listSessions held open until the test answers it, so two
+ * polls can be put in flight and answered in the WRONG order — which is what a
+ * slow network does to the 5s poll every time a request overruns the interval.
+ * getLayout still answers at once, snapshotting the document as it stood when
+ * the poll started (FreshApi's clone), so each poll carries a coherent world.
+ */
+class GatedApi extends FreshApi {
+  gate = false;
+  readonly pending: Array<{
+    resolve: (s: Session[]) => void;
+    reject: (e: unknown) => void;
+  }> = [];
+
+  override listSessions(): Promise<Session[]> {
+    if (!this.gate) return super.listSessions();
+    this.sessionCalls++;
+    return new Promise<Session[]>((resolve, reject) => {
+      this.pending.push({ resolve, reject });
+    });
+  }
+}
+
+async function withStore(
+  api: LobbyApi,
+  fn: (store: LobbyStore) => Promise<void>,
+  opts: Partial<LobbyStoreOptions> = {},
+): Promise<void> {
   let dispose: () => void = () => {};
   let store: LobbyStore | undefined;
   const done = new Promise<void>((resolve, reject) => {
     createRoot((d) => {
       dispose = d;
-      store = createLobbyStore({ api, autoStart: false, syncHash: false });
+      store = createLobbyStore({ api, autoStart: false, syncHash: false, ...opts });
       fn(store).then(resolve, reject);
     });
   });
@@ -688,6 +721,228 @@ describe("lobby store", () => {
       api.putError = false;
       expect(await store.create("ghost", "")).toBe(true);
       expect(names(store)).toContain("ghost");
+    });
+  });
+
+  /**
+   * The poll is the lobby's only view of the world, and on a slow or flaky
+   * network it is the part that breaks first: requests that never answer,
+   * answers that arrive in the wrong order, and a fixed 5s cadence that keeps
+   * hammering a link already failing to carry it.
+   */
+  describe("polling on a slow or unreliable network", () => {
+    /** Run every microtask, and any timer due within `ms`. */
+    const settle = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+
+    it("drops a slow poll's answer once a newer one has already landed", async () => {
+      const api = new GatedApi();
+      api.sessionsVal = [sess("a")];
+      api.layoutVal = { ...emptyLayout(), ungrouped: ["a"] };
+      await withStore(api, async (store) => {
+        await store.refresh(); // seeds whoami, so both polls below start at the fetch
+
+        api.gate = true;
+        const slow = store.refresh();
+
+        // the world moves on while the slow poll is still out
+        api.sessionsVal = [sess("b")];
+        api.layoutVal = { ...emptyLayout(), ungrouped: ["b"] };
+        const fresh = store.refresh();
+        expect(api.pending).toHaveLength(2);
+
+        api.pending[1]!.resolve([sess("b")]);
+        await fresh;
+        expect(names(store)).toEqual(["b"]);
+
+        // …and the older poll finally answers with the world as it WAS
+        api.pending[0]!.resolve([sess("a")]);
+        await slow;
+        expect(names(store)).toEqual(["b"]);
+        expect(store.layout().ungrouped).toEqual(["b"]);
+        expect(store.toast()).toBeNull();
+      });
+    });
+
+    it("never lets a poll slower than the interval pile up behind itself", async () => {
+      vi.useFakeTimers();
+      const api = new GatedApi();
+      api.gate = true;
+      await withStore(
+        api,
+        async (store) => {
+          await settle();
+          expect(api.sessionCalls).toBe(1);
+
+          await settle(60000); // twelve intervals pass with the poll still open
+          expect(api.sessionCalls).toBe(1);
+
+          api.pending[0]!.resolve([sess("a")]);
+          await settle();
+          expect(names(store)).toEqual(["a"]);
+
+          await settle(5000); // the next poll is scheduled off the ANSWER
+          expect(api.sessionCalls).toBe(2);
+        },
+        { autoStart: true },
+      );
+    });
+
+    it("keeps the last-known-good list when a poll times out", async () => {
+      const api = new FakeApi();
+      api.sessionsVal = [sess("a"), sess("b")];
+      api.layoutVal = { ...emptyLayout(), ungrouped: ["a", "b"] };
+      await withStore(api, async (store) => {
+        await store.refresh();
+        expect(names(store)).toEqual(["a", "b"]);
+
+        api.sessionsError = new DOMException("The operation timed out.", "TimeoutError");
+        api.layoutError = true;
+        await store.refresh();
+
+        expect(names(store)).toEqual(["a", "b"]); // nothing wiped
+        expect(store.layout().ungrouped).toEqual(["a", "b"]);
+        expect(store.loadError()).toMatch(/sessions/i); // …but the failure is shown
+
+        api.sessionsError = undefined;
+        api.layoutError = false;
+        await store.refresh();
+        expect(store.loadError()).toBeNull();
+      });
+    });
+
+    it("backs off 5s → 10s → 20s → 30s while polls fail, and snaps back on success", async () => {
+      vi.useFakeTimers();
+      const api = new FakeApi();
+      api.sessionsVal = [sess("a")];
+      await withStore(
+        api,
+        async (store) => {
+          await settle();
+          expect(api.sessionCalls).toBe(1);
+
+          api.sessionsError = new Error("network down");
+
+          await settle(5000); // 1st failure → next at +10s
+          expect(api.sessionCalls).toBe(2);
+          await settle(5000);
+          expect(api.sessionCalls).toBe(2);
+          await settle(5000); // 2nd failure → next at +20s
+          expect(api.sessionCalls).toBe(3);
+
+          await settle(19999);
+          expect(api.sessionCalls).toBe(3);
+          await settle(1); // 3rd failure → next at +40s, capped to 30s
+          expect(api.sessionCalls).toBe(4);
+
+          await settle(29999);
+          expect(api.sessionCalls).toBe(4);
+          api.sessionsError = undefined;
+          await settle(1); // the poll that finally succeeds
+          expect(api.sessionCalls).toBe(5);
+
+          await settle(5000); // one success is enough to restore the cadence
+          expect(api.sessionCalls).toBe(6);
+          expect(names(store)).toEqual(["a"]); // and the list was never lost
+        },
+        { autoStart: true },
+      );
+    });
+
+    it("holds at the 30s cap however long the outage runs", async () => {
+      vi.useFakeTimers();
+      const api = new FakeApi();
+      api.sessionsError = new Error("network down");
+      await withStore(
+        api,
+        async () => {
+          await settle(); // the very first poll already fails
+          expect(api.sessionCalls).toBe(1);
+          await settle(10000);
+          expect(api.sessionCalls).toBe(2);
+          await settle(20000);
+          expect(api.sessionCalls).toBe(3);
+
+          for (let i = 0; i < 4; i++) {
+            await settle(29999);
+            expect(api.sessionCalls).toBe(3 + i);
+            await settle(1);
+            expect(api.sessionCalls).toBe(4 + i);
+          }
+        },
+        { autoStart: true },
+      );
+    });
+
+    it("refreshes at once when the network comes back, and drops the backoff", async () => {
+      vi.useFakeTimers();
+      const api = new FakeApi();
+      api.sessionsVal = [sess("a")];
+      await withStore(
+        api,
+        async (store) => {
+          await settle();
+          api.sessionsError = new Error("network down");
+          await settle(5000); // → next at +10s
+          await settle(10000); // → next at +20s
+          expect(api.sessionCalls).toBe(3);
+
+          api.sessionsError = undefined;
+          window.dispatchEvent(new Event("online"));
+          await settle();
+          expect(api.sessionCalls).toBe(4); // not 20s from now — now
+          expect(store.loadError()).toBeNull();
+
+          await settle(5000); // back on the base cadence, not the ladder
+          expect(api.sessionCalls).toBe(5);
+        },
+        { autoStart: true },
+      );
+    });
+
+    it("stops polling and unhooks its listeners on dispose", async () => {
+      vi.useFakeTimers();
+      const api = new FakeApi();
+      await withStore(
+        api,
+        async (store) => {
+          await settle();
+          const before = api.sessionCalls;
+
+          store.dispose();
+
+          await settle(60000);
+          expect(api.sessionCalls).toBe(before);
+
+          window.dispatchEvent(new Event("online"));
+          await settle();
+          expect(api.sessionCalls).toBe(before);
+
+          document.dispatchEvent(new Event("visibilitychange"));
+          await settle();
+          expect(api.sessionCalls).toBe(before);
+        },
+        { autoStart: true },
+      );
+    });
+
+    it("a poll still in flight at dispose cannot restart the loop", async () => {
+      vi.useFakeTimers();
+      const api = new GatedApi();
+      api.gate = true;
+      await withStore(
+        api,
+        async (store) => {
+          await settle();
+          expect(api.sessionCalls).toBe(1);
+
+          store.dispose();
+          api.pending[0]!.resolve([sess("a")]); // answers after the store is gone
+          await settle(60000);
+
+          expect(api.sessionCalls).toBe(1);
+        },
+        { autoStart: true },
+      );
     });
   });
 });
