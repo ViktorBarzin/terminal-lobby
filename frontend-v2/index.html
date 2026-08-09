@@ -31,6 +31,25 @@
     <meta name="apple-mobile-web-app-title" content="Terminal" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
+    <!-- Webfont preload, as the vanilla page does: the two faces the chrome
+         actually paints first (mono Regular/Bold). @font-face itself lives in
+         the theme token layer (src/theme/theme.css). crossorigin is mandatory
+         even same-origin — font fetches are always CORS-anonymous, and a
+         mismatch double-downloads. -->
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      crossorigin
+      href="/fonts/JetBrainsMono-Regular.woff2"
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      crossorigin
+      href="/fonts/JetBrainsMono-Bold.woff2"
+    />
     <!-- Tab icon; the attention system swaps this href to a canvas-rendered
          data: URL (icon + a state-colored dot/tick) while a session awaits input
          or finishes, and restores it on clear (src/notify/favicon.ts). Served as
