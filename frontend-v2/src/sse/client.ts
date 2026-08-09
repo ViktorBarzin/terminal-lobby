@@ -20,20 +20,46 @@ export type SseStatus =
 /** The status session-events returns when a session has no event stream. */
 const NO_STREAM_STATUS = 404;
 
+/** How long a classification probe may take before its answer stops mattering. */
+const PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * How long a stream may go silent before a wake signal stops trusting it.
+ * session-events heartbeats every 20s (session-events/main.go `-heartbeat`), so
+ * two missed beats is the natural window — but note the heartbeat is a `:`
+ * COMMENT, and the SSE spec has EventSource *ignore* comment lines entirely, so
+ * the browser never surfaces one to us. Silence therefore does not prove a
+ * stream is dead, only that it is UNVERIFIED, which is why this window gates a
+ * wake-triggered revalidation rather than a standalone stall timer: an idle
+ * session is silent for hours and must not be torn down for it.
+ */
+const DEFAULT_STALL_MS = 45000;
+
 /**
  * Read the stream endpoint's HTTP status without consuming it. EventSource
  * hides the status behind an opaque `error` event, so this is the only way the
  * client can tell "there is nothing here" from "the connection dropped".
  * Returns null when the endpoint could not be reached at all (unknown → treat
  * as transient).
+ *
+ * The timeout is not a nicety: classifyFailure() awaits this with the source
+ * already closed and no timer armed, so a request that never settles — the
+ * signature of a half-open mobile network — stalls the client permanently.
+ * Aborting turns that into a plain "unknown", which routes to the normal
+ * reconnect ladder. The signal also bounds the body release below: aborting
+ * errors the response stream, so a hung cancel() cannot outlive it either.
  */
-async function probeViaFetch(url: string): Promise<number | null> {
+export async function probeViaFetch(
+  url: string,
+  timeoutMs: number = PROBE_TIMEOUT_MS,
+): Promise<number | null> {
   if (typeof fetch === "undefined") return null;
   try {
     const res = await fetch(url, {
       credentials: "same-origin",
       cache: "no-store",
       headers: { Accept: "text/event-stream" },
+      signal: AbortSignal.timeout(timeoutMs),
     });
     // A 200 here is a LIVE stream; cancelling releases it immediately so the
     // EventSource — not this probe — is what actually reads the events.
@@ -70,10 +96,14 @@ export interface SseClientOptions {
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (id: ReturnType<typeof setTimeout>) => void;
   random?: () => number;
+  /** wall clock, injectable so tests can age a connection without waiting. */
+  now?: () => number;
   baseDelayMs?: number;
   maxDelayMs?: number;
   /** how often to re-check a session whose stream does not exist yet. */
   probeIntervalMs?: number;
+  /** silence after which a wake signal stops trusting an open source. */
+  stallTimeoutMs?: number;
 }
 
 /**
@@ -88,7 +118,9 @@ export interface SseClientOptions {
  *   retrying a permanent condition forever. A slow re-probe keeps a session
  *   that registers LATER from being stranded.
  * - Instant retry when the tab becomes visible or the network comes back
- *   online — the two moments a mobile client most wants to catch up fast.
+ *   online — the two moments a mobile client most wants to catch up fast. Those
+ *   are also the moments a socket most often died unannounced, so a source that
+ *   has gone silent past the stall window is rebuilt rather than trusted.
  * - Dedups by id: the server replays from the cursor, so a resumed connection
  *   only surfaces events with id greater than the last one delivered.
  */
@@ -101,6 +133,8 @@ export class SseClient {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private lastEventId = 0;
+  /** when the live source last proved itself; only read while one exists. */
+  private lastActivityAt = 0;
   private stopped = false;
   private status: SseStatus = "connecting";
   private readonly onVisible = () => {
@@ -121,9 +155,11 @@ export class SseClient {
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
       clearTimer: opts.clearTimer ?? ((id) => clearTimeout(id)),
       random: opts.random ?? Math.random,
+      now: opts.now ?? (() => Date.now()),
       baseDelayMs: opts.baseDelayMs ?? 500,
       maxDelayMs: opts.maxDelayMs ?? 15000,
       probeIntervalMs: opts.probeIntervalMs ?? 30000,
+      stallTimeoutMs: opts.stallTimeoutMs ?? DEFAULT_STALL_MS,
     };
   }
 
@@ -152,11 +188,18 @@ export class SseClient {
     const create = this.o.createSource ?? this.defaultCreate.bind(this);
     const es = create(this.o.url(this.o.session, this.lastEventId));
     this.source = es;
+    // A source that never opens is as stale as one that stopped delivering, so
+    // the liveness clock starts at creation, not at onopen.
+    this.markAlive();
     es.onopen = () => {
       this.attempt = 0;
+      this.markAlive();
       this.setStatus("open");
     };
     es.onmessage = (ev) => {
+      // Anything the socket delivered is proof of life — including a frame this
+      // client then throws away, so record it before the parse and dedup gates.
+      this.markAlive();
       const e = parseEvent(ev.data);
       if (!e) return;
       if (e.id <= this.lastEventId) return; // already delivered via replay
@@ -164,6 +207,10 @@ export class SseClient {
       this.o.onEvent(e);
     };
     es.onerror = () => this.onError();
+  }
+
+  private markAlive(): void {
+    this.lastActivityAt = this.o.now();
   }
 
   private onError(): void {
@@ -230,9 +277,26 @@ export class SseClient {
     else this.connect(); // registered (or unknown) → back to the normal path
   }
 
-  /** Reconnect now, resetting backoff — used on tab-visible / network-online. */
+  /**
+   * Reconnect now, resetting backoff — used on tab-visible / network-online.
+   *
+   * Both triggers mark a moment a socket commonly died without the browser
+   * noticing: a phone that slept, or a network that changed under an
+   * established connection. Such a stream fires no error, so `this.source` is
+   * still set and simply never delivers again — and bailing out on a live
+   * source stranded the client on exactly that. A source silent past the stall
+   * window is therefore dropped and rebuilt; one that just delivered is left
+   * alone, since reconnecting mid-turn is a visible stall for no gain. Guessing
+   * wrong is cheap: the reconnect resumes from the cursor and the id dedup
+   * discards whatever the replay repeats.
+   */
   instantRetry(): void {
-    if (this.stopped || this.source) return; // already connected/connecting
+    if (this.stopped) return;
+    if (this.source) {
+      const silentFor = this.o.now() - this.lastActivityAt;
+      if (silentFor < this.o.stallTimeoutMs) return; // still delivering
+      this.closeSource();
+    }
     this.attempt = 0;
     this.clearTimer();
     this.connect();
