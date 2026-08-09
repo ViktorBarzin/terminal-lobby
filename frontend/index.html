@@ -4179,6 +4179,52 @@
         // and future) is tracked without touching the call sites. Anything
         // else — the stale-tab healer's self-fetch, ttyd's /token, CDN
         // assets — passes straight through.
+        //
+        // G10: the same wrapper is where those calls get a DEADLINE. Not one
+        // of them had one, and a fetch with no deadline is not a slow fetch —
+        // it is a call that never returns. A half-open mobile path (radio
+        // handover, captive portal, a NAT box that dropped the flow) accepts
+        // the connect and then says nothing, and the browser's own timeout is
+        // minutes long, so `await fetch(...)` simply never settles: the poll
+        // that awaits it never finishes, and everything sequenced behind it
+        // stops with no error to show for it. Doing it HERE rather than at
+        // ~20 call sites means the ones written next are covered too.
+        const TL_FETCH_TIMEOUT_MS = 8000;
+        // …except where a long call is the normal case. /clipboard/upload
+        // carries a whole image, and a phone photo over a weak uplink takes
+        // longer than any deadline that is useful for a JSON poll — bounding
+        // it would break paste-an-image precisely when it is hardest. Every
+        // other path through here answers with small JSON.
+        const TL_NO_DEADLINE = /^\/clipboard\/upload$/;
+        // Link a deadline onto a call WITHOUT stealing the caller's own
+        // signal: callers that already bound themselves (sessionStillExists'
+        // 5s kill-guard) must keep their abort, so the two are chained and
+        // whichever fires first wins. A plain controller + timer rather than
+        // AbortSignal.timeout/any, which are recent enough that a miss here
+        // would throw on EVERY api call on an older mobile Safari — this page
+        // is somebody's daily driver.
+        function tlDeadlineSignal(init, ms) {
+            const ctrl = new AbortController();
+            setTimeout(() => {
+                // Left armed for the whole call rather than cleared when the
+                // headers land: fetch() resolves on headers, so a path that
+                // sends them and then stalls would hang the body read exactly
+                // like the connect it replaced. Safe because every bounded
+                // path here returns small JSON, and the one large-body path is
+                // exempt above. Aborting an already-finished call is a no-op.
+                try {
+                    ctrl.abort(new DOMException(
+                        'Timed out after ' + ms + 'ms', 'TimeoutError'));
+                } catch (e) { ctrl.abort(); } // pre-reason AbortController
+            }, ms);
+            const caller = init && init.signal;
+            if (caller) {
+                if (caller.aborted) ctrl.abort(caller.reason);
+                else caller.addEventListener(
+                    'abort', () => ctrl.abort(caller.reason), { once: true });
+            }
+            return ctrl.signal;
+        }
         const tlRealFetch = window.fetch.bind(window);
         window.fetch = function (input, init) {
             let u = null;
@@ -4196,7 +4242,16 @@
             const method = ((init && init.method)
                 || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
             const id = slowRequests.track(method + ' ' + u.pathname);
-            const p = tlRealFetch(input, init);
+            // A Request already carries its own signal and its own body, and
+            // handing it a fresh init re-reads that body — not worth the risk
+            // for a shape no call site on this page uses (they all pass a URL
+            // string). Bound the string/URL calls; leave a Request alone.
+            const bounded = !TL_NO_DEADLINE.test(u.pathname)
+                && !(typeof Request !== 'undefined' && input instanceof Request);
+            const p = bounded
+                ? tlRealFetch(input, Object.assign({}, init, {
+                      signal: tlDeadlineSignal(init, TL_FETCH_TIMEOUT_MS) }))
+                : tlRealFetch(input, init);
             // Ack on headers-arrived or failure; return the ORIGINAL promise
             // so caller semantics (incl. rejection) are untouched.
             p.then(() => slowRequests.ack(id), () => slowRequests.ack(id));
