@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { SseClient, type EventSourceLike } from "../src/sse/client";
+import {
+  SseClient,
+  probeViaFetch,
+  type EventSourceLike,
+  type SseClientOptions,
+} from "../src/sse/client";
 import { eventsUrl } from "../src/lib/config";
 import type { Event } from "../src/types/events";
 
@@ -17,12 +22,18 @@ class FakeSource implements EventSourceLike {
 /** Resolve everything queued behind the (async) failure classification. */
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-function harness(probe: () => number | null = () => 200) {
+function harness(
+  probe: () => number | null = () => 200,
+  over: Partial<SseClientOptions> = {},
+) {
   const sources: FakeSource[] = [];
   const timers: { fn: () => void; ms: number }[] = [];
   const received: Event[] = [];
   const statuses: string[] = [];
   const probes: string[] = [];
+  // A hand-cranked clock: staleness is measured in wall time, so the tests
+  // advance it explicitly rather than waiting out the real 45s window.
+  let nowMs = 1_700_000_000_000;
   const client = new SseClient({
     session: "sess",
     url: eventsUrl,
@@ -46,8 +57,20 @@ function harness(probe: () => number | null = () => 200) {
     baseDelayMs: 100,
     maxDelayMs: 1000,
     probeIntervalMs: 5000,
+    now: () => nowMs,
+    ...over,
   });
-  return { client, sources, timers, received, statuses, probes };
+  return {
+    client,
+    sources,
+    timers,
+    received,
+    statuses,
+    probes,
+    advance: (ms: number) => {
+      nowMs += ms;
+    },
+  };
 }
 
 const line = (e: Partial<Event> & Pick<Event, "id" | "kind">) =>
@@ -220,6 +243,149 @@ describe("SseClient", () => {
       h.sources[1]!.onerror?.(null);
       await flush();
       expect(h.statuses[h.statuses.length - 1]).toBe("no-transcript");
+    });
+  });
+
+  // ---- a probe that never answers -----------------------------------------
+  // classifyFailure() awaits the probe with the source already closed and no
+  // timer armed, so an unbounded probe is a permanent stall: nothing is
+  // scheduled and nothing ever will be. A half-open mobile network — the exact
+  // case that produces a hung request — also fires no `online`/`visible` event,
+  // so instantRetry() is not a way out either.
+  describe("a stalled probe", () => {
+    /** A request that only ever settles by being aborted. */
+    const hangingFetch = (_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(init.signal?.reason ?? new Error("aborted")),
+        );
+      });
+
+    /** Swap in a fetch for one test, always restoring the real one. */
+    async function withFetch(fake: unknown, body: () => Promise<void>) {
+      const g = globalThis as unknown as { fetch: unknown };
+      const orig = g.fetch;
+      g.fetch = fake;
+      try {
+        await body();
+      } finally {
+        g.fetch = orig;
+      }
+    }
+
+    it("gives up instead of hanging, reporting the status as unknown", async () => {
+      await withFetch(hangingFetch, async () => {
+        await expect(probeViaFetch("/events/sess", 20)).resolves.toBeNull();
+      });
+    });
+
+    it("still reports a real status, releasing the live stream body", async () => {
+      let cancelled = false;
+      const ok = async () => ({
+        status: 200,
+        body: {
+          cancel: async () => {
+            cancelled = true;
+          },
+        },
+      });
+      await withFetch(ok, async () => {
+        await expect(probeViaFetch("/events/sess", 50)).resolves.toBe(200);
+      });
+      expect(cancelled).toBe(true); // the EventSource, not the probe, reads events
+    });
+
+    it("does not strand the stream: a reconnect is still scheduled", async () => {
+      await withFetch(hangingFetch, async () => {
+        const h = harness(() => 200, {
+          probeStatus: (url) => probeViaFetch(url, 20),
+        });
+        h.client.connect();
+        h.sources[0]!.onerror?.(null);
+
+        await new Promise((r) => setTimeout(r, 80)); // outlast the probe timeout
+        expect(h.timers).toHaveLength(1);
+        expect(h.timers[0]!.ms).toBe(75); // the normal backoff ladder
+        expect(h.statuses[h.statuses.length - 1]).toBe("reconnecting");
+      });
+    });
+  });
+
+  // ---- waking onto a dead-but-open stream ---------------------------------
+  // A socket killed while the phone slept, or dropped by a NAT rebind, reports
+  // no error to the browser: the EventSource stays "open" and simply never
+  // delivers again. `this.source` is therefore non-null, which used to make
+  // instantRetry() a no-op on exactly the two signals — tab-visible and
+  // network-online — that mark the moment such a socket most likely died.
+  describe("waking onto a dead-but-open stream", () => {
+    it("leaves a stream that is still delivering alone", () => {
+      const h = harness();
+      h.client.connect();
+      h.sources[0]!.onopen?.(null);
+      h.advance(30_000); // inside the stall window — the stream looks alive
+      h.client.instantRetry();
+      expect(h.sources).toHaveLength(1);
+      expect(h.sources[0]!.closed).toBe(false);
+    });
+
+    it("drops and rebuilds a source that has gone silent, resuming from the cursor", () => {
+      const h = harness();
+      h.client.connect();
+      h.sources[0]!.onopen?.(null);
+      h.sources[0]!.onmessage?.({ data: line({ id: 4, kind: "text", body: "a" }) });
+
+      h.advance(46_000); // past 2× the server's 20s heartbeat
+      h.client.instantRetry();
+
+      expect(h.sources[0]!.closed).toBe(true);
+      expect(h.sources).toHaveLength(2);
+      expect(h.sources[1]!.url).toBe("/events/sess?lastEventId=4");
+    });
+
+    it("counts any inbound frame as proof of life, even one it discards", () => {
+      const h = harness();
+      h.client.connect();
+      h.advance(40_000);
+      h.sources[0]!.onmessage?.({ data: "not json" }); // dropped by the parser…
+      h.advance(40_000); // …but the socket delivered it, so the clock restarts
+      h.client.instantRetry();
+      expect(h.sources).toHaveLength(1);
+      expect(h.received).toHaveLength(0);
+    });
+
+    it("revalidates when the network comes back online", () => {
+      const h = harness();
+      h.client.start();
+      h.sources[0]!.onopen?.(null);
+      h.advance(60_000);
+
+      window.dispatchEvent(new Event("online"));
+
+      expect(h.sources).toHaveLength(2);
+      h.client.close();
+    });
+
+    it("revalidates when the tab becomes visible again", () => {
+      const h = harness();
+      h.client.start();
+      h.sources[0]!.onopen?.(null);
+      h.advance(60_000);
+
+      expect(document.visibilityState).toBe("visible"); // jsdom's default
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      expect(h.sources).toHaveLength(2);
+      h.client.close();
+    });
+
+    it("stays shut once closed, however long it has been silent", () => {
+      const h = harness();
+      h.client.connect();
+      h.client.close();
+      h.advance(60_000);
+      h.client.instantRetry();
+      expect(h.sources).toHaveLength(1);
+      expect(h.statuses[h.statuses.length - 1]).toBe("closed");
     });
   });
 });
