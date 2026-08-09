@@ -686,6 +686,18 @@
         }
         #conn-pill.offline::before { background: var(--danger); animation: none; }
         @keyframes conn-pulse { 50% { opacity: 0.35; } }
+        /* A keystroke that could not be sent flashes the pill. The terminal
+           still LOOKS live while disconnected — tmux's last repaint is sitting
+           on screen — so a silently swallowed key reads as "it ate my
+           command". The flash keeps the base translateX centring, or the pill
+           would jump to the left edge for the duration of the animation. */
+        #conn-pill.dropped { border-color: var(--danger); color: var(--danger); }
+        #conn-pill.dropped { animation: conn-drop 0.7s ease-out; }
+        @keyframes conn-drop {
+            0%   { transform: translateX(-50%) scale(1.07); }
+            60%  { transform: translateX(-50%) scale(1.07); }
+            100% { transform: translateX(-50%) scale(1); }
+        }
         /* Session-switch pill (Task M.6): OUTER-document flash naming the
            target of a gesture-driven session cycle (‹/› soft keys, Android
            3-finger swipe). It must live in the lobby document — the switch
@@ -12453,6 +12465,71 @@
             }
         }
 
+        // ---- input typed while the socket is down (G5) --------------------
+        // A keystroke that arrived with no socket used to vanish completely:
+        // sendInput early-returned, the pty never saw the byte, and the screen
+        // — tmux's last repaint, still on display — looked entirely live. The
+        // reported symptom is "the terminal ate my command", usually noticed a
+        // whole command later.
+        //
+        // Two halves. Feedback is unconditional: the pill flashes and, at most
+        // once per burst, a toast says in words whether the key is being held
+        // or was thrown away. Buffering is deliberately timid, because replay
+        // is the risky part — the pty may be somewhere else entirely by the
+        // time we reconnect (a job finished, a TUI redrew, another client
+        // typed), and replaying blind would run keys against a prompt that no
+        // longer exists. So the queue is small, same-session only, and lives
+        // for PENDING_INPUT_TTL_MS: in practice that means it saves the
+        // bottom rung of the ladder (a ~1s blip, the common case) and drops
+        // everything else rather than guess.
+        const PENDING_INPUT_MAX_BYTES = 4096;
+        const PENDING_INPUT_TTL_MS = 3000;
+        const pendingInput = {
+            frames: [], bytes: 0, since: 0,
+            // Returns whether the frame was taken, so the caller can tell the
+            // user "held" rather than "lost".
+            push(frame) {
+                if (!hasConnectedOnce) return false; // no session to replay INTO yet
+                if (batterySuspended) return false;  // deliberately down; the tab is away
+                if (this.bytes + frame.byteLength > PENDING_INPUT_MAX_BYTES) return false;
+                if (!this.frames.length) this.since = Date.now();
+                this.frames.push(frame);
+                this.bytes += frame.byteLength;
+                return true;
+            },
+            clear() { this.frames = []; this.bytes = 0; this.since = 0; },
+            flush(sock) {
+                if (!this.frames.length) return;
+                const frames = this.frames;
+                const age = Date.now() - this.since;
+                this.clear();
+                if (age > PENDING_INPUT_TTL_MS) {
+                    console.log('pending input: dropped ' + frames.length + ' frame(s), ' + age + 'ms stale');
+                    showToast('Reconnected — what you typed while offline was discarded', 'error', 4000);
+                    return;
+                }
+                for (let i = 0; i < frames.length; i++) sock.send(frames[i]);
+            }
+        };
+        let dropFlashTimer = null;
+        let dropToastAt = 0;
+        function noteDroppedInput(held) {
+            if (!connPill.classList.contains('hidden')) {
+                connPill.classList.add('dropped');
+                clearTimeout(dropFlashTimer);
+                dropFlashTimer = setTimeout(() => connPill.classList.remove('dropped'), 700);
+            }
+            // Words, but only occasionally: a burst of typing is one event to
+            // the user, not one per key.
+            if (Date.now() - dropToastAt < 5000) return;
+            dropToastAt = Date.now();
+            if (held) showToast('Not connected — holding your keys until the session is back', 'info');
+            else showToast('Not connected — your input did not reach the session', 'error');
+        }
+        function queueDroppedInput(frame) {
+            noteDroppedInput(pendingInput.push(frame));
+        }
+
         function sendInput(data) {
             // A pty-bound byte hard-cancels a flick coast, WHATEVER path
             // produced it (raw keyboard, mirror field, soft key, paste):
@@ -12460,11 +12537,14 @@
             // be missed by a new input path. The scattered per-path cancels
             // remain as belt-and-braces.
             cancelScrollMomentum();
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const payload = textEncoder.encode(data);
             const buf = new Uint8Array(payload.length + 1);
             buf[0] = MSG_INPUT.charCodeAt(0);
             buf.set(payload, 1);
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                queueDroppedInput(buf.buffer);
+                return;
+            }
             ws.send(buf.buffer);
         }
 
@@ -12516,10 +12596,13 @@
             sendInput(data);
         });
         term.onBinary((data) => {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const bytes = new Uint8Array(data.length + 1);
             bytes[0] = MSG_INPUT.charCodeAt(0);
             for (let i = 0; i < data.length; i++) bytes[i + 1] = data.charCodeAt(i);
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                queueDroppedInput(bytes.buffer); // same contract as sendInput
+                return;
+            }
             ws.send(bytes.buffer);
         });
 
@@ -13873,6 +13956,8 @@
             clearTimeout(retryTimer); retryTimer = null; // drop any pending reconnect
             clearTimeout(stableTimer);
             hideConnPill();
+            connPill.classList.remove('dropped');
+            pendingInput.clear(); // a suspend outlives the replay window by design
             // Tear down through the shared path so a half-finished attempt
             // (a /token fetch still in flight, a socket still in CONNECTING)
             // is abandoned too, not just an already-open socket.
@@ -14097,6 +14182,7 @@
                     scheduleReconnect();
                 } else {
                     hideConnPill();
+                    pendingInput.clear(); // nothing left to replay them into
                     term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
                 }
             });
@@ -14231,6 +14317,13 @@
                         // RESIZE until it is), but harmless — term is already
                         // opened by this point and sendResize guards the ws.
                         sendResize();
+                        // Keys typed into the gap, replayed only now: after
+                        // the init handshake spawned the pty and after the
+                        // resize, so they land in a terminal that is already
+                        // the right shape. flush() drops them itself if the
+                        // gap outlived the window where replay is safe.
+                        pendingInput.flush(ws);
+                        connPill.classList.remove('dropped');
                         // From here on this socket has to prove it is alive.
                         startLivenessProbe();
                     };
