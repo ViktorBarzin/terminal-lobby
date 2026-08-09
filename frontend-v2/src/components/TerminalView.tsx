@@ -162,6 +162,22 @@ export const TerminalView: Component<{
   // owns the keyboard there, and this iframe is CSS-hidden anyway.
   const focusFrame = (): boolean => {
     if (!props.active) return false;
+    // Don't yank focus from a lobby text field the user is in — the inline
+    // rename box is the case that bites: selecting-then-double-clicking a card
+    // opens it, and this on-activate auto-focus fires a frame later, steals the
+    // box's focus, and its onBlur={endRename} tears the rename down the instant
+    // it appeared. A genuine overlay-close handback runs with nothing lobby-side
+    // focused, so this only ever declines the unwanted steal.
+    const ae =
+      typeof document !== "undefined"
+        ? (document.activeElement as HTMLElement | null)
+        : null;
+    if (
+      ae &&
+      (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)
+    ) {
+      return false;
+    }
     try {
       iframe?.contentWindow?.focus();
     } catch {
