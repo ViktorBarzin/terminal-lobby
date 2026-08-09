@@ -676,6 +676,18 @@
         }
         #conn-pill.offline::before { background: var(--danger); animation: none; }
         @keyframes conn-pulse { 50% { opacity: 0.35; } }
+        /* A keystroke that could not be sent flashes the pill. The terminal
+           still LOOKS live while disconnected — tmux's last repaint is sitting
+           on screen — so a silently swallowed key reads as "it ate my
+           command". The flash keeps the base translateX centring, or the pill
+           would jump to the left edge for the duration of the animation. */
+        #conn-pill.dropped { border-color: var(--danger); color: var(--danger); }
+        #conn-pill.dropped { animation: conn-drop 0.7s ease-out; }
+        @keyframes conn-drop {
+            0%   { transform: translateX(-50%) scale(1.07); }
+            60%  { transform: translateX(-50%) scale(1.07); }
+            100% { transform: translateX(-50%) scale(1); }
+        }
         /* Session-switch pill (Task M.6): OUTER-document flash naming the
            target of a gesture-driven session cycle (‹/› soft keys, Android
            3-finger swipe). It must live in the lobby document — the switch
@@ -1255,6 +1267,21 @@
         }
         .session-card.dragging { opacity: 0.4; cursor: grabbing; }
         .empty { color: var(--text-muted); font-style: italic; padding: 12px 0; font-size: 12px; }
+        /* A poll that failed says so HERE, above a list that keeps showing what
+           it last knew (G8). Deliberately quiet — a lobby whose sessions are
+           all still running must not look like an outage just because one
+           request lost a race with a lift door. */
+        .lobby-stale {
+            display: flex; align-items: center; gap: 6px;
+            color: var(--text-muted); font-size: 11px; line-height: 1.4;
+            padding: 6px 8px; margin-bottom: 6px;
+            border: 1px dashed var(--border); border-radius: 6px;
+        }
+        .lobby-stale::before {
+            content: ''; width: 6px; height: 6px; border-radius: 50%; flex: none;
+            background: var(--accent);   /* attention, not alarm — every theme defines it */
+            animation: conn-pulse 1.2s ease-in-out infinite;
+        }
 
         /* Session-card loading skeleton (Task 1.11d — T3's shimmer):
            placeholder cards seeded into #session-list at lobby boot, alive
@@ -2357,6 +2384,7 @@
                     </select>
                     <button id="new-btn">Create &amp; Open</button>
                 </div>
+                <div id="lobby-stale" class="lobby-stale hidden" role="status"></div>
                 <div id="session-list" class="session-list"></div>
                 <button id="new-project-btn" class="new-project-btn" type="button"
                         title="Create an empty project folder to group sessions into">+ Project</button>
@@ -4167,6 +4195,65 @@
         // and future) is tracked without touching the call sites. Anything
         // else — the stale-tab healer's self-fetch, ttyd's /token, CDN
         // assets — passes straight through.
+        //
+        // G10: the same wrapper is where those calls get a DEADLINE. Not one
+        // of them had one, and a fetch with no deadline is not a slow fetch —
+        // it is a call that never returns. A half-open mobile path (radio
+        // handover, captive portal, a NAT box that dropped the flow) accepts
+        // the connect and then says nothing, and the browser's own timeout is
+        // minutes long, so `await fetch(...)` simply never settles: the poll
+        // that awaits it never finishes, and everything sequenced behind it
+        // stops with no error to show for it. Doing it HERE rather than at
+        // ~20 call sites means the ones written next are covered too.
+        const TL_FETCH_TIMEOUT_MS = 8000;
+        // …except where a long call is the normal case. Three paths are slow
+        // BY DESIGN, and a deadline on them reports failure for work that is
+        // going to succeed:
+        //   /clipboard/upload  carries a whole image, and a phone photo over a
+        //                      weak uplink takes longer than any deadline that
+        //                      is useful for a JSON poll — bounding it would
+        //                      break paste-an-image precisely when it is
+        //                      hardest.
+        //   /api/…/restore     tmux-api's handleRestore runs the restore
+        //                      wrapper SYNCHRONOUSLY (main.go: exec.Command
+        //                      …CombinedOutput()) and recreates the caller's
+        //                      whole manifest, resuming a Claude conversation
+        //                      per dead session. It answers when that is done.
+        //   /api/…/push/test   handlePushTest blocks on the send, and the push
+        //                      client's own ceiling is 15s (pushsender.go:
+        //                      pushClientTimeout) — per subscription. A shorter
+        //                      deadline here would just lie about the result.
+        // Every other path through this wrapper answers with small JSON.
+        const TL_NO_DEADLINE = /^\/(clipboard\/upload|api\/sessions\/(restore|push\/test))$/;
+        // Link a deadline onto a call WITHOUT stealing the caller's own
+        // signal: callers that already bound themselves (sessionStillExists'
+        // 5s kill-guard) must keep their abort, so the two are chained and
+        // whichever fires first wins. A plain controller + timer rather than
+        // AbortSignal.timeout/any, which are recent enough that a miss here
+        // would throw on EVERY api call on an older mobile Safari — this page
+        // is somebody's daily driver.
+        function tlDeadlineSignal(init, ms) {
+            const ctrl = new AbortController();
+            setTimeout(() => {
+                // Left armed for the whole call rather than cleared when the
+                // headers land: fetch() resolves on headers, so a path that
+                // sends them and then stalls would hang the body read exactly
+                // like the connect it replaced. Safe because every bounded
+                // path here returns small JSON, and the one large-body path is
+                // exempt above. Aborting an already-finished call is a no-op.
+                try {
+                    ctrl.abort(new DOMException(
+                        'Timed out after ' + ms + 'ms', 'TimeoutError'));
+                } catch (e) { ctrl.abort(); } // pre-reason AbortController
+            }, ms);
+            const caller = init && init.signal;
+            if (caller) {
+                if (caller.aborted) ctrl.abort(caller.reason);
+                else caller.addEventListener(
+                    'abort', () => ctrl.abort(caller.reason), { once: true });
+            }
+            return ctrl.signal;
+        }
         const tlRealFetch = window.fetch.bind(window);
         window.fetch = function (input, init) {
             let u = null;
@@ -4184,7 +4271,16 @@
             const method = ((init && init.method)
                 || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
             const id = slowRequests.track(method + ' ' + u.pathname);
-            const p = tlRealFetch(input, init);
+            // A Request already carries its own signal and its own body, and
+            // handing it a fresh init re-reads that body — not worth the risk
+            // for a shape no call site on this page uses (they all pass a URL
+            // string). Bound the string/URL calls; leave a Request alone.
+            const bounded = !TL_NO_DEADLINE.test(u.pathname)
+                && !(typeof Request !== 'undefined' && input instanceof Request);
+            const p = bounded
+                ? tlRealFetch(input, Object.assign({}, init, {
+                      signal: tlDeadlineSignal(init, TL_FETCH_TIMEOUT_MS) }))
+                : tlRealFetch(input, init);
             // Ack on headers-arrived or failure; return the ORIGINAL promise
             // so caller semantics (incl. rejection) are untouched.
             p.then(() => slowRequests.ack(id), () => slowRequests.ack(id));
@@ -7746,19 +7842,82 @@
             // storm collapses to at most one reload.
             tlAttached = () => !!currentActive;
 
+            // ---- a failed poll must not erase the lobby (G8) -------------
+            // Both failure paths below used to clearChildren(listEl) and put an
+            // error in its place, so ONE lost request — a lift, a tunnel, a
+            // handover — replaced every card with "Error: Failed to fetch".
+            // That is a lie about the sessions: they are tmux processes on a
+            // server that never heard about the blip, still running, still the
+            // thing the user came here for. And it costs more than a scare —
+            // the cards carry the state dots, the working timers and the click
+            // targets, so the recovery is a full re-render that closes menus
+            // and loses scroll, five seconds after nothing happened.
+            //
+            // So: the last good render STANDS, and the failure is reported next
+            // to it as a note. The destructive path is kept for exactly the
+            // case it is true — a first load that has never produced a list, so
+            // there is nothing to preserve and an empty pane would say nothing.
+            let lobbyEverLoaded = false;
+            const staleEl = document.getElementById('lobby-stale');
+            function showLobbyStale(why) {
+                if (!lobbyEverLoaded) return;   // the empty state below says it better
+                staleEl.textContent = why + ' — showing the last known list';
+                staleEl.classList.remove('hidden');
+            }
+            function clearLobbyStale() { staleEl.classList.add('hidden'); }
+            // Why the poll failed, in the user's terms rather than the
+            // browser's ("Failed to fetch" / "signal is aborted without
+            // reason" tell nobody anything).
+            function lobbyFailureReason(err) {
+                if (navigator.onLine === false) return 'You are offline';
+                if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+                    return 'The server did not answer';
+                }
+                return 'Cannot reach the server';
+            }
+            // ---- newest answer wins, not last to arrive (G9) --------------
+            // Passes DO overlap: the poll loop is only one caller, and the
+            // post-create burst, the post-kill/rename refreshes and the prefs
+            // re-render all call in too — so on a slow link a request outlives
+            // the pass that followed it. Without a tag the LAST ANSWER TO
+            // ARRIVE wins rather than the newest one, and an overtaken pass
+            // then writes its whole snapshot: `layout` reverts, `lastSessions`
+            // goes backwards, the dock hysteresis counts a streak against a
+            // stale sighting, and paint() redraws the sidebar from a list the
+            // user has already moved past.
+            let lobbyLoadSeq = 0;
+            let lobbyAppliedSeq = 0;
+            // 'ok' | 'failed' | 'skipped' — what this pass says about the
+            // network, and nothing else. Read by the poll loop's backoff.
             async function renderLobby() {
-                if (isDragging || gestureActive || openMenuEl || ctxMenuOpen || renameEditing) return;
+                if (isDragging || gestureActive || openMenuEl || ctxMenuOpen || renameEditing) return 'skipped';
+                const seq = ++lobbyLoadSeq;
                 try {
                     const [sessResp, layoutResult] = await Promise.all([
                         fetch(SESSIONS_API, { credentials: 'same-origin' }),
                         fetchLayout().catch(err => err)
                     ]);
                     if (!sessResp.ok) {
-                        clearChildren(listEl);
-                        listEl.appendChild(emptyState('Failed to load sessions: HTTP ' + sessResp.status));
-                        return;
+                        if (seq < lobbyAppliedSeq) return 'failed';
+                        lobbyAppliedSeq = seq;
+                        // A reachable server that answered badly: the transport
+                        // is fine, so this is not the network failing — but the
+                        // list we have is still the last good one.
+                        if (lobbyEverLoaded) {
+                            showLobbyStale('The server answered HTTP ' + sessResp.status);
+                        } else {
+                            clearChildren(listEl);
+                            listEl.appendChild(emptyState('Failed to load sessions: HTTP ' + sessResp.status));
+                        }
+                        return 'failed';
                     }
                     const sessions = await sessResp.json();
+                    // From here down the pass WRITES. A newer answer already
+                    // applied means this one is history: report what it saw of
+                    // the network (the backoff still wants that) and touch
+                    // nothing.
+                    if (seq < lobbyAppliedSeq) return 'ok';
+                    lobbyAppliedSeq = seq;
                     if (layoutResult instanceof Error) {
                         // Grouping degrades gracefully: keep the last-known
                         // layout, sessions still render.
@@ -7836,9 +7995,19 @@
                     trackStateChanges(sessions);
                     updateFavicon();
                     paint();
+                    lobbyEverLoaded = true;
+                    clearLobbyStale();
+                    return 'ok';
                 } catch (err) {
-                    clearChildren(listEl);
-                    listEl.appendChild(emptyState('Error: ' + err.message));
+                    if (seq < lobbyAppliedSeq) return 'failed';
+                    lobbyAppliedSeq = seq;
+                    if (lobbyEverLoaded) {
+                        showLobbyStale(lobbyFailureReason(err));
+                    } else {
+                        clearChildren(listEl);
+                        listEl.appendChild(emptyState('Error: ' + err.message));
+                    }
+                    return 'failed';
                 }
             }
 
@@ -9575,16 +9744,118 @@
             // planUpdate, so nothing interrupts a user mid-session; the update
             // lands silently at the next open.
             const TL_SELF_CHECK_MS = 5000;
-            function lobbySelfCheck() {
-                if (document.hidden) return;
-                checkForUpdate('no-cache');
+
+            // ---- the two polling loops (G9/G11/G12) ----------------------
+            // Both ran on setInterval, and setInterval keeps firing into a
+            // network that has not answered the previous request yet. A link
+            // slow enough to overrun 5s therefore builds a QUEUE of requests
+            // that all land together, out of order and on top of each other —
+            // the exact load the connection was already too weak to carry,
+            // multiplied, and then applied newest-first-wins-by-arrival so the
+            // sidebar can repaint from a snapshot the user has already moved
+            // past. Both loops now schedule the next turn off their own ANSWER,
+            // and hold an in-flight flag so a wake cannot start a second pass
+            // beside a running one.
+            //
+            // On top of that a failing poll backs off: 5s → 10s → 20s → 30s.
+            // Retrying a dead link every 5s neither fixes it nor learns
+            // anything, and on a phone it is radio the battery pays for. The
+            // cap is near enough that a lobby left open through an outage
+            // catches up within half a minute of service returning — and the
+            // wakes below usually get there first.
+            const LOBBY_POLL_MS = 5000;
+            const LOBBY_POLL_MAX_MS = 30000;
+            let lobbyPollTimer = null;
+            let lobbyPollInFlight = false;
+            /** consecutive failed polls — the exponent of the backoff ladder. */
+            let lobbyPollFailures = 0;
+            function lobbyPollDelay() {
+                return Math.min(LOBBY_POLL_MS * Math.pow(2, lobbyPollFailures), LOBBY_POLL_MAX_MS);
+            }
+            function scheduleLobbyPoll(outcome) {
+                if (outcome === 'ok') lobbyPollFailures = 0;
+                // Stop counting once the ladder saturates: the delay is capped
+                // there anyway, and an overnight outage must not leave
+                // 2 ** <hours> behind for the first success to climb down from.
+                else if (outcome === 'failed' && lobbyPollDelay() < LOBBY_POLL_MAX_MS) lobbyPollFailures++;
+                // 'skipped' (mid-drag, or hidden) is neither: it says nothing
+                // about the network, so it leaves the ladder where it was.
+                clearTimeout(lobbyPollTimer);
+                lobbyPollTimer = setTimeout(lobbyPollTick, lobbyPollDelay());
+            }
+            async function lobbyPollTick() {
+                lobbyPollTimer = null;
+                // A wake landed on top of a running poll — that poll reschedules
+                // in its own finally, so there is nothing to do here.
+                if (lobbyPollInFlight) return;
+                // A hidden tab has nobody to render for, and its fetches are
+                // throttled hard enough to manufacture failures on a link that
+                // is fine. Keep the timer turning (a missed visibilitychange
+                // then costs one interval, not the loop).
+                if (document.hidden) { scheduleLobbyPoll('skipped'); return; }
+                lobbyPollInFlight = true;
+                let outcome = 'failed';
+                try {
+                    outcome = await renderLobby();
+                } catch (e) {
+                    console.warn('lobby poll threw:', e);   // never lose the loop
+                } finally {
+                    lobbyPollInFlight = false;
+                    scheduleLobbyPoll(outcome);
+                }
+            }
+            // Network back, or the tab in front of the user again — the two
+            // moments a phone most wants to catch up. Poll NOW rather than
+            // sitting out a delay the ladder earned while the network was down,
+            // and put the ladder back at the base: whatever it was measuring is
+            // over. (`online` is not trustworthy on its own — it lies true
+            // behind a captive portal and some platforms never fire it — which
+            // is why the timer keeps turning underneath.)
+            function wakeLobbyPoll() {
+                lobbyPollFailures = 0;
+                clearTimeout(lobbyPollTimer);
+                lobbyPollTimer = null;
+                lobbyPollTick();
+            }
+            window.addEventListener('online', () => wakeLobbyPoll());
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) wakeLobbyPoll();
+            });
+            // bfcache restore (iOS standalone especially): the page returns
+            // frozen rather than reloaded, and its visibilitychange can be
+            // unreliable — the same belt-and-braces the terminal's socket uses.
+            window.addEventListener('pageshow', (e) => { if (e.persisted) wakeLobbyPoll(); });
+
+            // The deploy detector is the other loop, and it had the same shape
+            // and the same pile-up. It has no error channel of its own —
+            // checkForUpdate swallows a failed self-fetch by design (a missed
+            // deploy check is not worth a toast) — so it borrows the lobby
+            // poll's verdict on the network for its backoff, and simply refuses
+            // to start a second self-fetch while one is still out. That guard
+            // is strict on purpose: a self-fetch hung on a dead path holds the
+            // loop until the browser gives up on it, which costs a late deploy
+            // detection during an outage and nothing else.
+            let selfCheckInFlight = false;
+            async function lobbySelfCheck() {
+                if (!selfCheckInFlight && !document.hidden) {
+                    selfCheckInFlight = true;
+                    try {
+                        await checkForUpdate('no-cache');
+                    } catch (e) { /* the kernel already swallows; belt only */ }
+                    finally { selfCheckInFlight = false; }
+                }
+                setTimeout(lobbySelfCheck, Math.min(
+                    TL_SELF_CHECK_MS * Math.pow(2, lobbyPollFailures), LOBBY_POLL_MAX_MS));
             }
             tlConfirmBoot();          // did the reload the last page life started land?
             lobbySelfCheck();
-            setInterval(lobbySelfCheck, TL_SELF_CHECK_MS);
 
+            // Boot paint goes straight in, exactly as before — the loop's
+            // hidden-skip is about the CADENCE, and must not cost a page that
+            // was loaded in the background its first render. The loop then owns
+            // every turn after this one.
             renderLobby();
-            setInterval(renderLobby, 5000);
+            scheduleLobbyPoll('skipped');
 
             // Boot landing — which session (if any) to attach on load. Precedence:
             //   1. an explicit #session hash (warm openWindow / deep link);
@@ -12622,6 +12893,73 @@
             }
         }
 
+        // ---- input typed while the socket is down (G5) --------------------
+        // A keystroke that arrived with no socket used to vanish completely:
+        // sendInput early-returned, the pty never saw the byte, and the screen
+        // — tmux's last repaint, still on display — looked entirely live. The
+        // reported symptom is "the terminal ate my command", usually noticed a
+        // whole command later.
+        //
+        // Two halves. Feedback is unconditional: the pill flashes and, at most
+        // once per burst, a toast says in words whether the key is being held
+        // or was thrown away. Buffering is deliberately timid, because replay
+        // is the risky part — the pty may be somewhere else entirely by the
+        // time we reconnect (a job finished, a TUI redrew, another client
+        // typed), and replaying blind would run keys against a prompt that no
+        // longer exists. So the queue is small, same-session only, and lives
+        // for PENDING_INPUT_TTL_MS: in practice that means it saves the
+        // bottom rung of the ladder (a ~1s blip, the common case) and drops
+        // everything else rather than guess.
+        // >>> tl-pending-input
+        const PENDING_INPUT_MAX_BYTES = 4096;
+        const PENDING_INPUT_TTL_MS = 3000;
+        const pendingInput = {
+            frames: [], bytes: 0, since: 0,
+            // Returns whether the frame was taken, so the caller can tell the
+            // user "held" rather than "lost".
+            push(frame) {
+                if (!hasConnectedOnce) return false; // no session to replay INTO yet
+                if (batterySuspended) return false;  // deliberately down; the tab is away
+                if (this.bytes + frame.byteLength > PENDING_INPUT_MAX_BYTES) return false;
+                if (!this.frames.length) this.since = Date.now();
+                this.frames.push(frame);
+                this.bytes += frame.byteLength;
+                return true;
+            },
+            clear() { this.frames = []; this.bytes = 0; this.since = 0; },
+            flush(sock) {
+                if (!this.frames.length) return;
+                const frames = this.frames;
+                const age = Date.now() - this.since;
+                this.clear();
+                if (age > PENDING_INPUT_TTL_MS) {
+                    console.log('pending input: dropped ' + frames.length + ' frame(s), ' + age + 'ms stale');
+                    showToast('Reconnected — what you typed while offline was discarded', 'error', 4000);
+                    return;
+                }
+                for (let i = 0; i < frames.length; i++) sock.send(frames[i]);
+            }
+        };
+        // <<< tl-pending-input
+        let dropFlashTimer = null;
+        let dropToastAt = 0;
+        function noteDroppedInput(held) {
+            if (!connPill.classList.contains('hidden')) {
+                connPill.classList.add('dropped');
+                clearTimeout(dropFlashTimer);
+                dropFlashTimer = setTimeout(() => connPill.classList.remove('dropped'), 700);
+            }
+            // Words, but only occasionally: a burst of typing is one event to
+            // the user, not one per key.
+            if (Date.now() - dropToastAt < 5000) return;
+            dropToastAt = Date.now();
+            if (held) showToast('Not connected — holding your keys until the session is back', 'info');
+            else showToast('Not connected — your input did not reach the session', 'error');
+        }
+        function queueDroppedInput(frame) {
+            noteDroppedInput(pendingInput.push(frame));
+        }
+
         function sendInput(data) {
             // A pty-bound byte hard-cancels a flick coast, WHATEVER path
             // produced it (raw keyboard, mirror field, soft key, paste):
@@ -12629,11 +12967,14 @@
             // be missed by a new input path. The scattered per-path cancels
             // remain as belt-and-braces.
             cancelScrollMomentum();
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const payload = textEncoder.encode(data);
             const buf = new Uint8Array(payload.length + 1);
             buf[0] = MSG_INPUT.charCodeAt(0);
             buf.set(payload, 1);
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                queueDroppedInput(buf.buffer);
+                return;
+            }
             ws.send(buf.buffer);
         }
 
@@ -12685,10 +13026,13 @@
             sendInput(data);
         });
         term.onBinary((data) => {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const bytes = new Uint8Array(data.length + 1);
             bytes[0] = MSG_INPUT.charCodeAt(0);
             for (let i = 0; i < data.length; i++) bytes[i + 1] = data.charCodeAt(i);
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                queueDroppedInput(bytes.buffer); // same contract as sendInput
+                return;
+            }
             ws.send(bytes.buffer);
         });
 
@@ -13831,14 +14175,29 @@
         // reconnect RECREATES a session that was just killed. Returns false only
         // when we positively confirm the session is gone; any uncertainty
         // (network/API error) returns true so a transient blip still reconnects.
+        // BOUNDED, and that is load-bearing: this check sits directly in front
+        // of the retry ladder, so on the dead path that most needs a reconnect
+        // an unbounded fetch hangs the ladder for as long as the browser takes
+        // to give up on it — the same trap as the /token hop, and it silently
+        // undoes the whole point of the liveness watchdog. (Seen in a browser
+        // soak: the watchdog correctly declared the socket dead, and then the
+        // page sat on "Reconnecting… (attempt 2)" forever because the guard
+        // never answered.) A timeout is uncertainty, so it answers true.
+        const SESSION_CHECK_TIMEOUT_MS = 5000;
         async function sessionStillExists() {
+            const ctrl = new AbortController();
+            const deadline = setTimeout(() => {
+                try { ctrl.abort(); } catch (e) { /* already settled */ }
+            }, SESSION_CHECK_TIMEOUT_MS);
             try {
-                const resp = await fetch(SESSIONS_API, { credentials: 'same-origin' });
+                const resp = await fetch(SESSIONS_API, { credentials: 'same-origin', signal: ctrl.signal });
                 if (!resp.ok) return true;
                 const list = await resp.json();
                 return Array.isArray(list) && list.some((s) => s.name === validArg);
             } catch (e) {
                 return true;
+            } finally {
+                clearTimeout(deadline);
             }
         }
 
@@ -13853,9 +14212,41 @@
         // term.write lines (those stacked up per retry and got overdrawn
         // by tmux's reattach repaint anyway).
         const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+        // A network outage ends for EVERY client at the same instant, so an
+        // unjittered ladder marches every open terminal (and every other tab,
+        // and every other phone) into the same 1s/2s/4s… rungs and stampedes
+        // ttyd the moment service returns. Full jitter in [delay/2, delay]
+        // spreads the herd across the rung — the same rule the v2 SSE client
+        // uses (frontend-v2/src/sse/client.ts). The rung itself, and its
+        // 30s-stable reset, are unchanged.
+        // navigator.onLine === false is the browser SAYING there is no path:
+        // burning a rung a second against it costs attempts and pill flicker
+        // for nothing. Park on a long safety delay instead and let the
+        // `online` event drive the real retry — SAFETY, not the ladder,
+        // because onLine also lies in both directions: behind a captive
+        // portal it reports true, and some platforms never fire `online` at
+        // all, so a parked tab must still be able to wake itself.
+        const OFFLINE_RETRY_MS = 20000;
         let connAttempts = 0;   // connect()s started since the last stable connection
         let retryTimer = null;  // pending scheduled connect (null while attempting)
         let stableTimer = null; // pending "connection survived 30s" ladder reset
+        // ---- one attempt at a time (G3/G4) -------------------------------
+        // A connect() is two hops — a /token fetch, then a WS handshake — and
+        // NEITHER was bounded. An unreachable server leaves the fetch hanging
+        // on the browser's own (minutes-long) timeout, and a black-holed TCP
+        // connect sits in SYN retransmit just as long: no onerror, no onclose,
+        // no ladder, a terminal frozen on "Connecting…". Worse, an attempt in
+        // flight left retryTimer null, so the instant-retry triggers (tab
+        // visible / back online) hit retryNow()'s `if (!retryTimer) return`
+        // and did nothing at exactly the moment they were most wanted. Every
+        // attempt now carries a generation, an abort handle for its fetch and
+        // a handshake deadline, so it can be cut short and superseded.
+        const TOKEN_TIMEOUT_MS = 8000;
+        const WS_OPEN_TIMEOUT_MS = 10000;
+        let connGen = 0;           // bumped whenever an attempt is superseded or abandoned
+        let connAbort = null;      // AbortController for the in-flight /token fetch
+        let handshakeTimer = null; // deadline for a socket stuck in CONNECTING
+        let wsSlowId = null;       // slow-request handle owned by the current attempt
         // ---- battery saver: drop the socket while the tab stays hidden ----
         // ttyd pings the WebSocket every 30s (server -P) and streams any pane
         // output; left open behind a locked screen or a switched-away PWA it
@@ -13885,22 +14276,39 @@
             connPill.classList.remove('hidden');
         }
         function hideConnPill() { connPill.classList.add('hidden'); }
+        // >>> tl-retry-delay
+        function nextRetryDelay() {
+            if (navigator.onLine === false) return OFFLINE_RETRY_MS;
+            const delay = RETRY_DELAYS_MS[Math.min(connAttempts, RETRY_DELAYS_MS.length - 1)];
+            return delay / 2 + Math.random() * (delay / 2);
+        }
+        // <<< tl-retry-delay
         function scheduleReconnect() {
             if (batterySuspended) return; // suspended for battery — reconnect waits for the tab to show
             if (retryTimer) return; // one pending attempt at a time
-            const delay = RETRY_DELAYS_MS[Math.min(connAttempts, RETRY_DELAYS_MS.length - 1)];
             paintConnPill(connAttempts + 1); // the attempt this timer will run
-            retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
+            retryTimer = setTimeout(() => { retryTimer = null; connect(); }, nextRetryDelay());
         }
         // A hidden tab throttles timers and a dead network fails fast — when
-        // either recovers, retry NOW instead of waiting out a 16s rung. Only
-        // while a retry is actually pending: never a second socket during a
-        // live attempt, never a resurrect after "Session ended."
+        // either recovers, retry NOW instead of waiting out a 16s rung.
+        //
+        // "Only while a retry is pending" used to be the whole rule, and it
+        // had the failure backwards: the attempt STARTED over the dead path
+        // is the one that can only ever time out, and while it hangs there is
+        // no retryTimer — so `back online` and `tab visible` became no-ops in
+        // precisely the case they exist for (G3/G6). An attempt in flight is
+        // therefore abandoned and restarted too; connect() tears down
+        // whatever the stale one owned, so this still cannot leave two live
+        // sockets. A healthy OPEN socket is left strictly alone, and there is
+        // still no resurrect after "Session ended." — that state has neither a
+        // timer nor an attempt.
         function retryNow(why) {
-            if (!retryTimer) return;
+            const pending = retryTimer !== null;
+            const inFlight = connAbort !== null || (ws && ws.readyState === WebSocket.CONNECTING);
+            if (!pending && !inFlight) return;
             clearTimeout(retryTimer);
             retryTimer = null;
-            console.log('reconnect: instant retry (' + why + ')');
+            console.log('reconnect: instant retry (' + why + (inFlight ? ', abandoning a stalled attempt' : '') + ')');
             connect();
         }
         // Tear the socket down after the tab has been hidden long enough, and
@@ -13917,9 +14325,12 @@
             clearTimeout(retryTimer); retryTimer = null; // drop any pending reconnect
             clearTimeout(stableTimer);
             hideConnPill();
-            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-                try { ws.close(); } catch (e) { /* already closing */ }
-            }
+            connPill.classList.remove('dropped');
+            pendingInput.clear(); // a suspend outlives the replay window by design
+            // Tear down through the shared path so a half-finished attempt
+            // (a /token fetch still in flight, a socket still in CONNECTING)
+            // is abandoned too, not just an already-open socket.
+            abandonAttempt();
             console.log('battery saver: socket suspended (tab hidden ' + HIDDEN_SUSPEND_MS + 'ms)');
         }
         // Resume from a suspend — shared by the visibilitychange and pageshow
@@ -13943,6 +14354,15 @@
             // Tab shown: resume a suspended socket, else bring a pending
             // reconnect forward.
             if (!resumeFromSuspend('tab visible')) retryNow('tab visible');
+            // Coming back is also the moment a socket most often turns out to
+            // have died unannounced while we were away. Re-anchor the
+            // watchdog's cadence here and take a reading immediately rather
+            // than waiting out a full interval on a terminal that is already
+            // frozen.
+            if (ws && ws.readyState === WebSocket.OPEN && !batterySuspended) {
+                armLivenessProbe(); // re-anchor the cadence; the strike record stands
+                runLivenessProbe();
+            }
         });
         // bfcache restore (iOS standalone especially): the page returns frozen,
         // not reloaded, and its visibilitychange can be unreliable — so pageshow
@@ -13957,8 +14377,126 @@
         window.addEventListener('offline', () => {
             // Repaint a waiting pill to "You are offline"; the online
             // handler above brings the retry forward when service returns.
-            if (retryTimer) paintConnPill(connAttempts + 1);
+            // A rung armed while the browser still believed it was online is
+            // re-parked on the long OFFLINE_RETRY_MS safety delay — otherwise
+            // going offline at the bottom of the ladder keeps firing a doomed
+            // attempt every second until the ladder climbs out.
+            if (retryTimer) {
+                clearTimeout(retryTimer); retryTimer = null;
+                scheduleReconnect(); // now takes the offline branch, and repaints
+            } else if (!connPill.classList.contains('hidden')) {
+                paintConnPill(connAttempts); // an attempt is in flight — just recolor it
+            }
         });
+
+        // ---- liveness watchdog (G2) --------------------------------------
+        // THE signature mobile failure. The page waits only for ws.onclose,
+        // and a black-holed path never produces one: ttyd's -P 30 keepalive is
+        // server→client and the browser hides ping/pong entirely, so a socket
+        // whose packets stopped arriving anywhere stays readyState === OPEN
+        // forever. The terminal freezes while still looking connected, and no
+        // ladder is running behind it because nothing ever reported a drop.
+        //
+        // "No inbound data for N seconds" is NOT a usable rule here — an idle
+        // terminal is legitimately silent for hours. So the watchdog probes
+        // ACTIVELY, on two independent signals, every LIVENESS_PROBE_MS while
+        // the socket is open, the tab is visible, and the battery saver is not
+        // holding us down:
+        //
+        //  1. Reachability — a same-origin fetch of ttyd's own /token under a
+        //     hard deadline. This is the only true round trip available: ttyd
+        //     answers no client frame at all (src/protocol.c), so nothing sent
+        //     over the WebSocket can ever come back. Judged on TRANSPORT, not
+        //     on status — any HTTP response, 500 included, proves the path is
+        //     alive, so a briefly unhappy server never costs a reconnect.
+        //  2. Backpressure — bufferedAmount around a 1-byte no-op frame. This
+        //     is the only deadness signal the socket object itself exposes,
+        //     but alone it cannot catch a black hole: bufferedAmount drains as
+        //     soon as bytes reach the network layer, and 1 byte per probe
+        //     would take days to fill the send buffers a dead TCP connection
+        //     keeps happily accepting into. It earns its place for the OTHER
+        //     stall — a send path already jammed (a large paste against a
+        //     crawling uplink) — which the fetch would call healthy.
+        //
+        // Either signal failing LIVENESS_STRIKES times running means the
+        // socket can no longer be trusted: drop it and hand the drop to the
+        // normal ladder, which still consults the session kill-guard.
+        const LIVENESS_PROBE_MS = 25000;         // just inside ttyd's 30s keepalive
+        const LIVENESS_FETCH_TIMEOUT_MS = 6000;  // a reachable origin answers far sooner
+        const LIVENESS_DRAIN_MS = 2000;          // grace for 1 byte to leave the buffer
+        const LIVENESS_STRIKES = 3;              // ~50s before a live-looking socket is dropped
+        // A bare ttyd INPUT frame with a ZERO-LENGTH payload. Verified a no-op
+        // against ttyd 1.7.7 (out/ttyd-build/src): protocol.c's INPUT case
+        // hands pty_write a zero-length pty_buf, so zero bytes reach the pty —
+        // and a read-only server drops it one line earlier on !server->writable.
+        // Anything longer would be typed into whatever sits at the prompt.
+        const WS_PROBE_FRAME = Uint8Array.of(MSG_INPUT.charCodeAt(0)).buffer;
+        let livenessTimer = null;
+        let livenessStrikes = 0;
+        let livenessBusy = false;  // a probe is still settling; don't overlap
+        let livenessUrl = '';      // set per attempt — the same origin+path as /ws
+        // Stop the watchdog and forget its verdict — the socket it was judging
+        // is gone, so the next one starts with a clean record.
+        function stopLivenessProbe() {
+            clearInterval(livenessTimer); livenessTimer = null;
+            livenessStrikes = 0;
+            livenessBusy = false;
+        }
+        // (Re)anchor the cadence WITHOUT touching the strike count. Coming back
+        // to the tab re-anchors, and that must not also absolve the socket: a
+        // phone glanced at every few seconds on a dead network would otherwise
+        // reset the count on every look and the watchdog could never reach a
+        // verdict — the exact case it exists for. Caught in a browser soak,
+        // where four forced probes all logged "strike 1/3".
+        function armLivenessProbe() {
+            clearInterval(livenessTimer);
+            livenessTimer = setInterval(runLivenessProbe, LIVENESS_PROBE_MS);
+        }
+        function startLivenessProbe() { stopLivenessProbe(); armLivenessProbe(); }
+        function livenessFailed(reason) {
+            livenessStrikes++;
+            console.warn('liveness: strike ' + livenessStrikes + '/' + LIVENESS_STRIKES + ' — ' + reason);
+            if (livenessStrikes < LIVENESS_STRIKES) return;
+            console.warn('liveness: socket presumed dead — dropping it');
+            abandonAttempt();     // detaches handlers, closes, stops this probe
+            reconnectAfterDrop(); // same kill-guard + ladder as a real onclose
+        }
+        function runLivenessProbe() {
+            if (livenessBusy) return;
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            // A hidden tab is the battery saver's business, and its timers and
+            // fetches are throttled hard enough to manufacture false strikes.
+            if (batterySuspended || document.hidden) return;
+            const gen = connGen;
+            const sock = ws;
+            const before = sock.bufferedAmount;
+            try {
+                sock.send(WS_PROBE_FRAME);
+            } catch (e) {
+                livenessFailed('send() threw: ' + (e && e.message));
+                return;
+            }
+            livenessBusy = true;
+            const ctrl = new AbortController();
+            const deadline = setTimeout(() => {
+                try { ctrl.abort(); } catch (e) { /* already settled */ }
+            }, LIVENESS_FETCH_TIMEOUT_MS);
+            const reachable = fetch(livenessUrl, {
+                credentials: 'same-origin', cache: 'no-store', signal: ctrl.signal
+            }).then(() => true, () => false);
+            const drained = new Promise((resolve) => setTimeout(
+                () => resolve(sock.bufferedAmount <= before), LIVENESS_DRAIN_MS));
+            Promise.all([reachable, drained]).then((r) => {
+                clearTimeout(deadline);
+                livenessBusy = false;
+                if (gen !== connGen) return;  // the socket was replaced while we waited
+                if (document.hidden) return;  // throttled mid-probe — no verdict either way
+                if (!r[0]) { livenessFailed('no HTTP response from the same origin'); return; }
+                if (!r[1]) { livenessFailed('a 1-byte frame never left the send buffer'); return; }
+                if (livenessStrikes) console.log('liveness: recovered after ' + livenessStrikes + ' strike(s)');
+                livenessStrikes = 0;
+            });
+        }
 
         // ---- self-update (definitions hoisted) ---------------------------
         // The update kernel (parseAssetId/planUpdate/checkForUpdate) lives ABOVE
@@ -13971,20 +14509,67 @@
         tlAttached = () => true;
         tlConfirmBoot();
 
-        function connect() {
-            // Neutralize any earlier socket before opening a new one. A battery
-            // resume can call connect() while a just-closed socket's onclose is
-            // still queued (a frozen mobile tab completes close() late);
-            // detaching its handlers stops that stale onclose from scheduling a
-            // competing reconnect — without this, resume's socket plus the
-            // stale-onclose's socket both go live, doubling the pty stream and
-            // the pings. Idempotent: on the normal ladder the prior socket is
-            // already CLOSED, so this is a no-op.
+        // Neutralize everything the current attempt owns — its socket, its
+        // in-flight /token fetch and its handshake deadline — without letting
+        // any of their callbacks schedule a competing reconnect. A battery
+        // resume can call connect() while a just-closed socket's onclose is
+        // still queued (a frozen mobile tab completes close() late); detaching
+        // its handlers stops that stale onclose from scheduling a competing
+        // reconnect — without this, resume's socket plus the stale-onclose's
+        // socket both go live, doubling the pty stream and the pings. The
+        // generation bump does the same for the async half: a /token response
+        // that lands after we walked away can no longer install a socket.
+        // Idempotent: on the normal ladder there is nothing left to abandon.
+        function abandonAttempt() {
+            connGen++;
+            if (connAbort) {
+                try { connAbort.abort(); } catch (e) { /* already settled */ }
+                connAbort = null;
+            }
+            clearTimeout(handshakeTimer); handshakeTimer = null;
+            stopLivenessProbe();
+            if (wsSlowId !== null) { slowRequests.ack(wsSlowId); wsSlowId = null; }
             if (ws) {
                 try { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }
                 catch (e) { /* already closing */ }
                 ws = null;
             }
+        }
+
+        // What to do once a connection is gone — shared by the socket's own
+        // onclose and by the liveness watchdog, so the kill-guard below can't
+        // be bypassed by whichever path noticed the drop first.
+        function reconnectAfterDrop() {
+            const gen = connGen;
+            // Show status while we decide whether to reconnect (the existence
+            // check can itself take a moment on a struggling network).
+            paintConnPill(connAttempts + 1);
+            // First connection is the create/attach — always retry it.
+            // After we've connected once, a close may mean the session was
+            // killed (by this or another client); reconnecting would resurrect
+            // it via `tmux new-session -A`. Only reconnect if the session
+            // still exists.
+            if (!hasConnectedOnce) {
+                scheduleReconnect();
+                return;
+            }
+            sessionStillExists().then((exists) => {
+                // A resume or an instant retry can start a fresh attempt while
+                // this check is in flight; that attempt owns the page now.
+                if (gen !== connGen) return;
+                if (exists) {
+                    scheduleReconnect();
+                } else {
+                    hideConnPill();
+                    pendingInput.clear(); // nothing left to replay them into
+                    term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
+                }
+            });
+        }
+
+        function connect() {
+            abandonAttempt();
+            const gen = connGen; // this attempt's claim on the page
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             let argSuffix = '?arg=' + encodeURIComponent(validArg);
             // Pin a project dir to arg3 and a shared-session owner to arg4: when
@@ -14009,13 +14594,31 @@
             }
             const base = location.pathname.replace(/\/+$/, '');
             const wsUrl = proto + '//' + location.host + base + '/ws' + argSuffix;
+            const tokenUrl = base + '/token' + argSuffix;
+            livenessUrl = tokenUrl; // the watchdog probes the same origin the socket uses
 
             connAttempts++;
             paintConnPill(connAttempts);
 
-            fetch(base + '/token' + argSuffix, { credentials: 'same-origin' })
+            // G3: bound the token hop. A server that accepts the TCP connect
+            // and then says nothing (the classic half-open mobile path) would
+            // otherwise hold this promise for minutes with the ladder idle.
+            // A plain controller + timer rather than AbortSignal.timeout so
+            // one handle serves both the deadline and retryNow()'s abort, and
+            // so the page keeps working on older mobile Safari.
+            const ctrl = new AbortController();
+            connAbort = ctrl;
+            const tokenTimer = setTimeout(() => {
+                console.warn('reconnect: /token timed out after ' + TOKEN_TIMEOUT_MS + 'ms');
+                try { ctrl.abort(); } catch (e) { /* already settled */ }
+            }, TOKEN_TIMEOUT_MS);
+
+            fetch(tokenUrl, { credentials: 'same-origin', signal: ctrl.signal })
                 .then(r => r.json())
                 .then(tokenData => {
+                    clearTimeout(tokenTimer);
+                    if (gen !== connGen) return; // superseded — a newer attempt owns the page
+                    connAbort = null;
                     // Tab went hidden while the token was in flight — don't open
                     // a socket the battery saver is about to suspend anyway.
                     if (batterySuspended) return;
@@ -14026,11 +14629,24 @@
                     // toast — this attempt is "pending" until onopen. The
                     // onclose ack keeps a failed attempt from lingering as
                     // slow (the connection pill owns retry messaging).
-                    const wsSlowId = slowRequests.track('WS ' + base + '/ws');
+                    wsSlowId = slowRequests.track('WS ' + base + '/ws');
+                    // G4: bound the handshake. Nothing else does — a WebSocket
+                    // whose SYNs vanish stays in CONNECTING for the OS's whole
+                    // retransmit budget (~1-2 min) and fires neither onerror
+                    // nor onclose, so the ladder never learns the attempt died.
+                    handshakeTimer = setTimeout(() => {
+                        handshakeTimer = null;
+                        if (gen !== connGen) return;
+                        if (!ws || ws.readyState !== WebSocket.CONNECTING) return;
+                        console.warn('reconnect: WS handshake timed out after ' + WS_OPEN_TIMEOUT_MS + 'ms');
+                        abandonAttempt();
+                        scheduleReconnect();
+                    }, WS_OPEN_TIMEOUT_MS);
 
                     ws.onopen = () => {
                         console.log('Connected to ttyd (session: ' + validArg + ')');
-                        slowRequests.ack(wsSlowId);
+                        clearTimeout(handshakeTimer); handshakeTimer = null;
+                        slowRequests.ack(wsSlowId); wsSlowId = null;
                         // Task 3.5: flow-control counters must not leak
                         // across connections (a carried-over PAUSE state
                         // would strangle the fresh pty stream). Re-read the
@@ -14076,6 +14692,15 @@
                         // RESIZE until it is), but harmless — term is already
                         // opened by this point and sendResize guards the ws.
                         sendResize();
+                        // Keys typed into the gap, replayed only now: after
+                        // the init handshake spawned the pty and after the
+                        // resize, so they land in a terminal that is already
+                        // the right shape. flush() drops them itself if the
+                        // gap outlived the window where replay is safe.
+                        pendingInput.flush(ws);
+                        connPill.classList.remove('dropped');
+                        // From here on this socket has to prove it is alive.
+                        startLivenessProbe();
                     };
 
                     ws.onmessage = (event) => {
@@ -14138,38 +14763,25 @@
                     };
 
                     ws.onclose = () => {
-                        slowRequests.ack(wsSlowId); // no-op after onopen's ack
+                        clearTimeout(handshakeTimer); handshakeTimer = null;
+                        stopLivenessProbe();
+                        if (wsSlowId !== null) { slowRequests.ack(wsSlowId); wsSlowId = null; }
                         clearTimeout(stableTimer);
                         // Battery saver closed us on purpose — stay down (no
                         // pill, no ladder); the visibilitychange handler
                         // reconnects when the tab is shown again.
                         if (batterySuspended) return;
-                        // The connection did not survive — show status while we
-                        // decide whether to reconnect (the existence check below
-                        // can itself take a moment on a struggling network).
-                        paintConnPill(connAttempts + 1);
-                        // First connection is the create/attach — always retry it.
-                        // After we've connected once, a close may mean the session
-                        // was killed (by this or another client); reconnecting would
-                        // resurrect it via `tmux new-session -A`. Only reconnect if
-                        // the session still exists.
-                        if (!hasConnectedOnce) {
-                            scheduleReconnect();
-                            return;
-                        }
-                        sessionStillExists().then((exists) => {
-                            if (exists) {
-                                scheduleReconnect();
-                            } else {
-                                hideConnPill();
-                                term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
-                            }
-                        });
+                        reconnectAfterDrop();
                     };
 
                     ws.onerror = (e) => console.error('WebSocket error:', e);
                 })
                 .catch(err => {
+                    clearTimeout(tokenTimer);
+                    // Aborted BY US (retryNow, a suspend, a fresh connect):
+                    // the attempt that superseded this one owns the ladder.
+                    if (gen !== connGen) return;
+                    connAbort = null;
                     // Token fetch failed = the attempt failed before a
                     // socket ever existed — same ladder as a WS drop.
                     console.error('Token fetch failed:', err);
