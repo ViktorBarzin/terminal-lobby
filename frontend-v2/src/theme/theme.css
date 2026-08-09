@@ -9,6 +9,78 @@
    xterm ITheme derivation (readTerminalTheme) when the terminal view owns xterm.
    ========================================================================== */
 
+/* The faces the stacks below ASK FOR. Ported from the vanilla page, which
+   carries the same five @font-face rules in its <style> head.
+   Without these the SPA named 'JetBrains Mono' and 'DM Sans Variable' and
+   never loaded either, so every stack below fell through to the next entry —
+   in practice a system face with different metrics. Chrome text (session
+   names, cards, dialogs) rendered in the wrong font on this tier while the
+   framed terminal, which declares its own faces in term.html, looked right.
+
+   Same two-source chain as vanilla: same-origin /fonts/ first (vendored in
+   frontend/fonts/, served by clipboard-upload's exact-path whitelist and
+   carved out of Authentik on both hosts), jsdelivr as the fallback. The URLs
+   are absolute, so vite-plugin-singlefile leaves them alone rather than
+   inlining the woff2 into the bundle.
+   font-display: block for the mono face (a flash of mis-metric fallback is
+   worse than briefly invisible text), swap for the UI face. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src:
+    url("/fonts/JetBrainsMono-Regular.woff2") format("woff2"),
+    url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-Regular.woff2")
+      format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src:
+    url("/fonts/JetBrainsMono-Bold.woff2") format("woff2"),
+    url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-Bold.woff2")
+      format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: italic;
+  font-weight: 400;
+  font-display: block;
+  src:
+    url("/fonts/JetBrainsMono-Italic.woff2") format("woff2"),
+    url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-Italic.woff2")
+      format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: italic;
+  font-weight: 700;
+  font-display: block;
+  src:
+    url("/fonts/JetBrainsMono-BoldItalic.woff2") format("woff2"),
+    url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-BoldItalic.woff2")
+      format("woff2");
+}
+/* DM Sans Variable (OFL-1.1, @fontsource-variable latin subset) — the chrome
+   UI face. NEVER applied to anything rendering pty content; terminal text
+   stays on the mono stack. */
+@font-face {
+  font-family: "DM Sans Variable";
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
+  src:
+    url("/fonts/dm-sans-latin-wght-normal.woff2") format("woff2-variations"),
+    url("https://cdn.jsdelivr.net/npm/@fontsource-variable/dm-sans@5.2.8/files/dm-sans-latin-wght-normal.woff2")
+      format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   /* Single source of truth for chrome mono stacks. */
   --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco,
