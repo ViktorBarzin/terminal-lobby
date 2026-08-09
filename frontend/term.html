@@ -13825,14 +13825,29 @@
         // reconnect RECREATES a session that was just killed. Returns false only
         // when we positively confirm the session is gone; any uncertainty
         // (network/API error) returns true so a transient blip still reconnects.
+        // BOUNDED, and that is load-bearing: this check sits directly in front
+        // of the retry ladder, so on the dead path that most needs a reconnect
+        // an unbounded fetch hangs the ladder for as long as the browser takes
+        // to give up on it — the same trap as the /token hop, and it silently
+        // undoes the whole point of the liveness watchdog. (Seen in a browser
+        // soak: the watchdog correctly declared the socket dead, and then the
+        // page sat on "Reconnecting… (attempt 2)" forever because the guard
+        // never answered.) A timeout is uncertainty, so it answers true.
+        const SESSION_CHECK_TIMEOUT_MS = 5000;
         async function sessionStillExists() {
+            const ctrl = new AbortController();
+            const deadline = setTimeout(() => {
+                try { ctrl.abort(); } catch (e) { /* already settled */ }
+            }, SESSION_CHECK_TIMEOUT_MS);
             try {
-                const resp = await fetch(SESSIONS_API, { credentials: 'same-origin' });
+                const resp = await fetch(SESSIONS_API, { credentials: 'same-origin', signal: ctrl.signal });
                 if (!resp.ok) return true;
                 const list = await resp.json();
                 return Array.isArray(list) && list.some((s) => s.name === validArg);
             } catch (e) {
                 return true;
+            } finally {
+                clearTimeout(deadline);
             }
         }
 
@@ -13995,7 +14010,7 @@
             // than waiting out a full interval on a terminal that is already
             // frozen.
             if (ws && ws.readyState === WebSocket.OPEN && !batterySuspended) {
-                startLivenessProbe();
+                armLivenessProbe(); // re-anchor the cadence; the strike record stands
                 runLivenessProbe();
             }
         });
@@ -14070,15 +14085,24 @@
         let livenessStrikes = 0;
         let livenessBusy = false;  // a probe is still settling; don't overlap
         let livenessUrl = '';      // set per attempt — the same origin+path as /ws
+        // Stop the watchdog and forget its verdict — the socket it was judging
+        // is gone, so the next one starts with a clean record.
         function stopLivenessProbe() {
             clearInterval(livenessTimer); livenessTimer = null;
             livenessStrikes = 0;
             livenessBusy = false;
         }
-        function startLivenessProbe() {
-            stopLivenessProbe();
+        // (Re)anchor the cadence WITHOUT touching the strike count. Coming back
+        // to the tab re-anchors, and that must not also absolve the socket: a
+        // phone glanced at every few seconds on a dead network would otherwise
+        // reset the count on every look and the watchdog could never reach a
+        // verdict — the exact case it exists for. Caught in a browser soak,
+        // where four forced probes all logged "strike 1/3".
+        function armLivenessProbe() {
+            clearInterval(livenessTimer);
             livenessTimer = setInterval(runLivenessProbe, LIVENESS_PROBE_MS);
         }
+        function startLivenessProbe() { stopLivenessProbe(); armLivenessProbe(); }
         function livenessFailed(reason) {
             livenessStrikes++;
             console.warn('liveness: strike ' + livenessStrikes + '/' + LIVENESS_STRIKES + ' — ' + reason);
