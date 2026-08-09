@@ -1267,6 +1267,21 @@
         }
         .session-card.dragging { opacity: 0.4; cursor: grabbing; }
         .empty { color: var(--text-muted); font-style: italic; padding: 12px 0; font-size: 12px; }
+        /* A poll that failed says so HERE, above a list that keeps showing what
+           it last knew (G8). Deliberately quiet — a lobby whose sessions are
+           all still running must not look like an outage just because one
+           request lost a race with a lift door. */
+        .lobby-stale {
+            display: flex; align-items: center; gap: 6px;
+            color: var(--text-muted); font-size: 11px; line-height: 1.4;
+            padding: 6px 8px; margin-bottom: 6px;
+            border: 1px dashed var(--border); border-radius: 6px;
+        }
+        .lobby-stale::before {
+            content: ''; width: 6px; height: 6px; border-radius: 50%; flex: none;
+            background: var(--accent);   /* attention, not alarm — every theme defines it */
+            animation: conn-pulse 1.2s ease-in-out infinite;
+        }
 
         /* Session-card loading skeleton (Task 1.11d — T3's shimmer):
            placeholder cards seeded into #session-list at lobby boot, alive
@@ -2369,6 +2384,7 @@
                     </select>
                     <button id="new-btn">Create &amp; Open</button>
                 </div>
+                <div id="lobby-stale" class="lobby-stale hidden" role="status"></div>
                 <div id="session-list" class="session-list"></div>
                 <button id="new-project-btn" class="new-project-btn" type="button"
                         title="Create an empty project folder to group sessions into">+ Project</button>
@@ -7813,19 +7829,82 @@
             // storm collapses to at most one reload.
             tlAttached = () => !!currentActive;
 
+            // ---- a failed poll must not erase the lobby (G8) -------------
+            // Both failure paths below used to clearChildren(listEl) and put an
+            // error in its place, so ONE lost request — a lift, a tunnel, a
+            // handover — replaced every card with "Error: Failed to fetch".
+            // That is a lie about the sessions: they are tmux processes on a
+            // server that never heard about the blip, still running, still the
+            // thing the user came here for. And it costs more than a scare —
+            // the cards carry the state dots, the working timers and the click
+            // targets, so the recovery is a full re-render that closes menus
+            // and loses scroll, five seconds after nothing happened.
+            //
+            // So: the last good render STANDS, and the failure is reported next
+            // to it as a note. The destructive path is kept for exactly the
+            // case it is true — a first load that has never produced a list, so
+            // there is nothing to preserve and an empty pane would say nothing.
+            let lobbyEverLoaded = false;
+            const staleEl = document.getElementById('lobby-stale');
+            function showLobbyStale(why) {
+                if (!lobbyEverLoaded) return;   // the empty state below says it better
+                staleEl.textContent = why + ' — showing the last known list';
+                staleEl.classList.remove('hidden');
+            }
+            function clearLobbyStale() { staleEl.classList.add('hidden'); }
+            // Why the poll failed, in the user's terms rather than the
+            // browser's ("Failed to fetch" / "signal is aborted without
+            // reason" tell nobody anything).
+            function lobbyFailureReason(err) {
+                if (navigator.onLine === false) return 'You are offline';
+                if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+                    return 'The server did not answer';
+                }
+                return 'Cannot reach the server';
+            }
+            // ---- newest answer wins, not last to arrive (G9) --------------
+            // Passes DO overlap: the poll loop is only one caller, and the
+            // post-create burst, the post-kill/rename refreshes and the prefs
+            // re-render all call in too — so on a slow link a request outlives
+            // the pass that followed it. Without a tag the LAST ANSWER TO
+            // ARRIVE wins rather than the newest one, and an overtaken pass
+            // then writes its whole snapshot: `layout` reverts, `lastSessions`
+            // goes backwards, the dock hysteresis counts a streak against a
+            // stale sighting, and paint() redraws the sidebar from a list the
+            // user has already moved past.
+            let lobbyLoadSeq = 0;
+            let lobbyAppliedSeq = 0;
+            // 'ok' | 'failed' | 'skipped' — what this pass says about the
+            // network, and nothing else. Read by the poll loop's backoff.
             async function renderLobby() {
-                if (isDragging || gestureActive || openMenuEl || ctxMenuOpen || renameEditing) return;
+                if (isDragging || gestureActive || openMenuEl || ctxMenuOpen || renameEditing) return 'skipped';
+                const seq = ++lobbyLoadSeq;
                 try {
                     const [sessResp, layoutResult] = await Promise.all([
                         fetch(SESSIONS_API, { credentials: 'same-origin' }),
                         fetchLayout().catch(err => err)
                     ]);
                     if (!sessResp.ok) {
-                        clearChildren(listEl);
-                        listEl.appendChild(emptyState('Failed to load sessions: HTTP ' + sessResp.status));
-                        return;
+                        if (seq < lobbyAppliedSeq) return 'failed';
+                        lobbyAppliedSeq = seq;
+                        // A reachable server that answered badly: the transport
+                        // is fine, so this is not the network failing — but the
+                        // list we have is still the last good one.
+                        if (lobbyEverLoaded) {
+                            showLobbyStale('The server answered HTTP ' + sessResp.status);
+                        } else {
+                            clearChildren(listEl);
+                            listEl.appendChild(emptyState('Failed to load sessions: HTTP ' + sessResp.status));
+                        }
+                        return 'failed';
                     }
                     const sessions = await sessResp.json();
+                    // From here down the pass WRITES. A newer answer already
+                    // applied means this one is history: report what it saw of
+                    // the network (the backoff still wants that) and touch
+                    // nothing.
+                    if (seq < lobbyAppliedSeq) return 'ok';
+                    lobbyAppliedSeq = seq;
                     if (layoutResult instanceof Error) {
                         // Grouping degrades gracefully: keep the last-known
                         // layout, sessions still render.
@@ -7903,9 +7982,19 @@
                     trackStateChanges(sessions);
                     updateFavicon();
                     paint();
+                    lobbyEverLoaded = true;
+                    clearLobbyStale();
+                    return 'ok';
                 } catch (err) {
-                    clearChildren(listEl);
-                    listEl.appendChild(emptyState('Error: ' + err.message));
+                    if (seq < lobbyAppliedSeq) return 'failed';
+                    lobbyAppliedSeq = seq;
+                    if (lobbyEverLoaded) {
+                        showLobbyStale(lobbyFailureReason(err));
+                    } else {
+                        clearChildren(listEl);
+                        listEl.appendChild(emptyState('Error: ' + err.message));
+                    }
+                    return 'failed';
                 }
             }
 
