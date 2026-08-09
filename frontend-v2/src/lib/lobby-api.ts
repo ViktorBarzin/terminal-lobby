@@ -23,8 +23,62 @@ export class ApiError extends Error {
   }
 }
 
-async function req(path: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(apiUrl(path), { credentials: "same-origin", ...init });
+/**
+ * How long any tmux-api call may take before it is abandoned.
+ *
+ * Without a deadline a fetch on a half-open connection never settles at all —
+ * which is exactly what a phone hands us when the radio drops a socket without
+ * an RST. The promise stays pending forever, and every caller awaiting it stays
+ * with it: the lobby's poll simply stops producing polls, showing a stale list
+ * and no error to explain it. 8s is past the p99 of these endpoints (all of
+ * them are a tmux shell-out or a small JSON file) while still well inside the
+ * poll's own 5s-and-backing-off cadence.
+ */
+export const REQUEST_TIMEOUT_MS = 8000;
+
+/**
+ * The deadline for POST /restore, which is not like the others: it shells out
+ * to `tmux-persist restore <user>` and recreates every dead session in the
+ * caller's manifest one tmux command at a time. A long manifest can outrun the
+ * ordinary cap, and cutting it off there would report "Restore failed" for work
+ * the server goes on to finish.
+ */
+export const RESTORE_TIMEOUT_MS = 30000;
+
+/**
+ * The signal a request runs under: a timeout deadline, merged with the caller's
+ * own signal when it has one, so neither can be lost by adding the other.
+ *
+ * Merged by hand rather than with `AbortSignal.any`, which reached Safari only
+ * in 17.4 — too new to put in the path of every lobby call on a phone (and
+ * jsdom has yet to ship it either). Exported for testing.
+ */
+export function withDeadline(ms: number, caller?: AbortSignal | null): AbortSignal {
+  const deadline = AbortSignal.timeout(ms);
+  if (!caller) return deadline;
+  const merged = new AbortController();
+  const forward = (from: AbortSignal) => merged.abort(from.reason);
+  if (caller.aborted) forward(caller);
+  else if (deadline.aborted) forward(deadline);
+  else {
+    caller.addEventListener("abort", () => forward(caller), { once: true });
+    deadline.addEventListener("abort", () => forward(deadline), { once: true });
+  }
+  return merged.signal;
+}
+
+async function req(
+  path: string,
+  init?: RequestInit,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  // `signal` after the spread on purpose: a caller's own signal is merged into
+  // the deadline by withDeadline, never dropped by it.
+  const res = await fetch(apiUrl(path), {
+    credentials: "same-origin",
+    ...init,
+    signal: withDeadline(timeoutMs, init?.signal),
+  });
   return res;
 }
 
@@ -114,9 +168,10 @@ export async function renameSession(oldName: string, newName: string): Promise<v
   if (!res.ok) throw new ApiError(res.status, `rename HTTP ${res.status}`);
 }
 
-/** POST /api/restore — recreate saved-but-dead sessions. */
+/** POST /api/restore — recreate saved-but-dead sessions. Runs on the longer
+ *  RESTORE_TIMEOUT_MS deadline: the server recreates the whole manifest. */
 export async function restoreSessions(): Promise<void> {
-  const res = await req("/restore", { method: "POST" });
+  const res = await req("/restore", { method: "POST" }, RESTORE_TIMEOUT_MS);
   if (!res.ok) throw new ApiError(res.status, `restore HTTP ${res.status}`);
 }
 
