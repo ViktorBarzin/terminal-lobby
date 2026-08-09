@@ -4206,12 +4206,25 @@
         // stops with no error to show for it. Doing it HERE rather than at
         // ~20 call sites means the ones written next are covered too.
         const TL_FETCH_TIMEOUT_MS = 8000;
-        // …except where a long call is the normal case. /clipboard/upload
-        // carries a whole image, and a phone photo over a weak uplink takes
-        // longer than any deadline that is useful for a JSON poll — bounding
-        // it would break paste-an-image precisely when it is hardest. Every
-        // other path through here answers with small JSON.
-        const TL_NO_DEADLINE = /^\/clipboard\/upload$/;
+        // …except where a long call is the normal case. Three paths are slow
+        // BY DESIGN, and a deadline on them reports failure for work that is
+        // going to succeed:
+        //   /clipboard/upload  carries a whole image, and a phone photo over a
+        //                      weak uplink takes longer than any deadline that
+        //                      is useful for a JSON poll — bounding it would
+        //                      break paste-an-image precisely when it is
+        //                      hardest.
+        //   /api/…/restore     tmux-api's handleRestore runs the restore
+        //                      wrapper SYNCHRONOUSLY (main.go: exec.Command
+        //                      …CombinedOutput()) and recreates the caller's
+        //                      whole manifest, resuming a Claude conversation
+        //                      per dead session. It answers when that is done.
+        //   /api/…/push/test   handlePushTest blocks on the send, and the push
+        //                      client's own ceiling is 15s (pushsender.go:
+        //                      pushClientTimeout) — per subscription. A shorter
+        //                      deadline here would just lie about the result.
+        // Every other path through this wrapper answers with small JSON.
+        const TL_NO_DEADLINE = /^\/(clipboard\/upload|api\/sessions\/(restore|push\/test))$/;
         // Link a deadline onto a call WITHOUT stealing the caller's own
         // signal: callers that already bound themselves (sessionStillExists'
         // 5s kill-guard) must keep their abort, so the two are chained and
