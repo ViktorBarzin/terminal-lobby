@@ -9731,16 +9731,118 @@
             // planUpdate, so nothing interrupts a user mid-session; the update
             // lands silently at the next open.
             const TL_SELF_CHECK_MS = 5000;
-            function lobbySelfCheck() {
-                if (document.hidden) return;
-                checkForUpdate('no-cache');
+
+            // ---- the two polling loops (G9/G11/G12) ----------------------
+            // Both ran on setInterval, and setInterval keeps firing into a
+            // network that has not answered the previous request yet. A link
+            // slow enough to overrun 5s therefore builds a QUEUE of requests
+            // that all land together, out of order and on top of each other —
+            // the exact load the connection was already too weak to carry,
+            // multiplied, and then applied newest-first-wins-by-arrival so the
+            // sidebar can repaint from a snapshot the user has already moved
+            // past. Both loops now schedule the next turn off their own ANSWER,
+            // and hold an in-flight flag so a wake cannot start a second pass
+            // beside a running one.
+            //
+            // On top of that a failing poll backs off: 5s → 10s → 20s → 30s.
+            // Retrying a dead link every 5s neither fixes it nor learns
+            // anything, and on a phone it is radio the battery pays for. The
+            // cap is near enough that a lobby left open through an outage
+            // catches up within half a minute of service returning — and the
+            // wakes below usually get there first.
+            const LOBBY_POLL_MS = 5000;
+            const LOBBY_POLL_MAX_MS = 30000;
+            let lobbyPollTimer = null;
+            let lobbyPollInFlight = false;
+            /** consecutive failed polls — the exponent of the backoff ladder. */
+            let lobbyPollFailures = 0;
+            function lobbyPollDelay() {
+                return Math.min(LOBBY_POLL_MS * Math.pow(2, lobbyPollFailures), LOBBY_POLL_MAX_MS);
+            }
+            function scheduleLobbyPoll(outcome) {
+                if (outcome === 'ok') lobbyPollFailures = 0;
+                // Stop counting once the ladder saturates: the delay is capped
+                // there anyway, and an overnight outage must not leave
+                // 2 ** <hours> behind for the first success to climb down from.
+                else if (outcome === 'failed' && lobbyPollDelay() < LOBBY_POLL_MAX_MS) lobbyPollFailures++;
+                // 'skipped' (mid-drag, or hidden) is neither: it says nothing
+                // about the network, so it leaves the ladder where it was.
+                clearTimeout(lobbyPollTimer);
+                lobbyPollTimer = setTimeout(lobbyPollTick, lobbyPollDelay());
+            }
+            async function lobbyPollTick() {
+                lobbyPollTimer = null;
+                // A wake landed on top of a running poll — that poll reschedules
+                // in its own finally, so there is nothing to do here.
+                if (lobbyPollInFlight) return;
+                // A hidden tab has nobody to render for, and its fetches are
+                // throttled hard enough to manufacture failures on a link that
+                // is fine. Keep the timer turning (a missed visibilitychange
+                // then costs one interval, not the loop).
+                if (document.hidden) { scheduleLobbyPoll('skipped'); return; }
+                lobbyPollInFlight = true;
+                let outcome = 'failed';
+                try {
+                    outcome = await renderLobby();
+                } catch (e) {
+                    console.warn('lobby poll threw:', e);   // never lose the loop
+                } finally {
+                    lobbyPollInFlight = false;
+                    scheduleLobbyPoll(outcome);
+                }
+            }
+            // Network back, or the tab in front of the user again — the two
+            // moments a phone most wants to catch up. Poll NOW rather than
+            // sitting out a delay the ladder earned while the network was down,
+            // and put the ladder back at the base: whatever it was measuring is
+            // over. (`online` is not trustworthy on its own — it lies true
+            // behind a captive portal and some platforms never fire it — which
+            // is why the timer keeps turning underneath.)
+            function wakeLobbyPoll() {
+                lobbyPollFailures = 0;
+                clearTimeout(lobbyPollTimer);
+                lobbyPollTimer = null;
+                lobbyPollTick();
+            }
+            window.addEventListener('online', () => wakeLobbyPoll());
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) wakeLobbyPoll();
+            });
+            // bfcache restore (iOS standalone especially): the page returns
+            // frozen rather than reloaded, and its visibilitychange can be
+            // unreliable — the same belt-and-braces the terminal's socket uses.
+            window.addEventListener('pageshow', (e) => { if (e.persisted) wakeLobbyPoll(); });
+
+            // The deploy detector is the other loop, and it had the same shape
+            // and the same pile-up. It has no error channel of its own —
+            // checkForUpdate swallows a failed self-fetch by design (a missed
+            // deploy check is not worth a toast) — so it borrows the lobby
+            // poll's verdict on the network for its backoff, and simply refuses
+            // to start a second self-fetch while one is still out. That guard
+            // is strict on purpose: a self-fetch hung on a dead path holds the
+            // loop until the browser gives up on it, which costs a late deploy
+            // detection during an outage and nothing else.
+            let selfCheckInFlight = false;
+            async function lobbySelfCheck() {
+                if (!selfCheckInFlight && !document.hidden) {
+                    selfCheckInFlight = true;
+                    try {
+                        await checkForUpdate('no-cache');
+                    } catch (e) { /* the kernel already swallows; belt only */ }
+                    finally { selfCheckInFlight = false; }
+                }
+                setTimeout(lobbySelfCheck, Math.min(
+                    TL_SELF_CHECK_MS * Math.pow(2, lobbyPollFailures), LOBBY_POLL_MAX_MS));
             }
             tlConfirmBoot();          // did the reload the last page life started land?
             lobbySelfCheck();
-            setInterval(lobbySelfCheck, TL_SELF_CHECK_MS);
 
+            // Boot paint goes straight in, exactly as before — the loop's
+            // hidden-skip is about the CADENCE, and must not cost a page that
+            // was loaded in the background its first render. The loop then owns
+            // every turn after this one.
             renderLobby();
-            setInterval(renderLobby, 5000);
+            scheduleLobbyPoll('skipped');
 
             // Boot landing — which session (if any) to attach on load. Precedence:
             //   1. an explicit #session hash (warm openWindow / deep link);
