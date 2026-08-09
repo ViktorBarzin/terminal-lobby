@@ -13780,6 +13780,23 @@
         let connAttempts = 0;   // connect()s started since the last stable connection
         let retryTimer = null;  // pending scheduled connect (null while attempting)
         let stableTimer = null; // pending "connection survived 30s" ladder reset
+        // ---- one attempt at a time (G3/G4) -------------------------------
+        // A connect() is two hops — a /token fetch, then a WS handshake — and
+        // NEITHER was bounded. An unreachable server leaves the fetch hanging
+        // on the browser's own (minutes-long) timeout, and a black-holed TCP
+        // connect sits in SYN retransmit just as long: no onerror, no onclose,
+        // no ladder, a terminal frozen on "Connecting…". Worse, an attempt in
+        // flight left retryTimer null, so the instant-retry triggers (tab
+        // visible / back online) hit retryNow()'s `if (!retryTimer) return`
+        // and did nothing at exactly the moment they were most wanted. Every
+        // attempt now carries a generation, an abort handle for its fetch and
+        // a handshake deadline, so it can be cut short and superseded.
+        const TOKEN_TIMEOUT_MS = 8000;
+        const WS_OPEN_TIMEOUT_MS = 10000;
+        let connGen = 0;           // bumped whenever an attempt is superseded or abandoned
+        let connAbort = null;      // AbortController for the in-flight /token fetch
+        let handshakeTimer = null; // deadline for a socket stuck in CONNECTING
+        let wsSlowId = null;       // slow-request handle owned by the current attempt
         // ---- battery saver: drop the socket while the tab stays hidden ----
         // ttyd pings the WebSocket every 30s (server -P) and streams any pane
         // output; left open behind a locked screen or a switched-away PWA it
@@ -13821,14 +13838,25 @@
             retryTimer = setTimeout(() => { retryTimer = null; connect(); }, nextRetryDelay());
         }
         // A hidden tab throttles timers and a dead network fails fast — when
-        // either recovers, retry NOW instead of waiting out a 16s rung. Only
-        // while a retry is actually pending: never a second socket during a
-        // live attempt, never a resurrect after "Session ended."
+        // either recovers, retry NOW instead of waiting out a 16s rung.
+        //
+        // "Only while a retry is pending" used to be the whole rule, and it
+        // had the failure backwards: the attempt STARTED over the dead path
+        // is the one that can only ever time out, and while it hangs there is
+        // no retryTimer — so `back online` and `tab visible` became no-ops in
+        // precisely the case they exist for (G3/G6). An attempt in flight is
+        // therefore abandoned and restarted too; connect() tears down
+        // whatever the stale one owned, so this still cannot leave two live
+        // sockets. A healthy OPEN socket is left strictly alone, and there is
+        // still no resurrect after "Session ended." — that state has neither a
+        // timer nor an attempt.
         function retryNow(why) {
-            if (!retryTimer) return;
+            const pending = retryTimer !== null;
+            const inFlight = connAbort !== null || (ws && ws.readyState === WebSocket.CONNECTING);
+            if (!pending && !inFlight) return;
             clearTimeout(retryTimer);
             retryTimer = null;
-            console.log('reconnect: instant retry (' + why + ')');
+            console.log('reconnect: instant retry (' + why + (inFlight ? ', abandoning a stalled attempt' : '') + ')');
             connect();
         }
         // Tear the socket down after the tab has been hidden long enough, and
@@ -13845,9 +13873,10 @@
             clearTimeout(retryTimer); retryTimer = null; // drop any pending reconnect
             clearTimeout(stableTimer);
             hideConnPill();
-            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-                try { ws.close(); } catch (e) { /* already closing */ }
-            }
+            // Tear down through the shared path so a half-finished attempt
+            // (a /token fetch still in flight, a socket still in CONNECTING)
+            // is abandoned too, not just an already-open socket.
+            abandonAttempt();
             console.log('battery saver: socket suspended (tab hidden ' + HIDDEN_SUSPEND_MS + 'ms)');
         }
         // Resume from a suspend — shared by the visibilitychange and pageshow
@@ -13907,20 +13936,35 @@
         tlAttached = () => true;
         tlConfirmBoot();
 
-        function connect() {
-            // Neutralize any earlier socket before opening a new one. A battery
-            // resume can call connect() while a just-closed socket's onclose is
-            // still queued (a frozen mobile tab completes close() late);
-            // detaching its handlers stops that stale onclose from scheduling a
-            // competing reconnect — without this, resume's socket plus the
-            // stale-onclose's socket both go live, doubling the pty stream and
-            // the pings. Idempotent: on the normal ladder the prior socket is
-            // already CLOSED, so this is a no-op.
+        // Neutralize everything the current attempt owns — its socket, its
+        // in-flight /token fetch and its handshake deadline — without letting
+        // any of their callbacks schedule a competing reconnect. A battery
+        // resume can call connect() while a just-closed socket's onclose is
+        // still queued (a frozen mobile tab completes close() late); detaching
+        // its handlers stops that stale onclose from scheduling a competing
+        // reconnect — without this, resume's socket plus the stale-onclose's
+        // socket both go live, doubling the pty stream and the pings. The
+        // generation bump does the same for the async half: a /token response
+        // that lands after we walked away can no longer install a socket.
+        // Idempotent: on the normal ladder there is nothing left to abandon.
+        function abandonAttempt() {
+            connGen++;
+            if (connAbort) {
+                try { connAbort.abort(); } catch (e) { /* already settled */ }
+                connAbort = null;
+            }
+            clearTimeout(handshakeTimer); handshakeTimer = null;
+            if (wsSlowId !== null) { slowRequests.ack(wsSlowId); wsSlowId = null; }
             if (ws) {
                 try { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }
                 catch (e) { /* already closing */ }
                 ws = null;
             }
+        }
+
+        function connect() {
+            abandonAttempt();
+            const gen = connGen; // this attempt's claim on the page
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             let argSuffix = '?arg=' + encodeURIComponent(validArg);
             // Pin a project dir to arg3 and a shared-session owner to arg4: when
@@ -13953,9 +13997,25 @@
             connAttempts++;
             paintConnPill(connAttempts);
 
-            fetch(base + '/token' + argSuffix, { credentials: 'same-origin' })
+            // G3: bound the token hop. A server that accepts the TCP connect
+            // and then says nothing (the classic half-open mobile path) would
+            // otherwise hold this promise for minutes with the ladder idle.
+            // A plain controller + timer rather than AbortSignal.timeout so
+            // one handle serves both the deadline and retryNow()'s abort, and
+            // so the page keeps working on older mobile Safari.
+            const ctrl = new AbortController();
+            connAbort = ctrl;
+            const tokenTimer = setTimeout(() => {
+                console.warn('reconnect: /token timed out after ' + TOKEN_TIMEOUT_MS + 'ms');
+                try { ctrl.abort(); } catch (e) { /* already settled */ }
+            }, TOKEN_TIMEOUT_MS);
+
+            fetch(base + '/token' + argSuffix, { credentials: 'same-origin', signal: ctrl.signal })
                 .then(r => r.json())
                 .then(tokenData => {
+                    clearTimeout(tokenTimer);
+                    if (gen !== connGen) return; // superseded — a newer attempt owns the page
+                    connAbort = null;
                     // Tab went hidden while the token was in flight — don't open
                     // a socket the battery saver is about to suspend anyway.
                     if (batterySuspended) return;
@@ -13966,11 +14026,24 @@
                     // toast — this attempt is "pending" until onopen. The
                     // onclose ack keeps a failed attempt from lingering as
                     // slow (the connection pill owns retry messaging).
-                    const wsSlowId = slowRequests.track('WS ' + base + '/ws');
+                    wsSlowId = slowRequests.track('WS ' + base + '/ws');
+                    // G4: bound the handshake. Nothing else does — a WebSocket
+                    // whose SYNs vanish stays in CONNECTING for the OS's whole
+                    // retransmit budget (~1-2 min) and fires neither onerror
+                    // nor onclose, so the ladder never learns the attempt died.
+                    handshakeTimer = setTimeout(() => {
+                        handshakeTimer = null;
+                        if (gen !== connGen) return;
+                        if (!ws || ws.readyState !== WebSocket.CONNECTING) return;
+                        console.warn('reconnect: WS handshake timed out after ' + WS_OPEN_TIMEOUT_MS + 'ms');
+                        abandonAttempt();
+                        scheduleReconnect();
+                    }, WS_OPEN_TIMEOUT_MS);
 
                     ws.onopen = () => {
                         console.log('Connected to ttyd (session: ' + validArg + ')');
-                        slowRequests.ack(wsSlowId);
+                        clearTimeout(handshakeTimer); handshakeTimer = null;
+                        slowRequests.ack(wsSlowId); wsSlowId = null;
                         // Task 3.5: flow-control counters must not leak
                         // across connections (a carried-over PAUSE state
                         // would strangle the fresh pty stream). Re-read the
@@ -14076,7 +14149,8 @@
                     };
 
                     ws.onclose = () => {
-                        slowRequests.ack(wsSlowId); // no-op after onopen's ack
+                        clearTimeout(handshakeTimer); handshakeTimer = null;
+                        if (wsSlowId !== null) { slowRequests.ack(wsSlowId); wsSlowId = null; }
                         clearTimeout(stableTimer);
                         // Battery saver closed us on purpose — stay down (no
                         // pill, no ladder); the visibilitychange handler
@@ -14108,6 +14182,11 @@
                     ws.onerror = (e) => console.error('WebSocket error:', e);
                 })
                 .catch(err => {
+                    clearTimeout(tokenTimer);
+                    // Aborted BY US (retryNow, a suspend, a fresh connect):
+                    // the attempt that superseded this one owns the ladder.
+                    if (gen !== connGen) return;
+                    connAbort = null;
                     // Token fetch failed = the attempt failed before a
                     // socket ever existed — same ladder as a WS drop.
                     console.error('Token fetch failed:', err);
