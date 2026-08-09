@@ -13900,6 +13900,15 @@
             // Tab shown: resume a suspended socket, else bring a pending
             // reconnect forward.
             if (!resumeFromSuspend('tab visible')) retryNow('tab visible');
+            // Coming back is also the moment a socket most often turns out to
+            // have died unannounced while we were away. Re-anchor the
+            // watchdog's cadence here and take a reading immediately rather
+            // than waiting out a full interval on a terminal that is already
+            // frozen.
+            if (ws && ws.readyState === WebSocket.OPEN && !batterySuspended) {
+                startLivenessProbe();
+                runLivenessProbe();
+            }
         });
         // bfcache restore (iOS standalone especially): the page returns frozen,
         // not reloaded, and its visibilitychange can be unreliable — so pageshow
@@ -13925,6 +13934,106 @@
                 paintConnPill(connAttempts); // an attempt is in flight — just recolor it
             }
         });
+
+        // ---- liveness watchdog (G2) --------------------------------------
+        // THE signature mobile failure. The page waits only for ws.onclose,
+        // and a black-holed path never produces one: ttyd's -P 30 keepalive is
+        // server→client and the browser hides ping/pong entirely, so a socket
+        // whose packets stopped arriving anywhere stays readyState === OPEN
+        // forever. The terminal freezes while still looking connected, and no
+        // ladder is running behind it because nothing ever reported a drop.
+        //
+        // "No inbound data for N seconds" is NOT a usable rule here — an idle
+        // terminal is legitimately silent for hours. So the watchdog probes
+        // ACTIVELY, on two independent signals, every LIVENESS_PROBE_MS while
+        // the socket is open, the tab is visible, and the battery saver is not
+        // holding us down:
+        //
+        //  1. Reachability — a same-origin fetch of ttyd's own /token under a
+        //     hard deadline. This is the only true round trip available: ttyd
+        //     answers no client frame at all (src/protocol.c), so nothing sent
+        //     over the WebSocket can ever come back. Judged on TRANSPORT, not
+        //     on status — any HTTP response, 500 included, proves the path is
+        //     alive, so a briefly unhappy server never costs a reconnect.
+        //  2. Backpressure — bufferedAmount around a 1-byte no-op frame. This
+        //     is the only deadness signal the socket object itself exposes,
+        //     but alone it cannot catch a black hole: bufferedAmount drains as
+        //     soon as bytes reach the network layer, and 1 byte per probe
+        //     would take days to fill the send buffers a dead TCP connection
+        //     keeps happily accepting into. It earns its place for the OTHER
+        //     stall — a send path already jammed (a large paste against a
+        //     crawling uplink) — which the fetch would call healthy.
+        //
+        // Either signal failing LIVENESS_STRIKES times running means the
+        // socket can no longer be trusted: drop it and hand the drop to the
+        // normal ladder, which still consults the session kill-guard.
+        const LIVENESS_PROBE_MS = 25000;         // just inside ttyd's 30s keepalive
+        const LIVENESS_FETCH_TIMEOUT_MS = 6000;  // a reachable origin answers far sooner
+        const LIVENESS_DRAIN_MS = 2000;          // grace for 1 byte to leave the buffer
+        const LIVENESS_STRIKES = 3;              // ~50s before a live-looking socket is dropped
+        // A bare ttyd INPUT frame with a ZERO-LENGTH payload. Verified a no-op
+        // against ttyd 1.7.7 (out/ttyd-build/src): protocol.c's INPUT case
+        // hands pty_write a zero-length pty_buf, so zero bytes reach the pty —
+        // and a read-only server drops it one line earlier on !server->writable.
+        // Anything longer would be typed into whatever sits at the prompt.
+        const WS_PROBE_FRAME = Uint8Array.of(MSG_INPUT.charCodeAt(0)).buffer;
+        let livenessTimer = null;
+        let livenessStrikes = 0;
+        let livenessBusy = false;  // a probe is still settling; don't overlap
+        let livenessUrl = '';      // set per attempt — the same origin+path as /ws
+        function stopLivenessProbe() {
+            clearInterval(livenessTimer); livenessTimer = null;
+            livenessStrikes = 0;
+            livenessBusy = false;
+        }
+        function startLivenessProbe() {
+            stopLivenessProbe();
+            livenessTimer = setInterval(runLivenessProbe, LIVENESS_PROBE_MS);
+        }
+        function livenessFailed(reason) {
+            livenessStrikes++;
+            console.warn('liveness: strike ' + livenessStrikes + '/' + LIVENESS_STRIKES + ' — ' + reason);
+            if (livenessStrikes < LIVENESS_STRIKES) return;
+            console.warn('liveness: socket presumed dead — dropping it');
+            abandonAttempt();     // detaches handlers, closes, stops this probe
+            reconnectAfterDrop(); // same kill-guard + ladder as a real onclose
+        }
+        function runLivenessProbe() {
+            if (livenessBusy) return;
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            // A hidden tab is the battery saver's business, and its timers and
+            // fetches are throttled hard enough to manufacture false strikes.
+            if (batterySuspended || document.hidden) return;
+            const gen = connGen;
+            const sock = ws;
+            const before = sock.bufferedAmount;
+            try {
+                sock.send(WS_PROBE_FRAME);
+            } catch (e) {
+                livenessFailed('send() threw: ' + (e && e.message));
+                return;
+            }
+            livenessBusy = true;
+            const ctrl = new AbortController();
+            const deadline = setTimeout(() => {
+                try { ctrl.abort(); } catch (e) { /* already settled */ }
+            }, LIVENESS_FETCH_TIMEOUT_MS);
+            const reachable = fetch(livenessUrl, {
+                credentials: 'same-origin', cache: 'no-store', signal: ctrl.signal
+            }).then(() => true, () => false);
+            const drained = new Promise((resolve) => setTimeout(
+                () => resolve(sock.bufferedAmount <= before), LIVENESS_DRAIN_MS));
+            Promise.all([reachable, drained]).then((r) => {
+                clearTimeout(deadline);
+                livenessBusy = false;
+                if (gen !== connGen) return;  // the socket was replaced while we waited
+                if (document.hidden) return;  // throttled mid-probe — no verdict either way
+                if (!r[0]) { livenessFailed('no HTTP response from the same origin'); return; }
+                if (!r[1]) { livenessFailed('a 1-byte frame never left the send buffer'); return; }
+                if (livenessStrikes) console.log('liveness: recovered after ' + livenessStrikes + ' strike(s)');
+                livenessStrikes = 0;
+            });
+        }
 
         // ---- stale-tab self-heal (definitions hoisted) -------------------
         // The update kernel (parseAssetId/planUpdate/checkForUpdate) lives
@@ -13954,12 +14063,43 @@
                 connAbort = null;
             }
             clearTimeout(handshakeTimer); handshakeTimer = null;
+            stopLivenessProbe();
             if (wsSlowId !== null) { slowRequests.ack(wsSlowId); wsSlowId = null; }
             if (ws) {
                 try { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }
                 catch (e) { /* already closing */ }
                 ws = null;
             }
+        }
+
+        // What to do once a connection is gone — shared by the socket's own
+        // onclose and by the liveness watchdog, so the kill-guard below can't
+        // be bypassed by whichever path noticed the drop first.
+        function reconnectAfterDrop() {
+            const gen = connGen;
+            // Show status while we decide whether to reconnect (the existence
+            // check can itself take a moment on a struggling network).
+            paintConnPill(connAttempts + 1);
+            // First connection is the create/attach — always retry it.
+            // After we've connected once, a close may mean the session was
+            // killed (by this or another client); reconnecting would resurrect
+            // it via `tmux new-session -A`. Only reconnect if the session
+            // still exists.
+            if (!hasConnectedOnce) {
+                scheduleReconnect();
+                return;
+            }
+            sessionStillExists().then((exists) => {
+                // A resume or an instant retry can start a fresh attempt while
+                // this check is in flight; that attempt owns the page now.
+                if (gen !== connGen) return;
+                if (exists) {
+                    scheduleReconnect();
+                } else {
+                    hideConnPill();
+                    term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
+                }
+            });
         }
 
         function connect() {
@@ -13993,6 +14133,8 @@
             // (v2 terminal iframe). A bare trailing-slash strip broke /term.html.
             const base = location.pathname.replace(/\/[^/]*$/, '');
             const wsUrl = proto + '//' + location.host + base + '/ws' + argSuffix;
+            const tokenUrl = base + '/token' + argSuffix;
+            livenessUrl = tokenUrl; // the watchdog probes the same origin the socket uses
 
             connAttempts++;
             paintConnPill(connAttempts);
@@ -14010,7 +14152,7 @@
                 try { ctrl.abort(); } catch (e) { /* already settled */ }
             }, TOKEN_TIMEOUT_MS);
 
-            fetch(base + '/token' + argSuffix, { credentials: 'same-origin', signal: ctrl.signal })
+            fetch(tokenUrl, { credentials: 'same-origin', signal: ctrl.signal })
                 .then(r => r.json())
                 .then(tokenData => {
                     clearTimeout(tokenTimer);
@@ -14089,6 +14231,8 @@
                         // RESIZE until it is), but harmless — term is already
                         // opened by this point and sendResize guards the ws.
                         sendResize();
+                        // From here on this socket has to prove it is alive.
+                        startLivenessProbe();
                     };
 
                     ws.onmessage = (event) => {
@@ -14150,33 +14294,14 @@
 
                     ws.onclose = () => {
                         clearTimeout(handshakeTimer); handshakeTimer = null;
+                        stopLivenessProbe();
                         if (wsSlowId !== null) { slowRequests.ack(wsSlowId); wsSlowId = null; }
                         clearTimeout(stableTimer);
                         // Battery saver closed us on purpose — stay down (no
                         // pill, no ladder); the visibilitychange handler
                         // reconnects when the tab is shown again.
                         if (batterySuspended) return;
-                        // The connection did not survive — show status while we
-                        // decide whether to reconnect (the existence check below
-                        // can itself take a moment on a struggling network).
-                        paintConnPill(connAttempts + 1);
-                        // First connection is the create/attach — always retry it.
-                        // After we've connected once, a close may mean the session
-                        // was killed (by this or another client); reconnecting would
-                        // resurrect it via `tmux new-session -A`. Only reconnect if
-                        // the session still exists.
-                        if (!hasConnectedOnce) {
-                            scheduleReconnect();
-                            return;
-                        }
-                        sessionStillExists().then((exists) => {
-                            if (exists) {
-                                scheduleReconnect();
-                            } else {
-                                hideConnPill();
-                                term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
-                            }
-                        });
+                        reconnectAfterDrop();
                     };
 
                     ws.onerror = (e) => console.error('WebSocket error:', e);
