@@ -90,6 +90,23 @@ describe("<TerminalView> — window.__tlFocusTerminal (hand the keyboard back)",
     unmount();
   });
 
+  it("declines to steal focus from a focused lobby text input (rename-box race, QA #4)", () => {
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    const { posted, focused, unmount } = mountTerminal(true);
+    // The on-activate auto-focus runs on a rAF; the explicit hook is the
+    // deterministic check. With a lobby text field focused it must decline, or
+    // the inline rename box gets torn down by its own onBlur the frame after it
+    // opens.
+    expect(window.__tlFocusTerminal?.()).toBe(false);
+    expect(focused()).toBe(0);
+    expect(typesOf(posted)).not.toContain("tl-focus");
+    expect(document.activeElement).toBe(input);
+    input.remove();
+    unmount();
+  });
+
   it("term.html handles the tl-focus this sends", () => {
     expect(termHtml()).toContain("e.data.type === 'tl-focus'");
   });
