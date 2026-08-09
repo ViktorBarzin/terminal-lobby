@@ -13853,6 +13853,21 @@
         // term.write lines (those stacked up per retry and got overdrawn
         // by tmux's reattach repaint anyway).
         const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+        // A network outage ends for EVERY client at the same instant, so an
+        // unjittered ladder marches every open terminal (and every other tab,
+        // and every other phone) into the same 1s/2s/4s… rungs and stampedes
+        // ttyd the moment service returns. Full jitter in [delay/2, delay]
+        // spreads the herd across the rung — the same rule the v2 SSE client
+        // uses (frontend-v2/src/sse/client.ts). The rung itself, and its
+        // 30s-stable reset, are unchanged.
+        // navigator.onLine === false is the browser SAYING there is no path:
+        // burning a rung a second against it costs attempts and pill flicker
+        // for nothing. Park on a long safety delay instead and let the
+        // `online` event drive the real retry — SAFETY, not the ladder,
+        // because onLine also lies in both directions: behind a captive
+        // portal it reports true, and some platforms never fire `online` at
+        // all, so a parked tab must still be able to wake itself.
+        const OFFLINE_RETRY_MS = 20000;
         let connAttempts = 0;   // connect()s started since the last stable connection
         let retryTimer = null;  // pending scheduled connect (null while attempting)
         let stableTimer = null; // pending "connection survived 30s" ladder reset
@@ -13885,12 +13900,16 @@
             connPill.classList.remove('hidden');
         }
         function hideConnPill() { connPill.classList.add('hidden'); }
+        function nextRetryDelay() {
+            if (navigator.onLine === false) return OFFLINE_RETRY_MS;
+            const delay = RETRY_DELAYS_MS[Math.min(connAttempts, RETRY_DELAYS_MS.length - 1)];
+            return delay / 2 + Math.random() * (delay / 2);
+        }
         function scheduleReconnect() {
             if (batterySuspended) return; // suspended for battery — reconnect waits for the tab to show
             if (retryTimer) return; // one pending attempt at a time
-            const delay = RETRY_DELAYS_MS[Math.min(connAttempts, RETRY_DELAYS_MS.length - 1)];
             paintConnPill(connAttempts + 1); // the attempt this timer will run
-            retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
+            retryTimer = setTimeout(() => { retryTimer = null; connect(); }, nextRetryDelay());
         }
         // A hidden tab throttles timers and a dead network fails fast — when
         // either recovers, retry NOW instead of waiting out a 16s rung. Only
@@ -13957,7 +13976,16 @@
         window.addEventListener('offline', () => {
             // Repaint a waiting pill to "You are offline"; the online
             // handler above brings the retry forward when service returns.
-            if (retryTimer) paintConnPill(connAttempts + 1);
+            // A rung armed while the browser still believed it was online is
+            // re-parked on the long OFFLINE_RETRY_MS safety delay — otherwise
+            // going offline at the bottom of the ladder keeps firing a doomed
+            // attempt every second until the ladder climbs out.
+            if (retryTimer) {
+                clearTimeout(retryTimer); retryTimer = null;
+                scheduleReconnect(); // now takes the offline branch, and repaints
+            } else if (!connPill.classList.contains('hidden')) {
+                paintConnPill(connAttempts); // an attempt is in flight — just recolor it
+            }
         });
 
         // ---- self-update (definitions hoisted) ---------------------------
