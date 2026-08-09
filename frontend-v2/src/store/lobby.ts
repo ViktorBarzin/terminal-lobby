@@ -85,6 +85,15 @@ export interface LobbyStoreOptions {
 const LAYOUT_GRACE_MS = 4000;
 
 /**
+ * Ceiling for the poll's failure backoff. The ladder doubles the base interval
+ * per consecutive failure (5s → 10s → 20s) and stops here: far enough back to
+ * stop hammering a link already failing to carry the poll, near enough that a
+ * lobby left open through an outage catches up within half a minute of the
+ * network returning — even in a browser that never fires `online`.
+ */
+const MAX_POLL_INTERVAL_MS = 30000;
+
+/**
  * Vanilla's STATES_KEY (frontend/index.html `trackStateChanges`): epoch ms at
  * which each live session was FIRST seen in its current Claude state. No
  * backend exposes a real state-change time — a session object carries only
@@ -169,8 +178,18 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   let lastWritten: Layout | null = null;
   let holds = 0;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
-  let pollTimer: ReturnType<typeof setInterval> | undefined;
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
   const burstTimers: ReturnType<typeof setTimeout>[] = [];
+  /** the poll loop is live (from autoStart until dispose). */
+  let polling = false;
+  /** consecutive failed polls — the exponent of the backoff ladder. */
+  let pollFailures = 0;
+  const maxPollMs = Math.max(pollMs, MAX_POLL_INTERVAL_MS);
+  /** a scheduled poll is out; a wake must not put a second one beside it. */
+  let pollInFlight = false;
+  /** monotonic tag per load, and the newest tag whose answer has been applied. */
+  let loadSeq = 0;
+  let appliedSeq = 0;
 
   function hold(): () => void {
     holds += 1;
@@ -245,21 +264,45 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (dirty) persistStates(states);
   }
 
-  async function refresh(): Promise<void> {
+  /** What one load did to the poll's backoff ladder. */
+  type LoadOutcome = "ok" | "failed" | "skipped";
+
+  /**
+   * One pass over /whoami + /sessions + /layout.
+   *
+   * Every pass carries a monotonic tag and refuses to apply an answer older
+   * than one already applied. Passes DO overlap — the visibility and online
+   * wakes, the post-create burst and the poll itself all call in, and on a slow
+   * link a request outlives the pass that follows it. Without the tag the last
+   * answer to ARRIVE wins rather than the newest one: a slow poll repaints the
+   * sidebar from a snapshot the user has already moved past, and its equally
+   * stale layout reads as somebody else's write — announced as "Layout changed
+   * elsewhere" when nothing changed anywhere.
+   */
+  async function load(): Promise<LoadOutcome> {
     // Mid-interaction (rename/drag/menu): don't rebuild the list under the user.
-    if (holds > 0) return;
+    if (holds > 0) return "skipped";
+    const seq = ++loadSeq;
     let gotWhoami = whoami();
     if (!gotWhoami) {
       try {
         gotWhoami = await api.whoami();
         setWhoami(gotWhoami);
       } catch (e) {
+        if (seq < appliedSeq) return "failed";
+        appliedSeq = seq;
         setLoadError(e instanceof ApiError ? `Access denied (HTTP ${e.status})` : "Failed to load");
         setLoading(false);
-        return;
+        return "failed";
       }
     }
     const [sRes, lRes] = await Promise.allSettled([api.listSessions(), api.getLayout()]);
+    // The session list is the poll's payload and the layout degrades on its own
+    // (the sidebar still renders from live sessions), so /sessions is what says
+    // whether the network is carrying us — and it alone drives the backoff.
+    const outcome: LoadOutcome = sRes.status === "fulfilled" ? "ok" : "failed";
+    if (seq < appliedSeq) return outcome; // a newer answer already landed
+    appliedSeq = seq;
     if (sRes.status === "fulfilled") {
       trackStates(sRes.value);
       // Reconcile by name rather than replace: a re-parsed but unchanged
@@ -283,6 +326,68 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       setLayout(lRes.value);
     }
     setLoading(false);
+    return outcome;
+  }
+
+  async function refresh(): Promise<void> {
+    await load();
+  }
+
+  /** The wait before the next poll: the base interval doubled per consecutive
+   *  failure, capped at maxPollMs. */
+  function pollDelay(): number {
+    return Math.min(pollMs * 2 ** pollFailures, maxPollMs);
+  }
+
+  function scheduleNextPoll(outcome: LoadOutcome): void {
+    if (!polling) return; // disposed while this poll was still out
+    if (outcome === "ok") pollFailures = 0;
+    // Stop counting once the ladder has saturated: the delay is capped there
+    // anyway, and an overnight outage should not leave 2 ** <hours> behind.
+    else if (outcome === "failed" && pollDelay() < maxPollMs) pollFailures += 1;
+    // "skipped" is neither: a poll held off mid-drag says nothing about the
+    // network, so it leaves the ladder exactly where it was.
+    pollTimer = setTimeout(() => {
+      pollTimer = undefined;
+      void pollTick();
+    }, pollDelay());
+  }
+
+  /**
+   * One turn of the poll loop, which schedules the next turn off its own ANSWER
+   * rather than off a fixed interval. setInterval keeps firing into a network
+   * that has not answered the previous request yet, so a link slow enough to
+   * overrun 5s builds a queue of polls that all land together, out of order and
+   * on top of each other — the load the connection was already too weak to
+   * carry, multiplied.
+   */
+  async function pollTick(): Promise<void> {
+    if (pollInFlight) return; // a wake landed on top of a running poll
+    pollInFlight = true;
+    let outcome: LoadOutcome = "failed";
+    try {
+      outcome = await load();
+    } finally {
+      pollInFlight = false;
+      // In the finally so an unexpected throw costs one poll, not the loop.
+      scheduleNextPoll(outcome);
+    }
+  }
+
+  /**
+   * Network back, or the tab in front of the user again — the two moments a
+   * phone most wants to catch up. Poll now instead of sitting out a delay the
+   * ladder earned while the network was down, and put the ladder back at the
+   * base: whatever the backoff was measuring is over.
+   */
+  function wake(): void {
+    if (!polling) return;
+    pollFailures = 0;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = undefined;
+    }
+    void pollTick();
   }
 
   function applyLocalLayout(next: Layout): void {
@@ -487,24 +592,35 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
 
   const onVisible = () => {
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
-      void refresh();
+      wake();
     }
   };
+  const onOnline = () => wake();
 
   function dispose(): void {
-    if (pollTimer) clearInterval(pollTimer);
+    // Before clearing the timer: a poll still out there schedules the next turn
+    // when it answers, and would otherwise restart the loop on a dead store.
+    polling = false;
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = undefined;
     if (toastTimer) clearTimeout(toastTimer);
     for (const t of burstTimers) clearTimeout(t);
     if (typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", onVisible);
     }
+    if (typeof window !== "undefined") {
+      window.removeEventListener("online", onOnline);
+    }
   }
 
   if (opts.autoStart !== false) {
-    void refresh();
-    pollTimer = setInterval(() => void refresh(), pollMs);
+    polling = true;
+    void pollTick();
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", onVisible);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", onOnline);
     }
   }
 
