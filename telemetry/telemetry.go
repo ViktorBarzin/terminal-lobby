@@ -56,10 +56,19 @@ type LogWriter struct{}
 func (LogWriter) Write(line string) { log.Print(line) }
 
 // Emitter stamps events with the resource fields of one service.
+//
+// marker, known and limit are what separate the two channels this module
+// carries: usage events (Marker, the ADR-0006 catalog) and diagnostics
+// (DiagMarker, the ADR-0008 catalog, with a larger allowance for stack
+// traces). Everything else — escaping, bounding, the record shape — is shared,
+// because both channels land in the same journal under the same constraints.
 type Emitter struct {
 	service string
 	version string
 	out     Writer
+	marker  string
+	known   func(string) bool
+	limit   func(key string) int
 }
 
 // New builds an Emitter for a service. version is the deployed build id, so a
@@ -68,7 +77,12 @@ func New(service, version string, out Writer) *Emitter {
 	if out == nil {
 		out = LogWriter{}
 	}
-	return &Emitter{service: service, version: version, out: out}
+	return &Emitter{
+		service: service, version: version, out: out,
+		marker: Marker,
+		known:  IsKnown,
+		limit:  func(string) int { return MaxValueLen },
+	}
 }
 
 // Emit records one event for one OS user. It is deliberately forgiving: a nil
@@ -76,7 +90,7 @@ func New(service, version string, out Writer) *Emitter {
 // neutered rather than failing the request that triggered it — telemetry is
 // never worth breaking the app over.
 func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
-	if e == nil || !IsKnown(name) {
+	if e == nil || !e.known(name) {
 		return
 	}
 	rec := struct {
@@ -92,20 +106,25 @@ func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
 		Service: e.service,
 		Version: e.version,
 		User:    osUser,
-		Attrs:   bound(attrs),
+		Attrs:   e.bound(attrs),
 	}
 	// Marshal (not Encode): one line, every control character escaped.
 	payload, err := json.Marshal(rec)
 	if err != nil {
 		return
 	}
-	e.out.Write(Marker + " " + string(payload))
+	e.out.Write(e.marker + " " + string(payload))
 }
 
 // bound truncates oversized strings and caps the attribute count, choosing
 // which keys survive deterministically so the same call site always logs the
-// same shape.
-func bound(attrs Attrs) Attrs {
+// same shape. The per-key length comes from the emitter, because diagnostics
+// allow tl.stack more room than any usage attribute gets.
+//
+// TraceKey is re-bounded here rather than trusted from the caller: it is the
+// one array the record shape permits, and the byte cap is what keeps a shared
+// 30-day store safe from a call site that forgets.
+func (e *Emitter) bound(attrs Attrs) Attrs {
 	if len(attrs) == 0 {
 		return nil
 	}
@@ -119,9 +138,17 @@ func bound(attrs Attrs) Attrs {
 	}
 	out := make(Attrs, len(keys))
 	for _, k := range keys {
-		if s, ok := attrs[k].(string); ok && len(s) > MaxValueLen {
-			out[k] = s[:MaxValueLen]
+		if k == TraceKey {
+			if t := BoundTrace(attrs[k]); t != nil {
+				out[k] = t
+			}
 			continue
+		}
+		if s, ok := attrs[k].(string); ok {
+			if max := e.limit(k); len(s) > max {
+				out[k] = s[:max]
+				continue
+			}
 		}
 		out[k] = attrs[k]
 	}
