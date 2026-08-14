@@ -18,6 +18,10 @@ var (
 	// Same intake, same auth, same identity resolution — a distinct marker and
 	// catalog so the two can be queried and budgeted apart.
 	diagEvents = telemetry.NewDiag("tmux-api", buildID, nil)
+	// timing measures how long this service's own handlers take, so a
+	// client-observed latency can be split into network and server. The client
+	// stamps X-TL-Req and the middleware echoes it back to join the two.
+	timing = telemetry.NewTiming(diagEvents, telemetry.TimingOpts{})
 )
 
 // The browser intake. The lobby pages cannot write to the journal themselves,

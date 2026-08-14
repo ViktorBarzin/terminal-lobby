@@ -259,7 +259,8 @@ func main() {
 		addr = a
 	}
 	log.Printf("tmux-api listening on %s (self=%s)", addr, selfUser)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	go timing.Run(nil)
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(http.DefaultServeMux)))
 }
 
 // /whoami → {authentik, osUser}. Used by the lobby HTML to render the
