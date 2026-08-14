@@ -71,7 +71,6 @@ func main() {
 	}
 
 	http.HandleFunc("/upload", handleUpload)
-	http.HandleFunc("/telemetry", handleTelemetry)
 	http.HandleFunc("/register", handleRegister)
 	http.HandleFunc("/list", handleList)
 	http.HandleFunc("/img/", handleImage)
@@ -826,49 +825,3 @@ func writePath(w http.ResponseWriter, path string) {
 	json.NewEncoder(w).Encode(map[string]string{"path": path})
 }
 
-// handleTelemetry ingests selection-diagnostics events from the terminal
-// page (default-on; ?seldebug=0 opts a tab out). Events are appended as
-// JSONL under _telemetry/<osUser>.jsonl for on-host analysis — this is
-// what lets a selection bug on a user's physical trackpad be diagnosed
-// from the devvm. Body is capped and the file size-guarded.
-func handleTelemetry(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	osUser := resolveOSUser(w, r)
-	if osUser == "" {
-		return
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
-	if err != nil || len(body) == 0 {
-		http.Error(w, "empty body", http.StatusBadRequest)
-		return
-	}
-	if !json.Valid(body) {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-	dir := filepath.Join(storeRoot, "_telemetry")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		http.Error(w, "store unavailable", http.StatusInternalServerError)
-		return
-	}
-	path := filepath.Join(dir, osUser+".jsonl")
-	if st, err := os.Stat(path); err == nil && st.Size() > 50*1024*1024 {
-		os.Rename(path, path+".1") // simple single-slot rotation
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		http.Error(w, "store unavailable", http.StatusInternalServerError)
-		return
-	}
-	defer f.Close()
-	line, _ := json.Marshal(map[string]any{
-		"at":   time.Now().UTC().Format(time.RFC3339Nano),
-		"user": osUser,
-		"ev":   json.RawMessage(body),
-	})
-	f.Write(append(line, '\n'))
-	w.WriteHeader(http.StatusNoContent)
-}
