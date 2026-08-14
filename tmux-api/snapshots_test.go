@@ -273,14 +273,28 @@ func TestSnapshotsEncodesJSON(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200 (%q)", rec.Code, rec.Body.String())
 	}
-	var got []Snapshot
+	var got SnapshotList
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("response is not JSON: %v (%q)", err, rec.Body.String())
 	}
-	if len(got) != 1 || got[0].TS != "20260814T125000" || got[0].Count != 18 {
+	if len(got.Snapshots) != 1 || got.Snapshots[0].TS != "20260814T125000" || got.Snapshots[0].Count != 18 {
 		t.Fatalf("unexpected payload: %+v", got)
+	}
+	if got.PerSessionMB != perSessionMB {
+		t.Fatalf("per-session estimate: got %d, want %d", got.PerSessionMB, perSessionMB)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("the list must not be cached by the browser, or the picker goes stale")
+	}
+}
+
+// The warning must stay silent rather than guess when the number is unknown.
+func TestMemAvailableIsRealOrUnknown(t *testing.T) {
+	got := memAvailableMB()
+	if got == 0 {
+		t.Fatalf("memAvailableMB returned 0; unknown must be -1 so the UI can stay quiet")
+	}
+	if got < -1 {
+		t.Fatalf("memAvailableMB returned %d", got)
 	}
 }
