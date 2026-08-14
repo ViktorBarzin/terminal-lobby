@@ -99,7 +99,8 @@ func main() {
 	root.HandleFunc("POST /hooks/session-start", localhostOnly(rg.handleSessionStart()))
 	root.Handle("/", authMiddleware(*mapPath, web))
 
-	srv := &http.Server{Addr: *addr, Handler: root}
+	go timing.Run(ctx.Done())
+	srv := &http.Server{Addr: *addr, Handler: timing.Wrap(root)}
 	go func() {
 		<-ctx.Done()
 		sh, cancel := context.WithTimeout(context.Background(), 3*time.Second)

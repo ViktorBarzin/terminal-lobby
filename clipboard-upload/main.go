@@ -90,7 +90,8 @@ func main() {
 	log.Printf("Clipboard upload service listening on %s (store=%s files=%s assets=%s)", addr, storeRoot, fileDir, assetDir())
 	// The public-asset dispatcher rides ahead of the mux (see
 	// withPublicAssets); every existing route falls through untouched.
-	log.Fatal(http.ListenAndServe(addr, withPublicAssets(http.DefaultServeMux)))
+	go timing.Run(nil)
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(withPublicAssets(http.DefaultServeMux))))
 }
 
 // --- Static assets served by exact path --------------------------------------

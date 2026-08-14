@@ -35,5 +35,6 @@ func main() {
 		addr = a
 	}
 	log.Printf("file-api listening on %s (homeBase=%s)", addr, homeBase)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	go timing.Run(nil)
+	log.Fatal(http.ListenAndServe(addr, timing.Wrap(http.DefaultServeMux)))
 }
