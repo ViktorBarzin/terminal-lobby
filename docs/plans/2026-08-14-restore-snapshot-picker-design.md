@@ -1,6 +1,6 @@
 # Restore snapshot picker — design
 
-**Status:** approved, not yet implemented
+**Status:** done — landed and deployed 2026-08-14
 **Date:** 2026-08-14
 **Author:** Viktor (decisions) + Claude (research, drafting)
 **Repos touched:** `infra` (`scripts/tmux-persist.sh`), `terminal-lobby` (`tmux-api`, both frontends)
@@ -135,6 +135,31 @@ contained 28 distinct session-sets — a 10% change rate. Writing per tick would
 about 90% duplicates, and the picker list would be mostly identical rows. At ~10
 changes/day, 200 snapshots is roughly three weeks of history at about 250 KB per
 user.
+
+### As built
+
+All eleven decisions shipped as designed. Landed in `infra` (`56a1dc17`,
+`2dc0623e`) and `terminal-lobby` (`c72fab4`, `363e114`, `c09c0e0`, `b8bcea5`),
+deployed the same day.
+
+Three things the design did not anticipate, all found while building:
+
+- **The existing manifests needed migrating.** A deployed box already had a flat
+  `<user>.tsv`, and until the first post-deploy save the series would have been
+  empty — a reboot in that window would have had nothing to restore. The first
+  read or save now converts it into the first snapshot, stamped with the file's
+  mtime.
+- **`users()` emitted the map's comment lines as usernames.** Harmless while
+  every consumer re-checked `id -u`, but those values now reach path-building
+  code, so the parser skips comments and validates the charset.
+- **Empty fields collapse under tab-IFS.** Snapshot rows write `-` rather than an
+  empty field, since `read` treats tab as whitespace and an empty column would
+  shift every one after it.
+
+Verified in production against the live devvm: the three users' manifests
+migrated, a throwaway session was captured, killed out of band, restored through
+the picker's own endpoint, then killed through the API and correctly offered
+unticked with the time of the kill while a blanket restore left it alone.
 
 ---
 
