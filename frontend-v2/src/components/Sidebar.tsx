@@ -16,6 +16,7 @@ import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
 import { CreateSessionRow } from "./CreateSessionRow";
 import { badgeLabel, flatSessionOrder } from "../keybindings/navigation.logic";
+import { RestorePicker } from "./RestorePicker";
 
 /**
  * The lobby sidebar (inventory Cat.2/3): identity + new-session row, the ordered
@@ -33,6 +34,15 @@ export const Sidebar: Component<{
   confirm?: (message: string) => boolean;
 }> = (props) => {
   const store = props.store;
+
+  // Restore picker overlay (2026-08-14). The footer button opens it rather than
+  // restoring immediately: after a partial loss the newest snapshot is the
+  // already-pruned one, so which version to restore from is a choice.
+  const [restoreOpen, setRestoreOpen] = createSignal(false);
+  const home = (): string => {
+    const u = store.whoami()?.osUser;
+    return u ? `/home/${u}` : "";
+  };
 
   // Alt-hold numbered chips: name -> "1".."9","0" for the first ten sidebar
   // cards, in the same flat paint order Alt+1..0 attaches. Empty while Alt is
@@ -179,11 +189,27 @@ export const Sidebar: Component<{
           <button class="tl-foot-btn" onClick={beginProject}>
             + Project
           </button>
-          <button class="tl-foot-btn" onClick={() => void store.restore()} title="Recreate saved-but-dead sessions">
+          <button
+            class="tl-foot-btn"
+            onClick={() => setRestoreOpen(true)}
+            title="Pick a saved snapshot and choose which sessions to bring back"
+          >
             Restore
           </button>
         </Show>
       </div>
+
+      <Show when={restoreOpen()}>
+        <RestorePicker
+          api={{
+            listSnapshots: () => store.listSnapshots(),
+            getSnapshot: (ts) => store.getSnapshot(ts),
+            restoreSessions: (sel) => store.restore(sel),
+          }}
+          home={home()}
+          onClose={() => setRestoreOpen(false)}
+        />
+      </Show>
     </div>
   );
 };
