@@ -1947,6 +1947,48 @@
         .pd-btn.pd-primary { border-color: var(--accent); color: var(--accent); }
         .pd-btn:disabled { opacity: 0.5; cursor: default; }
 
+        /* Restore picker (2026-08-14). Reuses the pd-* modal shell; these are
+           the two lists it adds — snapshot versions, then the sessions inside
+           the chosen one. Wider than pd-modal: rows carry a name AND a path. */
+        .rp-modal { width: 560px; }
+        .rp-head {
+            display: grid; grid-template-columns: 1fr auto auto; gap: 10px;
+            padding: 0 8px 4px; font-size: 11px; color: var(--text-muted);
+        }
+        .rp-snaps { max-height: 180px; }
+        .rp-snap {
+            display: grid; grid-template-columns: 1fr auto auto; gap: 10px;
+            align-items: baseline; width: 100%;
+        }
+        .rp-snap .rp-delta { font-variant-numeric: tabular-nums; }
+        .rp-snap .rp-delta.up { color: var(--accent); }
+        .rp-badge {
+            padding: 0 6px; border: 1px solid var(--border); border-radius: 999px;
+            font-size: 10px; color: var(--text-muted); white-space: nowrap;
+        }
+        .rp-rows { max-height: 260px; }
+        .rp-row { display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; }
+        .rp-row > input[type=checkbox] { margin: 3px 0 0; flex: 0 0 auto; }
+        .rp-row label { flex: 1 1 auto; min-width: 0; cursor: pointer; }
+        .rp-name { display: block; }
+        .rp-cwd {
+            display: block; font-size: 11px; color: var(--text-muted);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .rp-note { display: block; font-size: 11px; color: var(--text-muted); }
+        .rp-note.warn { color: var(--accent); }
+        .rp-row.is-live { opacity: 0.55; }
+        .rp-bulk { display: flex; gap: 8px; font-size: 11px; }
+        .rp-bulk button {
+            padding: 0; border: 0; background: transparent; color: var(--text-muted);
+            font: inherit; text-decoration: underline; cursor: pointer;
+        }
+        .rp-bulk button:hover { color: var(--text-primary); }
+        .rp-mem {
+            padding: 7px 9px; border-radius: calc(var(--radius) - 3px);
+            border: 1px solid var(--accent); font-size: 11px; line-height: 1.5;
+        }
+
         /* Shared multi-user projects & sessions (2026-07-17). */
         /* Owner badge on a foreign (shared-with-me) session card. */
         .shared-badge {
@@ -2675,7 +2717,7 @@
                 <button id="new-project-btn" class="new-project-btn" type="button"
                         title="Create an empty project folder to group sessions into">+ Project</button>
                 <button id="restore-btn" class="restore-btn" type="button"
-                        title="Recreate your saved sessions that aren't currently running (e.g. after an OOM), resuming each Claude conversation"><span data-icon="rotate-ccw" data-icon-px="15"></span> Restore saved sessions</button>
+                        title="Pick a saved snapshot and choose which sessions to bring back, resuming each Claude conversation"><span data-icon="rotate-ccw" data-icon-px="15"></span> Restore saved sessions</button>
                 <div class="settings-row">
                     <button type="button" id="settings-btn" aria-haspopup="true" aria-expanded="false"
                             title="Settings — theme, font size, line height, letter spacing, cursor, bold weight (prefs roam across your devices; theme stays per device)"><span data-icon="settings" data-icon-px="15"></span> Settings</button>
@@ -2972,6 +3014,7 @@ ${w.join(`
             if (document.visibilityState === 'hidden') tlFlushEventsSync();
         });
         const RESTORE_API  = '/api/sessions/restore';
+        const SNAPSHOTS_API = '/api/sessions/snapshots';
         const WHOAMI_API   = '/api/sessions/whoami';
         const LAYOUT_API   = '/api/sessions/layout';
         const DIRS_API     = '/api/sessions/dirs';
@@ -6635,28 +6678,282 @@ ${w.join(`
                 } catch (e) { /* best-effort */ }
             }
 
-            // Restore the current user's saved-but-dead sessions (tmux-persist
-            // manifest) on demand. Non-destructive: tmux-persist skips sessions
-            // that are already live, so this only recreates missing ones and
-            // resumes their Claude conversations. Useful after an OOM kills the
-            // tmux server without a reboot (the boot-only restore never fires).
-            async function restoreSessions(btn) {
+            // --- restore picker (2026-08-14) --------------------------------
+            // tmux-persist keeps a SERIES of snapshots, so restoring starts by
+            // choosing which version to restore from and seeing what that would
+            // do. The button used to POST /restore immediately, which recreated
+            // whatever the single live manifest happened to hold — and after a
+            // partial loss the 5-minute save had already rewritten that manifest
+            // with only the survivors.
+            //
+            // The picker opens on the NEWEST snapshot (predictable; no heuristic
+            // decides for you). The "vs live" column and the "last full" badge
+            // are what point at an older one.
+
+            function fmtSnapTime(ts) {                 // 20260814T125000 -> local time
+                const d = new Date(Date.UTC(
+                    +ts.slice(0, 4), +ts.slice(4, 6) - 1, +ts.slice(6, 8),
+                    +ts.slice(9, 11), +ts.slice(11, 13), +ts.slice(13, 15)));
+                if (isNaN(d)) return ts;
+                const today = new Date();
+                const sameDay = d.toDateString() === today.toDateString();
+                const hhmm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return sameDay ? hhmm : (d.toLocaleDateString([], { day: 'numeric', month: 'short' }) + ' ' + hhmm);
+            }
+
+            function fmtAgo(ts) {
+                const d = new Date(Date.UTC(
+                    +ts.slice(0, 4), +ts.slice(4, 6) - 1, +ts.slice(6, 8),
+                    +ts.slice(9, 11), +ts.slice(11, 13), +ts.slice(13, 15)));
+                const mins = Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
+                if (mins < 60) return mins + 'm ago';
+                const hrs = Math.round(mins / 60);
+                return hrs < 24 ? hrs + 'h ago' : Math.round(hrs / 24) + 'd ago';
+            }
+
+            // Home-relative path, so a row reads as a location rather than a
+            // wall of identical prefixes.
+            function shortCwd(cwd) {
+                if (!cwd) return '';
+                const home = whoami && whoami.osUser ? '/home/' + whoami.osUser : '';
+                return (home && cwd.startsWith(home)) ? '~' + cwd.slice(home.length) : cwd;
+            }
+
+            function restoreRowNote(row) {
+                if (row.state === 'live_same') return { text: 'already running', warn: false };
+                if (row.state === 'live_other_conv')
+                    return { text: 'name is taken by a different conversation — restores as ' + row.target, warn: true };
+                if (row.state === 'live_no_claude')
+                    return { text: 'still open, but Claude exited — resumes in place', warn: true };
+                if (row.killedAt) {
+                    const when = new Date(row.killedAt * 1000)
+                        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    return { text: 'you killed this at ' + when, warn: false };
+                }
+                return { text: '', warn: false };
+            }
+
+            async function openRestorePicker(btn) {
                 if (btn) btn.disabled = true;
+                let payload;
                 try {
-                    const resp = await fetch(RESTORE_API, { method: 'POST', credentials: 'same-origin' });
-                    if (resp.ok) {
-                        showToast('Restoring your saved sessions…', 'success', 3500);
-                        quickRefreshAfterCreate();
-                    } else if (resp.status === 401 || resp.status === 403) {
-                        showToast('Not authorized to restore', 'error', 4000);
-                    } else {
-                        showToast('Restore failed: HTTP ' + resp.status, 'error', 4000);
+                    const resp = await fetch(SNAPSHOTS_API, { credentials: 'same-origin' });
+                    if (resp.status === 401 || resp.status === 403) {
+                        showToast('Not authorized to restore', 'error', 4000); return;
                     }
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    payload = await resp.json();
                 } catch (err) {
-                    showToast('Restore error: ' + err.message, 'error', 4000);
+                    showToast('Could not load snapshots: ' + err.message, 'error', 4000);
+                    return;
                 } finally {
                     if (btn) btn.disabled = false;
                 }
+
+                const snaps = (payload && payload.snapshots) || [];
+                if (!snaps.length) {
+                    showToast('No session snapshots saved yet', 'error', 4000);
+                    return;
+                }
+
+                const backdrop = document.createElement('div');
+                backdrop.className = 'pd-backdrop';
+                const modal = document.createElement('div');
+                modal.className = 'pd-modal rp-modal';
+                backdrop.appendChild(modal);
+
+                const title = document.createElement('div');
+                title.className = 'pd-title';
+                title.textContent = 'Restore from snapshot';
+                modal.appendChild(title);
+
+                const head = document.createElement('div');
+                head.className = 'rp-head';
+                for (const t of ['SNAPSHOT', 'SESSIONS', 'VS LIVE']) {
+                    const c = document.createElement('span'); c.textContent = t; head.appendChild(c);
+                }
+                modal.appendChild(head);
+
+                const snapList = document.createElement('div');
+                snapList.className = 'pd-list rp-snaps';
+                modal.appendChild(snapList);
+
+                const bulk = document.createElement('div');
+                bulk.className = 'rp-bulk';
+                const allBtn = document.createElement('button'); allBtn.type = 'button'; allBtn.textContent = 'select all';
+                const noneBtn = document.createElement('button'); noneBtn.type = 'button'; noneBtn.textContent = 'select none';
+                bulk.appendChild(allBtn); bulk.appendChild(noneBtn);
+                modal.appendChild(bulk);
+
+                const rowList = document.createElement('div');
+                rowList.className = 'pd-list rp-rows';
+                modal.appendChild(rowList);
+
+                const memNote = document.createElement('div');
+                memNote.className = 'rp-mem';
+                memNote.hidden = true;
+                modal.appendChild(memNote);
+
+                const hint = document.createElement('div');
+                hint.className = 'pd-hint';
+                modal.appendChild(hint);
+
+                const footer = document.createElement('div');
+                footer.className = 'pd-footer';
+                const cancelBtn = document.createElement('button');
+                cancelBtn.className = 'pd-btn'; cancelBtn.type = 'button'; cancelBtn.textContent = 'Cancel';
+                const goBtn = document.createElement('button');
+                goBtn.className = 'pd-btn pd-primary'; goBtn.type = 'button';
+                footer.appendChild(cancelBtn); footer.appendChild(goBtn);
+                modal.appendChild(footer);
+
+                let selectedTS = snaps[0].ts;      // newest, per the design
+                let rows = [];
+                const checked = new Set();
+
+                function renderSnaps() {
+                    snapList.replaceChildren();
+                    for (const s of snaps) {
+                        const b = document.createElement('button');
+                        b.type = 'button';
+                        b.className = 'pd-row rp-snap' + (s.ts === selectedTS ? ' active' : '');
+                        const when = document.createElement('span');
+                        when.textContent = fmtSnapTime(s.ts) + (s.newest ? ' (' + fmtAgo(s.ts) + ')' : '');
+                        const count = document.createElement('span');
+                        count.textContent = s.count;
+                        const delta = document.createElement('span');
+                        delta.className = 'rp-delta' + (s.deltaVsLive > 0 ? ' up' : '');
+                        delta.textContent = s.deltaVsLive > 0 ? '+' + s.deltaVsLive : '—';
+                        b.appendChild(when); b.appendChild(count); b.appendChild(delta);
+                        if (s.lastFull) {
+                            const badge = document.createElement('span');
+                            badge.className = 'rp-badge'; badge.textContent = 'last full';
+                            when.appendChild(document.createTextNode(' '));
+                            when.appendChild(badge);
+                        }
+                        b.addEventListener('click', () => { selectedTS = s.ts; renderSnaps(); loadRows(); });
+                        snapList.appendChild(b);
+                    }
+                }
+
+                function renderRows() {
+                    rowList.replaceChildren();
+                    for (const row of rows) {
+                        const wrap = document.createElement('div');
+                        wrap.className = 'pd-row rp-row' + (row.action === 'skip' ? ' is-live' : '');
+                        const cb = document.createElement('input');
+                        cb.type = 'checkbox';
+                        cb.checked = checked.has(row.name);
+                        cb.disabled = row.action === 'skip';
+                        cb.id = 'rp-cb-' + row.name;
+                        cb.addEventListener('change', () => {
+                            if (cb.checked) checked.add(row.name); else checked.delete(row.name);
+                            renderFooter();
+                        });
+                        const lab = document.createElement('label');
+                        lab.htmlFor = cb.id;
+                        const nm = document.createElement('span'); nm.className = 'rp-name'; nm.textContent = row.name;
+                        const cw = document.createElement('span'); cw.className = 'rp-cwd'; cw.textContent = shortCwd(row.cwd);
+                        lab.appendChild(nm); lab.appendChild(cw);
+                        const note = restoreRowNote(row);
+                        if (note.text) {
+                            const nt = document.createElement('span');
+                            nt.className = 'rp-note' + (note.warn ? ' warn' : '');
+                            nt.textContent = note.text;
+                            lab.appendChild(nt);
+                        }
+                        wrap.appendChild(cb); wrap.appendChild(lab);
+                        rowList.appendChild(wrap);
+                    }
+                    renderFooter();
+                }
+
+                function renderFooter() {
+                    const n = checked.size;
+                    goBtn.textContent = n ? ('Restore ' + n + ' selected') : 'Restore';
+                    goBtn.disabled = n === 0;
+                    // Restoring fires everything at once by design; this only
+                    // says so when the box is already short on memory, which is
+                    // exactly when a recovery can re-trigger the OOM it follows.
+                    const avail = payload.memAvailableMb;
+                    const per = payload.perSessionMb || 550;
+                    if (n > 0 && avail > 0 && avail < 4096) {
+                        const needGb = ((n * per) / 1024).toFixed(1);
+                        memNote.hidden = false;
+                        memNote.textContent = (avail / 1024).toFixed(1) + ' GiB available; '
+                            + n + ' session' + (n === 1 ? '' : 's') + ' need about ' + needGb
+                            + ' GiB. They all start at once.';
+                    } else {
+                        memNote.hidden = true;
+                    }
+                }
+
+                async function loadRows() {
+                    rows = []; checked.clear();
+                    rowList.replaceChildren();
+                    hint.textContent = 'Loading…';
+                    renderFooter();
+                    try {
+                        const resp = await fetch(SNAPSHOTS_API + '/' + encodeURIComponent(selectedTS),
+                            { credentials: 'same-origin' });
+                        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                        rows = await resp.json();
+                    } catch (err) {
+                        hint.textContent = 'Could not load that snapshot: ' + err.message;
+                        return;
+                    }
+                    for (const r of rows) if (r.default) checked.add(r.name);
+                    const missing = rows.filter(r => r.action !== 'skip').length;
+                    hint.textContent = missing
+                        ? (missing + ' of ' + rows.length + ' not running')
+                        : 'Everything in this snapshot is already running';
+                    renderRows();
+                }
+
+                function close() {
+                    backdrop.remove(); document.removeEventListener('keydown', onKey); requestTerminalFocus();
+                }
+                function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+                cancelBtn.addEventListener('click', close);
+                backdrop.addEventListener('pointerdown', (e) => { if (e.target === backdrop) close(); });
+                document.addEventListener('keydown', onKey);
+
+                allBtn.addEventListener('click', () => {
+                    for (const r of rows) if (r.action !== 'skip') checked.add(r.name);
+                    renderRows();
+                });
+                noneBtn.addEventListener('click', () => { checked.clear(); renderRows(); });
+
+                goBtn.addEventListener('click', async () => {
+                    if (!checked.size) return;
+                    goBtn.disabled = true;
+                    try {
+                        const resp = await fetch(RESTORE_API, {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ snapshot: selectedTS, sessions: [...checked] })
+                        });
+                        if (resp.ok) {
+                            showToast('Restoring ' + checked.size + ' session'
+                                + (checked.size === 1 ? '' : 's') + '…', 'success', 3500);
+                            close();
+                            quickRefreshAfterCreate();
+                        } else if (resp.status === 401 || resp.status === 403) {
+                            showToast('Not authorized to restore', 'error', 4000);
+                        } else {
+                            showToast('Restore failed: HTTP ' + resp.status, 'error', 4000);
+                        }
+                    } catch (err) {
+                        showToast('Restore error: ' + err.message, 'error', 4000);
+                    } finally {
+                        goBtn.disabled = false;
+                    }
+                });
+
+                document.body.appendChild(backdrop);
+                renderSnaps();
+                loadRows();
             }
 
             // performRename: the network + bookkeeping half, shared by the
@@ -8518,7 +8815,7 @@ ${w.join(`
             newNameEl.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') newBtnEl.click();
             });
-            restoreBtnEl.addEventListener('click', () => restoreSessions(restoreBtnEl));
+            restoreBtnEl.addEventListener('click', () => openRestorePicker(restoreBtnEl));
             newProjectBtnEl.addEventListener('click', createProject);
 
             window.addEventListener('hashchange', () => {
