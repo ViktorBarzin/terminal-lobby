@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -72,6 +73,50 @@ func persistCmd(osUser string, args ...string) *exec.Cmd {
 	return exec.Command(sudoBinary, append([]string{"-n", restoreWrapper, osUser}, args...)...)
 }
 
+// SnapshotList is the GET /snapshots payload. MemAvailableMB rides along so the
+// picker can warn before a large restore without a second round trip: restoring
+// is unpaced by choice, and each restored session settles at roughly 530-560 MB
+// once its MCP servers are up, so the case worth flagging is recovering while
+// the box is still under memory pressure.
+type SnapshotList struct {
+	Snapshots []Snapshot `json:"snapshots"`
+	// MemAvailableMB is -1 when /proc/meminfo could not be read, which the UI
+	// treats as "say nothing" rather than "plenty of room".
+	MemAvailableMB int `json:"memAvailableMb"`
+	// PerSessionMB is the estimate behind the warning, so the copy the user
+	// reads and the number the server measured cannot drift apart.
+	PerSessionMB int `json:"perSessionMb"`
+}
+
+// perSessionMB is measured from the 2026-08-14 OOM dump: claude 305-334 MB,
+// workspace-mcp python 107-118 MB, context7 ~56 MB, plus ~57 MB.
+const perSessionMB = 550
+
+// memAvailableMB reads MemAvailable from /proc/meminfo. Returns -1 when it
+// cannot be read, so callers can distinguish "unknown" from "none left".
+func memAvailableMB() int {
+	raw, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return -1
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		rest, ok := strings.CutPrefix(line, "MemAvailable:")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return -1
+		}
+		kb, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return -1
+		}
+		return kb / 1024
+	}
+	return -1
+}
+
 // handleSnapshots (GET /snapshots) lists the caller's snapshot series, newest
 // first, annotated with how each compares to what is running now.
 func handleSnapshots(w http.ResponseWriter, r *http.Request) {
@@ -91,11 +136,15 @@ func handleSnapshots(w http.ResponseWriter, r *http.Request) {
 	}
 
 	liveCount := len(userSessions(osUser))
-	snaps := parseSnapshotList(string(out), liveCount)
+	body := SnapshotList{
+		Snapshots:      parseSnapshotList(string(out), liveCount),
+		MemAvailableMB: memAvailableMB(),
+		PerSessionMB:   perSessionMB,
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(snaps)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // parseSnapshotList turns the wrapper's TSV into the picker's list. Split out
