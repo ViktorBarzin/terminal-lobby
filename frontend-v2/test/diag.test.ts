@@ -66,7 +66,8 @@ function harness(over: Record<string, unknown> = {}, seed?: Map<string, string>)
     names: () => all().map((e) => e.name),
     last: (name: string) => {
       const hits = all().filter((e) => e.name === name);
-      return hits.length ? hits[hits.length - 1].attrs : undefined;
+      const latest = hits[hits.length - 1];
+      return latest ? latest.attrs : undefined;
     },
     at: (ms: number) => {
       clock = ms;
@@ -274,8 +275,7 @@ describe("the flight recorder", () => {
 
     const trace = h.last("diag.incident")!["tl.trace"] as { i: number }[];
     expect(trace).toHaveLength(30);
-    expect(trace[trace.length - 1].i).toBe(49); // newest survives
-    expect(trace[0].i).toBe(20);
+    expect(trace.map((e) => e.i)).toEqual(Array.from({ length: 30 }, (_, k) => k + 20));
   });
 
   it("stamps each ring entry with a relative time", () => {
@@ -286,7 +286,7 @@ describe("the flight recorder", () => {
     h.d.incident("stall", {});
 
     const trace = h.last("diag.incident")!["tl.trace"] as { t: number }[];
-    expect(trace[0].t).toBe(1000);
+    expect(trace.map((e) => e.t)).toEqual([1000]);
   });
 
   it("carries the trace on a dropped connection too", () => {
@@ -451,7 +451,7 @@ describe("never breaking the page", () => {
     h.at(120_000);
 
     expect(seen).toHaveLength(1);
-    expect(seen[0].events).toHaveLength(1); // the failed batch is gone, not replayed
+    expect(seen.map((b) => b.events.length)).toEqual([1]); // failed batch gone, not replayed
   });
 
   it("bounds the buffer when the transport never drains", () => {
@@ -512,9 +512,7 @@ describe("batch shape", () => {
     h.d.onKeydown();
     h.at(60_000);
 
-    expect(h.sent[0].kind).toBe("diag");
-    expect(h.sent[0].client).toBe("term");
-    expect(h.sent[0].build).toBe("abc1234");
+    expect(h.sent.map((b) => [b.kind, b.client, b.build])).toContainEqual(["diag", "term", "abc1234"]);
   });
 
   it("flushes what it has on close", () => {

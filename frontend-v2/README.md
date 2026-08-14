@@ -198,6 +198,7 @@ src/
     healer.logic.ts      PURE self-update kernel (ADR-0007)
     healer.ts            Its controller: poll own served bytes, TOP-owned reload
   telemetry/track.ts     Batched usage events → tmux-api /telemetry (ADR-0006)
+  telemetry/diag.ts      Typed seam onto the shared frontend/diag.js core (ADR-0008)
   theme/theme.css        The 9-theme CSS-var token layer (ported verbatim)
   theme/theme.ts         Live theme switch + xterm ITheme derivation
 public/                  sw.js (push-only — a fetch listener is FORBIDDEN),
