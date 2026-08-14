@@ -9,7 +9,10 @@ import {
   emptyLayout,
   type Layout,
   type LayoutProject,
+  type RestoreSelection,
   type Session,
+  type SnapshotList,
+  type SnapshotRow,
   type Whoami,
 } from "../types/lobby";
 
@@ -169,10 +172,36 @@ export async function renameSession(oldName: string, newName: string): Promise<v
 }
 
 /** POST /api/restore — recreate saved-but-dead sessions. Runs on the longer
- *  RESTORE_TIMEOUT_MS deadline: the server recreates the whole manifest. */
-export async function restoreSessions(): Promise<void> {
-  const res = await req("/restore", { method: "POST" }, RESTORE_TIMEOUT_MS);
+ *  RESTORE_TIMEOUT_MS deadline: the server recreates them one tmux command at
+ *  a time.
+ *
+ *  With no argument this is the blanket restore from the newest snapshot, as
+ *  before. With a selection it restores exactly those sessions from exactly
+ *  that snapshot — what the restore picker sends. */
+export async function restoreSessions(sel?: RestoreSelection): Promise<void> {
+  const init: RequestInit = sel
+    ? {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sel),
+      }
+    : { method: "POST" };
+  const res = await req("/restore", init, RESTORE_TIMEOUT_MS);
   if (!res.ok) throw new ApiError(res.status, `restore HTTP ${res.status}`);
+}
+
+/** GET /api/snapshots → the caller's snapshot series, newest first, annotated
+ *  against what is running now. */
+export async function listSnapshots(): Promise<SnapshotList> {
+  return json<SnapshotList>("/snapshots", { cache: "no-store" });
+}
+
+/** GET /api/snapshots/{ts} → one snapshot resolved against the live session
+ *  set: per row, what restoring it would do and whether it starts ticked.
+ *  Resolution is server-side so this and the vanilla lobby cannot drift. */
+export async function getSnapshot(ts: string): Promise<SnapshotRow[]> {
+  const rows = await json<SnapshotRow[]>(`/snapshots/${encodeURIComponent(ts)}`, { cache: "no-store" });
+  return Array.isArray(rows) ? rows : [];
 }
 
 /** GET /api/dirs → candidate directories for the project dir picker. */
@@ -198,7 +227,9 @@ export interface LobbyApi {
   putLayout(layout: Layout): Promise<void>;
   killSession(name: string): Promise<void>;
   renameSession(oldName: string, newName: string): Promise<void>;
-  restoreSessions(): Promise<void>;
+  restoreSessions(sel?: RestoreSelection): Promise<void>;
+  listSnapshots(): Promise<SnapshotList>;
+  getSnapshot(ts: string): Promise<SnapshotRow[]>;
   listDirs(): Promise<string[]>;
 }
 
@@ -210,5 +241,7 @@ export const lobbyApi: LobbyApi = {
   killSession,
   renameSession,
   restoreSessions,
+  listSnapshots,
+  getSnapshot,
   listDirs,
 };

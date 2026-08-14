@@ -20,7 +20,16 @@ import {
 } from "../components/lobby.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
-import { emptyLayout, NAME_RE, type Layout, type Session, type Whoami } from "../types/lobby";
+import {
+  emptyLayout,
+  NAME_RE,
+  type Layout,
+  type RestoreSelection,
+  type Session,
+  type SnapshotList,
+  type SnapshotRow,
+  type Whoami,
+} from "../types/lobby";
 import { track } from "../telemetry/track";
 
 export interface SelectedSession {
@@ -63,7 +72,9 @@ export interface LobbyStore {
   createProject(name: string, dir?: string): Promise<boolean>;
   renameProjectAction(oldName: string, newName: string): Promise<boolean>;
   deleteProjectAction(name: string): Promise<void>;
-  restore(): Promise<void>;
+  restore(sel?: RestoreSelection): Promise<void>;
+  listSnapshots(): Promise<SnapshotList>;
+  getSnapshot(ts: string): Promise<SnapshotRow[]>;
   dispose(): void;
 }
 
@@ -575,10 +586,20 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (await saveLayout(deleteProject(layout(), name))) collapse.remove(name);
   }
 
-  async function restore(): Promise<void> {
+  /**
+   * With no argument this is the blanket restore from the newest snapshot. With
+   * a selection it restores exactly those sessions from exactly that snapshot —
+   * what the restore picker sends.
+   */
+  async function restore(sel?: RestoreSelection): Promise<void> {
     try {
-      await api.restoreSessions();
-      showToast("Restoring saved sessions…", "info");
+      await api.restoreSessions(sel);
+      showToast(
+        sel
+          ? `Restoring ${sel.sessions.length} session${sel.sessions.length === 1 ? "" : "s"}…`
+          : "Restoring saved sessions…",
+        "info",
+      );
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         showToast("Not allowed to restore");
@@ -589,6 +610,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
     await refresh();
   }
+
+  const listSnapshots = (): Promise<SnapshotList> => api.listSnapshots();
+  const getSnapshot = (ts: string): Promise<SnapshotRow[]> => api.getSnapshot(ts);
 
   const onVisible = () => {
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
@@ -653,6 +677,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     renameProjectAction,
     deleteProjectAction,
     restore,
+    listSnapshots,
+    getSnapshot,
     dispose,
   };
 }
