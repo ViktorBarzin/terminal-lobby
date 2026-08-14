@@ -11251,7 +11251,7 @@ ${w.join(`
                     }).catch(() => {
                         showToast('Copy failed — clipboard unavailable', 'error', 3000);
                     });
-                    tel('link-copy', { len: u.length });
+                    ring({ k: 'lnk', len: u.length });
                     hideNow();
                 });
                 document.body.appendChild(el);
@@ -11575,38 +11575,24 @@ ${w.join(`
         // Opt-in diagnostics: add ?seldebug=1 to the session URL and every
         // selection clear announces its trigger in a toast + console.
         const selDebug = params.get('seldebug') === '1';
-        // ---- selection telemetry (DEFAULT ON; ?seldebug=0 opts this tab out).
-        // Ships selection lifecycle events + a ring buffer of raw INPUT
-        // events to /clipboard/telemetry (JSONL per user on the devvm), so a
-        // clear caused by a specific physical trackpad can be diagnosed
-        // server-side. Captures ONLY mouse/wheel geometry and the chord keys
-        // (Escape, mod+C/V) — never general typing.
-        const telemetryOn = params.get('seldebug') !== '0';
-        const evRing = [];
+        // ---- selection diagnostics -----------------------------------------
+        // A ring buffer of raw INPUT events plus a report when a selection
+        // clears unexpectedly, so a clear caused by a specific physical
+        // trackpad can be diagnosed from recorded data. Captures ONLY
+        // mouse/wheel geometry and the chord keys (Escape, mod+C/V) — never
+        // general typing.
+        //
+        // Both of these now ride the shared flight recorder (ADR-0008): the
+        // ring is diag.js's, and an anomaly reports through incident(), which
+        // attaches the preceding raw events itself. Same capability, one
+        // channel and one opt-out instead of two, and it reaches Grafana
+        // rather than a JSONL file that had to be read on the devvm.
         function ring(rec) {
-            rec.t = Math.round(performance.now());
-            evRing.push(rec);
-            if (evRing.length > 30) evRing.shift();
-        }
-        let telBatch = [], telTimer = null;
-        function flushTel() {
-            clearTimeout(telTimer); telTimer = null;
-            if (!telBatch.length) return;
-            const payload = JSON.stringify({ events: telBatch });
-            telBatch = [];
-            try {
-                navigator.sendBeacon('/clipboard/telemetry',
-                    new Blob([payload], { type: 'application/json' }));
-            } catch (e) {}
+            if (tlDiagnostics) tlDiagnostics.ring(rec);
         }
         function tel(type, data) {
-            if (!telemetryOn) return;
-            telBatch.push(Object.assign({ type: type, t: Math.round(performance.now()),
-                build: TL_BUILD, session: validArg, plat: navigator.platform }, data));
-            if (telBatch.length >= 6) flushTel();
-            else if (!telTimer) telTimer = setTimeout(flushTel, 3000);
+            if (tlDiagnostics) tlDiagnostics.incident(type, data || {});
         }
-        window.addEventListener('pagehide', flushTel);
         const modBits = e => (e.shiftKey?1:0)|(e.altKey?2:0)|(e.ctrlKey?4:0)|(e.metaKey?8:0);
         document.addEventListener('mousedown', (e) => ring({ k: 'md', x: e.clientX|0,
             y: e.clientY|0, b: e.buttons, d: e.detail, tr: e.isTrusted?1:0, m: modBits(e) }), true);
@@ -11632,7 +11618,7 @@ ${w.join(`
             if (!term.hasSelection()) return;
             selStash = null;                     // deliberate dismiss kills the fallback
             lastExplainedClear = { why: why, t: performance.now() };
-            tel('sel-cleared', { reason: why, ring: evRing.slice() });
+            tel('sel-cleared', { 'tl.reason': why });
             term.clearSelection();
             if (selDebug) {
                 console.log('[seldebug] cleared by:', why);
@@ -12050,11 +12036,11 @@ ${w.join(`
                 if (txt) selStash = { text: txt, t: performance.now() };
             }
             if (has && !telHadSelection) {
-                tel('sel-created', { len: term.getSelection().length });
+                ring({ k: 'sel+', len: term.getSelection().length });
             } else if (!has && telHadSelection) {
                 const dt = performance.now() - lastExplainedClear.t;
                 if (!(lastExplainedClear.why && dt < 200)) {
-                    tel('sel-cleared', { reason: 'UNEXPLAINED', ring: evRing.slice() });
+                    tel('sel-cleared', { 'tl.reason': 'UNEXPLAINED' });
                     if (selDebug) showToast('selection cleared: UNEXPLAINED [' + TL_BUILD + ']', 'error', 2500);
                 }
             }

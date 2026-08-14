@@ -247,7 +247,6 @@ func TestPublicAssetsFallthrough(t *testing.T) {
 		{http.MethodGet, "/list", true},
 		{http.MethodGet, "/img/sess/pic.png", true},
 		{http.MethodPost, "/register", true},
-		{http.MethodPost, "/telemetry", true},
 		{http.MethodGet, "/manifest.webmanifest", false},
 		{http.MethodGet, "/fonts/JetBrainsMono-Bold.woff2", false},
 		{http.MethodGet, "/sw.js", false},
