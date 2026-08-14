@@ -50,6 +50,12 @@ class FakeApi implements LobbyApi {
     throw new ApiError(404, "no");
   }
   async restoreSessions() {}
+  async listSnapshots() {
+    return { snapshots: [], memAvailableMb: -1, perSessionMb: 550 };
+  }
+  async getSnapshot() {
+    return [];
+  }
   async listDirs() {
     return [];
   }
