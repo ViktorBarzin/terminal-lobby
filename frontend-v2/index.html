@@ -19,6 +19,16 @@
          copies the head through verbatim, so the placeholder survives the build
          and the deploy script substitutes it. -->
     <meta name="tl-asset" content="__TL_ASSET__" />
+    <!-- Client diagnostics (docs/adr/0008-client-diagnostics.md). The same
+         frontend/diag.js the two vanilla surfaces inline, substituted by
+         deploy-v2.sh into the built page — one measurement core across all
+         three, so the quiet-gate state machine cannot drift between them. It
+         sits in <head> so its global error handlers and its fetch and
+         WebSocket wrappers are installed before the SPA boots. Defining
+         tlDiag has no side effects; src/telemetry/diag.ts calls bind(). -->
+    <script>
+      __TL_DIAG__
+    </script>
     <!-- PWA install metadata (inventory Cat.9). display:standalone lives in the
          manifest; these metas + icons make the lobby installable and give iOS its
          Home-Screen identity. status-bar-style='default' (opaque, app laid out

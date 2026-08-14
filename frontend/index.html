@@ -9,6 +9,14 @@
          served one to decide whether a real update exists — which is why a
          backend-only deploy (same frontend bytes, new git SHA) is silent. -->
     <meta name="tl-asset" content="__TL_ASSET__">
+    <!-- Client diagnostics (docs/adr/0008-client-diagnostics.md). The deploy
+         script substitutes frontend/diag.js here verbatim; the same file is
+         inlined into term.html and the v2 SPA, so there is one measurement
+         core rather than three that drift. It runs FIRST so its global error
+         handlers, fetch wrapper and WebSocket wrapper are in place before any
+         app code can fail or open a socket. Defining tlDiag has no side
+         effects — nothing measures until bind() is called below. -->
+    <script>__TL_DIAG__</script>
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <!-- 'default' (opaque status bar, app laid out BELOW it), not 'black-translucent':
@@ -2955,6 +2963,44 @@ ${w.join(`
         const TL_ASSET = '__TL_ASSET__';
         console.log('terminal-lobby build:', TL_BUILD);
         try { document.documentElement.dataset.tlBuild = TL_BUILD; } catch (e) {}
+
+        // --- client diagnostics (docs/adr/0008-client-diagnostics.md) --------
+        // Default ON, per-browser opt-out via the plain tl-diagnostics key (the
+        // same posture as tl-flow-control), plus ?diag=0 for a single tab.
+        // This file serves BOTH roles: ?arg= at the top level is a fullscreen
+        // terminal, anything else is the lobby — tl.role records which, so a
+        // terminal measurement is never mixed with a lobby one. A framed
+        // terminal reads its lobby's tab id directly (same origin), which is
+        // what joins an iframe's records to the page hosting it.
+        const DIAG_KILL_KEY = 'tl-diagnostics';
+        function diagnosticsWanted() {
+            try {
+                if (new URLSearchParams(location.search).get('diag') === '0') return false;
+                return localStorage.getItem(DIAG_KILL_KEY) !== 'off';
+            } catch (e) { return true; }
+        }
+        let tlDiagnostics = null;
+        try {
+            const diagParams = new URLSearchParams(location.search);
+            tlDiagnostics = tlDiag.bind({
+                url: '/api/sessions/telemetry',
+                client: 'lobby-vanilla',
+                role: diagParams.get('arg') ? 'terminal' : 'lobby',
+                session: diagParams.get('arg') || '',
+                parent: (function () {
+                    try {
+                        if (window.parent !== window && window.parent.tlDiagnostics) {
+                            return window.parent.tlDiagnostics.ids().tab;
+                        }
+                    } catch (e) {}
+                    return '';
+                })(),
+                build: TL_BUILD,
+                enabled: diagnosticsWanted(),
+            });
+            window.tlDiagnostics = tlDiagnostics;
+        } catch (e) { /* diagnostics must never cost the page its boot */ }
+
         // One event per tab boot — the denominator every other count is read
         // against. Emitted after tlTrack is defined below via a microtask so
         // the ordering does not depend on script layout.
@@ -9003,6 +9049,7 @@ ${w.join(`
                 settingsPanel.querySelector('#sp-ls-val').textContent = p.letterSpacing.toFixed(1) + 'px';
                 settingsPanel.querySelector('#sp-blink').checked = p.cursorBlink;
                 settingsPanel.querySelector('#sp-flow').checked = flowControlWanted();
+                settingsPanel.querySelector('#sp-diag').checked = diagnosticsWanted();
                 settingsPanel.querySelector('#sp-kb').checked = tlKb.enabled();
                 const lcp = settingsPanel.querySelector('#sp-linkchip');
                 if (lcp) lcp.checked = p.links.copyChip;       // hover-pointer row only ([links])
@@ -9297,6 +9344,25 @@ ${w.join(`
                     } catch (e) {}
                 });
                 flowRow.appendChild(flow);
+
+                // Client diagnostics (ADR-0008) — same posture as the
+                // flow-control switch: a plain per-browser key, never roamed.
+                // The toggle IS the disclosure: diagnostics are on by default
+                // and this is where anyone can see that and turn them off. A
+                // flip takes effect at the next page load, since the wrappers
+                // are installed at boot.
+                const diagRow = row('Send diagnostics');
+                const diagBox = document.createElement('input');
+                diagBox.type = 'checkbox';
+                diagBox.id = 'sp-diag';
+                diagBox.title = 'Performance and error data for this session — timings, failures and device info. Never terminal contents or what you type.';
+                diagBox.addEventListener('change', () => {
+                    try {
+                        if (diagBox.checked) localStorage.removeItem(DIAG_KILL_KEY);
+                        else localStorage.setItem(DIAG_KILL_KEY, 'off');
+                    } catch (e) {}
+                });
+                diagRow.appendChild(diagBox);
 
                 // Task 4.1: "App shortcuts" — the keybinding layer + command
                 // palette. Plain per-browser tl:keybindings:v1 key (never
