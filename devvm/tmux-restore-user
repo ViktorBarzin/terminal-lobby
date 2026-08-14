@@ -1,30 +1,73 @@
 #!/usr/bin/env bash
-# Restore ONE terminal user's saved tmux sessions — backs the web-UI
-# "Restore sessions" button (frontend/index.html -> tmux-api POST /restore).
+# The tmux-persist gateway for tmux-api — backs the web-UI restore picker
+# (frontend -> tmux-api -> here -> /usr/local/bin/tmux-persist).
 #
 # Invoked as ROOT by tmux-api (which runs as wizard) through the passwordless
 # grant in /etc/sudoers.d/ttyd-users:
 #     wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-restore-user
 #
-# Root is required because the real work is tmux-persist's single-user restore,
-# which reads the root-owned 0600 manifest (/var/lib/tmux-persist/<user>.tsv)
-# and `runuser`s into the target user to recreate sessions. The grant is safe
-# because this wrapper accepts exactly one argument and re-validates it against
-# /etc/ttyd-user-map before doing anything — it can only ever restore a real
-# terminal user's OWN saved sessions (idempotent: live sessions are skipped).
+# Root is required because the real work reads root-owned 0600 state under
+# /var/lib/tmux-persist and `runuser`s into the target user to recreate
+# sessions.
+#
+# Usage (the bare form predates the picker and still means "restore now"):
+#     tmux-restore-user <user>                       blanket restore
+#     tmux-restore-user <user> list                  snapshot series
+#     tmux-restore-user <user> show <ts>             one snapshot, resolved
+#     tmux-restore-user <user> select <ts> <name>... restore chosen rows
+#
+# TRUST MODEL — the sudo grant places no restriction on argv, so every
+# argument is validated here before it reaches tmux-persist:
+#   * the user is re-checked against /etc/ttyd-user-map, so this can only ever
+#     act on a real terminal user's OWN sessions;
+#   * the subcommand is matched against a fixed set, never passed through;
+#   * a snapshot id must be exactly YYYYMMDDTHHMMSS — no '/', no '..', so it
+#     cannot walk out of the snapshots directory;
+#   * session names must match tmux-api's own charset (alnum, '_' and '-',
+#     <=32), which admits no shell metacharacter.
+# Everything is passed as separate argv entries, never interpolated into a
+# shell string. Restores stay idempotent: live sessions are left alone.
 set -euo pipefail
 
 MAP=/etc/ttyd-user-map
 TMUX_PERSIST=/usr/local/bin/tmux-persist
 
-u="${1:-}"
-[[ "$u" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "tmux-restore-user: invalid user '$u'" >&2; exit 2; }
+die() { echo "tmux-restore-user: $*" >&2; exit 2; }
 
-# os_user = right-hand side of the map, minus any optional :cwd suffix
-# (mirrors tmux-api's loadUserMap parsing).
-if ! cut -d= -f2 "$MAP" | sed 's/:.*//' | grep -qxF "$u"; then
-  echo "tmux-restore-user: '$u' is not a terminal user (not in $MAP)" >&2
-  exit 2
+u="${1:-}"
+[[ "$u" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "invalid user '$u'"
+
+# os_user = right-hand side of the map, minus any optional :cwd suffix, and
+# never a comment line (mirrors tmux-api's loadUserMap and tmux-persist's own
+# parsing).
+if ! sed -e 's/#.*//' "$MAP" | cut -d= -f2- | sed -e 's/:.*//' -e 's/[[:space:]]//g' \
+     | grep -qxF "$u"; then
+  die "'$u' is not a terminal user (not in $MAP)"
 fi
 
-exec "$TMUX_PERSIST" restore "$u"
+valid_ts() { [[ "$1" =~ ^[0-9]{8}T[0-9]{6}$ ]]; }
+valid_name() { [[ "$1" =~ ^[a-zA-Z0-9_-]{1,32}$ ]]; }
+
+action="${2:-restore}"
+case "$action" in
+  restore)
+    exec "$TMUX_PERSIST" restore "$u"
+    ;;
+  list)
+    exec "$TMUX_PERSIST" snapshots "$u"
+    ;;
+  show)
+    ts="${3:-}"; valid_ts "$ts" || die "invalid snapshot id '$ts'"
+    exec "$TMUX_PERSIST" snapshot "$u" "$ts"
+    ;;
+  select)
+    ts="${3:-}"; valid_ts "$ts" || die "invalid snapshot id '$ts'"
+    shift 3
+    (( $# )) || die "select needs at least one session name"
+    for n in "$@"; do valid_name "$n" || die "invalid session name '$n'"; done
+    exec "$TMUX_PERSIST" restore-selection "$u" "$ts" "$@"
+    ;;
+  *)
+    die "unknown action '$action'"
+    ;;
+esac
