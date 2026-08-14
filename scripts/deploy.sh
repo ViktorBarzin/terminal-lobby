@@ -64,6 +64,24 @@ mkdir -p out
 # change, so no open tab would ever self-update to a fixed diag.js: ADR-0007's
 # failure mode inverted. `r` reads the file verbatim, so diag.js needs no
 # escaping of &, \ or / the way a sed replacement string would.
+# diag.js must land INSIDE a script block. sed's `d` deletes the whole matched
+# line, so a placeholder sharing its line with the tags takes them with it and
+# the core ships as inert text — present, greppable, never executed. Assert the
+# core is genuinely inside an open script element.
+assert_diag_executable() {
+  awk '
+    /<script/  { inscript = 1 }
+    /<\/script>/ { inscript = 0 }
+    /globalThis\.tlDiag = \(function/ {
+      found = 1
+      if (!inscript) { print "diag.js is not inside a <script> block"; exit 1 }
+    }
+    END { if (!found) { print "diag.js core not found in the page"; exit 1 } }
+  ' "$1" || {
+    echo "deploy: $1 would ship diagnostics that never run" >&2
+    exit 1
+  }
+}
 # diag.js is inlined into a classic script block, which the HTML tokenizer ends
 # at the first `</script`. A literal script tag anywhere in the file — even in a
 # comment — would truncate the page mid-JavaScript, so refuse to ship one.
@@ -76,6 +94,7 @@ if grep -q '__TL_DIAG__' out/index.pre; then
   echo "deploy.sh: __TL_DIAG__ placeholder survived — diagnostics would be dead" >&2
   exit 1
 fi
+assert_diag_executable out/index.pre
 ASSET=$(sha256sum out/index.pre | cut -c1-12)
 sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${ASSET}/g" out/index.pre > out/index.html
 rm -f out/index.pre
