@@ -55,9 +55,30 @@ echo "==> Stamping frontend build id + asset fingerprint..."
 #     than a git object also catches a deploy of uncommitted frontend edits,
 #     which deploy.sh has always supported (it seds the working tree, not HEAD).
 REV=$(git -C "$ROOT" rev-parse --short HEAD)
-ASSET=$(sha256sum frontend/index.html | cut -c1-12)
 mkdir -p out
-sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${ASSET}/g" frontend/index.html > out/index.html
+# The shared diagnostics core (frontend/diag.js, ADR-0008) is inlined FIRST, and
+# the asset id is computed AFTER that but BEFORE the two stamps. That ordering
+# is what keeps ADR-0007's rule literally true — the id is a fingerprint of the
+# page's own unstamped content — now that part of the page comes from another
+# file. Hashing index.html alone would leave the id unmoved by a diagnostics
+# change, so no open tab would ever self-update to a fixed diag.js: ADR-0007's
+# failure mode inverted. `r` reads the file verbatim, so diag.js needs no
+# escaping of &, \ or / the way a sed replacement string would.
+# diag.js is inlined into a classic script block, which the HTML tokenizer ends
+# at the first `</script`. A literal script tag anywhere in the file — even in a
+# comment — would truncate the page mid-JavaScript, so refuse to ship one.
+if grep -qi '</script\|<script' frontend/diag.js; then
+  echo "deploy: frontend/diag.js contains a literal script tag; inlining it would truncate the page" >&2
+  exit 1
+fi
+sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' frontend/index.html > out/index.pre
+if grep -q '__TL_DIAG__' out/index.pre; then
+  echo "deploy.sh: __TL_DIAG__ placeholder survived — diagnostics would be dead" >&2
+  exit 1
+fi
+ASSET=$(sha256sum out/index.pre | cut -c1-12)
+sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${ASSET}/g" out/index.pre > out/index.html
+rm -f out/index.pre
 # A surviving placeholder means the page ships without an identity: detection
 # reads it as "no information" and the app would never self-update again. Fail
 # the deploy instead of shipping a silently un-updatable page.

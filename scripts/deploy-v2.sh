@@ -75,10 +75,28 @@ echo "==> Stamping build id + asset fingerprint..."
 # update identity (a fingerprint of the built frontend's own content), so a
 # backend-only deploy ships an identical id and no client updates.
 REV=$(git -C "$ROOT" rev-parse --short HEAD)
-ASSET=$(sha256sum frontend-v2/dist/index.html | cut -c1-12)
 mkdir -p out
+# The shared diagnostics core (frontend/diag.js, ADR-0008) is inlined FIRST and
+# the asset id computed AFTER it but BEFORE the stamps, exactly as deploy.sh
+# does. The id must move when diag.js moves, or no open tab would self-update to
+# a fixed diagnostics build — ADR-0007's failure mode inverted.
+# diag.js is inlined into a classic script block, which the HTML tokenizer ends
+# at the first `</script`. A literal script tag anywhere in the file — even in a
+# comment — would truncate the page mid-JavaScript, so refuse to ship one.
+if grep -qi '</script\|<script' frontend/diag.js; then
+  echo "deploy: frontend/diag.js contains a literal script tag; inlining it would truncate the page" >&2
+  exit 1
+fi
+sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' \
+    frontend-v2/dist/index.html > out/index-v2.pre
+if grep -q '__TL_DIAG__' out/index-v2.pre; then
+  echo "deploy-v2.sh: __TL_DIAG__ survived in the SPA — diagnostics would be dead" >&2
+  exit 1
+fi
+ASSET=$(sha256sum out/index-v2.pre | cut -c1-12)
 sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${ASSET}/g" \
-    frontend-v2/dist/index.html > out/index-v2.html
+    out/index-v2.pre > out/index-v2.html
+rm -f out/index-v2.pre
 # The meta tag is the one leg that depends on the build tool: if vite ever stops
 # copying the head through verbatim, fail the deploy rather than ship a page
 # that can never self-update.
@@ -102,9 +120,16 @@ echo "    build=${REV} asset=${ASSET}"
 # containing `__TL_` — "no information", never "a new build". An unstamped
 # term.html is a terminal page that can never notice a deploy. Its id is its
 # own, not the SPA's: the two files change independently.
-TERM_ASSET=$(sha256sum frontend-v2/dist/term.html | cut -c1-12)
+sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' \
+    frontend-v2/dist/term.html > out/term.pre
+if grep -q '__TL_DIAG__' out/term.pre; then
+  echo "deploy-v2.sh: __TL_DIAG__ survived in term.html — diagnostics would be dead" >&2
+  exit 1
+fi
+TERM_ASSET=$(sha256sum out/term.pre | cut -c1-12)
 sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${TERM_ASSET}/g" \
-    frontend-v2/dist/term.html > out/term.html
+    out/term.pre > out/term.html
+rm -f out/term.pre
 grep -q '<meta name="tl-asset" content="'"${TERM_ASSET}"'"' out/term.html || {
   echo "deploy-v2.sh: tl-asset meta missing from term.html — self-update would be dead" >&2
   exit 1
