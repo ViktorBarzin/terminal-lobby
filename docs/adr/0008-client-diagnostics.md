@@ -273,6 +273,21 @@ Wiring `diag.js` into `term.html` also supplies the `tlTrack` that its
 self-update paths already call, closing the dangling reference at `:4737` and
 `:4743`.
 
+> [!WARNING]
+> **The placeholder needs its own line.** `sed`'s `d` deletes the whole matched
+> line, so a `<script>__TL_DIAG__</script>` written on one line loses both tags
+> and the core ships as inert text in `<head>` — present, greppable, and never
+> executed. The first deploy of this ADR did exactly that on both vanilla
+> surfaces; the v2 SPA was unaffected because its placeholder was already on
+> its own line.
+>
+> It passed every check that was being run: the core was in the page, no
+> placeholder survived, and every inline script parsed — because text outside a
+> script block is not a script for a parser to check. **Presence is not
+> evidence of execution.** Both deploy scripts now assert the core sits inside
+> an open script element, and the boot path is exercised by driving `bind()`
+> against the real served page under jsdom.
+
 ## Splitting network from server
 
 The client stamps `X-TL-Req: <tab>-<n>` on API calls. A shared middleware across
