@@ -328,6 +328,41 @@ This is a change from ADR-0006, which recorded usage with no in-app surface.
 Diagnostics collect more — stack traces, a persistent device id, hardware
 and network characteristics — from both users, so the control is visible.
 
+## Querying
+
+A journal line carries a prefix before the marker and the record's field names
+contain literal dots, so every query strips the prefix and addresses fields
+with bracket notation. ADR-0006 has the full explanation; the short version is
+that `| json` on a raw line raises `JSONParserErr`, and a dotted path walks
+nested objects that do not exist.
+
+```logql
+# echo latency p95 over time, per device
+max by (device) (max_over_time({job="devvm-journal"} |= "TLDIAG"
+  | line_format `{{ regexReplaceAll "^.*?TLDIAG " __line__ "" }}`
+  | json name="[\"event.name\"]", device="attrs[\"tl.device\"]",
+         v="attrs[\"tl.echo.p95\"]"
+  | name = "perf.rollup" | unwrap v | __error__ = "" [$__interval]))
+
+# what one tab did, in order, before it went wrong
+{job="devvm-journal"} |= "TLDIAG"
+  | line_format `{{ regexReplaceAll "^.*?TLDIAG " __line__ "" }}`
+  | json tab="attrs[\"tl.tab\"]" | tab = "f3a91c02"
+
+# exceptions, most frequent first
+sum by (msg, src) (count_over_time({job="devvm-journal"} |= "TLDIAG"
+  | line_format `{{ regexReplaceAll "^.*?TLDIAG " __line__ "" }}`
+  | json name="[\"event.name\"]", msg="attrs[\"tl.msg\"]", src="attrs[\"tl.src\"]"
+  | name = "app.exception" [$__range]))
+
+# one slow call, client-side and server-side
+{job="devvm-journal"} |= "TLDIAG" |= "f3a91c02-17"
+```
+
+The **Terminal Lobby Usage** dashboard renders these as four rows — Latency,
+Connections, Failures and Load — collapsed by default, so the usage view is
+unchanged until a health question comes up.
+
 ## Consequences
 
 - Adding a diagnostics record means editing the Go catalog, `diag.js`, and the
@@ -343,6 +378,11 @@ and network characteristics — from both users, so the control is visible.
   `infra/stacks/monitoring/` today.
 - Retiring the JSONL channel removes on-host raw traces. The ring buffer
   replaces the capability, bounded at 30 entries rather than unbounded on disk.
+- Building this surfaced that ADR-0006's queries and every panel on the
+  existing dashboard were returning parser errors rather than data, for the two
+  reasons under Querying. They are corrected in the same change, since the
+  health rows land in that dashboard and shipping working panels beside broken
+  ones would be worse than either.
 
 ## Open questions
 

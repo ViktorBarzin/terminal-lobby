@@ -124,23 +124,42 @@ tab rides `sendBeacon` on `pagehide`.
 
 ## Querying
 
+Two things have to be right for any of these to return rows. Both were
+corrected on 2026-08-14, after the queries as first written were found to
+return nothing:
+
+- **A journal line is not JSON.** Go's `log` package stamps a date and time
+  ahead of the marker, so `| json` on the raw line raises `JSONParserErr`.
+  Lines from the attach script arrive through `logger` with no prefix at all,
+  so the strip has to tolerate both — hence `regexReplaceAll` rather than a
+  fixed `pattern`.
+- **The field names contain literal dots.** `event.name`, `user.id` and every
+  `tl.*` attribute are single keys, not paths. The dotted form walks nested
+  objects that do not exist and yields empty strings, so they need bracket
+  notation.
+
 ```logql
-# every usage event
-{job="devvm-journal"} |= "TLEVENT" | json
+# every usage event, parsed
+{job="devvm-journal"} |= "TLEVENT"
+  | line_format `{{ regexReplaceAll "^.*?TLEVENT " __line__ "" }}` | json
 
 # what each of us used this week, most-used first
-sum by (event_name, user_id) (
+sum by (name, user) (
   count_over_time({job="devvm-journal"} |= "TLEVENT"
-    | json event_name="event.name", user_id="user.id" [7d])
+    | line_format `{{ regexReplaceAll "^.*?TLEVENT " __line__ "" }}`
+    | json name="[\"event.name\"]", user="[\"user.id\"]" [7d])
 )
 
 # which tool sessions actually get started
-sum by (tl_kind) (count_over_time({job="devvm-journal"} |= "TLEVENT"
-  | json name="event.name", tl_kind="attrs.tl.kind"
+sum by (kind) (count_over_time({job="devvm-journal"} |= "TLEVENT"
+  | line_format `{{ regexReplaceAll "^.*?TLEVENT " __line__ "" }}`
+  | json name="[\"event.name\"]", kind="attrs[\"tl.kind\"]"
   | name = "session.attached" [7d]))
 
 # errors people actually saw
-{job="devvm-journal"} |= "TLEVENT" | json name="event.name" | name = "app.error"
+{job="devvm-journal"} |= "TLEVENT"
+  | line_format `{{ regexReplaceAll "^.*?TLEVENT " __line__ "" }}`
+  | json name="[\"event.name\"]" | name = "app.error"
 ```
 
 The **Terminal Lobby Usage** dashboard in Grafana
