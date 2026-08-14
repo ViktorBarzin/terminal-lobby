@@ -108,10 +108,15 @@ nobody queries, and the intake accepts names from the client.
 | `term.stall` | per occurrence | input sent with no output for longer than the threshold |
 | `app.exception` | per occurrence, deduped | message, `file:line:col`, stack, occurrence count, `tl.kind` |
 | `api.slow` | per occurrence over threshold | endpoint, status, duration, request id |
-| `api.served` | server side | endpoint, duration, status, request id |
-| `app.loaded` (extended) | per boot | navigation timing, transfer size, cache hit, device and network context |
+| `api.served` | server side, over threshold | endpoint, duration, status, request id |
+| `api.rollup` | server side, every 60 s | per-service distribution by endpoint group |
+| `app.context` | per boot | navigation timing, transfer size, cache hit, device and network context |
 | `term.ready` | per boot | iframe boot → first byte → first paint |
 | `diag.incident` | per occurrence | `tl.kind` plus the preceding raw event trace |
+
+Boot context is a diagnostics record of its own rather than an extension of the
+usage `app.loaded`, so the whole health vocabulary stays selectable by the
+`TLDIAG` marker.
 
 Every record additionally carries `tl.tab`, `tl.parent`, `tl.device`,
 `tl.session`, `tl.conn`, `tl.client` and `tl.role`. `tl.client` names the
