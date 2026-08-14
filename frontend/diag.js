@@ -801,10 +801,12 @@ globalThis.tlDiag = (function () {
     }
 
     // Boot context: how long the page took to load, and what it is running on.
-    var context = null;
+    // Built field by field, and initialised BEFORE the first API call that
+    // might not exist: a browser missing one of these should cost that field,
+    // not the whole boot record.
+    var context = {};
     try {
       var nav = performance.getEntriesByType("navigation")[0];
-      context = {};
       if (nav) {
         context["tl.nav.ttfb"] = Math.round(nav.responseStart);
         context["tl.nav.dom"] = Math.round(nav.domContentLoadedEventEnd);
