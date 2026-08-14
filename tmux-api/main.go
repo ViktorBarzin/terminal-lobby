@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -225,6 +226,8 @@ func main() {
 	http.HandleFunc("/sessions/", handleSessionByName)
 	http.HandleFunc("/whoami", handleWhoami)
 	http.HandleFunc("/restore", handleRestore)
+	http.HandleFunc("/snapshots", handleSnapshots)
+	http.HandleFunc("/snapshots/", handleSnapshotByTS)
 	http.HandleFunc("/layout", handleLayout)
 	http.HandleFunc("/projects", handleProjects)
 	http.HandleFunc("/projects/", handleProjectByID)
@@ -318,6 +321,32 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
 	if osUser == "" {
 		return
 	}
+
+	// An optional body selects specific rows of a specific snapshot (the
+	// picker). No body keeps the blanket behaviour the boot path and the
+	// plain button rely on, so old clients are unaffected.
+	var sel restoreSelection
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if len(strings.TrimSpace(string(body))) > 0 {
+		if err := json.Unmarshal(body, &sel); err != nil {
+			http.Error(w, "bad request body", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if sel.Snapshot != "" {
+		status, msg := restoreFromSelection(osUser, sel)
+		if status != http.StatusOK {
+			http.Error(w, msg, status)
+			return
+		}
+		sessionsCacheInstance.invalidate(osUser)
+		emitRestored(osUser, "picker")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+
 	out, err := exec.Command(sudoBinary, "-n", restoreWrapper, osUser).CombinedOutput()
 	if err != nil {
 		log.Printf("restore for %s failed: %v: %s", osUser, err, strings.TrimSpace(string(out)))
@@ -326,7 +355,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("restore for %s: %s", osUser, strings.TrimSpace(string(out)))
 	sessionsCacheInstance.invalidate(osUser)
-	events.Emit("session.restored", osUser, telemetry.Attrs{"tl.client": "api"})
+	emitRestored(osUser, "api")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
