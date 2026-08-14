@@ -42,6 +42,11 @@ var knownDiagEvents = map[string]bool{
 	"api.rollup":  true, // 60s per-service distribution by endpoint group
 	"term.ready":  true, // iframe boot -> first byte -> first paint
 	"app.context": true, // navigation timing + device/network context at boot
+
+	// -- intake health -------------------------------------------------------
+	// Each channel reports its own rejections on its own channel, so a
+	// diagnostics problem never shows up as a usage anomaly.
+	"api.rejected": true, // a diag record refused: unknown name, over cap
 }
 
 // IsKnownDiag reports whether name is in the diagnostics catalog.
