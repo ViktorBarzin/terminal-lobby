@@ -20,6 +20,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="theme-color" content="#0d1117">
     <meta name="tl-asset" content="__TL_ASSET__">
+    <!-- Client diagnostics (docs/adr/0008-client-diagnostics.md) — the same
+         frontend/diag.js that index.html and the v2 SPA inline, substituted by
+         deploy-v2.sh. First in the head so its error handlers and its fetch and
+         WebSocket wrappers are installed before any app code runs. -->
+    <script>__TL_DIAG__</script>
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <!-- 'default' (opaque status bar, app laid out BELOW it), not 'black-translucent':
@@ -2437,6 +2442,82 @@
         const TL_ASSET = '__TL_ASSET__';
         console.log('terminal-lobby build:', TL_BUILD);
         try { document.documentElement.dataset.tlBuild = TL_BUILD; } catch (e) {}
+
+        // --- client diagnostics (docs/adr/0008-client-diagnostics.md) --------
+        // This page is always a terminal, and always framed by a lobby it can
+        // read directly (same origin) — that read is what joins this iframe's
+        // records to the page hosting it. Default ON, per-browser opt-out via
+        // the plain tl-diagnostics key, ?diag=0 for a single tab.
+        const DIAG_KILL_KEY = 'tl-diagnostics';
+        function diagnosticsWanted() {
+            try {
+                if (new URLSearchParams(location.search).get('diag') === '0') return false;
+                return localStorage.getItem(DIAG_KILL_KEY) !== 'off';
+            } catch (e) { return true; }
+        }
+        let tlDiagnostics = null;
+        try {
+            tlDiagnostics = tlDiag.bind({
+                url: '/api/sessions/telemetry',
+                client: 'term',
+                role: 'terminal',
+                session: new URLSearchParams(location.search).get('arg') || '',
+                parent: (function () {
+                    try {
+                        if (window.parent !== window && window.parent.tlDiagnostics) {
+                            return window.parent.tlDiagnostics.ids().tab;
+                        }
+                    } catch (e) {}
+                    return '';
+                })(),
+                build: TL_BUILD,
+                enabled: diagnosticsWanted(),
+            });
+            window.tlDiagnostics = tlDiagnostics;
+        } catch (e) { /* diagnostics must never cost the page its boot */ }
+
+        // --- usage events -----------------------------------------------------
+        // tlConfirmBoot below reports whether a self-update landed (ADR-0007).
+        // Those call sites predate this definition and threw a ReferenceError
+        // whenever an update record existed, taking the rest of this script
+        // with them — this page had no tlTrack at all. Batched and POSTed to
+        // the same intake index.html uses; the same rules apply, and the same
+        // closed catalog in telemetry/events.go.
+        const TELEMETRY_API = '/api/sessions/telemetry';
+        const TL_EVENT_MAX = 200;
+        let tlEventBuffer = [];
+        function tlTrack(name, attrs) {
+            tlEventBuffer.push({ name: name, attrs: attrs || {} });
+            if (tlEventBuffer.length > TL_EVENT_MAX) {
+                tlEventBuffer = tlEventBuffer.slice(-TL_EVENT_MAX);
+            }
+        }
+        function tlEventBatch() {
+            return JSON.stringify({ client: 'term', build: TL_BUILD, events: tlEventBuffer });
+        }
+        function tlFlushEvents() {
+            if (!tlEventBuffer.length) return;
+            const body = tlEventBatch();
+            tlEventBuffer = [];   // drop on failure; never retry into a growing buffer
+            fetch(TELEMETRY_API, {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' }, body: body
+            }).catch(() => {});
+        }
+        function tlFlushEventsSync() {
+            if (!tlEventBuffer.length) return;
+            const body = tlEventBatch();
+            tlEventBuffer = [];
+            try {
+                navigator.sendBeacon(TELEMETRY_API, new Blob([body], { type: 'application/json' }));
+            } catch (e) {}
+        }
+        setInterval(tlFlushEvents, 10000);
+        window.addEventListener('pagehide', tlFlushEventsSync);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') tlFlushEventsSync();
+        });
+
         const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
         const SESSIONS_API = '/api/sessions/sessions';
         const RESTORE_API  = '/api/sessions/restore';
@@ -7856,6 +7937,7 @@
                 settingsPanel.querySelector('#sp-ls-val').textContent = p.letterSpacing.toFixed(1) + 'px';
                 settingsPanel.querySelector('#sp-blink').checked = p.cursorBlink;
                 settingsPanel.querySelector('#sp-flow').checked = flowControlWanted();
+                settingsPanel.querySelector('#sp-diag').checked = diagnosticsWanted();
                 settingsPanel.querySelector('#sp-kb').checked = tlKb.enabled();
                 const lcp = settingsPanel.querySelector('#sp-linkchip');
                 if (lcp) lcp.checked = p.links.copyChip;       // hover-pointer row only ([links])
@@ -8149,6 +8231,25 @@
                     } catch (e) {}
                 });
                 flowRow.appendChild(flow);
+
+                // Client diagnostics (ADR-0008) — same posture as the
+                // flow-control switch: a plain per-browser key, never roamed.
+                // The toggle IS the disclosure: diagnostics are on by default
+                // and this is where anyone can see that and turn them off. A
+                // flip takes effect at the next page load, since the wrappers
+                // are installed at boot.
+                const diagRow = row('Send diagnostics');
+                const diagBox = document.createElement('input');
+                diagBox.type = 'checkbox';
+                diagBox.id = 'sp-diag';
+                diagBox.title = 'Performance and error data for this session \u2014 timings, failures and device info. Never terminal contents or what you type.';
+                diagBox.addEventListener('change', () => {
+                    try {
+                        if (diagBox.checked) localStorage.removeItem(DIAG_KILL_KEY);
+                        else localStorage.setItem(DIAG_KILL_KEY, 'off');
+                    } catch (e) {}
+                });
+                diagRow.appendChild(diagBox);
 
                 // Task 4.1: "App shortcuts" — the keybinding layer + command
                 // palette. Plain per-browser tl:keybindings:v1 key (never

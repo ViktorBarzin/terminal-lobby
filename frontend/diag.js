@@ -5,7 +5,7 @@
  * ONE implementation, three surfaces. index.html (lobby and terminal),
  * term.html (the v2 SPA's terminal iframe) and the v2 SPA all inline this exact
  * file at deploy. It carries no import or export statement on purpose: that is
- * what lets the same bytes be a classic inlined <script> and a side-effect ES
+ * what lets the same bytes be a classic inlined script tag and a side-effect ES
  * import in the test suite, so what is tested is what ships. term.html already
  * carries calls to a tlTrack it never defines — drift between hand-maintained
  * copies is the failure this arrangement avoids.
@@ -155,6 +155,7 @@ globalThis.tlDiag = (function () {
     var echoAt = -1;
     var echoAmbiguous = false;
     var pendingKey = false;
+    var keyAt = -1; // when the pending keystroke was seen, for the input path
 
     var ring = [];
     var seenErrors = {}; // dedupe key -> {n, attrs}
@@ -319,6 +320,7 @@ globalThis.tlDiag = (function () {
 
     function onKeydown() {
       pendingKey = true;
+      keyAt = now();
       traffic();
     }
 
@@ -340,6 +342,9 @@ globalThis.tlDiag = (function () {
       m.framesOut += 1;
       // Open the echo gate only for a lone keystroke leaving a quiet terminal.
       if (pendingKey) {
+        // keydown -> ws.send is the client's own cost: main-thread work, key
+        // handling, encoding. Unconfounded by anything off-device.
+        if (keyAt >= 0) m.input.add(t - keyAt);
         if (echoAt >= 0) {
           echoAmbiguous = true; // a second key before the echo — unpairable
         } else if (t - lastRecvAt >= cfg.quietMs) {
@@ -347,6 +352,7 @@ globalThis.tlDiag = (function () {
           echoAmbiguous = false;
         }
         pendingKey = false;
+        keyAt = -1;
       }
       lastSendAt = t;
       stallReported = false;
@@ -546,6 +552,132 @@ globalThis.tlDiag = (function () {
     };
   }
 
+  /** Best-effort byte length of anything that can go over a WebSocket. */
+  function sizeOf(data) {
+    try {
+      if (typeof data === "string") return data.length;
+      if (data && typeof data.byteLength === "number") return data.byteLength;
+      if (data && typeof data.size === "number") return data.size;
+    } catch (e) {
+      /* an exotic payload is not worth a throw */
+    }
+    return 0;
+  }
+
+  /**
+   * Wrap fetch so every same-origin API call is timed and carries a request id
+   * the server echoes back — that pairing is what splits a slow call into
+   * network and server time. Call sites are untouched, which matters: the two
+   * vanilla surfaces are large hand-written files and each edit to them is a
+   * chance to introduce the kind of drift that left term.html calling a
+   * function it never defined.
+   *
+   * Cross-origin calls are left entirely alone: adding a header to one would
+   * trigger a CORS preflight that the request did not previously need.
+   */
+  function instrumentFetch(native, d, timer) {
+    var seq = 0;
+    var tabPart = d && d.ids ? d.ids().tab : "tab";
+    return function (input, init) {
+      var url = "";
+      try {
+        url = typeof input === "string" ? input : input && input.url ? input.url : "";
+      } catch (e) {
+        /* fall through as cross-origin */
+      }
+      var sameOrigin = url.charAt(0) === "/" || (url.indexOf("http") !== 0 && url.indexOf("//") !== 0);
+      if (!sameOrigin) return native(input, init);
+
+      var reqId, opts, elapsed;
+      try {
+        seq += 1;
+        reqId = tabPart + "-" + seq;
+        opts = init ? Object.assign({}, init) : {};
+        var headers = new Headers(opts.headers || (typeof input === "object" && input.headers) || {});
+        headers.set("X-TL-Req", reqId);
+        opts.headers = headers;
+        elapsed = timer ? timer : null;
+      } catch (e) {
+        return native(input, init); // never let bookkeeping cost a request
+      }
+
+      var started = elapsed ? 0 : performance.now();
+      var took = function () {
+        return elapsed ? elapsed() : performance.now() - started;
+      };
+      var report = function (status) {
+        try {
+          d.onApi(new URL(url, "http://x").pathname, took(), status, reqId);
+        } catch (e) {
+          /* diagnostics must never turn a good response into a failure */
+        }
+      };
+      return native(input, opts).then(
+        function (res) {
+          report(res && typeof res.status === "number" ? res.status : 0);
+          return res;
+        },
+        function (err) {
+          report(0); // a network failure has no HTTP status
+          throw err;
+        },
+      );
+    };
+  }
+
+  /**
+   * Wrap WebSocket so connection health and terminal traffic are measured
+   * without touching the ttyd protocol code.
+   *
+   * The statics are copied deliberately: term.html guards every send with
+   * `ws.readyState === WebSocket.OPEN`, so a wrapper that dropped OPEN would
+   * freeze the terminal rather than merely lose a metric. Every diagnostics
+   * call inside is individually guarded for the same reason.
+   */
+  function instrumentWebSocket(Native, d) {
+    function Wrapped(url, protocols) {
+      var ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
+      var openedAt = Date.now();
+      try {
+        ws.addEventListener("open", function () {
+          try {
+            d.onConnOpen({ handshakeMs: Date.now() - openedAt });
+          } catch (e) {}
+        });
+        ws.addEventListener("message", function (e) {
+          try {
+            d.onWsRecv(sizeOf(e && e.data));
+          } catch (err) {}
+        });
+        ws.addEventListener("close", function (e) {
+          try {
+            d.onConnDrop({ code: e && e.code, upS: (Date.now() - openedAt) / 1000 });
+          } catch (err) {}
+        });
+        var nativeSend = ws.send;
+        ws.send = function (data) {
+          try {
+            d.onWsSend(sizeOf(data));
+          } catch (e) {}
+          return nativeSend.call(ws, data);
+        };
+      } catch (e) {
+        /* an un-instrumentable socket is still a working socket */
+      }
+      return ws;
+    }
+    try {
+      Wrapped.prototype = Native.prototype;
+      Wrapped.CONNECTING = Native.CONNECTING;
+      Wrapped.OPEN = Native.OPEN;
+      Wrapped.CLOSING = Native.CLOSING;
+      Wrapped.CLOSED = Native.CLOSED;
+    } catch (e) {
+      return Native; // if the statics cannot be carried over, do not wrap
+    }
+    return Wrapped;
+  }
+
   /**
    * Wire a real browser up to a diagnostics instance: the intake transport,
    * localStorage, the visibility and lifecycle edges, global error handlers,
@@ -614,6 +746,49 @@ globalThis.tlDiag = (function () {
       /* an environment without these still measures what it can */
     }
 
+    // Keydown in the capture phase, so the timestamp is taken before xterm's
+    // own handler runs and the input-path measurement includes it.
+    try {
+      window.addEventListener(
+        "keydown",
+        function () {
+          d.onKeydown();
+        },
+        true,
+      );
+    } catch (e) {
+      /* input latency is lost, everything else still measures */
+    }
+
+    // Instrument the platform rather than the call sites.
+    if (o.instrument !== false) {
+      try {
+        window.fetch = instrumentFetch(window.fetch.bind(window), d, null);
+      } catch (e) {
+        /* an un-wrappable fetch keeps working, unmeasured */
+      }
+      try {
+        window.WebSocket = instrumentWebSocket(window.WebSocket, d);
+      } catch (e) {
+        /* same: the terminal matters more than the metric */
+      }
+    }
+
+    // Frame jank: a gap far past a frame budget while the tab is visible means
+    // something blocked the main thread. Cheap, and it stops itself when the
+    // tab is hidden because rAF stops firing there.
+    try {
+      var lastFrame = 0;
+      var frame = function (ts) {
+        if (lastFrame && ts - lastFrame > 100) d.onJank();
+        lastFrame = ts;
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    } catch (e) {
+      /* no rAF, no jank signal */
+    }
+
     try {
       if (typeof PerformanceObserver === "function") {
         new PerformanceObserver(function (list) {
@@ -664,5 +839,11 @@ globalThis.tlDiag = (function () {
     return d;
   }
 
-  return { create: create, bind: bind, DEFAULTS: DEFAULTS };
+  return {
+    create: create,
+    bind: bind,
+    instrumentFetch: instrumentFetch,
+    instrumentWebSocket: instrumentWebSocket,
+    DEFAULTS: DEFAULTS,
+  };
 })();
