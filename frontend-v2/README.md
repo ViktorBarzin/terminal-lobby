@@ -153,6 +153,8 @@ src/
     codemirror-view.ts   The lazy-imported EditorView factory
     CommandPalette.tsx   Command-palette overlay (view over PaletteController)
     ShortcutsHelp.tsx    Keyboard-shortcuts help overlay
+    RestorePicker.tsx    Restore overlay: pick a session snapshot, see what it
+                         would recreate, choose which rows to bring back
     SettingsPanel.tsx    Settings overlay: theme, font size, new-session command,
                          keyboard, notifications
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)

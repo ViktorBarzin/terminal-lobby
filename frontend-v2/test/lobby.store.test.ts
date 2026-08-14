@@ -22,6 +22,9 @@ class FakeApi implements LobbyApi {
   kills: string[] = [];
   renames: [string, string][] = [];
   restores = 0;
+  restoreSelections: { snapshot: string; sessions: string[] }[] = [];
+  snapshotsVal: import("../src/types/lobby").Snapshot[] = [];
+  snapshotRows: Record<string, import("../src/types/lobby").SnapshotRow[]> = {};
   renameError?: number;
   killError = false;
   layoutError = false;
@@ -60,8 +63,15 @@ class FakeApi implements LobbyApi {
     this.sessionsVal = this.sessionsVal.map((s) => (s.name === o ? { ...s, name: n } : s));
     this.layoutVal = renameSessionInLayout(this.layoutVal, o, n);
   }
-  async restoreSessions() {
+  async restoreSessions(sel?: { snapshot: string; sessions: string[] }) {
     this.restores++;
+    if (sel) this.restoreSelections.push(sel);
+  }
+  async listSnapshots() {
+    return { snapshots: this.snapshotsVal, memAvailableMb: -1, perSessionMb: 550 };
+  }
+  async getSnapshot(ts: string) {
+    return this.snapshotRows[ts] ?? [];
   }
   async listDirs() {
     return [];
