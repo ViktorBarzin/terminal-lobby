@@ -80,6 +80,24 @@ mkdir -p out
 # the asset id computed AFTER it but BEFORE the stamps, exactly as deploy.sh
 # does. The id must move when diag.js moves, or no open tab would self-update to
 # a fixed diagnostics build — ADR-0007's failure mode inverted.
+# diag.js must land INSIDE a script block. sed's `d` deletes the whole matched
+# line, so a placeholder sharing its line with the tags takes them with it and
+# the core ships as inert text — present, greppable, never executed. Assert the
+# core is genuinely inside an open script element.
+assert_diag_executable() {
+  awk '
+    /<script/  { inscript = 1 }
+    /<\/script>/ { inscript = 0 }
+    /globalThis\.tlDiag = \(function/ {
+      found = 1
+      if (!inscript) { print "diag.js is not inside a <script> block"; exit 1 }
+    }
+    END { if (!found) { print "diag.js core not found in the page"; exit 1 } }
+  ' "$1" || {
+    echo "deploy: $1 would ship diagnostics that never run" >&2
+    exit 1
+  }
+}
 # diag.js is inlined into a classic script block, which the HTML tokenizer ends
 # at the first `</script`. A literal script tag anywhere in the file — even in a
 # comment — would truncate the page mid-JavaScript, so refuse to ship one.
@@ -93,6 +111,7 @@ if grep -q '__TL_DIAG__' out/index-v2.pre; then
   echo "deploy-v2.sh: __TL_DIAG__ survived in the SPA — diagnostics would be dead" >&2
   exit 1
 fi
+assert_diag_executable out/index-v2.pre
 ASSET=$(sha256sum out/index-v2.pre | cut -c1-12)
 sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${ASSET}/g" \
     out/index-v2.pre > out/index-v2.html
@@ -126,6 +145,7 @@ if grep -q '__TL_DIAG__' out/term.pre; then
   echo "deploy-v2.sh: __TL_DIAG__ survived in term.html — diagnostics would be dead" >&2
   exit 1
 fi
+assert_diag_executable out/term.pre
 TERM_ASSET=$(sha256sum out/term.pre | cut -c1-12)
 sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${TERM_ASSET}/g" \
     out/term.pre > out/term.html
