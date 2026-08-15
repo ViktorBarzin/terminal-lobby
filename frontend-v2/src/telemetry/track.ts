@@ -120,6 +120,8 @@ export interface Tracker {
 }
 
 const INTAKE = "/telemetry";
+/** How long a telemetry POST may hang before it is abandoned. */
+const TELEMETRY_TIMEOUT_MS = 8000;
 
 export function createTracker(opts: TrackerOptions = {}): Tracker {
   const flushMs = opts.flushMs ?? DEFAULT_FLUSH_MS;
@@ -131,6 +133,12 @@ export function createTracker(opts: TrackerOptions = {}): Tracker {
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(batch),
+        // A beacon that never settles is a beacon that leaks: the batch is
+        // already dropped from the buffer, so a hung POST holds a connection
+        // (and, before it stopped being tracked, a sticky slow-request toast)
+        // for as long as the tab lives. Nothing here is worth retrying, so the
+        // deadline just lets it go.
+        signal: AbortSignal.timeout(TELEMETRY_TIMEOUT_MS),
       });
     });
   const beacon =

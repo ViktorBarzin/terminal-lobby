@@ -4145,6 +4145,15 @@ __TL_DIAG__
             let seq = 0;
             let toastId = null;
             function repaint() {
+                // FRAMED: the lobby above owns the notification surface and runs
+                // this same coordinator over its OWN requests, so painting here
+                // stacks a second "Some requests are slow" toast on top of the
+                // lobby's — two warnings, different counts, one condition. Keep
+                // TRACKING either way (the tags stay available to diagnostics);
+                // only the painting is the lobby's job. A standalone
+                // /term.html tab is the only surface there is, so it still
+                // paints its own.
+                if (window.parent !== window) return;
                 if (!slow.size) {
                     if (toastId !== null) { tlToast.close(toastId); toastId = null; }
                     return;
@@ -4204,7 +4213,14 @@ __TL_DIAG__
                 );
             } catch (e) { /* unparseable → untracked */ }
             if (!u || u.origin !== location.origin
-                   || !/^\/(api\/sessions|clipboard)\//.test(u.pathname)) {
+                   || !/^\/(api\/sessions|clipboard)\//.test(u.pathname)
+                   // Telemetry and diagnostics are fire-and-forget: nothing the
+                   // user asked for, nothing they can act on, and their own
+                   // module swallows every failure by design. A slow beacon
+                   // must not raise a sticky "requests are slow" warning — that
+                   // is what put three POST /api/sessions/telemetry lines in
+                   // front of Viktor over a terminal that was working fine.
+                   || /\/telemetry$/.test(u.pathname)) {
                 return tlRealFetch(input, init);
             }
             const method = ((init && init.method)
