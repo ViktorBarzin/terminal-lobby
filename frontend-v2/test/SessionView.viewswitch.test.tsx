@@ -289,6 +289,11 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     ));
     expect(seen.at(-1)).toEqual({ open: false, dirty: false });
 
+    // Open the Text view: that is what opens the transcript stream (it is no
+    // longer opened by mounting — see SessionView.lazysse.test.tsx), and the
+    // recent-files list below is derived from that stream's events.
+    fireEvent.click(segments(container)[0]!); // [Text]
+
     // A Read in the transcript puts a file in the preview's recent list.
     eventSources[0]!.onmessage?.({
       data: JSON.stringify({
