@@ -327,3 +327,102 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(seen.at(-1)).toEqual({ open: false, dirty: false });
   });
 });
+
+/**
+ * The terminal controls in the session bar. The vanilla page carries these in a
+ * floating cluster (A− A+ / images / upload / paste); v2 shipped only two of
+ * them, as emoji. These pin both halves of the fix: the set is complete, and the
+ * buttons draw SVG rather than an emoji codepoint.
+ */
+describe("<SessionView> — terminal controls in the session bar", () => {
+  it("offers font size, images, upload and paste — not just two of them", () => {
+    const { container } = render(() => <SessionView session="qa-tools" />);
+    const labels = [...container.querySelectorAll(".tl-session-bar button")].map((b) =>
+      b.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        "Smaller terminal font",
+        "Larger terminal font",
+        "Session images",
+        "Upload image",
+        "Paste from clipboard",
+        "File preview",
+      ]),
+    );
+  });
+
+  it("draws icons, not emoji", () => {
+    // The vanilla page moved off emoji because they render in colour at an
+    // OS-dependent size; a regression here is invisible to every other test.
+    const { container } = render(() => <SessionView session="qa-tools" />);
+    for (const label of ["Session images", "Upload image", "Paste from clipboard", "File preview"]) {
+      const btn = container.querySelector(`.tl-session-bar [aria-label="${label}"]`)!;
+      expect(btn.querySelector("svg"), `${label} should draw an svg`).toBeTruthy();
+      expect(btn.textContent?.trim(), `${label} should carry no glyph`).toBe("");
+    }
+  });
+
+  it("steps the roamed font size, clamped at the ends", () => {
+    const sizes: number[] = [];
+    let current = 15;
+    const prefs = {
+      prefs: () => ({ fontSize: current }),
+      setFontSize: (n: number) => {
+        current = n;
+        sizes.push(n);
+      },
+    } as unknown as Parameters<typeof SessionView>[0]["prefs"];
+    const { container } = render(() => <SessionView session="qa-tools" prefs={prefs} />);
+    const click = (label: string) =>
+      fireEvent.click(container.querySelector(`[aria-label="${label}"]`)!);
+
+    click("Larger terminal font");
+    expect(sizes.at(-1)).toBe(16);
+    click("Smaller terminal font");
+    expect(sizes.at(-1)).toBe(15);
+
+    // ...and the clamp holds at the ceiling rather than walking past it.
+    current = 22;
+    click("Larger terminal font");
+    expect(sizes.at(-1)).toBe(22);
+  });
+
+  it("routes Paste through the terminal bridge", () => {
+    const seen: string[] = [];
+    // AFTER render: the mounted TerminalView installs this same hook in its
+    // onMount, so a stub set beforehand is the one that loses.
+    const { container } = render(() => <SessionView session="qa-tools" />);
+    window.__tlForwardToTerminal = (cmd: string) => {
+      seen.push(cmd);
+      return true;
+    };
+    fireEvent.click(container.querySelector('[aria-label="Paste from clipboard"]')!);
+    expect(seen).toEqual(["terminal.paste"]);
+    delete window.__tlForwardToTerminal;
+  });
+
+  it("hides the terminal controls on a coarse pointer, where the soft keys carry them", () => {
+    const orig = window.matchMedia;
+    window.matchMedia = ((q: string) =>
+      ({
+        matches: q.includes("coarse"),
+        media: q,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        onchange: null,
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+    try {
+      const { container } = render(() => <SessionView session="qa-tools" />);
+      expect(container.querySelector('[aria-label="Paste from clipboard"]')).toBeNull();
+      expect(container.querySelector('[aria-label="Smaller terminal font"]')).toBeNull();
+      // the file preview is session chrome, not a terminal control — it stays
+      expect(container.querySelector('[aria-label="File preview"]')).not.toBeNull();
+    } finally {
+      window.matchMedia = orig;
+    }
+  });
+});

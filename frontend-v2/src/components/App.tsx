@@ -362,6 +362,7 @@ export const App: Component = () => {
                 creating={selectedIsCreating()}
                 dir={selectedDir()}
                 newCommand={newCommand}
+                prefs={prefs}
                 notify={notify}
                 overlayOpen={overlayOpen}
                 // A chord pressed INSIDE the terminal iframe is matched by
