@@ -21,6 +21,13 @@ import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer } from "../mobile/pointer";
 import { installViewportSync } from "../mobile/viewport";
 import { installImageClipboard } from "../clipboard/attach";
+import {
+  CameraIcon,
+  ClipboardIcon,
+  FileTextIcon,
+  ImageIcon,
+} from "./Icons";
+import { clampFontSize, type PrefsStore } from "../store/prefs";
 
 /**
  * The stream badge's wording. Every status but one reads fine as-is; a session
@@ -57,6 +64,10 @@ export const SessionView: Component<{
   dir?: string;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
+  /** roamed prefs — the A−/A+ buttons step fontSize, which the store persists
+   *  and pushes live into the terminal via window.__tlPrefsLive. Optional so a
+   *  test can mount the view without one (the buttons then no-op). */
+  prefs?: PrefsStore;
   /** surface control-channel errors to the app's toast stack. */
   notify?: (message: string, kind: NotifyKind) => void;
   /** a chord fired inside the terminal iframe (tl-command) -> lobby dispatcher. */
@@ -237,6 +248,29 @@ export const SessionView: Component<{
   });
   onCleanup(image.dispose);
 
+  // ---- terminal controls in the session bar -------------------------------
+  // A−/A+ step the ROAMED font size, so the change follows the user to their
+  // other devices and reaches the live terminal through the prefs bridge
+  // without dropping its WebSocket. clampFontSize keeps the step inside the
+  // 6..22 the terminal page validates against, so holding A− cannot walk the
+  // pref out of range.
+  const stepFont = (delta: number): void => {
+    const p = props.prefs;
+    if (!p) return;
+    p.setFontSize(clampFontSize(p.prefs().fontSize + delta));
+  };
+
+  // The Upload button is a file picker in front of the SAME intake the drop
+  // path uses — one upload flow, so the toasts, the gallery routing and the
+  // path typed at the prompt cannot drift apart.
+  let fileInput: HTMLInputElement | undefined;
+  const onFilesPicked = (e: Event): void => {
+    const el = e.currentTarget as HTMLInputElement;
+    const files = [...(el.files ?? [])];
+    el.value = ""; // let the same file be picked again
+    if (files.length) void image.uploadFiles(files, "picker");
+  };
+
   return (
     <div class="tl-session-view" data-mode={mode()}>
       <div class="tl-session-bar">
@@ -260,21 +294,62 @@ export const SessionView: Component<{
           </span>
         </Show>
         <span class="tl-session-bar-spacer" />
+        {/* Terminal controls, in the order the vanilla page's floating cluster
+            uses them: size, then the three things you put INTO the session.
+            Hidden on a coarse pointer, where the soft-key row already carries
+            paste/upload/images and a two-finger pinch sets the font — the same
+            split vanilla makes. */}
+        <Show when={!coarse()}>
+          <span class="tl-term-tools">
+            <button
+              class="tl-icon-btn tl-font-btn"
+              aria-label="Smaller terminal font"
+              title="Smaller terminal font"
+              onClick={() => stepFont(-1)}
+            >
+              A&#8722;
+            </button>
+            <button
+              class="tl-icon-btn tl-font-btn"
+              aria-label="Larger terminal font"
+              title="Larger terminal font"
+              onClick={() => stepFont(1)}
+            >
+              A+
+            </button>
+            <button
+              class="tl-icon-btn tl-gallery-btn"
+              aria-label="Session images"
+              title="Session images"
+              onClick={() => props.onOpenGallery?.()}
+            >
+              <ImageIcon />
+            </button>
+            <button
+              class="tl-icon-btn tl-upload-btn"
+              aria-label="Upload image"
+              title="Upload image"
+              onClick={() => fileInput?.click()}
+            >
+              <CameraIcon />
+            </button>
+            <button
+              class="tl-icon-btn tl-paste-btn"
+              aria-label="Paste from clipboard"
+              title="Paste from clipboard"
+              onClick={() => window.__tlForwardToTerminal?.("terminal.paste")}
+            >
+              <ClipboardIcon />
+            </button>
+          </span>
+        </Show>
         <button
           class="tl-icon-btn tl-preview-btn"
           aria-label="File preview"
           title="Preview files"
           onClick={() => preview.show()}
         >
-          📄
-        </button>
-        <button
-          class="tl-icon-btn tl-gallery-btn"
-          aria-label="Session images"
-          title="Session images"
-          onClick={() => props.onOpenGallery?.()}
-        >
-          🖼
+          <FileTextIcon />
         </button>
         <ViewSwitch
           mode={mode()}
@@ -331,6 +406,20 @@ export const SessionView: Component<{
       <Show when={preview.isOpen()}>
         <FilePreview store={preview} />
       </Show>
+
+      {/* The Upload button's picker. `capture` is deliberately absent: on a
+          phone that would force the camera and skip the photo library, and the
+          soft-key row owns upload on touch anyway. */}
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        multiple
+        class="tl-hidden-input"
+        aria-hidden="true"
+        tabindex={-1}
+        onChange={onFilesPicked}
+      />
     </div>
   );
 };
