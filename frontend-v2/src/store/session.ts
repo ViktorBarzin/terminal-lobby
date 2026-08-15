@@ -9,6 +9,11 @@ export interface SessionStore {
   events: Event[];
   /** SSE connection status. */
   status: Accessor<SseStatus>;
+  /** Open the transcript stream. Idempotent, and one-way: the first call
+   *  connects, every later one is a no-op, and a call after close() leaves the
+   *  store closed. Callers that construct with `autoStart: false` own the
+   *  moment of the first connect (see the option). */
+  start: () => void;
   /** Resolve a permission request. Returns true on the backend's 204. */
   resolvePermission: (
     reqId: string,
@@ -31,6 +36,12 @@ export interface SessionStoreOptions {
    *  tests; when present, failures ALSO toast but still never throw (the read
    *  path stays intact). */
   notify?: (message: string, kind: NotifyKind) => void;
+  /** connect the stream at construction (default true). `false` hands the first
+   *  connect to `start()`, for a caller that knows whether the transcript is
+   *  being LOOKED at: v1 opens a session on the Terminal view, so constructing
+   *  the store is no longer evidence that anyone wants the stream. Same shape as
+   *  the lobby store's `autoStart`. */
+  autoStart?: boolean;
 }
 
 /**
@@ -40,6 +51,10 @@ export interface SessionStoreOptions {
  * /prompt/<session> (body {text}) and /cancel/<session>; failures never break
  * the read path (the transcript still tails), but they surface as an error
  * toast via `notify` so a dropped prompt/cancel/permission isn't silent.
+ *
+ * The stream itself is opened at construction by default, or by `start()` when
+ * built with `autoStart: false` — one connect either way, never a reconnect on
+ * top of a live one, and `close()` is final.
  */
 export function createSessionStore(
   session: string,
@@ -54,8 +69,31 @@ export function createSessionStore(
     onEvent: (e: Event) => setEvents(events.length, e),
     onStatus: setStatus,
   });
-  client.start();
-  onCleanup(() => client.close());
+
+  /** has the stream been opened, and has it been closed for good? */
+  let started = false;
+  let closed = false;
+
+  const start = (): void => {
+    // Idempotent because the caller drives this from a Solid effect, which
+    // re-runs for reasons that have nothing to do with this stream. `closed` is
+    // the guard that carries weight: SseClient.start() clears the client's own
+    // `stopped` flag, so an effect flushing after disposal would otherwise
+    // re-open a stream the view that owned it no longer exists to read.
+    if (started || closed) return;
+    started = true;
+    client.start();
+  };
+
+  const close = (): void => {
+    closed = true;
+    // Safe on a client that never opened anything: with no source, no timer and
+    // no registered listeners, every teardown step inside is a no-op.
+    client.close();
+  };
+
+  if (opts.autoStart !== false) start();
+  onCleanup(close);
 
   const resolvePermission = async (
     reqId: string,
@@ -118,9 +156,10 @@ export function createSessionStore(
   return {
     events,
     status,
+    start,
     resolvePermission,
     send,
     interrupt,
-    close: () => client.close(),
+    close,
   };
 }

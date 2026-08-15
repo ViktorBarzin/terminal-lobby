@@ -41,7 +41,8 @@ const connTitle = (s: SseStatus): string =>
  * top-level App so the lobby shell can mount ONE of these for the selected
  * session and remount it when the selection changes. Both views stay mounted
  * (CSS-hidden) so terminal state survives the Cmd/Ctrl-J toggle; the store's SSE
- * connection is closed on unmount (createSessionStore onCleanup).
+ * connection is opened the first time the Text view is shown (see the effect
+ * below) and closed on unmount (createSessionStore onCleanup).
  */
 export const SessionView: Component<{
   session: string;
@@ -80,8 +81,29 @@ export const SessionView: Component<{
   onPreviewState?: (state: { open: boolean; dirty: boolean }) => void;
 }> = (props) => {
   const session = props.session;
-  const store = createSessionStore(session, { notify: props.notify });
+  const store = createSessionStore(session, {
+    notify: props.notify,
+    autoStart: false,
+  });
   const [mode, setMode, toggleMode] = createViewMode(() => session);
+
+  // The transcript stream is opened by the Text view, not by mounting this one.
+  // v1 is terminal-first: a session opens on the Terminal view and Text is
+  // opt-in, so a store that connected at construction spent a
+  // `/events/<session>` stream — and, on a mobile network, its reconnect ladder
+  // — on a view most sessions never show. A plain shell session has no Claude
+  // transcript at all: session-events answers 404, so the eager connect also
+  // cost a console error per session per load.
+  //
+  // Only the FIRST connect is deferred. Once open the stream stays open for the
+  // life of this view, including while the terminal is showing, because the
+  // [Text] segment's activity dot is precisely the promise that the timeline
+  // keeps filling behind it. `start()` is idempotent, so this effect re-running
+  // (and the remembered-Text case, where it is true on the very first run)
+  // opens exactly one stream.
+  createEffect(() => {
+    if (mode() === "text") store.start();
+  });
 
   const rows = createMemo(() => deriveRows(store.events));
   const working = createMemo(() => sessionWorking(rows()));
