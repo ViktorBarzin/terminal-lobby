@@ -13683,6 +13683,22 @@ __TL_DIAG__
                     mirrorLineReset();
                     sendInput(e.data.bytes);
                 }
+            } else if (e.data.type === 'tl-paste') {
+                // frontend-v2 paste bridge (TerminalView __tlPasteToTerminal).
+                // The LOBBY reads the clipboard and sends the text down; it
+                // cannot be read here, because the async clipboard is gated on
+                // document.hasFocus() and the click that asks for the paste
+                // focuses the LOBBY — a read in this frame throws
+                // "NotAllowedError: Document is not focused" without ever
+                // prompting. term.paste (NOT sendInput) so the text is
+                // bracketed and \r\n-normalized: raw input would let a
+                // multiline paste execute line-by-line in a shell. Disarm any
+                // armed soft-modifier first, as the local paste path does — it
+                // would remap the pasted text's first character.
+                if (e.source === window.parent && typeof e.data.text === 'string' && e.data.text) {
+                    consumeSoftMods();
+                    term.paste(e.data.text);
+                }
             } else if (e.data.type === 'tl-refit') {
                 // frontend-v2 refit bridge (TerminalView __tlRefitTerminal): the
                 // SPA asks xterm to re-fit after a mobile viewport/keyboard

@@ -404,18 +404,38 @@ describe("<SessionView> — terminal controls in the session bar", () => {
     expect(sizes.at(-1)).toBe(22);
   });
 
-  it("routes Paste through the terminal bridge", () => {
-    const seen: string[] = [];
-    // AFTER render: the mounted TerminalView installs this same hook in its
-    // onMount, so a stub set beforehand is the one that loses.
+  it("reads the clipboard HERE and sends the text down, never asking the frame to read", async () => {
+    // The frame cannot read the clipboard: clicking this button focuses the
+    // LOBBY, and the async clipboard is gated on document focus, so a read
+    // inside the frame throws "Document is not focused" — reported to the user
+    // as denied access for a permission never requested.
+    const pasted: string[] = [];
+    const forwarded: string[] = [];
+    const orig = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText: async () => "from-the-lobby" },
+    });
+    // AFTER render: the mounted TerminalView installs these hooks in its
+    // onMount, so stubs set beforehand are the ones that lose.
     const { container } = render(() => <SessionView session="qa-tools" />);
-    window.__tlForwardToTerminal = (cmd: string) => {
-      seen.push(cmd);
+    window.__tlPasteToTerminal = (t: string) => {
+      pasted.push(t);
       return true;
     };
-    fireEvent.click(container.querySelector('[aria-label="Paste from clipboard"]')!);
-    expect(seen).toEqual(["terminal.paste"]);
-    delete window.__tlForwardToTerminal;
+    window.__tlForwardToTerminal = (cmd: string) => {
+      forwarded.push(cmd);
+      return true;
+    };
+    try {
+      fireEvent.click(container.querySelector('[aria-label="Paste from clipboard"]')!);
+      await waitFor(() => expect(pasted).toEqual(["from-the-lobby"]));
+      expect(forwarded).not.toContain("terminal.paste");
+    } finally {
+      delete window.__tlForwardToTerminal;
+      delete window.__tlPasteToTerminal;
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: orig });
+    }
   });
 
   it("hides the terminal controls on a coarse pointer, where the soft keys carry them", () => {

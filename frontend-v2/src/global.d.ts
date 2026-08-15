@@ -20,6 +20,17 @@ interface Window {
   // (mirrorLineReset() + sendInput(bytes)) in its terminal-mode message handler,
   // so the bridge is closed end-to-end.
   __tlSendToTerminal?: (bytes: string) => boolean;
+
+  // Clipboard TEXT the lobby has already read, for the terminal page's
+  // term.paste() (bracketed + \r\n-normalized). The lobby reads because the
+  // async clipboard is gated on document focus, which the frame lacks when a
+  // lobby control was clicked — see clipboard/paste.ts.
+  __tlPasteToTerminal?: (text: string) => boolean;
+
+  // Run the whole lobby-side paste (read the clipboard here, then send text
+  // down / upload an image). Registered by the mounted SessionView so the
+  // command palette and the Paste chord share the button's routine.
+  __tlDoPaste?: () => boolean;
   // Set by the mounted SessionView so the lobby's runAppCommand can flip the
   // per-session text/terminal view for a Ctrl/Cmd-J that was pressed INSIDE the
   // terminal iframe (its keydown never reaches this window; term.html forwards
