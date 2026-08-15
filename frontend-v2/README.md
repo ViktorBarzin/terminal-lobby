@@ -159,6 +159,8 @@ src/
                          keyboard, notifications
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
     BellIcon.tsx         Header notification-bell glyph (on/off)
+    Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
+                         clipboard, file-text, rotate-cw) — never emoji
     Toaster.tsx          Top-right toast stack
   keybindings/
     chords.logic.ts      PURE layout-proof chord parse/match
