@@ -57,25 +57,71 @@
   min-height: 0;
   width: 260px; /* fixed so content doesn't reflow while the grid animates */
 }
+/* The lobby header — values taken from the vanilla page (.lobby-header,
+   .lobby-header-row, .lobby-sub) so the two tiers read the same. The 52px row
+   is T3's topbar strip height, which is what puts the title on the same line as
+   the collapse arrow sitting in the shell bar beside it. */
 .tl-sidebar-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 10px 12px 6px;
+  display: block;
+  padding: 0 12px;
   flex: 0 0 auto;
 }
-.tl-sidebar-title {
-  font-weight: 600;
-  font-size: 13px;
+.tl-sidebar-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  margin-bottom: 4px;
 }
-.tl-sidebar-user {
-  font-family: var(--font-mono);
-  font-size: 11px;
+.tl-sidebar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+}
+/* Icon-button tier: 32x32, 16px glyph at 80% resting opacity. */
+.tl-head-btn {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  background: var(--bg-card);
   color: var(--text-muted);
-  margin-left: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border: 1px solid var(--border);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.tl-head-btn:hover {
+  opacity: 1;
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.tl-head-btn.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+/* Who you are and whose sessions these are. Hidden on a coarse pointer, as on
+   the vanilla page: on a phone the list is worth more than the explanation. */
+.tl-sidebar-sub {
+  margin: 0 0 18px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+@media (pointer: coarse) {
+  .tl-sidebar-sub {
+    display: none;
+  }
 }
 .tl-sidebar-scroll {
   flex: 1 1 auto;
