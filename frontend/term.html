@@ -8290,7 +8290,7 @@ __TL_DIAG__
                 const diagBox = document.createElement('input');
                 diagBox.type = 'checkbox';
                 diagBox.id = 'sp-diag';
-                diagBox.title = 'Performance and error data for this session \u2014 timings, failures and device info. Never terminal contents or what you type.';
+                diagBox.title = 'Lobby performance and error data \u2014 timings, failures, device info. This toggle never records terminal output or keystrokes. Claude session telemetry (prompts, tokens, tools) is separate and not controlled here.';
                 diagBox.addEventListener('change', () => {
                     try {
                         if (diagBox.checked) localStorage.removeItem(DIAG_KILL_KEY);
