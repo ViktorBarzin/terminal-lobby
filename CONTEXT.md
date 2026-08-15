@@ -83,3 +83,48 @@ survives reloads and session restores, and outlives a deleted session
 by a 30-day grace. Non-image file drops are NOT session images (they
 stay 7-day transfer ephemera in /tmp).
 _Avoid_: screenshots, attachments (images need not come from pastes)
+
+### T3 interoperability
+
+**Thread**:
+T3 Code's unit of conversation, the counterpart of a Session. A
+*bridged* thread is backed by one Session; a thread of any other
+provider is not, and never appears in the lobby.
+_Avoid_: session, chat, conversation
+
+**T3 workspace**:
+T3's own grouping: a title plus one absolute **workspace root**, at most
+one active workspace per root. Not a lobby Project — it has no members,
+no attach mode and no co-ownership, and its root is mandatory where a
+Project's directory is optional.
+_Avoid_: t3 project (ambiguous against Project)
+
+**Bridge**:
+The binary T3 spawns in place of `claude`. It runs as the OS user who
+owns the T3 instance, speaks the Agent SDK's stdio protocol upward, and
+downward attaches to a Session rather than starting a Claude of its own —
+so a bridged thread and its Session are one conversation in one process.
+_Avoid_: adapter, proxy, shim
+
+**Syncer**:
+The per-user reconciler that keeps a user's Threads in step with their
+Sessions: adopting new ones, following renames, and carrying destruction
+across in both directions.
+_Avoid_: sync daemon, mirror
+
+**Adoption**:
+Making an existing Session visible in T3 as a Thread. The Session keeps
+running throughout — adoption creates a view, never a second Claude.
+_Avoid_: import, migration
+
+**Warm-up**:
+The sentinel turn the Syncer dispatches at adoption. It exists only to
+make T3 spawn the Bridge, since nothing else can put content into a
+Thread; the Bridge recognises it and never passes it to the Session.
+
+**Kill**:
+Deliberate destruction of a Session by a person, which crosses to the
+other surface: killing in the lobby archives the Thread, deleting the
+Thread kills the Session. A process merely *exiting* — OOM, a reboot, a
+reaped Bridge — is not a kill and crosses nothing.
+_Avoid_: stop, end, close
