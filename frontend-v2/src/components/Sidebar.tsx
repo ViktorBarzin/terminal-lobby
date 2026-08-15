@@ -17,6 +17,8 @@ import { SessionCard } from "./SessionCard";
 import { CreateSessionRow } from "./CreateSessionRow";
 import { badgeLabel, flatSessionOrder } from "../keybindings/navigation.logic";
 import { RestorePicker } from "./RestorePicker";
+import { BellIcon } from "./BellIcon";
+import type { NotificationSystem } from "../notify/notifications";
 
 /**
  * The lobby sidebar (inventory Cat.2/3): identity + new-session row, the ordered
@@ -32,6 +34,13 @@ export const Sidebar: Component<{
   altActive?: Accessor<boolean>;
   /** confirm seam for the destructive card actions (tests inject it). */
   confirm?: (message: string) => boolean;
+  /** the notification system, for the bell in the header. The shell owns it;
+   *  the header is just where it is presented (as on the vanilla page).
+   *  Optional so a test can mount the sidebar without one. */
+  notifications?: NotificationSystem;
+  /** reload seam — the header's ↻ button. Defaults to a real page reload;
+   *  tests pass their own rather than navigating jsdom. */
+  onReload?: () => void;
 }> = (props) => {
   const store = props.store;
 
@@ -103,12 +112,52 @@ export const Sidebar: Component<{
 
   return (
     <div class="tl-sidebar">
+      {/* The lobby header, as on the vanilla page: the title carries the app,
+          the actions sit on its row, and the line beneath answers "who am I
+          here, and whose sessions are these?" — the isolation model is the
+          first thing worth knowing about a shared box. The bare "Sessions"
+          label this replaces said none of that. */}
       <div class="tl-sidebar-head">
-        <span class="tl-sidebar-title">Sessions</span>
+        <div class="tl-sidebar-head-row">
+          <h1 class="tl-sidebar-title">tmux sessions</h1>
+          <button
+            class="tl-icon-btn tl-head-btn"
+            type="button"
+            aria-label="Reload the app"
+            title="Reload the app"
+            onClick={() =>
+              props.onReload ? props.onReload() : window.location.reload()
+            }
+          >
+            ↻
+          </button>
+          <Show when={props.notifications && props.notifications.bellMode !== "hidden"}>
+            <button
+              class="tl-icon-btn tl-head-btn tl-notify-btn"
+              type="button"
+              classList={{ on: props.notifications!.bellOn() }}
+              aria-label="Notifications"
+              aria-pressed={props.notifications!.bellOn()}
+              title={
+                props.notifications!.bellMode === "install-hint"
+                  ? "Install to Home Screen for notifications"
+                  : props.notifications!.bellTitle()
+              }
+              onClick={() =>
+                props.notifications!.bellMode === "install-hint"
+                  ? props.notifications!.showInstallHint()
+                  : void props.notifications!.toggleBell()
+              }
+            >
+              <BellIcon ringing={props.notifications!.bellOn()} />
+            </button>
+          </Show>
+        </div>
         <Show when={store.whoami()}>
-          <span class="tl-sidebar-user" title="signed in as">
-            {store.whoami()!.osUser}
-          </span>
+          <p class="tl-sidebar-sub">
+            Logged in as {store.whoami()!.osUser} ({store.whoami()!.authentik}).
+            Sessions are kernel-isolated per Unix user; you only see your own.
+          </p>
         </Show>
       </div>
 
