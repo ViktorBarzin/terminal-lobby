@@ -1,6 +1,7 @@
 # terminal-lobby v1 — the terminal-first cut
 
-**Status:** Executing — dev tier clean & verified; live cutover pending Viktor's dogfood
+**Status:** Executing — dev tier verified, network-hardened, cutover prerequisites done;
+awaiting Viktor's dogfood before the flip
 **Date:** 2026-08-08 · **Owner:** wizard
 **Supersedes the direction of:** the 2026-07-19 "v2 roadmap" (text-primary, 6 pillars)
 
@@ -55,7 +56,7 @@ flowchart TD
 ## What shipped
 
 Terminal-first is flipped, deployed, and **browser-verified** on the dev tier, and
-**all 15 QA-sweep findings are fixed + deployed** (890 unit tests green). By cluster:
+**all 15 QA-sweep findings are fixed + deployed**. By cluster:
 
 | Cluster | Findings | Fix |
 |---|---|---|
@@ -65,6 +66,59 @@ Terminal-first is flipped, deployed, and **browser-verified** on the dev tier, a
 | **Notification badges** | "unseen done" never clears; favicon out of sync | new `store/visits.ts` visit-tracking feeding the real `isUnseen` into title + favicon |
 | **Layout race** | a second tab silently reverts your move | frontend conflict detection → "Layout changed elsewhere" toast |
 | **Terminal status / telemetry** | terminal bar showed the deferred text-view's "no transcript"; gallery telemetry fired before its guards | badge scoped to `mode === "text"`; `track()` moved past the guards |
+
+## Verified end-to-end in a browser
+
+An agent drove the deployed dev tier as a user (isolated chromium through the
+harness proxy, `qa-*` sessions only). Terminal, lobby/CRUD, keyboard/overlays,
+settings and the nine themes, and notifications all passed; typing was confirmed
+to reach the pty via `tmux capture-pane`, and the theme switch was observed
+recolouring the framed terminal along with the page.
+
+Thirteen of the fifteen fixes above re-verified live. Of the other two: the
+project-grouping fix could not have its precondition set up through the proxy
+(assigning a session the proxy does not own returns 403), so it rests on its unit
+tests; and double-click-rename turned out to be only partly fixed — `stabilizeModel`
+removed the poll-churn cause, but selecting a card still mounted the terminal,
+whose auto-focus stole the just-opened rename box and its `onBlur` closed it. The
+terminal now declines to take focus while a lobby text field has it.
+
+Known coverage gaps: OSC52 copy/paste is blocked
+by the headless clipboard, card-level HTML5 drag is not synthesizable in
+Playwright (group reorder was verified instead), and Restore needs a different
+setup than "kill, then restore" to exercise.
+
+## Surviving slow and unreliable networks
+
+A read-only investigation mapped the connection stack across both frontends and
+found seventeen gaps; sixteen are fixed on both, one is deferred with a reason.
+The existing good parts were confirmed intact: the ttyd flow-control patch, the
+`-P 30` keepalive, the battery saver with its three race guards, the
+`sessionStillExists` kill-guard, and the stale-tab healer.
+
+| Gap | Was | Now |
+|---|---|---|
+| **Half-open connection (the signature mobile failure)** | The `-P 30` keepalive is server→client and the browser hides ping/pong, so a black-holed path left `readyState === OPEN` forever: a frozen terminal swallowing keystrokes, with no reconnect ladder running because nothing reported a drop. | An active **liveness watchdog**: every 25s a same-origin `/token` round trip plus `bufferedAmount` around a zero-length INPUT frame; three strikes hands the drop to the ordinary kill-guarded ladder. The probe frame is a verified pty no-op (ttyd source + measured). A black-hole rig showed the page believing it was connected at t+56s before, and the watchdog firing at t+63s after, reconnecting 5s after the path returned. |
+| **Unbounded connect hops** | Neither the `/token` fetch nor the WebSocket handshake had a deadline, and while either was in flight `retryTimer` was null — which made the existing `online`/visible instant-retry a no-op precisely when it was needed. | 8s on the token hop, 10s on the handshake, and `retryNow()` abandons a stalled attempt instead of returning early. |
+| **Synchronised reconnects** | The ladder was a fixed 1/2/4/8/16s table with no randomisation, so every client retried in lockstep after a deploy or partition. | Full jitter, ported from the SSE client. |
+| **Input lost while disconnected** | Keystrokes, pastes and soft-key presses were dropped silently. | The connection pill flashes and a throttled toast explains; up to 4 KB is held and replayed if the socket returns within 3s, discarded with a clear message if not, and cleared on session end and battery suspend. |
+| **A dropped poll erased the lobby** (vanilla) | One failed 5s poll replaced every session card with `Error: Failed to fetch`, while the tmux sessions themselves were still running. | The last-known-good list stays; a non-destructive note reports the staleness; the empty state renders only when nothing has ever loaded. |
+| **Polls piled up and applied out of order** | `setInterval` fired regardless of whether the previous request had answered; the last response to *arrive* won. Deadlines were absent (47 fetch sites, no AbortController). | A self-scheduling loop with an in-flight guard and a monotonic sequence tag, 8s deadlines at the single choke point (uploads exempt), 5→10→20→30s failure backoff, and an `online` wake. |
+| **A stalled SSE probe stranded the stream** (v2) | The failure-classification probe was unbounded, and while it awaited, neither a source nor a timer existed — a probe that never settled hung the client permanently. | The probe is bounded; an unsettled probe becomes a plain "unknown" and routes to the reconnect ladder. A source silent past 45s is rebuilt on wake rather than trusted. |
+
+The one deferral is the **warm-frame pool** (instant session switching). It is not
+shipped because the `__tl*` bridges are installed on mount and never re-asserted
+on activation: with two mounted views the hidden one keeps them, so soft-key
+bytes would reach the wrong session's pty. It needs the bridges made
+activation-scoped first — worth doing on its own merits, since "exactly one
+mounted SessionView" is currently a load-bearing undocumented assumption.
+
+The transport lives in two files, so the mirror is now enforced by a test rather
+than by a careful diff: `frontend-v2/test/ws-parity.test.ts` compares the
+sentinel-delimited blocks, the liveness watchdog, and the transport constants
+between `index.html` and `term.html`. The constants are included because they sit
+outside the sentinel blocks: an earlier draft of the test passed clean against a
+deliberately-injected change to one of them.
 
 ## The rig (reusable)
 
@@ -77,13 +131,43 @@ Terminal-first is flipped, deployed, and **browser-verified** on the dev tier, a
   push `origin/master` → `deploy-v2.sh` (restarts only ttyd-v2). Shared-tier changes
   (tmux-api / clipboard-upload / ttyd) land but are **not** auto-deployed.
 
-## Open / next
+## Ready for the cutover
 
-- **Cutover** the main host once Viktor is happy dogfooding `terminal-dev`.
-- **Deferred to v2:** text-mode (make the SSE connection *lazy* — connect only when Text
-  is opened — before any main-host SSE), the file editor, auto-update, resilient protocol.
-- **Follow-up:** re-enable the quarantined `sse.integration.test.ts` (stand up a scratch
-  `tmux -L` server) when text-mode is un-deferred — the SessionStart registry now lives
-  in tmux, so it 500s for a fabricated session.
-- Minor observed (not a v1 defect): no lobby-level copy chord; terminal copy/paste rides
-  the ttyd page's own OSC52 (works as in vanilla).
+The prerequisites are done:
+
+- **`v-vanilla-final` tagged** — the rollback point, carrying the vanilla frontend
+  with the full resilience kernel, as prod served it before any cutover.
+- **Mobile double-toolbar fixed** — a phone showed two stacked soft-key bars in
+  terminal mode, because `term.html` built its own while the SPA drew one over it.
+  Framed ⟹ the SPA owns the toolbar, so the framed page now suppresses both its bar
+  and its height reservation. A bare deep-linked `/term.html?arg=` tab keeps its own.
+- **The transcript stream is lazy** — it opens when Text mode is first shown rather
+  than on mount, so a terminal-first session no longer spends an SSE connection (and,
+  on a mobile network, a reconnect ladder) on a view it never displays. It also ends
+  the `/events` 404 that every plain-shell session logged.
+- **Webfonts load on the dev tier** — the SPA named JetBrains Mono and DM Sans but
+  carried no `@font-face`, so all chrome text fell back to a system face.
+- **Parity is tested**, not diffed by hand (above).
+
+What remains is **dogfooding `terminal-dev`** — ideally on a phone and a poor
+connection, since that is what the resilience work targets — and then the flip:
+one file, with `.prev` and the tag behind it.
+
+## Deferred, with reasons
+
+- **Text mode, the file editor, auto-update, cluster-native deploy (pillar #5)** — the
+  later-v2 surfaces. Re-enable the quarantined `sse.integration.test.ts` when text mode
+  un-defers; it needs a scratch `tmux -L` server, because the SessionStart registry now
+  lives in tmux and rejects a fabricated session.
+- **Warm-frame pool** — needs the `__tl*` bridge-ownership refactor first (above).
+- Minor and not a v1 defect: there is no lobby-level copy chord; terminal copy/paste
+  rides the ttyd page's own OSC52, as in vanilla.
+
+## Open questions
+
+- The liveness probe adds one `/token` GET per visible terminal every 25s, through
+  Traefik and Authentik. Negligible at current tab counts; worth a look if many tabs
+  are ever open at once.
+- Traefik and Cloudflare idle timeouts are not set in-repo. The 30s keepalive margin
+  is chosen against upstream defaults (180s / ~100s), asserted by comment rather than
+  by configuration.
