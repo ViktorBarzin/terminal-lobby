@@ -252,6 +252,18 @@ export const TerminalView: Component<{
     return true;
   };
   let prevSendBytes: ((b: string) => boolean) | undefined;
+  // Clipboard TEXT the lobby has already read, handed to the terminal page's
+  // term.paste(). Separate from tl-input on purpose: term.paste brackets the
+  // paste and normalizes \r\n, so a multiline paste cannot execute
+  // line-by-line the way raw bytes would. The lobby does the reading because
+  // the async clipboard is gated on document focus, which the frame does not
+  // have when a lobby control was clicked (clipboard/paste.ts).
+  const pasteToFrame = (text: string): boolean => {
+    if (!iframe?.contentWindow) return false;
+    postToFrame({ type: "tl-paste", text });
+    return true;
+  };
+  let prevPaste: ((t: string) => boolean) | undefined;
   const refitFrame = (): boolean => {
     if (!iframe?.contentWindow) return false;
     postToFrame({ type: "tl-refit" });
@@ -296,6 +308,8 @@ export const TerminalView: Component<{
       window.__tlForwardToTerminal = forwardToFrame;
       prevSendBytes = window.__tlSendToTerminal;
       window.__tlSendToTerminal = sendBytesToFrame;
+      prevPaste = window.__tlPasteToTerminal;
+      window.__tlPasteToTerminal = pasteToFrame;
       prevRefit = window.__tlRefitTerminal;
       window.__tlRefitTerminal = refitFrame;
       prevFocus = window.__tlFocusTerminal;
@@ -322,6 +336,9 @@ export const TerminalView: Component<{
     }
     if (typeof window !== "undefined" && window.__tlSendToTerminal === sendBytesToFrame) {
       window.__tlSendToTerminal = prevSendBytes;
+    }
+    if (typeof window !== "undefined" && window.__tlPasteToTerminal === pasteToFrame) {
+      window.__tlPasteToTerminal = prevPaste;
     }
     if (typeof window !== "undefined" && window.__tlRefitTerminal === refitFrame) {
       window.__tlRefitTerminal = prevRefit;
