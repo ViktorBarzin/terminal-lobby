@@ -30,6 +30,9 @@ export interface CommandDeps {
   openGallery: () => void;
   /** post a terminal-document command DOWN to the active iframe; false if none. */
   forwardToTerminal: (cmd: string) => boolean;
+  /** Paste into the terminal, performed in THIS document (clipboard/paste.ts):
+   *  the frame cannot read the clipboard while the lobby holds focus. */
+  pasteToTerminal: () => boolean;
   /** flip the mounted session between its text and terminal view; false if no
    *  SessionView is mounted. Defaults to the `window.__tlToggleView` bridge the
    *  mounted SessionView installs (same pattern as __tlForwardToTerminal) — the
@@ -133,9 +136,11 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     }
 
     if (cmd === "terminal.paste") {
-      // Paste-into-terminal still lives in the terminal document (its clipboard
-      // read + image-aware routine) — forward down to the active iframe.
-      if (!deps.forwardToTerminal(cmd)) deps.notify("Open a session first", "error");
+      // The READ happens in the lobby: the async clipboard is gated on document
+      // focus, and a frame whose parent was just clicked does not have it — the
+      // old forward-and-read-there path threw "Document is not focused" and
+      // reported it as denied access for a permission never requested.
+      if (!deps.pasteToTerminal()) deps.notify("Open a session first", "error");
       return;
     }
   };
