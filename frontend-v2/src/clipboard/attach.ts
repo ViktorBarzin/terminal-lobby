@@ -35,6 +35,10 @@ export interface ImageClipboardDeps {
 export interface ImageClipboard {
   /** true while a file-bearing drag is over the window (raises the overlay). */
   dropActive: Accessor<boolean>;
+  /** The drop intake, for callers that obtained files some other way — the
+   *  Upload button's file picker. Same uploads, same toasts, same paths typed
+   *  at the pty; only the telemetry gesture differs. */
+  uploadFiles: (files: File[], via?: "drop" | "picker") => Promise<void>;
   dispose: () => void;
 }
 
@@ -102,12 +106,19 @@ export function installImageClipboard(
   };
 
   // ---- drop: many files, images to the gallery, rest to /tmp --------------
-  async function uploadDropped(files: File[]): Promise<void> {
-    // Up front, and counting the files DROPPED rather than the ones that
-    // uploaded: the event records the gesture (ADR-0006 attributes paste/drop
-    // to both lobbies), so a failing intake must not erase the drop from the
-    // stream. Same shape the vanilla page emits.
-    track("image.dropped", { "tl.count": files.length });
+  async function uploadDropped(
+    files: File[],
+    via: "drop" | "picker" = "drop",
+  ): Promise<void> {
+    // Up front, and counting the files the GESTURE carried rather than the ones
+    // that uploaded: the event records the gesture (ADR-0006 attributes
+    // paste/drop to both lobbies), so a failing intake must not erase it from
+    // the stream. Same shape the vanilla page emits. `via` keeps a file picked
+    // through the Upload button out of the drop counts — same intake, different
+    // gesture.
+    track(via === "picker" ? "image.uploaded" : "image.dropped", {
+      "tl.count": files.length,
+    });
     const loading = toast(
       `Uploading ${files.length} file${files.length > 1 ? "s" : ""}…`,
       "loading",
@@ -175,6 +186,7 @@ export function installImageClipboard(
 
   return {
     dropActive,
+    uploadFiles: uploadDropped,
     dispose(): void {
       doc.removeEventListener("paste", onPaste, true);
       win.removeEventListener("dragenter", onDragEnter);
