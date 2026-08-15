@@ -312,14 +312,26 @@
 .tl-drop-below {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
+/* Weights match the vanilla page's `.session-name` (index.html): 500 at rest,
+   600 for the attached session, italic for a session owned by someone else.
+   The family was never the difference — both pages put the lobby on
+   var(--font-ui) — but this rule set no weight at all, so the names rendered at
+   400 and read lighter than the ones next to them in prod. */
 .tl-card-name {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 13px;
+  font-weight: 500;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tl-card-active .tl-card-name {
+  font-weight: 600;
+}
+.tl-card-foreign .tl-card-name {
+  font-style: italic;
 }
 .tl-card-rename {
   flex: 1 1 auto;
@@ -343,8 +355,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 10px to match the vanilla page's `.row-time`, the same right-edge time (live
+   elapsed while running, otherwise last activity). */
 .tl-card-time {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
