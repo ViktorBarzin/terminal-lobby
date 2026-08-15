@@ -355,12 +355,28 @@ describe("<SessionView> — terminal controls in the session bar", () => {
   it("draws icons, not emoji", () => {
     // The vanilla page moved off emoji because they render in colour at an
     // OS-dependent size; a regression here is invisible to every other test.
+    // The buttons DO carry a text label — what must never come back is a
+    // pictographic glyph standing in for the icon.
     const { container } = render(() => <SessionView session="qa-tools" />);
     for (const label of ["Session images", "Upload image", "Paste from clipboard", "File preview"]) {
       const btn = container.querySelector(`.tl-session-bar [aria-label="${label}"]`)!;
       expect(btn.querySelector("svg"), `${label} should draw an svg`).toBeTruthy();
-      expect(btn.textContent?.trim(), `${label} should carry no glyph`).toBe("");
+      expect(btn.textContent ?? "", `${label} should carry no emoji`).not.toMatch(
+        /\p{Extended_Pictographic}/u,
+      );
     }
+  });
+
+  it("labels each control, so six icons are not a guessing game", () => {
+    const { container } = render(() => <SessionView session="qa-tools" />);
+    const labelled = (aria: string): string =>
+      container
+        .querySelector(`.tl-session-bar [aria-label="${aria}"] .tl-btn-label`)
+        ?.textContent?.trim() ?? "";
+    expect(labelled("Session images")).toBe("Images");
+    expect(labelled("Upload image")).toBe("Upload");
+    expect(labelled("Paste from clipboard")).toBe("Paste");
+    expect(labelled("File preview")).toBe("Files");
   });
 
   it("steps the roamed font size, clamped at the ends", () => {
