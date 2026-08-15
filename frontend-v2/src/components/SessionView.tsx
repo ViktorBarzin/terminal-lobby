@@ -21,6 +21,7 @@ import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer } from "../mobile/pointer";
 import { installViewportSync } from "../mobile/viewport";
 import { installImageClipboard } from "../clipboard/attach";
+import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
 import {
   CameraIcon,
   ClipboardIcon,
@@ -248,6 +249,27 @@ export const SessionView: Component<{
   });
   onCleanup(image.dispose);
 
+  // Paste is performed HERE, in the lobby document, and only the result is
+  // sent down — the frame cannot read the clipboard, because the async
+  // clipboard is gated on document focus and clicking a lobby control focuses
+  // the lobby (clipboard/paste.ts). Published on the window so the command
+  // palette and the Paste chord reach the same routine as the button.
+  const doPaste = (): boolean => {
+    void pasteIntoTerminal({
+      sendPasteText: (t) => window.__tlPasteToTerminal?.(t) ?? false,
+      uploadFiles: image.uploadFiles,
+    });
+    return true;
+  };
+  let prevDoPaste: (() => boolean) | undefined;
+  onMount(() => {
+    prevDoPaste = window.__tlDoPaste;
+    window.__tlDoPaste = doPaste;
+  });
+  onCleanup(() => {
+    if (window.__tlDoPaste === doPaste) window.__tlDoPaste = prevDoPaste;
+  });
+
   // ---- terminal controls in the session bar -------------------------------
   // A−/A+ step the ROAMED font size, so the change follows the user to their
   // other devices and reaches the live terminal through the prefs bridge
@@ -339,7 +361,7 @@ export const SessionView: Component<{
               class="tl-icon-btn tl-paste-btn"
               aria-label="Paste from clipboard"
               title="Paste from clipboard"
-              onClick={() => window.__tlForwardToTerminal?.("terminal.paste")}
+              onClick={() => doPaste()}
             >
               <ClipboardIcon />
               <span class="tl-btn-label">Paste</span>
@@ -396,7 +418,7 @@ export const SessionView: Component<{
         <SoftKeys
           send={sendBytesToPty}
           onCopy={() => window.__tlForwardToTerminal?.("terminal.copy")}
-          onPaste={() => window.__tlForwardToTerminal?.("terminal.paste")}
+          onPaste={() => doPaste()}
           onDismissKeyboard={dismissKeyboard}
         />
       </Show>

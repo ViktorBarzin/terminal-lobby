@@ -252,6 +252,7 @@ export const App: Component = () => {
     },
     notify,
     openGallery: () => void gallery.open(),
+    pasteToTerminal: () => window.__tlDoPaste?.() ?? false,
     forwardToTerminal: (cmd) => {
       const f = window.__tlForwardToTerminal;
       return typeof f === "function" ? !!f(cmd) : false;
