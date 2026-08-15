@@ -689,3 +689,24 @@ describe("term.html — both hops of a connect are bounded", () => {
     expect(src.match(/gen !== connGen/g) ?? []).toHaveLength(5);
   });
 });
+
+/**
+ * The framed terminal must not paint its own slow-request warning: the lobby
+ * runs the same coordinator over its own requests and owns the notification
+ * surface, so painting in both put two "Some requests are slow" toasts on
+ * screen at once, with different counts, for one condition.
+ */
+describe("term.html — one slow-request surface, not two", () => {
+  const src = (): string => readFileSync(TERM_HTML, "utf8");
+
+  it("stands down while framed, and still paints in a standalone tab", () => {
+    const repaint = src().slice(src().indexOf("function repaint()"));
+    expect(repaint.slice(0, 800)).toContain("window.parent !== window");
+  });
+
+  it("keeps telemetry out of the tracker entirely", () => {
+    // fire-and-forget: the user cannot act on a slow beacon, and its own
+    // module swallows failures by design.
+    expect(src()).toMatch(/\/\\\/telemetry\$\/|\/telemetry\$\//);
+  });
+});
