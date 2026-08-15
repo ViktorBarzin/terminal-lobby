@@ -1,0 +1,161 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { render, fireEvent } from "@solidjs/testing-library";
+import { SessionView } from "../src/components/SessionView";
+
+/**
+ * WHEN the transcript stream opens.
+ *
+ * v1 ships terminal-first: a session opens on the Terminal view and Text is
+ * opt-in. The session store used to connect `/events/<session>` from its
+ * constructor and the view creates that store on mount, so every session opened
+ * a stream for a view it may never show — pointless connections and reconnect
+ * ladders on a mobile network, plus a 404 per plain-shell session per load
+ * (no Claude in it, so session-events has no transcript to stream).
+ *
+ * So the first connect waits for Text mode to actually be shown. Only the FIRST
+ * one: once open the stream stays open for the life of this view, because the
+ * [Text] segment's activity dot is exactly the promise that the timeline keeps
+ * filling while you are looking at the terminal.
+ */
+
+interface FakeSource {
+  url: string;
+  closed: boolean;
+  onopen: ((ev: unknown) => void) | null;
+  onerror: ((ev: unknown) => void) | null;
+  onmessage: ((ev: { data: string }) => void) | null;
+}
+
+const eventSources: FakeSource[] = [];
+const g = globalThis as unknown as { EventSource?: unknown };
+
+const segments = (root: HTMLElement): HTMLButtonElement[] =>
+  Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"));
+
+const dots = (root: HTMLElement): boolean[] =>
+  segments(root).map((b) => !!b.querySelector(".tl-activity-dot"));
+
+const conn = (root: HTMLElement): HTMLElement | null =>
+  root.querySelector<HTMLElement>(".tl-conn");
+
+const mode = (root: HTMLElement): string | null =>
+  root.querySelector(".tl-session-view")?.getAttribute("data-mode") ?? null;
+
+const feed = (src: FakeSource | undefined, id: number, body: string): void =>
+  src?.onmessage?.({
+    data: JSON.stringify({ id, kind: "text", session: "qa-lazy", body }),
+  });
+
+describe("<SessionView> — the transcript stream is opened by Text mode", () => {
+  let origES: unknown;
+  beforeEach(() => {
+    origES = g.EventSource;
+    eventSources.length = 0;
+    g.EventSource = class implements FakeSource {
+      onopen: ((ev: unknown) => void) | null = null;
+      onerror: ((ev: unknown) => void) | null = null;
+      onmessage: ((ev: { data: string }) => void) | null = null;
+      closed = false;
+      constructor(public url: string) {
+        eventSources.push(this);
+      }
+      close(): void {
+        this.closed = true;
+      }
+    };
+    localStorage.clear();
+  });
+  afterEach(() => {
+    g.EventSource = origES;
+    localStorage.clear();
+  });
+
+  it("opens no stream for a session that lands on the Terminal view", () => {
+    const { container } = render(() => <SessionView session="qa-lazy" />);
+    expect(mode(container)).toBe("terminal");
+    expect(eventSources).toHaveLength(0);
+  });
+
+  it("opens the stream when Text mode is first shown", () => {
+    const { container } = render(() => <SessionView session="qa-lazy" />);
+    expect(eventSources).toHaveLength(0);
+
+    fireEvent.click(segments(container)[0]!); // [Text]
+    expect(mode(container)).toBe("text");
+    expect(eventSources).toHaveLength(1);
+    expect(eventSources[0]?.url).toContain("qa-lazy");
+  });
+
+  it("connects on mount for a session you left in Text mode", () => {
+    localStorage.setItem("tl:viewmode:v1:qa-lazy", "text");
+    const { container } = render(() => <SessionView session="qa-lazy" />);
+    expect(mode(container)).toBe("text");
+    // The remembered mode IS the view being shown — there is no click to wait
+    // for, so mount is the moment Text is first shown.
+    expect(eventSources).toHaveLength(1);
+  });
+
+  it("keeps the stream when you switch back to the Terminal", () => {
+    const { container } = render(() => <SessionView session="qa-lazy" />);
+    fireEvent.click(segments(container)[0]!); // [Text]
+    expect(eventSources).toHaveLength(1);
+
+    fireEvent.click(segments(container)[1]!); // [Terminal]
+    expect(mode(container)).toBe("terminal");
+    expect(eventSources[0]?.closed).toBe(false);
+    expect(eventSources).toHaveLength(1);
+
+    // ...and it is still filling the timeline, which is what the [Text]
+    // segment's activity dot reports while you are not looking at it.
+    feed(eventSources[0], 1, "arrived while you were in the terminal");
+    expect(dots(container)).toEqual([true, false]);
+  });
+
+  it("opens exactly one stream however often you toggle the view", () => {
+    const { container } = render(() => <SessionView session="qa-lazy" />);
+    for (let i = 0; i < 3; i++) {
+      fireEvent.click(segments(container)[0]!); // [Text]
+      fireEvent.click(segments(container)[1]!); // [Terminal]
+    }
+    fireEvent.click(segments(container)[0]!); // [Text]
+    expect(eventSources).toHaveLength(1);
+  });
+
+  it("badges the first open of Text as connecting, not as a failure", () => {
+    const { container } = render(() => <SessionView session="qa-lazy" />);
+    fireEvent.click(segments(container)[0]!); // [Text] — the badge's own view
+    // The badge appears with the connection it just triggered, not with the
+    // vocabulary of a broken one.
+    expect(conn(container)?.getAttribute("data-status")).toBe("connecting");
+    expect(conn(container)?.textContent).toBe("connecting");
+  });
+
+  it("unmounts cleanly when the stream was never opened", () => {
+    const { unmount } = render(() => <SessionView session="qa-lazy" />);
+    expect(eventSources).toHaveLength(0);
+    expect(() => unmount()).not.toThrow();
+    expect(eventSources).toHaveLength(0);
+  });
+
+  it("closes the stream on unmount once it HAS been opened", () => {
+    const { container, unmount } = render(() => <SessionView session="qa-lazy" />);
+    fireEvent.click(segments(container)[0]!); // [Text]
+    expect(eventSources).toHaveLength(1);
+
+    unmount();
+    expect(eventSources[0]?.closed).toBe(true);
+  });
+
+  it("renders the transcript-derived surfaces on an empty stream", () => {
+    // Nothing has connected, so `store.events` is empty — the timeline, the
+    // pending-permission list and the preview store's recent-files list all
+    // derive from it and must simply render nothing.
+    const { container } = render(() => <SessionView session="qa-lazy" />);
+    expect(eventSources).toHaveLength(0);
+    expect(dots(container)).toEqual([false, false]);
+
+    fireEvent.click(container.querySelector('[aria-label="File preview"]')!);
+    expect(container.querySelector(".tl-preview-panel")).toBeTruthy();
+    expect(container.querySelector(".tl-preview-recents")).toBeNull();
+  });
+});
