@@ -156,7 +156,7 @@ describe("restore picker — behaviour", () => {
     const { container } = mount(api);
     await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
 
-    fireEvent.click(screen.getByText(/12:50|Aug/));
+    fireEvent.click(screen.getByText(/12:50/));
     await waitFor(() => expect(screen.getByText("T3")).toBeTruthy());
 
     const boxes = [...container.querySelectorAll<HTMLInputElement>(".tl-restore-row input")];
@@ -180,7 +180,7 @@ describe("restore picker — behaviour", () => {
     let closed = false;
     const { container, getByText } = mount(api, { onClose: () => (closed = true) });
     await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
-    fireEvent.click(screen.getByText(/12:50|Aug/));
+    fireEvent.click(screen.getByText(/12:50/));
     await waitFor(() => expect(screen.getByText("T3")).toBeTruthy());
 
     // Tick the killed session back on — an accidental kill must stay one click
@@ -215,7 +215,7 @@ describe("restore picker — behaviour", () => {
     const api = new FakeApi();
     const { container, getByText } = mount(api);
     await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
-    fireEvent.click(screen.getByText(/12:50|Aug/));
+    fireEvent.click(screen.getByText(/12:50/));
     await waitFor(() => expect(screen.getByText("T3")).toBeTruthy());
 
     fireEvent.click(getByText("select none"));
@@ -241,7 +241,7 @@ describe("restore picker — behaviour", () => {
       onError: (m: string) => errors.push(m),
     });
     await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
-    fireEvent.click(screen.getByText(/12:50|Aug/));
+    fireEvent.click(screen.getByText(/12:50/));
     await waitFor(() => expect(screen.getByText("T3")).toBeTruthy());
 
     fireEvent.click(getByText(/^Restore \d+ selected$/));
