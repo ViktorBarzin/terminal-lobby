@@ -2269,6 +2269,30 @@ __TL_DIAG__
             body.has-soft-keys #terminal {
                 height: calc(100% - 50px - env(safe-area-inset-bottom));
             }
+            /* FRAMED (the frontend-v2 SPA): the SPA renders its OWN
+               <SoftKeys> above this iframe and reserves the strip on ITS
+               body (app.css `body.has-soft-keys .tl-views`), so a phone was
+               showing two stacked toolbars. Framed ⟹ the SPA owns the
+               toolbar: ours must neither PAINT (the duplicate) nor RESERVE
+               height (the reservation is already made one document up —
+               taking it twice would leave a dead ~50px gap between the grid
+               and the SPA's bar). Both are cancelled here rather than in the
+               toolbar build so nothing can appear even for a frame:
+               body.tl-framed is set pre-paint, long before the build.
+               Specificity (0,2,1)/(0,3,1) beats the two rules above from
+               anywhere in the sheet, so the Task M.6 toggle's
+               `toolbar.style.display = ''` — which removes the inline
+               declaration rather than setting one — cannot resurrect the bar
+               either. #compose-bar is deliberately NOT suppressed: the SPA
+               has no composer of its own, so the mirror field stays this
+               page's mobile text-input surface (--sk-h measures 0 for the
+               display:none toolbar, so the bar simply docks at the bottom).
+               A bare deep-linked /term.html?arg= tab is unframed and keeps
+               its toolbar — that tab has no SPA above it.
+               term.html ONLY: in the vanilla index.html the framed terminal
+               IS the toolbar owner, so the same rule would break it. */
+            body.tl-framed #soft-keys { display: none; }
+            body.tl-framed.has-soft-keys #terminal { height: 100%; }
         }
     </style>
 </head>
@@ -2347,6 +2371,28 @@ __TL_DIAG__
                     }
                 });
         } catch (e) { /* no matchMedia listener — auto-follow stays off */ }
+    })();
+    </script>
+    <script>
+    /* Pre-paint framing mark — body.tl-framed. The ONLY page that frames
+       /term.html is the frontend-v2 SPA (the vanilla lobby frames /?arg=,
+       i.e. index.html), so framed ⟹ the SPA is our parent and IT owns the
+       mobile chrome it draws over us — today the soft-key toolbar (see
+       `body.tl-framed #soft-keys` in the coarse-pointer block above).
+       Same detection as FRAMED_BY_LOBBY / isFramed further down, same
+       try/catch guard; it just runs ~7000 lines earlier. Here, and not in
+       the app script, because both things the class cancels start BEFORE
+       that code is reached: the `has-soft-keys` height reservation is added
+       at the first fit, and the toolbar is built moments later — a class
+       set pre-paint means neither the duplicate bar nor the dead gap can
+       ever be painted, not even for one frame. Body-scoped to match the
+       theme classes and the existing `body.has-soft-keys` rules; body
+       exists here (this script is a child of <body>, above every element
+       that paints). */
+    (function () {
+        try {
+            if (window.parent !== window) document.body.classList.add('tl-framed');
+        } catch (e) { /* parent unreachable — treat as unframed, keep our own chrome */ }
     })();
     </script>
     <div id="terminal"></div>
