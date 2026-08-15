@@ -54,6 +54,7 @@ function makeRun(over: Partial<CommandDeps> = {}): {
     notify,
     openGallery: noop,
     forwardToTerminal: () => false,
+    pasteToTerminal: () => true,
     ...over,
   });
   return { run, notify };

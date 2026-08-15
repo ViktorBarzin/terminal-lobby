@@ -192,6 +192,9 @@ src/
     compose.ts           PURE bracketed-paste + trailing-submit split
     viewport.ts          visualViewport → CSS var so the keyboard can't cover
   clipboard/
+    paste-into-terminal.ts  Clipboard -> terminal, READ IN THE LOBBY (the frame
+                         has no focus, so it cannot read it) — text via tl-paste,
+                         images via the shared upload intake
     paste.ts             PURE paste image-vs-text discrimination
     drop.ts              PURE drag-payload detection
     upload.ts            clipboard-upload client + field routing

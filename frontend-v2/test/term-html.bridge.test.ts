@@ -104,6 +104,7 @@ describe("term.html — the framed Ctrl+J chord reaches the v2 dispatcher", () =
       notify,
       openGallery: noop,
       forwardToTerminal: () => false,
+      pasteToTerminal: () => true,
       toggleView,
     });
 
