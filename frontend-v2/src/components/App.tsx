@@ -28,7 +28,6 @@ import { CommandPalette } from "./CommandPalette";
 import { ShortcutsHelp, createHelpController } from "./ShortcutsHelp";
 import { createNotificationSystem } from "../notify/notifications";
 import type { TitleSession } from "../notify/title";
-import { BellIcon } from "./BellIcon";
 import { createGalleryStore } from "../store/gallery";
 import { Gallery } from "./Gallery";
 import { createDeployHealer } from "../deploy/healer";
@@ -309,7 +308,12 @@ export const App: Component = () => {
   return (
     <div class="tl-shell" classList={{ "tl-shell-collapsed": collapsed() }}>
       <aside class="tl-shell-sidebar">
-        <Sidebar store={store} prefs={prefs} altActive={engine.altActive} />
+        <Sidebar
+          store={store}
+          prefs={prefs}
+          altActive={engine.altActive}
+          notifications={notifications}
+        />
       </aside>
 
       <div class="tl-shell-content">
@@ -323,27 +327,10 @@ export const App: Component = () => {
             {collapsed() ? "›" : "‹"}
           </button>
           <span class="tl-brand">terminal-lobby</span>
+          {/* The bell lives in the sidebar's lobby header, beside the title —
+              where the vanilla page keeps it. The shell bar carries the
+              collapse arrow, the brand and Settings. */}
           <span class="tl-shellbar-spacer" />
-          <Show when={notifications.bellMode !== "hidden"}>
-            <button
-              class="tl-icon-btn tl-notify-btn"
-              classList={{ on: notifications.bellOn() }}
-              aria-label="Notifications"
-              aria-pressed={notifications.bellOn()}
-              title={
-                notifications.bellMode === "install-hint"
-                  ? "Install to Home Screen for notifications"
-                  : notifications.bellTitle()
-              }
-              onClick={() =>
-                notifications.bellMode === "install-hint"
-                  ? notifications.showInstallHint()
-                  : void notifications.toggleBell()
-              }
-            >
-              <BellIcon ringing={notifications.bellOn()} />
-            </button>
-          </Show>
           <button
             class="tl-icon-btn tl-settings-btn"
             aria-label="Settings"
