@@ -221,6 +221,12 @@ export function installSlowRequestTracking(
   w.__tlFetchTracked = true;
   const orig = window.fetch.bind(window);
   const TRACK_RE = /^\/(api|prompt|cancel|permission)(\/|$|\?)/;
+  // Telemetry is fire-and-forget: the user never asked for it, cannot act on
+  // it, and telemetry/track.ts swallows its failures by design ("telemetry is
+  // never worth surfacing"). Tracking it here contradicted that — a stalled
+  // beacon raised a sticky "Some requests are slow" warning listing
+  // POST /api/sessions/telemetry, over a session that was working fine.
+  const NEVER_TRACK_RE = /\/telemetry$/;
   window.fetch = function (
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -236,7 +242,7 @@ export function installSlowRequestTracking(
       /* opaque input — skip tracking */
     }
     const promise = orig(input as RequestInfo, init);
-    if (path && TRACK_RE.test(path)) {
+    if (path && TRACK_RE.test(path) && !NEVER_TRACK_RE.test(path)) {
       const ack = controller.track(`${method} ${path}`);
       promise.then(ack, ack);
     }
