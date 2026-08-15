@@ -324,6 +324,7 @@ export const SessionView: Component<{
               onClick={() => props.onOpenGallery?.()}
             >
               <ImageIcon />
+              <span class="tl-btn-label">Images</span>
             </button>
             <button
               class="tl-icon-btn tl-upload-btn"
@@ -332,6 +333,7 @@ export const SessionView: Component<{
               onClick={() => fileInput?.click()}
             >
               <CameraIcon />
+              <span class="tl-btn-label">Upload</span>
             </button>
             <button
               class="tl-icon-btn tl-paste-btn"
@@ -340,6 +342,7 @@ export const SessionView: Component<{
               onClick={() => window.__tlForwardToTerminal?.("terminal.paste")}
             >
               <ClipboardIcon />
+              <span class="tl-btn-label">Paste</span>
             </button>
           </span>
         </Show>
@@ -350,6 +353,7 @@ export const SessionView: Component<{
           onClick={() => preview.show()}
         >
           <FileTextIcon />
+          <span class="tl-btn-label">Files</span>
         </button>
         <ViewSwitch
           mode={mode()}
