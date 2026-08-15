@@ -10,6 +10,13 @@ Operate a session from either surface. Anything created in the lobby is visible 
 manageable in T3 Code; anything created in T3 is visible and manageable in the lobby.
 One conversation, two windows onto it — never two copies, and never two Claudes.
 
+```stats
+14 | live-Claude tmux sessions to mirror
+1 | Claude process per session, always
+0 | changes to T3 Code
+0 | lobby frontend changes
+```
+
 Two constraints shape everything below. **T3 is external software** we don't control
 (`pingdotgg/t3code`, running here as pinned per-user `t3-serve@<user>` instances that
 auto-upgrade), so every integration point has to be a seam T3 already advertises —
@@ -53,7 +60,7 @@ no privileged service — the identity boundary is the uid, enforced by the kern
 ## The shape
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph browsers["Browsers"]
     LB["Lobby v2<br/>terminal.viktorbarzin.me"]
     T3W["T3 web / iOS<br/>t3.viktorbarzin.me"]
