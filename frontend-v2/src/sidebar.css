@@ -614,15 +614,38 @@
   align-items: center;
   gap: 2px;
 }
-/* The icon buttons carry an SVG, not a glyph: size the box, and let the svg
-   sit centred inside it at its own 16px. */
+/* The icon buttons carry an SVG, not a glyph: size the box, and let the svg sit
+   centred inside it at its own 16px. Width is auto rather than square — a
+   labelled button has to grow to fit its word. */
 .tl-session-bar .tl-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
+  gap: 5px;
+  min-width: 28px;
   height: 28px;
-  padding: 0;
+  padding: 0 6px;
+}
+/* Six icons in a row is a guessing game — the label is what says which is
+   which. Small, muted and beside the glyph, so the icon still does the finding
+   and the word only settles it. */
+.tl-btn-label {
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+/* Narrow window: the labels are the first thing to go, so the tools can never
+   push the [Text|Terminal] switch off the bar. The tooltip and the accessible
+   name stay either way. */
+@media (max-width: 1000px) {
+  .tl-btn-label {
+    display: none;
+  }
+  .tl-session-bar .tl-icon-btn {
+    padding: 0;
+    width: 28px;
+  }
 }
 .tl-session-bar .tl-icon-btn:hover {
   color: var(--text-primary);
