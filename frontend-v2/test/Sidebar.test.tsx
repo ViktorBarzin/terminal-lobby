@@ -64,7 +64,14 @@ class FakeApi implements LobbyApi {
  * both. The prefs store seeds itself from localStorage and never reaches the
  * network (its PUT is debounced past the end of the test).
  */
-function mount(api: LobbyApi, over: { confirm?: (message: string) => boolean } = {}) {
+function mount(
+  api: LobbyApi,
+  over: {
+    confirm?: (message: string) => boolean;
+    notifications?: Parameters<typeof Sidebar>[0]["notifications"];
+    onReload?: () => void;
+  } = {},
+) {
   let store!: LobbyStore;
   let prefs!: PrefsStore;
   const utils = render(() => {
@@ -74,7 +81,15 @@ function mount(api: LobbyApi, over: { confirm?: (message: string) => boolean } =
       putDebounceMs: 10_000,
     });
     onCleanup(() => prefs.dispose());
-    return <Sidebar store={store} prefs={prefs} confirm={over.confirm} />;
+    return (
+      <Sidebar
+        store={store}
+        prefs={prefs}
+        confirm={over.confirm}
+        notifications={over.notifications}
+        onReload={over.onReload}
+      />
+    );
   });
   return { ...utils, store: store!, prefs: prefs! };
 }
@@ -741,5 +756,69 @@ describe("<Sidebar>", () => {
     await waitFor(() => expect(group.classList.contains("tl-group-collapsed")).toBe(true));
     expect(group.querySelector(".tl-card")).toBeNull();
     store.dispose();
+  });
+});
+
+/**
+ * The lobby header. It replaced a bare "Sessions" label, and the point of the
+ * replacement is the information: which app this is, who you are on this box,
+ * and that the sessions you can see are only ever your own.
+ */
+describe("<Sidebar> — the lobby header", () => {
+  it("titles the app rather than just labelling the list", async () => {
+    const api = new FakeApi();
+    const { container, store } = mount(api);
+    await store.refresh();
+    const h1 = container.querySelector("h1.tl-sidebar-title");
+    expect(h1?.textContent).toBe("tmux sessions");
+  });
+
+  it("says who you are logged in as, and that sessions are yours alone", async () => {
+    const api = new FakeApi();
+    api.whoamiVal = { osUser: "wizard", authentik: "alice@gmail.com" };
+    const { container, store } = mount(api);
+    await store.refresh();
+    const sub = container.querySelector(".tl-sidebar-sub")?.textContent ?? "";
+    expect(sub).toContain("wizard");
+    expect(sub).toContain("alice@gmail.com");
+    expect(sub).toContain("kernel-isolated");
+  });
+
+  it("holds the explainer back until whoami answers, rather than guessing", () => {
+    const { container } = mount(new FakeApi()); // never refreshed
+    expect(container.querySelector(".tl-sidebar-sub")).toBeNull();
+  });
+
+  it("reloads the app from the ↻ button", async () => {
+    let reloads = 0;
+    const { getByLabelText, store } = mount(new FakeApi(), {
+      onReload: () => void reloads++,
+    });
+    await store.refresh();
+    fireEvent.click(getByLabelText("Reload the app"));
+    expect(reloads).toBe(1);
+  });
+
+  it("carries the notification bell, and toggles it", async () => {
+    let toggled = 0;
+    const notifications = {
+      bellMode: "toggle" as const,
+      bellOn: () => false,
+      bellTitle: () => "Notify me when Claude finishes or needs input",
+      toggleBell: async () => void toggled++,
+      showInstallHint: () => {},
+    } as unknown as Parameters<typeof Sidebar>[0]["notifications"];
+    const { getByLabelText, store } = mount(new FakeApi(), { notifications });
+    await store.refresh();
+    const bell = getByLabelText("Notifications");
+    expect(bell.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(bell);
+    expect(toggled).toBe(1);
+  });
+
+  it("shows no bell when notifications are unavailable on this device", async () => {
+    const { queryByLabelText, store } = mount(new FakeApi());
+    await store.refresh();
+    expect(queryByLabelText("Notifications")).toBeNull();
   });
 });
