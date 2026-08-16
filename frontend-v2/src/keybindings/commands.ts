@@ -33,6 +33,8 @@ export interface CommandDeps {
   /** Paste into the terminal, performed in THIS document (clipboard/paste.ts):
    *  the frame cannot read the clipboard while the lobby holds focus. */
   pasteToTerminal: () => boolean;
+  /** Ctrl/Cmd+J — open, hide or show the scratch-shell dock. */
+  toggleDock: () => void;
   /** flip the mounted session between its text and terminal view; false if no
    *  SessionView is mounted. Defaults to the `window.__tlToggleView` bridge the
    *  mounted SessionView installs (same pattern as __tlForwardToTerminal) — the
@@ -132,6 +134,15 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
       // The gallery is an SPA overlay (opens over any view); the store toasts
       // "Open a session first" when nothing is selected.
       deps.openGallery();
+      return;
+    }
+
+    if (cmd === "session.new.shell") {
+      // The chord fired INSIDE the terminal iframe and was forwarded up: a
+      // keydown in the frame never reaches the lobby's own listener, so this is
+      // the path Ctrl+J takes whenever the terminal has focus — which is most
+      // of the time.
+      deps.toggleDock();
       return;
     }
 
