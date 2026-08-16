@@ -752,13 +752,33 @@ export function currentMode(events: Event[]): string {
   return mode;
 }
 
-/** Prompts sitting in Claude's queue: enqueued, and not yet seen as a prompt. */
+/** How many queued prompts the composer shows before summarising the rest. */
+export const MAX_QUEUED_SHOWN = 3;
+
+/**
+ * Prompts sitting in Claude's queue.
+ *
+ * Only those enqueued since the last thing the human actually said, and only
+ * while the turn that will consume them is still running. The transcript never
+ * reports a prompt LEAVING the queue, so a list built from every queue-operation
+ * in the session only grows: measured on a real session it reached twelve rows
+ * of background-task notifications and took a third of the screen. Anchoring to
+ * the running turn keeps the list to what is genuinely still waiting.
+ */
 export function queuedPrompts(events: Event[]): string[] {
   const spoken = new Set(
     events.filter((e) => e.kind === "user").map((e) => (e.body ?? "").trim()),
   );
+  // Everything after the last real prompt is the turn now running.
+  let from = 0;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]!.kind === "user") {
+      from = i;
+      break;
+    }
+  }
   const out: string[] = [];
-  for (const e of events) {
+  for (const e of events.slice(from)) {
     if (e.kind !== "meta" || e.meta !== "queued") continue;
     const text = (e.body ?? "").trim();
     if (text && !spoken.has(text) && !out.includes(text)) out.push(text);
