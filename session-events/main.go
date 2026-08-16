@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
 
@@ -30,7 +31,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	injector := &Injector{selfUser: self.Username}
+	injector := sessionio.NewInjector(self.Username)
 	rg := newRegistry(ctx, *poll, *homeBase, injector)
 
 	// Authed web surface (mounted behind authMiddleware).
@@ -58,10 +59,13 @@ func main() {
 			http.Error(w, "bad body (need text)", http.StatusBadRequest)
 			return
 		}
-		if injector.State(osUser, session) == stateRunning {
-			http.Error(w, "turn in progress", http.StatusConflict)
-			return
-		}
+		// No turn gate. Claude Code queues typed input itself — its
+		// queue-operation records are in the transcript — and the queued prompt
+		// stays visible in the pane, so a mid-turn send is a normal thing to do
+		// rather than an error (design decision 9). The 409 that used to live
+		// here also made the two surfaces disagree: the bridge pastes whatever
+		// T3 sends, so the same prompt at the same moment ran from one window
+		// and was refused from the other.
 		if err := injector.Prompt(osUser, session, body.Text); err != nil {
 			http.Error(w, "inject failed", http.StatusBadGateway)
 			return
@@ -112,9 +116,3 @@ func main() {
 		log.Fatal(err)
 	}
 }
-
-// Claude turn states as stamped into @claude_state (docs/adr/0001-claude-state-via-hooks.md).
-const (
-	stateRunning = "running"
-	stateDone    = "done"
-)

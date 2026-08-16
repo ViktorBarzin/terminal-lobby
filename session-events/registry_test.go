@@ -8,12 +8,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"terminal-lobby/sessionio"
+	"terminal-lobby/sessionio/siotest"
 )
 
 func TestRegistrySourceRequiresSessionStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	opts := newFakeTmuxOptions("wizard/demo")
+	opts := siotest.NewFakeOptions("wizard/demo")
 	rg := newRegistry(ctx, time.Millisecond, "/root", opts)
 
 	if _, ok := rg.source("wizard", "demo"); ok {
@@ -31,8 +34,8 @@ func TestRegistrySourceRequiresSessionStart(t *testing.T) {
 	if !ok || fs == nil {
 		t.Fatal("session should resolve after SessionStart")
 	}
-	if fs.path != "/root/wizard/.claude/projects/-home-wizard-x/s1.jsonl" {
-		t.Fatalf("transcript path = %q", fs.path)
+	if fs.Path() != "/root/wizard/.claude/projects/-home-wizard-x/s1.jsonl" {
+		t.Fatalf("transcript path = %q", fs.Path())
 	}
 }
 
@@ -41,7 +44,7 @@ func TestRegistrySourceRequiresSessionStart(t *testing.T) {
 func TestRegistrySessionStartFailsWhenItCannotRecord(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, "/root", newFakeTmuxOptions()) // no live sessions
+	rg := newRegistry(ctx, time.Millisecond, "/root", siotest.NewFakeOptions()) // no live sessions
 
 	w := httptest.NewRecorder()
 	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
@@ -56,7 +59,7 @@ func TestRegistrySessionStartFailsWhenItCannotRecord(t *testing.T) {
 func writeTranscript(t *testing.T, homeBase, osUser, cwd, claudeID, marker string) string {
 	t.Helper()
 	root := filepath.Join(homeBase, osUser, ".claude", "projects")
-	path := transcriptPath(root, cwd, claudeID)
+	path := sessionio.TranscriptPath(root, cwd, claudeID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +71,7 @@ func writeTranscript(t *testing.T, homeBase, osUser, cwd, claudeID, marker strin
 }
 
 // waitForMarker polls the source's replay log until an event body carries want.
-func waitForMarker(t *testing.T, fs *fileSource, want string) {
+func waitForMarker(t *testing.T, fs *sessionio.FileSource, want string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -79,10 +82,10 @@ func waitForMarker(t *testing.T, fs *fileSource, want string) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	t.Fatalf("source tailing %s never produced %q; got %+v", fs.path, want, fs.Replay(0))
+	t.Fatalf("source tailing %s never produced %q; got %+v", fs.Path(), want, fs.Replay(0))
 }
 
-func bodies(fs *fileSource) []string {
+func bodies(fs *sessionio.FileSource) []string {
 	var out []string
 	for _, e := range fs.Replay(0) {
 		out = append(out, e.Body)
@@ -115,7 +118,7 @@ func TestRegistryResolvesSessionsRegisteredBeforeARestart(t *testing.T) {
 	)
 	homeBase := t.TempDir()
 	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-SURVIVES-RESTART")
-	opts := newFakeTmuxOptions(osUser + "/" + tmux)
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
 
 	ctxA, cancelA := context.WithCancel(context.Background())
 	before := newRegistry(ctxA, time.Millisecond, homeBase, opts)
@@ -145,7 +148,7 @@ func TestRegistryStopsServingAfterTheTmuxSessionIsReplaced(t *testing.T) {
 	)
 	homeBase := t.TempDir()
 	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-DEAD-SESSION")
-	opts := newFakeTmuxOptions(osUser + "/" + tmux)
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -162,8 +165,8 @@ func TestRegistryStopsServingAfterTheTmuxSessionIsReplaced(t *testing.T) {
 	live := us.srcs[tmux]
 	us.mu.Unlock()
 
-	opts.kill(osUser, tmux)  // tmux kill-session
-	opts.start(osUser, tmux) // same name, a plain shell this time
+	opts.Kill(osUser, tmux)  // tmux kill-session
+	opts.Start(osUser, tmux) // same name, a plain shell this time
 
 	if _, ok := rg.source(osUser, tmux); ok {
 		t.Fatal("the reused tmux name still serves the dead Claude session's transcript")
@@ -189,7 +192,7 @@ func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
 	homeBase := t.TempDir()
 	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-TRANSCRIPT-A")
 	pathB := writeTranscript(t, homeBase, osUser, cwd, "bbbb-2222", "MARKER-TRANSCRIPT-B")
-	opts := newFakeTmuxOptions(osUser + "/" + tmux)
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -217,8 +220,8 @@ func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
 	if !ok {
 		t.Fatal("session should still resolve after re-registration")
 	}
-	if second.path != pathB {
-		t.Fatalf("source still tails %q; want the re-registered transcript %q", second.path, pathB)
+	if second.Path() != pathB {
+		t.Fatalf("source still tails %q; want the re-registered transcript %q", second.Path(), pathB)
 	}
 	waitForMarker(t, second, "MARKER-TRANSCRIPT-B")
 	for _, b := range bodies(second) {
@@ -240,7 +243,7 @@ func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
 func TestRegistrySourceKeptWhenTranscriptUnchanged(t *testing.T) {
 	homeBase := t.TempDir()
 	writeTranscript(t, homeBase, "wizard", "/home/wizard/qa", "aaaa-1111", "MARKER-TRANSCRIPT-A")
-	opts := newFakeTmuxOptions("wizard/qa-stable")
+	opts := siotest.NewFakeOptions("wizard/qa-stable")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -260,7 +263,7 @@ func TestRegistrySourceKeptWhenTranscriptUnchanged(t *testing.T) {
 func TestRegistryMissingSessionStartFields(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, "/root", newFakeTmuxOptions())
+	rg := newRegistry(ctx, time.Millisecond, "/root", siotest.NewFakeOptions())
 	w := httptest.NewRecorder()
 	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"user":"wizard"}`)))
 	if w.Code != 400 {

@@ -8,16 +8,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"terminal-lobby/sessionio"
 )
 
 // fakeSource is a controllable Source for the SSE test.
 type fakeSource struct {
-	all  []Event
-	live chan Event
+	all  []sessionio.Event
+	live chan sessionio.Event
 }
 
-func (f *fakeSource) Replay(from int64) []Event {
-	var out []Event
+func (f *fakeSource) Replay(from int64) []sessionio.Event {
+	var out []sessionio.Event
 	for _, e := range f.all {
 		if e.ID > from {
 			out = append(out, e)
@@ -25,12 +27,12 @@ func (f *fakeSource) Replay(from int64) []Event {
 	}
 	return out
 }
-func (f *fakeSource) Subscribe() (<-chan Event, func()) { return f.live, func() {} }
+func (f *fakeSource) Subscribe() (<-chan sessionio.Event, func()) { return f.live, func() {} }
 
 func TestWriteSSEReplaysFromCursorHeartbeatsAndTailsLive(t *testing.T) {
 	src := &fakeSource{
-		all:  []Event{{ID: 1, Kind: KindText, Body: "old"}, {ID: 3, Kind: KindText, Body: "a"}, {ID: 4, Kind: KindText, Body: "b"}},
-		live: make(chan Event, 1),
+		all:  []sessionio.Event{{ID: 1, Kind: sessionio.KindText, Body: "old"}, {ID: 3, Kind: sessionio.KindText, Body: "a"}, {ID: 4, Kind: sessionio.KindText, Body: "b"}},
+		live: make(chan sessionio.Event, 1),
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeSSE(w, r, src, 30*time.Millisecond)
@@ -40,7 +42,7 @@ func TestWriteSSEReplaysFromCursorHeartbeatsAndTailsLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
-	req.Header.Set("Last-Event-ID", "2") // resume: expect only id>2
+	req.Header.Set("Last-sessionio.Event-ID", "2") // resume: expect only id>2
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +85,7 @@ func TestWriteSSEReplaysFromCursorHeartbeatsAndTailsLive(t *testing.T) {
 	want(func(l string) bool { return l == "id: 4" }, "replay id 4")
 
 	// Live tail.
-	src.live <- Event{ID: 5, Kind: KindText, Body: "live"}
+	src.live <- sessionio.Event{ID: 5, Kind: sessionio.KindText, Body: "live"}
 	want(func(l string) bool { return l == "id: 5" }, "live id 5")
 	want(func(l string) bool { return strings.Contains(l, `"body":"live"`) }, "live data")
 
