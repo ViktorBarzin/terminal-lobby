@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "Shared title→name test vectors. Read by BOTH slug/slug_test.go (Go) and",
+    "frontend-v2/test/slug.test.ts (vitest), because the browser derives a name",
+    "when it creates a session and tmux-api derives one when it retitles, and a",
+    "disagreement between the two would create or rename the wrong session.",
+    "An empty want means the title yields nothing usable and the caller supplies",
+    "its own fallback (session-N in the lobby, 'claude' in t3-bridge).",
+    "Add a case here rather than to either language's test file."
+  ],
+  "cases": [
+    { "title": "Deploy the thing", "want": "deploy-the-thing" },
+    { "title": "Deploy the thing 🚀", "want": "deploy-the-thing" },
+    { "title": "Deploy!!! the thing", "want": "deploy-the-thing" },
+    { "title": "already-a-slug", "want": "already-a-slug" },
+    { "title": "keeps_underscores", "want": "keeps_underscores" },
+    { "title": "UPPER Case Title", "want": "upper-case-title" },
+    { "title": "  leading and trailing  ", "want": "leading-and-trailing" },
+    { "title": "100% done", "want": "100-done" },
+    { "title": "C++ / Rust", "want": "c-rust" },
+    { "title": "emoji 🎉 in the middle", "want": "emoji-in-the-middle" },
+    { "title": "session-1", "want": "session-1" },
+
+    { "title": "", "want": "" },
+    { "title": "   ", "want": "" },
+    { "title": "---", "want": "" },
+    { "title": "___", "want": "___" },
+    { "title": "!!!", "want": "" },
+    { "title": "🚀", "want": "" },
+    { "title": "会议", "want": "" },
+    { "title": "日本語 test", "want": "test" },
+
+    { "title": "тестова сесия", "want": "testova-sesiya" },
+    { "title": "Привет мир", "want": "privet-mir" },
+    { "title": "Български", "want": "balgarski" },
+    { "title": "ЩАСТИЕ", "want": "shtastie" },
+    { "title": "Ελληνικά", "want": "ellinika" },
+
+    { "title": "café ☕", "want": "cafe" },
+    { "title": "Ünïcödé Nàmè", "want": "unicode-name" },
+    { "title": "Straße", "want": "strasse" },
+    { "title": "Ærø og Øresund", "want": "aero-og-oresund" },
+
+    { "title": "tab\tand\nnewline", "want": "tab-and-newline" },
+    { "title": "nul\u0000byte", "want": "nul-byte" },
+
+    { "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "title": "abcdefghij abcdefghij abcdefghij abc", "want": "abcdefghij-abcdefghij-abcdefghij" },
+    { "title": "abcdefghij abcdefghij abcdefghi jkl", "want": "abcdefghij-abcdefghij-abcdefghi" }
+  ]
+}
