@@ -1,7 +1,7 @@
 # Act as user — an admin lens on another account's lobby
 
-**Status:** Design agreed 2026-08-16, building. **Author:** Viktor Barzin
-(design), Claude (research + build).
+**Status:** Shipped 2026-08-16, live on `terminal.viktorbarzin.me` (build
+`675772e`). **Author:** Viktor Barzin (design), Claude (research + build).
 
 ## What we wanted
 
@@ -230,6 +230,41 @@ Each of these is a behaviour to prove on the live devvm, not a unit test:
 The last row is why the others exist: this feature adds a branch to the
 identity resolution every request in the lobby passes through, so "nothing
 changes when the parameter is absent" needs proving rather than assuming.
+
+## What the build measured
+
+All of the above ran against the live devvm after deploy. Every row passed;
+these are the ones worth recording because they were not obvious beforehand.
+
+| Check | Result |
+|---|---|
+| `?as=bob` sidebar | bob's real sessions (ESP32, Institutions, tablet-viki, …); the unswitched tab still shows wizard's |
+| `/whoami?as=bob` | `osUser: bob`, `realUser: wizard`, `admin: true` |
+| Session created from wizard's browser at `?as=bob` | pane process runs as **bob**, executing `/home/bob/start-claude.sh` |
+| Its working directory | `/home/bob/code` — the start-dir fallback landed in bob's home, not the admin's |
+| Same name under wizard's tmux | absent; nothing leaked into the caller's account |
+| `DELETE /sessions/<n>?as=bob` | 204, and gone from bob's tmux |
+| Share store after an admin attach | still `{"version":1,"shares":[]}` — the admin path invents no grant |
+| `?as=` as root / daemon / nosuchuser / `../wizard` / `-bob` | 403 each |
+| bob `?as=wizard`, bob `?as=carol` | 403; bob `?as=bob` (self) 200 |
+| Push list under `?as=bob` | identical to wizard's own — the switch does not reach it |
+| Audit line | `admin.actas user.id=wizard tl.to=bob tl.client=whoami\|attach` |
+
+### One thing found along the way, unrelated to this work
+
+The Text view's SSE endpoint has been answering **500 "streaming unsupported"**
+for every session since 2026-08-14, and it is not caused by anything here.
+Commit `d7b509e` wrapped each service's handler in `timing.Wrap` for request
+timing; its `statusWriter` (`telemetry/httpmw.go:91`) embeds
+`http.ResponseWriter` but implements no `Flush`, so `sse.go:44`'s
+`w.(http.Flusher)` assertion fails and the stream is refused before it starts.
+`session-events` is the only service with an SSE endpoint, so it is the only
+one affected.
+
+The fix is a `Flush()` passthrough on `statusWriter`. Left unmade here: text
+mode is out of scope for this work by decision, and it is being worked on
+separately, so the change belongs with that rather than folded into a
+security-sensitive commit.
 
 ## Open questions
 

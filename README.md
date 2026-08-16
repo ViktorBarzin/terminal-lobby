@@ -105,6 +105,40 @@ Projects and sessions can be **shared with other users on the same machine**
 The store is server-side (`GET`/`POST /projects`, `/shares`, …), so shares roam
 across your devices. Design + security model: `docs/plans/2026-07-17-shared-multiuser-projects-and-sessions.md`.
 
+### Act as another user (admins)
+
+An administrator can work as another mapped user without asking them to share
+anything — the way to see what is happening on a shared box. Pick them under
+**Act as user** in ⚙ Settings; the tab reloads at `?as=<osUser>` and becomes
+their lobby: their sessions, layout, projects, prefs, files and gallery, with a
+read-write terminal attached as them. Per tab, so another tab stays you.
+
+- **Who is an admin** comes from `/etc/ttyd-admins`, which the hourly
+  workstation reconcile derives from `roster.yaml`'s `tier: admin` alongside
+  `/etc/ttyd-user-map`. Authentik groups cannot answer it: every devvm user is
+  in *Home Server Admins*, which is what gets them to this host at all. No
+  file means no admins, so the feature is unavailable rather than open.
+- **Enforced in each service** (`tmux-api`, `file-api`, `clipboard-upload`,
+  `session-events`) through one shared gate, `authuser`. The caller comes from
+  the Authentik header Traefik sets; the target must already be a mapped
+  account. Anyone else sending `?as=` gets a 403 and a log line.
+- **Two carve-outs.** Push subscriptions and the push test button resolve the
+  real caller, so an as-*user* tab cannot enrol your browser as one of their
+  devices. And `session-events` answers **501** rather than ignoring the
+  parameter — its cross-user transcript reader is not built yet, and serving
+  your own transcripts under their name would be worse than refusing. The Text
+  view is therefore unavailable while switched.
+- **A switched tab looks different**: an amber frame and tinted bars (fixed
+  across all nine themes) plus a chip naming the user, which returns you in one
+  click. With a full identity switch there is no server-side difference between
+  you and them, so this is what separates a deliberate action from typing into
+  the wrong tab.
+- **Every switch is recorded** — a journal line plus an `admin.actas` telemetry
+  event carrying the real caller, the target, and whether it came from a page
+  load or a session attach.
+
+Design: `docs/plans/2026-08-16-admin-act-as-user-design.md`.
+
 ## Keyboard shortcuts
 
 Switch sessions and drive the lobby without the mouse. The shortcut layer
