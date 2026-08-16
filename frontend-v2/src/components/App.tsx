@@ -401,7 +401,7 @@ export const App: Component = () => {
               />
             )}
           </Show>
-          <Dock dock={dock} />
+          <Dock dock={dock} onFrameCommand={(cmd) => run(cmd)} />
         </div>
       </div>
 
