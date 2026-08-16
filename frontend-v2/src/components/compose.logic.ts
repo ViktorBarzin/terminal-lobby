@@ -114,3 +114,21 @@ export function nextMode(current: string): string {
   const i = PERMISSION_MODES.indexOf(current);
   return PERMISSION_MODES[(i + 1) % PERMISSION_MODES.length] ?? "default";
 }
+
+/**
+ * The mode, short enough to sit in a chip beside the input. The full names run
+ * to `bypassPermissions`, which on a 390px screen crowds out both the message
+ * field and the Send button.
+ */
+export function modeLabel(mode: string): string {
+  switch (mode) {
+    case "bypassPermissions":
+      return "bypass";
+    case "acceptEdits":
+      return "auto-edit";
+    case "default":
+      return "ask";
+    default:
+      return mode;
+  }
+}

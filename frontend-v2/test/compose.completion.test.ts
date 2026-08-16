@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { completionFor, nextMode, PERMISSION_MODES } from "../src/components/compose.logic";
+import { completionFor, modeLabel, nextMode, PERMISSION_MODES } from "../src/components/compose.logic";
 
 const files = ["main.go", "main_test.go", "registry.go", "sub/"];
 
@@ -61,5 +61,19 @@ describe("mode cycling", () => {
   it("never cycles into bypassPermissions", () => {
     expect(PERMISSION_MODES).not.toContain("bypassPermissions");
     expect(nextMode("bypassPermissions")).toBe("default");
+  });
+});
+
+describe("the mode chip's label", () => {
+  // `bypassPermissions` beside the input crowded out both the message field and
+  // the Send button at 390px.
+  it("shortens the long mode names", () => {
+    expect(modeLabel("bypassPermissions")).toBe("bypass");
+    expect(modeLabel("acceptEdits")).toBe("auto-edit");
+    expect(modeLabel("default")).toBe("ask");
+  });
+
+  it("passes an unfamiliar mode through unchanged", () => {
+    expect(modeLabel("somethingNew")).toBe("somethingNew");
   });
 });

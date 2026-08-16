@@ -106,14 +106,24 @@ const StatusRowView: Component<{ row: StatusRow }> = (props) => (
 const PIN_SLACK_PX = 40;
 
 /**
- * Rows rendered above and below the viewport. A transcript's rows vary wildly
- * in height (a one-line tool row, a 200-line diff), so windowing by index needs
- * generous margins or fast scrolling shows blank space.
+ * Why there is no row virtualization here.
+ *
+ * There was, briefly, and it was wrong in a way worth recording. Rows vary
+ * enormously in height — a one-line tool row beside a 200-line diff — so the
+ * window was derived from an AVERAGE height (scrollHeight / row count) with
+ * spacer divs standing in for the rows outside it. Those spacers are most of
+ * scrollHeight, so the average was computed from a number the average itself
+ * produced: the loop settled and stopped responding to scrolling. Measured on a
+ * real 675-row session, the leading spacer read 21,863px at every scroll
+ * position and the same 29 rows stayed mounted, which left the rest of the
+ * transcript unreachable — a worse failure than the slowness it was avoiding.
+ *
+ * What bounds the DOM instead is the data: a fresh open replays the last 20
+ * turns (session-events OpenWindowTurns), settled turns fold to a single row,
+ * and "Load earlier" adds a bounded window at a time. The 675-row session above
+ * renders and scrolls without complaint. If a future session makes this hurt,
+ * the fix is a virtualizer that MEASURES rows rather than averages them.
  */
-const OVERSCAN = 12;
-
-/** Below this many rows, windowing costs more than it saves. */
-const VIRTUALIZE_ABOVE = 120;
 
 const sameKeys = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((k, i) => k === b[i]);
@@ -294,47 +304,19 @@ export const MessagesTimeline: Component<{
   // scrolls up to read something.
   let scroller: HTMLDivElement | undefined;
   const [pinned, setPinned] = createSignal(true);
-  const [top, setTop] = createSignal(0);
-  const [height, setHeight] = createSignal(0);
-
-  // Windowing. Row heights vary far too much to measure ahead, so the window is
-  // an index range around the scroll position derived from an AVERAGE row
-  // height, padded by OVERSCAN on both sides. The spacers keep the scrollbar
-  // honest. Below VIRTUALIZE_ABOVE rows everything renders, which is the common
-  // case and keeps behaviour (and tests) simple.
-  const windowed = createMemo(() => {
-    const keys = allKeys();
-    if (keys.length <= VIRTUALIZE_ABOVE || height() === 0) {
-      return { keys, before: 0, after: 0 };
-    }
-    const avg = Math.max(28, (scroller?.scrollHeight ?? 0) / keys.length);
-    const first = Math.max(0, Math.floor(top() / avg) - OVERSCAN);
-    const visible = Math.ceil(height() / avg) + OVERSCAN * 2;
-    const last = Math.min(keys.length, first + visible);
-    return {
-      keys: keys.slice(first, last),
-      before: first * avg,
-      after: (keys.length - last) * avg,
-    };
-  });
 
   const onScroll = () => {
     const el = scroller;
     if (!el) return;
     setPinned(el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX);
-    setTop(el.scrollTop);
-    setHeight(el.clientHeight);
   };
 
   createEffect(() => {
     derived(); // the TRANSCRIPT grew — follow it. Expanding a fold must not
     // move the viewport: you clicked to read what was hidden.
     const el = scroller;
-    if (!el) return;
-    if (height() === 0) setHeight(el.clientHeight);
-    if (!pinned()) return;
+    if (!el || !pinned()) return;
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-    setTop(el.scrollTop);
   });
 
   const [loadingEarlier, setLoadingEarlier] = createSignal(false);
@@ -369,9 +351,7 @@ export const MessagesTimeline: Component<{
         when={allKeys().length > 0}
         fallback={<div class="tl-empty-state">No messages yet.</div>}
       >
-        <div style={{ height: `${windowed().before}px` }} aria-hidden="true" />
-        <For each={windowed().keys}>{(key) => renderRow(key)}</For>
-        <div style={{ height: `${windowed().after}px` }} aria-hidden="true" />
+        <For each={allKeys()}>{(key) => renderRow(key)}</For>
       </Show>
       <Show when={!pinned()}>
         <button
