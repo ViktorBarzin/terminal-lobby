@@ -81,6 +81,10 @@ var selfUser = func() string {
 type Session struct {
 	Name         string `json:"name"`
 	Attached     int    `json:"attached"`
+	// Driven is true when at least one attached client is READ-WRITE.
+	// Distinct from Attached, which counts watchers too: the lobby joins a
+	// new device as a viewer only when someone is actually driving.
+	Driven       bool   `json:"driven"`
 	LastActivity int64  `json:"lastActivity"`
 	Created      int64  `json:"created"`
 	// State of the Claude conversation inside the session: "running",
@@ -408,6 +412,13 @@ func userSessions(osUser string) []Session {
 		return nil
 	}
 	sessions := parseSessions(out)
+	// Who is DRIVING, as opposed to merely attached (Watch mode). One extra
+	// fork per list build, behind the same sessionsTTL cache as the rest; a
+	// failure here just leaves every session undriven, which is the safe way
+	// round — the lobby then attaches read-write exactly as it did before.
+	if clients, cerr := tmuxCmd(osUser, "list-clients", "-F", drivenListFmt).Output(); cerr == nil {
+		markDriven(sessions, clients)
+	}
 	// One /proc snapshot serves two readers: the liveness backstop (drop
 	// states whose claude died without a SessionEnd hook) and the tool mark
 	// (which command each session runs). A failed scan fails open — states
