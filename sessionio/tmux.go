@@ -32,6 +32,12 @@ const (
 	// by the syncer at adoption; dies with the session, which is deliberate —
 	// a resurrected session re-derives it from the durable Index instead.
 	OptionThread = "@t3_thread"
+	// OptionTitle holds the DISPLAY TITLE a person chose for the session —
+	// arbitrary text, up to 64 runes, which the lobby shows in place of the
+	// tmux name. Written by tmux-api; unset for a session nobody has titled,
+	// which is most of them. Like the others it dies with the session, so
+	// tmux-api keeps a durable copy to re-stamp after a restore.
+	OptionTitle = "@title"
 )
 
 // Options is the tmux session-option store: read and written as the session's

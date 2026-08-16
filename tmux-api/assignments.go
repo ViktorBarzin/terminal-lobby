@@ -125,6 +125,30 @@ func (s *assignmentStore) remember(osUser, name, project string) error {
 	return s.saveLocked(osUser, set)
 }
 
+// rename follows a session rename so a later restore still knows which project
+// the session belonged to. Entries keep their position and their timestamp —
+// only the name they are filed under changes, and being renamed is not the same
+// event as being killed again.
+func (s *assignmentStore) rename(osUser, oldName, newName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	set, err := s.loadLocked(osUser)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range set.Entries {
+		if set.Entries[i].Name == oldName {
+			set.Entries[i].Name = newName
+			changed = true
+		}
+	}
+	if !changed {
+		return nil // this session was never killed out of a project
+	}
+	return s.saveLocked(osUser, set)
+}
+
 func (s *assignmentStore) saveLocked(osUser string, set AssignmentSet) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
@@ -329,6 +353,7 @@ func placeRestoredSessions(osUser string, rows []SnapshotRow, selected []string)
 	}
 
 	changed := false
+	restoredTitles := map[string]string{}
 	for _, row := range rows {
 		if !want[row.Name] {
 			continue
@@ -350,7 +375,12 @@ func placeRestoredSessions(osUser string, rows []SnapshotRow, selected []string)
 		if target != row.Name {
 			mirrorRenamedIntoSharedProject(osUser, row.Name, target)
 		}
+		// The session is back but its @title is not: options die with the
+		// session, and the snapshot never carried one. Re-stamp from the
+		// titles store, under whatever name it actually returned as.
+		restoredTitles[row.Name] = target
 	}
+	restoreRememberedTitlesAs(osUser, restoredTitles)
 	if !changed {
 		return
 	}
