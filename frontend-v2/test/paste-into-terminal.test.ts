@@ -102,3 +102,128 @@ describe("pasteIntoTerminal — the read happens where the focus is", () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe("pasteIntoTerminal — when the browser refuses read()", () => {
+  const denied = (msg = "Read permission denied") => {
+    const e = new Error(msg);
+    e.name = "NotAllowedError";
+    return e;
+  };
+
+  it("retries with readText() rather than giving up", async () => {
+    // Safari's ClipboardItem read() and readText() are separately gated, and
+    // read() is the shakier of the two. Refusing the image-aware call is not a
+    // reason to lose a plain-text paste.
+    let readCalls = 0;
+    const { sent, toasts, d } = deps({
+      clipboard: {
+        read: async () => {
+          readCalls++;
+          throw denied();
+        },
+        readText: async () => "rescued",
+      } as unknown as Clipboard,
+    });
+    await pasteIntoTerminal(d);
+    expect(readCalls).toBe(1);
+    expect(sent).toEqual(["rescued"]);
+    expect(toasts).toEqual([]); // it worked; there is nothing to report
+  });
+
+  it("reports only once when BOTH calls are refused", async () => {
+    const { sent, toasts, d } = deps({
+      clipboard: {
+        read: async () => {
+          throw denied();
+        },
+        readText: async () => {
+          throw denied();
+        },
+      } as unknown as Clipboard,
+    });
+    await pasteIntoTerminal(d);
+    expect(sent).toEqual([]);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]!.kind).toBe("error");
+  });
+
+  it("tells a touch user the gesture that actually works on their device", async () => {
+    // The async clipboard is not the only way in: a native long-press paste
+    // inside the terminal fires a paste event in the frame, which term.html
+    // already handles, and needs no permission at all. Naming a keyboard chord
+    // to someone holding a phone is a dead end.
+    const { toasts, d } = deps({
+      clipboard: {
+        read: async () => {
+          throw denied();
+        },
+        readText: async () => {
+          throw denied();
+        },
+      } as unknown as Clipboard,
+      coarsePointer: true,
+    });
+    await pasteIntoTerminal(d);
+    expect(toasts[0]!.msg).toMatch(/long-press/i);
+    expect(toasts[0]!.msg).not.toMatch(/Ctrl-V/);
+  });
+
+  it("still names the keyboard chord on a desktop", async () => {
+    const { toasts, d } = deps({
+      clipboard: {
+        read: async () => {
+          throw denied();
+        },
+        readText: async () => {
+          throw denied();
+        },
+      } as unknown as Clipboard,
+      coarsePointer: false,
+    });
+    await pasteIntoTerminal(d);
+    expect(toasts[0]!.msg).toMatch(/Ctrl-V/);
+  });
+
+  it("records the refusal so a device that cannot be reproduced still reports", async () => {
+    // The failure only appears on the user's own browser; without this the
+    // next round of diagnosis starts from a description again.
+    const events: { name: string; attrs?: Record<string, unknown> }[] = [];
+    const { d } = deps({
+      clipboard: {
+        read: async () => {
+          throw denied("Read permission denied");
+        },
+        readText: async () => {
+          throw denied("Read permission denied");
+        },
+      } as unknown as Clipboard,
+      track: (name: string, attrs?: Record<string, unknown>) =>
+        void events.push({ name, attrs }),
+    });
+    await pasteIntoTerminal(d);
+    const failed = events.find((e) => e.name === "terminal.paste_failed");
+    expect(failed, "a terminal.paste_failed event").toBeTruthy();
+    expect(failed!.attrs!["tl.error"]).toBe("NotAllowedError");
+    // WHICH call was refused is the whole question on Safari.
+    expect(failed!.attrs!["tl.api"]).toBe("readText");
+  });
+
+  it("carries no clipboard CONTENT into telemetry", async () => {
+    const events: { name: string; attrs?: Record<string, unknown> }[] = [];
+    const { d } = deps({
+      clipboard: {
+        read: async () => {
+          throw denied("secret-token-abc123 could not be read");
+        },
+        readText: async () => {
+          throw denied("secret-token-abc123 could not be read");
+        },
+      } as unknown as Clipboard,
+      track: (name: string, attrs?: Record<string, unknown>) =>
+        void events.push({ name, attrs }),
+    });
+    await pasteIntoTerminal(d);
+    const failed = events.find((e) => e.name === "terminal.paste_failed")!;
+    expect(JSON.stringify(failed.attrs)).not.toContain("secret-token");
+  });
+});

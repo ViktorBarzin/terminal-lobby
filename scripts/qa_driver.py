@@ -215,7 +215,17 @@ class QaAgent:
         # The lobby asks for notification permission (area 11). Granting it up
         # front keeps the prompt from eating clicks — and with the full browser
         # build above, the grant is visible to Notification.permission too.
-        self._context.grant_permissions(["notifications"], origin=self.harness)
+        #
+        # The clipboard pair is re-listed here on purpose. grant_permissions
+        # REPLACES the granted set for the origin it names rather than adding to
+        # it, so naming notifications alone revoked the clipboard grant made in
+        # new_context above — and every clipboard read then failed with
+        # "NotAllowedError: Read permission denied", which reads exactly like
+        # the product bug a sweep would be hunting.
+        self._context.grant_permissions(
+            ["notifications", "clipboard-read", "clipboard-write"],
+            origin=self.harness,
+        )
         self.page = self._context.new_page()
         self._wire_capture(self.page)
         self._context.on("page", self._wire_capture)

@@ -73,6 +73,7 @@ export type TlEvent =
   // terminal surface
   | "terminal.copied"
   | "terminal.pasted"
+  | "terminal.paste_failed"
   | "terminal.softkey"
   | "terminal.gesture"
   // settings
