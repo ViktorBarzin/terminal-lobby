@@ -211,11 +211,13 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   # Skip a byte-identical re-install: ttyd's ETag is size+mtime (NOT a content
   # hash), so an unconditional install bumps mtime and turns every client's
   # cheap 304 poll into a full ~800 KB 200 for no content change.
-  if ! sudo cmp -s /tmp/index.html /usr/local/share/ttyd/index.html; then
-    sudo install -m 0644 /tmp/index.html             /usr/local/share/ttyd/index.html
-  else
-    echo "    index.html unchanged — leaving it (and its ETag) alone"
-  fi
+  # The LOBBY PAGE IS NOT SHIPPED HERE ANY MORE. terminal.viktorbarzin.me now
+  # serves the v2 SPA, promoted by `scripts/deploy-v2.sh --prod` — the same
+  # artifact that soaked on the canary. Installing frontend/index.html here
+  # would silently undo that promotion on the next backend deploy, which is the
+  # one way a cutover quietly reverts itself. The vanilla page stays in the repo
+  # (and as index.html.prev on the box) purely as the rollback.
+  echo "    lobby page: not shipped by deploy.sh — see scripts/deploy-v2.sh --prod"
   # Push service worker (Item 4): served no-cache by clipboard-upload's
   # /sw.js whitelist entry, reached through the public asset ingress route.
   sudo install -m 0644 /tmp/sw.js                    /usr/local/share/ttyd/sw.js
