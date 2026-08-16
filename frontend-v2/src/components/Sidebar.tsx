@@ -41,6 +41,10 @@ export const Sidebar: Component<{
   /** reload seam — the header's ↻ button. Defaults to a real page reload;
    *  tests pass their own rather than navigating jsdom. */
   onReload?: () => void;
+  /** Supplied only by the phone layout, which folds the shell bar (and its
+   *  Settings gear) into the session bar. That bar only exists once a session
+   *  is open, so the sidebar's own screen carries the gear instead. */
+  onOpenSettings?: () => void;
 }> = (props) => {
   const store = props.store;
 
@@ -245,6 +249,18 @@ export const Sidebar: Component<{
           >
             Restore
           </button>
+        </Show>
+        <Show when={props.onOpenSettings}>
+          {(open) => (
+            <button
+              class="tl-icon-btn tl-settings-btn tl-foot-settings"
+              aria-label="Settings"
+              title="Settings"
+              onClick={() => open()()}
+            >
+              ⚙
+            </button>
+          )}
         </Show>
       </div>
 
