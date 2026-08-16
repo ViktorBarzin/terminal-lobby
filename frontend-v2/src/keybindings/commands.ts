@@ -1,3 +1,4 @@
+import { sessionLabel } from "../types/lobby";
 import type { LobbyStore, NotifyKind } from "../store/lobby";
 import type { PaletteController } from "./palette-controller";
 import type { HelpController } from "../components/ShortcutsHelp";
@@ -52,6 +53,11 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
   const toggleViewFn = deps.toggleView ?? (() => window.__tlToggleView?.() ?? false);
 
   const current = (): string | null => store.selected()?.name ?? null;
+  /** What to SHOW for a session name: its title when it has one. */
+  const labelOf = (name: string): string => {
+    const s = store.sessions.find((x) => x.name === name);
+    return s ? sessionLabel(s) : name;
+  };
   const order = () => flatSessionOrder(store.model());
   const stateOf = (name: string): string | undefined =>
     store.sessions.find((s) => s.name === name)?.state || undefined;
@@ -106,17 +112,20 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
 
     if (cmd === "session.kill.current") {
       const sel = store.selected();
-      if (sel && confirmFn(`Kill session "${sel.name}"?`)) void store.kill(sel.name);
+      if (sel && confirmFn(`Kill session "${labelOf(sel.name)}"?`)) void store.kill(sel.name);
       return;
     }
 
     if (cmd === "session.rename.current") {
       const sel = store.selected();
       if (!sel) return;
-      const next = promptFn("Rename session", sel.name);
-      if (next && next.trim() && next.trim() !== sel.name) {
-        void store.rename(sel.name, next.trim());
-      }
+      // The prompt edits the TITLE, so it opens on the title and hands one
+      // back; store.rename derives the name and moves it to match. An empty
+      // answer clears the title, which is a real instruction here — only a
+      // cancelled prompt (null) does nothing.
+      const current = labelOf(sel.name);
+      const next = promptFn("Rename session", current);
+      if (next !== null && next !== current) void store.rename(sel.name, next);
       return;
     }
 

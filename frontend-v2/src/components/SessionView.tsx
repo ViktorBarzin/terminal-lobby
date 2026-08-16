@@ -61,6 +61,11 @@ const connTitle = (s: SseStatus): string =>
  */
 export const SessionView: Component<{
   session: string;
+  /** What the bar SHOWS for this session: its title when it has one, else its
+   *  name. Passed in rather than looked up because this view is given a name,
+   *  not a session — and it stays reactive, so a retitle repaints the bar
+   *  without re-mounting the terminal. */
+  label?: string;
   /** FALSE while an ancestor is display:none — the phone layout hides the whole
    *  session pane to give the list the screen. It folds into TerminalView's
    *  `active`, so the frame is told it is hidden and stops fitting: a fit
@@ -117,7 +122,7 @@ export const SessionView: Component<{
    *  leaves the overlay standing. */
   overlayOpen?: () => boolean;
   /** Every OTHER session, for the bar's tap-to-switch picker (phone only). */
-  otherSessions?: () => { name: string; owner?: string }[];
+  otherSessions?: () => { name: string; owner?: string; label?: string }[];
   /** Switch to another session from the bar's picker. */
   onSwitchSession?: (name: string, owner?: string) => void;
   /** the file-preview overlay's open + unsaved-draft state, published UP so the
@@ -381,12 +386,13 @@ export const SessionView: Component<{
         {/* The session name doubles as the switcher on a phone: tapping it
             lists the others, so changing session does not mean going back to
             the list, finding it and tapping again. On a desktop it stays a
-            label — the sidebar is right there. */}
+            label — the sidebar is right there. Either way it shows the
+            session's TITLE when it has one, like every other surface. */}
         <Show
           when={props.onSwitchSession && coarse()}
           fallback={
-            <span class="tl-session" title="session">
-              {session}
+            <span class="tl-session" title={session}>
+              {props.label ?? session}
             </span>
           }
         >
@@ -396,9 +402,10 @@ export const SessionView: Component<{
               class="tl-session tl-session-switch"
               aria-haspopup="menu"
               aria-expanded={picker.open()}
+              title={session}
               onClick={() => picker.toggle()}
             >
-              {session}
+              {props.label ?? session}
               <span class="tl-session-caret">▾</span>
             </button>
             <Show when={picker.open()}>
@@ -409,12 +416,13 @@ export const SessionView: Component<{
                       type="button"
                       class="tl-menu-item"
                       role="menuitem"
+                      title={other.name}
                       onClick={() => {
                         picker.close();
                         props.onSwitchSession?.(other.name, other.owner);
                       }}
                     >
-                      {other.name}
+                      {other.label ?? other.name}
                     </button>
                   )}
                 </For>

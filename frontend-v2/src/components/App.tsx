@@ -12,7 +12,7 @@ import {
   type NotifyKind,
   type SelectedSession,
 } from "../store/lobby";
-import { NAME_RE, type Layout } from "../types/lobby";
+import { NAME_RE, sessionLabel, type Layout } from "../types/lobby";
 import { Sidebar } from "./Sidebar";
 import { SessionView } from "./SessionView";
 import { SettingsPanel } from "./SettingsPanel";
@@ -122,6 +122,9 @@ export const App: Component = () => {
   const sessionSnapshot = createMemo<TitleSession[]>(() =>
     store.sessions.map((s) => ({
       name: s.name,
+      // The tab title and the OS notification body speak in titles like every
+      // other surface; the name still identifies the session underneath.
+      title: s.title,
       state: s.state,
       pane_current_command: s.pane_current_command,
     })),
@@ -511,9 +514,20 @@ export const App: Component = () => {
             {(name) => (
               <SessionView
                 session={name}
+                label={sessionLabel(
+                  store.sessions.find((s) => s.name === name) ?? { name },
+                )}
                 owner={store.selected()?.owner}
                 otherSessions={() =>
-                  flatSessionOrder(store.model()).filter((o) => o.name !== name)
+                  flatSessionOrder(store.model())
+                    .filter((o) => o.name !== name)
+                    .map((o) => ({
+                      ...o,
+                      // Titled sessions read by their title here too.
+                      label: sessionLabel(
+                        store.sessions.find((s) => s.name === o.name) ?? { name: o.name },
+                      ),
+                    }))
                 }
                 onSwitchSession={(n, owner) => store.select(n, owner)}
                 visible={!flip() || collapsed()}
