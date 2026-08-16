@@ -350,6 +350,15 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return Math.min(pollMs * 2 ** pollFailures, maxPollMs);
   }
 
+  /**
+   * Nobody is reading a backgrounded tab, so it has nothing to poll for — and
+   * a tab left open all day costs far more requests than one being looked at.
+   * `wake()` refreshes on visibilitychange, so pausing here loses no freshness:
+   * the list is rebuilt the moment the tab is in front of someone again.
+   */
+  const isHidden = (): boolean =>
+    typeof document !== "undefined" && document.visibilityState === "hidden";
+
   function scheduleNextPoll(outcome: LoadOutcome): void {
     if (!polling) return; // disposed while this poll was still out
     if (outcome === "ok") pollFailures = 0;
@@ -358,6 +367,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     else if (outcome === "failed" && pollDelay() < maxPollMs) pollFailures += 1;
     // "skipped" is neither: a poll held off mid-drag says nothing about the
     // network, so it leaves the ladder exactly where it was.
+
+    // Leave the loop parked rather than timed; onVisible restarts it.
+    if (isHidden()) return;
+
     pollTimer = setTimeout(() => {
       pollTimer = undefined;
       void pollTick();
@@ -392,7 +405,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * base: whatever the backoff was measuring is over.
    */
   function wake(): void {
-    if (!polling) return;
+    // `online` can fire on a tab nobody is looking at; that is not a reason to
+    // restart a loop deliberately parked by isHidden().
+    if (!polling || isHidden()) return;
     pollFailures = 0;
     if (pollTimer) {
       clearTimeout(pollTimer);
@@ -617,6 +632,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   const onVisible = () => {
     if (typeof document !== "undefined" && document.visibilityState === "visible") {
       wake();
+      return;
+    }
+    // Going hidden: drop the turn already on the clock too, so backgrounding
+    // costs at most the poll that is genuinely in flight.
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = undefined;
     }
   };
   const onOnline = () => wake();
