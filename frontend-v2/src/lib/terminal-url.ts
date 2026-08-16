@@ -9,9 +9,13 @@
  *   arg2  new-session command KEY (whitelisted: default|claude|codex|shell)
  *   arg3  base directory for a NEW session (a project's dir; absolute)
  *   arg4  session OWNER for a SHARED/foreign attach (a different OS user)
+ *   arg5  Watch mode: "ro" to attach without driving (a REQUEST — the server
+ *         resolves it downgrade-only and sources `-r` from its own answer)
  *
- * A dir must land at arg3 and an owner at arg4, so whenever a later arg is sent
- * the earlier ones are emitted too ('default' as the inert command placeholder).
+ * A dir must land at arg3, an owner at arg4 and a watch request at arg5, so
+ * whenever a later arg is sent the earlier ones are emitted too ('default' as
+ * the inert command placeholder, and an EMPTY owner at arg4 when watching your
+ * own session — the attach script treats a blank owner as "mine").
  * `tmux -A` ignores -c on a live session, so sending the dir on every attach is
  * harmless. Pure + base-parameterized so it is unit-testable and so a canary
  * deploy can retarget the ttyd origin without touching call sites.
@@ -27,6 +31,10 @@ export interface TerminalUrlOpts {
   dir?: string;
   /** arg4 — the real OS-user owner for a SHARED/foreign attach; empty = own. */
   owner?: string;
+  /** arg5 — Watch mode: attach read-only, so this client never drives the
+   *  session and never moves its grid. Works on your own session as well as a
+   *  shared one. Absent/false keeps today's read-write behaviour. */
+  watch?: boolean;
 }
 
 /**
@@ -45,7 +53,20 @@ export function buildTerminalUrl(
   const cmd = opts.cmd && opts.cmd.length > 0 ? opts.cmd : "default";
   const owner = opts.owner ?? "";
   const dir = opts.dir ?? "";
-  if (owner) {
+  if (opts.watch) {
+    // Deepest slot: emit ALL of arg2..arg4 so "ro" lands on $5. The owner slot
+    // is deliberately empty for your own session — tmux-attach.sh reads a blank
+    // arg4 as "mine", whereas a placeholder like 'default' would name an OS
+    // user that does not exist.
+    u +=
+      "&arg=" +
+      encodeURIComponent(cmd) +
+      "&arg=" +
+      encodeURIComponent(dir || "default") +
+      "&arg=" +
+      encodeURIComponent(owner) +
+      "&arg=ro";
+  } else if (owner) {
     // Foreign attach: owner MUST reach $4, so command + dir precede it as
     // placeholders ('default' when absent — a non-absolute dir is ignored by
     // the attach branch, which sources `-r` from the server).

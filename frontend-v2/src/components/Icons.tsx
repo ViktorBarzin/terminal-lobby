@@ -66,6 +66,14 @@ export const FileTextIcon: Component<{ size?: number }> = (props) => (
   </Svg>
 );
 
+/** lucide `eye` — Watch mode: this device observes without driving. */
+export const EyeIcon: Component<{ size?: number }> = (props) => (
+  <Svg size={props.size}>
+    <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+);
+
 /** lucide `rotate-cw` — reload the app (the lobby header's ↻). */
 export const RotateCwIcon: Component<{ size?: number }> = (props) => (
   <Svg size={props.size}>
