@@ -289,7 +289,9 @@ describe("the wire-contract docstrings point at Go that exists", () => {
   it("finds the cross-service pointers to check", () => {
     const pointers = goPointers();
     expect(pointers.length).toBeGreaterThanOrEqual(5);
-    expect(pointers.map((p) => p.path)).toContain("session-events/event.go");
+    // The canary: the event wire contract's own pointer. It moved out of
+    // session-events into sessionio when the package was shared.
+    expect(pointers.map((p) => p.path)).toContain("sessionio/event.go");
   });
 
   it("names no Go file that is not on disk", () => {
