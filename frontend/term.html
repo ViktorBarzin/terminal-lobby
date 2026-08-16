@@ -3982,18 +3982,18 @@ ${w.join(`
             // flag AND for every user (they bypass the layer gate). Kept
             // separate from KB_DEFAULT_BINDINGS, which stay opt-in and
             // user-overridable.
-            // Ctrl+J / Cmd+J: `session.new.shell` (open a new plain shell in
-            // the dock) in our own lobby mode, but `view.toggle` when the v2
-            // SPA frames us — it has no dock, and its dispatcher had no
-            // `session.new.shell` branch, so the chord was swallowed here and
-            // then dropped there: pressed inside the terminal it did nothing
-            // at all, not even emit the LF byte it is on every other terminal.
+            // Ctrl+J / Cmd+J: `session.new.shell` — open (or toggle) a plain
+            // shell in the dock. ONE command for both lobbies now: the v2 SPA
+            // grew the dock, so the old `view.toggle` special case for it is
+            // gone. Pressed with focus in the terminal, this is the only way
+            // the chord reaches the lobby at all — a lobby keydown listener
+            // never sees a key typed inside the frame.
             // `lobbyOpen` is true in the lobby top window AND in a framed
             // terminal (isFramed); false in a bare deep-linked ?arg= tab, where
             // there is no dock — so there Ctrl+J falls through to the pty as a
             // normal newline instead of being swallowed.
             const KB_ALWAYS_BINDINGS = [
-                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: FRAMED_BY_LOBBY ? 'view.toggle' : 'session.new.shell', when: 'lobbyOpen && !galleryOpen' },
+                { key: IS_MAC ? 'meta+j' : 'ctrl+j', command: 'session.new.shell', when: 'lobbyOpen && !galleryOpen' },
                 // ⌥⇧⌫ kills the attached session from ANYWHERE the lobby owns keys —
                 // including while typing in a framed terminal (forwarded like the
                 // new-shell chord above), so you don't have to click back to the

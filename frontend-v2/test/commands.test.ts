@@ -55,6 +55,7 @@ function makeRun(over: Partial<CommandDeps> = {}): {
     openGallery: noop,
     forwardToTerminal: () => false,
     pasteToTerminal: () => true,
+    toggleDock: () => {},
     ...over,
   });
   return { run, notify };
@@ -87,5 +88,21 @@ describe("runAppCommand — view.toggle", () => {
     const { run } = makeRun();
     run("view.toggle");
     expect(bridge).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Ctrl/Cmd+J with focus in the terminal. A keydown inside the frame never
+ * reaches the lobby's own listener, so term.html matches the chord and forwards
+ * `session.new.shell` up — which is the path the chord takes most of the time,
+ * since the terminal usually has focus. It reached nothing before the dock
+ * existed, so the chord did nothing at all from inside a session.
+ */
+describe("session.new.shell — the forwarded Ctrl+J", () => {
+  it("opens the scratch-shell dock", () => {
+    let toggled = 0;
+    const { run } = makeRun({ toggleDock: () => void toggled++ });
+    run("session.new.shell");
+    expect(toggled).toBe(1);
   });
 });
