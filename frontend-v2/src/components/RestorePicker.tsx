@@ -1,4 +1,5 @@
 import {
+  createMemo,
   createSignal,
   For,
   Show,
@@ -79,6 +80,26 @@ export function shortCwd(cwd: string, home?: string): string {
   return home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd;
 }
 
+/**
+ * A snapshot's rows split into what a restore would DO and what is already
+ * running, each keeping its snapshot order.
+ *
+ * The list is alphabetical as it arrives, which is fine when a lot is missing
+ * and unhelpful in the ordinary case: one session died, seventeen are fine, and
+ * the one that matters sits wherever its name happens to fall. A session killed
+ * deliberately counts as a change — it differs from what is live — so it stays
+ * visible without scrolling, still unticked.
+ */
+export function orderRows(rows: SnapshotRow[]): {
+  changed: SnapshotRow[];
+  running: SnapshotRow[];
+} {
+  const changed: SnapshotRow[] = [];
+  const running: SnapshotRow[] = [];
+  for (const r of rows) (r.action === "skip" ? running : changed).push(r);
+  return { changed, running };
+}
+
 /** The one-line explanation under a row. `warn` marks the two cases where a
  *  restore does something other than recreate the session under its own name. */
 export function rowNote(row: SnapshotRow): { text: string; warn: boolean } {
@@ -133,6 +154,8 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
 
   const snapshots: Accessor<Snapshot[]> = () => list()?.snapshots ?? [];
   const selectedCount = (): number => checked().size;
+  // What a restore would do, above what is already running.
+  const split = createMemo(() => orderRows(rows()));
 
   const loadRows = async (ts: string): Promise<void> => {
     setSelectedTS(ts);
@@ -197,6 +220,38 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
     }
   };
 
+  /** One session row — identical markup in both parts of the list, so the
+   *  divider is the only thing that tells them apart. The destination project
+   *  is shown where a restore would act on it: for an already-running session
+   *  the sidebar already answers that question. */
+  const renderRow = (row: SnapshotRow) => {
+    const note = rowNote(row);
+    return (
+      <label class="tl-restore-row" classList={{ "is-live": row.action === "skip" }}>
+        <input
+          type="checkbox"
+          checked={checked().has(row.name)}
+          disabled={row.action === "skip"}
+          onChange={() => toggle(row.name)}
+        />
+        <span class="tl-restore-meta">
+          <span class="tl-restore-name">{row.name}</span>
+          <span class="tl-restore-where">
+            <span class="tl-restore-cwd">{shortCwd(row.cwd, props.home)}</span>
+            <Show when={row.action !== "skip" && row.project}>
+              <span class="tl-restore-dest">→ {row.project}</span>
+            </Show>
+          </span>
+          <Show when={note.text}>
+            <span class="tl-restore-note" classList={{ "is-warn": note.warn }}>
+              {note.text}
+            </span>
+          </Show>
+        </span>
+      </label>
+    );
+  };
+
   return (
     <div
       class="tl-cmdpalette-backdrop"
@@ -250,30 +305,11 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
         </Show>
 
         <div class="tl-restore-rows tl-schelp-scroll">
-          <For each={rows()}>
-            {(row) => {
-              const note = rowNote(row);
-              return (
-                <label class="tl-restore-row" classList={{ "is-live": row.action === "skip" }}>
-                  <input
-                    type="checkbox"
-                    checked={checked().has(row.name)}
-                    disabled={row.action === "skip"}
-                    onChange={() => toggle(row.name)}
-                  />
-                  <span class="tl-restore-meta">
-                    <span class="tl-restore-name">{row.name}</span>
-                    <span class="tl-restore-cwd">{shortCwd(row.cwd, props.home)}</span>
-                    <Show when={note.text}>
-                      <span class="tl-restore-note" classList={{ "is-warn": note.warn }}>
-                        {note.text}
-                      </span>
-                    </Show>
-                  </span>
-                </label>
-              );
-            }}
-          </For>
+          <For each={split().changed}>{renderRow}</For>
+          <Show when={split().changed.length > 0 && split().running.length > 0}>
+            <div class="tl-restore-divider">already running ({split().running.length})</div>
+          </Show>
+          <For each={split().running}>{renderRow}</For>
         </div>
 
         <Show when={memoryWarning(list(), selectedCount())}>

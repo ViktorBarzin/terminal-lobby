@@ -1742,10 +1742,38 @@ body {
   font-size: 11px;
   color: var(--text-muted);
 }
+/* cwd and destination share one line: the path gives way, the project does not. */
+.tl-restore-where {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
 .tl-restore-cwd {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tl-restore-dest {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+/* Splits the rows a restore would act on from the ones already running. */
+.tl-restore-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.tl-restore-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
 }
 .tl-restore-note.is-warn {
   color: var(--accent);
