@@ -167,8 +167,9 @@ src/
     ShortcutsHelp.tsx    Keyboard-shortcuts help overlay
     RestorePicker.tsx    Restore overlay: pick a session snapshot, see what it
                          would recreate, choose which rows to bring back
-    SettingsPanel.tsx    Settings overlay: theme, font size, new-session command,
-                         keyboard, notifications
+    SettingsPanel.tsx    Settings overlay: theme, font size, session-list
+                         last-active time, new-session command, keyboard,
+                         notifications, and the admin act-as picker
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     BellIcon.tsx         Header notification-bell glyph (on/off)
@@ -279,8 +280,11 @@ All of the following ship in the deployed build:
   keyboard cannot produce), soft Ctrl/Alt modifiers, and visualViewport
   plumbing so the soft keyboard cannot cover the composer.
 - **Settings** — an overlay with the 9-theme grid (per-device), terminal font
-  size (roamed + dual-written for the ttyd page), the new-session command,
-  keyboard toggles and notification prefs; roamed fields ride `/prefs`.
+  size (roamed + dual-written for the ttyd page), the session-list last-active
+  time (`sidebar.showLastActive`, roamed, **off by default** — it hides the
+  relative "5m ago", never a running session's live working timer), the
+  new-session command, keyboard toggles and notification prefs; roamed fields
+  ride `/prefs`.
 - **Self-update** (ADR-0007) — the page polls its own served bytes and reloads
   itself when the asset id changes, deferring while a terminal is attached until
   the next resume. `index.html` and `term.html` each carry their own id.

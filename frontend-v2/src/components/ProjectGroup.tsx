@@ -33,6 +33,8 @@ export const ProjectGroup: Component<{
   badge?: (name: string) => string | null;
   /** confirm seam, threaded down to each session card (tests inject it). */
   confirm?: (message: string) => boolean;
+  /** the roamed `sidebar.showLastActive` pref, threaded down to each card. */
+  showLastActive?: Accessor<boolean>;
 }> = (props) => {
   const isUngrouped = () => props.group.kind === "ungrouped";
   const token = () => groupToken(props.group);
@@ -264,6 +266,7 @@ export const ProjectGroup: Component<{
                 tick={props.tick}
                 badge={props.badge}
                 confirm={props.confirm}
+                showLastActive={props.showLastActive}
               />
             )}
           </For>
