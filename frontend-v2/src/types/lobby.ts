@@ -23,6 +23,11 @@ export type SessionTool = "claude" | "codex" | "shell";
 export interface Session {
   name: string;
   attached: number;
+  /** At least one attached client is READ-WRITE. Distinct from `attached`,
+   *  which counts watchers too: a session with two watchers and nobody
+   *  typing is attached twice and driven by nobody. Watch mode joins a new
+   *  device as a viewer only when this is true. */
+  driven?: boolean;
   lastActivity: number;
   created: number;
   /** "" when no live Claude. */
