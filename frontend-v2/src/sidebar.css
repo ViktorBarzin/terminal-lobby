@@ -841,25 +841,54 @@
     padding: 0 6px;
     gap: 6px;
   }
-  /* The session name yields first — it is the one thing here that can ellipsis
-     instead of pushing a control off the bar. */
+  /* One flexible item, and it is the session name: everything else on this bar
+     is a control, and a control that shrinks below its own content does not get
+     smaller — it overflows its box and paints on top of its neighbour. Measured
+     at 390px, `< Sessions` was squeezed to the 40px floor and its label ran
+     under the session name. */
+  .tl-session-bar > * {
+    flex: 0 0 auto;
+  }
   .tl-session {
+    flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* The view switch is the widest thing on the bar after the back control
+     (131px of 390 at its desktop size). Tightened here so the session name
+     keeps a readable share; the segments stay well past the 40px floor. */
+  .tl-viewswitch .tl-seg {
+    padding: 0 9px;
+    min-height: 36px;
+    font-size: 12px;
+  }
   /* Back to the list. The one labelled control on the bar: an unlabelled `\2039`
      in a row of icons is a guess, and this is the only way out of the terminal.
      It re-shows the label the max-width:1000px rule above hides. */
-  .tl-back-btn {
+  .tl-session-bar .tl-back-btn {
+    /* width:auto beats the max-width:1000px rule's fixed 28px (raised to the
+       40px touch floor above). A fixed width on a labelled button does not
+       clip the label — it lets it paint outside the box, over the neighbour. */
+    width: auto;
     padding: 0 10px 0 6px;
     font-size: 17px;
     line-height: 1;
   }
-  .tl-back-btn .tl-btn-label {
+  .tl-session-bar .tl-back-btn .tl-btn-label {
     display: inline;
     font-size: 13px;
+  }
+  /* The bar's overflow menu. It anchors the popup, so it needs to be the
+     positioned ancestor .tl-menu resolves against (top:100%; right:0). */
+  .tl-bar-menu {
+    position: relative;
+    display: inline-flex;
+  }
+  /* Above the terminal iframe, which paints in a layer of its own. */
+  .tl-bar-menu .tl-menu {
+    z-index: 30;
   }
   /* Settings, on the sidebar's own screen. The gear normally rides the shell
      bar, which is folded away here, and the session bar only exists once a

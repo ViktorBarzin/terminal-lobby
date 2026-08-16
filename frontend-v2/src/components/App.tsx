@@ -438,7 +438,20 @@ export const App: Component = () => {
                     </button>
                   </Show>
                 }
-                trailing={<Show when={flip()}>{settingsButton()}</Show>}
+                menuExtra={
+                  <Show when={flip()}>
+                    <button
+                      class="tl-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        if (!settingsOpen()) track("settings.opened");
+                        setSettingsOpen((v) => !v);
+                      }}
+                    >
+                      Settings
+                    </button>
+                  </Show>
+                }
                 driven={() =>
                   store.sessions.some((s) => s.name === name && s.driven === true)
                 }
