@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"terminal-lobby/authuser"
 	"terminal-lobby/telemetry"
 )
 
@@ -269,12 +270,40 @@ func loadUserMap() map[string]string {
 	return m
 }
 
-// resolveOSUser → mapped OS user from the Authentik header, or "" after
-// writing the appropriate 401/403 to w. The store is keyed per OS user, so
-// an unauthenticated request has no directory to touch. (Mirrors
-// tmux-api/main.go minus the user.Lookup — this service never execs as the
-// user, it only needs a directory name.)
+// actAsGate decides whether a ?as= request may proceed. A var only as a test
+// seam (actas_test.go points it at a fixture admin list); production never
+// reassigns it. Shared with tmux-api and file-api so the admin check has
+// exactly one implementation.
+var actAsGate = authuser.Default
+
+// resolveOSUser → the OS user this request ACTS AS: normally the caller from
+// the Authentik header, or an act-as target when an administrator asked for one
+// and is entitled to it. Returns "" after writing the appropriate 401/403.
+//
+// The gallery is keyed per (OS user, session) under a service-owned store, so
+// acting as someone reads and writes their directory directly — no privilege
+// drop is involved here, unlike file-api's home-directory access.
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
+	real := resolveRealOSUser(w, r)
+	if real == "" {
+		return ""
+	}
+	eff, err := actAsGate.Effective(real, r.URL.Query().Get("as"), osUserKnown)
+	if err != nil {
+		log.Printf("act-as refused: %s -> %q: %v (%s %s)",
+			real, r.URL.Query().Get("as"), err, r.Method, r.URL.Path)
+		http.Error(w, "not permitted to act as that user", http.StatusForbidden)
+		return ""
+	}
+	return eff
+}
+
+// resolveRealOSUser → the CALLER's own mapped OS user from the Authentik
+// header, ignoring ?as=. The store is keyed per OS user, so an unauthenticated
+// request has no directory to touch. (Mirrors tmux-api/main.go minus the
+// user.Lookup — this service never execs as the user, it only needs a
+// directory name.)
+func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
 	authUser := r.Header.Get(authHeader)
 	if authUser == "" {
 		log.Printf("auth: missing %s header (%s %s)", authHeader, r.Method, r.URL.Path)
