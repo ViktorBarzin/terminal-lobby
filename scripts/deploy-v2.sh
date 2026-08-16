@@ -30,6 +30,27 @@
 #   SKIP_BUILD=1 ./scripts/deploy-v2.sh       # reuse frontend-v2/dist/{index,term}.html
 set -euo pipefail
 
+# --prod PROMOTES the same built artifact to terminal.viktorbarzin.me: identical
+# bytes, different destination and unit. Promotion rather than a second build is
+# the point — the thing that goes to prod is the thing that soaked on the canary.
+TARGET="canary"
+for a in "$@"; do
+  case "$a" in
+    --prod)   TARGET="prod" ;;
+    --canary) TARGET="canary" ;;
+    *) echo "deploy-v2.sh: unknown argument $a (want --prod or --canary)" >&2; exit 2 ;;
+  esac
+done
+if [[ "$TARGET" == "prod" ]]; then
+  REMOTE_INDEX="index.html"      # ttyd :7681 serves this (-I), terminal.viktorbarzin.me
+  REMOTE_UNIT="ttyd"
+  REMOTE_PORT=7681
+else
+  REMOTE_INDEX="index-v2.html"   # ttyd-v2 :7687, terminal-dev.viktorbarzin.me
+  REMOTE_UNIT="ttyd-v2"
+  REMOTE_PORT=7687
+fi
+
 DEVVM="${DEVVM:-10.0.10.10}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -167,28 +188,40 @@ scp -o BatchMode=yes \
   devvm/ttyd-v2.service \
   "wizard@${DEVVM}:/tmp/"
 
-echo "==> Installing on $DEVVM..."
-ssh -o BatchMode=yes "wizard@${DEVVM}" bash -se <<'REMOTE'
+echo "==> Installing on $DEVVM (target: ${TARGET}, ${REMOTE_UNIT} :${REMOTE_PORT})..."
+ssh -o BatchMode=yes "wizard@${DEVVM}" \
+  REMOTE_INDEX="$REMOTE_INDEX" REMOTE_UNIT="$REMOTE_UNIT" TARGET="$TARGET" \
+  bash -se <<'REMOTE'
   set -euo pipefail
   # restart_ttyd tracks whether anything ttyd-v2 actually SERVES changed. A
   # restart drops every attached terminal's WebSocket, so it must not happen on
   # a deploy that shipped identical bytes — and the `cmp` below already knows.
   restart_ttyd=0
-  # The v2 SPA index — served ONLY by ttyd-v2 (:7687). Never overwrites
-  # /usr/local/share/ttyd/index.html (that stays the vanilla page on :7681).
-  if ! sudo cmp -s /tmp/index-v2.html /usr/local/share/ttyd/index-v2.html; then
-    sudo install -m 0644 /tmp/index-v2.html /usr/local/share/ttyd/index-v2.html
+  DEST="/usr/local/share/ttyd/${REMOTE_INDEX}"
+  # The SPA index. On the canary that is index-v2.html (ttyd-v2 :7687); with
+  # --prod it is index.html, the page ttyd :7681 serves at
+  # terminal.viktorbarzin.me. Same bytes either way.
+  if ! sudo cmp -s /tmp/index-v2.html "$DEST"; then
+    # Keep the outgoing page as the rollback channel before overwriting it —
+    # the same pattern ttyd.prev uses for the binary. On the promotion itself
+    # this captures the vanilla lobby, so backing the cutover out is one
+    # install + restart, with no rebuild and no checkout.
+    [[ -f "$DEST" ]] && sudo cp -f "$DEST" "${DEST}.prev"
+    sudo install -m 0644 /tmp/index-v2.html "$DEST"
     restart_ttyd=1
   else
-    echo "    index-v2.html unchanged — leaving it (and its ETag) alone"
+    echo "    ${REMOTE_INDEX} unchanged — leaving it (and its ETag) alone"
   fi
-  # The unit counts too: a changed ExecStart with no restart leaves the old
-  # command line running until something else bounces it.
-  if ! sudo cmp -s /tmp/ttyd-v2.service /etc/systemd/system/ttyd-v2.service; then
-    sudo install -m 0644 /tmp/ttyd-v2.service /etc/systemd/system/ttyd-v2.service
-    restart_ttyd=1
-  else
-    echo "    ttyd-v2.service unchanged"
+  # The ttyd-v2 unit is the canary's own; --prod does not touch ttyd.service
+  # (its ExecStart already points at index.html — the promotion swaps the FILE,
+  # not the unit, which is what keeps the rollback a single install).
+  if [[ "$TARGET" != "prod" ]]; then
+    if ! sudo cmp -s /tmp/ttyd-v2.service /etc/systemd/system/ttyd-v2.service; then
+      sudo install -m 0644 /tmp/ttyd-v2.service /etc/systemd/system/ttyd-v2.service
+      restart_ttyd=1
+    else
+      echo "    ttyd-v2.service unchanged"
+    fi
   fi
   # term.html — the terminal-mode iframe page. Served by CLIPBOARD-UPLOAD out
   # of its exact-path asset whitelist (assetDir = /usr/local/share/ttyd), not
@@ -203,19 +236,20 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" bash -se <<'REMOTE'
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   # enable --now regardless — a stopped or never-enabled unit must come up even
   # when nothing changed. The restart is the conditional part.
-  sudo systemctl enable --now ttyd-v2
+  sudo systemctl enable --now "$REMOTE_UNIT"
   if [[ "$restart_ttyd" == "1" ]]; then
-    sudo systemctl restart ttyd-v2
+    sudo systemctl restart "$REMOTE_UNIT"
   else
-    echo "    nothing ttyd-v2 serves changed — skipping restart (attached terminals keep their WebSocket)"
+    echo "    nothing ${REMOTE_UNIT} serves changed — skipping restart (attached terminals keep their WebSocket)"
   fi
   rm -f /tmp/index-v2.html /tmp/term.html /tmp/ttyd-v2.service
 REMOTE
 
 echo "==> Verifying..."
-ssh -o BatchMode=yes "wizard@${DEVVM}" '
+ssh -o BatchMode=yes "wizard@${DEVVM}" \
+  REMOTE_UNIT="$REMOTE_UNIT" REMOTE_PORT="$REMOTE_PORT" TARGET="$TARGET" bash -s <<'VERIFY'
   set -euo pipefail
-  systemctl is-active ttyd-v2
+  systemctl is-active "$REMOTE_UNIT"
   # Poll, do not probe once. A restart takes ttyd a moment to bind :7687, and
   # index-v2.html changes on EVERY deploy (TL_BUILD carries the git SHA, so the
   # bytes differ even when TL_ASSET — the identity clients compare — does not),
@@ -224,12 +258,12 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" '
   # fact succeeded.
   ok=0
   for _ in $(seq 1 30); do
-    if curl -sf -m 3 -H "X-authentik-username: vbarzin" http://localhost:7687/ -o /dev/null; then
+    if curl -sf -m 3 -H "X-authentik-username: vbarzin" http://localhost:${REMOTE_PORT}/ -o /dev/null; then
       ok=1; break
     fi
     sleep 0.5
   done
-  [ "$ok" = "1" ] && echo "ttyd-v2 serving the v2 SPA OK" || { echo "ttyd-v2 NOT serving after 15s"; exit 1; }
+  [ "$ok" = "1" ] && echo "${REMOTE_UNIT} serving the v2 SPA OK" || { echo "${REMOTE_UNIT} NOT serving after 15s"; exit 1; }
   test -f /usr/local/share/ttyd/term.html || { echo "term.html NOT installed"; exit 1; }
   # Installing term.html is what this script does; SERVING it is clipboard-upload
   # (:7683), whose exact-path whitelist must carry a /term.html entry. That
@@ -239,5 +273,11 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" '
   # succeeded: this script does not own that service.
   code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://localhost:7683/term.html || echo 000)
   [ "$code" = "200" ] && echo "clipboard-upload serving /term.html OK" || echo "NOTE: /term.html -> $code — installed, but clipboard-upload has not been released with the whitelist entry yet (the SPA Terminal view stays blank until it is)"
-'
-echo "==> Done. v2 SPA live on :7687. Routing lives in infra stacks/terminal (terminal-dev.viktorbarzin.me)."
+VERIFY
+if [[ "$TARGET" == "prod" ]]; then
+  echo "==> Done. v2 SPA is now the LOBBY on :7681 (terminal.viktorbarzin.me)."
+  echo "    Roll back: sudo install -m 0644 /usr/local/share/ttyd/index.html.prev \\"
+  echo "                 /usr/local/share/ttyd/index.html && sudo systemctl restart ttyd"
+else
+  echo "==> Done. v2 SPA live on :7687 (terminal-dev.viktorbarzin.me)."
+fi
