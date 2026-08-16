@@ -686,3 +686,62 @@
     max-height: 0;
   }
 }
+
+/* ---- Ctrl/Cmd+J scratch-shell dock ------------------------------------- */
+/* A second live terminal under the session surface. The content column is a
+   flex column, so the dock takes a percentage height and the session above
+   keeps the rest. Desktop only — the coarse-pointer rule below removes it
+   outright rather than shrinking it, because one terminal is all a phone has
+   room for (and the chord that opens it is inert there too). */
+.tl-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 80px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-page);
+}
+.tl-dock-gutter {
+  height: 6px;
+  margin-top: -3px;
+  cursor: row-resize;
+  flex: 0 0 auto;
+}
+.tl-dock-gutter:hover,
+.tl-dock-dragging .tl-dock-gutter {
+  background: var(--accent);
+  opacity: 0.5;
+}
+.tl-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.tl-dock-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.tl-dock-spacer {
+  flex: 1 1 auto;
+}
+.tl-dock-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+/* While the gutter is being dragged the pointer must not land in the iframe,
+   or the drag dies the moment it crosses into the terminal. */
+.tl-dock-dragging .tl-dock-body {
+  pointer-events: none;
+}
+@media (pointer: coarse) {
+  .tl-dock {
+    display: none;
+  }
+}
