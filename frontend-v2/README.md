@@ -95,7 +95,7 @@ src/
   global.d.ts            Vite `define` + theme-boot-script global declarations
   app.css                App chrome + timeline styles (theme tokens only)
   sidebar.css            Lobby shell grid + sidebar styles
-  types/events.ts        Wire contract — mirrors session-events/event.go EXACTLY
+  types/events.ts        Wire contract — mirrors sessionio/event.go EXACTLY
   types/lobby.ts         tmux-api shapes (Session/Layout/Project/Whoami)
   lib/
     config.ts            Endpoints: /events,/prompt,/cancel (session-events),
@@ -215,7 +215,7 @@ test/                    logic, store, sidebar render, SSE client, event-parse,
 ## Wire contract
 
 `src/types/events.ts` mirrors the Go `Event` struct in
-`session-events/event.go` field-for-field (`id, kind, session, turnId, body,
+`sessionio/event.go` field-for-field (`id, kind, session, turnId, body,
 tool, toolId, reqId, isError, at`) and the 11 `kind` discriminators. The renderer
 only ever sees this normalized shape, never raw transcript JSONL.
 

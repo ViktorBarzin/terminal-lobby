@@ -48,7 +48,7 @@ resulting state itself — see "Interrupts have no hook" below.
   sitting idle at `❯`, and 30 s of polling after a bare
   `tmux send-keys C-c` with the stamp unmoved. The invariant is now
   **an interrupt ends the turn**: `Injector.Cancel`
-  (`session-events/inject.go`) re-derives the stamp right after the C-c
+  (`sessionio/tmux.go`) re-derives the stamp right after the C-c
   lands — a stamped session becomes `done`, an unstamped one stays
   unstamped so a plain shell never grows a state dot. The trade is
   deliberate. This writer can under-report for a moment when an

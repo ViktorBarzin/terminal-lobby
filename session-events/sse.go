@@ -5,15 +5,17 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"terminal-lobby/sessionio"
 )
 
 // Source is the read side of a session's event stream. Replay returns all events
 // with ID greater than `from` (0 = from the start); Subscribe returns a channel
 // of live events and a cancel func to release the subscription. Kept an interface
-// so the SSE layer is tested without files (fileSource wires the real one).
+// so the SSE layer is tested without files (sessionio.FileSource wires the real one).
 type Source interface {
-	Replay(from int64) []Event
-	Subscribe() (<-chan Event, func())
+	Replay(from int64) []sessionio.Event
+	Subscribe() (<-chan sessionio.Event, func())
 }
 
 // parseLastEventID reads the resume cursor from the standard SSE `Last-Event-ID`
