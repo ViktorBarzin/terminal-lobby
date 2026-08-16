@@ -162,10 +162,10 @@ func newPushHTTPClient() *http.Client {
 
 func newPushSender(store *pushStore, prefs prefsLoader, stater sessionStater, vapid vapidConfig) *pushSender {
 	return &pushSender{
-		store:  store,
-		prefs:  prefs,
-		stater: stater,
-		vapid:  vapid,
+		store:     store,
+		prefs:     prefs,
+		stater:    stater,
+		vapid:     vapid,
 		client:    newPushHTTPClient(),
 		last:      map[string]map[string]string{},
 		seenAct:   map[string]map[string]int64{},
