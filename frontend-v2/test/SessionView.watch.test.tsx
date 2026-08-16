@@ -75,37 +75,7 @@ describe("<SessionView> — the Watch toggle", () => {
 
     fireEvent.click(btn);
     await waitFor(() => expect(btn.getAttribute("aria-pressed")).toBe("false"));
-    // Turning it off records an EXPLICIT choice to drive, not an absence. With
-    // no choice stored, the automatic rule would put a driven session straight
-    // back into watch mode and the button would look inert.
-    expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("rw");
-  });
-
-  it("joins as a viewer when someone is already driving, with nothing stored", () => {
-    const { container } = render(() => (
-      <SessionView session="main" driven={() => true} />
-    ));
-    expect(watchButton(container).getAttribute("aria-pressed")).toBe("true");
     expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull();
-  });
-
-  it("drives a session nobody else is on, as before", () => {
-    const { container } = render(() => (
-      <SessionView session="main" driven={() => false} />
-    ));
-    expect(watchButton(container).getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("take-control sticks even while the other device keeps driving", async () => {
-    const { container } = render(() => (
-      <SessionView session="main" driven={() => true} />
-    ));
-    const btn = watchButton(container);
-    expect(btn.getAttribute("aria-pressed")).toBe("true"); // auto-joined
-
-    fireEvent.click(btn); // take control
-    await waitFor(() => expect(btn.getAttribute("aria-pressed")).toBe("false"));
-    expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("rw");
   });
 
   it("remembers per session — watching one does not silence another", async () => {

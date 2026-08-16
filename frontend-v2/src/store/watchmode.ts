@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, type Accessor } from "solid-js";
+import { createEffect, createSignal, type Accessor } from "solid-js";
 import { track } from "../telemetry/track";
 
 /**
@@ -9,86 +9,60 @@ import { track } from "../telemetry/track";
  * the desktop is driving. A server-side setting would make the session
  * read-only everywhere, which is the opposite of what is wanted — so the state
  * lives in localStorage and never leaves the browser. The server holds no watch
- * state; it only ever answers the request one individual attach makes, and
- * resolves it downgrade-only against what that caller is allowed.
+ * state at all; it only ever answers the request one individual attach makes,
+ * and resolves it downgrade-only against what that caller is allowed.
  *
- * THREE STATES, NOT TWO. A session nobody has chosen for is `undefined`, and
- * that is resolved automatically: joining a session someone is already DRIVING
- * comes up watching, so a second device never takes the grid from the first.
- * That is why "I chose to drive" (`false`) has to be storable and distinct from
- * "I have never said" — otherwise clicking *take control* while your desktop is
- * still driving would be undone by the same rule that put you in watch mode,
- * and the button would look inert.
+ * WHY DRIVING IS THE DEFAULT. Opening a session behaves exactly as it does
+ * today; watching is opt-in and remembered as a deviation, so a device that has
+ * never asked to watch is unaffected by this feature existing. Storage records
+ * only the deviation (the key is removed when watch is turned off), which
+ * matches how viewmode.ts persists its own default.
  *
- * The automatic case exists because the toggle could not, in practice, be set
- * before the attach: v2 is terminal-first (viewmode defaults to "terminal"), so
- * selecting a session shows the Terminal view and latches the attach in the
- * same tick. There was no moment in between to click anything.
- *
- * Storage: "ro" | "rw" | key absent. The shipped two-state version wrote "ro"
- * for watching and removed the key otherwise, so its values still read
- * correctly — an absent key simply now means "decide for me" rather than
- * "drive", which is the intended change.
+ * The toggle has to be reachable BEFORE the Terminal view is first shown,
+ * because that first show is what triggers the attach (TerminalView is lazy) —
+ * and an attach that has already happened read-write has already claimed the
+ * grid. SessionView therefore renders it in the session bar, visible from Text
+ * mode.
  */
 
 export const WATCH_KEY_PREFIX = "tl:watch:v1:";
 
-/** undefined = no choice recorded; decide from whether the session is driven. */
-export type WatchChoice = boolean | undefined;
+/** The marker stored for a watching session. Any other value reads as driving,
+ *  so a partially-written or hand-edited key fails safe toward today's
+ *  behaviour rather than silently making a session read-only. */
+const WATCH_MARKER = "ro";
 
-export function loadWatch(session: string): WatchChoice {
+export function loadWatch(session: string): boolean {
   try {
-    const v = localStorage.getItem(WATCH_KEY_PREFIX + session);
-    if (v === "ro") return true;
-    if (v === "rw") return false;
-    return undefined;
+    return localStorage.getItem(WATCH_KEY_PREFIX + session) === WATCH_MARKER;
   } catch {
-    return undefined;
+    return false;
   }
 }
 
-export function saveWatch(session: string, choice: WatchChoice): void {
-  if (choice !== undefined) {
-    track("watch.switched", {
-      "tl.to": choice ? "ro" : "rw",
-      "tl.session": session,
-    });
-  }
+export function saveWatch(session: string, watch: boolean): void {
+  track("watch.switched", {
+    "tl.to": watch ? "ro" : "rw",
+    "tl.session": session,
+  });
   try {
-    if (choice === undefined) localStorage.removeItem(WATCH_KEY_PREFIX + session);
-    else localStorage.setItem(WATCH_KEY_PREFIX + session, choice ? "ro" : "rw");
+    if (watch) localStorage.setItem(WATCH_KEY_PREFIX + session, WATCH_MARKER);
+    else localStorage.removeItem(WATCH_KEY_PREFIX + session);
   } catch {
     /* private mode / no storage */
   }
 }
 
-/**
- * What this client should actually do: an explicit choice always wins; with no
- * choice recorded, join as a viewer when someone is already driving.
- *
- * `driven` is a courtesy signal, not an access decision — it comes from the
- * polled session list and can be a few seconds stale. Being wrong costs one
- * click: the toggle starts on the wrong side and nothing else.
- */
-export function resolveWatch(choice: WatchChoice, driven: boolean): boolean {
-  return choice ?? driven;
-}
-
-/**
- * Resolved watch state for the current session, plus a toggle that always
- * records an EXPLICIT choice (so the automatic rule cannot immediately undo it).
- */
+/** Signal + setter + toggle for the current session's watch state, re-hydrating
+ *  when the session changes (each session is remembered separately). */
 export function createWatchMode(
   session: Accessor<string>,
-  driven: Accessor<boolean>,
 ): [Accessor<boolean>, (w: boolean) => void, () => void] {
-  const [choice, setChoice] = createSignal<WatchChoice>(loadWatch(session()));
-  createEffect(() => setChoice(loadWatch(session())));
-
-  const watch = createMemo(() => resolveWatch(choice(), driven()));
+  const [watch, setWatch] = createSignal<boolean>(loadWatch(session()));
+  createEffect(() => setWatch(loadWatch(session())));
 
   const set = (w: boolean) => {
-    setChoice(w);
+    setWatch(w);
     saveWatch(session(), w);
   };
   return [watch, set, () => set(!watch())];
