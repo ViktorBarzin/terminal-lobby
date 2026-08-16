@@ -74,14 +74,31 @@ fi
 # ---- shared / foreign attach --------------------------------------------
 # A 4th ?arg= names the session OWNER. When present and different from the
 # authenticated guest's OS user, this attaches SOMEONE ELSE's session.
+#
+# A 5th ?arg= is the client's WATCH-MODE request: "ro" asks to attach without
+# driving. It is a request, never a decision — the server resolves it against
+# what the caller is actually allowed (downgrade-only: a client may ask for less
+# access than it has, never more), and `-r` still comes back from the server's
+# answer. That is why accepting this argument does not weaken the exact-argv
+# discipline below: the only thing it can do is take access away.
+#
 # Authorization + the read-only decision come from tmux-api's token-gated
 # internal endpoint (which also records this client's tty so a revoke can
 # detach exactly it). The tmux argv is FIXED — the only guest-influenced value
 # is the NAME_RE-validated session name, and `-r` comes from the server's mode,
 # NEVER a client argument. This exact-argv discipline is the whole security
 # boundary given the broad sudo tmux grant.
+MODE_RE='^(ro|rw)$'
 owner_arg="${4:-}"
-if [[ -n "$owner_arg" && "$owner_arg" =~ $NAME_RE && "$owner_arg" != "$os_user" ]]; then
+[[ "$owner_arg" =~ $NAME_RE ]] || owner_arg=""
+watch_arg="${5:-}"
+[[ "$watch_arg" =~ $MODE_RE ]] || watch_arg=""
+
+# The server is consulted for a FOREIGN attach (as before) and now also for any
+# attach that asks to watch — including your own session, which is the
+# two-device case and has no share row to authorize it.
+if [[ -n "$owner_arg" && "$owner_arg" != "$os_user" ]] || [[ "$watch_arg" == "ro" ]]; then
+    target_owner="${owner_arg:-$os_user}"
     guest="$os_user"
     my_tty="$(tty 2>/dev/null || true)"
     [[ "$my_tty" == /dev/* ]] || my_tty=""
@@ -89,18 +106,25 @@ if [[ -n "$owner_arg" && "$owner_arg" =~ $NAME_RE && "$owner_arg" != "$os_user" 
     [[ -r /var/lib/tmux-api/internal.token ]] && token="$(cat /var/lib/tmux-api/internal.token)"
     resp="$(curl -s -m 5 -w $'\n%{http_code}' \
         -H "X-Internal-Token: ${token}" -H 'Content-Type: application/json' \
-        --data "{\"owner\":\"${owner_arg}\",\"name\":\"${name}\",\"guest\":\"${guest}\",\"tty\":\"${my_tty}\"}" \
+        --data "{\"owner\":\"${target_owner}\",\"name\":\"${name}\",\"guest\":\"${guest}\",\"tty\":\"${my_tty}\",\"requested\":\"${watch_arg}\"}" \
         http://127.0.0.1:7684/internal/attach 2>/dev/null || true)"
     code="$(printf '%s' "$resp" | tail -n1)"
-    mode="$(printf '%s' "$resp" | sed -n 's/.*"mode":"\([a-z]*\)".*/\1/p')"
-    logger -t ttyd-attach "shared-attach: guest='$guest' owner='$owner_arg' name='$name' tty='${my_tty:-none}' code='$code' mode='${mode:-none}'"
+    # Tolerate whitespace around the colon. Go's json.Encoder emits compact
+    # output today, so the tighter pattern worked — but an unparsed mode fails
+    # in two different directions (a foreign attach falls safe to -r, a self
+    # attach falls through to CREATING the session), and neither is obvious from
+    # the outside. Accepting both spellings removes that silent divergence.
+    mode="$(printf '%s' "$resp" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p')"
+    logger -t ttyd-attach "server-attach: guest='$guest' owner='$target_owner' name='$name' tty='${my_tty:-none}' asked='${watch_arg:-none}' code='$code' mode='${mode:-none}'"
     if [[ "$code" != "200" ]]; then
+        # Only reachable for a foreign attach: a self attach is authorized by
+        # owning the session, so the server never denies it.
         cat <<EOF
 
   Access denied
   ─────────────
-  '$guest' is not permitted to attach '$owner_arg's session '$name'
-  (no active share). Ask '$owner_arg' to share it from the lobby.
+  '$guest' is not permitted to attach '$target_owner's session '$name'
+  (no active share). Ask '$target_owner' to share it from the lobby.
 
 EOF
         sleep 5
@@ -109,13 +133,20 @@ EOF
     # Fail SAFE: read-only unless the server explicitly said "rw".
     ro_flag=(-r)
     [[ "$mode" == "rw" ]] && ro_flag=()
-    # Attach the owner's ALREADY-RUNNING server as the owner. No systemd scope
-    # (the server exists, owned by the owner). Self (owner == the ttyd identity)
+    # Attach the ALREADY-RUNNING server as its owner. No systemd scope (the
+    # server exists, owned by the owner). Self (owner == the ttyd identity)
     # needs no sudo; otherwise the passwordless per-user tmux grant applies.
-    if [[ "$owner_arg" == "$(id -un)" ]]; then
-        exec /usr/bin/tmux attach-session "${ro_flag[@]}" -t "$name"
-    else
-        exec sudo -n -H -u "$owner_arg" /usr/bin/tmux attach-session "${ro_flag[@]}" -t "$name"
+    #
+    # The one case that does NOT attach here is a WATCH of your own session that
+    # is not running yet: the server answers "rw" because there is nothing to
+    # watch, and we fall through to the ordinary create path below rather than
+    # attaching to a session that does not exist.
+    if [[ "$target_owner" != "$os_user" || "$mode" == "ro" ]]; then
+        if [[ "$target_owner" == "$(id -un)" ]]; then
+            exec /usr/bin/tmux attach-session "${ro_flag[@]}" -t "$name"
+        else
+            exec sudo -n -H -u "$target_owner" /usr/bin/tmux attach-session "${ro_flag[@]}" -t "$name"
+        fi
     fi
 fi
 

@@ -1,6 +1,8 @@
 module tmux-api
 
-go 1.21
+go 1.22
+
+toolchain go1.22.2
 
 require github.com/SherClockHolmes/webpush-go v1.4.0
 
@@ -11,3 +13,7 @@ require (
 )
 
 replace terminal-lobby/telemetry => ../telemetry
+
+require terminal-lobby/sessionio v0.0.0
+
+replace terminal-lobby/sessionio => ../sessionio
