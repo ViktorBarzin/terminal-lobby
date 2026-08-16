@@ -98,6 +98,22 @@
 .tl-shellbar-spacer {
   flex: 1 1 auto;
 }
+/* The shell bar's Settings control. Measured as a bare .tl-icon-btn it came
+   out 23x18 in --text-muted at the far right of a 1440px bar — present, and
+   findable only if you already knew where to look. Give it the affordances of
+   a button: an outline, a real hit area, and readable colour. */
+.tl-shellbar .tl-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  min-height: 26px;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+.tl-shellbar .tl-settings-btn:hover {
+  border-color: var(--accent);
+}
 .tl-shell-body {
   flex: 1 1 auto;
   min-height: 0;

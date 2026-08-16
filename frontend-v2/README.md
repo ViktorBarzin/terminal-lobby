@@ -128,6 +128,10 @@ src/
                          → the unseen-done predicate behind the tab-title (N✓)
                          badge and the favicon's green tick
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
+    device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
+                         terminal flow control (tl-flow-control — the iframe
+                         picks a flip up live via a storage event) and the
+                         Clear-local-data wipe
     toast.ts             Toast stack + the slow-request health coordinator
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
