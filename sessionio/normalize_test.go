@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,16 +47,26 @@ func TestNormalizeToolResultAsBlockArray(t *testing.T) {
 	}
 }
 
+// A non-conversation record never becomes conversation. Since 2026-08-16 a few
+// of them become session-lifecycle markers instead (see meta), so this asserts
+// the part that has to stay true: nothing here is text, a tool call or a turn.
 func TestNormalizeSkipsMetaLines(t *testing.T) {
 	n := NewNormalizer("demo")
 	for _, meta := range []string{
 		`{"type":"mode","mode":"default","sessionId":"x"}`,
 		`{"type":"permission-mode","permissionMode":"default","sessionId":"x"}`,
 		`{"type":"last-prompt","leafUuid":"u","sessionId":"x"}`,
+		`{"type":"attachment","attachment":{"type":"file"},"sessionId":"x"}`,
+		`{"type":"ai-title","aiTitle":"a name","sessionId":"x"}`,
 	} {
-		if got := n.Line([]byte(meta)); len(got) != 0 {
-			t.Fatalf("meta %q should yield no events, got %+v", meta, got)
+		for _, e := range n.Line([]byte(meta)) {
+			if e.Kind != KindMeta {
+				t.Fatalf("meta %q produced conversation: %+v", meta, e)
+			}
 		}
+	}
+	if got := n.Line([]byte(`{"type":"last-prompt","leafUuid":"u"}`)); len(got) != 0 {
+		t.Fatalf("a record with nothing to say yields nothing, got %+v", got)
 	}
 }
 
@@ -521,4 +532,119 @@ func mustAt(t *testing.T, ts string) int64 {
 		t.Fatalf("bad test timestamp %q", ts)
 	}
 	return at
+}
+
+// ---- what the 2026-08-16 text-view work added to the wire --------------------
+
+func TestNormalizeEmitsThinkingBlocks(t *testing.T) {
+	n := NewNormalizer("demo")
+	out := n.Line([]byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"weighing it up"}]},"uuid":"a1"}`))
+	if len(out) != 1 || out[0].Kind != KindThinking || out[0].Body != "weighing it up" {
+		t.Fatalf("thinking = %+v", out)
+	}
+}
+
+func TestNormalizeCarriesTheStructuredToolResult(t *testing.T) {
+	n := NewNormalizer("demo")
+	out := n.Line([]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"out"}]},"toolUseResult":{"stdout":"out","stderr":"boom","interrupted":false}}`))
+	if len(out) != 1 || out[0].Kind != KindToolResult {
+		t.Fatalf("want one tool_result, got %+v", out)
+	}
+	if string(out[0].Result) != `{"stdout":"out","stderr":"boom","interrupted":false}` {
+		t.Fatalf("result not carried: %s", out[0].Result)
+	}
+	if out[0].Truncated {
+		t.Fatal("a small result must not be marked truncated")
+	}
+}
+
+func TestNormalizeCapsAnOversizedResult(t *testing.T) {
+	big := strings.Repeat("x", MaxInlineResult*2)
+	n := NewNormalizer("demo")
+	out := n.Line([]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"` + big + `"}]},"toolUseResult":{"stdout":"` + big + `"}}`))
+	if len(out) != 1 {
+		t.Fatalf("want one event, got %d", len(out))
+	}
+	e := out[0]
+	if !e.Truncated {
+		t.Fatal("an oversized result must be marked truncated")
+	}
+	if len(e.Body) > MaxInlineResult+64 {
+		t.Fatalf("body not capped: %d bytes", len(e.Body))
+	}
+	if len(e.Result) != 0 {
+		t.Fatalf("an oversized structured result is dropped, not truncated into invalid JSON: %d bytes", len(e.Result))
+	}
+}
+
+func TestNormalizeCarriesUsageOnTurnEnd(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}`))
+	out := n.Line([]byte(`{"type":"assistant","message":{"role":"assistant","id":"m1","stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3},"content":[{"type":"text","text":"done"}]}}`))
+	var end *Event
+	for i := range out {
+		if out[i].Kind == KindTurnEnd {
+			end = &out[i]
+		}
+	}
+	if end == nil {
+		t.Fatalf("no turn_end in %v", kinds(out))
+	}
+	if string(end.Usage) != `{"input_tokens":7,"output_tokens":3}` {
+		t.Fatalf("usage not carried: %s", end.Usage)
+	}
+}
+
+func TestNormalizeMarksSidechainWork(t *testing.T) {
+	n := NewNormalizer("demo")
+	out := n.Line([]byte(`{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"subagent says"}]}}`))
+	if len(out) != 1 || !out[0].Sidechain {
+		t.Fatalf("sidechain not marked: %+v", out)
+	}
+}
+
+func TestNormalizeEmitsLifecycleMeta(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want Meta
+		body string
+	}{
+		{"mode", `{"type":"mode","mode":"normal"}`, MetaMode, "normal"},
+		{"permission mode", `{"type":"permission-mode","permissionMode":"bypassPermissions"}`, MetaPermissionMode, "bypassPermissions"},
+		{"queued prompt", `{"type":"queue-operation","operation":"enqueue","content":"and also this"}`, MetaQueued, "and also this"},
+		{"hook error", `{"type":"system","subtype":"stop_hook_summary","hookErrors":["auto-learn.py exited 1"]}`, MetaHookError, `["auto-learn.py exited 1"]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n := NewNormalizer("demo")
+			out := n.Line([]byte(tc.line))
+			if len(out) != 1 || out[0].Kind != KindMeta || out[0].Meta != tc.want || out[0].Body != tc.body {
+				t.Fatalf("got %+v", out)
+			}
+		})
+	}
+}
+
+func TestNormalizeDropsQuietSystemRecords(t *testing.T) {
+	n := NewNormalizer("demo")
+	if out := n.Line([]byte(`{"type":"system","subtype":"stop_hook_summary","hookErrors":[]}`)); len(out) != 0 {
+		t.Fatalf("a system record with no hook errors says nothing: %+v", out)
+	}
+	if out := n.Line([]byte(`{"type":"queue-operation","operation":"dequeue","content":"x"}`)); len(out) != 0 {
+		t.Fatalf("only an enqueue is news; a dequeue is the prompt being taken: %+v", out)
+	}
+}
+
+// A compaction boundary is a user-role record, so the prompt test claims it and
+// it renders as an enormous thing the operator never typed.
+func TestNormalizeCompactSummaryIsMetaNotAPrompt(t *testing.T) {
+	n := NewNormalizer("demo")
+	out := n.Line([]byte(`{"type":"user","isCompactSummary":true,"message":{"role":"user","content":[{"type":"text","text":"This session is being continued from…"}]}}`))
+	if len(out) != 1 || out[0].Kind != KindMeta || out[0].Meta != MetaCompact {
+		t.Fatalf("compact boundary = %+v", out)
+	}
+	if n.turnID != "" {
+		t.Fatalf("a compaction boundary must not open a turn, got %q", n.turnID)
+	}
 }

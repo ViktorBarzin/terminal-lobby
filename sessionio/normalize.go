@@ -35,6 +35,23 @@ type Normalizer struct {
 
 func NewNormalizer(session string) *Normalizer { return &Normalizer{session: session} }
 
+// MaxInlineResult caps what one tool result may put on the wire. Measured over
+// the transcripts on this box, tool results run to 673 KB and one session holds
+// 5.5 MB of them; replaying that to a phone on open is not worth doing for
+// output that renders collapsed. Past the cap the flattened text is cut with a
+// marker and the structured form is dropped whole — truncating JSON would only
+// produce something no reader can parse — and the event is marked Truncated so
+// the renderer can offer to fetch the rest (see FullResult).
+const MaxInlineResult = 8 << 10
+
+// cap returns s cut to MaxInlineResult with a marker, and whether it cut.
+func capText(s string) (string, bool) {
+	if len(s) <= MaxInlineResult {
+		return s, false
+	}
+	return s[:MaxInlineResult] + "\n… truncated, " + strconv.Itoa(len(s)-MaxInlineResult) + " bytes not shown", true
+}
+
 func (n *Normalizer) next() int64 { n.seq++; return n.seq }
 
 func (n *Normalizer) emit(k Kind, at int64) Event {
@@ -73,7 +90,16 @@ func (n *Normalizer) Line(b []byte) []Event {
 // nil.
 func (n *Normalizer) Record(rec Record) []Event {
 	if !rec.Conversational() {
-		return nil
+		return n.meta(rec)
+	}
+	// A compaction boundary is written as a user-role record, so the "the human
+	// spoke" test claims it and the summary renders as an enormous prompt
+	// nobody typed — and opens a turn around it. It is session lifecycle, not
+	// conversation.
+	if rec.IsCompactSummary {
+		e := n.emit(KindMeta, parseAt(rec.Timestamp))
+		e.Meta = MetaCompact
+		return []Event{e}
 	}
 	// The message role is authoritative; the line type is the fallback for the
 	// older lines that omit it.
@@ -116,6 +142,10 @@ func (n *Normalizer) Record(rec Record) []Event {
 			e := n.emit(k, at)
 			e.Body = bl.Text
 			out = append(out, e)
+		case "thinking":
+			e := n.emit(KindThinking, at)
+			e.Body = bl.Thinking
+			out = append(out, e)
 		case "tool_use":
 			e := n.emit(KindToolUse, at)
 			e.Tool, e.ToolID = bl.Name, bl.ID
@@ -124,8 +154,26 @@ func (n *Normalizer) Record(rec Record) []Event {
 		case "tool_result":
 			e := n.emit(KindToolResult, at)
 			e.ToolID, e.IsError = bl.ToolUseID, bl.IsError
-			e.Body = decodeToolResult(bl.Content)
+			body, cut := capText(decodeToolResult(bl.Content))
+			e.Body = body
+			// The structured result is where the stdout/stderr split and the
+			// diff live; it is dropped rather than cut when oversized, since
+			// half a JSON object is worse than none.
+			if res := rec.ToolUseResult; len(res) > 0 && len(res) <= MaxInlineResult {
+				e.Result = res
+			} else if len(res) > MaxInlineResult {
+				cut = true
+			}
+			e.Truncated = cut
 			out = append(out, e)
+		}
+	}
+
+	// Subagent work shares the transcript with the main thread; the renderer
+	// nests it rather than interleaving it.
+	if rec.IsSidechain {
+		for i := range out {
+			out[i].Sidechain = true
 		}
 	}
 
@@ -133,7 +181,9 @@ func (n *Normalizer) Record(rec Record) []Event {
 	// (thinking, then text) that all repeat the same terminal stop_reason.
 	if role == "assistant" && !n.turnDone && EndsTurn(rec.Message.StopReason) {
 		n.turnDone, n.doneMsg = true, rec.Message.ID
-		out = append(out, n.emit(KindTurnEnd, at))
+		end := n.emit(KindTurnEnd, at)
+		end.Usage = rec.Message.Usage
+		out = append(out, end)
 	}
 	// A prompt the operator has already interrupted arrives dead: it opens a
 	// turn nobody is working on, and Claude will write nothing further about
@@ -143,6 +193,43 @@ func (n *Normalizer) Record(rec Record) []Event {
 		out = append(out, n.emit(KindTurnEnd, at))
 	}
 	return out
+}
+
+// meta turns a non-conversation record into the session-lifecycle events the
+// renderer shows as inline markers: the mode in force, a prompt sitting in the
+// queue, a hook that failed. Records that say nothing a reader would act on —
+// a system summary with no errors, a dequeue (the queue being drained is just
+// the prompt arriving, which the transcript reports anyway) — yield nothing.
+//
+// This is the one place that reads past Conversational(). That whitelist stays
+// exactly as it is: the T3 bridge mirrors conversation only, and a `mode` record
+// is not something to put in a thread.
+func (n *Normalizer) meta(rec Record) []Event {
+	at := parseAt(rec.Timestamp)
+	emit := func(m Meta, body string) []Event {
+		e := n.emit(KindMeta, at)
+		e.Meta, e.Body = m, body
+		return []Event{e}
+	}
+	switch rec.Type {
+	case RecordMode:
+		if rec.Mode != "" {
+			return emit(MetaMode, rec.Mode)
+		}
+	case RecordPermissionMode:
+		if rec.PermissionMode != "" {
+			return emit(MetaPermissionMode, rec.PermissionMode)
+		}
+	case RecordQueueOperation:
+		if rec.Operation == "enqueue" && rec.Content != "" {
+			return emit(MetaQueued, rec.Content)
+		}
+	case RecordSystem:
+		if s := string(rec.HookErrors); s != "" && s != "[]" && s != "null" {
+			return emit(MetaHookError, s)
+		}
+	}
+	return nil
 }
 
 // Interrupt reports that the operator interrupted this session at `at` (epoch

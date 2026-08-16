@@ -14,8 +14,18 @@ import (
 
 // fakeSource is a controllable Source for the SSE test.
 type fakeSource struct {
-	all  []sessionio.Event
-	live chan sessionio.Event
+	all         []sessionio.Event
+	live        chan sessionio.Event
+	windowTurns int
+	windowFrom  int64
+}
+
+// windowTurns records what writeSSE asked for, so a test can prove a fresh open
+// is windowed and a resume is not.
+func (f *fakeSource) ReplayWindow(from int64, turns int) []sessionio.Event {
+	f.windowTurns = turns
+	f.windowFrom = from
+	return f.Replay(from)
 }
 
 func (f *fakeSource) Replay(from int64) []sessionio.Event {
@@ -91,4 +101,26 @@ func TestWriteSSEReplaysFromCursorHeartbeatsAndTailsLive(t *testing.T) {
 
 	// Heartbeat comment appears.
 	want(func(l string) bool { return strings.HasPrefix(l, ":") }, "heartbeat comment")
+}
+
+// A fresh open is windowed; a resume asks for everything after its cursor, or
+// the client silently loses the gap it reconnected to collect.
+func TestSSEWindowsAFreshOpenButNotAResume(t *testing.T) {
+	src := &fakeSource{all: []sessionio.Event{{ID: 1, Kind: sessionio.KindText}}, live: make(chan sessionio.Event)}
+	r := httptest.NewRequest("GET", "/events/demo", nil)
+	w := httptest.NewRecorder()
+	close(src.live)
+	writeSSE(w, r, src, time.Hour)
+	if src.windowTurns != OpenWindowTurns || src.windowFrom != 0 {
+		t.Fatalf("fresh open asked for turns=%d from=%d", src.windowTurns, src.windowFrom)
+	}
+
+	src2 := &fakeSource{all: src.all, live: make(chan sessionio.Event)}
+	close(src2.live)
+	r2 := httptest.NewRequest("GET", "/events/demo", nil)
+	r2.Header.Set("Last-Event-ID", "7")
+	writeSSE(httptest.NewRecorder(), r2, src2, time.Hour)
+	if src2.windowFrom != 7 {
+		t.Fatalf("resume cursor lost: from=%d", src2.windowFrom)
+	}
 }
