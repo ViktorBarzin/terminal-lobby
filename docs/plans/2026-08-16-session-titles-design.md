@@ -87,17 +87,30 @@ sequenceDiagram
 `@title` joins the format string tmux-api already polls. Two mechanical points
 came out of measuring tmux 3.4 directly:
 
-**The field separator changes from `|` to `\x1f`.** `pane_title` is arbitrary
+**The field separator changes from `|` to a tab.** `pane_title` is arbitrary
 terminal-controlled text and is last in the format precisely so an embedded `|`
 cannot shift the columns. `@title` is arbitrary too, and only one field can be
-last. A unit separator is a character neither a typed title nor a realistic pane
-title contains, so both fields are safe:
+last:
 
 ```
-#{session_id}␟#{session_name}␟#{session_attached}␟#{session_activity}␟
-#{session_created}␟#{@claude_state}␟#{pane_pid}␟#{pane_current_command}␟
-#{@title}␟#{pane_title}
+#{session_id}⇥#{session_name}⇥#{session_attached}⇥#{session_activity}⇥
+#{session_created}⇥#{@claude_state}⇥#{pane_pid}⇥#{pane_current_command}⇥
+#{@title}⇥#{pane_title}
 ```
+
+A unit separator (`\x1f`) was the first choice and does not work. Measured on
+tmux 3.4: tmux escapes non-printable bytes on output, in the format literal and
+inside expanded values alike, so a `\x1f` separator arrives as the four
+characters `\037` — and so does a `\x1f` inside a value, leaving the two
+indistinguishable and every row parsing as a single field. Tab passes through
+raw on both sides.
+
+What makes tab safe is the argument that made `|` safe for one field, now good
+for two: a title can never contain a tab, because control characters are
+stripped before a title is stored, and `pane_title` stays last so an embedded
+tab is soaked into the trailing field rather than shifting the row. A row is
+also anchored at the front — `session_id` must look like `$N`, which catches a
+separator smuggled into a session name before the numeric columns have to.
 
 `#{session_id}` (`$0`, `$1`, …) is added at the same time. It survives a rename,
 which is what lets another tab follow a session whose name changed rather than
@@ -113,7 +126,13 @@ so it gains one.
 
 Measured on tmux 3.4: `set-option -t "=name:" @title` sets a session option that
 `list-sessions -F '#{@title}'` reads back; `"Hello, world! | тест 🚀"`
-round-trips intact; `set-option -u` unsets it and it reads back empty.
+round-trips intact; `set-option -u` unsets it and it reads back empty, including
+when the option was never set.
+
+These are covered by tests that drive the real handlers against a real tmux
+server on a private socket (`tmux-api/title_live_test.go`), skipped where tmux
+is unavailable. The separator problem above is exactly what they exist for: it
+was invisible to a stubbed tmux and showed up as an empty session list.
 
 ## Deriving the name
 
