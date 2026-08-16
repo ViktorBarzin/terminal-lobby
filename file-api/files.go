@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -54,6 +55,17 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	osUser := resolveOSUser(w, r)
 	if osUser == "" {
+		return
+	}
+	// Another user's home is 0750, so the service cannot even resolve a path
+	// inside it — symlink resolution needs their read access. Hand the whole
+	// validate-and-list to a copy of this binary running AS them. Same-user
+	// requests (the common case) fall through to the inline path below,
+	// unchanged.
+	if crossUser(osUser) {
+		res := runPrivop(osUser, "list", userHome(osUser), r.URL.Query().Get("dir"),
+			r.URL.Query().Get("all") == "1", nil)
+		writeEnvelope(w, res, "")
 		return
 	}
 	resolved, err := resolveWithin(userHome(osUser), r.URL.Query().Get("dir"), true)
@@ -117,6 +129,19 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 	}
 	osUser := resolveOSUser(w, r)
 	if osUser == "" {
+		return
+	}
+	if crossUser(osUser) {
+		p := r.URL.Query().Get("path")
+		res := runPrivop(osUser, "read", userHome(osUser), p, false, nil)
+		if res.Status == http.StatusOK {
+			// The same signal the inline path records, from the requested
+			// extension — the child never sees the telemetry pipe.
+			events.Emit("file.previewed", osUser, telemetry.Attrs{
+				"tl.kind": strings.ToLower(filepath.Ext(p)), "tl.client": "api",
+			})
+		}
+		writeEnvelope(w, res, p)
 		return
 	}
 	resolved, err := resolveWithin(userHome(osUser), r.URL.Query().Get("path"), true)
@@ -214,6 +239,21 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "file too large (max 10MB)", http.StatusRequestEntityTooLarge)
 		return
 	}
+	// Cross-user: the child writes AS them, so the file lands with THEIR
+	// ownership. A write performed by the service would leave a wizard-owned
+	// file in someone else's home, which they could then not edit from a
+	// shell — worse than refusing.
+	if crossUser(osUser) {
+		res := runPrivop(osUser, "write", userHome(osUser), body.Path, false,
+			[]byte(body.Content))
+		if res.Status == http.StatusOK {
+			events.Emit("file.saved", osUser, telemetry.Attrs{
+				"tl.kind": strings.ToLower(filepath.Ext(body.Path)), "tl.client": "api",
+			})
+		}
+		writeEnvelope(w, res, body.Path)
+		return
+	}
 	resolved, err := resolveWithin(userHome(osUser), body.Path, false)
 	if err != nil {
 		pathHTTPError(w, err)
@@ -272,4 +312,45 @@ func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("encode json: %v", err)
 	}
+}
+
+// writeEnvelope relays a privileged child's result to the client.
+//
+// The child ran as the requesting user and already applied the same
+// containment and the same status codes the inline path uses, so this only
+// re-shapes the envelope into an HTTP response. Content comes back base64'd
+// because it travelled through a pipe; the inline path still streams via
+// ServeContent, so a same-user read keeps Range support and never buffers a
+// whole file. That asymmetry is deliberate: the common case should not pay for
+// the cross-user one.
+func writeEnvelope(w http.ResponseWriter, res privopResult, reqPath string) {
+	if res.Status != http.StatusOK {
+		http.Error(w, res.Error, res.Status)
+		return
+	}
+	if res.Entries != nil {
+		writeJSON(w, res.Entries)
+		return
+	}
+	if res.ContentB64 != "" || res.ContentType != "" {
+		data, err := base64.StdEncoding.DecodeString(res.ContentB64)
+		if err != nil {
+			log.Printf("privop: undecodable content envelope: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		ct := res.ContentType
+		// The SVG rule the inline path applies, applied here too: an SVG has no
+		// binary signature, so the sniffer calls it text/plain and Chrome then
+		// refuses to render it inside an <img>. Both paths must name it the
+		// same or a preview would depend on whose file it is.
+		if strings.EqualFold(filepath.Ext(reqPath), ".svg") {
+			ct = "image/svg+xml"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(data)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
