@@ -10,6 +10,7 @@ import {
 import { createSessionStore, type NotifyKind } from "../store/session";
 import type { SseStatus } from "../sse/client";
 import { createViewMode } from "../store/viewmode";
+import { createWatchMode } from "../store/watchmode";
 import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
 import type { PermissionDecision } from "../types/events";
 import { ViewSwitch } from "./ViewSwitch";
@@ -25,6 +26,7 @@ import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
 import {
   CameraIcon,
   ClipboardIcon,
+  EyeIcon,
   FileTextIcon,
   ImageIcon,
 } from "./Icons";
@@ -98,6 +100,9 @@ export const SessionView: Component<{
     autoStart: false,
   });
   const [mode, setMode, toggleMode] = createViewMode(() => session);
+  // Watch mode is per (session, device) and lives only in this browser — the
+  // desktop keeps driving the same session while the phone watches it.
+  const [watch, , toggleWatch] = createWatchMode(() => session);
 
   // The transcript stream is opened by the Text view, not by mounting this one.
   // v1 is terminal-first: a session opens on the Terminal view and Text is
@@ -377,6 +382,26 @@ export const SessionView: Component<{
           <FileTextIcon />
           <span class="tl-btn-label">Files</span>
         </button>
+        {/* Watch mode. Deliberately OUTSIDE the coarse-pointer guard and next to
+            the view switch, because the phone is where it matters most and it
+            has to be reachable from the TEXT view — the Terminal view's first
+            show is what triggers the attach, and an attach that has already
+            happened read-write has already claimed the grid. */}
+        <button
+          class="tl-icon-btn tl-watch-btn"
+          classList={{ "tl-watch-on": watch() }}
+          aria-label={watch() ? "Watching — tap to take control" : "Watch only"}
+          aria-pressed={watch()}
+          title={
+            watch()
+              ? "Watching: this device can't type and never resizes the session"
+              : "Watch only: observe without typing or resizing the session"
+          }
+          onClick={() => toggleWatch()}
+        >
+          <EyeIcon />
+          <span class="tl-btn-label">{watch() ? "Watching" : "Watch"}</span>
+        </button>
         <ViewSwitch
           mode={mode()}
           onSet={setMode}
@@ -405,6 +430,7 @@ export const SessionView: Component<{
             active={mode() === "terminal"}
             creating={props.creating}
             dir={props.dir}
+            watch={watch()}
             newCommand={props.newCommand}
             onFrameCommand={props.onFrameCommand}
             onFrameAlt={props.onFrameAlt}

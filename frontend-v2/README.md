@@ -111,6 +111,7 @@ src/
     session.ts           SSE → Solid store of events + prompt/cancel control
     lobby.ts             Lobby store: poll + optimistic layout PUT + session CRUD
     viewmode.ts          Per-session/per-device {mode} persistence
+    watchmode.ts         Per-session/per-device Watch mode (attach read-only)
     collapse.ts          Per-browser group-collapse (tmux-collapsed-<user>)
     visits.ts            Per-browser seen/visit tracking (tl:session-visits:v1)
                          → the unseen-done predicate behind the tab-title (N✓)
