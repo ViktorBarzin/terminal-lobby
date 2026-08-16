@@ -124,6 +124,34 @@ export function cancelUrl(session: string): string {
   return withActAs(`${API_BASE}/cancel/${encodeURIComponent(session)}`);
 }
 
+/**
+ * POST target that types an answer into the session's pane (session-events).
+ * Body: {keys:[…]}. The server allowlists the keys — this is how the text view
+ * answers a blocking prompt (ADR-0010).
+ */
+export function keysUrl(session: string): string {
+  return withActAs(`${API_BASE}/keys/${encodeURIComponent(session)}`);
+}
+
+/** GET target for the window of turns before event `before` (session-events). */
+export function earlierUrl(session: string, before: number): string {
+  return withActAs(
+    `${API_BASE}/earlier/${encodeURIComponent(session)}?before=${before}`,
+  );
+}
+
+/** GET target for one tool result in full, after the wire capped it. */
+export function resultUrl(session: string, toolId: string): string {
+  return withActAs(
+    `${API_BASE}/result/${encodeURIComponent(session)}/${encodeURIComponent(toolId)}`,
+  );
+}
+
+/** GET target for what the session's pane currently shows, plus its state. */
+export function paneUrl(session: string): string {
+  return withActAs(`${API_BASE}/pane/${encodeURIComponent(session)}`);
+}
+
 /** Build a tmux-api URL under the /api/sessions prefix (e.g. apiUrl("/sessions")
  *  → "/api/sessions/sessions"; apiUrl("/whoami") → "/api/sessions/whoami"). */
 export function apiUrl(path: string): string {

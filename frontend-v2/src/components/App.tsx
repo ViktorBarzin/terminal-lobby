@@ -34,6 +34,7 @@ import { Gallery } from "./Gallery";
 import { createDeployHealer } from "../deploy/healer";
 import { createDockStore } from "../store/dock";
 import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
+import { installSwipe } from "../mobile/swipe";
 import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
@@ -317,6 +318,20 @@ export const App: Component = () => {
     },
   });
 
+  /**
+   * Swipe left/right moves between sessions on a phone, so switching does not
+   * require the round trip back to the list. It dispatches the SAME commands
+   * the keyboard uses, so the order, the wrap and the foreign-session handling
+   * are the sidebar's, in one place.
+   */
+  const installSessionSwipe = (el: HTMLElement): void => {
+    const off = installSwipe(el, {
+      enabled: () => flip() && !collapsed(),
+      onSwipe: (dir) => run(dir === "next" ? "session.next" : "session.prev"),
+    });
+    onCleanup(off);
+  };
+
   run = createRunAppCommand({
     store,
     palette,
@@ -483,7 +498,7 @@ export const App: Component = () => {
           {settingsButton()}
         </div>
 
-        <div class="tl-shell-body">
+        <div class="tl-shell-body" ref={(el) => installSessionSwipe(el)}>
           <Show
             when={selectedName()}
             keyed
@@ -497,6 +512,10 @@ export const App: Component = () => {
               <SessionView
                 session={name}
                 owner={store.selected()?.owner}
+                otherSessions={() =>
+                  flatSessionOrder(store.model()).filter((o) => o.name !== name)
+                }
+                onSwitchSession={(n, owner) => store.select(n, owner)}
                 visible={!flip() || collapsed()}
                 leading={
                   <Show when={flip()}>

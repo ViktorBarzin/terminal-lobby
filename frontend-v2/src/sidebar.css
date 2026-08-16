@@ -795,7 +795,22 @@
      44px ellipsis button inflated a 28px row, and the fix was likewise about
      what the button does to its PARENT, not about shrinking the button. */
   .tl-card {
+    /* 48px, not the 40px floor: switching sessions is the most common thing
+       done on a phone, and e7c3417 had taken the row down to exactly its
+       button's height. Still well under the 54px it started at, so the list
+       stays dense. */
     padding: 0 8px;
+    min-height: 48px;
+  }
+  .tl-card .tl-card-name {
+    font-size: 15px;
+  }
+  /* The ⋯ button is a 40px target inside the row, so a thumb aiming right of
+     centre opened the menu instead of the session. On a touch screen the whole
+     row is "open this session" and a long press (SessionCard, 450ms) is the
+     menu. */
+  .tl-card-actions {
+    display: none;
   }
   /* The active row's accent bar insets from the row's edges; at 40px the old
      6px left a 28px stub, which reads as a dash rather than a bar. */
@@ -803,17 +818,10 @@
     top: 4px;
     bottom: 4px;
   }
-  /* The card's action menu. It was opacity:0 until :hover — on a touch screen
-     that hover never arrives, so rename/kill/move were reachable only by
-     tabbing a card into :focus-within with a keyboard the phone does not have.
-     Always visible here, at a size a thumb can actually land on. */
-  .tl-card-actions {
-    opacity: 1;
-    min-width: 40px;
-    height: 40px;
-    padding: 0 8px;
-    font-size: 18px;
-  }
+  /* The card's action menu was opacity:0 until :hover — a hover a touch screen
+     never delivers — and then always-visible, which cost the row its right
+     half. Long-press now opens the same menu, so the button is gone here and
+     the menu itself keeps the 40px rows below. */
   /* Its menu: rows a finger can pick apart, and a wider panel so a long label
      does not wrap into a two-line target. */
   .tl-menu {
