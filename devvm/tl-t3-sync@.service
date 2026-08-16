@@ -1,0 +1,79 @@
+[Unit]
+Description=terminal-lobby T3 syncer for %i (tl-t3-sync, per-user)
+Documentation=https://forgejo.viktorbarzin.me/viktor/terminal-lobby/src/branch/master/t3-bridge/DEPLOY.md
+# t3-serve@%i is the only thing this talks to, so start after it — but do NOT
+# Wants= or BindsTo= it. The syncer has to survive a t3-serve that is down,
+# restarting or mid-upgrade anyway (it retries every poll), and pulling t3-serve
+# in as a dependency would let `systemctl start tl-t3-sync@user` start a T3
+# server for a user who had deliberately stopped theirs.
+After=network.target t3-serve@%i.service
+# Backoff bound: with RestartSec=10 below, a unit that cannot start at all gives
+# up after ~10 tries and stays down for an operator to look at, instead of
+# hammering t3-serve forever. A unit that fails once an hour never trips this.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# The identity boundary is the uid, exactly as it is for t3-serve@%i: this
+# syncer sees one user's tmux server, one user's ~/.t3 and one user's threads,
+# with no sudo and no user-map (ADR-0009). Cross-user anything is a later,
+# deliberate design.
+User=%i
+Group=%i
+Environment=HOME=/home/%i
+# The syncer execs two binaries: `t3 auth session issue` to mint its bearer and
+# `tmux` to read session state. Both are in /usr/bin here; ~/.local/bin stays on
+# the path for a user-installed t3.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/%i/.local/bin
+# Per-user config. NOT optional (no leading '-'): a syncer with no config would
+# come up pointed at a default endpoint and start reconciling somebody's threads
+# on guessed settings. Absent file = unit fails to start = the user is not
+# enabled, which is the correct reading. See tl-t3-sync.env.example for the
+# keys; every one of them is required.
+EnvironmentFile=/etc/tl-t3-sync/%i.env
+WorkingDirectory=/home/%i
+# ${VAR} substitutes as exactly one argument, including mid-word (systemd.service(5)
+# "Basic environment variable substitution"), so the endpoint composes from the
+# user's t3 port. An unset variable expands to an EMPTY argument rather than
+# disappearing — the binary rejects those, so a half-filled env file fails loudly
+# at start instead of running on defaults nobody chose.
+# $TL_T3_SYNC_ARGS (no braces) is the escape hatch: it word-splits, and an empty
+# value contributes zero arguments. First enablement should set it to -dry-run.
+ExecStart=/usr/local/bin/tl-t3-sync \
+    -endpoint http://127.0.0.1:${T3_PORT} \
+    -base-dir ${T3_BASE_DIR} \
+    -interval ${TL_T3_SYNC_INTERVAL} \
+    -ignore ${TL_T3_SYNC_IGNORE} \
+    -notify-addr 127.0.0.1:${TL_T3_SYNC_NOTIFY_PORT} \
+    $TL_T3_SYNC_ARGS
+Restart=always
+RestartSec=10
+
+# --- privileges -------------------------------------------------------------
+# An ordinary user process, and nothing more. It needs no capability at all: it
+# reads its own tmux server, its own ~/.t3 and its own state directory, and
+# talks to loopback.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=true
+# /usr, /boot and /etc read-only. Everything the syncer writes — the T3 settings
+# merge, the binding index, the bearer's scratch state — is under /home/%i.
+ProtectSystem=full
+# DELIBERATELY false, and stated rather than left to the default: tmux's server
+# socket is /tmp/tmux-<uid>/default, so a private /tmp would hide every session
+# on the box from the syncer and it would reconcile as if the user had none.
+# ProtectHome must stay off for the same class of reason (~/.t3 and
+# ~/.claude/projects are the two things it reads).
+PrivateTmp=false
+
+# --- memory -----------------------------------------------------------------
+# The box is memory constrained and earlyoom fires here; a poller that holds one
+# snapshot document should never be the reason. Generous for what it does, low
+# enough that a leak dies alone instead of taking a Claude with it.
+MemoryMax=512M
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

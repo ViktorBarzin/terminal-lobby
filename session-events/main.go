@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
 
@@ -30,7 +31,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	injector := &Injector{selfUser: self.Username}
+	injector := sessionio.NewInjector(self.Username)
 	rg := newRegistry(ctx, *poll, *homeBase, injector)
 
 	// Authed web surface (mounted behind authMiddleware).
@@ -58,7 +59,7 @@ func main() {
 			http.Error(w, "bad body (need text)", http.StatusBadRequest)
 			return
 		}
-		if injector.State(osUser, session) == stateRunning {
+		if injector.State(osUser, session) == sessionio.StateRunning {
 			http.Error(w, "turn in progress", http.StatusConflict)
 			return
 		}
@@ -112,9 +113,3 @@ func main() {
 		log.Fatal(err)
 	}
 }
-
-// Claude turn states as stamped into @claude_state (docs/adr/0001-claude-state-via-hooks.md).
-const (
-	stateRunning = "running"
-	stateDone    = "done"
-)

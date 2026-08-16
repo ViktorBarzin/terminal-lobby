@@ -8,12 +8,12 @@ import (
 func TestCoownOpsForPatch(t *testing.T) {
 	m := []string{"wizard", "bob"}
 	cases := []struct {
-		name                        string
-		was                         bool
-		oldDir                      string
-		now                         bool
-		newDir                      string
-		want                        []coownOp
+		name   string
+		was    bool
+		oldDir string
+		now    bool
+		newDir string
+		want   []coownOp
 	}{
 		{"enable with dir", false, "", true, "/home/wizard/code/p", []coownOp{{"grant", "/home/wizard/code/p", m}}},
 		{"enable without dir", false, "", true, "", nil},
