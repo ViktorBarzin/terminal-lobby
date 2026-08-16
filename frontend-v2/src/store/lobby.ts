@@ -86,6 +86,10 @@ export interface LobbyStore {
 export type NotifyKind = "info" | "error" | "warning" | "success";
 
 export interface LobbyStoreOptions {
+  /** Fired when the user ACTIVATES a session (not on a rename's re-select).
+   *  Fires even if the name is unchanged — re-tapping the attached session is
+   *  how a phone gets back to its terminal. */
+  onActivate?: (session: SelectedSession) => void;
   api?: LobbyApi;
   pollMs?: number;
   autoStart?: boolean;
@@ -463,13 +467,35 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
   }
 
-  function select(name: string, owner?: string): void {
+  /**
+   * Point the app at a session WITHOUT announcing an activation. Used by paths
+   * that merely have to keep the selection pointing at the right name — rename
+   * being the one that matters: it re-selects the renamed session, and on a
+   * phone an activation there would throw the user out of the list and into the
+   * terminal in the middle of typing a name.
+   */
+  function applySelection(name: string, owner?: string): void {
     track("session.selected", { "tl.session": name, "tl.kind": owner ? "foreign" : "own" });
     setSelected({ name, ...(owner ? { owner } : {}) });
     updateHash({ name, owner });
     // auto-expand the group containing this session
     const g = model().groups.find((grp) => grp.sessions.some((s) => s.name === name));
     if (g) collapse.expand(g.kind === "ungrouped" ? ":ungrouped" : g.name);
+  }
+
+  /**
+   * The user ASKED for this session — every activation path funnels here
+   * (card tap, card Enter, command palette, create, a notification tap), which
+   * is what lets the phone layout flip forward from one place.
+   *
+   * onActivate fires even when the name is UNCHANGED: re-tapping the session
+   * you are already attached to is exactly how you get back to the terminal
+   * after opening the list, and a Solid effect on selected() cannot see that
+   * because nothing changed.
+   */
+  function select(name: string, owner?: string): void {
+    applySelection(name, owner);
+    opts.onActivate?.({ name, ...(owner ? { owner } : {}) });
   }
 
   function quickRefreshBurst(): void {
@@ -530,7 +556,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // instant repaint, then reconcile.
     applyLocalLayout(renameSessionInLayout(layout(), oldName, n));
     setPending((p) => p.map((s) => (s.name === oldName ? { ...s, name: n } : s)));
-    if (selected()?.name === oldName) select(n, selected()?.owner);
+    // applySelection, NOT select: renaming the session you are attached to must
+    // keep the selection pointing at the new name without counting as "the user
+    // asked to open this", which on a phone would flip them out of the list.
+    if (selected()?.name === oldName) applySelection(n, selected()?.owner);
     await refresh();
     return true;
   }

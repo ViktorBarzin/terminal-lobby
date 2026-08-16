@@ -1,4 +1,5 @@
 import {
+  createEffect,
   createMemo,
   createSignal,
   onCleanup,
@@ -32,7 +33,7 @@ import { createGalleryStore } from "../store/gallery";
 import { Gallery } from "./Gallery";
 import { createDeployHealer } from "../deploy/healer";
 import { createDockStore } from "../store/dock";
-import { createCoarsePointer } from "../mobile/pointer";
+import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
 import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
@@ -92,6 +93,12 @@ export const App: Component = () => {
   const store = createLobbyStore({
     initialSelected: readInitialSelection(),
     notify,
+    // Opening a session on a phone IS the navigation: show the terminal. Fires
+    // even when the same session is re-tapped, which is how you get back to a
+    // terminal you left to browse the list.
+    onActivate: () => {
+      if (isMobileFlip()) setCollapsed(true);
+    },
   });
   onCleanup(() => store.dispose());
 
@@ -164,11 +171,25 @@ export const App: Component = () => {
   onMount(() => window.addEventListener("keydown", onDockKey, true));
   onCleanup(() => window.removeEventListener("keydown", onDockKey, true));
 
-  const [collapsed, setCollapsed] = createSignal(readSidebarCollapsed());
+  // ---- phone layout: one view at a time -----------------------------------
+  // `collapsed` is re-read under the phone query as a VIEW, not a width:
+  // false = BROWSING (the session list owns the screen), true = TERMINAL.
+  const flip = createMobileFlip();
+  // Boot: a phone starts on the list unless the URL already names a session —
+  // a deep link goes straight to the terminal with no flash of the list. The
+  // persisted desktop collapse is deliberately ignored here: it is a width
+  // preference for a device with room for both, and honouring it on a phone
+  // would open the app into a terminal the user did not ask for.
+  const [collapsed, setCollapsed] = createSignal(
+    isMobileFlip() ? !!readInitialSelection() : readSidebarCollapsed(),
+  );
   const toggleSidebar = () => {
     const next = !collapsed();
     track("sidebar.toggled", { "tl.to": next ? "collapsed" : "expanded" });
     setCollapsed(next);
+    // On a phone this is a VIEW, not a width preference — persisting it would
+    // decide which screen the app opens on next time.
+    if (flip()) return;
     try {
       localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0");
     } catch {
@@ -178,6 +199,12 @@ export const App: Component = () => {
 
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const selectedName = createMemo(() => store.selected()?.name ?? null);
+  // Nothing selected (killed, or the last session closed) => walk back to the
+  // list. Without this the phone shows an empty terminal pane whose only exit
+  // is the back control, and the user has no session to go back to.
+  createEffect(() => {
+    if (flip() && selectedName() === null) setCollapsed(false);
+  });
   const newCommand = () => prefs.prefs().session.newCommand;
 
   // A selected session the poll has never returned does not exist in tmux yet:
@@ -325,14 +352,45 @@ export const App: Component = () => {
   onMount(() => window.addEventListener("keydown", onSlashKey, true));
   onCleanup(() => window.removeEventListener("keydown", onSlashKey, true));
 
+  // Authored once, rendered into whichever bar is on screen: the shell bar on a
+  // desktop, the merged session bar on a phone.
+  const settingsButton = () => (
+    <button
+      class="tl-icon-btn tl-settings-btn"
+      aria-label="Settings"
+      title="Settings"
+      aria-expanded={settingsOpen()}
+      onClick={() => {
+        if (!settingsOpen()) track("settings.opened");
+        setSettingsOpen((v) => !v);
+      }}
+    >
+      ⚙
+    </button>
+  );
+
   return (
-    <div class="tl-shell" classList={{ "tl-shell-collapsed": collapsed() }}>
+    <div
+      class="tl-shell"
+      classList={{ "tl-shell-collapsed": collapsed(), "tl-flip": flip() }}
+    >
       <aside class="tl-shell-sidebar">
         <Sidebar
           store={store}
           prefs={prefs}
           altActive={engine.altActive}
           notifications={notifications}
+          // The phone folds the shell bar (and with it the gear) into the
+          // session bar, which only exists once a session is open. Without this
+          // the sidebar's own screen has no route to Settings at all.
+          onOpenSettings={
+            flip()
+              ? () => {
+                  if (!settingsOpen()) track("settings.opened");
+                  setSettingsOpen((v) => !v);
+                }
+              : undefined
+          }
         />
       </aside>
 
@@ -351,18 +409,7 @@ export const App: Component = () => {
               where the vanilla page keeps it. The shell bar carries the
               collapse arrow, the brand and Settings. */}
           <span class="tl-shellbar-spacer" />
-          <button
-            class="tl-icon-btn tl-settings-btn"
-            aria-label="Settings"
-            title="Settings"
-            aria-expanded={settingsOpen()}
-            onClick={() => {
-              if (!settingsOpen()) track("settings.opened");
-              setSettingsOpen((v) => !v);
-            }}
-          >
-            ⚙
-          </button>
+          {settingsButton()}
         </div>
 
         <div class="tl-shell-body">
@@ -379,6 +426,19 @@ export const App: Component = () => {
               <SessionView
                 session={name}
                 owner={store.selected()?.owner}
+                visible={!flip() || collapsed()}
+                leading={
+                  <Show when={flip()}>
+                    <button
+                      class="tl-icon-btn tl-back-btn"
+                      aria-label="Back to sessions"
+                      onClick={() => setCollapsed(false)}
+                    >
+                      ‹<span class="tl-btn-label">Sessions</span>
+                    </button>
+                  </Show>
+                }
+                trailing={<Show when={flip()}>{settingsButton()}</Show>}
                 driven={() =>
                   store.sessions.some((s) => s.name === name && s.driven === true)
                 }

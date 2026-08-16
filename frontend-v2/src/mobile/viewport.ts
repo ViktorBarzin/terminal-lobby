@@ -64,6 +64,15 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
     // it). Mirrors the vanilla syncViewport --sk-h write.
     const tb = document.getElementById("soft-keys");
     root.setProperty("--sk-h", (tb ? tb.offsetHeight : 0) + "px");
+    // --app-vh: the shell's height once a phone shows ONE pane full-screen.
+    // window.innerHeight, deliberately — NOT visualViewport.height and NOT a
+    // CSS viewport unit:
+    //  - vh/svh/dvh resolve to the LARGE viewport in an iOS standalone PWA, so
+    //    the pane renders taller than the screen and its footer is clipped
+    //    (the vanilla page measured 681px rendered against a 641px window);
+    //  - visualViewport.height SHRINKS with the soft keyboard, which would
+    //    resize the whole session list every time a rename box took focus.
+    root.setProperty("--app-vh", window.innerHeight + "px");
   };
 
   const sync = (): void => {
