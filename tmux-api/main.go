@@ -39,10 +39,21 @@ const (
 	// @claude_state is, so it costs no extra call here and a guest attaching
 	// a shared session reads the same title its owner set.
 	//
-	// The separator is \x1f, not '|'. TWO fields now carry arbitrary text —
+	// The separator is TAB, not '|'. TWO fields now carry arbitrary text —
 	// pane_title, which applications set freely via OSC 2, and @title — and
-	// only one field can be last. A unit separator is a character neither a
-	// typed title nor a realistic pane title contains, so both are safe.
+	// only one field can be last, which is all '|' ever protected.
+	//
+	// Tab rather than a unit separator, measured on tmux 3.4: tmux ESCAPES
+	// non-printable bytes on output, in the format literal and inside values
+	// alike, so a \x1f separator comes back as the four characters \037 — and
+	// so does a \x1f inside a value, leaving the two indistinguishable. Tab
+	// passes through raw on both sides.
+	//
+	// What makes tab safe is the same argument that made '|' safe for one
+	// field, now good for two: a title cannot contain one, because CleanTitle
+	// strips every control character before a title is ever stored, and
+	// pane_title stays LAST so an embedded tab is soaked into the trailing
+	// field rather than shifting the row.
 	//
 	// session_id leads. It is the one field with a guaranteed shape ($N) and
 	// it SURVIVES A RENAME, which is what lets a second tab follow a session
@@ -55,7 +66,7 @@ const (
 		"#{" + sessionTitleOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
-	listSep    = "\x1f"
+	listSep    = "\t"
 	listFields = 10
 
 	// sessionTitleOption is where a display title lives, alongside
