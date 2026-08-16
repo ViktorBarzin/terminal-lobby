@@ -5,6 +5,7 @@ import {
   formatAgo,
   formatSnapshotTime,
   memoryWarning,
+  orderRows,
   rowNote,
   shortCwd,
   snapshotDate,
@@ -54,6 +55,13 @@ const ROWS: Record<string, SnapshotRow[]> = {
     row({ name: "Wrongmove", default: false, killedAt: 1786711920 }),
     row({ name: "portal", state: "live_same", action: "skip", default: false }),
   ],
+  // The ordinary case: everything still running except one session, whose name
+  // sorts last. Finding it must not mean reading past the nine that are fine.
+  "20260814T130049": [
+    row({ name: "matrix", state: "live_same", action: "skip", default: false }),
+    row({ name: "portal", state: "live_same", action: "skip", default: false }),
+    row({ name: "repowise", project: "code" }),
+  ],
 };
 
 class FakeApi implements RestorePickerApi {
@@ -70,6 +78,13 @@ class FakeApi implements RestorePickerApi {
     this.restores.push(sel);
   }
 }
+
+/** Click the nth version in the snapshot list. By position, not by label: the
+ *  label is a locale-formatted time ("01:00 PM" under the test's en-US). */
+const clickSnapshot = (container: HTMLElement, n: number): void => {
+  const snaps = [...container.querySelectorAll<HTMLButtonElement>(".tl-restore-snap")];
+  fireEvent.click(snaps[n]!);
+};
 
 const mount = (api: RestorePickerApi, over: Record<string, unknown> = {}) =>
   render(() => (
@@ -120,6 +135,42 @@ describe("restore picker — pure helpers", () => {
     expect(inPlace.warn).toBe(true);
 
     expect(rowNote(row({ name: "W", killedAt: 1786711920 })).text).toContain("you killed this at");
+  });
+});
+
+describe("restore picker — diff first", () => {
+  const rows = [
+    row({ name: "matrix", state: "live_same", action: "skip", default: false }),
+    row({ name: "repowise" }),
+    row({ name: "portal", state: "live_same", action: "skip", default: false }),
+    row({ name: "chesscom", state: "live_other_conv", action: "suffixed", target: "chesscom-1250" }),
+  ];
+
+  it("separates what a restore would do from what is already running", () => {
+    const { changed, running } = orderRows(rows);
+    expect(changed.map((r) => r.name)).toEqual(["repowise", "chesscom"]);
+    expect(running.map((r) => r.name)).toEqual(["matrix", "portal"]);
+  });
+
+  // Snapshot order is the only order the server promises; the split must not
+  // reshuffle within a part, or the list moves under the reader between visits.
+  it("keeps snapshot order inside each part", () => {
+    const { changed } = orderRows([...rows].reverse());
+    expect(changed.map((r) => r.name)).toEqual(["chesscom", "repowise"]);
+  });
+
+  // A session you killed is a difference from what is live, so it belongs with
+  // the changes — unticked, but visible without scrolling.
+  it("counts a deliberately killed session as a change", () => {
+    const { changed } = orderRows([row({ name: "Wrongmove", default: false, killedAt: 1786711920 })]);
+    expect(changed.map((r) => r.name)).toEqual(["Wrongmove"]);
+  });
+
+  it("handles a snapshot that is all one kind", () => {
+    expect(orderRows([]).changed).toEqual([]);
+    const allLive = orderRows([row({ name: "a", state: "live_same", action: "skip" })]);
+    expect(allLive.changed).toEqual([]);
+    expect(allLive.running.map((r) => r.name)).toEqual(["a"]);
   });
 });
 
@@ -248,6 +299,50 @@ describe("restore picker — behaviour", () => {
     await waitFor(() => expect(errors.length).toBe(1));
     expect(errors[0]).toContain("Restore failed");
     expect(closed).toBe(false);
+  });
+
+  // The reason this ordering exists: a snapshot where one session died and the
+  // rest are fine used to bury the missing one wherever its name sorted.
+  it("shows what would be restored first, under a labelled divider", async () => {
+    const api = new FakeApi();
+    const { container } = mount(api);
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+
+    clickSnapshot(container, 1); // 13:00 — one session short of what is live
+    await waitFor(() => expect(screen.getByText("repowise")).toBeTruthy());
+
+    const names = [...container.querySelectorAll(".tl-restore-row .tl-restore-name")].map(
+      (n) => n.textContent,
+    );
+    expect(names[0]).toBe("repowise");
+    expect(names).toEqual(["repowise", "matrix", "portal"]);
+    expect(container.querySelector(".tl-restore-divider")?.textContent).toContain(
+      "already running (2)",
+    );
+  });
+
+  it("shows no divider when there is nothing to separate", async () => {
+    const api = new FakeApi();
+    const { container } = mount(api);
+    // The newest snapshot is entirely live — one part, so no divider.
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+    expect(container.querySelector(".tl-restore-divider")).toBeNull();
+  });
+
+  // Where a session lands is decided server-side; the picker shows it so a
+  // restore is not a guess about which group it reappears in.
+  it("names the project the restore would put a session in", async () => {
+    const api = new FakeApi();
+    const { container } = mount(api);
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+
+    clickSnapshot(container, 1);
+    await waitFor(() => expect(screen.getByText("repowise")).toBeTruthy());
+
+    const dest = container.querySelector(".tl-restore-row .tl-restore-dest");
+    expect(dest?.textContent).toContain("code");
+    // Nothing invented for rows with no project.
+    expect(container.querySelectorAll(".tl-restore-dest").length).toBe(1);
   });
 
   it("says so when nothing has been snapshotted yet", async () => {
