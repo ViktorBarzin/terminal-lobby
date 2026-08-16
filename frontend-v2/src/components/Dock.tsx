@@ -14,7 +14,11 @@ import type { DockStore } from "../store/dock";
  * Desktop only. A phone has room for one terminal, and the vanilla page draws
  * the same line (coarse pointers ignore the dock entirely).
  */
-export const Dock: Component<{ dock: DockStore }> = (props) => {
+export const Dock: Component<{
+  dock: DockStore;
+  /** a chord fired inside the dock's terminal → the lobby dispatcher. */
+  onFrameCommand?: (command: string) => void;
+}> = (props) => {
   const d = props.dock;
   const [dragging, setDragging] = createSignal(false);
 
@@ -74,6 +78,13 @@ export const Dock: Component<{ dock: DockStore }> = (props) => {
             active
             creating={d.creating()}
             newCommand={() => "shell"}
+            // The primary session view owns the window bridges; a second frame
+            // installing them would point the soft keys, paste and the focus
+            // handback at this shell instead of the session above it.
+            ownsBridges={false}
+            // ...but a chord pressed IN here still has to reach the lobby —
+            // Ctrl+J from the dock is how you hide the dock.
+            onFrameCommand={props.onFrameCommand}
           />
         </div>
       </div>
