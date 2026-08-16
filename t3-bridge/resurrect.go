@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -84,6 +85,13 @@ const resurrectWait = 45 * time.Second
 // loaded box: this is one `tmux show-options` per tick.
 const resurrectPoll = 250 * time.Millisecond
 
+// resurrectReadyWait bounds the wait for the resumed TUI to paint a settled
+// prompt. It is shorter than resurrectWait because by this point the process
+// is known to be up and stamped; what remains is a redraw measured in about a
+// second, and a pane still blank after fifteen is not going to be helped by
+// waiting longer.
+const resurrectReadyWait = 15 * time.Second
+
 // Resurrect creates the tmux session and starts claude inside it, returning the
 // target the attacher should bind to.
 //
@@ -136,6 +144,24 @@ func (r *Resurrector) Resurrect(spec ResurrectSpec) (Target, error) {
 		// the bridge is a detached client that never destroys a session
 		// (decision 3) — the operator can see it in the lobby either way.
 		return Target{}, err
+	}
+
+	// The stamp says a Claude is here; it does not say that Claude is reading
+	// keys yet. `claude --resume` fires SessionStart and then spends about a
+	// second loading the transcript before painting anything, and a prompt sent
+	// into that window half-lands: measured 2026-08-16, the pasted text arrived
+	// on the input line and the Enter did not, so the turn never ran and the
+	// thread showed a message Claude never saw.
+	//
+	// A failure to settle is logged and then ignored on purpose. Typing into a
+	// pane that never drew a prompt is a gamble; dropping the operator's prompt
+	// on the floor is a certainty, and the worse of the two.
+	ctx := r.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := r.Tmux.AwaitInputReady(ctx, r.OSUser, name, resurrectReadyWait, resurrectPoll); err != nil {
+		log.Printf("resurrect %s: %v; sending the prompt anyway", spec.ClaudeID, err)
 	}
 
 	target := Target{
