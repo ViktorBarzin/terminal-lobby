@@ -39,6 +39,25 @@ Server state in the share store; the owner grants, the owner or guest removes.
 **Attach mode**:
 How a viewer may attach a session that isn't theirs: **ro** (watch) or **rw**
 (drive, i.e. run as the owner). Set per-share, or blanket per shared project.
+Server-side and per-share — it is the **ceiling** on what an attach may get,
+not what a given client asked for. _Compare_: Watch mode.
+
+**Watch mode**:
+A client's own choice to attach read-only, so it observes without driving and
+without moving the Grid. Per (session, device), remembered in the browser and
+never sent to the server as state — the desktop keeps driving while the phone
+watches the same session. Applies to your own sessions as well as shared ones;
+owning a session is what authorizes watching it. A client may only ever request
+**at or below** its Attach mode, so asking to watch can never grant access.
+_Avoid_: read-only mode (ambiguous against a share's `ro`), observer mode
+
+**Grid**:
+The size of a session's tmux window, in columns and rows. Owned exclusively by
+its **read-write** clients: a Watch-mode client consumes the Grid and never
+changes it, including when no read-write client is attached at all. Enforced by
+pinning (`window-size manual` plus hooks that re-derive the size from the live
+client list), applied on the first read-only attach and never reverted.
+_Avoid_: window size (means the browser's), canvas, viewport
 
 **Co-ownership**:
 POSIX-ACL grant giving all a project's members rwX on its directory, applied
