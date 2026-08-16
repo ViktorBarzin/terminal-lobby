@@ -241,7 +241,13 @@ func handlePushSubscriptions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET, PUT or DELETE only", http.StatusMethodNotAllowed)
 		return
 	}
-	osUser := resolveOSUser(w, r)
+	// resolveRealOSUser, NOT resolveOSUser: push subscriptions are the one
+	// surface that must not follow an act-as switch. The SPA refreshes its
+	// registration on boot, so an as-<user> tab would otherwise enrol this
+	// browser as one of THEIR devices and keep delivering their session
+	// notifications here long after the tab closed — state that outlives the
+	// switch. See actas_test.go.
+	osUser := resolveRealOSUser(w, r)
 	if osUser == "" {
 		return
 	}
@@ -327,7 +333,10 @@ func handlePushTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	osUser := resolveOSUser(w, r)
+	// Real caller, like the subscription endpoints above: "Test all devices"
+	// means the devices of whoever pressed it. Firing it at the act-as target
+	// would push to someone else's phone from a button labelled as your own.
+	osUser := resolveRealOSUser(w, r)
 	if osUser == "" {
 		return
 	}

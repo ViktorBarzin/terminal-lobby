@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"terminal-lobby/authuser"
 	"terminal-lobby/telemetry"
 )
 
@@ -162,9 +163,15 @@ func loadUserMap() map[string]string {
 	return m
 }
 
-// resolveOSUser → mapped OS user from the Authentik header, or "" after
-// writing the appropriate 401/403/500 to w.
-func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
+// resolveRealOSUser → the CALLER's own mapped OS user from the Authentik
+// header, or "" after writing the appropriate 401/403/500 to w. Ignores ?as=
+// entirely.
+//
+// Two callers want this rather than resolveOSUser: the push-subscription
+// endpoints, whose writes must never land under an act-as target (see
+// handlePushSubscriptions), and resolveOSUser itself, which starts here and
+// then applies the switch.
+func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
 	authUser := r.Header.Get(authHeader)
 	if authUser == "" {
 		log.Printf("auth: missing %s header (%s %s)", authHeader, r.Method, r.URL.Path)
@@ -187,6 +194,47 @@ func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
 		return ""
 	}
 	return osUser
+}
+
+// actAsGate decides whether a ?as= request may proceed. A var only as a test
+// seam (actas_test.go points it at a fixture admin list); production never
+// reassigns it.
+var actAsGate = authuser.Default
+
+// actAsTarget is the query parameter carrying the switch. It rides the URL
+// rather than a header because two of the surfaces it has to reach are not
+// fetch() calls at all — file previews and gallery thumbnails are <img src> —
+// and a parameter is the only form all of them can carry.
+const actAsTarget = "as"
+
+// resolveOSUser → the OS user this request ACTS AS: normally the caller, or an
+// act-as target when an administrator asked for one and is entitled to it.
+// Returns "" after writing 401/403/500, exactly as before.
+//
+// Every handler in this service resolves identity through here, so the switch
+// reaches sessions, layout, projects, prefs, restore, kill and rename with no
+// per-endpoint work. The one deliberate exception is push subscriptions, which
+// call resolveRealOSUser instead.
+func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
+	real := resolveRealOSUser(w, r)
+	if real == "" {
+		return ""
+	}
+	eff, err := actAsGate.Effective(real, r.URL.Query().Get(actAsTarget), isMappedOSUser)
+	if err != nil {
+		// Denials are rare and worth a line each; an allowed switch is NOT
+		// logged here, because the lobby polls /sessions every 5 s and that
+		// would bury the trail it is meant to leave. The audit points are
+		// /whoami (once per tab) and /internal/attach (once per attach).
+		log.Printf("act-as refused: %s -> %q: %v (%s %s)",
+			real, r.URL.Query().Get(actAsTarget), err, r.Method, r.URL.Path)
+		events.Emit("admin.actas.refused", real, telemetry.Attrs{
+			"tl.to": r.URL.Query().Get(actAsTarget), "tl.kind": err.Error(),
+		})
+		http.Error(w, "not permitted to act as that user", http.StatusForbidden)
+		return ""
+	}
+	return eff
 }
 
 // tmuxCmd builds an exec.Cmd that runs `tmux <args...>` AS osUser. When
@@ -295,9 +343,23 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authUser := r.Header.Get(authHeader)
+	real := resolveRealOSUser(w, r)
+	if real == "" {
+		return
+	}
 	osUser := resolveOSUser(w, r)
 	if osUser == "" {
 		return
+	}
+	if osUser != real {
+		// One of the two audit points. /whoami is called once per page load
+		// (the lobby AND each terminal iframe), so this fires when a tab
+		// starts acting as someone — the granularity the record wants, unlike
+		// the 5 s /sessions poll.
+		log.Printf("act-as: %s acting as %s (auth=%q)", real, osUser, authUser)
+		events.Emit("admin.actas", real, telemetry.Attrs{
+			"tl.to": osUser, "tl.client": "whoami",
+		})
 	}
 	log.Printf("whoami: auth=%q -> os=%q", authUser, osUser)
 	sessionsCacheInstance.invalidate(osUser)
@@ -308,10 +370,20 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	// session doesn't appear until the user manually refreshes.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	// realUser is present ONLY while acting as someone else, so the SPA's
+	// "am I switched?" test is simply "is realUser present" — it never has to
+	// trust its own URL for that. admin drives whether Settings offers the
+	// picker at all; the server refuses regardless, this just avoids showing a
+	// control that could only fail.
+	body := map[string]any{
 		"authentik": authUser,
 		"osUser":    osUser,
-	})
+		"admin":     actAsGate.IsAdmin(real),
+	}
+	if osUser != real {
+		body["realUser"] = real
+	}
+	json.NewEncoder(w).Encode(body)
 }
 
 // handleRestore (POST /restore) recreates the caller's saved-but-dead tmux
