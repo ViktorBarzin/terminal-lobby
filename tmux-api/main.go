@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"terminal-lobby/authuser"
+	"terminal-lobby/sessionio"
 	"terminal-lobby/slug"
 	"terminal-lobby/telemetry"
 )
@@ -51,17 +52,19 @@ const (
 		"#{session_attached}" + listSep + "#{session_activity}" + listSep +
 		"#{session_created}" + listSep + "#{@claude_state}" + listSep +
 		"#{pane_pid}" + listSep + "#{pane_current_command}" + listSep +
-		"#{@title}" + listSep + "#{pane_title}"
+		"#{" + sessionTitleOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\x1f"
 	listFields = 10
 
 	// sessionTitleOption is where a display title lives, alongside
-	// @claude_state. Options die with the session that holds them, which is
-	// right for state and wrong for a title someone chose — the titles store
-	// (titles.go) is what carries a title across a restore.
-	sessionTitleOption = "@title"
+	// @claude_state. Named in sessionio so this service, t3-sync and anything
+	// else reading a session's options agree on the spelling. Options die with
+	// the session that holds them, which is right for state and wrong for a
+	// title someone chose — the titles store (titles.go) is what carries a
+	// title across a restore.
+	sessionTitleOption = sessionio.OptionTitle
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
