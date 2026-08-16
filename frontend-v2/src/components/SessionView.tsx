@@ -171,18 +171,10 @@ export const SessionView: Component<{
     if (mode() === "terminal") setTerminalDot(false);
   });
 
-  const onKey = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && (e.key === "j" || e.key === "J")) {
-      // An overlay owns the keyboard (the palette's input, the Settings dialog,
-      // …): stand down and leave the key to whatever is focused, rather than
-      // toggling a view nobody can see behind it.
-      if (props.overlayOpen?.()) return;
-      e.preventDefault();
-      toggleMode();
-    }
-  };
-  onMount(() => window.addEventListener("keydown", onKey, true));
-  onCleanup(() => window.removeEventListener("keydown", onKey, true));
+  // Ctrl/Cmd+J belongs to the scratch-shell dock, as it does on the vanilla
+  // page — the view toggle keeps the [Text|Terminal] control and the
+  // `view.toggle` command, which is what a chord would have run anyway. Text
+  // mode is deferred for v1, so the segmented control is enough for it.
 
   // The listener above only ever sees a keydown that landed in the LOBBY
   // document; the same chord pressed with focus in the terminal comes back as a

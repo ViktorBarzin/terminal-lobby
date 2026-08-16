@@ -112,6 +112,9 @@ src/
     lobby.ts             Lobby store: poll + optimistic layout PUT + session CRUD
     viewmode.ts          Per-session/per-device {mode} persistence
     watchmode.ts         Per-session/per-device Watch mode (attach read-only)
+    dock.logic.ts        PURE Ctrl+J dock decisions (shell naming, create→hide→
+                         show, sidebar hiding, split clamp)
+    dock.ts              Ctrl+J scratch-shell dock state (roamed via layout.dock)
     collapse.ts          Per-browser group-collapse (tmux-collapsed-<user>)
     visits.ts            Per-browser seen/visit tracking (tl:session-visits:v1)
                          → the unseen-done predicate behind the tab-title (N✓)
@@ -159,6 +162,7 @@ src/
     SettingsPanel.tsx    Settings overlay: theme, font size, new-session command,
                          keyboard, notifications
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
+    Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     BellIcon.tsx         Header notification-bell glyph (on/off)
     Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
                          clipboard, file-text, rotate-cw) — never emoji
