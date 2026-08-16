@@ -38,6 +38,10 @@ export const SessionCard: Component<{
   badge?: (name: string) => string | null;
   /** confirm seam (window.confirm by default; injectable for tests). */
   confirm?: (message: string) => boolean;
+  /** The roamed `sidebar.showLastActive` pref. Absent means hidden — the safe
+   *  direction for a setting that is off by default, so a call site that
+   *  forgets to pass it errs towards showing less rather than more. */
+  showLastActive?: Accessor<boolean>;
 }> = (props) => {
   const s = () => props.session;
   const foreign = () => !!s().owner && s().owner !== props.store.me();
@@ -76,12 +80,22 @@ export const SessionCard: Component<{
     releaseHold = null;
   });
 
+  // Two different numbers share this slot. The live working timer is progress
+  // on the turn in flight; the relative time is a TIMESTAMP, and only that one
+  // answers to `sidebar.showLastActive`. Turning the setting off on a running
+  // session would take away the one number worth watching while you wait.
+  //
+  // tick() is read only on the paths that actually need re-running every
+  // second, so a card with the time hidden and nothing running stops
+  // re-rendering on the clock entirely.
   const rightText = () => {
-    props.tick(); // re-run every second
     if (s().state === "running") {
+      props.tick();
       const since = props.store.workingSince(s().name);
       return since ? formatWorking(Date.now() - since) : "working";
     }
+    if (!props.showLastActive?.()) return "";
+    props.tick();
     return relativeTime(s().lastActivity);
   };
 
@@ -272,12 +286,19 @@ export const SessionCard: Component<{
         </span>
       </Show>
 
-      <span
-        class="tl-card-time"
-        classList={{ "tl-card-time-running": s().state === "running" }}
-      >
-        {rightText()}
-      </span>
+      {/* Omitted entirely rather than rendered empty: the row is a flex
+          container with a gap, so an empty span would leave a hole where the
+          time used to be. */}
+      <Show when={rightText()}>
+        {(text) => (
+          <span
+            class="tl-card-time"
+            classList={{ "tl-card-time-running": s().state === "running" }}
+          >
+            {text()}
+          </span>
+        )}
+      </Show>
 
       <Show when={!foreign()}>
         <button
