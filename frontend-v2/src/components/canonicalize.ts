@@ -165,6 +165,27 @@ export function parseJSON(raw: string | undefined): unknown {
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
+/** How much of a label a row can show before it is just noise. */
+export const LABEL_MAX = 120;
+
+/**
+ * A row's label is ONE line. A Bash call routinely carries a whole heredoc —
+ * measured on a real session, a single `command` held a 60-line embedded script
+ * — and pasting that into a one-line row gives a reader nothing to recognise it
+ * by. Take the first line that says something, drop a leading `cd … &&` (it is
+ * setup, not the command), and cap the rest. The full input is one expand away.
+ */
+export function oneLine(text: string): string {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  let first = lines[0] ?? "";
+  const cd = /^cd\s+\S+\s*&&\s*/.exec(first);
+  if (cd && first.length > cd[0].length) first = first.slice(cd[0].length);
+  // A `cd` on its own line is setup too; the next line is the command.
+  else if (/^cd\s+\S+$/.test(first) && lines.length > 1) first = lines[1]!;
+  const more = lines.length > 1 ? " …" : "";
+  return first.length > LABEL_MAX ? first.slice(0, LABEL_MAX) + "…" : first + more;
+}
+
 /** The last two segments of a path — enough to recognise, short enough to fit. */
 export function shortPath(path: string): string {
   const parts = path.split("/").filter(Boolean);
@@ -300,7 +321,7 @@ export function describe(tool: string, inputRaw: string | undefined): Described 
 
   switch (tool) {
     case "Bash":
-      return d(get("command"), get("description"));
+      return d(oneLine(get("command")), get("description"));
     case "Read":
       return d(shortPath(get("file_path")), get("file_path"));
     case "Edit":

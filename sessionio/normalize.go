@@ -45,11 +45,73 @@ func NewNormalizer(session string) *Normalizer { return &Normalizer{session: ses
 const MaxInlineResult = 8 << 10
 
 // cap returns s cut to MaxInlineResult with a marker, and whether it cut.
-func capText(s string) (string, bool) {
-	if len(s) <= MaxInlineResult {
+func capText(s string) (string, bool) { return capTextTo(s, MaxInlineResult) }
+
+// capTextTo is capText against an explicit budget. A string nested INSIDE a
+// result has to leave room for the rest of the object, so it gets a smaller
+// one — cut to the full cap, the enclosing JSON came out over the limit again
+// and the whole result was dropped, which is the failure this exists to avoid.
+func capTextTo(s string, max int) (string, bool) {
+	if len(s) <= max {
 		return s, false
 	}
-	return s[:MaxInlineResult] + "\n… truncated, " + strconv.Itoa(len(s)-MaxInlineResult) + " bytes not shown", true
+	return s[:max] + "\n… truncated, " + strconv.Itoa(len(s)-max) + " bytes not shown", true
+}
+
+// bulkyResultFields are the keys a structured tool result carries for the
+// harness's benefit rather than a reader's. An Edit records `originalFile` —
+// the ENTIRE file as it was before the change — beside the structuredPatch that
+// describes the change itself, and a Write records the whole new `content`.
+// They are what pushes a result past the cap, and they are the parts nothing
+// renders.
+var bulkyResultFields = []string{"originalFile", "content", "oldString", "newString"}
+
+// pruneResult trims an oversized structured result to the parts a reader needs,
+// and reports whether it had to change anything.
+//
+// Dropping an oversized result whole cost the diff: measured across the six most
+// recent transcripts on this box, 209 tool results carried a structuredPatch and
+// 54 of them exceeded MaxInlineResult — every one of those would have rendered
+// as a file change with no visible change. Removing the bulky fields brings 48
+// of the 54 back under the cap; the remaining 6 are patches that are genuinely
+// enormous, and those are dropped rather than shown in part.
+//
+// Pruning is deliberately shallow and key-based. A result is a different shape
+// per tool family, and guessing at nested structure would be how a future tool's
+// output gets mangled; anything this does not recognise is left alone and judged
+// on size, the same as before.
+func pruneResult(raw json.RawMessage) (json.RawMessage, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	if len(raw) <= MaxInlineResult {
+		return raw, false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return nil, true // not an object — nothing safe to prune
+	}
+	for _, k := range bulkyResultFields {
+		delete(fields, k)
+	}
+	// Command output is trimmed rather than removed: its head is usually the
+	// part that says what happened, and stderr is short and almost always worth
+	// keeping whole.
+	for _, k := range []string{"stdout", "stderr"} {
+		var s string
+		if raw, ok := fields[k]; ok && json.Unmarshal(raw, &s) == nil {
+			if cut, did := capTextTo(s, MaxInlineResult/2); did {
+				if b, err := json.Marshal(cut); err == nil {
+					fields[k] = b
+				}
+			}
+		}
+	}
+	out, err := json.Marshal(fields)
+	if err != nil || len(out) > MaxInlineResult {
+		return nil, true
+	}
+	return out, true
 }
 
 func (n *Normalizer) next() int64 { n.seq++; return n.seq }
@@ -157,14 +219,11 @@ func (n *Normalizer) Record(rec Record) []Event {
 			body, cut := capText(decodeToolResult(bl.Content))
 			e.Body = body
 			// The structured result is where the stdout/stderr split and the
-			// diff live; it is dropped rather than cut when oversized, since
-			// half a JSON object is worse than none.
-			if res := rec.ToolUseResult; len(res) > 0 && len(res) <= MaxInlineResult {
-				e.Result = res
-			} else if len(res) > MaxInlineResult {
-				cut = true
-			}
-			e.Truncated = cut
+			// diff live, so an oversized one is PRUNED down to those parts
+			// rather than dropped whole (see pruneResult).
+			res, pruned := pruneResult(rec.ToolUseResult)
+			e.Result = res
+			e.Truncated = cut || pruned
 			out = append(out, e)
 		}
 	}
