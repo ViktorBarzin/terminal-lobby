@@ -17,3 +17,7 @@ replace terminal-lobby/telemetry => ../telemetry
 require terminal-lobby/sessionio v0.0.0
 
 replace terminal-lobby/sessionio => ../sessionio
+
+require terminal-lobby/authuser v0.0.0
+
+replace terminal-lobby/authuser => ../authuser
