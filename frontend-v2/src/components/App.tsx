@@ -406,8 +406,14 @@ export const App: Component = () => {
     </Show>
   );
 
-  // Authored once, rendered into whichever bar is on screen: the shell bar on a
-  // desktop, the merged session bar on a phone.
+  // The shell bar's Settings control. It carries a LABEL, not just the gear:
+  // as a bare glyph it measured 23x18 in muted grey in the extreme top-right
+  // corner of a 1440px bar, which is findable only if you already know it is
+  // there. The bar has the room — everything else in it sits on the left — and
+  // the label collapses back to the icon under 1000px via .tl-btn-label.
+  //
+  // The phone never renders this: its shell bar is hidden by the flip, and the
+  // sidebar footer carries its own gear instead.
   const settingsButton = () => (
     <button
       class="tl-icon-btn tl-settings-btn"
@@ -419,7 +425,7 @@ export const App: Component = () => {
         setSettingsOpen((v) => !v);
       }}
     >
-      ⚙
+      ⚙<span class="tl-btn-label">Settings</span>
     </button>
   );
 

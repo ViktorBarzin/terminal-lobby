@@ -66,9 +66,16 @@ describe("coercePrefs — validate-or-default", () => {
       fontSize: 18,
       session: { newCommand: "codex" },
       notify: { onDone: false, onAwaiting: true },
-      // Absent from the input, so it takes its default — which is off. This
-      // assertion is exhaustive on purpose: a new pref has to show up here.
+      // Absent from the input, so these take their defaults. This assertion is
+      // exhaustive on purpose: a new pref has to show up here.
       sidebar: { showLastActive: false },
+      lineHeight: 1,
+      letterSpacing: 0,
+      cursorStyle: "block",
+      cursorBlink: true,
+      fontWeightBold: "700",
+      links: { copyChip: true },
+      gestures: { wheelSmooth: true, wheelSpeed: 1 },
     });
   });
 });
@@ -76,14 +83,20 @@ describe("coercePrefs — validate-or-default", () => {
 describe("composeDoc — write-back preserves unknown keys", () => {
   it("keeps unknown top-level keys AND unknown subkeys of known namespaces", () => {
     const raw = {
-      gestures: { keyRepeat: false }, // unknown top-level namespace
-      links: { copyChip: true }, // unknown top-level namespace
+      input: { bar: "auto" }, // unknown top-level namespace
+      // PARTLY owned: this SPA edits gestures.wheelSmooth/wheelSpeed and
+      // links.copyChip, and the terminal page owns everything else in them.
+      gestures: { keyRepeat: false },
+      links: { copyChip: true },
       session: { reopenLast: false, newCommand: "shell" }, // unknown subkey
       notify: { onDone: true },
     };
     const doc = composeDoc(raw, coercePrefs({ session: { newCommand: "codex" } }));
-    // unknown namespaces survive untouched
-    expect(doc.gestures).toEqual({ keyRepeat: false });
+    // a wholly unknown namespace survives untouched
+    expect(doc.input).toEqual({ bar: "auto" });
+    // in a partly-owned one, the subkeys this SPA does not edit survive and the
+    // ones it does are materialised at their defaults
+    expect(doc.gestures).toEqual({ keyRepeat: false, wheelSmooth: true, wheelSpeed: 1 });
     expect(doc.links).toEqual({ copyChip: true });
     // unknown subkey preserved, known subkey updated
     expect(doc.session).toEqual({ reopenLast: false, newCommand: "codex" });
@@ -264,7 +277,9 @@ describe("createPrefsStore — persistence + local-wins adoption", () => {
       expect(localStorage.getItem(PREFS_DIRTY_KEY)).not.toBeNull();
       const doc = JSON.parse(localStorage.getItem(PREFS_KEY) as string);
       expect(doc.session.newCommand).toBe("codex");
-      expect(doc.gestures).toEqual({ keyRepeat: false }); // not clobbered
+      // keyRepeat is the terminal page's, and survives; the two wheel keys are
+      // this panel's, and get materialised at their defaults.
+      expect(doc.gestures).toEqual({ keyRepeat: false, wheelSmooth: true, wheelSpeed: 1 });
       store.dispose();
       dispose();
     });

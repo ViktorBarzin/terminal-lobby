@@ -32,8 +32,35 @@ export const NEW_COMMANDS: readonly NewCommand[] = [
 ];
 export const DEFAULT_NEW_COMMAND: NewCommand = "claude";
 
+/** xterm cursor shapes the terminal page accepts (vanilla PREF_VALID). */
+export type CursorStyle = "block" | "bar" | "underline";
+/** The two bold faces Task 1.3 pinned; anything else renders as a synthetic. */
+export type BoldWeight = "600" | "700";
+/** Desktop wheel multiplier — an enumeration, not a range. */
+export type WheelSpeed = 1 | 1.5 | 2 | 3;
+
 export interface Prefs {
   fontSize: number;
+  /**
+   * Terminal rendering, all roamed and all consumed by `term.html`, which has
+   * been reading them from the shared-origin `tl:prefs:v1` doc since long
+   * before this SPA existed — only the editing UI was missing here. Ranges and
+   * enumerations mirror the vanilla page's PREF_VALID exactly: a value it
+   * rejects is a setting that silently does nothing.
+   */
+  lineHeight: number;
+  letterSpacing: number;
+  cursorStyle: CursorStyle;
+  cursorBlink: boolean;
+  fontWeightBold: BoldWeight;
+  /** The copy chip on terminal links. One key today; namespaced upstream. */
+  links: { copyChip: boolean };
+  /**
+   * Desktop smooth-wheel only. The `gestures` namespace also holds eight TOUCH
+   * flags this panel does not edit (keyRepeat, cardLongPress, haptics, …); they
+   * belong to the terminal page and survive every write from here.
+   */
+  gestures: { wheelSmooth: boolean; wheelSpeed: WheelSpeed };
   session: { newCommand: NewCommand };
   notify: { onDone: boolean; onAwaiting: boolean };
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
@@ -46,6 +73,13 @@ export interface Prefs {
 
 export interface PrefsPatch {
   fontSize?: number;
+  lineHeight?: number;
+  letterSpacing?: number;
+  cursorStyle?: CursorStyle;
+  cursorBlink?: boolean;
+  fontWeightBold?: BoldWeight;
+  links?: Partial<Prefs["links"]>;
+  gestures?: Partial<Prefs["gestures"]>;
   session?: Partial<Prefs["session"]>;
   notify?: Partial<Prefs["notify"]>;
   sidebar?: Partial<Prefs["sidebar"]>;
@@ -61,8 +95,23 @@ export const FONT_SIZE_MIN = 6;
 export const FONT_SIZE_MAX = 22;
 export const FONT_SIZE_DEFAULT = 15;
 
+export const LINE_HEIGHT_MIN = 1;
+export const LINE_HEIGHT_MAX = 1.4;
+export const LETTER_SPACING_MIN = 0;
+export const LETTER_SPACING_MAX = 1;
+export const CURSOR_STYLES: readonly CursorStyle[] = ["block", "bar", "underline"];
+export const BOLD_WEIGHTS: readonly BoldWeight[] = ["600", "700"];
+export const WHEEL_SPEEDS: readonly WheelSpeed[] = [1, 1.5, 2, 3];
+
 export const PREF_DEFAULTS: Prefs = {
   fontSize: FONT_SIZE_DEFAULT,
+  lineHeight: 1, // xterm default
+  letterSpacing: 0, // px; fractional ok (device-pixel rounding)
+  cursorStyle: "block",
+  cursorBlink: true, // the historical constructor value
+  fontWeightBold: "700", // the real JBM 700 face
+  links: { copyChip: true },
+  gestures: { wheelSmooth: true, wheelSpeed: 1 },
   session: { newCommand: DEFAULT_NEW_COMMAND },
   notify: { onDone: true, onAwaiting: true },
   sidebar: { showLastActive: false },
@@ -81,6 +130,17 @@ function isValidFontSize(v: unknown): v is number {
     v >= FONT_SIZE_MIN &&
     v <= FONT_SIZE_MAX
   );
+}
+
+/** Finite number inside an inclusive range — the vanilla PREF_VALID shape for
+ *  lineHeight and letterSpacing. Rejects strings: the terminal page compares
+ *  these straight into `term.options`, where "1.2" is not 1.2. */
+function inRange(v: unknown, lo: number, hi: number): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+}
+
+function oneOf<T extends string | number>(v: unknown, allowed: readonly T[]): v is T {
+  return (allowed as readonly unknown[]).includes(v);
 }
 
 function isNewCommand(v: unknown): v is NewCommand {
@@ -102,8 +162,37 @@ export function coercePrefs(raw: unknown): Prefs {
   const session = isPlainObject(src.session) ? src.session : {};
   const notify = isPlainObject(src.notify) ? src.notify : {};
   const sidebar = isPlainObject(src.sidebar) ? src.sidebar : {};
+  const links = isPlainObject(src.links) ? src.links : {};
+  const gestures = isPlainObject(src.gestures) ? src.gestures : {};
   return {
     fontSize: isValidFontSize(src.fontSize) ? src.fontSize : FONT_SIZE_DEFAULT,
+    lineHeight: inRange(src.lineHeight, LINE_HEIGHT_MIN, LINE_HEIGHT_MAX)
+      ? src.lineHeight
+      : PREF_DEFAULTS.lineHeight,
+    letterSpacing: inRange(src.letterSpacing, LETTER_SPACING_MIN, LETTER_SPACING_MAX)
+      ? src.letterSpacing
+      : PREF_DEFAULTS.letterSpacing,
+    cursorStyle: oneOf(src.cursorStyle, CURSOR_STYLES)
+      ? src.cursorStyle
+      : PREF_DEFAULTS.cursorStyle,
+    cursorBlink:
+      typeof src.cursorBlink === "boolean" ? src.cursorBlink : PREF_DEFAULTS.cursorBlink,
+    fontWeightBold: oneOf(src.fontWeightBold, BOLD_WEIGHTS)
+      ? src.fontWeightBold
+      : PREF_DEFAULTS.fontWeightBold,
+    links: {
+      copyChip:
+        typeof links.copyChip === "boolean" ? links.copyChip : PREF_DEFAULTS.links.copyChip,
+    },
+    gestures: {
+      wheelSmooth:
+        typeof gestures.wheelSmooth === "boolean"
+          ? gestures.wheelSmooth
+          : PREF_DEFAULTS.gestures.wheelSmooth,
+      wheelSpeed: oneOf(gestures.wheelSpeed, WHEEL_SPEEDS)
+        ? gestures.wheelSpeed
+        : PREF_DEFAULTS.gestures.wheelSpeed,
+    },
     session: {
       newCommand: isNewCommand(session.newCommand)
         ? session.newCommand
@@ -137,9 +226,25 @@ export function composeDoc(
   const session = isPlainObject(base.session) ? base.session : {};
   const notify = isPlainObject(base.notify) ? base.notify : {};
   const sidebar = isPlainObject(base.sidebar) ? base.sidebar : {};
+  const links = isPlainObject(base.links) ? base.links : {};
+  // Spread FIRST, then overwrite only what this panel edits: `gestures` holds
+  // eight touch flags the terminal page owns, and losing them here would turn
+  // off long-press, haptics and the rest on every device.
+  const gestures = isPlainObject(base.gestures) ? base.gestures : {};
   return {
     ...base,
     fontSize: prefs.fontSize,
+    lineHeight: prefs.lineHeight,
+    letterSpacing: prefs.letterSpacing,
+    cursorStyle: prefs.cursorStyle,
+    cursorBlink: prefs.cursorBlink,
+    fontWeightBold: prefs.fontWeightBold,
+    links: { ...links, copyChip: prefs.links.copyChip },
+    gestures: {
+      ...gestures,
+      wheelSmooth: prefs.gestures.wheelSmooth,
+      wheelSpeed: prefs.gestures.wheelSpeed,
+    },
     session: { ...session, newCommand: prefs.session.newCommand },
     notify: {
       ...notify,
@@ -163,7 +268,7 @@ export function mergeAdopt(
   const local = isPlainObject(localRaw) ? localRaw : {};
   const server = isPlainObject(serverRaw) ? serverRaw : {};
   const merged: Record<string, unknown> = { ...local, ...server };
-  for (const k of ["session", "notify", "sidebar"] as const) {
+  for (const k of ["session", "notify", "sidebar", "links", "gestures"] as const) {
     const l = isPlainObject(local[k]) ? local[k] : {};
     const s = isPlainObject(server[k]) ? server[k] : {};
     merged[k] = { ...l, ...s };
@@ -188,6 +293,14 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
     if (a !== b) out.push([path, String(b)]);
   };
   diff("fontSize", prev.fontSize, next.fontSize);
+  diff("lineHeight", prev.lineHeight, next.lineHeight);
+  diff("letterSpacing", prev.letterSpacing, next.letterSpacing);
+  diff("cursorStyle", prev.cursorStyle, next.cursorStyle);
+  diff("cursorBlink", prev.cursorBlink, next.cursorBlink);
+  diff("fontWeightBold", prev.fontWeightBold, next.fontWeightBold);
+  diff("links.copyChip", prev.links.copyChip, next.links.copyChip);
+  diff("gestures.wheelSmooth", prev.gestures.wheelSmooth, next.gestures.wheelSmooth);
+  diff("gestures.wheelSpeed", prev.gestures.wheelSpeed, next.gestures.wheelSpeed);
   diff("session.newCommand", prev.session.newCommand, next.session.newCommand);
   diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
   diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
@@ -201,8 +314,19 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
 
 /** Merge a typed patch into a typed Prefs (deep one level), returns the next. */
 export function applyPatch(cur: Prefs, patch: PrefsPatch): Prefs {
+  const pick = <K extends keyof Prefs>(k: K): Prefs[K] =>
+    (patch as Partial<Prefs>)[k] !== undefined
+      ? ((patch as Partial<Prefs>)[k] as Prefs[K])
+      : cur[k];
   return {
     fontSize: patch.fontSize !== undefined ? patch.fontSize : cur.fontSize,
+    lineHeight: pick("lineHeight"),
+    letterSpacing: pick("letterSpacing"),
+    cursorStyle: pick("cursorStyle"),
+    cursorBlink: pick("cursorBlink"),
+    fontWeightBold: pick("fontWeightBold"),
+    links: { ...cur.links, ...(patch.links ?? {}) },
+    gestures: { ...cur.gestures, ...(patch.gestures ?? {}) },
     session: { ...cur.session, ...(patch.session ?? {}) },
     notify: { ...cur.notify, ...(patch.notify ?? {}) },
     sidebar: { ...cur.sidebar, ...(patch.sidebar ?? {}) },

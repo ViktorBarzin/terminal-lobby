@@ -105,10 +105,20 @@ describe("<SettingsPanel> focus management", () => {
     const { container, getByLabelText } = openPanel();
     await panelReady(container);
 
-    // With no keybindings/notifications props the tabbable run is: ✕ … theme
-    // swatches … A− A+ … the new-command <select> … the two notify checkboxes.
+    // Derived from the DOM rather than named: the panel grows rows over time,
+    // and what this test is about is the WRAP at each end, not which control
+    // happens to sit there. Mirrors the component's own tabbable() query.
+    // Scoped to the DIALOG, not the container: the container also holds the
+    // gear that opened it, which is exactly what the trap must not reach.
+    const dialog = container.querySelector(".tl-settings")!;
+    const tabbables = [
+      ...dialog.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ];
     const close = getByLabelText("Close settings") as HTMLButtonElement;
-    const last = getByLabelText("When a session needs input") as HTMLInputElement;
+    expect(tabbables[0], "the ✕ is first in DOM order").toBe(close);
+    const last = tabbables[tabbables.length - 1]!;
 
     last.focus();
     fireEvent.keyDown(last, { key: "Tab" });

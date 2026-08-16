@@ -1,12 +1,37 @@
-import { For, Show, onCleanup, onMount, type Accessor, type Component } from "solid-js";
+import {
+  For,
+  Show,
+  createSignal,
+  onCleanup,
+  onMount,
+  type Accessor,
+  type Component,
+} from "solid-js";
+import { toasts } from "../store/toast";
 import { THEMES, THEME_LABELS, setTheme, theme } from "../theme/theme";
 import {
+  BOLD_WEIGHTS,
+  CURSOR_STYLES,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  LETTER_SPACING_MAX,
+  LETTER_SPACING_MIN,
+  LINE_HEIGHT_MAX,
+  LINE_HEIGHT_MIN,
   NEW_COMMANDS,
+  WHEEL_SPEEDS,
+  type BoldWeight,
+  type CursorStyle,
   type NewCommand,
   type PrefsStore,
+  type WheelSpeed,
 } from "../store/prefs";
+import {
+  clearLocalData,
+  flowControlWanted,
+  setFlowControlEnabled,
+} from "../store/device-prefs";
+import { diagnosticsWanted, setDiagnosticsEnabled } from "../telemetry/diag";
 import type { NotificationSystem } from "../notify/notifications";
 
 /** What Settings needs to render the act-as picker. Absent for a non-admin. */
@@ -42,6 +67,10 @@ export const SettingsPanel: Component<{
   /** the admin act-as picker. Supplied only when the CALLER administers this
    *  box; absent for everyone else, so the section does not render at all. */
   actAs?: ActAsControl;
+  /** confirm seam for Clear local data (tests inject it). */
+  confirm?: (message: string) => boolean;
+  /** reload seam for Clear local data (tests inject it). */
+  onCleared?: () => void;
 }> = (props) => {
   let dialogEl: HTMLDivElement | undefined;
 
@@ -107,6 +136,35 @@ export const SettingsPanel: Component<{
   const newCommand = () => props.prefs.prefs().session.newCommand;
   const notify = () => props.prefs.prefs().notify;
   const sidebar = () => props.prefs.prefs().sidebar;
+  const p = () => props.prefs.prefs();
+
+  // Per-BROWSER switches: signals rather than derived values, because their
+  // truth lives in localStorage and nothing else re-renders this panel when it
+  // changes. Seeded once on open.
+  const [flowOn, setFlowOn] = createSignal(flowControlWanted());
+  const [diagOn, setDiagOn] = createSignal(diagnosticsWanted());
+  const [alsoRoamed, setAlsoRoamed] = createSignal(false);
+  const [clearing, setClearing] = createSignal(false);
+
+  const confirmFn = () => props.confirm ?? ((m: string) => window.confirm(m));
+
+  const doClear = async (): Promise<void> => {
+    const ok = confirmFn()(
+      "Clear this browser's terminal-lobby data (theme, font size, sidebar " +
+        "layout, gestures, notification opt-in)" +
+        (alsoRoamed()
+          ? " AND reset the settings that roam to your other devices"
+          : "") +
+        ", then reload?\n\nYour tmux sessions are not affected.",
+    );
+    if (!ok) return;
+    setClearing(true);
+    await clearLocalData({
+      alsoRoamed: alsoRoamed(),
+      onError: (m) => toasts.push({ kind: "error", message: m }),
+      ...(props.onCleared ? { reload: props.onCleared } : {}),
+    });
+  };
 
   return (
     <div
@@ -207,6 +265,150 @@ export const SettingsPanel: Component<{
               A+
             </button>
           </div>
+        </section>
+
+        {/* Terminal rendering. Every row here is roamed and read by the
+            terminal page from the shared-origin prefs doc, so a change applies
+            to the live terminal without a reload. */}
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">Terminal text</div>
+
+          <label class="tl-settings-range">
+            <span>Line height</span>
+            <input
+              type="range"
+              min={LINE_HEIGHT_MIN}
+              max={LINE_HEIGHT_MAX}
+              step="0.05"
+              value={p().lineHeight}
+              aria-label="Line height"
+              onInput={(e) =>
+                props.prefs.setPref({ lineHeight: Number(e.currentTarget.value) })
+              }
+            />
+            <b class="tl-settings-num">{p().lineHeight.toFixed(2)}</b>
+          </label>
+
+          <label class="tl-settings-range">
+            <span>Letter spacing</span>
+            <input
+              type="range"
+              min={LETTER_SPACING_MIN}
+              max={LETTER_SPACING_MAX}
+              step="0.1"
+              value={p().letterSpacing}
+              aria-label="Letter spacing"
+              onInput={(e) =>
+                props.prefs.setPref({ letterSpacing: Number(e.currentTarget.value) })
+              }
+            />
+            <b class="tl-settings-num">{p().letterSpacing.toFixed(1)}px</b>
+          </label>
+
+          <div class="tl-settings-seg-row">
+            <span>Bold weight</span>
+            <div class="tl-settings-seg">
+              <For each={BOLD_WEIGHTS}>
+                {(w) => (
+                  <button
+                    type="button"
+                    classList={{ active: p().fontWeightBold === w }}
+                    aria-pressed={p().fontWeightBold === w}
+                    onClick={() =>
+                      props.prefs.setPref({ fontWeightBold: w as BoldWeight })
+                    }
+                  >
+                    {w}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+        </section>
+
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">Cursor</div>
+          <div class="tl-settings-seg-row">
+            <span>Shape</span>
+            <div class="tl-settings-seg">
+              <For each={CURSOR_STYLES}>
+                {(c) => (
+                  <button
+                    type="button"
+                    classList={{ active: p().cursorStyle === c }}
+                    aria-pressed={p().cursorStyle === c}
+                    onClick={() =>
+                      props.prefs.setPref({ cursorStyle: c as CursorStyle })
+                    }
+                  >
+                    {c}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={p().cursorBlink}
+              onChange={(e) =>
+                props.prefs.setPref({ cursorBlink: e.currentTarget.checked })
+              }
+            />
+            <span>Blink</span>
+          </label>
+        </section>
+
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">Scrolling &amp; links</div>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={p().gestures.wheelSmooth}
+              onChange={(e) =>
+                props.prefs.setPref({
+                  gestures: { wheelSmooth: e.currentTarget.checked },
+                })
+              }
+            />
+            <span>Smooth mouse-wheel scrolling</span>
+          </label>
+          <div class="tl-settings-seg-row">
+            <span>Scroll speed</span>
+            <div class="tl-settings-seg">
+              <For each={WHEEL_SPEEDS}>
+                {(s) => (
+                  <button
+                    type="button"
+                    classList={{ active: p().gestures.wheelSpeed === s }}
+                    aria-pressed={p().gestures.wheelSpeed === s}
+                    disabled={!p().gestures.wheelSmooth}
+                    onClick={() =>
+                      props.prefs.setPref({
+                        gestures: { wheelSpeed: s as WheelSpeed },
+                      })
+                    }
+                  >
+                    {s}×
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+          <div class="tl-settings-hint">
+            Speed applies to the smooth scroller, so it does nothing while that
+            is off.
+          </div>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={p().links.copyChip}
+              onChange={(e) =>
+                props.prefs.setPref({ links: { copyChip: e.currentTarget.checked } })
+              }
+            />
+            <span>Copy button on terminal links</span>
+          </label>
         </section>
 
         <section class="tl-settings-group">
@@ -358,6 +560,71 @@ export const SettingsPanel: Component<{
               </>
             )}
           </Show>
+        </section>
+
+        {/* Per-BROWSER switches. Deliberately not roamed: flow control exists
+            to rescue a wedged stream on the machine that is wedged, and
+            diagnostics is a consent given by the person at this keyboard. */}
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">This browser</div>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={flowOn()}
+              onChange={(e) => {
+                setFlowControlEnabled(e.currentTarget.checked);
+                setFlowOn(e.currentTarget.checked);
+              }}
+            />
+            <span>Terminal flow control</span>
+          </label>
+          <div class="tl-settings-hint">
+            Back-pressure that pauses a session flooding output. Turning it off
+            releases a stream that is stuck paused — the terminal picks the
+            change up immediately, no reload.
+          </div>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={diagOn()}
+              onChange={(e) => {
+                setDiagnosticsEnabled(e.currentTarget.checked);
+                setDiagOn(e.currentTarget.checked);
+              }}
+            />
+            <span>Send diagnostics</span>
+          </label>
+          <div class="tl-settings-hint">
+            Lobby timings, failures and device info. Never terminal contents,
+            keystrokes or session names.
+          </div>
+        </section>
+
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">Advanced</div>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={alsoRoamed()}
+              onChange={(e) => setAlsoRoamed(e.currentTarget.checked)}
+            />
+            <span>Also reset settings that roam to your other devices</span>
+          </label>
+          <div class="tl-settings-btnrow">
+            <button
+              type="button"
+              class="tl-settings-btn tl-settings-btn-danger"
+              disabled={clearing()}
+              onClick={() => void doClear()}
+            >
+              Clear local data
+            </button>
+          </div>
+          <div class="tl-settings-hint">
+            Removes this browser's saved theme, font size, sidebar layout,
+            gestures and notification opt-in, then reloads. Your tmux sessions
+            are not affected.
+          </div>
         </section>
       </div>
     </div>
