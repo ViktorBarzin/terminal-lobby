@@ -198,3 +198,29 @@ func TestTimingIsConcurrencySafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// The wrapper must not hide the ResponseWriter's Flusher: session-events' SSE
+// endpoint asserts w.(http.Flusher) and refuses the stream when that fails,
+// which is what took the text view offline between 2026-08-14 and this fix.
+func TestTimingKeepsTheResponseWriterFlushable(t *testing.T) {
+	now := time.Now()
+	tm, _ := timingHarness(t, &now, TimingOpts{})
+	var sawFlusher bool
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fl, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		sawFlusher = true
+		w.WriteHeader(http.StatusOK)
+		fl.Flush()
+	})
+	rec := httptest.NewRecorder()
+	tm.Wrap(h).ServeHTTP(rec, httptest.NewRequest("GET", "/events/x", nil))
+	if !sawFlusher {
+		t.Fatal("wrapped ResponseWriter is not an http.Flusher")
+	}
+	if !rec.Flushed {
+		t.Fatal("Flush did not reach the underlying ResponseWriter")
+	}
+}

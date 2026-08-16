@@ -161,6 +161,58 @@ func (in *Injector) Cancel(osUser, session string) error {
 	return nil
 }
 
+// MaxKeys bounds one answer. A permission dialog is answered with a digit and
+// an Enter; a menu with a few arrows. Nothing legitimate needs more, and a cap
+// keeps a mistake in the browser from typing a paragraph into somebody's shell.
+const MaxKeys = 8
+
+// answerKeys is what a web client may send into a pane. It is an ALLOWLIST, and
+// it is the whole security boundary of the keys route: the text view answers
+// blocking prompts by typing (ADR-0010), and a pane accepts anything a keyboard
+// can produce, so the set is exactly the keys an answer is made of.
+//
+// C-c is deliberately absent — interrupting is Cancel's job, which also owns the
+// @claude_state transition that an interrupt implies (ADR-0001). Letters are
+// limited to the y/n a yes-no prompt wants; free text goes through Prompt, where
+// it is bracketed-pasted rather than typed as keystrokes.
+var answerKeys = map[string]bool{
+	"1": true, "2": true, "3": true, "4": true, "5": true,
+	"6": true, "7": true, "8": true, "9": true,
+	"y": true, "n": true, "Y": true, "N": true,
+	"Enter": true, "Escape": true, "Space": true, "Tab": true, "BTab": true,
+	"Up": true, "Down": true, "Left": true, "Right": true,
+}
+
+// Keys types an answer into the session's pane — the downward half of ADR-0010,
+// where the text view mirrors a blocking prompt and sends back what a person
+// would have pressed.
+//
+// Every key is checked against answerKeys BEFORE anything is sent, so a batch
+// carrying one bad key sends nothing at all rather than half an answer.
+func (in *Injector) Keys(osUser, session string, keys []string) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("keys: nothing to send")
+	}
+	if len(keys) > MaxKeys {
+		return fmt.Errorf("keys: %d keys exceeds the %d allowed in one answer", len(keys), MaxKeys)
+	}
+	for _, k := range keys {
+		if !answerKeys[k] {
+			return fmt.Errorf("keys: %q is not an answer key", k)
+		}
+	}
+	args := append([]string{"send-keys", "-t", exactPane(session)}, keys...)
+	return in.Command(osUser, args...).Run()
+}
+
+// Reading the pane back — how the text view sees a permission dialog, which the
+// transcript does not report while it is pending — is CapturePane in ready.go,
+// which already existed for the resurrection readiness check. ADR-0001 rejected
+// pane sniffing for session STATE, where it meant a fork per session per
+// refresh to infer something a hook reports reliably; reading one pane on
+// demand, for a session already known to be waiting on a human, is a different
+// trade.
+
 // State returns the @claude_state option value (running/awaiting/done/"") for
 // the session, used to gate prompt injection. Empty on any error (fail-open to
 // allow).
