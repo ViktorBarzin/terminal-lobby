@@ -968,6 +968,92 @@ describe("lobby store", () => {
       );
     });
 
+    /**
+     * A hidden tab is the dominant cost of this poll, not the visible one. Two
+     * lobby tabs left open drove 63k requests/day through Cloudflare on
+     * 2026-08-15 (31.5k /sessions + 31.4k /layout — the poll fires both), which
+     * with the Worker on a wildcard route was a material share of a 100k/day
+     * quota. Nobody is reading a backgrounded list, and `wake()` already
+     * refreshes on visibilitychange, so a hidden tab has nothing to poll FOR.
+     */
+    describe("a hidden tab", () => {
+      /** Drive document.visibilityState, which jsdom leaves read-only. */
+      const setVisibility = (state: "visible" | "hidden") => {
+        Object.defineProperty(document, "visibilityState", {
+          value: state,
+          configurable: true,
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      };
+
+      afterEach(() => setVisibility("visible"));
+
+      it("stops polling while hidden", async () => {
+        vi.useFakeTimers();
+        const api = new FakeApi();
+        await withStore(
+          api,
+          async () => {
+            await settle();
+            await settle(5000);
+            const before = api.sessionCalls;
+            expect(before).toBeGreaterThan(0);
+
+            setVisibility("hidden");
+            await settle();
+
+            // Ten intervals go by with nobody looking at the tab.
+            await settle(50000);
+            expect(api.sessionCalls).toBe(before);
+          },
+          { autoStart: true },
+        );
+      });
+
+      it("catches up at once when the tab comes back, and resumes the cadence", async () => {
+        vi.useFakeTimers();
+        const api = new FakeApi();
+        await withStore(
+          api,
+          async () => {
+            await settle();
+            setVisibility("hidden");
+            await settle(50000);
+            const whileHidden = api.sessionCalls;
+
+            setVisibility("visible");
+            await settle();
+            // Immediately, not after sitting out another interval.
+            expect(api.sessionCalls).toBe(whileHidden + 1);
+
+            await settle(5000);
+            expect(api.sessionCalls).toBe(whileHidden + 2);
+          },
+          { autoStart: true },
+        );
+      });
+
+      it("does not resume polling on an `online` event while still hidden", async () => {
+        vi.useFakeTimers();
+        const api = new FakeApi();
+        await withStore(
+          api,
+          async () => {
+            await settle();
+            setVisibility("hidden");
+            await settle(50000);
+            const whileHidden = api.sessionCalls;
+
+            window.dispatchEvent(new Event("online"));
+            await settle(50000);
+
+            expect(api.sessionCalls).toBe(whileHidden);
+          },
+          { autoStart: true },
+        );
+      });
+    });
+
     it("a poll still in flight at dispose cannot restart the loop", async () => {
       vi.useFakeTimers();
       const api = new GatedApi();
