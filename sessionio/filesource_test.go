@@ -1,4 +1,4 @@
-package main
+package sessionio
 
 import (
 	"os"
@@ -11,8 +11,8 @@ func TestFileSourceTailsTranscriptAndAssignsMonotonicIDs(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.jsonl")
 	os.WriteFile(p, []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"one"}]}}`+"\n"), 0o644)
 
-	fs := newFileSource("demo", p, time.Millisecond)
-	fs.tailOnce() // pick up the initial line
+	fs := NewFileSource("demo", p, time.Millisecond)
+	fs.TailOnce() // pick up the initial line
 
 	got := fs.Replay(0)
 	if len(got) != 1 || got[0].Kind != KindText || got[0].Body != "one" || got[0].ID != 1 {
@@ -30,7 +30,7 @@ func TestFileSourceTailsTranscriptAndAssignsMonotonicIDs(t *testing.T) {
 	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
 	f.WriteString(`{"type":"assistant","message":{"content":[{"type":"text","text":"two"}]}}` + "\n")
 	f.Close()
-	fs.tailOnce()
+	fs.TailOnce()
 
 	got = fs.Replay(2) // resume after the permission event
 	if len(got) != 1 || got[0].Body != "two" || got[0].ID != 3 {
@@ -41,7 +41,7 @@ func TestFileSourceTailsTranscriptAndAssignsMonotonicIDs(t *testing.T) {
 func TestFileSourceSubscribeReceivesLive(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.jsonl")
 	os.WriteFile(p, []byte(""), 0o644)
-	fs := newFileSource("demo", p, time.Millisecond)
+	fs := NewFileSource("demo", p, time.Millisecond)
 
 	ch, cancel := fs.Subscribe()
 	defer cancel()
@@ -64,8 +64,8 @@ func TestFileSourceInterruptSettlesTheTurnOnTheStream(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.jsonl")
 	os.WriteFile(p, []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"count to 400"}]},"timestamp":"2026-08-06T10:00:00Z"}`+"\n"), 0o644)
 
-	fs := newFileSource("demo", p, time.Millisecond)
-	fs.tailOnce()
+	fs := NewFileSource("demo", p, time.Millisecond)
+	fs.TailOnce()
 	got := fs.Replay(0)
 	if len(got) != 1 || got[0].Kind != KindUser {
 		t.Fatalf("after tail: %+v", got)
@@ -103,8 +103,8 @@ func TestFileSourceInterruptOnASettledTurnAppendsNothing(t *testing.T) {
 		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"timestamp":"2026-08-06T10:00:00Z"}`+"\n"+
 			`{"type":"assistant","message":{"id":"m1","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"hello"}]},"timestamp":"2026-08-06T10:00:01Z"}`+"\n"), 0o644)
 
-	fs := newFileSource("demo", p, time.Millisecond)
-	fs.tailOnce()
+	fs := NewFileSource("demo", p, time.Millisecond)
+	fs.TailOnce()
 	before := len(fs.Replay(0))
 	fs.Interrupt(1786053601000)
 	if after := len(fs.Replay(0)); after != before {

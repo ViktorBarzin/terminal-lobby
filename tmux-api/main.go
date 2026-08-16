@@ -188,6 +188,17 @@ func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
 // tmuxCmd builds an exec.Cmd that runs `tmux <args...>` AS osUser. When
 // osUser is the current process owner, sudo is skipped; otherwise we use
 // `sudo -n -u <user> tmux ...` (passwordless grant via /etc/sudoers.d/ttyd-users).
+// exactSession names one session and nothing else.
+//
+// tmux resolves an ABSENT session name by unambiguous prefix match and exits 0
+// doing it (measured on 3.4: with only `agent-2` alive, `kill-session -t agent`
+// kills it). The lobby manufactures that state routinely — a name is freed when
+// a session dies, and siblings like `agent-2` are ordinary — so a kill or a
+// rename for a session that has already gone would land on a stranger, and the
+// notice this then posts would name the session the caller ASKED about rather
+// than the one that died. `=` makes tmux fail closed instead.
+func exactSession(name string) string { return "=" + name }
+
 func tmuxCmd(osUser string, args ...string) *exec.Cmd {
 	if osUser == selfUser {
 		return exec.Command(tmuxBinary, args...)
@@ -573,7 +584,7 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 }
 
 func killSession(w http.ResponseWriter, osUser, name string) {
-	out, err := tmuxCmd(osUser, "kill-session", "-t", name).CombinedOutput()
+	out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(name)).CombinedOutput()
 	if err != nil {
 		msg := string(out)
 		if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") {
@@ -583,6 +594,23 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 		log.Printf("kill-session %s as %s failed: %v: %s", name, osUser, err, msg)
 		http.Error(w, "kill-session failed", http.StatusInternalServerError)
 		return
+	}
+	// Tell this user's T3 syncer, if they have one. Reaching here is the only
+	// proof anywhere on the box that a session was destroyed on PURPOSE — an
+	// OOM, a crashed tmux server or a reboot never does — and "kill crosses,
+	// exit does not" is built on exactly that (killnotify.go).
+	//
+	// Only the lookup is synchronous, and it is one read of a small local file.
+	// The POST goes on its own goroutine: the kill has already succeeded, so the
+	// answer the user gets must not depend on a syncer that is stopped, wedged
+	// or not installed.
+	if url, ok := syncNotifyURL(osUser); ok {
+		notice := killNotice{OSUser: osUser, Session: name, KilledAt: time.Now().UTC(), Source: killNotifySource}
+		go func() {
+			if err := postKillNotice(url, notice); err != nil {
+				log.Printf("kill-notify for %s/%s: %v", osUser, name, err)
+			}
+		}()
 	}
 	// A UI kill is deliberate — drop the session's project assignment.
 	// (Deaths outside the API keep theirs so a restore regroups them.)
@@ -629,7 +657,7 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 		return
 	}
 
-	out, err := tmuxCmd(osUser, "rename-session", "-t", oldName, newName).CombinedOutput()
+	out, err := tmuxCmd(osUser, "rename-session", "-t", exactSession(oldName), newName).CombinedOutput()
 	if err != nil {
 		msg := string(out)
 		if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") {

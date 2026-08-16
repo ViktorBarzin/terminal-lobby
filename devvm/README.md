@@ -19,6 +19,14 @@ manual deploys see the project root `README.md`.
 | `../frontend/index.html` | `/usr/local/share/ttyd/index.html` | 0644 |
 | `../tmux-api/` (built) | `/usr/local/bin/tmux-api` | 0755 |
 | `../clipboard-upload/` (built) | `/usr/local/bin/clipboard-upload` | 0755 |
+| `tl-t3-sync@.service` | `/etc/systemd/system/tl-t3-sync@.service` | 0644 — via `scripts/deploy-services.sh` |
+| `tl-t3-sync.env.example` | `/etc/tl-t3-sync/tl-t3-sync.env.example` | 0644 — via `scripts/deploy-services.sh` |
+
+The two `tl-t3-sync` rows ship with the T3 bridge, not with the rest of this
+directory: `scripts/deploy-services.sh` installs them next to its own binaries.
+Installing the template enables nobody — a `tl-t3-sync@<user>` instance needs a
+hand-written `/etc/tl-t3-sync/<user>.env` first. Runbook:
+`../t3-bridge/DEPLOY.md`.
 
 `start-claude.sh` is not auto-deployed because it's per-user — copy it
 into the home directory of any user who wants Claude Code as their
