@@ -159,36 +159,68 @@ func protoDroppedBlocks(in Inbound) []string {
 	return dropped
 }
 
+// protoMaxFrameBytes is the largest inbound line the bridge will assemble. It
+// is generous because a user message can carry a pasted file, and finite
+// because the alternative is letting one frame decide how much memory the
+// bridge takes.
+const protoMaxFrameBytes = 16 * 1024 * 1024
+
+// ErrFrameTooLong is returned for a line over protoMaxFrameBytes. It is a
+// RECOVERABLE error: the frame is skipped, and the caller closes whatever turn
+// it opened rather than letting a paste over the limit end the process.
+var ErrFrameTooLong = errors.New("inbound frame is over the size limit")
+
 // Decoder reads inbound frames off T3's pipe.
 type Decoder struct {
+	r  io.Reader
 	sc *bufio.Scanner
 }
 
-// NewDecoder wraps the bridge's stdin. The line limit is generous because an
-// inbound user message can carry a pasted file.
+// NewDecoder wraps the bridge's stdin.
 func NewDecoder(r io.Reader) *Decoder {
+	return &Decoder{r: r, sc: newProtoScanner(r)}
+}
+
+func newProtoScanner(r io.Reader) *bufio.Scanner {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	return &Decoder{sc: sc}
+	sc.Buffer(make([]byte, 0, 64*1024), protoMaxFrameBytes)
+	return sc
 }
 
 // Next returns the next frame. io.EOF means T3 closed the pipe, which is how a
 // bridge is normally told to exit. A line that is not a JSON object is skipped
 // rather than fatal — see the same reasoning in sessionio.Tail.Next.
+//
+// An OVERSIZE line is the one error worth naming. bufio.Scanner cannot be used
+// again after ErrTooLong, so before this the bridge exited on it — an
+// unhandled process death driven by ordinary user input (paste more than 16 MiB
+// into the composer) that also lost every frame queued behind it. The scanner
+// is rebuilt instead, which resumes at the next newline, and the caller is told
+// so it can close the turn with a legible reason.
 func (d *Decoder) Next() (Inbound, error) {
-	for d.sc.Scan() {
-		line := append([]byte(nil), d.sc.Bytes()...)
-		var in Inbound
-		if json.Unmarshal(line, &in) != nil {
-			continue
+	for {
+		for d.sc.Scan() {
+			line := append([]byte(nil), d.sc.Bytes()...)
+			var in Inbound
+			if json.Unmarshal(line, &in) != nil {
+				continue
+			}
+			in.Line = line
+			return in, nil
 		}
-		in.Line = line
-		return in, nil
+		err := d.sc.Err()
+		if err == nil {
+			return Inbound{}, io.EOF
+		}
+		if !errors.Is(err, bufio.ErrTooLong) {
+			return Inbound{}, err
+		}
+		// Scan stopped at the token, not at the newline, so the rebuilt scanner
+		// picks up mid-line and its first "line" is the tail of the frame that
+		// was too big. That tail is not JSON, so the loop above drops it.
+		d.sc = newProtoScanner(d.r)
+		return Inbound{}, ErrFrameTooLong
 	}
-	if err := d.sc.Err(); err != nil {
-		return Inbound{}, err
-	}
-	return Inbound{}, io.EOF
 }
 
 // Encoder writes outbound frames to T3's pipe.
@@ -397,6 +429,10 @@ func (l *protoLoop) Handshake(init SystemInit) ([]Inbound, error) {
 	var pending []Inbound
 	for {
 		frame, err := l.In.Next()
+		if errors.Is(err, ErrFrameTooLong) {
+			log.Printf("handshake: dropped an inbound frame over %d bytes", protoMaxFrameBytes)
+			continue
+		}
 		if err != nil {
 			return pending, fmt.Errorf("handshake: %w", err)
 		}
@@ -420,27 +456,84 @@ func (l *protoLoop) Handshake(init SystemInit) ([]Inbound, error) {
 	}
 }
 
+// protoPromptQueue is how many prompts may be waiting on the tmux side before
+// the reader has to wait too. T3 sends one turn at a time in practice, so this
+// is slack for a burst rather than a design capacity.
+const protoPromptQueue = 32
+
 // Serve reads frames until T3 closes the pipe, delivering pending (the frames
 // Handshake held back) first.
+//
+// CONTROL REQUESTS ARE ANSWERED ON THE READING GOROUTINE; prompts are handed to
+// a worker. That split is the whole point of this function. Delivering a prompt
+// can take seconds — the tmux session may have to be brought back first, and
+// the stamp it waits for travels the long way round — and while the reader was
+// the thing doing that, nothing read the pipe: an operator pressing Stop got no
+// control_response at all until the wait finished, or ever, if it timed out.
+// T3 is holding a promise on every control_request, and a promise has to settle
+// whatever else is going on.
 //
 // It takes no context on purpose. A blocking read on stdin is not cancellable,
 // so a context here would be a promise the loop cannot keep; run owns
 // cancellation and lets the process exit out from under this goroutine.
 func (l *protoLoop) Serve(pending []Inbound) error {
+	prompts := make(chan Inbound, protoPromptQueue)
+	worked := make(chan error, 1)
+	go func() {
+		for frame := range prompts {
+			if err := l.prompt(frame); err != nil {
+				worked <- err
+				return
+			}
+		}
+		worked <- nil
+	}()
+	// The worker owns the channel's close, and the reader owns the send, so the
+	// reader closes on its way out and then waits for the worker to drain.
+	defer func() { <-worked }()
+	defer close(prompts)
+
+	deliver := func(frame Inbound) error {
+		if frame.Type == TypeUser {
+			select {
+			case prompts <- frame:
+				return nil
+			case err := <-worked:
+				// The worker has stopped; nothing will ever take this prompt.
+				worked <- err
+				if err == nil {
+					err = errors.New("the prompt worker stopped")
+				}
+				return err
+			}
+		}
+		return l.dispatch(frame)
+	}
+
 	for _, frame := range pending {
-		if err := l.dispatch(frame); err != nil {
+		if err := deliver(frame); err != nil {
 			return err
 		}
 	}
 	for {
 		frame, err := l.In.Next()
+		if errors.Is(err, ErrFrameTooLong) {
+			// The frame is gone and the stream has been re-anchored. If it was a
+			// prompt T3 is waiting on, this is the only chance to say so.
+			log.Printf("dropped an inbound frame over %d bytes", protoMaxFrameBytes)
+			if emitErr := l.Out.Emit(protoResultError(l.SessionID,
+				fmt.Sprintf("that message is larger than the %d MiB the bridge can carry", protoMaxFrameBytes>>20))); emitErr != nil {
+				return emitErr
+			}
+			continue
+		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return fmt.Errorf("read from t3: %w", err)
 		}
-		if err := l.dispatch(frame); err != nil {
+		if err := deliver(frame); err != nil {
 			return err
 		}
 	}
@@ -495,16 +588,16 @@ func (l *protoLoop) control(frame Inbound) error {
 }
 
 // prompt delivers one user message to the pane.
+//
+// The syncer's warm-up turn (decision 11) goes through the handler like any
+// other prompt rather than being answered here. It has to: it is the frame that
+// tells an adoption which conversation it is adopting, so the tmux side is the
+// only thing that can act on it. Every handler on that side swallows it —
+// Attacher.Send checks IsSentinel before it reaches a pane — so the rule "it
+// never gets typed into a live session" is still held where a prompt could
+// actually get out.
 func (l *protoLoop) prompt(frame Inbound) error {
 	text := frame.Text()
-
-	// The syncer's warm-up turn exists only to make T3 spawn this bridge
-	// (decision 11). It must not reach the pane — and nothing in the transcript
-	// will ever settle a turn that never reached Claude, so the bridge closes
-	// it here.
-	if IsSentinel(text) {
-		return l.Out.Emit(protoResult(l.SessionID, "end_turn"))
-	}
 
 	if strings.TrimSpace(text) == "" {
 		// An image-only prompt, or a shape we have not met. Pasting it would

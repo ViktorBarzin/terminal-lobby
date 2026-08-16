@@ -1,8 +1,10 @@
 package sessionio
 
 import (
+	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,6 +22,48 @@ func TestTranscriptPathSlug(t *testing.T) {
 	want := "/home/wizard/.claude/projects/-home-wizard-code-terminal-lobby/abc-123.jsonl"
 	if got != want {
 		t.Fatalf("transcriptPath =\n %s\nwant %s", got, want)
+	}
+}
+
+// The slug has to be Claude Code's own, character for character, or the bridge
+// tails a file nothing ever writes. The wants below are REAL directory names
+// read off ~/.claude/projects on this box, which is why the dotted ones matter:
+// a worktree under .worktrees/ is the standing workflow here, and every one of
+// them was previously stamped with a path that does not exist.
+func TestTranscriptSlugMatchesClaudeCode(t *testing.T) {
+	for _, tc := range []struct{ name, cwd, want string }{
+		{"plain", "/home/wizard/code/terminal-lobby", "-home-wizard-code-terminal-lobby"},
+		{"leading-dot component", "/home/wizard/code/infra/.worktrees/ingress-factory-nullguard",
+			"-home-wizard-code-infra--worktrees-ingress-factory-nullguard"},
+		{"dot inside a component", "/tmp/tl-t3-e2e.9eW/ws", "-tmp-tl-t3-e2e-9eW-ws"},
+		{"underscore", "/home/wizard/my_dir", "-home-wizard-my-dir"},
+		{"space", "/home/wizard/two words", "-home-wizard-two-words"},
+		{"case is kept", "/home/wizard/CamelCase", "-home-wizard-CamelCase"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TranscriptSlug(tc.cwd); got != tc.want {
+				t.Fatalf("TranscriptSlug(%q) = %q, want %q", tc.cwd, got, tc.want)
+			}
+		})
+	}
+}
+
+// Over 200 characters Claude Code truncates and appends a hash of the ORIGINAL
+// path, so two long siblings do not collide. The hash is a 32-bit
+// h = h*31 + charCode accumulator, absolute value, base 36.
+func TestTranscriptSlugTruncatesLongPathsLikeClaudeCode(t *testing.T) {
+	// Both wants come from running claude 2.1.233's own WE() over the same
+	// input; they are here so the hash is pinned to the reference rather than to
+	// this port of it.
+	long := "/home/wizard/" + strings.Repeat("abcdefghij/", 25) // 288 characters
+	head := strings.ReplaceAll(long, "/", "-")[:200]
+	for _, tc := range []struct{ cwd, want string }{
+		{long, head + "-10l5cp"},
+		{long + "x", head + "-vi7lu7"},
+	} {
+		if got := TranscriptSlug(tc.cwd); got != tc.want {
+			t.Fatalf("TranscriptSlug(%d chars) =\n %s\nwant %s", len(tc.cwd), got, tc.want)
+		}
 	}
 }
 
@@ -148,5 +192,43 @@ func TestInjectorOptionRoundTripAgainstRealTmux(t *testing.T) {
 	}
 	if v, ok := in.Option(u.Username, "no-such-session", OptionTranscript); ok {
 		t.Fatalf("missing session = (%q, %v), want ok=false", v, ok)
+	}
+}
+
+// The model a session is running is knowable from its own transcript, and it is
+// read from the END: a session's model can change mid-conversation, and what a
+// reader wants is what it is answering with now.
+func TestTranscriptModelReadsTheLastAnswer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.jsonl")
+	var b strings.Builder
+	b.WriteString(`{"type":"user","message":{"role":"user","content":"hi"}}` + "\n")
+	b.WriteString(`{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4","content":[]}}` + "\n")
+	// Padding past the tail window, so the seek path is the one exercised.
+	for b.Len() < 80*1024 {
+		b.WriteString(`{"type":"system","subtype":"noise","content":"` + strings.Repeat("x", 200) + `"}` + "\n")
+	}
+	b.WriteString(`{"type":"assistant","message":{"role":"assistant","model":"claude-opus-5","content":[]}}` + "\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := TranscriptModel(path); got != "claude-opus-5" {
+		t.Fatalf("TranscriptModel = %q, want claude-opus-5", got)
+	}
+	if got := TranscriptModel(filepath.Join(t.TempDir(), "absent.jsonl")); got != "" {
+		t.Fatalf("TranscriptModel on a missing file = %q, want empty", got)
+	}
+}
+
+// TranscriptCWD is the shared answer to "where is this conversation actually
+// happening"; both the bridge and the syncer file bindings by it.
+func TestTranscriptCWDReadsTheOpeningRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.jsonl")
+	body := `{"type":"system","subtype":"start"}` + "\n" +
+		`{"type":"user","cwd":"/home/wizard/code/tl/.worktrees/x","message":{"role":"user","content":"hi"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := TranscriptCWD(path); got != "/home/wizard/code/tl/.worktrees/x" {
+		t.Fatalf("TranscriptCWD = %q", got)
 	}
 }

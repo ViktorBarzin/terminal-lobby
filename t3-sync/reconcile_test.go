@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"terminal-lobby/sessionio"
 )
@@ -22,10 +23,14 @@ const (
 
 // bind records what an adoption would have left behind, so a test can start
 // from "this session is already mirrored".
+// bind is the state after a COMPLETED adoption: thread created, binding
+// written, warm-up landed. A binding with no WarmedAt is a different state —
+// the thread exists and is empty — and TestPlanRetriesAWarmUpThatNeverLanded
+// is what covers it.
 func (h *harness) bind(claudeID, tmuxName, cwd, threadID string) {
 	h.t.Helper()
 	if err := h.index.Put(claudeID, sessionio.Binding{
-		TmuxName: tmuxName, CWD: cwd, ThreadID: threadID,
+		TmuxName: tmuxName, CWD: cwd, ThreadID: threadID, WarmedAt: time.Now().UTC(),
 	}); err != nil {
 		h.t.Fatalf("seed the binding: %v", err)
 	}

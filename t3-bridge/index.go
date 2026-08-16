@@ -54,14 +54,37 @@ func (b *Bindings) Lookup(claudeID string) (sessionio.Binding, bool, error) {
 // created. It is called on EVERY successful attach, not only on creation: a
 // session renamed in the lobby has to be findable under its new name the next
 // time it dies, and the attach is the only moment the bridge knows both halves.
+//
+// It MERGES rather than replaces, and that distinction is load-bearing. The
+// bridge attaches knowing the tmux name and the cwd; it is never told which
+// thread it is serving, and nothing in this binary stamps @t3_thread, so the
+// thread id it reads back off a session it created is "". Writing that over the
+// pairing the syncer recorded is what made a bridge-born session look unadopted
+// on the next reconcile — a second thread for one session, and a kill that then
+// read whichever of the two the index happened to name.
+//
+// The same rule covers the cwd: a target resolved without one leaves the stored
+// value alone rather than blanking the directory a resurrection has to start
+// in.
 func (b *Bindings) Record(t Target) error {
 	if t.ClaudeID == "" || t.TmuxName == "" {
 		return fmt.Errorf("bindings: refusing to record an incomplete target %+v", t)
 	}
-	return b.ix.Put(t.ClaudeID, sessionio.Binding{
-		TmuxName: t.TmuxName,
-		CWD:      t.CWD,
-		ThreadID: t.ThreadID,
+	return b.ix.Merge(t.ClaudeID, func(stored sessionio.Binding) sessionio.Binding {
+		stored.TmuxName = t.TmuxName
+		if t.CWD != "" {
+			stored.CWD = t.CWD
+		}
+		if t.ThreadID != "" {
+			stored.ThreadID = t.ThreadID
+		}
+		if t.Origin != "" {
+			stored.Origin = t.Origin
+		}
+		if t.AliasOf != "" {
+			stored.AliasOf = t.AliasOf
+		}
+		return stored
 	})
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -32,6 +33,11 @@ type Resurrector struct {
 	// can be recovered from too.
 	Bindings *Bindings
 
+	// ctx aborts the wait for @claude_transcript. A resurrection can sit here
+	// for the better part of a minute, and a Stop pressed in that window has to
+	// end it rather than queue behind it. Nil means "wait the full time".
+	ctx context.Context
+
 	// wait bounds how long the stamp is waited for, and poll how often it is
 	// re-read. Both are unexported with sane zero-value defaults: production has
 	// no reason to tune them and tests need them short.
@@ -54,6 +60,10 @@ type ResurrectSpec struct {
 	TmuxName string
 	// CWD is the session's working directory.
 	CWD string
+	// Origin records who chose TmuxName (sessionio.OriginLobby / OriginT3), so
+	// the syncer can tell a session it named from one the bridge invented a name
+	// for. Empty is read as OriginLobby.
+	Origin string
 	// MCPConfig is T3's --mcp-config, passed straight through so a session the
 	// bridge launches keeps T3's own tools. A session adopted mid-flight cannot
 	// have them (--mcp-config is launch-only), which the design accepts.
@@ -133,6 +143,7 @@ func (r *Resurrector) Resurrect(spec ResurrectSpec) (Target, error) {
 		TmuxName:   name,
 		CWD:        spec.CWD,
 		Transcript: transcript,
+		Origin:     spec.Origin,
 	}
 	if r.Bindings != nil {
 		if err := r.Bindings.Record(target); err != nil {
@@ -156,18 +167,29 @@ func (r *Resurrector) awaitStamp(name, claudeID string) (string, error) {
 	if poll <= 0 {
 		poll = resurrectPoll
 	}
+	ctx := r.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	deadline := time.Now().Add(wait)
 	for {
 		stamp, ok := r.Tmux.Option(r.OSUser, name, sessionio.OptionTranscript)
 		if ok && stamp != "" && sessionio.ClaudeIDFromTranscript(stamp) == claudeID {
 			return stamp, nil
 		}
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("resurrect %s: gave up waiting for %s on session %s: %w",
+				claudeID, sessionio.OptionTranscript, name, err)
+		}
 		if !time.Now().Before(deadline) {
 			return "", fmt.Errorf(
 				"resurrect %s: no %s naming this conversation appeared on session %s within %s (is session-events running?)",
 				claudeID, sessionio.OptionTranscript, name, wait)
 		}
-		time.Sleep(poll)
+		select {
+		case <-ctx.Done():
+		case <-time.After(poll):
+		}
 	}
 }
 

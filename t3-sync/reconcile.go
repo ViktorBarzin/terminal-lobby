@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"time"
 
 	"terminal-lobby/sessionio"
 )
@@ -69,6 +70,9 @@ type Plan struct {
 	KillSession []string
 	// PruneBinding are index entries for conversations neither surface has.
 	PruneBinding []string
+	// WarmUp are threads that exist and were never warmed, so the bridge has
+	// never been spawned for them and their history has never replayed.
+	WarmUp []WarmUp
 
 	// notices are the kill notices this plan consumed. Apply hands back the
 	// ones it could not act on, so a kill dispatched while t3-serve was down is
@@ -82,11 +86,18 @@ type Rename struct {
 	Title    string
 }
 
+// WarmUp is one retry of decision 11's sentinel turn.
+type WarmUp struct {
+	ThreadID string
+	ClaudeID string
+	TmuxName string
+}
+
 // Empty reports whether the plan would change nothing — the steady state, and
 // what almost every pass should produce.
 func (p Plan) Empty() bool {
 	return len(p.Adopt) == 0 && len(p.Rename) == 0 && len(p.ArchiveThread) == 0 &&
-		len(p.KillSession) == 0 && len(p.PruneBinding) == 0
+		len(p.KillSession) == 0 && len(p.PruneBinding) == 0 && len(p.WarmUp) == 0
 }
 
 // Plan computes the pass without changing anything.
@@ -123,15 +134,35 @@ func (r *Reconciler) Plan(ctx context.Context, snap Snapshot) (Plan, error) {
 
 	var p Plan
 	for _, c := range candidates {
+		binding := bindings[c.ClaudeID]
 		threadID := c.ThreadID
 		if threadID == "" {
-			if b, ok := bindings[c.ClaudeID]; ok {
-				threadID = b.ThreadID
-			}
+			threadID = binding.ThreadID
 		}
 		if threadID == "" {
+			if binding.FromT3() {
+				// The bridge created this session for a thread T3 already has.
+				// Which thread is the one fact nobody can tell us — T3 does not
+				// pass it to the bridge, and the snapshot does not project the
+				// session id that would identify it — so adopting would make a
+				// SECOND thread for a conversation that already has one. Leaving
+				// it alone costs the tmux→T3 rename and the kill→archive for
+				// these sessions; making a duplicate cost the delete→kill as
+				// well, and broke it silently.
+				continue
+			}
 			p.Adopt = append(p.Adopt, c)
 			continue
+		}
+		// A thread that exists but never got its warm-up turn is empty for good
+		// unless it is retried: the thread is bound, so it is not a candidate
+		// again, and nothing else ever spawns a bridge for it. The dispatch is
+		// what fails here (a 400 on a payload T3's client-facing schema
+		// rejected), not the adoption around it, so the retry is just the turn.
+		if binding.ThreadID == threadID && binding.WarmedAt.IsZero() {
+			if thread, ok := snap.Thread(threadID); ok && !thread.Archived() && !thread.Deleted() {
+				p.WarmUp = append(p.WarmUp, WarmUp{ThreadID: threadID, ClaudeID: c.ClaudeID, TmuxName: c.TmuxName})
+			}
 		}
 		thread, ok := snap.Thread(threadID)
 		if !ok {
@@ -152,6 +183,12 @@ func (r *Reconciler) Plan(ctx context.Context, snap Snapshot) (Plan, error) {
 		case thread.Archived():
 			// The routine "done" gesture. It crosses nothing — and the session
 			// is not renamed to match a title nobody is looking at either.
+		case binding.FromT3():
+			// The bridge named this session after the workspace root, because
+			// T3 sends it the directory and never the thread's title. Pushing
+			// that back over T3's own title would replace "Fix the header
+			// spacing" with "terminal-lobby-2" — decision 7's "tmux wins" is
+			// about names a HUMAN chose in the lobby.
 		case thread.Title != c.TmuxName:
 			p.Rename = append(p.Rename, Rename{ThreadID: threadID, Title: c.TmuxName})
 		}
@@ -178,18 +215,32 @@ func (r *Reconciler) Plan(ctx context.Context, snap Snapshot) (Plan, error) {
 		p.ArchiveThread = append(p.ArchiveThread, threadID)
 	}
 
-	// A binding is what a resurrection is built from, so it is only dropped
-	// when neither surface has anything left: no live session, and no thread
-	// that could ever be resumed into one.
+	// A binding is what a resurrection is built from, so dropping one needs
+	// POSITIVE evidence that nothing will ever want it — not merely an absence.
+	//
+	// Absence is exactly what a reboot produces: `list-sessions` against a tmux
+	// server that is not there is an ordinary empty list, so every binding on
+	// the box looks abandoned at once. The rule that used to apply here dropped
+	// every entry with no thread id on the first pass after a restart, and an
+	// empty thread id is the NORMAL state for a session the bridge created.
+	// Both facts a resurrection needs — the tmux name and the cwd — live only
+	// here, so that was the one copy.
+	//
+	// So: prune a bound binding only when its thread is known DELETED (a
+	// snapshot that merely lags is not evidence), and an unbound one only once
+	// it is old enough that nothing is coming for it.
+	prunable := time.Now().Add(-bindingGrace)
 	for claudeID, b := range bindings {
 		if _, ok := byClaude[claudeID]; ok {
 			continue
 		}
 		if b.ThreadID != "" {
 			thread, ok := snap.Thread(b.ThreadID)
-			if ok && !thread.Deleted() {
+			if !ok || !thread.Deleted() {
 				continue
 			}
+		} else if b.UpdatedAt.After(prunable) {
+			continue
 		}
 		p.PruneBinding = append(p.PruneBinding, claudeID)
 	}
@@ -217,18 +268,45 @@ func (r *Reconciler) warnOrphan(tmuxName, threadID string) {
 		tmuxName, threadID, sessionio.OptionThread)
 }
 
+// bindingGrace is how long an unadopted binding is kept once its session is no
+// longer live. It is long because the cost of keeping one is a few hundred
+// bytes and the cost of dropping one is a conversation that can never be
+// resurrected under its own name and directory again.
+const bindingGrace = 30 * 24 * time.Hour
+
 // threadForSession finds the thread bound to a tmux session name.
 //
 // The index is keyed by conversation, not by name, because a name is reusable
-// and a conversation is not. Reversing it here is a scan over a handful of
-// entries, once per notice.
+// and a conversation is not. Reversing it is therefore AMBIGUOUS: bindings for
+// dead conversations are kept on purpose, so two entries can name `work` — last
+// week's, retained for resurrection, and today's. Picking whichever the map
+// happened to yield archived a thread nobody had touched about half the time,
+// and left the one that had just lost its session open.
+//
+// The newest write wins, and a genuine tie is left alone: there is no way to
+// tell those apart, and archiving the wrong thread is worse than archiving
+// none.
 func threadForSession(bindings map[string]sessionio.Binding, name string) (string, bool) {
+	best, tied := sessionio.Binding{}, false
 	for _, b := range bindings {
-		if b.TmuxName == name && b.ThreadID != "" {
-			return b.ThreadID, true
+		if b.TmuxName != name || b.ThreadID == "" {
+			continue
+		}
+		switch {
+		case best.ThreadID == "" || b.UpdatedAt.After(best.UpdatedAt):
+			best, tied = b, false
+		case b.UpdatedAt.Equal(best.UpdatedAt) && b.ThreadID != best.ThreadID:
+			tied = true
 		}
 	}
-	return "", false
+	if best.ThreadID == "" {
+		return "", false
+	}
+	if tied {
+		log.Printf("kill notice for %s: two bindings name it and neither is newer; archiving nothing", name)
+		return "", false
+	}
+	return best.ThreadID, true
 }
 
 // Apply executes a plan. With Cfg.DryRun it logs every intended dispatch and
@@ -256,6 +334,14 @@ func (r *Reconciler) Apply(ctx context.Context, p Plan) error {
 			continue
 		}
 		log.Printf("adopted %s as thread %s", c.TmuxName, threadID)
+	}
+
+	for _, w := range p.WarmUp {
+		if err := r.Adopter.WarmUp(ctx, w.ThreadID, w.ClaudeID); err != nil {
+			failures = append(failures, fmt.Errorf("warm up thread %s (%s): %w", w.ThreadID, w.TmuxName, err))
+			continue
+		}
+		log.Printf("thread %s warmed up: %s will now replay into it", w.ThreadID, w.TmuxName)
 	}
 
 	for _, rn := range p.Rename {
@@ -368,6 +454,9 @@ func (r *Reconciler) logPlan(p Plan) {
 	}
 	for _, id := range p.PruneBinding {
 		log.Printf("dry run: would forget the binding for %s", id)
+	}
+	for _, w := range p.WarmUp {
+		log.Printf("dry run: would warm up thread %s for %s", w.ThreadID, w.TmuxName)
 	}
 }
 

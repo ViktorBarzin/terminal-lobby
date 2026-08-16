@@ -154,9 +154,9 @@ _verb_has_created_at() {
 # The route decodes ClientOrchestrationCommand, and its ClientThreadTurnStartCommand
 # declares runtimeMode AND interactionMode as plain required fields — unlike the
 # internal ThreadTurnStartCommand, where both carry a decoding default. Omitting
-# interactionMode is answered with an empty-bodied HTTP 400. t3-sync's own
-# turnStart struct omits it, which is what step 4 measures; this helper sends it
-# so the rest of the run can exercise everything downstream of the warm-up.
+# interactionMode is answered with an empty-bodied HTTP 400, which is what step 4
+# measures on the syncer's own payload. This helper always sends both, so a turn
+# the harness starts itself is never the thing that failed.
 turn_payload() {
     jq -nc --arg th "$1" --arg mid "$(uuid)" --arg text "$2" \
         '{threadId:$th,

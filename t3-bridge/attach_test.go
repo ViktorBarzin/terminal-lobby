@@ -113,9 +113,16 @@ func (f *attachFakeTmux) ListSessions(string) ([]sessionio.TmuxSession, error) {
 	return out, nil
 }
 
+// Prompt and Cancel FAIL against a session that is not there, the way tmux does
+// now that every target is exact (sessionio.exactPane). A fake that accepted
+// them hid the case the bridge cares most about: a session that died under a
+// bridge T3 is still holding.
 func (f *attachFakeTmux) Prompt(_, session, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, live := f.sessions[session]; !live {
+		return fmt.Errorf("can't find session: %s", session)
+	}
 	f.prompts = append(f.prompts, attachPrompt{session, text})
 	return f.promptErr
 }
@@ -123,6 +130,9 @@ func (f *attachFakeTmux) Prompt(_, session, text string) error {
 func (f *attachFakeTmux) Cancel(_, session string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, live := f.sessions[session]; !live {
+		return fmt.Errorf("can't find session: %s", session)
+	}
 	f.cancels = append(f.cancels, session)
 	return f.cancelErr
 }
@@ -294,11 +304,12 @@ func (r *attachRig) attacher() *Attacher {
 		CWD:        "/home/wizard/code/terminal-lobby",
 		Transcript: r.path,
 	}, AttacherDeps{
-		OSUser:  "wizard",
-		Tmux:    r.tmux,
-		Out:     NewEncoder(r.out),
-		Poll:    5 * time.Millisecond,
-		Cursors: r.cursors,
+		OSUser:    "wizard",
+		Tmux:      r.tmux,
+		Out:       NewEncoder(r.out),
+		Poll:      5 * time.Millisecond,
+		StatePoll: 5 * time.Millisecond,
+		Cursors:   r.cursors,
 	})
 }
 

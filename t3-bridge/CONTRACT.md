@@ -95,7 +95,10 @@ type NewSessionSpec struct {
 type SessionInfo struct{ TmuxSession, CWD, ClaudeID, Transcript string }
 
 func ProjectsRoot(homeBase, osUser string) string      // /home/<user>/.claude/projects
-func TranscriptPath(root, cwd, claudeID string) string // <root>/<cwd-slashes-as-dashes>/<id>.jsonl
+func TranscriptSlug(cwd string) string                 // Claude Code's own cwd → directory rule
+func TranscriptPath(root, cwd, claudeID string) string // <root>/<TranscriptSlug(cwd)>/<id>.jsonl
+func TranscriptCWD(path string) string                 // where the conversation is really happening
+func TranscriptModel(path string) string               // what it last answered with
 func WithinProjects(root, path string) bool
 func ClaudeIDFromTranscript(path string) string        // base name without .jsonl
 
@@ -243,6 +246,9 @@ type Binding struct {
 	TmuxName  string    `json:"tmuxName"`
 	CWD       string    `json:"cwd"`
 	ThreadID  string    `json:"threadId"`
+	Origin    string    `json:"origin,omitempty"`   // OriginLobby | OriginT3
+	AliasOf   string    `json:"aliasOf,omitempty"`  // this uuid stands in for that conversation
+	WarmedAt  time.Time `json:"warmedAt,omitempty"` // zero = the sentinel never landed
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
@@ -253,6 +259,7 @@ func (ix *Index) All() (map[string]Binding, error)
 func (ix *Index) Get(claudeID string) (Binding, bool, error)
 func (ix *Index) FindByThread(threadID string) (string, Binding, bool, error)
 func (ix *Index) Put(claudeID string, b Binding) error
+func (ix *Index) Merge(claudeID string, apply func(Binding) Binding) error
 func (ix *Index) Delete(claudeID string) error
 func (ix *Index) Update(fn func(map[string]Binding) error) error
 ```
@@ -775,3 +782,66 @@ literal `none` = ignore nothing) and `-notify-addr` (empty = do not listen).
   T3's snapshot is a projection and can lag a thread the syncer created seconds
   ago, so re-adopting on an absence would create a thread per tick. The session
   stays unmirrored and the pairing is logged once.
+
+## 10. What phase 4 changed — the review pass
+
+The adversarial review and the end-to-end run against a live T3 on 2026-08-16.
+Sections 1–9 are the phases they belong to; this one records the seams that
+moved, so a reader of §2–§5 is not working from a signature that has since
+changed. Decisions are unchanged; the design doc carries the two it clarifies.
+
+### 10.1 `sessionio`
+
+- **`TranscriptPath` now goes through `TranscriptSlug`,** which rewrites every
+  character outside `[A-Za-z0-9]` and applies claude's 200-character cap with
+  its hash suffix. The old slashes-only rule produced a path nothing writes for
+  any cwd containing a dot — every worktree under `.worktrees/`. Shared code, so
+  `session-events`' text view was blind on those sessions too.
+- **`TranscriptCWD` and `TranscriptModel`** are promoted here from the syncer, so
+  the bridge and the syncer answer "where is this session" and "what is it
+  running" the same way.
+- **Every destructive or mutating tmux verb targets exactly one session**
+  (`-t "="+name+":"` for pane targets, `-t "="+name` for `kill-session`). tmux
+  prefix-matches an absent name and exits 0 doing it, and `base-2` beside a dead
+  `base` is a state resurrection manufactures. `tmux-api` applies the same rule
+  to `kill-session` and `rename-session`.
+- **`Index.Merge`** writes through a callback over the stored entry. `Put`
+  replaces, which is right for the syncer and wrong for the bridge — it knows the
+  tmux name and never the thread id.
+
+### 10.2 `t3-bridge`
+
+- **`protoTmuxSide` is replaced by `protoRealDeps` + `protoDeferredSide`.**
+  Opening happens off the reading goroutine and, for a session id nothing knows,
+  not until a prompt says what it is for. `protoOpenSide` gains an `adopting`
+  argument and returns `*Attacher`.
+- **`Serve` answers control requests inline and queues prompts to a worker,** so
+  an interrupt is answered while a prompt is still being delivered.
+- **`Decoder.Next` returns `ErrFrameTooLong`** and rebuilds its scanner rather
+  than ending the process on an oversize line.
+- **The sentinel carries the conversation**: `SentinelFor(claudeID)` /
+  `SentinelConversation(text)`, and `IsSentinel` matches on the prefix. Both
+  spellings are pinned across the two modules by tests that read the other file.
+- **`Bindings.Record` merges**, and records `Origin` and `AliasOf`.
+- **`AttacherDeps.StatePoll`** reads `@claude_state` on its own slower cadence;
+  the 200 ms poll stays on the transcript, which is a file read rather than a
+  fork.
+
+### 10.3 `t3-sync`
+
+- **`thread.turn.start` carries `runtimeMode` AND `interactionMode`,** both
+  without `omitempty`. The HTTP route decodes `ClientThreadTurnStartCommand`,
+  which declares both plainly; only the internal command gives them decoding
+  defaults. A payload missing one is HTTP 400 with an empty body.
+- **`Adopter.WarmUp(ctx, threadID, claudeID)`** is separable from `Adopt`, and
+  `Plan.WarmUp` retries one that never landed — keyed on `Binding.WarmedAt`
+  rather than on the thread existing.
+- **The prune pass needs positive evidence**: a thread T3 says is deleted, or an
+  unadopted binding older than `bindingGrace`. A snapshot that merely lags, and
+  a tmux server that is not answering, both mean "keep".
+- **`threadForSession` takes the newest binding and skips a tie.**
+- **A binding with `Origin == OriginT3` is neither adopted nor retitled.**
+- **`SettingsMerge` never writes an empty `binaryPath`,** `Verify` treats one as
+  a failure, and both instances get a `displayName`.
+- **`T3Version` + a five-minute check** re-run `SelfTest` when the t3 build moves.
+- **`validNotifyAddr` resolves the host and requires loopback.**
