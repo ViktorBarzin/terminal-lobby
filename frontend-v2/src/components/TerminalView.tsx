@@ -35,6 +35,11 @@ import { track } from "../telemetry/track";
  *    clicked. `creating` opts back in for the one case that needs it: a session
  *    the app is bringing into being, whose tmux is born by this very attach.
  *    Once attached we never detach — the CSS-hidden frame keeps its WebSocket.
+ *    Laziness is also what makes Watch mode's toggle useful: it can be set from
+ *    the session bar BEFORE the first attach, so a phone opening a session the
+ *    desktop is driving never claims the grid even momentarily.
+ *  - WATCH MODE (`watch`): attaches read-only via arg5. Toggling it re-navigates,
+ *    because a tmux client's read-only-ness is fixed when it attaches.
  *  - Live theme: window.__tlThemeLive posts `{type:'tl-theme',name}` into the
  *    frame and reloads it if no `tl-theme-ack` arrives within 1000ms.
  *  - Live prefs: window.__tlPrefsLive posts `{type:'tl-prefs',prefs}` +
@@ -55,6 +60,10 @@ export const TerminalView: Component<{
   /** arg3 — the owning project's base directory, read ONCE at attach. `tmux -A`
    *  ignores -c on a live session, so sending it every time is harmless. */
   dir?: string;
+  /** arg5 — Watch mode: attach read-only so this client never drives the session
+   *  and never moves its grid. Changing it RE-attaches (read-only is fixed when
+   *  a tmux client attaches), which is why it is a tracked dependency below. */
+  watch?: boolean;
   /** current roamed newCommand — the command for a session this view is CREATING
    *  (arg2). Ignored on a re-attach (read ONCE, never re-navigates live). */
   newCommand?: () => string;
@@ -125,12 +134,18 @@ export const TerminalView: Component<{
     if (props.active || props.creating) setAttachAllowed(true);
   });
 
-  // Attach (and re-attach if the session/owner target changes). newCommand is
-  // read UNTRACKED: it only shapes a NEW session's command, and a pref change
+  // Attach (and re-attach if the session/owner/watch target changes). newCommand
+  // is read UNTRACKED: it only shapes a NEW session's command, and a pref change
   // must never re-navigate a live terminal (that would drop the WebSocket).
+  //
+  // `watch` IS tracked, and re-navigating is the point: read-only is a property
+  // of the tmux client, fixed when it attaches, so changing it means attaching
+  // again. The cover hides the reload and tmux keeps the scrollback, so the
+  // visible cost is one flash.
   createEffect(() => {
     const session = props.session;
     const owner = props.owner;
+    const watch = props.watch;
     if (!attachAllowed()) return;
     const url = untrack(() =>
       terminalUrl(session, {
@@ -141,6 +156,7 @@ export const TerminalView: Component<{
         cmd: props.creating ? props.newCommand?.() : undefined,
         dir: props.dir || undefined,
         owner: owner || undefined,
+        watch,
       }),
     );
     if (url !== currentUrl) navigate(url);

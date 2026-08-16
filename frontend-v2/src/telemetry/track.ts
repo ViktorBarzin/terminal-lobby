@@ -56,6 +56,8 @@ export type TlEvent =
   | "palette.action"
   | "help.opened"
   | "view.switched"
+  // watch mode (attach read-only): tl.to is "ro" or "rw"
+  | "watch.switched"
   // images & transfers
   | "gallery.opened"
   | "gallery.image_opened"

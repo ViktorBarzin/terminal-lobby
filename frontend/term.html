@@ -2613,6 +2613,19 @@ __TL_DIAG__
         // attach (memory #9926, the same trap the per-project dir hit).
         const rawOwner = params.getAll('arg')[3] || '';
         const validOwner = NAME_RE.test(rawOwner) ? rawOwner : '';
+        // Fifth ?arg= = WATCH MODE: 'ro' asks the server to attach this client
+        // read-only, so it observes without driving and never moves the
+        // session's grid. Like arg4 it MUST be re-emitted on the /ws + /token
+        // URLs in connect() — ttyd's `-a` forwards ?arg= positionally, and a
+        // 5th arg that dies at the iframe boundary means the attach silently
+        // comes back read-WRITE, i.e. the opposite of what was asked.
+        //
+        // This flag is only a REQUEST. tmux-attach.sh sends it to tmux-api,
+        // which resolves it downgrade-only and sources `-r` from its own answer
+        // — so the page cannot grant itself anything by lying here, only give
+        // access up. The local input block below is a UX affordance on top of
+        // that server-side decision, never the boundary itself.
+        const validWatch = params.getAll('arg')[4] === 'ro' ? 'ro' : '';
         const validArg = rawArg && NAME_RE.test(rawArg) ? rawArg : null;
 
         // ---- inline icon set (icon fix, 2026-07-14) --------------------
@@ -12690,6 +12703,20 @@ __TL_DIAG__
             // be missed by a new input path. The scattered per-path cancels
             // remain as belt-and-braces.
             cancelScrollMomentum();
+            // WATCH MODE: drop every pty-bound byte here rather than at each
+            // input path — this choke point already sees the keyboard, the
+            // compose mirror, the soft keys and paste, so one guard covers all
+            // of them, and a future path inherits it.
+            //
+            // NOT the security boundary. tmux attached this client with `-r` on
+            // the server's say-so and would discard these bytes anyway; what
+            // this adds is an honest UI, because without it a watcher types
+            // into a terminal that looks alive and silently eats everything.
+            // The nudge tells them why, at most once every few seconds.
+            if (validWatch) {
+                watchNudge();
+                return;
+            }
             const payload = textEncoder.encode(data);
             const buf = new Uint8Array(payload.length + 1);
             buf[0] = MSG_INPUT.charCodeAt(0);
@@ -12699,6 +12726,19 @@ __TL_DIAG__
                 return;
             }
             ws.send(buf.buffer);
+        }
+
+        // Explain the silence when a watcher types, without nagging: at most one
+        // toast per WATCH_NUDGE_MS however many keys they hit.
+        const WATCH_NUDGE_MS = 4000;
+        let watchNudgedAt = 0;
+        function watchNudge() {
+            const now = Date.now();
+            if (now - watchNudgedAt < WATCH_NUDGE_MS) return;
+            watchNudgedAt = now;
+            try {
+                showToast('Watching — this device can’t type into the session', 'info', 2500);
+            } catch (e) { /* toasts not up yet */ }
         }
 
         function sendResize() {
@@ -14398,7 +14438,16 @@ __TL_DIAG__
             // below reuse this suffix, so both carry arg4=owner. Without a dir
             // and without an owner, keep the historic shape (arg2 only when a
             // command is set).
-            if (validOwner) {
+            if (validWatch) {
+                // Deepest slot: emit arg2..arg4 so 'ro' lands on $5. The owner
+                // slot stays EMPTY for your own session — tmux-attach.sh reads a
+                // blank arg4 as "mine", where a 'default' placeholder would name
+                // an OS user that does not exist.
+                argSuffix += '&arg=' + encodeURIComponent(validCmdKey || 'default');
+                argSuffix += '&arg=' + encodeURIComponent(validDir || 'default');
+                argSuffix += '&arg=' + encodeURIComponent(validOwner);
+                argSuffix += '&arg=' + encodeURIComponent(validWatch);
+            } else if (validOwner) {
                 argSuffix += '&arg=' + encodeURIComponent(validCmdKey || 'default');
                 argSuffix += '&arg=' + encodeURIComponent(validDir || 'default');
                 argSuffix += '&arg=' + encodeURIComponent(validOwner);
