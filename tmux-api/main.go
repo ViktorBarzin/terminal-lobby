@@ -779,6 +779,12 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	// snapshot long after the layout has forgotten where it went, and landing
 	// in Ungrouped is where a recovered session is hardest to find again.
 	rememberKilledAssignment(osUser, name)
+	// The title goes with it, for the same reason the persist manifest row
+	// does: a deliberate kill means this session is not coming back, so
+	// keeping its title would only re-stamp a name someone else may reuse.
+	if err := titleStoreInstance.forget(osUser, name); err != nil {
+		log.Printf("title memory: forgetting %s for %s failed: %v", name, osUser, err)
+	}
 	if err := layoutStoreInstance.removeSession(osUser, name); err != nil {
 		log.Printf("layout cleanup after killing %s for %s failed: %v", name, osUser, err)
 	}
@@ -973,20 +979,5 @@ func tmuxTargetMissing(msg string) bool {
 	return false
 }
 
-// carryRenameAcrossStores moves everything keyed by a session's NAME.
-//
-// The layout is the store that always followed a rename. The others did not,
-// which mattered little while renaming was rare — deriving names from titles
-// makes it routine, so a retitle that quietly dropped a session out of a shared
-// project or orphaned its shares would be a regular occurrence rather than an
-// edge case. Every step is best-effort and logged: the tmux rename has already
-// landed, and failing the request now would report an error for something that
-// did happen.
-func carryRenameAcrossStores(osUser, oldName, newName string) {
-	if err := layoutStoreInstance.renameSession(osUser, oldName, newName); err != nil {
-		log.Printf("layout rename %s→%s for %s failed: %v", oldName, newName, osUser, err)
-	}
-	if err := titleStoreInstance.rename(osUser, oldName, newName); err != nil {
-		log.Printf("title memory rename %s→%s for %s failed: %v", oldName, newName, osUser, err)
-	}
-}
+// carryRenameAcrossStores lives in rename_cascade.go — every store that keys
+// on a session's name, moved together.
