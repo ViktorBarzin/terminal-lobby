@@ -66,6 +66,10 @@ type SnapshotRow struct {
 	Default bool `json:"default"`
 	// KilledAt is set when a deliberate kill is why Default is false.
 	KilledAt int64 `json:"killedAt,omitempty"`
+	// Project is where restoring this row would put the session — resolved by
+	// the same function the restore uses, so the picker's preview and the
+	// placement cannot disagree. "" is Ungrouped. See assignments.go.
+	Project string `json:"project,omitempty"`
 }
 
 // persistCmd runs the root wrapper with the caller's own OS user.
@@ -211,7 +215,7 @@ func handleSnapshotByTS(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(parseSnapshotRows(string(out)))
+	_ = json.NewEncoder(w).Encode(annotateRowProjects(osUser, parseSnapshotRows(string(out))))
 }
 
 func parseSnapshotRows(out string) []SnapshotRow {
@@ -277,6 +281,11 @@ func restoreFromSelection(osUser string, sel restoreSelection) (int, string) {
 			return http.StatusBadRequest, fmt.Sprintf("bad session name: %q", n)
 		}
 	}
+	// Resolve the snapshot BEFORE restoring. This is the view the picker showed,
+	// so the name each row was promised is the name that gets placed; asking
+	// afterwards would resolve every row as live and lose the -HHMM targets.
+	rows := snapshotRowsFor(osUser, sel.Snapshot)
+
 	args := append([]string{"select", sel.Snapshot}, sel.Sessions...)
 	out, err := persistCmd(osUser, args...).CombinedOutput()
 	if err != nil {
@@ -285,7 +294,20 @@ func restoreFromSelection(osUser string, sel restoreSelection) (int, string) {
 		return http.StatusInternalServerError, "restore failed"
 	}
 	log.Printf("restore-selection %s for %s: %s", sel.Snapshot, osUser, strings.TrimSpace(string(out)))
+	placeRestoredSessions(osUser, rows, sel.Sessions)
 	return http.StatusOK, ""
+}
+
+// snapshotRowsFor reads one snapshot resolved against what is live now. Returns
+// nil when it cannot be read: placement is a convenience on top of a restore
+// that stands on its own.
+func snapshotRowsFor(osUser, ts string) []SnapshotRow {
+	out, err := persistCmd(osUser, "show", ts).Output()
+	if err != nil {
+		log.Printf("snapshot %s for %s unreadable, restoring without placement: %v", ts, osUser, err)
+		return nil
+	}
+	return parseSnapshotRows(string(out))
 }
 
 // emitRestored records a restore for the usage telemetry, tagged with whether

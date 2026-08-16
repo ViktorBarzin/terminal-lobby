@@ -201,7 +201,10 @@ func TestRestoreFromSelectionInvokesWrapper(t *testing.T) {
 	if status, msg := restoreFromSelection("alice", sel); status != http.StatusOK {
 		t.Fatalf("got %d (%s), want 200", status, msg)
 	}
-	want := "-n\n" + restoreWrapper + "\nalice\nselect\n20260814T125000\nT3\nrepowise\n"
+	// The snapshot is read first — that resolved view is what tells the
+	// placement which name each row comes back under — and then restored.
+	want := "-n\n" + restoreWrapper + "\nalice\nshow\n20260814T125000\n" +
+		"-n\n" + restoreWrapper + "\nalice\nselect\n20260814T125000\nT3\nrepowise\n"
 	if got := recordedArgv(t, argv); got != want {
 		t.Fatalf("wrapper invocation:\ngot  %q\nwant %q", got, want)
 	}
@@ -222,7 +225,8 @@ func TestHandleRestoreWithSelectionBody(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200 (body %q)", rec.Code, rec.Body.String())
 	}
-	want := "-n\n" + restoreWrapper + "\n" + osSelf + "\nselect\n20260814T125000\nT3\n"
+	want := "-n\n" + restoreWrapper + "\n" + osSelf + "\nshow\n20260814T125000\n" +
+		"-n\n" + restoreWrapper + "\n" + osSelf + "\nselect\n20260814T125000\nT3\n"
 	if got := recordedArgv(t, argv); got != want {
 		t.Fatalf("selection restore:\ngot  %q\nwant %q", got, want)
 	}
@@ -296,5 +300,42 @@ func TestMemAvailableIsRealOrUnknown(t *testing.T) {
 	}
 	if got < -1 {
 		t.Fatalf("memAvailableMB returned %d", got)
+	}
+}
+
+// Every row carries the project a restore would put it in, resolved by the same
+// function the restore itself uses — so the picker previews the destination
+// rather than each frontend guessing at it.
+func TestSnapshotRowsCarryTheirDestinationProject(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osSelf+"\n")
+	withTempLayoutStore(t)
+	withTempAssignmentStore(t)
+	swapProjectStore(t)
+	withSudoStub(t, `printf 'repowise\t/home/x/code\tu1\tmissing\tnew\trepowise\ton\t-\nloose\t/home/x\t-\tmissing\tnew\tloose\ton\t-\n'`)
+
+	if err := layoutStoreInstance.save(osSelf, Layout{
+		Version: 1, Projects: []Project{{Name: "code", Sessions: []string{"repowise"}}}, Ungrouped: []string{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	handleSnapshotByTS(rec, sessionReq(http.MethodGet, "/snapshots/20260814T125000", "", "alice"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (%q)", rec.Code, rec.Body.String())
+	}
+	var rows []SnapshotRow
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("response is not JSON: %v (%q)", err, rec.Body.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if rows[0].Project != "code" {
+		t.Fatalf("row %q: project %q, want code", rows[0].Name, rows[0].Project)
+	}
+	if rows[1].Project != "" {
+		t.Fatalf("row %q: project %q, want \"\" — nothing places it", rows[1].Name, rows[1].Project)
 	}
 }
