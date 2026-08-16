@@ -21,6 +21,8 @@
 
 export type TitleSession = {
   name: string;
+  /** The display title, when the session has one. */
+  title?: string;
   state?: string;
   pane_current_command?: string;
 };
@@ -62,7 +64,15 @@ export function composeTitle(p: TitleParts): string {
     unseenDone: p.sessions.filter(isUnseen).length,
   };
   const badge = titleBadge(counts);
-  const attention = p.attentionSession ? "● " + p.attentionSession + " " : "";
+  // The tab speaks in titles like every other surface. Both the attention latch
+  // and the body look the session up so a titled one reads as its title; a
+  // session with no title, or one the poll has not caught up with, falls back
+  // to its name exactly as before.
+  const labelFor = (name: string): string => {
+    const s = p.sessions.find((x) => x.name === name);
+    return s?.title || name;
+  };
+  const attention = p.attentionSession ? "● " + labelFor(p.attentionSession) + " " : "";
   const active =
     p.activeSession != null
       ? p.sessions.find((s) => s.name === p.activeSession)
@@ -70,8 +80,8 @@ export function composeTitle(p: TitleParts): string {
   const cmd = active?.pane_current_command;
   const body = p.activeSession
     ? cmd
-      ? cmd + " — " + p.activeSession // em dash
-      : "tmux: " + p.osUser + "/" + p.activeSession
+      ? cmd + " — " + labelFor(p.activeSession) // em dash
+      : "tmux: " + p.osUser + "/" + labelFor(p.activeSession)
     : p.baseTitle;
   return attention + badge + body;
 }
