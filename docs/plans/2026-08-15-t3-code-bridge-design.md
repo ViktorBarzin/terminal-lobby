@@ -1,6 +1,6 @@
 # The T3 Code bridge — one Claude, two windows
 
-**Status:** Designed — grilled 2026-08-15, ready to build
+**Status:** Built and landed on master 2026-08-16; tmux-api released. Not yet enabled for any user — the bridge is inert until a T3 instance's `binaryPath` points at it.
 **Date:** 2026-08-15 · **Owner:** wizard
 **Scope:** terminal-lobby v2 only. The vanilla frontend is untouched and needs no change.
 
@@ -277,6 +277,17 @@ that a session killed under a live bridge turns every subsequent prompt into an
 error in the thread — the resurrection would only ever run on a fresh spawn. The
 retry only ever creates; nothing on this path can destroy a session.
 
+A resurrected session is not typed into until its pane is drawn, showing a
+prompt, and has stopped changing. The transcript stamp is not enough on its own:
+`claude --resume` fires SessionStart — which is what sets the stamp — and only
+then spends about a second loading the transcript before painting. A prompt sent
+into that window half-lands, which is worse than losing it outright. Measured on
+2026-08-16 against a real resumed session: the bracketed paste arrived on the
+input line intact and the Enter that should have submitted it did not, so the
+turn never ran while the thread showed a message Claude had not seen. A pane that
+never settles is logged and typed into anyway — that is a gamble, where dropping
+the prompt is a certainty.
+
 Control requests are answered on the reading goroutine and prompts are handed to
 a worker, so a Stop pressed while a resurrection waits for its transcript stamp
 is answered rather than queued behind it.
@@ -394,7 +405,9 @@ One build, then dogfood — not staged milestones.
    frames: handshake, replay, live tail, paste, interrupt, resurrect, sentinel.
 3. **Syncer**: adoption, workspace filing, rename following, kill/archive symmetry,
    snapshot polling, settings merge, bearer minting, self-test.
-4. **Release tmux-api** with the kill-notify producer, and create
+4. **Release tmux-api** with the kill-notify producer *(done 2026-08-16 — binary
+   installed and only that service restarted, so no browser terminal was
+   dropped; the notify is inert until step 5 creates the env file)*, and create
    `/etc/tl-t3-sync/<user>.env`. Without both, "kill a session in the lobby"
    crosses nothing — the consumer alone cannot see the difference between a kill
    and an OOM.
