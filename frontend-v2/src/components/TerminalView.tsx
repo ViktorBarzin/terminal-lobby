@@ -74,6 +74,15 @@ export const TerminalView: Component<{
   /** the terminal iframe's attention signal (bell / output-while-hidden). The
    *  lobby owns the tab title+favicon, so it decides what to badge. */
   onFrameAttention?: (kind: "bell" | "output", session: string | null) => void;
+  /** FALSE for a secondary terminal (the Ctrl+J dock). The window-level
+   *  bridges — __tlSendToTerminal, __tlForwardToTerminal, __tlPasteToTerminal,
+   *  __tlFocusTerminal, __tlRefitTerminal, __tlPrefsLive, __tlThemeLive — are
+   *  installed on MOUNT and named globally, so a second mounted frame silently
+   *  takes them over and the soft keys, paste and focus handback start driving
+   *  the wrong pty. The primary session view keeps them; the dock listens on
+   *  its own postMessage handler instead. (Making them activation-scoped rather
+   *  than mount-scoped is the real fix and a larger one.) */
+  ownsBridges?: boolean;
   /** the terminal iframe's `tl-build-stale` signal (inventory Cat.10): its own
    *  reconnect heal saw a new build. TOP-owned reload — the iframe NEVER reloads
    *  itself, it hands the reload UP to the lobby, which owns the single reload. */
@@ -317,7 +326,7 @@ export const TerminalView: Component<{
   let prevFocus: (() => boolean) | undefined;
   onMount(() => {
     window.addEventListener("message", onMessage);
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && props.ownsBridges !== false) {
       prevThemeLive = window.__tlThemeLive;
       window.__tlThemeLive = onThemeLive;
       prevForward = window.__tlForwardToTerminal;
@@ -344,6 +353,7 @@ export const TerminalView: Component<{
     window.removeEventListener("message", onMessage);
     if (coverTimer) clearTimeout(coverTimer);
     if (themeAckTimer) clearTimeout(themeAckTimer);
+    if (props.ownsBridges === false) return; // never installed any of the below
     if (typeof window !== "undefined" && window.__tlThemeLive === onThemeLive) {
       window.__tlThemeLive = prevThemeLive;
     }
