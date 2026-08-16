@@ -44,10 +44,8 @@ not what a given client asked for. _Compare_: Watch mode.
 
 **Watch mode**:
 A client's own choice to attach read-only, so it observes without driving and
-without moving the Grid. Three states: watch, drive, or **unset** — and unset
-resolves automatically, joining as a viewer when the session already has a
-read-write client (**driven**). Per (session, device), remembered in the browser
-and never sent to the server as state — the desktop keeps driving while the phone
+without moving the Grid. Per (session, device), remembered in the browser and
+never sent to the server as state — the desktop keeps driving while the phone
 watches the same session. Applies to your own sessions as well as shared ones;
 owning a session is what authorizes watching it. A client may only ever request
 **at or below** its Attach mode, so asking to watch can never grant access.
