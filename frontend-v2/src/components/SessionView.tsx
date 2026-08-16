@@ -10,7 +10,7 @@ import {
 import { createSessionStore, type NotifyKind } from "../store/session";
 import type { SseStatus } from "../sse/client";
 import { createViewMode } from "../store/viewmode";
-import { createWatchMode } from "../store/watchmode";
+import { createWatchMode, clearResolvedWatch } from "../store/watchmode";
 import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
 import type { PermissionDecision } from "../types/events";
 import { ViewSwitch } from "./ViewSwitch";
@@ -65,6 +65,11 @@ export const SessionView: Component<{
   /** the owning project's base directory, so a session born here starts in the
    *  project rather than in $HOME (the attach URL's arg3). */
   dir?: string;
+  /** TRUE when someone is already DRIVING this session (a read-write client is
+   *  attached). With no explicit Watch choice recorded, this view joins as a
+   *  viewer — read ONCE when the view takes the session on, never after, since
+   *  the count includes this client's own attach. */
+  driven?: () => boolean;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** roamed prefs — the A−/A+ buttons step fontSize, which the store persists
@@ -102,7 +107,14 @@ export const SessionView: Component<{
   const [mode, setMode, toggleMode] = createViewMode(() => session);
   // Watch mode is per (session, device) and lives only in this browser — the
   // desktop keeps driving the same session while the phone watches it.
-  const [watch, , toggleWatch] = createWatchMode(() => session);
+  const [watch, , toggleWatch] = createWatchMode(
+    () => session,
+    () => props.driven?.() ?? false,
+  );
+  // The sidebar reads this view's resolved state for the open session; drop it
+  // when the view goes so a stale decision cannot outlive the attach it
+  // described.
+  onCleanup(() => clearResolvedWatch(session));
 
   // The transcript stream is opened by the Text view, not by mounting this one.
   // v1 is terminal-first: a session opens on the Terminal view and Text is
