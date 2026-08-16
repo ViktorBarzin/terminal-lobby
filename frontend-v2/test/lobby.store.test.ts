@@ -651,6 +651,39 @@ describe("lobby store", () => {
       });
     });
 
+    // A restore is the server placing sessions in their projects, so its layout
+    // is ahead of ours the moment the call returns. Holding our copy through the
+    // grace window would hide the placement until the next poll, and the
+    // conflict check would blame another tab for a change this click asked for.
+    it("takes the server's layout straight after a restore places sessions", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-06T10:00:00Z"));
+      const api = new FreshApi();
+      api.sessionsVal = [sess("a")];
+      api.layoutVal = {
+        ...emptyLayout(),
+        projects: [{ name: "code", sessions: [] }],
+        ungrouped: ["a"],
+      };
+      await withStore(api, async (store) => {
+        await store.refresh();
+        await store.move("a", "code"); // arms the grace window and the conflict check
+
+        // tmux-api recreates `b` and puts it back where it belonged.
+        api.sessionsVal = [sess("a"), sess("b")];
+        api.layoutVal = {
+          ...emptyLayout(),
+          projects: [{ name: "code", sessions: ["a", "b"] }],
+          ungrouped: [],
+        };
+        await store.restore({ snapshot: "20260814T125000", sessions: ["b"] });
+
+        expect(store.toast()).not.toMatch(/elsewhere/i);
+        const code = store.model().groups.find((g) => g.name === "code");
+        expect(code!.sessions.map((s) => s.name)).toEqual(["a", "b"]);
+      });
+    });
+
     it("does not blame a conflict for a poll with no local write behind it", async () => {
       // Another tab moving a session while THIS one is only reading is not a
       // conflict — there is nothing of ours to lose.
