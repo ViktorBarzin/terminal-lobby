@@ -1,55 +1,53 @@
 #!/usr/bin/env bash
-# Deploy the v2 (SolidJS) SPA to a SECOND ttyd (:7687) on the DevVM, which the
-# terminal-dev.viktorbarzin.me ingress fronts. Companion to scripts/deploy.sh.
+# Deploy the SolidJS SPA as THE lobby: /usr/local/share/ttyd/index.html, served
+# by ttyd :7681 (-I) at terminal.viktorbarzin.me. Companion to scripts/deploy.sh.
 #
-# RESTARTS ONLY ttyd-v2 — never ttyd :7681 (the stable vanilla frontend at
-# terminal.viktorbarzin.me), never ttyd-ro, and never a shared backend. What it
-# installs is three files: the SPA index (index-v2.html), the ttyd-v2 unit, and
-# term.html.
+# There is one tier. The terminal-dev canary (ttyd-v2 :7687, index-v2.html) was
+# retired on 2026-08-16 once the SPA became the daily driver — everything ships
+# straight to prod now (Viktor's call). --prod is still accepted so existing
+# muscle memory and docs keep working; --canary is refused rather than silently
+# doing something else.
 #
-# WHO SHIPS WHAT (the earlier version of this comment claimed deploy.sh already
-# shipped everything below; it does not):
-#   this script          index-v2.html, ttyd-v2.service, term.html
-#   deploy.sh            the vanilla index + the SHARED backends
-#                        (ttyd, ttyd-ro, tmux-api, clipboard-upload) + PWA assets
-#   deploy-services.sh   session-events (:7685) + file-api (:7686) — v2-only
+# RESTARTS ONLY ttyd — never ttyd-ro, never a shared backend. What it installs
+# is two files: the SPA index (index.html) and term.html.
+#
+# WHO SHIPS WHAT:
+#   this script          index.html (the lobby SPA), term.html
+#   deploy.sh            the SHARED backends (ttyd, ttyd-ro, tmux-api,
+#                        clipboard-upload) + PWA assets. It does NOT install the
+#                        lobby page — that would revert whatever is deployed here.
+#   deploy-services.sh   session-events (:7685) + file-api (:7686) — SPA-only
 #                        backends that NEITHER of the other two scripts ships
 #
-# term.html is the one file here that lands in the SHARED asset dir
-# (/usr/local/share/ttyd, which clipboard-upload serves from): both hosts'
-# ingresses route Path(`/term.html`) there, but only the v2 SPA ever fetches it
-# (config.TERMINAL_BASE) — the vanilla page contains no reference to it. No
-# service is restarted for it; clipboard-upload re-reads the file per request.
-#
-# Both frontends attach the SAME per-uid tmux server, so they serve the same
-# sessions from one backend.
+# term.html lands in the SHARED asset dir (/usr/local/share/ttyd, which
+# clipboard-upload serves from) and the ingress routes Path(`/term.html`) there.
+# The SPA fetches it as its terminal frame (config.TERMINAL_BASE). No service is
+# restarted for it; clipboard-upload re-reads the file per request.
 #
 # Usage:
 #   ./scripts/deploy-v2.sh                    # build + deploy
 #   DEVVM=10.0.10.10 ./scripts/deploy-v2.sh   # override host
 #   SKIP_BUILD=1 ./scripts/deploy-v2.sh       # reuse frontend-v2/dist/{index,term}.html
+#
+# Roll back: the previous index is kept as index.html.prev (see the tail).
 set -euo pipefail
 
-# --prod PROMOTES the same built artifact to terminal.viktorbarzin.me: identical
-# bytes, different destination and unit. Promotion rather than a second build is
-# the point — the thing that goes to prod is the thing that soaked on the canary.
-TARGET="canary"
+# One destination. --prod is a no-op kept for compatibility with older docs and
+# habits; --canary names a tier that no longer exists, so it fails loudly rather
+# than quietly deploying to prod under a name that promises it will not.
 for a in "$@"; do
   case "$a" in
-    --prod)   TARGET="prod" ;;
-    --canary) TARGET="canary" ;;
-    *) echo "deploy-v2.sh: unknown argument $a (want --prod or --canary)" >&2; exit 2 ;;
+    --prod) ;;
+    --canary)
+      echo "deploy-v2.sh: the terminal-dev canary (ttyd-v2 :7687) was retired" >&2
+      echo "  on 2026-08-16 — there is only the prod tier now. Drop the flag." >&2
+      exit 2 ;;
+    *) echo "deploy-v2.sh: unknown argument $a" >&2; exit 2 ;;
   esac
 done
-if [[ "$TARGET" == "prod" ]]; then
-  REMOTE_INDEX="index.html"      # ttyd :7681 serves this (-I), terminal.viktorbarzin.me
-  REMOTE_UNIT="ttyd"
-  REMOTE_PORT=7681
-else
-  REMOTE_INDEX="index-v2.html"   # ttyd-v2 :7687, terminal-dev.viktorbarzin.me
-  REMOTE_UNIT="ttyd-v2"
-  REMOTE_PORT=7687
-fi
+REMOTE_INDEX="index.html"      # ttyd :7681 serves this (-I), terminal.viktorbarzin.me
+REMOTE_UNIT="ttyd"
+REMOTE_PORT=7681
 
 DEVVM="${DEVVM:-10.0.10.10}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -127,25 +125,25 @@ if grep -qi '</script\|<script' frontend/diag.js; then
   exit 1
 fi
 sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' \
-    frontend-v2/dist/index.html > out/index-v2.pre
-if grep -q '__TL_DIAG__' out/index-v2.pre; then
+    frontend-v2/dist/index.html > out/index.pre
+if grep -q '__TL_DIAG__' out/index.pre; then
   echo "deploy-v2.sh: __TL_DIAG__ survived in the SPA — diagnostics would be dead" >&2
   exit 1
 fi
-assert_diag_executable out/index-v2.pre
-ASSET=$(sha256sum out/index-v2.pre | cut -c1-12)
+assert_diag_executable out/index.pre
+ASSET=$(sha256sum out/index.pre | cut -c1-12)
 sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${ASSET}/g" \
-    out/index-v2.pre > out/index-v2.html
-rm -f out/index-v2.pre
+    out/index.pre > out/index.html
+rm -f out/index.pre
 # The meta tag is the one leg that depends on the build tool: if vite ever stops
 # copying the head through verbatim, fail the deploy rather than ship a page
 # that can never self-update.
-grep -q '<meta name="tl-asset" content="'"${ASSET}"'"' out/index-v2.html || {
+grep -q '<meta name="tl-asset" content="'"${ASSET}"'"' out/index.html || {
   echo "deploy-v2.sh: tl-asset meta missing from the built SPA — vite dropped it" >&2
   exit 1
 }
-if grep -q '__TL_[A-Z]*__' out/index-v2.html; then
-  echo "deploy-v2.sh: unsubstituted __TL_*__ placeholder in out/index-v2.html" >&2
+if grep -q '__TL_[A-Z]*__' out/index.html; then
+  echo "deploy-v2.sh: unsubstituted __TL_*__ placeholder in out/index.html" >&2
   exit 1
 fi
 echo "    build=${REV} asset=${ASSET}"
@@ -154,7 +152,7 @@ echo "    build=${REV} asset=${ASSET}"
 # the same two stamps. vite's copyTermHtml plugin passes the source through
 # with both placeholders intact (BUILD_ID defaults to the literal
 # `__TL_BUILD__`), so dist/term.html is a pure function of frontend/term.html
-# and can be fingerprinted the same way index-v2.html is.
+# and can be fingerprinted the same way index.html is.
 # Stamping is not cosmetic here: term.html runs the shared zero-touch
 # self-update healer, whose parseAssetId() returns null for any id still
 # containing `__TL_` — "no information", never "a new build". An unstamped
@@ -182,53 +180,43 @@ fi
 echo "    term.html asset=${TERM_ASSET}"
 
 echo "==> Staging on $DEVVM..."
-scp -o BatchMode=yes \
-  out/index-v2.html \
-  out/term.html \
-  devvm/ttyd-v2.service \
-  "wizard@${DEVVM}:/tmp/"
+# Staged under distinct names: /tmp/index.html on a SHARED devvm is somebody
+# else's file waiting to happen.
+scp -o BatchMode=yes out/index.html "wizard@${DEVVM}:/tmp/tl-deploy-index.html"
+scp -o BatchMode=yes out/term.html  "wizard@${DEVVM}:/tmp/tl-deploy-term.html"
 
-echo "==> Installing on $DEVVM (target: ${TARGET}, ${REMOTE_UNIT} :${REMOTE_PORT})..."
+echo "==> Installing on $DEVVM (${REMOTE_UNIT} :${REMOTE_PORT})..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" \
-  REMOTE_INDEX="$REMOTE_INDEX" REMOTE_UNIT="$REMOTE_UNIT" TARGET="$TARGET" \
+  REMOTE_INDEX="$REMOTE_INDEX" REMOTE_UNIT="$REMOTE_UNIT" \
   bash -se <<'REMOTE'
   set -euo pipefail
-  # restart_ttyd tracks whether anything ttyd-v2 actually SERVES changed. A
-  # restart drops every attached terminal's WebSocket, so it must not happen on
-  # a deploy that shipped identical bytes — and the `cmp` below already knows.
+  # restart_ttyd tracks whether anything ttyd actually SERVES changed. A restart
+  # drops every attached terminal's WebSocket, so it must not happen on a deploy
+  # that shipped identical bytes — and the `cmp` below already knows.
   restart_ttyd=0
   DEST="/usr/local/share/ttyd/${REMOTE_INDEX}"
-  # The SPA index. On the canary that is index-v2.html (ttyd-v2 :7687); with
-  # --prod it is index.html, the page ttyd :7681 serves at
-  # terminal.viktorbarzin.me. Same bytes either way.
-  if ! sudo cmp -s /tmp/index-v2.html "$DEST"; then
+  # The SPA index: index.html, the page ttyd :7681 serves at
+  # terminal.viktorbarzin.me.
+  if ! sudo cmp -s /tmp/tl-deploy-index.html "$DEST"; then
     # Keep the outgoing page as the rollback channel before overwriting it —
     # the same pattern ttyd.prev uses for the binary. On the promotion itself
     # this captures the vanilla lobby, so backing the cutover out is one
     # install + restart, with no rebuild and no checkout.
     [[ -f "$DEST" ]] && sudo cp -f "$DEST" "${DEST}.prev"
-    sudo install -m 0644 /tmp/index-v2.html "$DEST"
+    sudo install -m 0644 /tmp/tl-deploy-index.html "$DEST"
     restart_ttyd=1
   else
     echo "    ${REMOTE_INDEX} unchanged — leaving it (and its ETag) alone"
   fi
-  # The ttyd-v2 unit is the canary's own; --prod does not touch ttyd.service
-  # (its ExecStart already points at index.html — the promotion swaps the FILE,
-  # not the unit, which is what keeps the rollback a single install).
-  if [[ "$TARGET" != "prod" ]]; then
-    if ! sudo cmp -s /tmp/ttyd-v2.service /etc/systemd/system/ttyd-v2.service; then
-      sudo install -m 0644 /tmp/ttyd-v2.service /etc/systemd/system/ttyd-v2.service
-      restart_ttyd=1
-    else
-      echo "    ttyd-v2.service unchanged"
-    fi
-  fi
+  # No unit is installed here. ttyd.service belongs to deploy.sh and its
+  # ExecStart already points at index.html, so shipping the lobby swaps the
+  # FILE, not the unit — which is what keeps the rollback a single install.
   # term.html — the terminal-mode iframe page. Served by CLIPBOARD-UPLOAD out
   # of its exact-path asset whitelist (assetDir = /usr/local/share/ttyd), not
-  # by ttyd-v2, so it is deliberately NOT part of restart_ttyd: no process
+  # by ttyd, so it is deliberately NOT part of restart_ttyd: no process
   # caches it, the next request reads the new file.
-  if ! sudo cmp -s /tmp/term.html /usr/local/share/ttyd/term.html; then
-    sudo install -m 0644 /tmp/term.html /usr/local/share/ttyd/term.html
+  if ! sudo cmp -s /tmp/tl-deploy-term.html /usr/local/share/ttyd/term.html; then
+    sudo install -m 0644 /tmp/tl-deploy-term.html /usr/local/share/ttyd/term.html
   else
     echo "    term.html unchanged — leaving it alone"
   fi
@@ -242,16 +230,16 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   else
     echo "    nothing ${REMOTE_UNIT} serves changed — skipping restart (attached terminals keep their WebSocket)"
   fi
-  rm -f /tmp/index-v2.html /tmp/term.html /tmp/ttyd-v2.service
+  rm -f /tmp/tl-deploy-index.html /tmp/tl-deploy-term.html
 REMOTE
 
 echo "==> Verifying..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" \
-  REMOTE_UNIT="$REMOTE_UNIT" REMOTE_PORT="$REMOTE_PORT" TARGET="$TARGET" bash -s <<'VERIFY'
+  REMOTE_UNIT="$REMOTE_UNIT" REMOTE_PORT="$REMOTE_PORT" bash -s <<'VERIFY'
   set -euo pipefail
   systemctl is-active "$REMOTE_UNIT"
-  # Poll, do not probe once. A restart takes ttyd a moment to bind :7687, and
-  # index-v2.html changes on EVERY deploy (TL_BUILD carries the git SHA, so the
+  # Poll, do not probe once. A restart takes ttyd a moment to bind its port, and
+  # index.html changes on EVERY deploy (TL_BUILD carries the git SHA, so the
   # bytes differ even when TL_ASSET — the identity clients compare — does not),
   # which means the restart branch is the normal path and a single immediate
   # curl races it. That race reported "NOT serving" for a deploy that had in
@@ -263,7 +251,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
     fi
     sleep 0.5
   done
-  [ "$ok" = "1" ] && echo "${REMOTE_UNIT} serving the v2 SPA OK" || { echo "${REMOTE_UNIT} NOT serving after 15s"; exit 1; }
+  [ "$ok" = "1" ] && echo "${REMOTE_UNIT} serving the lobby SPA OK" || { echo "${REMOTE_UNIT} NOT serving after 15s"; exit 1; }
   test -f /usr/local/share/ttyd/term.html || { echo "term.html NOT installed"; exit 1; }
   # Installing term.html is what this script does; SERVING it is clipboard-upload
   # (:7683), whose exact-path whitelist must carry a /term.html entry. That
@@ -274,10 +262,6 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://localhost:7683/term.html || echo 000)
   [ "$code" = "200" ] && echo "clipboard-upload serving /term.html OK" || echo "NOTE: /term.html -> $code — installed, but clipboard-upload has not been released with the whitelist entry yet (the SPA Terminal view stays blank until it is)"
 VERIFY
-if [[ "$TARGET" == "prod" ]]; then
-  echo "==> Done. v2 SPA is now the LOBBY on :7681 (terminal.viktorbarzin.me)."
-  echo "    Roll back: sudo install -m 0644 /usr/local/share/ttyd/index.html.prev \\"
-  echo "                 /usr/local/share/ttyd/index.html && sudo systemctl restart ttyd"
-else
-  echo "==> Done. v2 SPA live on :7687 (terminal-dev.viktorbarzin.me)."
-fi
+echo "==> Done. The lobby SPA is live on :${REMOTE_PORT} (terminal.viktorbarzin.me)."
+echo "    Roll back: sudo install -m 0644 /usr/local/share/ttyd/index.html.prev \\"
+echo "                 /usr/local/share/ttyd/index.html && sudo systemctl restart ttyd"

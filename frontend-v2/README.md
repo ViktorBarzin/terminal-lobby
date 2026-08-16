@@ -1,11 +1,14 @@
 # frontend-v2 — terminal-lobby v2 frontend (SolidJS + TypeScript)
 
-The from-scratch rewrite of terminal-lobby's frontend (roadmap pillars #0 + #2).
-The build is one inlined HTML file; `scripts/deploy-v2.sh` installs it as
-`index-v2.html` and its own `ttyd-v2` unit serves it (`-I`, port 7687) at
-`terminal-dev.viktorbarzin.me`. It runs **alongside** the vanilla `frontend/` —
-that app is untouched and still serves `terminal.viktorbarzin.me` until v2
-reaches cutover.
+The from-scratch rewrite of terminal-lobby's frontend (roadmap pillars #0 + #2),
+and since the 2026-08-16 cutover **the lobby**. The build is one inlined HTML
+file; `scripts/deploy-v2.sh` installs it as `index.html`, which `ttyd` serves
+(`-I`, port 7681) at `terminal.viktorbarzin.me`.
+
+The vanilla `frontend/` is no longer deployed. It stays in the tree as the
+rollback target and as the parity reference `scripts/test_frontend_compat.py`
+compares against. The `terminal-dev.viktorbarzin.me` canary that carried this
+app before the cutover was retired the same day.
 
 ## What this is
 

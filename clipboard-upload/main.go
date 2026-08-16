@@ -110,7 +110,7 @@ func main() {
 // both hosts, including Path(`/term.html`), keeps
 // the authentik-forward-auth middleware. So a path in this table is not
 // thereby public: /term.html is routed here by BOTH hosts' ingresses and stays
-// gated, exactly as infra/stacks/terminal/{main,terminal-dev}.tf says. What
+// gated, exactly as infra/stacks/terminal/main.tf says. What
 // the table does grant is a direct unauthenticated hit on :7683 from the box
 // or the cluster network, which bypasses the ingress in the first place —
 // acceptable for term.html on the same grounds as the other entries: a fixed
