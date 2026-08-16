@@ -405,7 +405,12 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 
 	mode := ""
 	selfAttach := body.Owner == body.Guest
-	if selfAttach {
+	// asOwner is true when the caller is entitled to the owner's own access —
+	// either because they ARE the owner, or because they administer this box
+	// and are acting as them. It is what gates the create answer below.
+	asOwner := selfAttach
+	switch {
+	case selfAttach:
 		// Self attach. There is no share row to match, and matching one is what
 		// used to validate these two values before they reached a tmux command
 		// — so check them here instead.
@@ -414,7 +419,22 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mode = shareModeRW
-	} else {
+	case actAsGate.IsAdmin(body.Guest) && isMappedOSUser(body.Owner):
+		// Admin acting as the owner. Being an administrator IS the
+		// authorization, so no share row is required and none is created —
+		// which is why the empty share store stays empty. The same two values
+		// still get validated, for the same reason as the self branch.
+		if !sessionNameRe.MatchString(body.Owner) || !sessionNameRe.MatchString(body.Name) {
+			http.Error(w, "invalid owner or session name", http.StatusBadRequest)
+			return
+		}
+		mode = shareModeRW
+		asOwner = true
+		log.Printf("act-as attach: %s attaching %s/%s as owner", body.Guest, body.Owner, body.Name)
+		events.Emit("admin.actas", body.Guest, telemetry.Attrs{
+			"tl.to": body.Owner, "tl.session": body.Name, "tl.client": "attach",
+		})
+	default:
 		err := shareStoreInstance.update(func(ss *ShareSet) error {
 			for i := range ss.Shares {
 				if ss.Shares[i].Owner == body.Owner && ss.Shares[i].Name == body.Name && ss.Shares[i].Guest == body.Guest {
@@ -437,9 +457,19 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mode = effectiveMode(mode, body.Requested)
+
+	// Whether the session is live decides all three things below. A self
+	// attach at rw needs none of them: it never reaches the script's attach
+	// branch, falling through to tmux-user-attach, which is attach-or-create
+	// already — so it does not pay for the lookup.
+	exists := false
+	if !selfAttach || mode == shareModeRO {
+		exists = sessionExists(body.Owner, body.Name)
+	}
+
 	if mode == shareModeRO {
 		switch {
-		case sessionExists(body.Owner, body.Name):
+		case exists:
 			if err := pinGrid(body.Owner, body.Name); err != nil {
 				// Non-fatal: the attach is still read-only, and tmux still
 				// ignores a read-only client's size while a read-write one is
@@ -447,23 +477,35 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 				// read-write client drops.
 				log.Printf("pin grid %s/%s: %v", body.Owner, body.Name, err)
 			}
-		case selfAttach:
-			// Your own session, not started yet: there is nothing to watch, so
-			// hand back rw and let the ordinary create path bring it into
-			// being rather than failing the attach.
+		case asOwner:
+			// The session is not started yet, so there is nothing to watch:
+			// hand back rw and let the create path bring it into being rather
+			// than failing the attach.
 			//
-			// SELF ONLY. Doing this for a shared attach would raise a guest
-			// from the ro their share grants to rw whenever the owner's session
-			// happens to be missing — an escalation, and a racy one, since the
-			// session could appear between this check and the attach. A foreign
-			// ro attach to an absent session stays ro and simply fails, which
-			// is the safe outcome.
+			// OWNER-EQUIVALENT ONLY — the caller's own session, or an admin
+			// acting as them. Doing this for a shared attach would raise a
+			// guest from the ro their share grants to rw whenever the owner's
+			// session happens to be missing: an escalation, and a racy one,
+			// since the session could appear between this check and the
+			// attach. A guest's ro attach to an absent session stays ro and
+			// simply fails, which is the safe outcome.
 			mode = shareModeRW
 		}
 	}
 
+	// create tells tmux-attach.sh to START the session under the owner's
+	// account instead of attaching an existing one — the other half of a full
+	// identity switch, decided here so the script keeps its fixed argv.
+	//
+	// Gated on asOwner for the same reason as the fallback above, and on
+	// !selfAttach because a self attach already creates by another route.
+	create := asOwner && !selfAttach && mode == shareModeRW && !exists
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"mode": mode})
+	_ = json.NewEncoder(w).Encode(struct {
+		Mode   string `json:"mode"`
+		Create bool   `json:"create"`
+	}{mode, create})
 }
 
 var errShareNotFound = errors.New("share not found")
