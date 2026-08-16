@@ -232,16 +232,26 @@ describe("touch ergonomics — sized for a finger, phone or tablet", () => {
     expect(flipBlock()).not.toContain(".tl-session-bar .tl-icon-btn");
   });
 
-  it("reveals the card's action menu, which hover used to gate", () => {
-    // .tl-card-actions is opacity:0 until :hover. There is no hover on a touch
-    // screen, so rename/kill/move were reachable only by tabbing a card into
-    // :focus-within with a keyboard the phone does not have.
+  // The ⋯ button used to be revealed here (opacity:1), because hover never
+  // arrives on a touch screen. That made rename/kill/move reachable, but it
+  // also put a 40px target inside a 40px row, so a thumb aiming at the row's
+  // right half opened the menu instead of the session. Since 2026-08-16 the
+  // button is hidden on touch and a 450ms press on the row opens the same menu
+  // (SessionCard), which hands the whole row back to "open this session".
+  it("hides the card's ⋯ button, since a long press opens the menu", () => {
     const block = touchBlock();
-    expect(block).toMatch(/\.tl-card-actions\s*\{[^}]*opacity:\s*1/);
+    expect(block).toMatch(/\.tl-card-actions\s*\{[^}]*display:\s*none/);
+  });
+
+  it("makes the session row itself a comfortable target", () => {
+    const block = touchBlock();
+    const at = block.indexOf(".tl-card {");
+    expect(at, ".tl-card in the touch block").toBeGreaterThan(-1);
+    const rule = block.slice(at, block.indexOf("}", at));
+    expect(rule).toMatch(/min-height:\s*48px/);
   });
 
   const FLOOR_SELECTORS = [
-    ".tl-card-actions",
     ".tl-menu-item",
     ".tl-head-btn",
     ".tl-foot-btn",

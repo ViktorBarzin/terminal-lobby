@@ -2,6 +2,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  For,
   onCleanup,
   onMount,
   Show,
@@ -33,6 +34,8 @@ import {
   ImageIcon,
 } from "./Icons";
 import { clampFontSize, type PrefsStore } from "../store/prefs";
+import { listDir as fileList } from "../lib/file-api";
+import { uploadBlob } from "../clipboard/upload";
 
 /**
  * The stream badge's wording. Every status but one reads fine as-is; a session
@@ -113,6 +116,10 @@ export const SessionView: Component<{
    *  to travel down to it — flipping the view BEHIND an overlay is invisible and
    *  leaves the overlay standing. */
   overlayOpen?: () => boolean;
+  /** Every OTHER session, for the bar's tap-to-switch picker (phone only). */
+  otherSessions?: () => { name: string; owner?: string }[];
+  /** Switch to another session from the bar's picker. */
+  onSwitchSession?: (name: string, owner?: string) => void;
   /** the file-preview overlay's open + unsaved-draft state, published UP so the
    *  shell's keybinding context can refuse to switch session out from under an
    *  unsaved edit (the preview store is per-session and dies with this view). */
@@ -227,8 +234,44 @@ export const SessionView: Component<{
     if (window.__tlToggleView === toggleView) window.__tlToggleView = prevToggleView;
   });
 
+  // The bar's session picker. Same dismissable-menu machinery as the bar's
+  // overflow menu, so a press anywhere else closes it.
+  const picker = createDismissableMenu(() => () => {});
+
   const send = (t: string) => store.send(t);
   const stop = () => void store.interrupt();
+
+  /**
+   * `@` completion. The composer asks for a directory relative to the session's
+   * own cwd (or absolute when the token starts with /), and gets back bare
+   * names — directories keep their trailing slash so picking one continues into
+   * it rather than ending the token.
+   */
+  const listDir = async (dir: string): Promise<string[]> => {
+    const base = props.dir || "";
+    const target = dir.startsWith("/") ? dir : `${base}/${dir}`.replace(/\/+/g, "/");
+    try {
+      const entries = await fileList(target || "/");
+      return entries.map((e) => (e.isDir ? `${e.name}/` : e.name));
+    } catch {
+      // A path that does not exist yet is an ordinary state while typing.
+      return [];
+    }
+  };
+
+  /** Paste or drop an image into the composer: store it, reference its path. */
+  const attachImage = async (file: File): Promise<string | null> => {
+    try {
+      return await uploadBlob(file, {
+        session,
+        field: "image",
+        filename: file.name,
+      });
+    } catch (err) {
+      props.notify?.(err instanceof Error ? err.message : "Couldn't attach the image", "error");
+      return null;
+    }
+  };
   const resolve = (reqId: string, d: PermissionDecision) =>
     void store.resolvePermission(reqId, d);
 
@@ -335,9 +378,50 @@ export const SessionView: Component<{
     <div class="tl-session-view" data-mode={mode()}>
       <div class="tl-session-bar">
         {props.leading}
-        <span class="tl-session" title="session">
-          {session}
-        </span>
+        {/* The session name doubles as the switcher on a phone: tapping it
+            lists the others, so changing session does not mean going back to
+            the list, finding it and tapping again. On a desktop it stays a
+            label — the sidebar is right there. */}
+        <Show
+          when={props.onSwitchSession && coarse()}
+          fallback={
+            <span class="tl-session" title="session">
+              {session}
+            </span>
+          }
+        >
+          <span class="tl-session-picker" ref={picker.anchor}>
+            <button
+              type="button"
+              class="tl-session tl-session-switch"
+              aria-haspopup="menu"
+              aria-expanded={picker.open()}
+              onClick={() => picker.toggle()}
+            >
+              {session}
+              <span class="tl-session-caret">▾</span>
+            </button>
+            <Show when={picker.open()}>
+              <div class="tl-menu tl-session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                <For each={props.otherSessions?.() ?? []}>
+                  {(other) => (
+                    <button
+                      type="button"
+                      class="tl-menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        picker.close();
+                        props.onSwitchSession?.(other.name, other.owner);
+                      }}
+                    >
+                      {other.name}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </span>
+        </Show>
         {/* The TEXT view's status, and only its. It reports the SSE transcript
             stream that feeds that view — on the Terminal view (v1's default,
             with the text view deferred) it was the bar's ONLY badge, so a plain
@@ -509,6 +593,14 @@ export const SessionView: Component<{
             onResolve={resolve}
             sendToTerminal={coarse() ? sendBytesToPty : undefined}
             onOpenPreview={(path) => void preview.open(path)}
+            onKeys={store.answer}
+            onLoadFull={store.fullResult}
+            onLoadEarlier={async () => {
+              await store.loadEarlier();
+            }}
+            hasEarlier={store.hasEarlier()}
+            onListDir={listDir}
+            onAttachImage={attachImage}
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>

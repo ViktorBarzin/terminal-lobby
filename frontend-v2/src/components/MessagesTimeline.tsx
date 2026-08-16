@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   For,
+  onCleanup,
   Show,
   type Accessor,
   type Component,
@@ -14,25 +15,32 @@ import {
   sameRow,
   visibleRows,
   type ErrorRow,
+  type LeafRow,
   type MessageRow,
+  type MetaRow,
   type PermissionRow,
+  type PlanRow,
+  type QuestionRow,
   type StatusRow,
+  type ThinkingRow,
   type TimelineRow,
+  type TodoRow,
   type ToolRow,
   type TurnFoldRow,
   type UserRow,
   type WorkingRow,
 } from "./timeline.logic";
 import { Markdown } from "./Markdown";
-import { basename, parseToolPath } from "../store/preview.logic";
-
-function formatDuration(ms: number | undefined): string {
-  if (!ms || ms <= 0) return "";
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${s % 60}s`;
-}
+import {
+  MetaRowView,
+  PlanRowView,
+  QuestionRowView,
+  ThinkingRowView,
+  TodoRowView,
+  ToolRowView,
+  TurnFoldRowView,
+  WorkingRowView,
+} from "./rows";
 
 const USER_COLLAPSE_CHARS = 600;
 
@@ -70,66 +78,6 @@ const MessageRowView: Component<{ row: MessageRow }> = (props) => (
   </div>
 );
 
-const ToolRowView: Component<{
-  row: ToolRow;
-  onOpenPreview?: (path: string) => void;
-}> = (props) => {
-  const [open, setOpen] = createSignal(false);
-  const status = () =>
-    !props.row.done ? "running" : props.row.isError ? "error" : "ok";
-  const tick = () =>
-    !props.row.done ? "…" : props.row.isError ? "✗" : "✓";
-  // A Read/Edit/Write file path becomes a preview link when a handler is wired.
-  const previewPath = () =>
-    props.onOpenPreview ? parseToolPath(props.row.tool, props.row.input) : null;
-  return (
-    <div class="tl-row tl-row-tool" data-status={status()}>
-      <div class="tl-tool-head">
-        <button
-          type="button"
-          class="tl-tool-toggle"
-          aria-expanded={open()}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span class="tl-tool-caret">{open() ? "▾" : "▸"}</span>
-          <span class="tl-tool-name">{props.row.tool || "tool"}</span>
-        </button>
-        <Show when={previewPath()}>
-          {(p) => (
-            <button
-              type="button"
-              class="tl-tool-pathchip"
-              title={`Preview ${p()}`}
-              onClick={() => props.onOpenPreview?.(p())}
-            >
-              {basename(p())}
-            </button>
-          )}
-        </Show>
-        <span class="tl-tool-tick" data-status={status()}>
-          {tick()}
-        </span>
-      </div>
-      <Show when={open()}>
-        <div class="tl-tool-raw">
-          <Show when={props.row.input}>
-            <div class="tl-tool-section-label">input</div>
-            <pre class="tl-code">{props.row.input}</pre>
-          </Show>
-          <Show when={props.row.result !== undefined}>
-            <div class="tl-tool-section-label">
-              output{props.row.isError ? " (error)" : ""}
-            </div>
-            <pre class="tl-code" classList={{ "tl-code-error": props.row.isError }}>
-              {props.row.result}
-            </pre>
-          </Show>
-        </div>
-      </Show>
-    </div>
-  );
-};
-
 const PermissionRowView: Component<{ row: PermissionRow }> = (props) => {
   const state = () =>
     props.row.decision ? `resolved: ${props.row.decision}` : "awaiting decision";
@@ -154,45 +102,18 @@ const StatusRowView: Component<{ row: StatusRow }> = (props) => (
   </div>
 );
 
-const WorkingRowView: Component<{ row: WorkingRow }> = () => (
-  <div class="tl-row tl-row-working" aria-live="polite">
-    <span class="tl-working-dot" />
-    <span class="tl-working-text">Working…</span>
-  </div>
-);
-
-const TurnFoldRowView: Component<{
-  row: TurnFoldRow;
-  expanded: boolean;
-  onToggle: (turnKey: string) => void;
-}> = (props) => (
-  <div class="tl-row tl-row-fold">
-    <button
-      type="button"
-      class="tl-fold-btn"
-      aria-expanded={props.expanded}
-      data-has-error={props.row.hasError ? "true" : undefined}
-      onClick={() => props.onToggle(props.row.turnKey)}
-    >
-      <span class="tl-fold-caret">{props.expanded ? "▾" : "▸"}</span>
-      <span class="tl-fold-label">
-        {props.row.durationMs
-          ? `Worked for ${formatDuration(props.row.durationMs)}`
-          : "Worked"}
-        {" · "}
-        {props.row.count} {props.row.count === 1 ? "step" : "steps"}
-      </span>
-      {/* A fold is the only thing standing for the steps it hides, so a hidden
-          failure has to surface here — in words, not by colour alone. */}
-      <Show when={props.row.hasError}>
-        <span class="tl-fold-error">✗ failed</span>
-      </Show>
-    </button>
-  </div>
-);
-
 /** How far off the bottom still counts as "reading the live end". */
 const PIN_SLACK_PX = 40;
+
+/**
+ * Rows rendered above and below the viewport. A transcript's rows vary wildly
+ * in height (a one-line tool row, a 200-line diff), so windowing by index needs
+ * generous margins or fast scrolling shows blank space.
+ */
+const OVERSCAN = 12;
+
+/** Below this many rows, windowing costs more than it saves. */
+const VIRTUALIZE_ABOVE = 120;
 
 const sameKeys = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((k, i) => k === b[i]);
@@ -200,7 +121,8 @@ const sameKeys = (a: readonly string[], b: readonly string[]): boolean =>
 /**
  * Structured text-mode renderer. Derives folded rows from the raw event stream
  * (pure logic in timeline.logic) and maps each row kind to a view. Turn-fold
- * rows expand and re-fold in place; tool rows expand to raw I/O.
+ * rows expand and re-fold in place; tool rows expand to their real payload —
+ * a diff for an edit, stdout and stderr for a command.
  *
  * Rows are reconciled by KEY, not by object reference. deriveRows allocates
  * fresh row objects on every call, so a reference-keyed `<For each={rows()}>`
@@ -214,6 +136,14 @@ export const MessagesTimeline: Component<{
   events: Event[];
   /** open a file path in the preview overlay (Read/Edit/Write tool rows). */
   onOpenPreview?: (path: string) => void;
+  /** fetch a capped tool result in full. */
+  onLoadFull?: (toolId: string) => Promise<string | null>;
+  /** answer the blocking question by its option index. */
+  onAnswer?: (row: QuestionRow, optionIndex: number) => void;
+  /** load the window of turns before the oldest one held. */
+  onLoadEarlier?: () => Promise<void>;
+  /** true while older turns exist to load. */
+  hasEarlier?: boolean;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -234,7 +164,7 @@ export const MessagesTimeline: Component<{
     }
     return { keys, byKey };
   });
-  const keys = createMemo<string[]>(() => keyed().keys, [], {
+  const allKeys = createMemo<string[]>(() => keyed().keys, [], {
     equals: sameKeys,
   });
 
@@ -261,6 +191,51 @@ export const MessagesTimeline: Component<{
       return next;
     });
 
+  // A ticking clock for the working row's elapsed timer. One timer for the
+  // whole timeline, running only while something is actually working — a
+  // per-row interval would re-render the list once a second forever.
+  const [now, setNow] = createSignal(0);
+  createEffect(() => {
+    const working = rows().some((r) => r.kind === "working");
+    if (!working) {
+      setNow(0);
+      return;
+    }
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => clearInterval(t));
+  });
+
+  // A leaf row inside a subagent's sub-timeline. Rendered directly rather than
+  // through the key machinery: it is owned by its parent tool row, which the
+  // memo already holds stable.
+  const renderLeaf = (row: LeafRow): JSX.Element => {
+    switch (row.kind) {
+      case "message":
+        return <MessageRowView row={row} />;
+      case "thinking":
+        return <ThinkingRowView row={row} />;
+      case "tool":
+        return <ToolRowView row={row} onOpenPreview={props.onOpenPreview} onLoadFull={props.onLoadFull} renderChild={renderLeaf} />;
+      case "todo":
+        return <TodoRowView row={row} />;
+      case "question":
+        return <QuestionRowView row={row} />;
+      case "plan":
+        return <PlanRowView row={row} />;
+      case "meta":
+        return <MetaRowView row={row} />;
+      case "error":
+        return <ErrorRowView row={row} />;
+      case "status":
+        return <StatusRowView row={row} />;
+      case "user":
+        return <UserRowView row={row} />;
+      case "permission":
+        return <PermissionRowView row={row} />;
+    }
+  };
+
   // The row kind is encoded in its key, so a node never changes kind under
   // itself and the switch can run once, at creation.
   const renderRow = (key: string): JSX.Element => {
@@ -270,13 +245,30 @@ export const MessagesTimeline: Component<{
         return <UserRowView row={row() as UserRow} />;
       case "message":
         return <MessageRowView row={row() as MessageRow} />;
+      case "thinking":
+        return <ThinkingRowView row={row() as ThinkingRow} />;
       case "tool":
         return (
           <ToolRowView
             row={row() as ToolRow}
             onOpenPreview={props.onOpenPreview}
+            onLoadFull={props.onLoadFull}
+            renderChild={renderLeaf}
           />
         );
+      case "todo":
+        return <TodoRowView row={row() as TodoRow} />;
+      case "question":
+        return (
+          <QuestionRowView
+            row={row() as QuestionRow}
+            onAnswer={(i) => props.onAnswer?.(row() as QuestionRow, i)}
+          />
+        );
+      case "plan":
+        return <PlanRowView row={row() as PlanRow} />;
+      case "meta":
+        return <MetaRowView row={row() as MetaRow} />;
       case "permission":
         return <PermissionRowView row={row() as PermissionRow} />;
       case "error":
@@ -284,7 +276,7 @@ export const MessagesTimeline: Component<{
       case "status":
         return <StatusRowView row={row() as StatusRow} />;
       case "working":
-        return <WorkingRowView row={row() as WorkingRow} />;
+        return <WorkingRowView row={row() as WorkingRow} now={now()} />;
       case "turn-fold":
         return (
           <TurnFoldRowView
@@ -302,19 +294,61 @@ export const MessagesTimeline: Component<{
   // scrolls up to read something.
   let scroller: HTMLDivElement | undefined;
   const [pinned, setPinned] = createSignal(true);
+  const [top, setTop] = createSignal(0);
+  const [height, setHeight] = createSignal(0);
+
+  // Windowing. Row heights vary far too much to measure ahead, so the window is
+  // an index range around the scroll position derived from an AVERAGE row
+  // height, padded by OVERSCAN on both sides. The spacers keep the scrollbar
+  // honest. Below VIRTUALIZE_ABOVE rows everything renders, which is the common
+  // case and keeps behaviour (and tests) simple.
+  const windowed = createMemo(() => {
+    const keys = allKeys();
+    if (keys.length <= VIRTUALIZE_ABOVE || height() === 0) {
+      return { keys, before: 0, after: 0 };
+    }
+    const avg = Math.max(28, (scroller?.scrollHeight ?? 0) / keys.length);
+    const first = Math.max(0, Math.floor(top() / avg) - OVERSCAN);
+    const visible = Math.ceil(height() / avg) + OVERSCAN * 2;
+    const last = Math.min(keys.length, first + visible);
+    return {
+      keys: keys.slice(first, last),
+      before: first * avg,
+      after: (keys.length - last) * avg,
+    };
+  });
+
   const onScroll = () => {
     const el = scroller;
-    if (el) {
-      setPinned(el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX);
-    }
+    if (!el) return;
+    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX);
+    setTop(el.scrollTop);
+    setHeight(el.clientHeight);
   };
+
   createEffect(() => {
     derived(); // the TRANSCRIPT grew — follow it. Expanding a fold must not
     // move the viewport: you clicked to read what was hidden.
     const el = scroller;
-    if (!el || !pinned()) return;
+    if (!el) return;
+    if (height() === 0) setHeight(el.clientHeight);
+    if (!pinned()) return;
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    setTop(el.scrollTop);
   });
+
+  const [loadingEarlier, setLoadingEarlier] = createSignal(false);
+  const loadEarlier = async () => {
+    if (!props.onLoadEarlier || loadingEarlier()) return;
+    setLoadingEarlier(true);
+    const el = scroller;
+    const before = el?.scrollHeight ?? 0;
+    await props.onLoadEarlier();
+    // Keep the reader where they were: prepending rows would otherwise push
+    // what they are looking at down the page by the height of everything added.
+    if (el) el.scrollTop += el.scrollHeight - before;
+    setLoadingEarlier(false);
+  };
 
   return (
     <div
@@ -324,11 +358,34 @@ export const MessagesTimeline: Component<{
       ref={scroller}
       onScroll={onScroll}
     >
+      <Show when={props.hasEarlier}>
+        <div class="tl-row tl-row-earlier">
+          <button type="button" class="tl-linkbtn" onClick={loadEarlier} disabled={loadingEarlier()}>
+            {loadingEarlier() ? "Loading…" : "Load earlier turns"}
+          </button>
+        </div>
+      </Show>
       <Show
-        when={keys().length > 0}
+        when={allKeys().length > 0}
         fallback={<div class="tl-empty-state">No messages yet.</div>}
       >
-        <For each={keys()}>{(key) => renderRow(key)}</For>
+        <div style={{ height: `${windowed().before}px` }} aria-hidden="true" />
+        <For each={windowed().keys}>{(key) => renderRow(key)}</For>
+        <div style={{ height: `${windowed().after}px` }} aria-hidden="true" />
+      </Show>
+      <Show when={!pinned()}>
+        <button
+          type="button"
+          class="tl-scroll-end"
+          onClick={() => {
+            const el = scroller;
+            if (!el) return;
+            el.scrollTop = el.scrollHeight;
+            setPinned(true);
+          }}
+        >
+          ↓ Latest
+        </button>
       </Show>
     </div>
   );
