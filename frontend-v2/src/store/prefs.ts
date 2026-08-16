@@ -36,12 +36,19 @@ export interface Prefs {
   fontSize: number;
   session: { newCommand: NewCommand };
   notify: { onDone: boolean; onAwaiting: boolean };
+  /** Session-list display. `showLastActive` governs the relative "5m ago" on
+   *  each card — OFF by default, and deliberately not the running session's
+   *  live working timer, which is progress on the turn in flight rather than a
+   *  timestamp. Its own namespace because the vanilla page never wrote one, so
+   *  there is nothing to collide with. */
+  sidebar: { showLastActive: boolean };
 }
 
 export interface PrefsPatch {
   fontSize?: number;
   session?: Partial<Prefs["session"]>;
   notify?: Partial<Prefs["notify"]>;
+  sidebar?: Partial<Prefs["sidebar"]>;
 }
 
 // Device-local + roamed keys — the exact names the vanilla app uses, so the two
@@ -58,6 +65,7 @@ export const PREF_DEFAULTS: Prefs = {
   fontSize: FONT_SIZE_DEFAULT,
   session: { newCommand: DEFAULT_NEW_COMMAND },
   notify: { onDone: true, onAwaiting: true },
+  sidebar: { showLastActive: false },
 };
 
 // ---- pure helpers (exported for unit tests) -------------------------------
@@ -93,6 +101,7 @@ export function coercePrefs(raw: unknown): Prefs {
   const src = isPlainObject(raw) ? raw : {};
   const session = isPlainObject(src.session) ? src.session : {};
   const notify = isPlainObject(src.notify) ? src.notify : {};
+  const sidebar = isPlainObject(src.sidebar) ? src.sidebar : {};
   return {
     fontSize: isValidFontSize(src.fontSize) ? src.fontSize : FONT_SIZE_DEFAULT,
     session: {
@@ -104,6 +113,12 @@ export function coercePrefs(raw: unknown): Prefs {
       onDone: typeof notify.onDone === "boolean" ? notify.onDone : true,
       onAwaiting:
         typeof notify.onAwaiting === "boolean" ? notify.onAwaiting : true,
+    },
+    sidebar: {
+      // Anything that is not literally `true` is off — including a stored
+      // "true" string. Every doc written before this pref existed lacks the
+      // namespace entirely, which is what makes it off for everyone already.
+      showLastActive: sidebar.showLastActive === true,
     },
   };
 }
@@ -121,6 +136,7 @@ export function composeDoc(
   const base = isPlainObject(raw) ? { ...raw } : {};
   const session = isPlainObject(base.session) ? base.session : {};
   const notify = isPlainObject(base.notify) ? base.notify : {};
+  const sidebar = isPlainObject(base.sidebar) ? base.sidebar : {};
   return {
     ...base,
     fontSize: prefs.fontSize,
@@ -130,6 +146,7 @@ export function composeDoc(
       onDone: prefs.notify.onDone,
       onAwaiting: prefs.notify.onAwaiting,
     },
+    sidebar: { ...sidebar, showLastActive: prefs.sidebar.showLastActive },
   };
 }
 
@@ -146,7 +163,7 @@ export function mergeAdopt(
   const local = isPlainObject(localRaw) ? localRaw : {};
   const server = isPlainObject(serverRaw) ? serverRaw : {};
   const merged: Record<string, unknown> = { ...local, ...server };
-  for (const k of ["session", "notify"] as const) {
+  for (const k of ["session", "notify", "sidebar"] as const) {
     const l = isPlainObject(local[k]) ? local[k] : {};
     const s = isPlainObject(server[k]) ? server[k] : {};
     merged[k] = { ...l, ...s };
@@ -174,6 +191,11 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("session.newCommand", prev.session.newCommand, next.session.newCommand);
   diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
   diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
+  diff(
+    "sidebar.showLastActive",
+    prev.sidebar.showLastActive,
+    next.sidebar.showLastActive,
+  );
   return out;
 }
 
@@ -183,6 +205,7 @@ export function applyPatch(cur: Prefs, patch: PrefsPatch): Prefs {
     fontSize: patch.fontSize !== undefined ? patch.fontSize : cur.fontSize,
     session: { ...cur.session, ...(patch.session ?? {}) },
     notify: { ...cur.notify, ...(patch.notify ?? {}) },
+    sidebar: { ...cur.sidebar, ...(patch.sidebar ?? {}) },
   };
 }
 

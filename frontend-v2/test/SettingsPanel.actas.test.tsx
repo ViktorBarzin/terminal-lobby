@@ -42,10 +42,10 @@ describe("Settings — the act-as picker", () => {
       switchTo: () => {},
     });
     const sel = picker(container);
-    expect(sel).not.toBeNull();
-    const options = Array.from(sel!.options).map((o) => o.value);
-    expect(options).toEqual(["", "carol", "bob"]);
-    expect(sel!.options[0].textContent).toContain("myself");
+    if (!sel) throw new Error("expected the act-as picker to render");
+    const options = Array.from(sel.options);
+    expect(options.map((o) => o.value)).toEqual(["", "carol", "bob"]);
+    expect(options.map((o) => o.textContent ?? "")[0]).toContain("myself");
   });
 
   it("shows who the tab is currently acting as", () => {

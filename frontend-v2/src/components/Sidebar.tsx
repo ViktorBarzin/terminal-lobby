@@ -53,6 +53,11 @@ export const Sidebar: Component<{
 }> = (props) => {
   const store = props.store;
 
+  // The roamed session-list pref, read once here and threaded to every card
+  // (through ProjectGroup for projects and Ungrouped, directly for the
+  // shared-with-me section).
+  const showLastActive = () => props.prefs.prefs().sidebar.showLastActive;
+
   // Restore picker overlay (2026-08-14). The footer button opens it rather than
   // restoring immediately: after a partial loss the newest snapshot is the
   // already-pruned one, so which version to restore from is a choice.
@@ -189,7 +194,14 @@ export const Sidebar: Component<{
 
         <For each={visibleGroups()}>
           {(g) => (
-            <ProjectGroup store={store} group={g} tick={tick} badge={badge} confirm={props.confirm} />
+            <ProjectGroup
+              store={store}
+              group={g}
+              tick={tick}
+              badge={badge}
+              confirm={props.confirm}
+              showLastActive={showLastActive}
+            />
           )}
         </For>
 
@@ -220,7 +232,16 @@ export const Sidebar: Component<{
             <Show when={!sharedCollapsed()}>
               <div class="tl-group-body">
                 <For each={store.model().foreign}>
-                  {(s) => <SessionCard store={store} session={s} groupName="" tick={tick} badge={badge} />}
+                  {(s) => (
+                    <SessionCard
+                      store={store}
+                      session={s}
+                      groupName=""
+                      tick={tick}
+                      badge={badge}
+                      showLastActive={showLastActive}
+                    />
+                  )}
                 </For>
               </div>
             </Show>
