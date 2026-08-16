@@ -20,7 +20,8 @@ import { TerminalView } from "./TerminalView";
 import { FilePreview } from "./FilePreview";
 import { createPreviewStore } from "../store/preview";
 import { SoftKeys } from "./SoftKeys";
-import { createCoarsePointer } from "../mobile/pointer";
+import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
+import { createDismissableMenu } from "./menu";
 import { installViewportSync } from "../mobile/viewport";
 import { installImageClipboard } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
@@ -65,11 +66,15 @@ export const SessionView: Component<{
    *  that session would be dragged down with it. Defaults to visible. */
   visible?: boolean;
   /** Bar slots. On a phone the shell bar is folded into this one to buy back a
-   *  40px row, so the back control and Settings are passed in from the shell
-   *  rather than duplicated here. Empty on a desktop, where the shell bar
-   *  carries them itself. */
+   *  40px row, so the shell's own controls are passed in rather than duplicated
+   *  here. Both are empty on a desktop, where the shell bar carries them itself.
+   *
+   *  `leading` is a control (the back button); `menuExtra` is `.tl-menu-item`
+   *  rows for the bar's overflow menu, because at 390px there is no room for
+   *  another button — measured, the bar's own controls left 29px for the
+   *  session name. Clicking anything in there closes the menu. */
   leading?: JSX.Element;
-  trailing?: JSX.Element;
+  menuExtra?: JSX.Element;
   /** real OS-user owner when this is a shared/foreign attach (else undefined). */
   owner?: string;
   /** TRUE while the app is CREATING this session (the poll has never seen it):
@@ -233,6 +238,12 @@ export const SessionView: Component<{
   // the pty is alive even while text mode shows). `body.has-soft-keys` reserves
   // a REAL height so the view surface shrinks above the toolbar.
   const coarse = createCoarsePointer();
+  // The phone bar carries a back control and a view switch and still has to
+  // name the session, so the per-session actions move behind a ⋯. No poll to
+  // hold here — that contract belongs to the sidebar's menus, whose list a poll
+  // can rebuild underneath them.
+  const flip = createMobileFlip();
+  const barMenu = createDismissableMenu(() => () => {});
   const sendBytesToPty = (bytes: string): void => {
     window.__tlSendToTerminal?.(bytes);
   };
@@ -392,42 +403,95 @@ export const SessionView: Component<{
             </button>
           </span>
         </Show>
-        <button
-          class="tl-icon-btn tl-preview-btn"
-          aria-label="File preview"
-          title="Preview files"
-          onClick={() => preview.show()}
-        >
-          <FileTextIcon />
-          <span class="tl-btn-label">Files</span>
-        </button>
-        {/* Watch mode. Deliberately OUTSIDE the coarse-pointer guard and next to
-            the view switch, because the phone is where it matters most and it
-            has to be reachable from the TEXT view — the Terminal view's first
-            show is what triggers the attach, and an attach that has already
-            happened read-write has already claimed the grid. */}
-        <button
-          class="tl-icon-btn tl-watch-btn"
-          classList={{ "tl-watch-on": watch() }}
-          aria-label={watch() ? "Watching — tap to take control" : "Watch only"}
-          aria-pressed={watch()}
-          title={
-            watch()
-              ? "Watching: this device can't type and never resizes the session"
-              : "Watch only: observe without typing or resizing the session"
-          }
-          onClick={() => toggleWatch()}
-        >
-          <EyeIcon />
-          <span class="tl-btn-label">{watch() ? "Watching" : "Watch"}</span>
-        </button>
+        {/* Files and Watch are buttons wherever the bar has room. On a phone
+            they move into the ⋯ below: the bar also has to carry a back control
+            and the view switch, and measured at 390px the six of them together
+            left 29px for the session name. */}
+        <Show when={!flip()}>
+          <button
+            class="tl-icon-btn tl-preview-btn"
+            aria-label="File preview"
+            title="Preview files"
+            onClick={() => preview.show()}
+          >
+            <FileTextIcon />
+            <span class="tl-btn-label">Files</span>
+          </button>
+          {/* Watch mode. Deliberately OUTSIDE the coarse-pointer guard and next
+              to the view switch, because the phone is where it matters most and
+              it has to be reachable from the TEXT view — the Terminal view's
+              first show is what triggers the attach, and an attach that has
+              already happened read-write has already claimed the grid. The ⋯
+              below keeps that property: the bar is shared by both views. */}
+          <button
+            class="tl-icon-btn tl-watch-btn"
+            classList={{ "tl-watch-on": watch() }}
+            aria-label={watch() ? "Watching — tap to take control" : "Watch only"}
+            aria-pressed={watch()}
+            title={
+              watch()
+                ? "Watching: this device can't type and never resizes the session"
+                : "Watch only: observe without typing or resizing the session"
+            }
+            onClick={() => toggleWatch()}
+          >
+            <EyeIcon />
+            <span class="tl-btn-label">{watch() ? "Watching" : "Watch"}</span>
+          </button>
+        </Show>
+        <Show when={flip()}>
+          <span class="tl-bar-menu" ref={barMenu.anchor}>
+            <button
+              class="tl-icon-btn tl-bar-menu-btn"
+              aria-label="Session actions"
+              aria-haspopup="menu"
+              aria-expanded={barMenu.open()}
+              onClick={barMenu.toggle}
+            >
+              ⋯
+            </button>
+            <Show when={barMenu.open()}>
+              <div class="tl-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                <button
+                  class="tl-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    barMenu.close();
+                    preview.show();
+                  }}
+                >
+                  Files
+                </button>
+                <button
+                  class="tl-menu-item"
+                  role="menuitemcheckbox"
+                  aria-checked={watch()}
+                  onClick={() => {
+                    barMenu.close();
+                    toggleWatch();
+                  }}
+                >
+                  {watch() ? "✓ Watching" : "Watch only"}
+                </button>
+                {/* The shell's own items (Settings). display:contents keeps the
+                    menu's layout while giving their clicks somewhere to bubble
+                    to — the shell has no handle on this menu to close it. */}
+                <span
+                  style={{ display: "contents" }}
+                  onClick={() => barMenu.close()}
+                >
+                  {props.menuExtra}
+                </span>
+              </div>
+            </Show>
+          </span>
+        </Show>
         <ViewSwitch
           mode={mode()}
           onSet={setMode}
           textDot={textDot()}
           terminalDot={terminalDot()}
         />
-        {props.trailing}
       </div>
 
       <main class="tl-views">
