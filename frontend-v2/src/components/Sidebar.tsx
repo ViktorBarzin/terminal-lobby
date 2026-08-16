@@ -7,6 +7,7 @@ import {
   Show,
   type Accessor,
   type Component,
+  type JSX,
 } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
 import type { PrefsStore } from "../store/prefs";
@@ -45,6 +46,10 @@ export const Sidebar: Component<{
    *  Settings gear) into the session bar. That bar only exists once a session
    *  is open, so the sidebar's own screen carries the gear instead. */
   onOpenSettings?: () => void;
+  /** The act-as chip, for the same reason as onOpenSettings: the phone folds
+   *  away the shell bar that carries it on a desktop, so the sidebar's own
+   *  screen needs a route back to your own lobby. */
+  actAsChip?: JSX.Element;
 }> = (props) => {
   const store = props.store;
 
@@ -250,6 +255,7 @@ export const Sidebar: Component<{
             Restore
           </button>
         </Show>
+        {props.actAsChip}
         <Show when={props.onOpenSettings}>
           {(open) => (
             <button

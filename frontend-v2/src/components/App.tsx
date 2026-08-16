@@ -37,6 +37,8 @@ import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/p
 import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
+import { actAsUrl } from "../lib/act-as";
+import { listUsers } from "../lib/lobby-api";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 
@@ -198,6 +200,35 @@ export const App: Component = () => {
   };
 
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+
+  // --- act as another user (admin only) -------------------------------------
+  //
+  // actingAs comes from the SERVER's /whoami (realUser present ⇒ switched), not
+  // from ACT_AS: the URL is only the ask, and a tab whose ?as= the server
+  // refused must not paint itself as somebody else. ACT_AS is used solely to
+  // pre-select the dropdown before whoami lands.
+  const actingAs = createMemo(() => {
+    const w = store.whoami();
+    return w?.realUser ? w.osUser : "";
+  });
+  const isAdmin = createMemo(() => store.whoami()?.admin === true);
+  const [actAsUsers, setActAsUsers] = createSignal<string[]>([]);
+  createEffect(() => {
+    if (!isAdmin() || actAsUsers().length > 0) return;
+    const real = store.whoami()?.realUser ?? store.whoami()?.osUser ?? "";
+    void listUsers().then((us) => setActAsUsers(us.filter((u) => u !== real)));
+  });
+  const switchToUser = (osUser: string): void => {
+    if (osUser === actingAs()) return;
+    track(osUser ? "admin.actas" : "admin.actas.exit", { "tl.to": osUser });
+    window.location.href = actAsUrl(window.location.href, osUser);
+  };
+  const actAsControl = createMemo(() =>
+    isAdmin()
+      ? { users: actAsUsers, current: actingAs, switchTo: switchToUser }
+      : undefined,
+  );
+
   const selectedName = createMemo(() => store.selected()?.name ?? null);
   // Nothing selected (killed, or the last session closed) => walk back to the
   // list. Without this the phone shows an empty terminal pane whose only exit
@@ -352,6 +383,29 @@ export const App: Component = () => {
   onMount(() => window.addEventListener("keydown", onSlashKey, true));
   onCleanup(() => window.removeEventListener("keydown", onSlashKey, true));
 
+  // The act-as chip, rendered into whichever bar is on screen alongside the
+  // gear. With a full identity switch there is no server-side difference
+  // between you and the person you are acting as, so this plus the tinted frame
+  // is what separates a deliberate action from typing into the wrong tab.
+  const actAsChip = () => (
+    <Show when={actingAs()}>
+      {(who) => (
+        <button
+          type="button"
+          class="tl-actas-chip"
+          title={`Acting as ${who()} — click to return to your own lobby`}
+          aria-label={`Acting as ${who()}. Return to your own lobby`}
+          onClick={() => switchToUser("")}
+        >
+          <span class="tl-actas-who">{who()}</span>
+          <span class="tl-actas-x" aria-hidden="true">
+            ✕
+          </span>
+        </button>
+      )}
+    </Show>
+  );
+
   // Authored once, rendered into whichever bar is on screen: the shell bar on a
   // desktop, the merged session bar on a phone.
   const settingsButton = () => (
@@ -372,7 +426,13 @@ export const App: Component = () => {
   return (
     <div
       class="tl-shell"
-      classList={{ "tl-shell-collapsed": collapsed(), "tl-flip": flip() }}
+      classList={{
+        "tl-shell-collapsed": collapsed(),
+        "tl-flip": flip(),
+        // Paints the coloured frame + tinted bars. Driven by the server's
+        // answer, so a refused ?as= leaves the tab looking exactly like yours.
+        "tl-acting-as": !!actingAs(),
+      }}
     >
       <aside class="tl-shell-sidebar">
         <Sidebar
@@ -391,6 +451,10 @@ export const App: Component = () => {
                 }
               : undefined
           }
+          // Same reason as onOpenSettings: on a phone the shell bar that
+          // carries the chip is folded away, so the list screen needs its own
+          // one-tap route back to your own lobby.
+          actAsChip={flip() ? actAsChip() : undefined}
         />
       </aside>
 
@@ -409,6 +473,7 @@ export const App: Component = () => {
               where the vanilla page keeps it. The shell bar carries the
               collapse arrow, the brand and Settings. */}
           <span class="tl-shellbar-spacer" />
+          {actAsChip()}
           {settingsButton()}
         </div>
 
@@ -491,6 +556,7 @@ export const App: Component = () => {
             altLabel: engine.altLabel,
           }}
           notifications={notifications}
+          actAs={actAsControl()}
         />
       </Show>
 
