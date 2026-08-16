@@ -30,14 +30,17 @@ describe("<MessagesTimeline> (smoke)", () => {
     const strong = container.querySelector("strong");
     expect(strong?.textContent).toBe("done");
     expect(container.textContent).toContain("All");
-    // the fold summary is present, and folded work (the Bash tool) is hidden
+    // the fold summary is present, and folded work (the command) is hidden
     expect(getByText(/Worked/)).toBeInTheDocument();
     expect(getByText(/2 steps/)).toBeInTheDocument();
-    expect(queryByText("Bash")).toBeNull();
+    expect(queryByText("ls")).toBeNull();
 
-    // expanding the fold reveals the hidden tool row
+    // Expanding the fold reveals the hidden tool row. Since 2026-08-16 that row
+    // is labelled with what the call is DOING — the command, not "Bash" — so
+    // the reader can tell two Bash calls apart without opening either.
     fireEvent.click(getByRole("button", { name: /Worked/ }));
-    expect(getByText("Bash")).toBeInTheDocument();
+    expect(getByText("ls")).toBeInTheDocument();
+    expect(getByText("Command")).toBeInTheDocument();
   });
 
   it("shows a working indicator while the last turn is still running", () => {

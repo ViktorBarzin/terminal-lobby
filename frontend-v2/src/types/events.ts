@@ -23,6 +23,8 @@ export type EventKind =
   | "session"
   | "user"
   | "text"
+  | "thinking"
+  | "meta"
   | "tool_use"
   | "tool_result"
   | "result"
@@ -44,6 +46,31 @@ export interface Event {
   reqId?: string;
   isError?: boolean;
   at?: number;
+  /** `toolUseResult` — the structured result (stdout/stderr, structuredPatch). */
+  result?: unknown;
+  /** `message.usage` from the assistant message that closed the turn. */
+  usage?: TokenUsage;
+  /** Set on `meta` events only. */
+  meta?: MetaKind;
+  /** Subagent work, nested rather than interleaved. */
+  sidechain?: boolean;
+  /** body/result were capped for the wire; the rest is fetched on demand. */
+  truncated?: boolean;
+}
+
+/** The subtype of a `meta` event — the session's lifecycle, not its content. */
+export type MetaKind =
+  | "mode"
+  | "permission-mode"
+  | "queued"
+  | "compact"
+  | "hook-error";
+
+export interface TokenUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
 }
 
 /** Permission decision the web client can POST. Matches Go DecisionAllow/Deny. */
@@ -58,6 +85,8 @@ const KINDS: ReadonlySet<string> = new Set<EventKind>([
   "session",
   "user",
   "text",
+  "thinking",
+  "meta",
   "tool_use",
   "tool_result",
   "result",
@@ -88,5 +117,10 @@ export function parseEvent(data: string): Event | null {
   if (typeof o.reqId === "string") ev.reqId = o.reqId;
   if (typeof o.isError === "boolean") ev.isError = o.isError;
   if (typeof o.at === "number") ev.at = o.at;
+  if (o.result !== undefined) ev.result = o.result;
+  if (o.usage && typeof o.usage === "object") ev.usage = o.usage as TokenUsage;
+  if (typeof o.meta === "string") ev.meta = o.meta as MetaKind;
+  if (o.sidechain === true) ev.sidechain = true;
+  if (o.truncated === true) ev.truncated = true;
   return ev;
 }
