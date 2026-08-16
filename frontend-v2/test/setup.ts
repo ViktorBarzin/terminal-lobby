@@ -33,3 +33,24 @@ if (typeof document !== "undefined" && typeof EventSource === "undefined") {
     removeEventListener(): void {}
   };
 }
+
+/**
+ * jsdom ships no PointerEvent, and its fallback drops `pointerType` — which is
+ * the field the composer's touch-focus fix branches on (it acts on touch/pen
+ * and leaves the mouse alone). Without this, a "touch" fired from a test
+ * arrives with no pointer type and the code correctly declines to handle it,
+ * so the test would be asserting against the shim rather than the behaviour.
+ */
+if (typeof window !== "undefined" && typeof (window as { PointerEvent?: unknown }).PointerEvent === "undefined") {
+  class PointerEventShim extends MouseEvent {
+    pointerType: string;
+    pointerId: number;
+    constructor(type: string, init: MouseEventInit & { pointerType?: string; pointerId?: number } = {}) {
+      super(type, init);
+      this.pointerType = init.pointerType ?? "";
+      this.pointerId = init.pointerId ?? 0;
+    }
+  }
+  (window as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventShim;
+  (globalThis as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventShim;
+}

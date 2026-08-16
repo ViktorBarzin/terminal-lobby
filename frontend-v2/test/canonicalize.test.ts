@@ -6,6 +6,8 @@ import {
   diffHunks,
   diffStat,
   extractTodoSteps,
+  LABEL_MAX,
+  oneLine,
   questions,
   shortPath,
 } from "../src/components/canonicalize";
@@ -122,5 +124,29 @@ describe("structured payloads", () => {
   it("returns null for a TodoWrite with no todos", () => {
     expect(extractTodoSteps({ todos: [] })).toBeNull();
     expect(extractTodoSteps(null)).toBeNull();
+  });
+});
+
+describe("oneLine", () => {
+  it("takes the first meaningful line of a multi-line command", () => {
+    expect(oneLine("go build ./...\ngo test ./...")).toBe("go build ./... …");
+  });
+
+  // Measured on a real session: one Bash `command` held a 60-line heredoc, and
+  // the row's label was the whole script.
+  it("caps a very long line", () => {
+    const long = "x".repeat(400);
+    expect(oneLine(long).length).toBeLessThanOrEqual(LABEL_MAX + 1);
+  });
+
+  it("drops a leading cd, which is setup rather than the command", () => {
+    expect(oneLine("cd /home/wizard/code/tripit && tripit segments list")).toBe(
+      "tripit segments list",
+    );
+    expect(oneLine("cd /home/w/code\nnpm test")).toBe("npm test …");
+  });
+
+  it("leaves an ordinary one-liner alone", () => {
+    expect(oneLine("git status")).toBe("git status");
   });
 });

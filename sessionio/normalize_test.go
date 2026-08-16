@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -572,8 +573,16 @@ func TestNormalizeCapsAnOversizedResult(t *testing.T) {
 	if len(e.Body) > MaxInlineResult+64 {
 		t.Fatalf("body not capped: %d bytes", len(e.Body))
 	}
-	if len(e.Result) != 0 {
-		t.Fatalf("an oversized structured result is dropped, not truncated into invalid JSON: %d bytes", len(e.Result))
+	// The structured result is PRUNED rather than dropped (see pruneResult):
+	// whatever survives must still be valid JSON and under the cap.
+	if len(e.Result) > MaxInlineResult {
+		t.Fatalf("pruned result is still oversized: %d bytes", len(e.Result))
+	}
+	if len(e.Result) > 0 {
+		var any map[string]json.RawMessage
+		if err := json.Unmarshal(e.Result, &any); err != nil {
+			t.Fatalf("pruned result is not valid JSON: %v", err)
+		}
 	}
 }
 
@@ -646,5 +655,87 @@ func TestNormalizeCompactSummaryIsMetaNotAPrompt(t *testing.T) {
 	}
 	if n.turnID != "" {
 		t.Fatalf("a compaction boundary must not open a turn, got %q", n.turnID)
+	}
+}
+
+// A tool result is pruned to what a reader needs before it is judged oversized.
+// Measured across the six most recent transcripts: 209 edit results carried a
+// structuredPatch, 54 of them exceeded MaxInlineResult — and dropping those
+// whole took the diff with them, which is the one part worth rendering. The
+// bulk is `originalFile` (the entire file before the change), not the patch.
+func TestNormalizeKeepsTheDiffWhenTheResultIsOversized(t *testing.T) {
+	huge := strings.Repeat("z", MaxInlineResult*2)
+	line := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"ok"}]},` +
+		`"toolUseResult":{"filePath":"/x/a.go","structuredPatch":[{"oldStart":1,"newStart":1,"lines":["-a","+b"]}],` +
+		`"originalFile":"` + huge + `","content":"` + huge + `"}}`
+	n := NewNormalizer("demo")
+	out := n.Line([]byte(line))
+	if len(out) != 1 {
+		t.Fatalf("want one event, got %d", len(out))
+	}
+	e := out[0]
+	if !e.Truncated {
+		t.Fatal("a pruned result must still be marked truncated")
+	}
+	if len(e.Result) == 0 {
+		t.Fatal("the structured result was dropped rather than pruned")
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(e.Result, &got); err != nil {
+		t.Fatalf("pruned result is not valid JSON: %v", err)
+	}
+	if _, ok := got["structuredPatch"]; !ok {
+		t.Fatal("the diff did not survive pruning")
+	}
+	if _, ok := got["filePath"]; !ok {
+		t.Fatal("the path did not survive pruning")
+	}
+	if _, ok := got["originalFile"]; ok {
+		t.Fatal("originalFile is the bulk; it must not survive")
+	}
+	if len(e.Result) > MaxInlineResult {
+		t.Fatalf("pruned result is still oversized: %d bytes", len(e.Result))
+	}
+}
+
+func TestNormalizeKeepsTheHeadOfAnOversizedCommandOutput(t *testing.T) {
+	huge := strings.Repeat("q", MaxInlineResult*3)
+	line := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"x"}]},` +
+		`"toolUseResult":{"stdout":"` + huge + `","stderr":"boom","interrupted":false}}`
+	n := NewNormalizer("demo")
+	e := n.Line([]byte(line))[0]
+	if len(e.Result) == 0 {
+		t.Fatal("an oversized command result should keep its head, not vanish")
+	}
+	var got struct {
+		Stdout string `json:"stdout"`
+		Stderr string `json:"stderr"`
+	}
+	if err := json.Unmarshal(e.Result, &got); err != nil {
+		t.Fatalf("pruned result is not valid JSON: %v", err)
+	}
+	if got.Stderr != "boom" {
+		t.Fatalf("stderr lost: %q", got.Stderr)
+	}
+	if len(got.Stdout) == 0 || len(got.Stdout) > MaxInlineResult {
+		t.Fatalf("stdout head is %d bytes", len(got.Stdout))
+	}
+}
+
+// A patch that is itself enormous has nothing left to prune.
+func TestNormalizeDropsAResultThatCannotBePrunedSmallEnough(t *testing.T) {
+	lines := make([]string, 4000)
+	for i := range lines {
+		lines[i] = `"+a line of a very large patch"`
+	}
+	line := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"x"}]},` +
+		`"toolUseResult":{"structuredPatch":[{"lines":[` + strings.Join(lines, ",") + `]}]}}`
+	n := NewNormalizer("demo")
+	e := n.Line([]byte(line))[0]
+	if len(e.Result) != 0 {
+		t.Fatalf("want the result dropped, got %d bytes", len(e.Result))
+	}
+	if !e.Truncated {
+		t.Fatal("dropping must be reported")
 	}
 }

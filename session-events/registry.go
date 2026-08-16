@@ -104,9 +104,22 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 
 // start builds a FileSource and runs its tail under a context of its own, so
 // this one source can be stopped without taking down the rest of the process.
+//
+// The FIRST read of the transcript happens here, synchronously, before the
+// source is handed to anyone. Left to the tail goroutine it raced every caller:
+// a client that opened the stream in that window replayed an EMPTY log and then
+// received the entire transcript through the live subscription instead — which
+// is not a slow path but a wrong one, because the replay window (the last N
+// turns) only governs the replay. Measured on a 20.8 MB transcript: 3,396
+// events and 3.9 MB arrived on an open that should have carried 20 turns.
+//
+// The cost is that the first request for a session waits for its transcript to
+// be parsed, once per session per process — the same work, moved to where its
+// result is actually used.
 func (rg *registry) start(session, transcript string) *liveSource {
 	ctx, stop := context.WithCancel(rg.ctx)
 	fs := sessionio.NewFileSource(session, transcript, rg.poll)
+	fs.TailOnce()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

@@ -270,3 +270,42 @@ func TestRegistryMissingSessionStartFields(t *testing.T) {
 		t.Fatalf("missing fields: want 400, got %d", w.Code)
 	}
 }
+
+// A source must be readable the moment it is handed out. Left to the tail
+// goroutine, a client that opened the stream first replayed an empty log and
+// then received the whole transcript live, bypassing the replay window.
+func TestSourceIsHydratedBeforeItIsReturned(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	user := "someone"
+	root := filepath.Join(home, user, ".claude", "projects", "-x")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(root, "sess.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","id":"m1","stop_reason":"end_turn","content":[{"type":"text","text":"hi"}]}}`,
+	}
+	if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Hour, home, siotest.NewFakeOptions(user+"/s"))
+	if err := rg.user(user).sm.Put(sessionio.SessionInfo{
+		TmuxSession: "s", CWD: "/x", ClaudeID: "sess",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fs, ok := rg.source(user, "s")
+	if !ok {
+		t.Fatal("source not registered")
+	}
+	// No sleep, no poll: the transcript must already be readable.
+	if got := len(fs.Replay(0)); got == 0 {
+		t.Fatal("the source was handed out before its transcript was read")
+	}
+}
