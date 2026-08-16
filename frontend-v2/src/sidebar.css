@@ -381,11 +381,16 @@
 }
 
 /* ---- Session card ------------------------------------------------------ */
+/* 4px of vertical padding, not 6px: a 13px name puts the row at ~27.5px, which
+   is the height the vanilla page's session rows already use. The extra 2px each
+   side bought nothing a mouse needs and cost a row of the list on every screen.
+   The coarse-pointer block below drops it to 0 for the same reason at a bigger
+   scale — see there. */
 .tl-card {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 8px;
+  padding: 4px 8px;
   border-radius: 8px;
   cursor: pointer;
   min-width: 0;
@@ -761,6 +766,27 @@
    floor both Apple's and Google's guidance land near, and it is what the merged
    session bar above already uses. */
 @media (pointer: coarse) {
+  /* A session row is 40px because its action button is 40px — not 40px PLUS the
+     card's own padding. The button is a flex child of an align-items:center
+     row, so the card's 6px top and bottom stacked on the target and every
+     session rendered 54px tall (measured, 390x844). Dropping the vertical
+     padding gives the list 14px per session back and leaves the tap targets
+     exactly where they were: the row is still 40px, the button inside it still
+     40px. Rows sit 2px apart (.tl-group-body gap), which is what keeps two
+     adjacent targets distinguishable now that they abut.
+
+     The same shape as the vanilla page's 2026-07-17 row-height finding: there a
+     44px ellipsis button inflated a 28px row, and the fix was likewise about
+     what the button does to its PARENT, not about shrinking the button. */
+  .tl-card {
+    padding: 0 8px;
+  }
+  /* The active row's accent bar insets from the row's edges; at 40px the old
+     6px left a 28px stub, which reads as a dash rather than a bar. */
+  .tl-card-active::before {
+    top: 4px;
+    bottom: 4px;
+  }
   /* The card's action menu. It was opacity:0 until :hover — on a touch screen
      that hover never arrives, so rename/kill/move were reachable only by
      tabbing a card into :focus-within with a keyboard the phone does not have.
