@@ -1,7 +1,16 @@
 import { createSignal, onCleanup, type Accessor } from "solid-js";
 import { createStore } from "solid-js/store";
 import { SseClient, type SseStatus } from "../sse/client";
-import { cancelUrl, eventsUrl, permissionUrl, promptUrl } from "../lib/config";
+import {
+  cancelUrl,
+  earlierUrl,
+  eventsUrl,
+  keysUrl,
+  paneUrl,
+  permissionUrl,
+  promptUrl,
+  resultUrl,
+} from "../lib/config";
 import type { Event, PermissionDecision } from "../types/events";
 
 export interface SessionStore {
@@ -25,6 +34,17 @@ export interface SessionStore {
   send: (text: string) => Promise<boolean>;
   /** Interrupt the running turn (provisional control endpoint). */
   interrupt: () => Promise<void>;
+  /** Type an answer into the session's pane (ADR-0010). Returns true on 204. */
+  answer: (keys: string[]) => Promise<boolean>;
+  /** Read what the pane shows, for mirroring a blocking prompt. */
+  pane: () => Promise<{ pane: string; state: string } | null>;
+  /** One tool result in full, after the wire capped it. */
+  fullResult: (toolId: string) => Promise<string | null>;
+  /** Prepend the window of turns before the oldest event held. Returns how
+   *  many arrived — 0 means the start of the session has been reached. */
+  loadEarlier: () => Promise<number>;
+  /** False once loadEarlier has reached the start of the session. */
+  hasEarlier: Accessor<boolean>;
   close: () => void;
 }
 
@@ -62,6 +82,10 @@ export function createSessionStore(
 ): SessionStore {
   const [events, setEvents] = createStore<Event[]>([]);
   const [status, setStatus] = createSignal<SseStatus>("connecting");
+  // A fresh open replays a WINDOW of recent turns (session-events
+  // OpenWindowTurns), so there is usually history behind the oldest event held.
+  // Assumed present until a load comes back empty.
+  const [hasEarlier, setHasEarlier] = createSignal(true);
 
   const client = new SseClient({
     session,
@@ -153,6 +177,73 @@ export function createSessionStore(
     }
   };
 
+  const answer = async (keys: string[]): Promise<boolean> => {
+    try {
+      const res = await fetch(keysUrl(session), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys }),
+      });
+      if (!res.ok) opts.notify?.(`Couldn't answer (HTTP ${res.status})`, "error");
+      return res.ok;
+    } catch {
+      opts.notify?.("Couldn't reach the session", "error");
+      return false;
+    }
+  };
+
+  const pane = async (): Promise<{ pane: string; state: string } | null> => {
+    try {
+      const res = await fetch(paneUrl(session), { credentials: "same-origin" });
+      if (!res.ok) return null;
+      return (await res.json()) as { pane: string; state: string };
+    } catch {
+      return null;
+    }
+  };
+
+  const fullResult = async (toolId: string): Promise<string | null> => {
+    try {
+      const res = await fetch(resultUrl(session, toolId), {
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        opts.notify?.("That output is no longer in the transcript", "warning");
+        return null;
+      }
+      const body = (await res.json()) as { body?: string };
+      return body.body ?? "";
+    } catch {
+      opts.notify?.("Couldn't load the full output", "error");
+      return null;
+    }
+  };
+
+  const loadEarlier = async (): Promise<number> => {
+    const oldest = events[0]?.id ?? 0;
+    if (oldest <= 1) {
+      setHasEarlier(false);
+      return 0;
+    }
+    try {
+      const res = await fetch(earlierUrl(session, oldest), {
+        credentials: "same-origin",
+      });
+      if (!res.ok) return 0;
+      const older = ((await res.json()) as Event[] | null) ?? [];
+      if (older.length === 0) {
+        setHasEarlier(false);
+        return 0;
+      }
+      setEvents((prev) => [...older, ...prev]);
+      return older.length;
+    } catch {
+      opts.notify?.("Couldn't load earlier turns", "error");
+      return 0;
+    }
+  };
+
   return {
     events,
     status,
@@ -160,6 +251,11 @@ export function createSessionStore(
     resolvePermission,
     send,
     interrupt,
+    answer,
+    pane,
+    fullResult,
+    loadEarlier,
+    hasEarlier,
     close,
   };
 }

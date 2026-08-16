@@ -1,4 +1,14 @@
-import type { Event, PermissionDecision } from "../types/events";
+import type { Event, MetaKind, PermissionDecision, TokenUsage } from "../types/events";
+import {
+  describe as describeTool,
+  extractTodoSteps,
+  parseJSON,
+  questions,
+  type Described,
+  type ItemType,
+  type Question,
+  type TodoStep,
+} from "./canonicalize";
 
 /**
  * Pure, DOM-free transcript→rows derivation (design pillar #2: "put the risky
@@ -12,6 +22,11 @@ import type { Event, PermissionDecision } from "../types/events";
  * today). A turn is "settled" once a turn_end event lands OR a later turn
  * begins; the running (last, unsettled) turn never folds and shows a working
  * row. Tool_use/tool_result are paired by toolId (T3's collapseKey).
+ *
+ * The folding rules follow t3code's MessagesTimeline.logic.ts (MIT, T3 Tools
+ * Inc): the last assistant message of a settled turn stays visible as the
+ * turn's answer and everything else folds behind "Worked for Ns". What a tool
+ * row SAYS comes from canonicalize.ts, which reads the transcript's own payloads.
  */
 
 export interface UserRow {
@@ -31,16 +46,70 @@ export interface MessageRow {
   streaming: boolean;
   at?: number;
 }
+/** Claude's reasoning. Folded by default, kept in full on expand. */
+export interface ThinkingRow {
+  kind: "thinking";
+  key: string;
+  id: number;
+  body: string;
+  turnKey: string;
+  at?: number;
+}
 export interface ToolRow {
   kind: "tool";
   key: string;
   id: number;
   tool: string;
   toolId?: string;
+  itemType: ItemType;
+  /** What this call is doing — the command, the path, the query. */
+  label: string;
+  detail: string;
+  changedFiles: string[];
+  /** The raw JSON input, kept for "view raw". */
   input: string;
+  /** The flattened result text. */
   result?: string;
+  /** The structured `toolUseResult`, when it fit on the wire. */
+  payload?: unknown;
   isError: boolean;
   done: boolean;
+  /** The payload was capped; the full one is fetched by toolId. */
+  truncated: boolean;
+  /** Subagent work belonging to this call (collab_agent_tool_call only). */
+  children: LeafRow[];
+  turnKey: string;
+  at?: number;
+}
+/** A TodoWrite rendered as the checklist it is, not as a tool call. */
+export interface TodoRow {
+  kind: "todo";
+  key: string;
+  id: number;
+  steps: TodoStep[];
+  turnKey: string;
+  at?: number;
+}
+/** An AskUserQuestion. Answerable while `pending`. */
+export interface QuestionRow {
+  kind: "question";
+  key: string;
+  id: number;
+  toolId?: string;
+  questions: Question[];
+  /** What was chosen, once the transcript records an answer. */
+  answers: string[];
+  pending: boolean;
+  turnKey: string;
+  at?: number;
+}
+/** ExitPlanMode — a plan put up for approval. */
+export interface PlanRow {
+  kind: "plan";
+  key: string;
+  id: number;
+  body: string;
+  pending: boolean;
   turnKey: string;
   at?: number;
 }
@@ -73,6 +142,16 @@ export interface StatusRow {
   turnKey: string;
   at?: number;
 }
+/** The session's own lifecycle: mode changes, queued prompts, compaction. */
+export interface MetaRow {
+  kind: "meta";
+  key: string;
+  id: number;
+  meta: MetaKind;
+  body: string;
+  turnKey: string;
+  at?: number;
+}
 export interface TurnFoldRow {
   kind: "turn-fold";
   key: string;
@@ -82,28 +161,43 @@ export interface TurnFoldRow {
   hidden: LeafRow[];
   /** At least one hidden row is a failure — the collapsed row must say so. */
   hasError: boolean;
+  /** Files the turn changed, summarised on the collapsed row. */
+  changedFiles: string[];
+  usage?: TokenUsage;
 }
 export interface WorkingRow {
   kind: "working";
   key: string;
   turnKey: string;
   startedAt?: number;
+  /** The call currently in flight, if the turn is inside one. */
+  tool?: string;
+  toolLabel?: string;
+  toolStartedAt?: number;
+  /** How much has happened in this turn so far. */
+  steps: number;
 }
 
 /** Rows that can be hidden inside a fold (everything except fold/working). */
 export type LeafRow =
   | UserRow
   | MessageRow
+  | ThinkingRow
   | ToolRow
+  | TodoRow
+  | QuestionRow
+  | PlanRow
   | PermissionRow
   | ErrorRow
-  | StatusRow;
+  | StatusRow
+  | MetaRow;
 export type TimelineRow = LeafRow | TurnFoldRow | WorkingRow;
 
 interface Turn {
   key: string;
   events: Event[];
   ended: boolean;
+  usage?: TokenUsage;
 }
 
 function groupTurns(events: Event[]): Turn[] {
@@ -131,7 +225,10 @@ function groupTurns(events: Event[]): Turn[] {
       turns.push(t);
     }
     t.events.push(e);
-    if (e.kind === "turn_end") t.ended = true;
+    if (e.kind === "turn_end") {
+      t.ended = true;
+      if (e.usage) t.usage = e.usage;
+    }
   }
 
   // A turn is implicitly settled once a later turn has started.
@@ -143,7 +240,11 @@ function groupTurns(events: Event[]): Turn[] {
 
 /** A leaf row that stands for something that went wrong. */
 function leafFailed(row: LeafRow): boolean {
-  return row.kind === "error" || (row.kind === "tool" && row.isError);
+  return (
+    row.kind === "error" ||
+    (row.kind === "tool" && row.isError) ||
+    (row.kind === "meta" && row.meta === "hook-error")
+  );
 }
 
 function turnDuration(turn: Turn): number | undefined {
@@ -155,6 +256,19 @@ function turnDuration(turn: Turn): number | undefined {
   const last = ats[ats.length - 1]!;
   const d = last - first;
   return d > 0 ? d : undefined;
+}
+
+/** The answers an AskUserQuestion result records, as flat labels. */
+function answersFrom(payload: unknown): string[] {
+  const raw = (payload as { answers?: unknown } | null)?.answers;
+  if (!raw) return [];
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    if (typeof v === "string" && v) out.push(v);
+  };
+  if (Array.isArray(raw)) raw.forEach(push);
+  else if (typeof raw === "object") Object.values(raw as object).forEach(push);
+  return out;
 }
 
 /** Derive the folded row list from a session's events (see module doc). */
@@ -169,6 +283,19 @@ export function deriveRows(events: Event[]): TimelineRow[] {
     let userRow: UserRow | null = null;
     const work: LeafRow[] = [];
     const toolBy = new Map<string, ToolRow>();
+    // The subagent call currently collecting sidechain work, if any.
+    let host: ToolRow | null = null;
+    let lastTodo: TodoRow | null = null;
+    // Rows awaiting the tool_result that resolves them, by tool_use_id. Local
+    // to the turn: deriveRows runs on every event and must be pure, so nothing
+    // here may outlive one derivation.
+    const pendingByTool = new Map<string, QuestionRow | PlanRow>();
+
+    /** Push a row into the turn, or into the subagent that spawned it. */
+    const add = (row: LeafRow, sidechain?: boolean) => {
+      if (sidechain && host) host.children.push(row);
+      else work.push(row);
+    };
 
     for (const e of turn.events) {
       switch (e.kind) {
@@ -183,56 +310,169 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           };
           break;
         case "text":
-          work.push({
-            kind: "message",
-            key: `msg-${e.id}`,
-            id: e.id,
-            body: e.body ?? "",
-            turnKey: turn.key,
-            streaming: false,
-            ...(e.at !== undefined ? { at: e.at } : {}),
-          });
+          add(
+            {
+              kind: "message",
+              key: `msg-${e.id}`,
+              id: e.id,
+              body: e.body ?? "",
+              turnKey: turn.key,
+              streaming: false,
+              ...(e.at !== undefined ? { at: e.at } : {}),
+            },
+            e.sidechain,
+          );
+          break;
+        case "thinking":
+          add(
+            {
+              kind: "thinking",
+              key: `think-${e.id}`,
+              id: e.id,
+              body: e.body ?? "",
+              turnKey: turn.key,
+              ...(e.at !== undefined ? { at: e.at } : {}),
+            },
+            e.sidechain,
+          );
           break;
         case "tool_use": {
+          const d: Described = describeTool(e.tool ?? "", e.body);
+          // TodoWrite is a checklist, not a call: one row per turn, updated in
+          // place, so a turn that revises its list six times shows one list.
+          if (d.type === "todo") {
+            const steps = extractTodoSteps(parseJSON(e.body)) ?? [];
+            if (lastTodo) {
+              lastTodo.steps = steps;
+              lastTodo.id = e.id;
+            } else {
+              lastTodo = {
+                kind: "todo",
+                key: `todo-${turn.key}`,
+                id: e.id,
+                steps,
+                turnKey: turn.key,
+                ...(e.at !== undefined ? { at: e.at } : {}),
+              };
+              add(lastTodo, e.sidechain);
+            }
+            break;
+          }
+          if (d.type === "question") {
+            const row: QuestionRow = {
+              kind: "question",
+              key: `q-${e.toolId || e.id}`,
+              id: e.id,
+              questions: questions(parseJSON(e.body)),
+              answers: [],
+              pending: true,
+              turnKey: turn.key,
+              ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
+              ...(e.at !== undefined ? { at: e.at } : {}),
+            };
+            if (e.toolId) pendingByTool.set(e.toolId, row);
+            add(row, e.sidechain);
+            break;
+          }
+          if (d.type === "plan") {
+            const plan = parseJSON(e.body) as { plan?: string } | null;
+            const row: PlanRow = {
+              kind: "plan",
+              key: `plan-${e.toolId || e.id}`,
+              id: e.id,
+              body: plan?.plan ?? e.body ?? "",
+              pending: true,
+              turnKey: turn.key,
+              ...(e.at !== undefined ? { at: e.at } : {}),
+            };
+            if (e.toolId) pendingByTool.set(e.toolId, row);
+            add(row, e.sidechain);
+            break;
+          }
           const row: ToolRow = {
             kind: "tool",
             key: `tool-${e.toolId || e.id}`,
             id: e.id,
             tool: e.tool ?? "",
+            itemType: d.type,
+            label: d.label,
+            detail: d.detail,
+            changedFiles: d.changedFiles,
             input: e.body ?? "",
             isError: false,
             done: false,
+            truncated: false,
+            children: [],
             turnKey: turn.key,
             ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
             ...(e.at !== undefined ? { at: e.at } : {}),
           };
           if (e.toolId) toolBy.set(e.toolId, row);
-          work.push(row);
+          // A subagent's own work arrives as sidechain records AFTER the call
+          // that spawned it, so the call becomes the host for what follows.
+          if (d.type === "collab_agent_tool_call") host = row;
+          add(row, e.sidechain);
           break;
         }
         case "tool_result": {
+          const waiting = e.toolId ? pendingByTool.get(e.toolId) : undefined;
+          if (waiting) {
+            waiting.pending = false;
+            if (waiting.kind === "question") {
+              waiting.answers = answersFrom(e.result);
+            }
+            pendingByTool.delete(e.toolId!);
+            // A subagent's result closes its host.
+            break;
+          }
           const existing = e.toolId ? toolBy.get(e.toolId) : undefined;
           if (existing) {
             existing.result = e.body ?? "";
+            existing.payload = e.result;
             existing.isError = !!e.isError;
             existing.done = true;
+            existing.truncated = !!e.truncated;
+            if (existing.itemType === "collab_agent_tool_call" && host === existing) {
+              host = null;
+            }
           } else {
-            work.push({
-              kind: "tool",
-              key: `tool-${e.toolId || e.id}`,
-              id: e.id,
-              tool: "",
-              input: "",
-              result: e.body ?? "",
-              isError: !!e.isError,
-              done: true,
-              turnKey: turn.key,
-              ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
-              ...(e.at !== undefined ? { at: e.at } : {}),
-            });
+            add(
+              {
+                kind: "tool",
+                key: `tool-${e.toolId || e.id}`,
+                id: e.id,
+                tool: "",
+                itemType: "dynamic_tool_call",
+                label: "",
+                detail: "",
+                changedFiles: [],
+                input: "",
+                result: e.body ?? "",
+                payload: e.result,
+                isError: !!e.isError,
+                done: true,
+                truncated: !!e.truncated,
+                children: [],
+                turnKey: turn.key,
+                ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
+                ...(e.at !== undefined ? { at: e.at } : {}),
+              },
+              e.sidechain,
+            );
           }
           break;
         }
+        case "meta":
+          add({
+            kind: "meta",
+            key: `meta-${e.id}`,
+            id: e.id,
+            meta: e.meta ?? "mode",
+            body: e.body ?? "",
+            turnKey: turn.key,
+            ...(e.at !== undefined ? { at: e.at } : {}),
+          });
+          break;
         case "permission_request":
           work.push({
             kind: "permission",
@@ -268,7 +508,7 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           break;
         }
         case "error":
-          work.push({
+          add({
             kind: "error",
             key: `err-${e.id}`,
             id: e.id,
@@ -311,6 +551,11 @@ export function deriveRows(events: Event[]): TimelineRow[] {
       if (visibleAt < 0) visibleAt = work.length - 1;
       const visible = work[visibleAt];
       const hidden = work.filter((_, i) => i !== visibleAt);
+      const changed = [
+        ...new Set(
+          work.flatMap((r) => (r.kind === "tool" ? r.changedFiles : [])),
+        ),
+      ];
       const fold: TurnFoldRow | null =
         hidden.length > 0
           ? {
@@ -320,6 +565,8 @@ export function deriveRows(events: Event[]): TimelineRow[] {
               count: hidden.length,
               hidden,
               hasError: hidden.some(leafFailed),
+              changedFiles: changed,
+              ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
               ...(turnDuration(turn) !== undefined
                 ? { durationMs: turnDuration(turn) }
                 : {}),
@@ -345,12 +592,31 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           break;
         }
       }
+      // What is happening RIGHT NOW: the newest tool call that has not come
+      // back yet. The transcript records a tool_use the moment Claude emits it,
+      // so this is specific without any second source (design decision 6).
+      let live: ToolRow | undefined;
+      for (let i = work.length - 1; i >= 0; i--) {
+        const r = work[i]!;
+        if (r.kind === "tool" && !r.done) {
+          live = r;
+          break;
+        }
+      }
       out.push({
         kind: "working",
         key: `working-${turn.key}`,
         turnKey: turn.key,
+        steps: work.length,
         ...(turn.events[0]?.at !== undefined
           ? { startedAt: turn.events[0]!.at }
+          : {}),
+        ...(live
+          ? {
+              tool: live.tool,
+              toolLabel: live.label,
+              ...(live.at !== undefined ? { toolStartedAt: live.at } : {}),
+            }
           : {}),
       });
     }
@@ -399,17 +665,34 @@ export function sameRow(a: TimelineRow, b: TimelineRow): boolean {
     const va = fa[name];
     const vb = fb[name];
     if (va === vb) continue;
-    // `hidden` — the only nested field; compare its rows the same way.
+    // Nested rows — `hidden`, a tool's `children` — compare the same way.
     if (Array.isArray(va) && Array.isArray(vb)) {
       if (va.length !== vb.length) return false;
       for (let i = 0; i < va.length; i++) {
-        if (!sameRow(va[i] as TimelineRow, vb[i] as TimelineRow)) return false;
+        const ea = va[i];
+        const eb = vb[i];
+        if (ea === eb) continue;
+        if (isRow(ea) && isRow(eb)) {
+          if (!sameRow(ea, eb)) return false;
+          continue;
+        }
+        // Plain values (changed files, todo steps, answers).
+        if (JSON.stringify(ea) !== JSON.stringify(eb)) return false;
       }
       continue;
+    }
+    // Structured payloads are compared by value; they are small by
+    // construction (MaxInlineResult caps them server-side).
+    if (va && vb && typeof va === "object" && typeof vb === "object") {
+      if (JSON.stringify(va) === JSON.stringify(vb)) continue;
     }
     return false;
   }
   return true;
+}
+
+function isRow(v: unknown): v is TimelineRow {
+  return !!v && typeof v === "object" && typeof (v as TimelineRow).kind === "string";
 }
 
 export interface PendingPermission {
@@ -440,4 +723,55 @@ export function pendingPermissions(events: Event[]): PendingPermission[] {
 /** True while the last turn is still running (drives the Send↔Stop morph). */
 export function sessionWorking(rows: TimelineRow[]): boolean {
   return rows.some((r) => r.kind === "working");
+}
+
+/**
+ * The question the session is blocked on, if any — an AskUserQuestion whose
+ * result has not arrived. This is the transcript-derived half of ADR-0010: the
+ * options are recorded losslessly, so only the ANSWER has to be inferred.
+ */
+export function pendingQuestion(rows: TimelineRow[]): QuestionRow | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i]!;
+    if (r.kind === "question" && r.pending) return r;
+    if (r.kind === "turn-fold") {
+      for (const h of r.hidden) {
+        if (h.kind === "question" && h.pending) return h;
+      }
+    }
+  }
+  return null;
+}
+
+/** The mode in force, from the most recent mode marker. */
+export function currentMode(events: Event[]): string {
+  let mode = "";
+  for (const e of events) {
+    if (e.kind === "meta" && e.meta === "permission-mode" && e.body) mode = e.body;
+  }
+  return mode;
+}
+
+/** Prompts sitting in Claude's queue: enqueued, and not yet seen as a prompt. */
+export function queuedPrompts(events: Event[]): string[] {
+  const spoken = new Set(
+    events.filter((e) => e.kind === "user").map((e) => (e.body ?? "").trim()),
+  );
+  const out: string[] = [];
+  for (const e of events) {
+    if (e.kind !== "meta" || e.meta !== "queued") continue;
+    const text = (e.body ?? "").trim();
+    if (text && !spoken.has(text) && !out.includes(text)) out.push(text);
+  }
+  return out;
+}
+
+/** Every prompt this session has sent, oldest first — the composer's history. */
+export function promptHistory(events: Event[]): string[] {
+  const out: string[] = [];
+  for (const e of events) {
+    const text = (e.body ?? "").trim();
+    if (e.kind === "user" && text && out[out.length - 1] !== text) out.push(text);
+  }
+  return out;
 }

@@ -101,6 +101,12 @@ export const SessionCard: Component<{
 
   // ---- activation ----
   const activate = (e: Event) => {
+    // A long press has already opened the actions menu; the click that ends it
+    // must not also open the session.
+    if (holdFired) {
+      holdFired = false;
+      return;
+    }
     menu.close(); // a click on the row is a click away from the menu
     if (editing()) return;
     if ((e as MouseEvent).detail > 1) return; // dblclick → rename, not activate
@@ -201,6 +207,37 @@ export const SessionCard: Component<{
     });
   };
 
+  /**
+   * Long-press opens the actions menu on a touch screen.
+   *
+   * The ⋯ button is a 40px target living inside a 40px row, so on a phone a
+   * thumb aiming at the row's right half opens the menu instead of the session.
+   * Holding anywhere on the row gets the same menu, which lets the button hide
+   * on coarse pointers (see .tl-card-actions in sidebar.css) and hands the whole
+   * row back to "open this session".
+   */
+  const HOLD_MS = 450;
+  let holdTimer: ReturnType<typeof setTimeout> | undefined;
+  let holdFired = false;
+
+  const endHold = () => {
+    if (holdTimer) clearTimeout(holdTimer);
+    holdTimer = undefined;
+  };
+
+  const onHoldStart = (e: PointerEvent) => {
+    if (e.pointerType === "mouse" || foreign()) return;
+    holdFired = false;
+    endHold();
+    holdTimer = setTimeout(() => {
+      holdFired = true;
+      holdTimer = undefined;
+      menu.toggle();
+    }, HOLD_MS);
+  };
+
+  onCleanup(endHold);
+
   return (
     <div
       // the ⋯ button and its popup both live in here, so the row is the menu's
@@ -224,6 +261,14 @@ export const SessionCard: Component<{
       onClick={activate}
       onKeyDown={onKey}
       onDblClick={beginRename}
+      onPointerDown={onHoldStart}
+      onPointerUp={endHold}
+      onPointerCancel={endHold}
+      onPointerLeave={endHold}
+      onContextMenu={(e) => {
+        // A long press raises the platform context menu on top of ours.
+        if (holdFired) e.preventDefault();
+      }}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}

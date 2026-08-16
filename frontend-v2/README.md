@@ -151,6 +151,9 @@ src/
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot
     TextView.tsx         Text mode: timeline above the composer
+    canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
+    compose.logic.ts     PURE `/` and `@` completion + the mode cycle
+    rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / working / …)
     Markdown.tsx         solid-markdown + remark-gfm + rehype-sanitize
@@ -209,6 +212,7 @@ src/
     softmods.ts          PURE one-shot/latched soft Ctrl+Alt machine
     compose.ts           PURE bracketed-paste + trailing-submit split
     viewport.ts          visualViewport → CSS var so the keyboard can't cover
+    swipe.ts             PURE swipe classification + the session-switch gesture
   clipboard/
     paste-into-terminal.ts  Clipboard -> terminal, READ IN THE LOBBY (the frame
                          has no focus, so it cannot read it) — text via tl-paste,
