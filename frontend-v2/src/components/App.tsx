@@ -31,6 +31,9 @@ import type { TitleSession } from "../notify/title";
 import { createGalleryStore } from "../store/gallery";
 import { Gallery } from "./Gallery";
 import { createDeployHealer } from "../deploy/healer";
+import { createDockStore } from "../store/dock";
+import { createCoarsePointer } from "../mobile/pointer";
+import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
 
@@ -145,6 +148,21 @@ export const App: Component = () => {
     hasAttachedTerminal: () => store.selected() !== null,
   });
   onCleanup(() => healer.dispose());
+
+  // ---- Ctrl/Cmd+J scratch shell (the vanilla dock) ------------------------
+  // A second live terminal under the session you are in, roamed as layout.dock.
+  // Desktop only: a coarse pointer has room for one terminal, so the chord is
+  // inert there — the same line the vanilla page draws.
+  const dock = createDockStore({ store });
+  const dockAllowed = createCoarsePointer();
+  const onDockKey = (e: KeyboardEvent): void => {
+    if (!((e.metaKey || e.ctrlKey) && (e.key === "j" || e.key === "J"))) return;
+    if (dockAllowed()) return; // coarse pointer: no dock
+    e.preventDefault();
+    void dock.toggle();
+  };
+  onMount(() => window.addEventListener("keydown", onDockKey, true));
+  onCleanup(() => window.removeEventListener("keydown", onDockKey, true));
 
   const [collapsed, setCollapsed] = createSignal(readSidebarCollapsed());
   const toggleSidebar = () => {
@@ -382,6 +400,7 @@ export const App: Component = () => {
               />
             )}
           </Show>
+          <Dock dock={dock} />
         </div>
       </div>
 
