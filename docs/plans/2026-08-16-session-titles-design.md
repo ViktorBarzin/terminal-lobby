@@ -1,12 +1,19 @@
 # Session titles — arbitrary text names, normalized tmux names
 
-**Status:** Designed 2026-08-16 (grilling session) · **Repo:** terminal-lobby ·
-**Owner:** Viktor (wizard)
+**Status:** Shipped 2026-08-16 (designed in a grilling session, built the same
+day) · **Repo:** terminal-lobby · **Owner:** Viktor (wizard)
 
 Today a session name must match `^[a-zA-Z0-9_-]{1,32}$`, so "Deploy the thing"
 and "тестова сесия" are both refused. This adds a **Title** — arbitrary text
 that every surface displays — while the tmux session **name** stays the
 normalized slug that the rest of the system is keyed by.
+
+```stats
+64 | runes a title may hold
+32 | characters the tmux name still fits
+6 | stores a rename now moves
+33 | shared title→name test vectors
+```
 
 ## Language
 
@@ -84,8 +91,8 @@ sequenceDiagram
 
 ## Reading the title
 
-`@title` joins the format string tmux-api already polls. Two mechanical points
-came out of measuring tmux 3.4 directly:
+`@title` joins the format string tmux-api already polls. Three details came out
+of measuring tmux 3.4 directly rather than reasoning about it:
 
 **The field separator changes from `|` to a tab.** `pane_title` is arbitrary
 terminal-controlled text and is last in the format precisely so an embedded `|`
@@ -97,6 +104,13 @@ last:
 #{session_created}⇥#{@claude_state}⇥#{pane_pid}⇥#{pane_current_command}⇥
 #{@title}⇥#{pane_title}
 ```
+
+> [!WARNING]
+> A control character cannot separate these fields. tmux escapes non-printable
+> bytes on output — in the format literal and inside expanded values alike — so
+> both a `\x1f` separator and a `\x1f` inside a value arrive as the four
+> characters `\037`, and every row parses as one field. It surfaces as an empty
+> session list, not an error.
 
 A unit separator (`\x1f`) was the first choice and does not work. Measured on
 tmux 3.4: tmux escapes non-printable bytes on output, in the format literal and
@@ -116,6 +130,11 @@ separator smuggled into a session name before the numeric columns have to.
 which is what lets another tab follow a session whose name changed rather than
 losing track of it.
 
+> [!IMPORTANT]
+> tmux resolves a bare session name by unambiguous **prefix match** and exits 0
+> doing it. Deriving names from titles makes pairs like `deploy` and
+> `deploy-the-thing` ordinary, so every target this feature uses is `=`-anchored.
+
 **Setting the option needs the `exactPane` target form.** `set-option -t "=name"`
 is rejected — its `-t` takes a pane — so the target is `"=" + name + ":"`, as
 `sessionio/tmux.go:105` already documents. The `=` matters more than usual here:
@@ -131,14 +150,16 @@ when the option was never set.
 
 These are covered by tests that drive the real handlers against a real tmux
 server on a private socket (`tmux-api/title_live_test.go`), skipped where tmux
-is unavailable. The separator problem above is exactly what they exist for: it
-was invisible to a stubbed tmux and showed up as an empty session list.
+is unavailable. They are what caught the separator problem above, which a
+stubbed tmux could not show: it surfaced as an empty session list.
 
 ## Deriving the name
 
 `slug(title)`, in both languages, against one fixture:
 
-1. Trim, strip control characters (C0/C1, newline, tab).
+1. Replace control characters (C0/C1, newline, tab) with a space, collapse
+   whitespace runs, trim. A space rather than nothing, so a title pasted out of
+   a terminal reads as words rather than one run-on.
 2. Transliterate to ASCII — Latin-1 accents by decomposition, Cyrillic and Greek
    by table. Hand-rolled: no module here depends on `golang.org/x/text`, and a
    table covering the scripts actually in use is about a hundred lines.
@@ -148,13 +169,13 @@ was invisible to a stubbed tmux and showed up as an empty session list.
 5. Cut to 32 characters, trimming a trailing `-`.
 6. Empty result → `session-N`, the first N free among live sessions.
 
-`t3-bridge`'s `Slug()` (`resurrect.go:281`) already does steps 4–6 and moves
+`t3-bridge`'s `Slug()` (`resurrect.go`) already did steps 4–6 and moves
 into the shared package, so Go has one implementation rather than two. Its
 case-preserving behaviour changes to lowercase, which affects the names
 t3-bridge gives newly resurrected sessions; existing sessions are not renamed.
 
 The fixture is a JSON file of title→slug pairs read by both the Go test and the
-vitest suite, so a divergence between the two implementations fails CI.
+vitest suite, so a divergence between the two implementations fails both.
 
 ```
 "Deploy the thing 🚀"  → deploy-the-thing
@@ -226,8 +247,8 @@ Both resolve the actor through `resolveOSUser`, so only the owner — or an
 administrator acting as them — can retitle. Sessions shared with someone remain
 attach-only.
 
-The session JSON gains `title` and `session_id`. A session with no `@title`
-omits `title`, which is every session that exists today.
+The session JSON gains `title` and `id` (tmux's `#{session_id}`). A session
+with no `@title` omits `title`, which is every session that exists today.
 
 ## Frontend
 
@@ -245,15 +266,24 @@ omits `title`, which is every session that exists today.
 
 ## T3
 
-`adopt.go:156` creates a thread with the title rather than the tmux name, and
-`reconcile.go:192` compares against the title. t3-sync already fetches
-`/sessions`, so the title arrives with no new call.
+`adopt.go` creates a thread with the title rather than the tmux name, and
+`reconcile.go` compares against it. The title comes from the session's own
+`@title` option through the same `Option()` call the syncer already makes for
+the thread stamp — so no new call, and no new dependency on tmux-api. A session
+nobody has titled falls back to its tmux name, which is every session today.
+
+The option name moved into `sessionio` (`OptionTitle`) so tmux-api and t3-sync
+cannot disagree about its spelling.
 
 The `binding.FromT3()` guard is unchanged: a session the bridge named after a
 workspace root still does not push that name over a title someone chose in T3.
 Renames made in T3 continue not to flow back to the lobby.
 
 ## Out of scope
+
+> [!NOTE]
+> Project names carry the same restriction. They are left alone here because
+> they need a prerequisite this change does not build.
 
 **Project names** carry the same restriction and would benefit from the same
 treatment. They need a prerequisite first: the layout matches projects *by
