@@ -49,6 +49,16 @@ var knownEvents = map[string]bool{
 	"share.granted": true, // (tl.kind = ro|rw)
 	"share.revoked": true,
 
+	// -- acting as another user (admin) -------------------------------------
+	// The audit trail for the act-as switch. user.id is always the REAL caller
+	// and tl.to the target, so "who was in emo's account, and when" is
+	// answerable. Server-emitted at /whoami (once per tab) and at attach (once
+	// per session), with tl.client naming which; the SPA emits the same name
+	// when the switch is asked for, and .exit when it is left.
+	"admin.actas":         true, // (tl.to = target, tl.client = whoami|attach)
+	"admin.actas.exit":    true, // (client only) back to your own lobby
+	"admin.actas.refused": true, // (tl.to = target, tl.kind = reason) a denial
+
 	// -- navigation & keyboard ---------------------------------------------
 	"palette.opened": true,
 	"palette.action": true, // ANY command dispatch: palette pick, chord, forwarded shortcut

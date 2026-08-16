@@ -2,6 +2,67 @@
    so every one of the 9 themes styles the sidebar too. Class prefix tl- to match
    the app chrome. */
 
+/* ---- Acting as another user -------------------------------------------
+   The one piece of chrome that deliberately does NOT come from the theme
+   token layer. With a full identity switch there is no server-side
+   difference between you and the person you are acting as, so this frame is
+   what separates a deliberate action from typing into the wrong tab — and a
+   theme-relative colour would disappear in whichever theme already used it.
+   Amber, fixed, in all nine.
+
+   Distinct from --state-awaiting (purple/lavender everywhere) on purpose;
+   it does share a hue with carbon's --state-running, but those are small
+   dots inside cards while this is the window frame. */
+:root {
+  --tl-actas: #e8912d;
+  --tl-actas-ink: #1b1206;
+}
+.tl-acting-as {
+  /* inset shadow, not a border: no layout shift, so switching identity does
+     not reflow the terminal grid underneath. */
+  box-shadow: inset 0 0 0 2px var(--tl-actas);
+}
+.tl-acting-as .tl-shellbar,
+.tl-acting-as .tl-session-bar {
+  background: color-mix(in srgb, var(--tl-actas) 14%, var(--bg-sidebar));
+}
+.tl-actas-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--tl-actas);
+  border-radius: 999px;
+  background: var(--tl-actas);
+  color: var(--tl-actas-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  max-width: 40vw;
+}
+.tl-actas-chip::before {
+  content: "as";
+  opacity: 0.7;
+  font-weight: 400;
+}
+.tl-actas-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-actas-x {
+  opacity: 0.75;
+}
+.tl-actas-chip:hover .tl-actas-x {
+  opacity: 1;
+}
+.tl-actas-group .tl-settings-select {
+  border-color: var(--tl-actas);
+}
+
 /* ---- Shell grid -------------------------------------------------------- */
 .tl-shell {
   display: grid;

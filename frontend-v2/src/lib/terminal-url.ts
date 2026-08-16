@@ -21,7 +21,7 @@
  * deploy can retarget the ttyd origin without touching call sites.
  */
 
-import { TERMINAL_BASE } from "./config";
+import { ACT_AS, TERMINAL_BASE } from "./config";
 
 export interface TerminalUrlOpts {
   /** arg2 — the new-session command key. Defaults to "default" (the user's tmux
@@ -88,5 +88,16 @@ export function buildTerminalUrl(
 /** Config-bound builder: `buildTerminalUrl` against TERMINAL_BASE (the
  *  same-origin /term.html page by default; `?terminal=` overrides it). */
 export function terminalUrl(name: string, opts?: TerminalUrlOpts): string {
-  return buildTerminalUrl(TERMINAL_BASE, name, opts);
+  // The act-as switch (?as=) cannot reach ttyd — it resolves the guest from the
+  // Authentik header itself and takes only positional ?arg= values — so here it
+  // becomes arg4, the owner slot that already exists for shared attaches.
+  //
+  // A DEFAULT, not an override. The sidebar passes no owner for a session it
+  // considers the caller's own, and in an as-emo tab emo's sessions are exactly
+  // that: without this the iframe would attach WIZARD's session of the same
+  // name. But while acting as emo you can still see sessions a third party
+  // shared WITH emo, and those carry their real owner — forcing the act-as
+  // target there would attach the wrong account.
+  const owner = opts?.owner || ACT_AS || undefined;
+  return buildTerminalUrl(TERMINAL_BASE, name, { ...opts, owner });
 }
