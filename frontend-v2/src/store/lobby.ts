@@ -32,6 +32,7 @@ import {
   type Whoami,
 } from "../types/lobby";
 import { track } from "../telemetry/track";
+import { cleanTitle, nameForTitle } from "../lib/slug";
 import { hideDockedSession } from "./dock.logic";
 
 export interface SelectedSession {
@@ -267,6 +268,31 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return new Set<string>(mergedSessions().map((s) => s.name));
   }
 
+  /**
+   * Follow the selected session when it was RENAMED somewhere else.
+   *
+   * Retitling renames, so this is no longer a rare event: a second tab, or the
+   * phone, can have a session selected when the desktop retitles it. Left
+   * alone, that tab keeps a name nothing answers to, and its terminal iframe
+   * still points at `?arg=<old name>` — where ttyd's `tmux new-session -A`
+   * would happily bring the old name back as an empty session on the next
+   * reconnect.
+   *
+   * tmux's session id is the only thing that survives a rename, so it is what
+   * identifies "the same session under a new name". Matching on anything else
+   * (creation time, position) would eventually follow the wrong one.
+   */
+  function followRenamedSelection(prev: readonly Session[], next: readonly Session[]): void {
+    const sel = selected();
+    if (!sel || sel.owner) return; // foreign sessions are not ours to follow
+    if (next.some((s) => s.name === sel.name)) return; // still there
+    const id = prev.find((s) => s.name === sel.name)?.id;
+    if (!id) return; // never saw an id for it — a server that predates the field
+    const moved = next.find((s) => s.id === id);
+    if (!moved) return; // genuinely gone, not renamed
+    applySelection(moved.name, undefined);
+  }
+
   /** Stamp state transitions and prune dead sessions (vanilla trackStateChanges). */
   function trackStates(next: Session[]): void {
     const live = new Set(next.map((s) => s.name));
@@ -333,6 +359,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       // Reconcile by name rather than replace: a re-parsed but unchanged
       // payload must write nothing, or every memo downstream recomputes and
       // <For> re-creates every group and card (taking open menus with it).
+      followRenamedSelection(sessions, sRes.value);
       setSessions(reconcile(sRes.value, { key: "name" }));
       // drop optimistic pending that the server now knows about
       const known = new Set(sRes.value.map((s) => s.name));
@@ -504,23 +531,45 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
   }
 
-  async function create(name: string, group: string): Promise<boolean> {
-    const n = name.trim();
-    if (!NAME_RE.test(n)) {
-      showToast("Session names use letters, numbers, _ and - (max 32)");
+  /**
+   * Create a session from a TITLE the person typed.
+   *
+   * The name is derived here rather than asked for: creation reaches no server
+   * at all — the session comes into being when the terminal iframe attaches and
+   * ttyd runs `tmux new-session -A` — so the browser has to pick a name before
+   * anything else can. tmux-api derives the same name from the same title
+   * (both run the shared slug vectors), it just never gets the chance to on
+   * this path.
+   */
+  async function create(title: string, group: string): Promise<boolean> {
+    const t = cleanTitle(title);
+    if (t === "") {
+      showToast("Give the session a name");
       return false;
     }
-    if (takenNames().has(n)) {
+    const taken = takenNames();
+    const n = nameForTitle(t, taken);
+    if (taken.has(n)) {
       showToast(`"${n}" already exists`);
       return false;
     }
-    // Creation is a lobby-only act: tmux-api never sees it (the session comes
-    // into being when the terminal attaches), so this is the only record of it.
+    // Creation is a lobby-only act: tmux-api never sees it, so this is the only
+    // record of it.
     track("session.created", { "tl.session": n, "tl.to": group || "ungrouped" });
     const nowSec = Math.floor(Date.now() / 1000);
     setPending((p) => [
       ...p,
-      { name: n, owner: me(), attached: 0, lastActivity: nowSec, created: nowSec, state: "" },
+      {
+        name: n,
+        // Carry the title on the optimistic card so it reads correctly in the
+        // second before the server has been told about it.
+        ...(t !== n ? { title: t } : {}),
+        owner: me(),
+        attached: 0,
+        lastActivity: nowSec,
+        created: nowSec,
+        state: "",
+      },
     ]);
     const saved = await saveLayout(addSessionToGroup(layout(), n, group));
     if (!saved) {
@@ -533,29 +582,107 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       setPending((p) => p.filter((s) => s.name !== n));
     }
     select(n);
+    // Stamping the title needs the session to EXIST, and only the iframe's
+    // attach creates it. The refresh burst is already the "has it appeared
+    // yet" poll, so the stamp rides along with it.
+    if (t !== n) void stampTitleWhenAlive(n, t);
     quickRefreshBurst();
     return saved;
   }
 
-  async function rename(oldName: string, newName: string): Promise<boolean> {
-    const n = newName.trim();
-    if (!NAME_RE.test(n)) {
-      showToast("Invalid session name");
+  /**
+   * Stamp a title onto a session the lobby has just asked ttyd to create.
+   *
+   * Retries on the same cadence as quickRefreshBurst because the session does
+   * not exist until the iframe's WebSocket lands, and a 404 here means "not yet"
+   * rather than "no". Gives up quietly after the last attempt: the session is
+   * running and usable, it is just showing its name.
+   */
+  async function stampTitleWhenAlive(name: string, title: string): Promise<void> {
+    for (const ms of [700, 1600, 3000, 6000]) {
+      await new Promise((r) => setTimeout(r, ms));
+      try {
+        await api.setSessionTitle(name, title);
+        void refresh();
+        return;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) continue; // not up yet
+        return; // anything else: the title is not worth a second error
+      }
+    }
+  }
+
+  /**
+   * Clear a session's title so its card shows its name again.
+   *
+   * Emptying the rename box is the only way back to a bare name, and it is the
+   * state every session that predates titles is already in. The NAME is left
+   * exactly where it is — deriving one from an empty title would mean renaming
+   * a running session to something arbitrary.
+   */
+  async function clearTitle(name: string): Promise<boolean> {
+    try {
+      await api.setSessionTitle(name, "");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
+      else showToast("Rename failed");
       return false;
     }
-    if (n === oldName) return true;
+    await refresh();
+    return true;
+  }
+
+  /**
+   * Retitle a session: set its display title and move its name to match.
+   *
+   * The name follows the title so `tmux ls` stays legible from a shell. Most
+   * retitles do not move it — "Deploy the thing" and "Deploy the thing 🚀"
+   * derive the same name — and that case is worth protecting, because a name
+   * change re-navigates the terminal iframe.
+   *
+   * A collision is rejected rather than suffixed. The person is editing a
+   * title, so a name they never typed appearing underneath would be harder to
+   * make sense of than being told the name is taken — which they can see,
+   * because the rename box shows the derived name as they type.
+   */
+  async function rename(oldName: string, title: string): Promise<boolean> {
+    const t = cleanTitle(title);
+    if (t === "") {
+      // An empty title clears back to the name rather than renaming to nothing.
+      return clearTitle(oldName);
+    }
+    const taken = takenNames();
+    taken.delete(oldName); // keeping your own name is not a collision
+    const n = nameForTitle(t, taken);
+    if (taken.has(n)) {
+      showToast(`"${n}" is taken`);
+      return false;
+    }
     try {
-      await api.renameSession(oldName, n);
+      await api.retitleSession(oldName, n, t);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) showToast(`"${n}" is taken`);
       else if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
       else showToast("Rename failed");
       return false;
     }
+    if (n === oldName) {
+      // Title-only: nothing downstream is keyed by a name that did not move,
+      // so a refresh is the whole update — and the terminal is left alone.
+      await refresh();
+      return true;
+    }
     // The backend already renamed the server layout; mirror locally for an
     // instant repaint, then reconcile.
     applyLocalLayout(renameSessionInLayout(layout(), oldName, n));
     setPending((p) => p.map((s) => (s.name === oldName ? { ...s, name: n } : s)));
+    // Per-browser records keyed by the name have to follow it too, or the next
+    // poll prunes the old name as dead and a completion the user already saw
+    // comes back as an unseen tick. Announced rather than called: the visit
+    // store belongs to the notification system, which is built after this one.
+    window.dispatchEvent(
+      new CustomEvent("tl:session-renamed", { detail: { from: oldName, to: n } }),
+    );
     // applySelection, NOT select: renaming the session you are attached to must
     // keep the selection pointing at the new name without counting as "the user
     // asked to open this", which on a phone would flip them out of the list.

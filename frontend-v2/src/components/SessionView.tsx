@@ -58,6 +58,11 @@ const connTitle = (s: SseStatus): string =>
  */
 export const SessionView: Component<{
   session: string;
+  /** What the bar SHOWS for this session: its title when it has one, else its
+   *  name. Passed in rather than looked up because this view is given a name,
+   *  not a session — and it stays reactive, so a retitle repaints the bar
+   *  without re-mounting the terminal. */
+  label?: string;
   /** FALSE while an ancestor is display:none — the phone layout hides the whole
    *  session pane to give the list the screen. It folds into TerminalView's
    *  `active`, so the frame is told it is hidden and stops fitting: a fit
@@ -335,8 +340,8 @@ export const SessionView: Component<{
     <div class="tl-session-view" data-mode={mode()}>
       <div class="tl-session-bar">
         {props.leading}
-        <span class="tl-session" title="session">
-          {session}
+        <span class="tl-session" title={session}>
+          {props.label ?? session}
         </span>
         {/* The TEXT view's status, and only its. It reports the SSE transcript
             stream that feeds that view — on the Terminal view (v1's default,
