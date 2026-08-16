@@ -66,6 +66,9 @@ describe("coercePrefs — validate-or-default", () => {
       fontSize: 18,
       session: { newCommand: "codex" },
       notify: { onDone: false, onAwaiting: true },
+      // Absent from the input, so it takes its default — which is off. This
+      // assertion is exhaustive on purpose: a new pref has to show up here.
+      sidebar: { showLastActive: false },
     });
   });
 });

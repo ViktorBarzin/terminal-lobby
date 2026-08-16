@@ -106,6 +106,7 @@ export const SettingsPanel: Component<{
   const fontSize = () => props.prefs.prefs().fontSize;
   const newCommand = () => props.prefs.prefs().session.newCommand;
   const notify = () => props.prefs.prefs().notify;
+  const sidebar = () => props.prefs.prefs().sidebar;
 
   return (
     <div
@@ -205,6 +206,27 @@ export const SettingsPanel: Component<{
             >
               A+
             </button>
+          </div>
+        </section>
+
+        <section class="tl-settings-group">
+          <div class="tl-settings-label">Session list</div>
+          <label class="tl-settings-check">
+            <input
+              type="checkbox"
+              checked={sidebar().showLastActive}
+              onChange={(e) =>
+                props.prefs.setPref({
+                  sidebar: { showLastActive: e.currentTarget.checked },
+                })
+              }
+            />
+            <span>Show when each session was last active</span>
+          </label>
+          <div class="tl-settings-hint">
+            Roams across your devices. A running session still shows its live
+            timer, which counts the turn in flight rather than telling you when
+            it last did something.
           </div>
         </section>
 
