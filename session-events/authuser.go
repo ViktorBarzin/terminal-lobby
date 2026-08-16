@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/user"
 	"strings"
+
+	"terminal-lobby/authuser"
 )
 
 const authHeader = "X-Authentik-Username"
@@ -68,8 +70,21 @@ func osUserFrom(ctx context.Context) string {
 	return s
 }
 
+// actAsGate decides whether a ?as= request may proceed. A var only as a test
+// seam; production never reassigns it. Shared with tmux-api, file-api and
+// clipboard-upload so the admin check has exactly one implementation.
+var actAsGate = authuser.Default
+
 // authMiddleware resolves the Authentik header to an OS user (401 missing / 403
 // unmapped / 500 if the OS user is absent) and stashes it in the request context.
+//
+// It also REFUSES an act-as request rather than ignoring it. This service reads
+// /home/<user>/.claude/projects directly and has no cross-user path yet — other
+// homes are 0750, and its tail polls every 200 ms, so it needs a persistent
+// streaming child rather than the per-operation sudo re-exec file-api uses.
+// Ignoring the parameter would be worse than refusing: the handler would resolve
+// the CALLER and serve their own transcripts under the target's name. 501 says
+// "this view is not available here" instead of quietly showing wrong data.
 func authMiddleware(mapPath string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authValue := r.Header.Get(authHeader)
@@ -77,7 +92,8 @@ func authMiddleware(mapPath string, next http.Handler) http.Handler {
 			http.Error(w, "missing "+authHeader, http.StatusUnauthorized)
 			return
 		}
-		osUser := mapAuthToOS(loadUserMap(mapPath), authValue)
+		userMap := loadUserMap(mapPath)
+		osUser := mapAuthToOS(userMap, authValue)
 		if osUser == "" {
 			http.Error(w, "no terminal account for '"+authValue+"'", http.StatusForbidden)
 			return
@@ -85,6 +101,29 @@ func authMiddleware(mapPath string, next http.Handler) http.Handler {
 		if _, err := user.Lookup(osUser); err != nil {
 			log.Printf("mapped OS user %q missing: %v", osUser, err)
 			http.Error(w, "mapped OS user missing on this host", http.StatusInternalServerError)
+			return
+		}
+		// Same gate as the other services, so an unauthorized ?as= is refused
+		// for the same reason with the same status; an AUTHORIZED one still
+		// stops here, because the reader behind it does not exist yet.
+		isMapped := func(u string) bool {
+			for _, v := range userMap {
+				if v == u {
+					return true
+				}
+			}
+			return false
+		}
+		eff, err := actAsGate.Effective(osUser, r.URL.Query().Get("as"), isMapped)
+		if err != nil {
+			log.Printf("act-as refused: %s -> %q: %v (%s %s)",
+				osUser, r.URL.Query().Get("as"), err, r.Method, r.URL.Path)
+			http.Error(w, "not permitted to act as that user", http.StatusForbidden)
+			return
+		}
+		if eff != osUser {
+			http.Error(w, "the text view is not available while acting as another user",
+				http.StatusNotImplemented)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), osUserKey, osUser)))
