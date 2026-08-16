@@ -31,7 +31,7 @@ and differently shaped: `resize.c`'s `ignore_client_size` skips read-only client
 only *"if there are any attached clients that aren't read-only."* When the last
 read-write client goes, that skip lapses.
 
-This happens in ordinary use here. `frontend/term.html` drops its WebSocket after
+This happens in ordinary use here. `frontend/term.html` · `tmux-api/driven.go` drops its WebSocket after
 tab has been hidden 60 s, to spare a backgrounded phone's radio — a deliberate
 and worthwhile behaviour. Its side effect is that pocketing your phone detaches
 your client, hands the grid to whoever is watching, and reflows the session
@@ -71,7 +71,7 @@ the grid away.
 | 7 | No watcher indicator, in any case | Viktor's call; shares are consent-gated and the box is effectively single-user today |
 | 8 | Frontend also blocks input, with a nudge | tmux discards the bytes anyway; without this a watcher types into a terminal that looks alive |
 | 9 | Pin applied lazily at the first read-only attach, never reverted | A session nobody watches behaves exactly as before |
-| 10 | Read-write stays the default | Opening a session is unchanged; watching is opt-in |
+| 10 | **Revised:** joining a session someone is already *driving* comes up watching; read-write remains the default when nobody is. Settable ahead of time from the sidebar card's menu (Auto / Watch only / Take control) | The original — set the toggle before the attach — could not be done: v2 is terminal-first, so selecting a session attaches in the same tick |
 | 11 | v2 only | v2's cutover is already marked ready |
 | 12 | Named **Watch mode** | `Attach mode` is taken — it is the server-side, per-share term |
 
@@ -178,6 +178,68 @@ so it holds however the detach is sequenced.
   recently *attached or resized*. This is only observable with two read-write
   clients on one session, and only until one of them starts watching.
 
+## Revision — decision 10, and the regression on the way
+
+Decision 10 rested on v2's lazy attach: the toggle would be set before the
+Terminal view was first shown. That window does not exist — `viewmode.ts`
+defaults to `"terminal"`, so selecting a session shows the Terminal view and
+latches the attach in the same tick.
+
+The rule now: **with no explicit choice recorded, a client joins as a viewer
+when the session already has a read-write client.** Opening a session nobody is
+on is unchanged. It can also be set ahead of time from the sidebar card's
+`⋯ → Attach as` menu, and the card carries an 👁 when this device would open the
+session as a viewer.
+
+Three states, not two — Auto, Watch only, Take control. *Take control* has to
+survive the other device still driving, so it must be storable and distinct from
+"never said"; and without a way back to Auto, a session taken control of once
+would never auto-join again on that device, so the fix would quietly stop
+applying with nothing explaining why.
+
+> [!IMPORTANT]
+> The first cut of this shipped and had to be reverted within the hour. `driven`
+> counts every read-write client **including the one asking**, and it was wired
+> as a live dependency of the attach. So: attach read-write → the next poll
+> reports the session as driven → the rule flips the client to watch → the
+> re-attach leaves only a read-only client → driven goes false → it flips back.
+> Once per poll, re-navigating the terminal iframe each time.
+>
+> Joining is now a decision taken **once**, latched when a view takes a session
+> on, re-taken only on a session change or an explicit choice. It is a memo
+> rather than an effect so it re-latches in the same tick, with no window in
+> which the previous session's decision is still reported.
+
+`GET /api/sessions` grew `driven` for this: at least one attached client is
+read-write. Deliberately not `attached`, which counts watchers too — a session
+with two watchers and nobody typing is attached twice and driven by nobody, and
+joining that as a viewer would leave it with no one able to type. The sidebar
+card prefers the open view's own resolved state over `driven`, since for the
+session this browser has open the count includes us.
+
+## Two pinning bugs found while chasing the loop
+
+Both moved a session the moment somebody watched it, which is what the feature
+exists to prevent.
+
+**Switching a live window to `manual` does not freeze it where it is.** It
+reverts it to the size the window was *created* at, discarding whatever `latest`
+had negotiated. Measured: a window born 80x24, grown to 190x55 by its client,
+snaps back to 80x24 the instant the option is set. PinGrid now reads the size
+first and restores it immediately after.
+
+**The hook resized to the client's raw height.** tmux subtracts the status lines
+when it sizes a window, so every pinned session came out one row too tall with
+its bottom row behind the status bar. 3.4 has no `#{status_lines}`, so the
+subtraction reads `#{status}` — `off`, `on`, or a count — and falls back to 1 on
+anything unrecognised rather than breaking the resize.
+
+Neither appeared in the original verification because its fixture created the
+scratch session at 200x50 and attached 200x50 clients — birth size and client
+size coincided, so the snap was invisible — and ran with the status line off, so
+the row was too. The replacement test asserts its own fixture has grown past the
+birth size before it trusts its result.
+
 ## Verification
 
 | Layer | What it proves | Where |
@@ -187,7 +249,11 @@ so it holds however the detach is sequenced.
 | tmux-api units | Downgrade-only resolution; self-attach needs no share; an unshared guest is still refused whatever they ask; a missing session never upgrades a guest | `tmux-api/watch_test.go` |
 | Shipped browser code | The real `argSuffix` builder lifted out of `term.html` and executed, against both the source and the **deployed** file | `scripts/test_watch_mode_e2e.py` |
 | The attach script | Executed with curl/tmux/sudo shimmed; asserts the exact argv, that `-r` comes from the server and not the argument, and that a malformed arg5 is ignored | `scripts/test_watch_mode_e2e.py` |
-| Session bar | The toggle is reachable from the Text view, persists per session, and reaches the attach builder | `frontend-v2/test/SessionView.watch.test.tsx` |
+| Session bar | The toggle is reachable from the Text view, persists per session, reaches the attach builder, and auto-joins on a driven session | `frontend-v2/test/SessionView.watch.test.tsx` |
+| Sidebar card | The 👁 marker in all four combinations of choice and driven-ness; that it defers to an open view rather than a count including us; the three-way menu, including the route back to Auto | `frontend-v2/test/SessionCard.watch.test.tsx` |
+| The latch | That `driven` changing after a view takes a session on does NOT move the watch state, in both directions — the reverted oscillation, pinned | `frontend-v2/test/watchmode.auto.test.ts` |
+| Driving vs attached | A lone watcher is not a driver; several still are not; a watcher beside a driver is; names match exactly | `tmux-api/driven_test.go` |
+| Pinning is invisible | That pinning does not move a running session, with a fixture that asserts birth size and current size actually differ; and that the pinned grid equals what tmux would choose, at status on/off/2/3 | `sessionio/grid_test.go` |
 | Live round trip | ttyd → `tmux-attach.sh` → tmux-api → tmux, driven exactly as the browser drives it | run 2026-08-16, below |
 
 The live run against the deployed stack, with two real WebSocket clients:

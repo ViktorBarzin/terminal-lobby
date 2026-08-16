@@ -11,6 +11,13 @@ import type { LobbyStore } from "../store/lobby";
 import { formatWorking, relativeTime, stateLabel } from "./lobby.logic";
 import { createDismissableMenu } from "./menu";
 import { StateDot } from "./StateDot";
+import {
+  resolveWatch,
+  resolvedWatchFor,
+  saveWatch,
+  watchChoice,
+  type WatchChoice,
+} from "../store/watchmode";
 import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
 
 const isCoarse = (): boolean =>
@@ -34,6 +41,20 @@ export const SessionCard: Component<{
 }> = (props) => {
   const s = () => props.session;
   const foreign = () => !!s().owner && s().owner !== props.store.me();
+
+  // --- Watch mode ---------------------------------------------------------
+  // What this device would do on opening this session. For a session a view is
+  // already OPEN on, that view's resolved decision wins: `driven` counts our own
+  // client, so a session we are driving reads as driven and this would otherwise
+  // claim we are about to watch it.
+  const choice = () => watchChoice(s().name);
+  const willWatch = () =>
+    resolvedWatchFor(s().name) ?? resolveWatch(choice(), s().driven === true);
+
+  const setChoice = (c: WatchChoice) => {
+    saveWatch(s().name, c);
+    menu.close();
+  };
   const isActive = () =>
     props.store.selected()?.name === s().name &&
     (props.store.selected()?.owner ?? "") === (foreign() ? s().owner ?? "" : "");
@@ -233,6 +254,24 @@ export const SessionCard: Component<{
         </span>
       </Show>
 
+      {/* Watch marker. Deliberately only shown when this device WOULD watch:
+          driving is the ordinary case and does not need a mark. Suppressed on a
+          foreign session, whose owner badge already carries 👁 for a read-only
+          share — two eyes on one row would say the same thing twice. */}
+      <Show when={!foreign() && willWatch()}>
+        <span
+          class="tl-card-watch"
+          title={
+            choice() === true
+              ? "Watch only: set for this session on this device"
+              : "Someone is driving this session — you will join as a viewer"
+          }
+          aria-label="opens as a viewer"
+        >
+          👁
+        </span>
+      </Show>
+
       <span
         class="tl-card-time"
         classList={{ "tl-card-time-running": s().state === "running" }}
@@ -261,6 +300,31 @@ export const SessionCard: Component<{
           </button>
           <button class="tl-menu-item tl-menu-danger" role="menuitem" onClick={() => void kill()}>
             Kill
+          </button>
+          <div class="tl-menu-label">Attach as</div>
+          <button
+            class="tl-menu-item"
+            role="menuitemradio"
+            aria-checked={choice() === undefined}
+            onClick={() => setChoice(undefined)}
+          >
+            {choice() === undefined ? "✓ " : "\u2007 "}Auto — watch if busy
+          </button>
+          <button
+            class="tl-menu-item"
+            role="menuitemradio"
+            aria-checked={choice() === true}
+            onClick={() => setChoice(true)}
+          >
+            {choice() === true ? "✓ " : "\u2007 "}Watch only
+          </button>
+          <button
+            class="tl-menu-item"
+            role="menuitemradio"
+            aria-checked={choice() === false}
+            onClick={() => setChoice(false)}
+          >
+            {choice() === false ? "✓ " : "\u2007 "}Take control
           </button>
           <Show when={targets().length > 0}>
             <div class="tl-menu-label">Move to</div>
