@@ -178,6 +178,15 @@ body {
   align-items: center;
 }
 
+/* Watch mode — accent when this device is watching rather than driving. It is
+   a mode, not an action, so it stays visibly lit for as long as it is on: the
+   terminal below refuses every keystroke, and this is the only thing on screen
+   that explains why. */
+.tl-watch-btn.tl-watch-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* Settings → Notifications: per-device readouts + test buttons. */
 .tl-settings-readouts {
   display: flex;

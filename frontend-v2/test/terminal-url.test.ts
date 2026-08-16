@@ -82,6 +82,66 @@ describe("buildTerminalUrl — ttyd positional ?arg= contract", () => {
   });
 });
 
+/**
+ * Watch mode rides arg5, the deepest slot in the positional contract — so every
+ * earlier position has to be emitted ahead of it, including an owner slot that
+ * is empty for your OWN session. Dropping one shifts "ro" into the owner slot,
+ * where tmux-attach.sh would read it as an OS user named "ro": the attach falls
+ * back to your own server read-WRITE, i.e. it silently does the opposite of
+ * what was asked. This is the same trap arg4 hit before (memory #9926), one
+ * position deeper, which is why it is pinned this thoroughly.
+ */
+describe("buildTerminalUrl — arg5 (Watch mode)", () => {
+  it("own session, watch: every earlier slot is emitted, owner blank at arg4", () => {
+    const u = buildTerminalUrl("/term.html", "foo", { watch: true });
+    expect(u).toBe("/term.html?arg=foo&arg=default&arg=default&arg=&arg=ro");
+    expect(u.match(/arg=/g)?.length).toBe(5);
+  });
+
+  it("own session, watch, with a command and dir: real values keep their slots", () => {
+    expect(
+      buildTerminalUrl("/term.html", "foo", {
+        cmd: "claude",
+        dir: "/srv/p",
+        watch: true,
+      }),
+    ).toBe("/term.html?arg=foo&arg=claude&arg=%2Fsrv%2Fp&arg=&arg=ro");
+  });
+
+  it("foreign session, watch: owner keeps arg4 and ro lands at arg5", () => {
+    const u = buildTerminalUrl("/term.html", "foo", {
+      owner: "bob",
+      watch: true,
+    });
+    expect(u).toBe("/term.html?arg=foo&arg=default&arg=default&arg=bob&arg=ro");
+    // The owner must still be the FOURTH arg, not the fifth.
+    expect(new URLSearchParams(u.split("?")[1]).getAll("arg")[3]).toBe("bob");
+  });
+
+  it("watch:false is identical to omitting it — no arg5, no shape change", () => {
+    for (const opts of [
+      {},
+      { cmd: "claude" },
+      { dir: "/d" },
+      { owner: "bob" },
+      { cmd: "claude", dir: "/d", owner: "bob" },
+    ]) {
+      expect(buildTerminalUrl("/term.html", "foo", { ...opts, watch: false })).toBe(
+        buildTerminalUrl("/term.html", "foo", opts),
+      );
+    }
+  });
+
+  it("the mode value is the literal the attach script matches on", () => {
+    // tmux-attach.sh validates arg5 against ^(ro|rw)$ and only acts on "ro";
+    // anything else falls through to the server's ceiling.
+    const args = new URLSearchParams(
+      buildTerminalUrl("/term.html", "foo", { watch: true }).split("?")[1],
+    ).getAll("arg");
+    expect(args[4]).toBe("ro");
+  });
+});
+
 describe("terminalUrl — config-bound (default /term.html base, avoids SPA recursion)", () => {
   it("builds a same-origin /term.html URL by default (NOT '/', which would reload the SPA)", () => {
     expect(terminalUrl("foo")).toBe("/term.html?arg=foo");
