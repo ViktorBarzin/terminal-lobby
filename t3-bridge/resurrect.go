@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"terminal-lobby/sessionio"
+	"terminal-lobby/slug"
 )
 
 // Recreating a session that is gone, and creating the one a T3-born thread
@@ -272,78 +273,35 @@ func resurrectShellSafe(r rune) bool {
 
 // Slug turns a T3 thread title into a tmux session name.
 //
-// tmux names are the constraint: 32 characters of [A-Za-z0-9_-]. That squeezes
-// T3's descriptive titles hard, and it is the accepted cost of decision 7 —
-// one name, tmux wins, so both lists read as the same sessions.
+// The derivation itself lives in terminal-lobby/slug, shared with tmux-api and
+// mirrored in the lobby's TypeScript, so a title names the same session
+// whichever surface it was typed on. What stays here is the bridge's own
+// fallback: a title with nothing usable in it still has to become a session,
+// and "claude" reads better in `tmux ls` than session-N does for a thread that
+// came from T3.
 //
-// Case is kept. The lobby's own session names are mixed-case and the two lists
-// are meant to read as the same sessions, so lowercasing here would make every
-// T3-born session look like it came from somewhere else.
+// Slugs are lowercase now. Decision 7's "one name, tmux wins" was about not
+// losing the phrasing a human chose — and that phrasing now travels as the
+// session's TITLE, which is what the lobby displays and what t3-sync gives the
+// thread. The name underneath is free to be a plain identifier.
 func Slug(title string) string {
-	var b strings.Builder
-	dash := false // collapses a run of unusable characters into one dash
-	for _, r := range strings.TrimSpace(title) {
-		if resurrectNameRune(r) {
-			b.WriteRune(r)
-			dash = false
-			continue
-		}
-		if !dash && b.Len() > 0 {
-			b.WriteByte('-')
-			dash = true
-		}
+	if name := slug.FromTitle(title); name != "" {
+		return name
 	}
-	name := strings.Trim(b.String(), "-")
-	if len(name) > MaxTmuxNameLen {
-		name = strings.TrimRight(name[:MaxTmuxNameLen], "-")
-	}
-	if name == "" {
-		// Every caller is about to create a session, and a session cannot be
-		// created under an empty name. A legible placeholder beats an error the
-		// caller can only turn into the same placeholder.
-		return resurrectFallbackName
-	}
-	return name
-}
-
-// resurrectNameRune reports whether a rune may appear in a tmux session name.
-// The set matches tmux-api's own validation (^[a-zA-Z0-9_-]{1,32}$), so a name
-// the bridge creates can always be renamed and killed through the lobby.
-func resurrectNameRune(r rune) bool {
-	switch {
-	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		return true
-	}
-	return r == '_' || r == '-'
+	// Every caller is about to create a session, and a session cannot be
+	// created under an empty name. A legible placeholder beats an error the
+	// caller can only turn into the same placeholder.
+	return resurrectFallbackName
 }
 
 // resurrectFallbackName is what a title with nothing usable in it becomes.
 const resurrectFallbackName = "claude"
 
-// resurrectFreeName returns base, or the first free `base-N` variant.
-//
-// The suffix has to fit the same 32-character budget, so a base at the limit is
-// cut to make room. Ten variants is the ceiling before it gives up and returns
-// the last try: at that point the collision is not a coincidence, and
-// NewSession's own duplicate check is the backstop.
+// resurrectFreeName returns base, or the first free `base-N` variant, when a
+// resurrection finds its name taken. The walk is shared with tmux-api.
 func resurrectFreeName(base string, taken map[string]bool) string {
-	if !taken[base] {
-		return base
-	}
-	name := base
-	for n := 2; n < 12; n++ {
-		suffix := fmt.Sprintf("-%d", n)
-		trimmed := base
-		if len(trimmed)+len(suffix) > MaxTmuxNameLen {
-			trimmed = strings.TrimRight(base[:MaxTmuxNameLen-len(suffix)], "-")
-		}
-		name = trimmed + suffix
-		if !taken[name] {
-			return name
-		}
-	}
-	return name
+	return slug.Free(base, taken)
 }
 
 // MaxTmuxNameLen is the character budget a slugged title has to fit.
-const MaxTmuxNameLen = 32
+const MaxTmuxNameLen = slug.MaxNameLen

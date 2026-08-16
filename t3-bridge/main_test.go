@@ -527,7 +527,7 @@ func TestOpenSideStartsAT3BornThread(t *testing.T) {
 		t.Fatalf("protoOpenSide: %v", err)
 	}
 	spec := rig.tmux.created[0]
-	if spec.Name != "My-Notes" {
+	if spec.Name != "my-notes" {
 		t.Errorf("session name = %q, want the slugged workspace directory", spec.Name)
 	}
 	cmd := spec.Command[0]
