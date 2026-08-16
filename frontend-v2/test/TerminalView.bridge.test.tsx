@@ -326,3 +326,47 @@ describe("<TerminalView> — the create-dropdown command only shapes a NEW sessi
     expect(frames.nav).toEqual(["/term.html?arg=qa-born&arg=codex"]);
   });
 });
+
+/**
+ * A SECOND terminal (the Ctrl+J dock) must not take the window bridges.
+ *
+ * They are installed on mount and named globally, so the last frame to mount
+ * wins them — which would point the soft keys, paste and the focus handback at
+ * the dock's shell instead of the session the user is working in.
+ */
+describe("<TerminalView> — only the primary frame owns the window bridges", () => {
+  afterEach(() => {
+    delete window.__tlSendToTerminal;
+    delete window.__tlForwardToTerminal;
+    delete window.__tlPasteToTerminal;
+    delete window.__tlFocusTerminal;
+  });
+
+  it("leaves every bridge alone when it does not own them", () => {
+    const mine = () => true;
+    window.__tlForwardToTerminal = mine;
+    window.__tlSendToTerminal = mine;
+    window.__tlPasteToTerminal = mine;
+    window.__tlFocusTerminal = mine;
+
+    const { unmount } = render(() => (
+      <TerminalView session="qa-dock" active ownsBridges={false} />
+    ));
+    expect(window.__tlForwardToTerminal).toBe(mine);
+    expect(window.__tlSendToTerminal).toBe(mine);
+    expect(window.__tlPasteToTerminal).toBe(mine);
+    expect(window.__tlFocusTerminal).toBe(mine);
+
+    // ...and unmounting must not restore over the owner either
+    unmount();
+    expect(window.__tlForwardToTerminal).toBe(mine);
+    expect(window.__tlSendToTerminal).toBe(mine);
+  });
+
+  it("still installs them by default (the session view is the owner)", () => {
+    const { unmount } = render(() => <TerminalView session="qa-main" active />);
+    expect(typeof window.__tlForwardToTerminal).toBe("function");
+    unmount();
+    expect(window.__tlForwardToTerminal).toBeUndefined();
+  });
+});
