@@ -9,6 +9,8 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+
+	"terminal-lobby/authuser"
 )
 
 const authHeader = "X-Authentik-Username"
@@ -67,11 +69,58 @@ func loadUserMap() map[string]string {
 	return m
 }
 
-// resolveOSUser → mapped OS user from the Authentik header, or "" after writing
-// the appropriate 401/403/500 to w. Ported verbatim from tmux-api/main.go: this
-// service execs file ops as the mapped user in production, so the user.Lookup
-// gate (500 when the mapped account is missing on this host) is kept.
+// isMappedOSUser reports whether osUser is a real terminal account — a target
+// in the Authentik→OS-user map. The population an admin may act as; existing
+// as a Unix account is not authorization on its own.
+func isMappedOSUser(osUser string) bool {
+	for _, u := range loadUserMap() {
+		if u == osUser {
+			return true
+		}
+	}
+	return false
+}
+
+// actAsGate decides whether a ?as= request may proceed. A var only as a test
+// seam (actas_test.go points it at a fixture admin list); production never
+// reassigns it. Shared with tmux-api and clipboard-upload so the admin check
+// has exactly one implementation.
+var actAsGate = authuser.Default
+
+// resolveOSUser → the OS user this request ACTS AS: normally the caller from
+// the Authentik header, or an act-as target when an administrator asked for one
+// and is entitled to it. Returns "" after writing the appropriate 401/403/500.
+//
+// The resolved name is what userHome() confines the request to and what the
+// privop re-exec runs as, so an admin acting as emo is confined to emo's home
+// and their writes land with emo's ownership — the cross-user path built for
+// this service already does the rest.
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
+	real := resolveRealOSUser(w, r)
+	if real == "" {
+		return ""
+	}
+	eff, err := actAsGate.Effective(real, r.URL.Query().Get("as"), isMappedOSUser)
+	if err != nil {
+		log.Printf("act-as refused: %s -> %q: %v (%s %s)",
+			real, r.URL.Query().Get("as"), err, r.Method, r.URL.Path)
+		http.Error(w, "not permitted to act as that user", http.StatusForbidden)
+		return ""
+	}
+	if eff != real {
+		// Logged per request here, unlike tmux-api: file-api is not polled, so
+		// these lines are one per user action rather than one per five seconds,
+		// and a write under someone else's account is worth a record.
+		log.Printf("act-as: %s acting as %s (%s %s)", real, eff, r.Method, r.URL.Path)
+	}
+	return eff
+}
+
+// resolveRealOSUser → the CALLER's own mapped OS user, ignoring ?as= entirely.
+// Ported verbatim from tmux-api/main.go: this service execs file ops as the
+// mapped user in production, so the user.Lookup gate (500 when the mapped
+// account is missing on this host) is kept.
+func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
 	authUser := r.Header.Get(authHeader)
 	if authUser == "" {
 		log.Printf("auth: missing %s header (%s %s)", authHeader, r.Method, r.URL.Path)

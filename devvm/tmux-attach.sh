@@ -115,7 +115,13 @@ if [[ -n "$owner_arg" && "$owner_arg" != "$os_user" ]] || [[ "$watch_arg" == "ro
     # attach falls through to CREATING the session), and neither is obvious from
     # the outside. Accepting both spellings removes that silent divergence.
     mode="$(printf '%s' "$resp" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p')"
-    logger -t ttyd-attach "server-attach: guest='$guest' owner='$target_owner' name='$name' tty='${my_tty:-none}' asked='${watch_arg:-none}' code='$code' mode='${mode:-none}'"
+    # create tells us to START the session under the owner's account rather
+    # than attach an existing one — the server returns it only for a caller
+    # holding the owner's own access (the owner themselves, or an administrator
+    # acting as them). Matched strictly against `true`, so anything unparsed
+    # falls back to attaching, which fails safe.
+    create="$(printf '%s' "$resp" | sed -n 's/.*"create"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p')"
+    logger -t ttyd-attach "server-attach: guest='$guest' owner='$target_owner' name='$name' tty='${my_tty:-none}' asked='${watch_arg:-none}' code='$code' mode='${mode:-none}' create='${create:-none}'"
     if [[ "$code" != "200" ]]; then
         # Only reachable for a foreign attach: a self attach is authorized by
         # owning the session, so the server never denies it.
@@ -129,6 +135,27 @@ if [[ -n "$owner_arg" && "$owner_arg" != "$os_user" ]] || [[ "$watch_arg" == "ro
 EOF
         sleep 5
         exit 1
+    fi
+    # An administrator acting as the owner, on a session that is not running
+    # yet: create it under the OWNER's account. Same fixed argv as the ordinary
+    # create path at the bottom of this script — only the user differs, and that
+    # user was authorized by the server, matched against NAME_RE here, and is
+    # covered by the per-user sudo grant. Read-write by construction: the server
+    # returns create only alongside mode=rw.
+    if [[ "$create" == "true" && "$mode" == "rw" && "$target_owner" != "$os_user" ]]; then
+        # $start_dir defaulted to the GUEST's home further up. Landing there
+        # would put the new session in the admin's home directory, which the
+        # target can traverse but not list (0750) — and tmux-user-attach's
+        # fallback does not catch it, since it only tests that the directory
+        # exists. Default to the TARGET's own home instead; an explicitly
+        # supplied absolute dir (a project's) still wins.
+        spawn_dir="$start_dir"
+        if [[ ! ( "$dir_arg" == /* && ${#dir_arg} -le 4096 ) ]]; then
+            target_home=$(getent passwd "$target_owner" | cut -d: -f6)
+            [[ -n "$target_home" ]] && spawn_dir="$target_home"
+        fi
+        logger -t ttyd-attach "act-as spawn: guest='$guest' owner='$target_owner' name='$name' dir='$spawn_dir'"
+        exec sudo -n -H -u "$target_owner" /usr/local/bin/tmux-user-attach "$name" "$spawn_dir" "$cmd_key"
     fi
     # Fail SAFE: read-only unless the server explicitly said "rw".
     ro_flag=(-r)
