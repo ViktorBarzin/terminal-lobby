@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
 
@@ -330,11 +331,51 @@ func ensureInternalToken() error {
 	return os.WriteFile(internalTokenPath, []byte(internalToken+"\n"), 0o600)
 }
 
+// effectiveMode resolves what a client actually gets from what the server
+// allows (ceiling) and what the client asked for (requested).
+//
+// The rule is DOWNGRADE-ONLY: a client may ask for less access than the server
+// grants, never more. That is what lets Watch mode be a client-side toggle
+// without weakening anything — tmux-attach.sh's exact-argv discipline exists to
+// stop a guest promoting themselves to read-write, and a request to *drop* to
+// read-only cannot promote anyone. Anything other than a literal "ro" request
+// is simply no request at all, so a malformed or hostile value falls through to
+// the ceiling rather than to a guess.
+func effectiveMode(ceiling, requested string) string {
+	if requested == shareModeRO {
+		return shareModeRO
+	}
+	return ceiling
+}
+
+// The two tmux-touching seams, as vars so the handler's tests stay pure units.
+var (
+	gridInjector  = sessionio.NewInjector(selfUser)
+	sessionExists = func(osUser, name string) bool { return gridInjector.HasSession(osUser, name) }
+	pinGrid       = func(osUser, name string) error { return gridInjector.PinGrid(osUser, name) }
+)
+
 // handleInternalAttach is the devvm attach path's single authorization call:
-// given (owner,name,guest,tty) it confirms a share exists (else 403 — DENY the
-// attach), records the guest's client tty for later kick, and returns the mode
-// ({"mode":"ro"|"rw"}) so tmux-attach.sh can source `-r` from the server, never
-// a client argument. Token-gated; localhost-only in practice.
+// given (owner,name,guest,tty,requested) it decides whether the attach may
+// happen at all (else 403 — DENY), records the guest's client tty for later
+// kick, pins the grid when the attach is read-only, and returns the effective
+// mode ({"mode":"ro"|"rw"}) so tmux-attach.sh can source `-r` from the server,
+// never a client argument. Token-gated; localhost-only in practice.
+//
+// Two callers, two authorization stories:
+//
+//   - owner != guest — a shared attach. A share row must exist; its mode is the
+//     ceiling. Unchanged behaviour.
+//   - owner == guest — the owner's own session, reached from a second device.
+//     Owning it IS the authorization, so no share row is required or created,
+//     and the ceiling is rw. This is the path Watch mode adds; without it there
+//     would be no way to attach your own session read-only, and a phone opening
+//     a session you are driving on a desktop would reflow it.
+//
+// A read-only attach also pins the session's grid on the way in, which is what
+// keeps the owner's size theirs after their last read-write client drops (see
+// sessionio.PinGrid). A session that does not exist yet cannot be watched — the
+// mode falls back to rw so the ordinary create path brings it into being.
 func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 	if internalToken == "" || r.Header.Get("X-Internal-Token") != internalToken {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -349,6 +390,9 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 		Name  string `json:"name"`
 		Guest string `json:"guest"`
 		Tty   string `json:"tty"`
+		// Requested is the client's Watch-mode ask: "ro" to attach without
+		// driving, anything else (including absent) to take the ceiling.
+		Requested string `json:"requested"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -358,26 +402,66 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid tty", http.StatusBadRequest)
 		return
 	}
+
 	mode := ""
-	err := shareStoreInstance.update(func(ss *ShareSet) error {
-		for i := range ss.Shares {
-			if ss.Shares[i].Owner == body.Owner && ss.Shares[i].Name == body.Name && ss.Shares[i].Guest == body.Guest {
-				ss.Shares[i].ClientTty = body.Tty
-				mode = ss.Shares[i].Mode
-				return nil
-			}
+	selfAttach := body.Owner == body.Guest
+	if selfAttach {
+		// Self attach. There is no share row to match, and matching one is what
+		// used to validate these two values before they reached a tmux command
+		// — so check them here instead.
+		if !sessionNameRe.MatchString(body.Owner) || !sessionNameRe.MatchString(body.Name) {
+			http.Error(w, "invalid owner or session name", http.StatusBadRequest)
+			return
 		}
-		return errShareNotFound
-	})
-	if errors.Is(err, errShareNotFound) {
-		// No grant → deny the attach.
-		http.Error(w, "not shared", http.StatusForbidden)
-		return
+		mode = shareModeRW
+	} else {
+		err := shareStoreInstance.update(func(ss *ShareSet) error {
+			for i := range ss.Shares {
+				if ss.Shares[i].Owner == body.Owner && ss.Shares[i].Name == body.Name && ss.Shares[i].Guest == body.Guest {
+					ss.Shares[i].ClientTty = body.Tty
+					mode = ss.Shares[i].Mode
+					return nil
+				}
+			}
+			return errShareNotFound
+		})
+		if errors.Is(err, errShareNotFound) {
+			// No grant → deny the attach.
+			http.Error(w, "not shared", http.StatusForbidden)
+			return
+		}
+		if err != nil {
+			logAndFail(w, "record attach failed: %v", err)
+			return
+		}
 	}
-	if err != nil {
-		logAndFail(w, "record attach failed: %v", err)
-		return
+
+	mode = effectiveMode(mode, body.Requested)
+	if mode == shareModeRO {
+		switch {
+		case sessionExists(body.Owner, body.Name):
+			if err := pinGrid(body.Owner, body.Name); err != nil {
+				// Non-fatal: the attach is still read-only, and tmux still
+				// ignores a read-only client's size while a read-write one is
+				// attached. What is lost is only the protection after the last
+				// read-write client drops.
+				log.Printf("pin grid %s/%s: %v", body.Owner, body.Name, err)
+			}
+		case selfAttach:
+			// Your own session, not started yet: there is nothing to watch, so
+			// hand back rw and let the ordinary create path bring it into
+			// being rather than failing the attach.
+			//
+			// SELF ONLY. Doing this for a shared attach would raise a guest
+			// from the ro their share grants to rw whenever the owner's session
+			// happens to be missing — an escalation, and a racy one, since the
+			// session could appear between this check and the attach. A foreign
+			// ro attach to an absent session stays ro and simply fails, which
+			// is the safe outcome.
+			mode = shareModeRW
+		}
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"mode": mode})
 }
