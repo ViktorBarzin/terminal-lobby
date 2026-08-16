@@ -49,6 +49,12 @@ class FakeApi implements LobbyApi {
   async renameSession() {
     throw new ApiError(404, "no");
   }
+  async retitleSession() {
+    throw new ApiError(404, "no");
+  }
+  async setSessionTitle() {
+    throw new ApiError(404, "no");
+  }
   async restoreSessions() {}
   async listSnapshots() {
     return { snapshots: [], memAvailableMb: -1, perSessionMb: 550 };

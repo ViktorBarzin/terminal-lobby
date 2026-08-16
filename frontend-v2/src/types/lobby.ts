@@ -22,6 +22,17 @@ export type SessionTool = "claude" | "codex" | "shell";
 /** One session as returned by GET /api/sessions. */
 export interface Session {
   name: string;
+  /** tmux's own session id ($0, $1, …). The ONE identifier that survives a
+   *  rename, which is how a tab whose selected session was retitled elsewhere
+   *  follows it instead of holding a name whose attach would create a fresh
+   *  empty session. Absent from a server that predates it. */
+  id?: string;
+  /** The display title a person chose — arbitrary text, up to 64 code points,
+   *  from the session's @title option. Absent means the session has no title
+   *  and its `name` is what gets shown, which is where every session that
+   *  predates the feature sits. Distinct from `pane_title`, which is whatever
+   *  is running in the pane describing itself. */
+  title?: string;
   attached: number;
   /** At least one attached client is READ-WRITE. Distinct from `attached`,
    *  which counts watchers too: a session with two watchers and nobody
@@ -86,8 +97,22 @@ export interface Whoami {
 
 export const LAYOUT_VERSION = 1;
 
-/** Session name charset (tmux-api sessionNameRe). Shared client-side validation. */
+/** Session name charset (tmux-api sessionNameRe). Shared client-side validation.
+ *  This is the NAME — the identifier — not the title: a person types a title and
+ *  `lib/slug.ts` derives something matching this from it. */
 export const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+
+/**
+ * What to SHOW for a session: its title when it has one, otherwise its name.
+ *
+ * Every user-facing surface goes through this — cards, the tab title, the
+ * command palette, the dock, push bodies, confirmations, aria-labels. The name
+ * still travels underneath as the identifier; it is only the display that
+ * changes.
+ */
+export function sessionLabel(s: Pick<Session, "name" | "title">): string {
+  return s.title && s.title.length > 0 ? s.title : s.name;
+}
 
 export function emptyLayout(): Layout {
   return { version: LAYOUT_VERSION, projects: [], ungrouped: [], ungroupedIndex: 0 };
