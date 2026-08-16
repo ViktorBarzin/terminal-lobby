@@ -2,7 +2,7 @@
 # Deploy the two v2-ONLY backends — session-events (:7685) and file-api (:7686)
 # — plus the T3 bridge artefacts to the DevVM. Companion to scripts/deploy.sh
 # (the vanilla frontend + the SHARED backends) and scripts/deploy-v2.sh (the v2
-# SPA + its ttyd-v2).
+# SPA served by ttyd :7681).
 #
 # Why a third script: these two services were shipped by NEITHER of the other
 # two. Both binaries were installed by hand on 2026-08-03, so until now the only
@@ -231,7 +231,7 @@ if [[ -z "${SKIP_T3:-}" ]]; then
     done
   '
 fi
-echo "==> Done. session-events :7685 + file-api :7686 live. Routing lives in infra stacks/terminal (terminal-dev.viktorbarzin.me)."
+echo "==> Done. session-events :7685 + file-api :7686 live. Routing lives in infra stacks/terminal (terminal.viktorbarzin.me)."
 if [[ -z "${SKIP_T3:-}" ]]; then
   echo "    T3 bridge: /usr/local/bin/tl-t3-bridge + tl-t3-sync installed, tl-t3-sync@.service reloaded. Enabling a user: t3-bridge/DEPLOY.md."
 fi

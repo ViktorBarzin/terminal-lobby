@@ -2,7 +2,7 @@
 
 `session-events` (pillar #1) backs the v2 SPA's Text view: the normalized SSE
 transcript stream plus the prompt/cancel control channel. It is **deployed and
-live on the dev tier** (`terminal-dev.viktorbarzin.me`). The vanilla page never
+live** on `terminal.viktorbarzin.me`. The vanilla page never
 calls it, which is what keeps its blast radius to v2 only.
 
 ## Release path
@@ -26,7 +26,7 @@ install.
 | Piece | State |
 |---|---|
 | systemd unit on the devvm | installed, `enable --now`, listening on `:7685` |
-| Ingress | `terminal-dev.viktorbarzin.me` routes `PathPrefix(/events/)`, `/prompt/` and `/cancel/` here behind Authentik (`infra/stacks/terminal/terminal-dev.tf`). No strip — the service serves those at its root |
+| Ingress | `terminal.viktorbarzin.me` routes `PathPrefix(/events/)`, `/prompt/` and `/cancel/` here behind Authentik (`infra/stacks/terminal/main.tf`). No strip — the service serves those at its root |
 | `SessionStart` hook | wired org-wide: `/usr/local/bin/claude-se-hook session-start` in `/etc/claude-code/managed-settings.json`, installed by `scripts/deploy.sh`. It registers (user, tmux session) so the SSE handler can find the transcript to tail |
 
 `/hooks/*` is **never** routed publicly, and the session-start handler is
