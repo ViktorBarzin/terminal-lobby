@@ -31,7 +31,7 @@ and differently shaped: `resize.c`'s `ignore_client_size` skips read-only client
 only *"if there are any attached clients that aren't read-only."* When the last
 read-write client goes, that skip lapses.
 
-This happens in ordinary use here. `frontend/term.html` · `tmux-api/driven.go` drops its WebSocket after
+This happens in ordinary use here. `frontend/term.html` drops its WebSocket after
 tab has been hidden 60 s, to spare a backgrounded phone's radio — a deliberate
 and worthwhile behaviour. Its side effect is that pocketing your phone detaches
 your client, hands the grid to whoever is watching, and reflows the session
@@ -71,7 +71,7 @@ the grid away.
 | 7 | No watcher indicator, in any case | Viktor's call; shares are consent-gated and the box is effectively single-user today |
 | 8 | Frontend also blocks input, with a nudge | tmux discards the bytes anyway; without this a watcher types into a terminal that looks alive |
 | 9 | Pin applied lazily at the first read-only attach, never reverted | A session nobody watches behaves exactly as before |
-| 10 | **Revised 2026-08-16:** joining a session someone is already *driving* comes up watching; read-write remains the default when nobody is | The original — set the toggle before the attach — could not be done in practice: v2 is terminal-first, so selecting a session attaches in the same tick |
+| 10 | Read-write stays the default | Opening a session is unchanged; watching is opt-in |
 | 11 | v2 only | v2's cutover is already marked ready |
 | 12 | Named **Watch mode** | `Attach mode` is taken — it is the server-side, per-share term |
 
@@ -169,35 +169,14 @@ so it holds however the detach is sequenced.
 - **If you drive from a small screen and watch from a large one**, the grid is
   the small one and the watcher sees blank space around it. That follows from
   the invariant rather than contradicting it.
-- **A device taking control while another still drives** contends as two
-  read-write clients always have. The toggle is how you avoid it.
+- **Forgetting the toggle on a new device costs one resize.** The first attach
+  is read-write by design (decision 10), and the pin then holds that size. It
+  heals on the driving client's next attach *or any resize* — verified — so
+  recovery is "resize your window", not "restart the session".
 - **`manual` + hooks is not a perfect emulation of `latest`.** `latest` follows
   whichever client you most recently *typed* on; the hooks follow whichever most
   recently *attached or resized*. This is only observable with two read-write
   clients on one session, and only until one of them starts watching.
-
-## Revision — decision 10, after first use
-
-Shipped, then corrected the same day. Decision 10 rested on v2's lazy attach:
-the toggle would be set before the Terminal view was first shown. In use that
-window does not exist — `viewmode.ts` defaults to `"terminal"`, so selecting a
-session shows the Terminal view and latches the attach in the same tick, and the
-first attach was always read-write.
-
-The rule now: **with no explicit choice recorded, a client joins as a viewer
-when the session already has a read-write client attached.** Opening a session
-nobody is on is unchanged.
-
-This needs three states rather than two — "I have never said", "watch", and
-"drive" — because *take control* has to survive the other device still driving.
-Stored as a two-state absence, the automatic rule would immediately undo it and
-the button would look inert.
-
-`GET /api/sessions` grew a `driven` field for it: at least one attached client
-is read-write. That is a different question from `attached`, which counts
-watchers too — a session with two watchers and nobody typing is attached twice
-and driven by nobody. It is a courtesy signal, not an access decision: it comes
-from the polled list and can be seconds stale, and being wrong costs one click.
 
 ## Verification
 
@@ -208,9 +187,7 @@ from the polled list and can be seconds stale, and being wrong costs one click.
 | tmux-api units | Downgrade-only resolution; self-attach needs no share; an unshared guest is still refused whatever they ask; a missing session never upgrades a guest | `tmux-api/watch_test.go` |
 | Shipped browser code | The real `argSuffix` builder lifted out of `term.html` and executed, against both the source and the **deployed** file | `scripts/test_watch_mode_e2e.py` |
 | The attach script | Executed with curl/tmux/sudo shimmed; asserts the exact argv, that `-r` comes from the server and not the argument, and that a malformed arg5 is ignored | `scripts/test_watch_mode_e2e.py` |
-| Session bar | The toggle is reachable from the Text view, persists per session, reaches the attach builder, auto-joins as a viewer on a driven session, and keeps take-control while the other device drives | `frontend-v2/test/SessionView.watch.test.tsx` |
-| Driving vs attached | A lone watcher is not a driver; several watchers are still not; a watcher beside a driver is; names match exactly, not by prefix | `tmux-api/driven_test.go` |
-| Auto-join rule | An explicit choice beats the automatic one in both directions; values written by the two-state version still read correctly | `frontend-v2/test/watchmode.auto.test.ts` |
+| Session bar | The toggle is reachable from the Text view, persists per session, and reaches the attach builder | `frontend-v2/test/SessionView.watch.test.tsx` |
 | Live round trip | ttyd → `tmux-attach.sh` → tmux-api → tmux, driven exactly as the browser drives it | run 2026-08-16, below |
 
 The live run against the deployed stack, with two real WebSocket clients:
