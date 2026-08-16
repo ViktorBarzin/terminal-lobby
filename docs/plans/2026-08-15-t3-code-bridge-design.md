@@ -125,7 +125,7 @@ re-derives `@claude_state` because Ctrl-C never fires the Stop hook.
 | 3 | **Kill crosses; exit doesn't.** `thread.delete` kills the tmux session; a lobby kill archives the thread. OOM, reboots and reaped bridges cross nothing. | Archive is the routine "done" gesture — 386 threads here, mostly archived. Mapping it to a kill would be destructive by accident. |
 | 4 | **Every live-Claude session is mirrored, automatically**, minus an ignore list of name prefixes: `qa-`, `t3e2e-`, `tlp-t`. | No per-session bookkeeping and no toggle to forget. Plain shells appear once a Claude starts in them. Agent worktree sessions carry no naming convention today, so they are mirrored like any other — see the note under decision 4 below. |
 | 5 | **The default Claude instance carries the bridge; a second instance, `claudeStock`, holds the real binary.** Codex/Cursor/Grok threads stay T3-only. | Threads born in T3 get a real tmux session without anyone choosing anything, and a T3 upgrade that breaks the bridge is one instance switch away from working. |
-| 6 | **Replay the whole transcript once at adoption**, with a per-session cursor so re-attach never duplicates. | A session you worked in all day should read as itself in T3, not as a blank thread. |
+| 6 | ~~**Replay the whole transcript once at adoption.**~~ **Withdrawn 2026-08-16 — T3 will not ingest a backfill.** The bridge still emits the whole transcript and keeps its per-session cursor, but an adopted thread shows its name, workspace, live state and everything from now on, not its past. | Measured on enablement: the bridge emitted an entire 2.4 MB / 1171-record transcript — the cursor offset equals the file size, so all of it went — and T3 stored one assistant message and two activities. The past stays in the lobby, which is where the terminal scrollback and the Text view already are. |
 | 7 | **One name; tmux wins for sessions the lobby named.** T3's title mirrors the session name. A T3-born thread's session is slugged from the WORKSPACE ROOT, not the title, and keeps T3's own title — see the note under decision 7 below. | Both lists read as the same sessions for the sessions a human named. The cost is T3's descriptive titles squeezed into 32 chars of `[A-Za-z0-9_-]`. |
 | 8 | **File by directory.** Longest-prefix match against T3 workspace roots; `project.create` at the git root when nothing matches. | Keeps T3's per-repo grouping meaningful. T3 enforces one active workspace per root, so the syncer treats "already exists" as success. |
 | 9 | **Mid-turn sends queue in Claude, on both surfaces.** The lobby's 409 gate goes away. | Claude Code already queues typed input (its `queue-operation` records are in the transcript). The queued prompt stays visible in the pane. |
@@ -352,6 +352,11 @@ tmux-api that has it — see the build order.
   A per-thread provider instance carrying the uuid in `launchArgs` would let T3
   hold it directly; that is a larger change and is not built.
 
+- **Your own prompts in T3, for work typed in the pane.** T3 ignores inbound `user`
+  frames from a provider — it stores the messages *it* sent and no others — so a
+  turn you start by typing in the terminal shows up in the thread as Claude's answer
+  with no visible question. Prompts sent from T3 appear normally, because T3 wrote
+  them itself.
 - **Token-by-token streaming in T3 for bridged threads.** The transcript only gains
   complete messages, so a bridged thread updates per message. The tmux terminal keeps
   its live stream.
