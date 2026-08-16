@@ -107,6 +107,26 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Flush forwards to the wrapped writer so a streaming handler keeps working
+// through the middleware.
+//
+// Embedding http.ResponseWriter promotes only the three methods of that
+// interface; Flush is not one of them, so wrapping a flushable writer produced
+// one that is not. session-events' SSE endpoint asserts w.(http.Flusher) and
+// refuses the stream when the assertion fails, so from d7b509e (which put every
+// service behind Wrap) until this passthrough, GET /events/{session} answered
+// 500 "streaming unsupported" for every session and every user — the text view
+// showed nothing at all. Nothing else in the codebase streams, which is why the
+// blast radius stopped there.
+func (w *statusWriter) Flush() {
+	if fl, ok := w.ResponseWriter.(http.Flusher); ok {
+		if w.status == 0 {
+			w.status = http.StatusOK
+		}
+		fl.Flush()
+	}
+}
+
 // Wrap returns next instrumented with request timing.
 func (t *Timing) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

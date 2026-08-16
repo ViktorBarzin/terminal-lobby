@@ -359,3 +359,48 @@ func TestVerbsStillWorkOnAnExactName(t *testing.T) {
 		t.Fatal("KillSession left the session alive")
 	}
 }
+
+// ---- answering a blocking prompt (ADR-0010) --------------------------------
+
+func TestKeysRefusesAnythingOutsideTheAnswerAlphabet(t *testing.T) {
+	in := NewInjectorOnSocket("nobody", "tl-never")
+	for _, bad := range [][]string{
+		{"C-c"},                      // interrupt has its own verb, with its own state handling
+		{"rm -rf /"},                 // not a key name at all
+		{"Enter; tmux kill-server"},  // no shell here, but the shape must still be refused
+		{"1", "Enter", "C-u"},        // one bad key spoils the batch
+		{},                           // nothing to send
+		make([]string, MaxKeys+1),    // unbounded batches are not an answer
+	} {
+		if err := in.Keys("nobody", "s", bad); err == nil {
+			t.Fatalf("Keys accepted %q", bad)
+		}
+	}
+}
+
+func TestKeysTypesTheAnswerIntoThePane(t *testing.T) {
+	in, osUser, _ := scratchSession(t)
+	// `2` then Enter is how a permission dialog is declined; against a plain
+	// shell it simply echoes, which is enough to prove the keys landed.
+	if err := in.Keys(osUser, "demo", []string{"2", "Enter"}); err != nil {
+		t.Fatalf("Keys: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		pane, err := in.CapturePane(osUser, "demo")
+		if err == nil && strings.Contains(pane, "2") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the keys never reached the pane; last read: %q", pane)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestCapturePaneRefusesAMissingSession(t *testing.T) {
+	in, osUser, _ := scratchServer(t)
+	if _, err := in.CapturePane(osUser, "nope"); err == nil {
+		t.Fatal("capture-pane on a missing session must fail, not return another session's screen")
+	}
+}
