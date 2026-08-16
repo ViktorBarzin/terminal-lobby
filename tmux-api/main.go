@@ -584,6 +584,23 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 		http.Error(w, "kill-session failed", http.StatusInternalServerError)
 		return
 	}
+	// Tell this user's T3 syncer, if they have one. Reaching here is the only
+	// proof anywhere on the box that a session was destroyed on PURPOSE — an
+	// OOM, a crashed tmux server or a reboot never does — and "kill crosses,
+	// exit does not" is built on exactly that (killnotify.go).
+	//
+	// Only the lookup is synchronous, and it is one read of a small local file.
+	// The POST goes on its own goroutine: the kill has already succeeded, so the
+	// answer the user gets must not depend on a syncer that is stopped, wedged
+	// or not installed.
+	if url, ok := syncNotifyURL(osUser); ok {
+		notice := killNotice{OSUser: osUser, Session: name, KilledAt: time.Now().UTC(), Source: killNotifySource}
+		go func() {
+			if err := postKillNotice(url, notice); err != nil {
+				log.Printf("kill-notify for %s/%s: %v", osUser, name, err)
+			}
+		}()
+	}
 	// A UI kill is deliberate — drop the session's project assignment.
 	// (Deaths outside the API keep theirs so a restore regroups them.)
 	if err := layoutStoreInstance.removeSession(osUser, name); err != nil {
