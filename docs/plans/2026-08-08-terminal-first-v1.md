@@ -1,7 +1,8 @@
 # terminal-lobby v1 — the terminal-first cut
 
-**Status:** Executing — dev tier verified, network-hardened, cutover prerequisites done;
-awaiting Viktor's dogfood before the flip
+**Status:** Done — flipped to `terminal.viktorbarzin.me` on 2026-08-16; the
+`terminal-dev` canary was retired the same day and everything now ships straight
+to prod. See "After the flip" at the end for what happened next.
 **Date:** 2026-08-08 · **Owner:** wizard
 **Supersedes the direction of:** the 2026-07-19 "v2 roadmap" (text-primary, 6 pillars)
 
@@ -149,9 +150,40 @@ The prerequisites are done:
   carried no `@font-face`, so all chrome text fell back to a system face.
 - **Parity is tested**, not diffed by hand (above).
 
-What remains is **dogfooding `terminal-dev`** — ideally on a phone and a poor
-connection, since that is what the resilience work targets — and then the flip:
-one file, with `.prev` and the tag behind it.
+Both happened on 2026-08-16: Viktor dogfooded the canary, then the flip went in
+as designed — one file, with `.prev` and the tag behind it.
+
+## After the flip (2026-08-16)
+
+The cutover promoted the artefact that had soaked on the canary rather than
+rebuilding it — same asset fingerprint, different destination.
+
+- **The canary is gone.** `terminal-dev.viktorbarzin.me`, `ttyd-v2` :7687 and
+  `index-v2.html` were retired: the systemd unit stopped and deleted, the k8s
+  Service / Endpoints / ingress / five per-path IngressRoutes removed from
+  `infra/stacks/terminal`, and `deploy-v2.sh` reduced to one destination.
+  `terminal.viktorbarzin.me` already carried the identical route set, added for
+  the cutover, so nothing moved on the remaining tier. The Authentik admin gate
+  needed no edit — it derives its host list from live forward-auth ingresses.
+- **The phone got its own layout.** A phone-shaped viewport now shows one pane
+  at a time rather than pinning the session list open; touch targets moved to a
+  40px floor with 16px inputs; and the card's action menu, which was
+  `opacity: 0` until `:hover`, is always visible on touch — without it, rename /
+  kill / move / watch had no route at all on a touch screen.
+- **The document no longer scrolls.** `html`/`body`/`#root` were `height: 100%`,
+  and a percentage height resolves against the large viewport on iOS while the
+  visible area is the small one, so the document stood taller than the screen by
+  the height of the browser chrome and a swipe on the terminal panned it. The
+  symptom does not reproduce in headless Chromium, which has no chrome for the
+  two to disagree about; the containment below is verified behaviourally
+  instead. Pinned with
+  `overflow: hidden`, root-level `overscroll-behavior: none`, and `#root` sized
+  to `--app-vh`.
+- **Paste falls through.** A refused `clipboard.read()` now retries `readText()`
+  (the two are gated separately, and `read()` is the one more often refused) and, if
+  both are refused, names the gesture the device actually has. A new
+  `terminal.paste_failed` event records which call was refused, since the
+  refusal does not reproduce in the QA rig's headless Chromium.
 
 ## Deferred, with reasons
 
