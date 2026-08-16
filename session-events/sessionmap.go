@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode/utf16"
 )
 
 type sessionInfo struct {
@@ -55,11 +57,67 @@ func newSessionMap(osUser, projectsRoot string, opts tmuxOptions) *sessionMap {
 	return &sessionMap{osUser: osUser, projectsRoot: projectsRoot, opts: opts}
 }
 
-// transcriptPath mirrors Claude Code's layout: <root>/<cwd-with-slashes-as-dashes>/<session-id>.jsonl
+// transcriptPath mirrors Claude Code's layout: <root>/<slug of cwd>/<session-id>.jsonl
 // e.g. /home/wizard/code/terminal-lobby -> -home-wizard-code-terminal-lobby.
 func transcriptPath(root, cwd, claudeID string) string {
-	slug := strings.ReplaceAll(cwd, "/", "-")
-	return filepath.Join(root, slug, claudeID+".jsonl")
+	return filepath.Join(root, transcriptSlug(cwd), claudeID+".jsonl")
+}
+
+// transcriptSlug is the directory name Claude Code files a cwd's transcripts
+// under. It rewrites EVERY character outside [A-Za-z0-9] to '-', not just '/'.
+//
+// That distinction is the whole point of this function. A cwd containing a dot
+// — every worktree under .worktrees/, which is the standing workflow here —
+// slugs to a name with a DOUBLED dash, so a slashes-only replacement produced
+// a path nothing ever writes. Nothing errors in that state: the tail opens a
+// file that is not there and mirrors silence, which is why the Text view was
+// simply empty for worktree sessions rather than visibly broken.
+//
+// Transcribed from claude 2.1.233's own implementation:
+//
+//	slug = cwd.replace(/[^a-zA-Z0-9]/g, "-")
+//	slug.length <= 200 ? slug : slug.slice(0,200) + "-" + hash(cwd)
+//	hash(s) = |Σ h = h*31 + utf16unit| as int32, base 36
+//
+// Verified against the real directories under ~/.claude/projects: none holds a
+// character outside [A-Za-z0-9-], and the ones carrying a doubled dash are
+// exactly those whose cwd has a leading-dot component.
+func transcriptSlug(cwd string) string {
+	var b strings.Builder
+	b.Grow(len(cwd))
+	for i := 0; i < len(cwd); i++ {
+		c := cwd[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+			b.WriteByte(c)
+		default:
+			// A byte at a time, deliberately: JavaScript's replace works on
+			// UTF-16 code units, so a multi-byte rune becomes several dashes
+			// there too. Counting runes here would produce a shorter name.
+			b.WriteByte('-')
+		}
+	}
+	slug := b.String()
+	if len(slug) <= transcriptSlugMax {
+		return slug
+	}
+	return slug[:transcriptSlugMax] + "-" + transcriptSlugHash(cwd)
+}
+
+// transcriptSlugMax is Claude Code's cap on a project directory name; past it
+// the name is truncated and disambiguated with a hash of the full cwd.
+const transcriptSlugMax = 200
+
+func transcriptSlugHash(cwd string) string {
+	var h int32
+	for _, unit := range utf16.Encode([]rune(cwd)) {
+		h = h*31 + int32(unit)
+	}
+	n := int64(h)
+	if n < 0 {
+		n = -n
+	}
+	return strconv.FormatInt(n, 36)
 }
 
 // withinProjects reports whether path is a transcript inside root. Guards both
