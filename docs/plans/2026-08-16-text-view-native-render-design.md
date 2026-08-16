@@ -17,9 +17,16 @@ itself.
 
 ## 1. Where it stands today
 
+```stats
+3 days | unavailable in production
+541 | thinking blocks dropped, one session
+626 | tool results sent without their structured payload
+28.9 MB | largest transcript on this box
+```
+
 Four measurements taken on this box on 2026-08-16.
 
-**The view has been dark since 2026-08-14.** `GET /events/{session}` answers
+**The view has been unavailable since 2026-08-14.** `GET /events/{session}` answers
 `500 streaming unsupported` for every session and every user. Commit `d7b509e`
 wrapped each service in `timing.Wrap`; its `statusWriter`
 (`telemetry/httpmw.go:91`) embeds `http.ResponseWriter` but implements no
@@ -30,7 +37,7 @@ against `localhost:7685`. The fix is a `Flush()` passthrough.
 
 **Most of the transcript never reaches the wire.** `sessionio/normalize.go`
 emits three block types — `text`, `tool_use`, `tool_result`. Profiling one real
-5,086-record session: **541 `thinking` blocks**, `usage` on all 1,697 assistant
+5,086-record session: 541 `thinking` blocks, `usage` on all 1,697 assistant
 messages, and `toolUseResult` on all 626 tool results are dropped before they
 leave Go, along with the record types `mode` / `permission-mode` (297),
 `queue-operation` (232), `system` carrying `hookInfos` (301), `attachment`
@@ -48,14 +55,14 @@ recent transcripts:
 | AskUserQuestion | `{questions, answers, annotations}` | 100 |
 | WebSearch | `{query, results, searchCount, durationSeconds}` | 39 |
 
-Every row we render as `▸ tool ✓` today has that sitting behind it unused —
+Every row we render as `▸ tool ✓` today has that payload available to it and unused —
 including real unified diffs (`structuredPatch`) and a clean stdout/stderr split.
 
 **The rendering layer is thin and the interactive layer is absent.**
 `MessagesTimeline.tsx` is 335 lines, `timeline.logic.ts` 443, `TextView.tsx` 37,
 `Composer.tsx` 133. There is no virtualization — a `<For>` over every row. The
-`PermissionPanel` cannot ever populate: the web-mediated permission path was
-removed in `575d4f5` and nothing emits `permission_request` today.
+`PermissionPanel` has no producer today: the web-mediated permission path was
+removed in `575d4f5`, and nothing emits `permission_request`.
 
 What already works well and stays: the turn model in `normalize.go` (prompt
 opens a turn, `EndsTurn` closes it, interrupt notices settle it), the
@@ -70,26 +77,33 @@ append.
 
 | # | Decision | Why |
 |---|---|---|
-| 1 | **T3-style agent chat**, not a facsimile of the CLI. Provider-neutral canonical item types, a tone-tagged work log kept separate from message text. | The visual grammar people already read agent work in. It also keeps the render honest about being a projection rather than a mirror of a TUI. |
+| 1 | **T3-style agent chat**, not a facsimile of the CLI. Provider-neutral canonical item types, a tone-tagged work log kept separate from message text. | The visual grammar people already read agent work in. It also keeps the render explicit about being a projection rather than a mirror of a TUI. |
 | 2 | **Carry everything the transcript has**: thinking, structured tool payloads, agent work structure (todos, plans, subagents), and session meta (usage, mode changes, queued prompts, compaction, hook errors). | These are the difference between a row that says a tool ran and a row that says what it did. The data is already on disk; only the normalizer stands between it and the view. |
-| 3 | **Blocking prompts are answered by mirroring the pane and injecting keys.** A pending `AskUserQuestion` is derivable from the transcript; a pending permission from the existing Notification-hook state stamp plus a `capture-pane` read. Answers go into the same pty. | No new hook on the tool path. `575d4f5` removed the PreToolUse broker because a PreToolUse `"ask"` overrides the allowlist and permission mode, so with nothing watching it forced a prompt on every tool call for every user on the shared devvm. Key injection keeps both surfaces live and costs other users nothing. Accepted risk: coupling to the TUI's key handling and dialog wording. |
+| 3 | **Blocking prompts are answered by mirroring the pane and injecting keys** (ADR-0010). A pending `AskUserQuestion` is derivable from the transcript; a pending permission from the existing Notification-hook state stamp plus a `capture-pane` read. Answers go into the same pty. | No new hook on the tool path. `575d4f5` removed the PreToolUse broker because a PreToolUse `"ask"` overrides the allowlist and permission mode, so with nothing watching it forced a prompt on every tool call for every user on the shared devvm. Key injection keeps both surfaces live and adds no per-tool-call cost to other users' sessions. Accepted risk: coupling to the TUI's key handling and dialog wording. |
 | 4 | **Composer reaches CLI parity**: `/` command menu, `@` file completion, image paste/drag, prompt history, visible queueing, mode control. | Text mode is the phone's primary surface. Anything you cannot do there sends you back to a 40-column pty on a handset. |
-| 5 | **Port T3's pure logic under MIT; rebuild the views in Solid.** | T3 Code is MIT (T3 Tools Inc, 2026), so copying is permitted with the notice retained. React-vs-Solid rules out component reuse, but the derivation rules — which is where the earned edge cases live — are plain TypeScript. Inventory in §8. |
+| 5 | **Port T3's pure logic under MIT; rebuild the views in Solid.** | T3 Code is MIT (T3 Tools Inc, 2026), so copying is permitted with the notice retained. React-vs-Solid rules out component reuse, but the derivation rules — which is where the accumulated edge cases live — are plain TypeScript. Inventory in §8. |
 | 6 | **Liveness comes from transcript data, not a second stream.** A rich working row: in-flight tool, live elapsed timer, step count, last thinking or text block. | The `tool_use` record lands the moment Claude emits it, so the working row can be specific for free. Token-level streaming is a **non-goal on this path** — see §5. |
 | 7 | **Open on a recent window with lazy payloads.** Last ~20 turns replayed; tool results capped on the wire with fetch-on-demand for the rest; "Load earlier" walks back. | Worst case on this box is a 28.9 MB transcript: ~4,936 events and 5.5 MB of tool results, one of them 673 KB. First paint on a phone should not depend on a session's age. |
-| 8 | **Text becomes the default on phones, terminal stays the default on desktop** — flipped last, gated on verifying SSE through the prod Cloudflare ingress. | Avoiding SSE-through-Cloudflare was one of the two reasons for terminal-first (`2026-08-08-terminal-first-v1.md`); that path has never run successfully in prod, because of the flush bug. If it proves unreliable, we do not flip and nothing else here is wasted. |
+| 8 | **Text becomes the default on phones, terminal stays the default on desktop** — flipped last, gated on verifying SSE through the prod Cloudflare ingress. | Avoiding SSE-through-Cloudflare was one of the two reasons for terminal-first (`2026-08-08-terminal-first-v1.md`); that path is unverified in prod, and the flush bug has masked it since 2026-08-14. If it proves unreliable, we do not flip and nothing else here is wasted. |
 | 9 | **One landing.** All of it builds in `wizard/text-view-native` and merges to master together. | Chosen over staged delivery. |
 | 10 | **Fix the mobile composer keyboard** (§7.1) and **grow the session list into a switcher** (§7.2). | Raised during design; both are in the same surface and land with this work. |
+
+> [!IMPORTANT]
+> A PreToolUse hook returning `"ask"` **overrides** the allowlist and the
+> permission mode — it does not mean "defer to normal flow". That is what made
+> the removed broker force a prompt on every tool call for every user on the
+> shared devvm. Any future hook on this path must fall through by exiting 0 with
+> no decision at all.
 
 ---
 
 ## 3. Architecture
 
 ```mermaid
-flowchart LR
-  subgraph disk["On disk"]
-    T["transcript JSONL<br/>~/.claude/projects/&lt;slug&gt;/&lt;id&gt;.jsonl"]
-    P["tmux pane<br/>(the live Claude TUI)"]
+flowchart TD
+  subgraph disk["On disk — one session"]
+    T["transcript JSONL"]
+    P["tmux pane<br/>the live Claude TUI"]
   end
 
   subgraph go["Go — faithful projection"]
@@ -99,7 +113,7 @@ flowchart LR
   end
 
   subgraph ts["TypeScript — presentation"]
-    C["canonicalizer<br/>(ported from T3)<br/>tool → itemType · tone"]
+    C["canonicalizer, ported from T3<br/>tool → itemType · tone"]
     R["deriveRows<br/>folding · working · fold rows"]
     V["Solid views<br/>virtualized timeline"]
     K["composer<br/>/ · @ · images · history · mode"]
@@ -107,12 +121,12 @@ flowchart LR
 
   T --> N --> W -->|SSE| C --> R --> V
   P -->|capture-pane| W
-  K -->|POST /prompt · /cancel · /keys| I --> P
   V -.->|answer a blocking prompt| K
+  K -->|"POST /prompt · /cancel · /keys"| I --> P
 ```
 
-The split is deliberate and is the one architectural choice not put to a vote:
-**Go carries data, TypeScript decides presentation.** Transcript-format churn is
+This split was taken directly rather than in the interview, so it is worth
+stating plainly: **Go carries data, TypeScript decides presentation.** Transcript-format churn is
 absorbed once, in the normalizer, where it is already unit-tested. Label
 vocabulary, tone and icons — the things that change every time we look at the
 view — live where iteration does not need a service redeploy.
@@ -183,14 +197,17 @@ sequenceDiagram
   T->>V: turn settles, folds to "Worked for 12s · 4 steps"
 ```
 
-**Token-level streaming is not possible on this path, and we are not going to
-pretend otherwise.** Claude Code writes one transcript record per *completed*
-block — sampled on a live session, 95 of 95 assistant records carried exactly
-one block and a terminal `stop_reason`. A long answer therefore arrives in one
-piece. The working row closes as much of that gap as data allows: it names the
-tool actually running, counts steps, and ticks a timer. If we ever want true
-streaming, it needs a different source (a pty tail, or stream-json), and that is
-a separate decision, not an extension of this one.
+> [!NOTE]
+> **Token-level streaming is not possible on this path.** It is a stated
+> non-goal, not an unfinished feature — if we want it later it needs a
+> different source, and that is its own decision.
+
+Claude Code writes one transcript record per *completed* block — sampled on a
+live session, 95 of 95 assistant records carried exactly one block and a
+terminal `stop_reason`. A long answer therefore arrives in one piece. The
+working row closes as much of that gap as the data allows: it names the tool
+actually running, counts steps, and ticks a timer. Real streaming would need a
+different source — a pty tail, or stream-json.
 
 ---
 
@@ -241,7 +258,7 @@ be *after* the reflow.
 
 **Fix:** acquire focus during the gesture, on `pointerdown`, before any layout
 change, so the later click cannot steal it. Keep caret placement working by only
-taking over when the field is not already focused. Verified on a real handset,
+taking over when the field is not already focused. To verify on a real handset,
 not in jsdom.
 
 ### 7.2 The session list and switching
@@ -277,7 +294,7 @@ Their dependency set (`@legendapp/list`, `@base-ui/react`, `lucide-react`,
 zustand, Tailwind, `@pierre/diffs`) is React-bound; our virtualization and diff
 rendering will be Solid-native equivalents.
 
-One small validation of the approach: T3's follow-rearm threshold is 40px and
+A small corroboration: T3's follow-rearm threshold is 40px and
 our `PIN_SLACK_PX` is also 40 — arrived at independently.
 
 ---
