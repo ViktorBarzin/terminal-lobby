@@ -4,11 +4,35 @@
 * {
   box-sizing: border-box;
 }
+/* The document never scrolls. This is an inner-scroller shell: the session list
+   scrolls, the terminal scrolls itself, and the page behind them holds still.
+
+   Both declarations are load-bearing on a phone, and neither is redundant:
+
+   - `overflow: hidden` — a percentage height resolves against the LARGE
+     viewport on iOS (URL bar hidden) while the visible area is the SMALL one,
+     so `height: 100%` alone leaves the document taller than the screen by
+     exactly the browser chrome. A drag anywhere then pans the page. The same
+     class was measured on the vanilla page before and cured there (rendered
+     681px against a 641px window); v2 was built without the guard.
+   - `overscroll-behavior: none` on the ROOT, not only on body — whether the
+     viewport inherits the body value depends on the root element's own being
+     auto, which is not a thing to depend on. It is what stops the iOS
+     rubber-band, and a rubber-band reads to the user as the page scrolling
+     just as much as a real scroll does. */
 html,
-body,
-#root {
+body {
   height: 100%;
   margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+/* --app-vh is window.innerHeight in px (mobile/viewport.ts, seeded pre-paint in
+   index.html) — the VISIBLE height, where a percentage would be the large
+   viewport. Falls back to 100% where the variable has not been written yet. */
+#root {
+  height: var(--app-vh, 100%);
+  overflow: hidden;
 }
 body {
   background: var(--bg-page, #0d1117);
@@ -17,7 +41,6 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  overscroll-behavior: none;
 }
 .tl-muted {
   color: var(--text-muted);
