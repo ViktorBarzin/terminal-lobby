@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/signal"
 	"os/user"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -73,6 +74,76 @@ func main() {
 		// tl.count is the prompt LENGTH; the text itself is never recorded.
 		events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.count": len(body.Text), "tl.client": "api",
+		})
+		w.WriteHeader(http.StatusNoContent)
+	})
+	// Older turns, one window at a time — the "Load earlier" step above a view
+	// that opened on the recent window (see OpenWindowTurns).
+	web.HandleFunc("GET /earlier/{session}", func(w http.ResponseWriter, r *http.Request) {
+		fs, ok := rg.source(osUserFrom(r.Context()), r.PathValue("session"))
+		if !ok {
+			http.Error(w, "session not registered", http.StatusNotFound)
+			return
+		}
+		before, err := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+		if err != nil || before <= 0 {
+			http.Error(w, "bad before (need the id of the oldest event held)", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, fs.Earlier(before, OpenWindowTurns))
+	})
+	// One tool result in full, after MaxInlineResult capped it on the wire.
+	web.HandleFunc("GET /result/{session}/{toolId}", func(w http.ResponseWriter, r *http.Request) {
+		fs, ok := rg.source(osUserFrom(r.Context()), r.PathValue("session"))
+		if !ok {
+			http.Error(w, "session not registered", http.StatusNotFound)
+			return
+		}
+		body, result, err := fs.FullResult(r.PathValue("toolId"))
+		if err != nil {
+			http.Error(w, "no such result", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, struct {
+			Body   string          `json:"body"`
+			Result json.RawMessage `json:"result,omitempty"`
+		}{body, result})
+	})
+	// What the pane currently shows. The text view reads it to mirror a blocking
+	// prompt, which the transcript does not report while it is pending (ADR-0010).
+	web.HandleFunc("GET /pane/{session}", func(w http.ResponseWriter, r *http.Request) {
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		if _, ok := rg.source(osUser, session); !ok {
+			http.Error(w, "session not registered", http.StatusNotFound)
+			return
+		}
+		text, err := injector.CapturePane(osUser, session)
+		if err != nil {
+			http.Error(w, "cannot read the pane", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, struct {
+			Pane  string `json:"pane"`
+			State string `json:"state"`
+		}{text, injector.State(osUser, session)})
+	})
+	// The answer to a blocking prompt, typed into the pane. sessionio.Injector
+	// allowlists the keys; anything outside the answer alphabet is refused there.
+	web.HandleFunc("POST /keys/{session}", func(w http.ResponseWriter, r *http.Request) {
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		var body struct {
+			Keys []string `json:"keys"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "bad body (need keys)", http.StatusBadRequest)
+			return
+		}
+		if err := injector.Keys(osUser, session, body.Keys); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		events.Emit("claude.answered", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.count": len(body.Keys), "tl.client": "api",
 		})
 		w.WriteHeader(http.StatusNoContent)
 	})

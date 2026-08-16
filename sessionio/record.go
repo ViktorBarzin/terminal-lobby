@@ -24,6 +24,8 @@ const (
 	RecordAttachment     RecordType = "attachment"
 	RecordLastPrompt     RecordType = "last-prompt"
 	RecordQueueOperation RecordType = "queue-operation"
+	RecordMode           RecordType = "mode"
+	RecordPermissionMode RecordType = "permission-mode"
 )
 
 // Message is the Anthropic message object carried by an assistant or user
@@ -37,6 +39,7 @@ type Message struct {
 	Model      string          `json:"model"`
 	StopReason string          `json:"stop_reason"`
 	Content    json.RawMessage `json:"content"`
+	Usage      json.RawMessage `json:"usage"`
 	// Raw is the message object exactly as it appeared in the transcript.
 	Raw json.RawMessage `json:"-"`
 }
@@ -75,6 +78,23 @@ type Record struct {
 	SessionID    string `json:"sessionId"`
 	SessionIDAlt string `json:"session_id"`
 
+	// ToolUseResult is the structured result the harness recorded for a tool
+	// call, alongside the tool_result block's flattened text. Shapes differ per
+	// tool family — Bash {stdout,stderr,interrupted,…}, Edit
+	// {filePath,structuredPatch,…}, WebSearch {query,results,…} — so it stays
+	// raw here and is classified by the renderer.
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
+
+	// The lifecycle fields, each carried by exactly one record type. See
+	// Normalizer.meta for what becomes an Event.
+	Mode             string          `json:"mode"`             // type "mode"
+	PermissionMode   string          `json:"permissionMode"`   // type "permission-mode"
+	Operation        string          `json:"operation"`        // type "queue-operation"
+	Content          string          `json:"content"`          // the queued prompt's text
+	Subtype          string          `json:"subtype"`          // type "system"
+	HookErrors       json.RawMessage `json:"hookErrors"`       // type "system"
+	IsCompactSummary bool            `json:"isCompactSummary"` // a compaction boundary
+
 	// Line is the source line, byte for byte. Callers that forward a record
 	// onward use this rather than re-encoding.
 	Line []byte `json:"-"`
@@ -84,6 +104,7 @@ type Record struct {
 type Block struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
