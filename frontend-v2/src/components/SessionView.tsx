@@ -292,6 +292,10 @@ export const SessionView: Component<{
     void pasteIntoTerminal({
       sendPasteText: (t) => window.__tlPasteToTerminal?.(t) ?? false,
       uploadFiles: image.uploadFiles,
+      // The advice when a read is refused has to match the device: a phone has
+      // no ⌘/Ctrl-V, but it does have a long-press Paste that needs no
+      // permission at all.
+      coarsePointer: coarse(),
     });
     return true;
   };

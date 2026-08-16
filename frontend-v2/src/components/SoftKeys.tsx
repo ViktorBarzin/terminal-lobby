@@ -308,7 +308,11 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
             aria-label="Paste"
             onPointerDown={(e) => e.preventDefault()}
             onClick={() => {
-              track("terminal.pasted", { "tl.kind": "softkey" });
+              // No terminal.pasted here: the paste routine emits that itself,
+              // once it has actually read something, and a paste_failed when
+              // the browser refuses. Recording success on the TAP made a
+              // refused paste indistinguishable from a completed one — which
+              // is exactly the signal this bug needed.
               props.onPaste?.();
             }}
           >

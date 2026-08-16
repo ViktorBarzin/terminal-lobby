@@ -70,10 +70,16 @@ var knownEvents = map[string]bool{
 	"file.saved":       true,
 
 	// -- terminal surface ---------------------------------------------------
-	"terminal.copied":  true,
-	"terminal.pasted":  true,
-	"terminal.softkey": true, // mobile soft-key toolbar (tl.key)
-	"terminal.gesture": true, // pinch / long-press / swipe (tl.kind)
+	"terminal.copied": true,
+	"terminal.pasted": true,
+	// The clipboard read was refused (tl.api = which call, tl.error = the
+	// DOMException name, tl.focused, tl.coarse). Recorded because the refusal
+	// is a property of the USER's browser and does not reproduce in the
+	// headless Chromium the QA rig drives. Never the error MESSAGE, which can
+	// quote clipboard content.
+	"terminal.paste_failed": true,
+	"terminal.softkey":      true, // mobile soft-key toolbar (tl.key)
+	"terminal.gesture":      true, // pinch / long-press / swipe (tl.kind)
 
 	// -- settings -----------------------------------------------------------
 	"settings.opened": true,
