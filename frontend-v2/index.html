@@ -67,6 +67,16 @@
          bundle). -->
     <link rel="icon" type="image/png" href="/icon-192.png" />
     <title>terminal-lobby</title>
+    <script>
+      /* Seed --app-vh before first paint: the phone layout pins the shell to it,
+         and a first frame computed against a CSS viewport unit would be the
+         wrong height in an iOS standalone PWA (vh/svh/dvh resolve to the LARGE
+         viewport there). mobile/viewport.ts keeps it current afterwards. */
+      try {
+        document.documentElement.style.setProperty(
+          "--app-vh", window.innerHeight + "px");
+      } catch (e) { /* pre-paint seed is best-effort */ }
+    </script>
   </head>
   <body>
     <script>
