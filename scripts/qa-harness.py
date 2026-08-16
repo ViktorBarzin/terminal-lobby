@@ -4,9 +4,9 @@ mutation guard.
 
 Companion to dev-harness.py, but a different job. dev-harness.py runs the
 VANILLA page against a scratch ttyd + scratch tmux server. This one puts a QA
-fleet in front of the **already-deployed** v2 SPA and the **real** backends, on
+fleet in front of the **already-deployed** SPA and the **real** backends, on
 the devvm itself — so what the agents click is byte-for-byte what
-terminal-dev.viktorbarzin.me serves.
+terminal.viktorbarzin.me serves.
 
     browser ── http://127.0.0.1:7998 (this script)
       ├─ 10 exact PWA paths      → :7683 clipboard-upload, UNSTRIPPED, NO auth
@@ -16,9 +16,9 @@ terminal-dev.viktorbarzin.me serves.
       ├─ /clipboard/*            → :7683 clipboard-upload, prefix stripped, authed
       ├─ /events/*               → :7685 session-events, no strip, authed, STREAMED
       ├─ /prompt/*  /cancel/*    → :7685 session-events, no strip, authed
-      ├─ /permission/*           → :7687 ttyd-v2 catch-all, as in production (†)
+      ├─ /permission/*           → :7681 ttyd catch-all, as in production (†)
       ├─ /files/*                → :7686 file-api, no strip, authed
-      └─ everything else + /ws   → :7687 ttyd-v2, the DEPLOYED index-v2.html
+      └─ everything else + /ws   → :7681 ttyd, the DEPLOYED lobby index.html
 
 (†) /permission has no working destination anywhere, and this proxy cannot
 invent one. The production ingress does not route it — the session-events rule
@@ -29,9 +29,9 @@ localhost-only POST /hooks/session-start. Measured 2026-08-06: POST
 /permission/<id> straight at 127.0.0.1:7685 as alice returns
 `404 page not found`. So routing /permission to session-events would NOT let
 the fleet exercise the panel (an earlier version of this docstring and of
-the plan claimed it would); it would only swap ttyd-v2's HTML 404 for
+the plan claimed it would); it would only swap the SPA's HTML 404 for
 session-events' text/plain 404. The default is therefore production-faithful:
-/permission falls through to the ttyd-v2 catch-all. --permission-shim routes
+/permission falls through to the ttyd catch-all. --permission-shim routes
 it to session-events anyway, for the day a handler lands there.
 
 THE GUARD
@@ -115,7 +115,10 @@ except ImportError:  # pragma: no cover - operator-facing
     sys.exit("qa-harness.py needs aiohttp: pip install --user aiohttp")
 
 # Upstreams — every one of them is on this box (we run ON the devvm).
-TTYD_V2 = "http://127.0.0.1:7687"
+# ttyd :7681 serves the lobby SPA. It used to be :7687 (ttyd-v2, the
+# terminal-dev canary) until that tier was retired on 2026-08-16 and prod became
+# the only place the SPA runs. --ttyd-port still moves it.
+TTYD_DEFAULT_PORT = 7681
 TMUX_API = "http://127.0.0.1:7684"
 CLIPBOARD = "http://127.0.0.1:7683"
 SESSION_EVENTS = "http://127.0.0.1:7685"
@@ -414,13 +417,21 @@ def build_app(args: argparse.Namespace) -> web.Application:
             log(f"SSE {request.rel_url.raw_path} → 502 ({exc})")
             return web.Response(status=502, text=f"session-events error: {exc}")
 
+    def ttyd_base() -> str:
+        """The ttyd serving the SPA. Read through --ttyd-port rather than a
+        module constant: the HTTP forwarders used to hardcode it while only the
+        WebSocket path honoured the flag, so pointing the harness at another
+        ttyd moved the socket and left every page load on the old one."""
+        return f"http://127.0.0.1:{args.ttyd_port}"
+
     async def control_proxy(request: web.Request) -> web.StreamResponse:
         path = request.rel_url.path
         if path.startswith("/permission") and not args.permission_shim:
             # Reproduce production: the ingress has no /permission rule, so the
             # request falls through to the SPA's catch-all and gets HTML back.
-            return await forward(request, f"{TTYD_V2}{request.rel_url.raw_path}",
-                                 auth=True, label=f"{path} (no shim → ttyd-v2)")
+            return await forward(
+                request, f"{ttyd_base()}{request.rel_url.raw_path}",
+                auth=True, label=f"{path} (no shim → ttyd catch-all)")
         body = await request.read()
         reason = guard.check_events(request.method, path)
         if reason:
@@ -523,7 +534,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
         if request.rel_url.query_string:
             url += "?" + request.rel_url.query_string
         try:
-            # ttyd-v2 runs `-H X-authentik-username`, so the UPGRADE is authed
+            # ttyd runs `-H X-authentik-username`, so the UPGRADE is authed
             # exactly like every HTTP leg. Miss this and ttyd drops the dial
             # while the browser socket is already open, which surfaces as
             # "Reconnecting… (attempt N)" in term.html and nothing in the log
@@ -566,7 +577,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
         if (request.headers.get("Upgrade", "").lower() == "websocket"
                 and "upgrade" in request.headers.get("Connection", "").lower()):
             return await ws_proxy(request)
-        return await forward(request, f"{TTYD_V2}{request.rel_url.raw_path}",
+        return await forward(request, f"{ttyd_base()}{request.rel_url.raw_path}",
                              auth=True, label=request.rel_url.raw_path)
 
     # ---- roamed state we borrow and give back ------------------------------
@@ -666,8 +677,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=7998, help="proxy listen port")
     p.add_argument("--user", default="alice",
                    help="value injected as X-Authentik-Username")
-    p.add_argument("--ttyd-port", type=int, default=7687,
-                   help="ttyd serving the SPA (7687 = the deployed v2 tier)")
+    p.add_argument("--ttyd-port", type=int, default=TTYD_DEFAULT_PORT,
+                   help=f"ttyd serving the SPA (default {TTYD_DEFAULT_PORT} = "
+                        "the deployed lobby on terminal.viktorbarzin.me)")
     p.add_argument("--scratch", default=default_scratch(),
                    help="the only tree /files/write may target (default: "
                         "%(default)s). Must live inside file-api's containment "
@@ -679,7 +691,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--permission-shim", dest="permission_shim",
                    action="store_true", default=False,
                    help="route /permission to session-events instead of the "
-                        "ttyd-v2 catch-all. Off by default: session-events has "
+                        "ttyd catch-all. Off by default: session-events has "
                         "no /permission handler, so this only changes which 404 "
                         "comes back (finding B)")
     p.add_argument("--no-permission-shim", dest="permission_shim",
