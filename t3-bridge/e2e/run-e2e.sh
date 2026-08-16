@@ -457,12 +457,18 @@ hdr "4 · adoption of a session that is already running"
         # 4c — what the warm-up actually attaches to. This is the question the
         # whole adoption story turns on: does the bridge T3 spawns for this
         # thread land on the SESSION THAT IS ALREADY RUNNING, or somewhere else?
-        # The warm-up is re-issued here with the one field the syncer omits, so
-        # the answer is about binding rather than about the 400.
-        note "dispatching the sentinel warm-up WITH interactionMode, to see what the bridge binds to"
+        #
+        # The sentinel NAMES the conversation. T3 mints the thread's provider
+        # session id itself and offers no way to seed or read it, so this marker
+        # is the only thing that tells the bridge which running session the
+        # thread is for. A sentinel without it is the older shape, and the bridge
+        # answers it by attaching to nothing rather than by guessing.
+        note "re-dispatching the sentinel warm-up, to see what the bridge binds to"
         BEFORE_NAMES=$(tmux_names)
         t3_dispatch thread.turn.start \
-            "$(turn_payload "$ADOPT_THREAD" '[terminal-lobby] adopting this session — mirroring its transcript into this thread.')" \
+            "$(turn_payload "$ADOPT_THREAD" "[terminal-lobby] adopting this session — mirroring its transcript into this thread.
+
+[conversation:$ADOPT_UUID]")" \
             > "$(evidence 04f-warmup-dispatch)"
         # 20s is enough for T3 to spawn the bridge and for the bridge to decide
         # what it is attaching to, which is the whole question here.
@@ -493,10 +499,14 @@ hdr "4 · adoption of a session that is already running"
         cat "$(evidence 04h-binding)" | tee -a "$RUNLOG"
 
         PING_OK=$(count_in 'PING' "$(evidence 04g-thread-messages)")
-        if [ "$SPAWN_ID" = "$ADOPT_UUID" ] && [ "$PING_OK" -ge 1 ]; then
-            record 4c PASS "the bridge attached to the running session and replayed its history, PING included"
-        elif [ -n "$SPAWN_ID" ] && [ "$SPAWN_ID" != "$ADOPT_UUID" ]; then
-            record 4c FAIL "T3 spawned the bridge with --session-id $SPAWN_ID, a uuid it invented, not the adopted conversation $ADOPT_UUID. Nothing in thread.create carries the Claude session id, so T3 treats the thread as new; the bridge finds no binding for that uuid and starts a SECOND claude${NEW_NAMES:+ in a new tmux session: $NEW_NAMES}. Replay lines carrying PING: $PING_OK."
+        # The pass condition is NOT "the ids agree" — they cannot: T3 mints the
+        # thread's provider session id and no dispatchable command seeds it.
+        # What must hold is that the bridge re-targeted onto the running session
+        # (its history replayed, PING included) and started nothing of its own.
+        if [ "$PING_OK" -ge 1 ] && [ -z "$NEW_NAMES" ]; then
+            record 4c PASS "the bridge re-targeted onto the running session and replayed its history, PING included; no second session, no second claude"
+        elif [ -n "$SPAWN_ID" ]; then
+            record 4c FAIL "T3 spawned the bridge with --session-id $SPAWN_ID, a uuid it invented, not the adopted conversation $ADOPT_UUID — that part is expected and unavoidable (nothing in thread.create carries a Claude session id). What must then happen is that the sentinel's [conversation:] marker re-targets the bridge at $ADOPT_UUID and it replays; PING lines seen: $PING_OK${NEW_NAMES:+, and it created a tmux session anyway: $NEW_NAMES}."
         else
             record 4c FAIL "no bridge seen for the warm-up turn; replay lines carrying PING: $PING_OK"
         fi
@@ -769,7 +779,7 @@ hdr "8 · a turn against a session that is gone brings it back"
     if [ -n "$RESURRECTED" ] && [ "$UUID_AFTER" = "$UUID_BEFORE" ] && thread_has_assistant "$DRIVEN_THREAD" 'BACK'; then
         record 8 PASS "the session came back as '$RESURRECTED' resuming $UUID_BEFORE, and the answer landed in the same thread $DRIVEN_THREAD"
     elif [ "$BRIDGE_ERR" -ge 1 ]; then
-        record 8 FAIL "no session came back. T3 routed the new turn to the bridge process it ALREADY had for this thread, and that bridge is still bound to the session that just died: it sent to a gone pane, logged 'send failed: exit status 1' and reported error_during_execution into the thread. Resurrection lives in the bridge's STARTUP path (protoOpenSide), so it can only happen on a spawn — and a live provider session means there is no spawn."
+        record 8 FAIL "no session came back, and the bridge logged 'send failed'. T3 routes a later turn to the bridge process it ALREADY has, so the retry path is what has to bring the session back: Send re-resolves on a paste failure whose session is gone, resurrects, and pastes once more. That did not happen here."
     else
         record 8 FAIL "resurrected='${RESURRECTED:-none}' uuid before=$UUID_BEFORE after=${UUID_AFTER:-none}"
     fi

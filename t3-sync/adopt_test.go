@@ -121,14 +121,15 @@ func newHarness(t *testing.T) *harness {
 	bearer.T3Bin = bin
 
 	cfg := Config{
-		OSUser:         "wizard",
-		HomeDir:        filepath.Join(home, "wizard"),
-		BaseDir:        filepath.Join(home, "wizard", ".t3"),
-		Endpoint:       t3.URL,
-		ProjectsRoot:   root,
-		Model:          "claude-opus-5",
-		RuntimeMode:    "full-access",
-		IgnorePrefixes: DefaultIgnorePrefixes,
+		OSUser:          "wizard",
+		HomeDir:         filepath.Join(home, "wizard"),
+		BaseDir:         filepath.Join(home, "wizard", ".t3"),
+		Endpoint:        t3.URL,
+		ProjectsRoot:    root,
+		Model:           "claude-opus-5",
+		RuntimeMode:     "full-access",
+		InteractionMode: defaultInteractionMode,
+		IgnorePrefixes:  DefaultIgnorePrefixes,
 	}
 
 	h := &harness{
@@ -478,8 +479,11 @@ func TestAdoptEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(warm[0]["message"], &message); err != nil {
 		t.Fatalf("warm-up message: %v", err)
 	}
-	if message.Text != SentinelPrompt {
-		t.Errorf("warm-up text = %q, want the sentinel", message.Text)
+	// The sentinel carries the conversation it is adopting: T3 mints the
+	// thread's provider session id itself, so this is the only way the bridge
+	// learns which running session the thread is for.
+	if message.Text != SentinelFor(claudeID) {
+		t.Errorf("warm-up text = %q, want the sentinel naming %s", message.Text, claudeID)
 	}
 	if message.Role != "user" || !isUUID(message.MessageID) || message.Attachments == nil {
 		t.Errorf("warm-up message = %+v, want a user message with an id and an empty attachment list", message)

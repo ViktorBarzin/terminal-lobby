@@ -322,3 +322,58 @@ func TestDefaultIndexPathIsUnderTheUsersStateDir(t *testing.T) {
 		t.Fatalf("DefaultIndexPath without XDG_STATE_HOME = %q, want %q", got, want)
 	}
 }
+
+// Merge is what stops a writer that knows three facts from erasing the other
+// two. The bridge attaches knowing the tmux name and the cwd and NOT the
+// thread; before this existed its Put wrote "" over the threadId the syncer had
+// recorded, and the next reconcile made a second thread for the same session.
+func TestMergeKeepsWhatTheCallerDoesNotKnow(t *testing.T) {
+	ix := NewIndex(filepath.Join(t.TempDir(), "index.json"))
+
+	if err := ix.Put("uuid-1", Binding{
+		TmuxName: "feat-header", CWD: "/home/wizard/code/tl", ThreadID: "thread-A",
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	// An attach: the tmux name moved, the thread is unknown here.
+	if err := ix.Merge("uuid-1", func(b Binding) Binding {
+		b.TmuxName = "renamed-header"
+		return b
+	}); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	got, ok, err := ix.Get("uuid-1")
+	if err != nil || !ok {
+		t.Fatalf("Get after merge: (%v, %v)", ok, err)
+	}
+	if got.ThreadID != "thread-A" {
+		t.Errorf("threadId = %q, want thread-A — the merge erased a pairing it did not know about", got.ThreadID)
+	}
+	if got.CWD != "/home/wizard/code/tl" {
+		t.Errorf("cwd = %q, want the stored one", got.CWD)
+	}
+	if got.TmuxName != "renamed-header" {
+		t.Errorf("tmuxName = %q, want renamed-header", got.TmuxName)
+	}
+	if got.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt was not stamped")
+	}
+
+	// Merging a uuid nobody has heard of creates it, so a first attach needs no
+	// separate path.
+	if err := ix.Merge("uuid-2", func(b Binding) Binding {
+		b.TmuxName, b.Origin = "born-in-t3", OriginT3
+		return b
+	}); err != nil {
+		t.Fatalf("Merge on a new uuid: %v", err)
+	}
+	fresh, ok, err := ix.Get("uuid-2")
+	if err != nil || !ok || !fresh.FromT3() {
+		t.Fatalf("Get uuid-2 = (%+v, %v, %v)", fresh, ok, err)
+	}
+	if err := ix.Merge("", func(b Binding) Binding { return b }); err == nil {
+		t.Error("Merge accepted an empty claude session id")
+	}
+}

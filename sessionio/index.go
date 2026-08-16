@@ -27,10 +27,41 @@ type Binding struct {
 	// thread has adopted yet. It is also stamped on the live tmux session as
 	// @t3_thread; this copy is the one that survives the session's death.
 	ThreadID string `json:"threadId"`
+	// Origin says who named the tmux session, which is what decides who wins a
+	// naming disagreement and whether the syncer may adopt it. Empty means
+	// "written before this field existed", and is read as OriginLobby.
+	Origin string `json:"origin,omitempty"`
+	// AliasOf redirects this uuid to the conversation it really names.
+	//
+	// It exists for one case, and it is the one T3 leaves no other way to
+	// express: a thread created by the syncer for a session that is ALREADY
+	// running gets a provider session id T3 invents for itself, because no
+	// dispatchable command seeds one and the snapshot does not project it. The
+	// bridge learns the true conversation from the warm-up turn and files that
+	// id here, so every later spawn under T3's invented id resolves to the same
+	// tmux session instead of starting a second Claude.
+	AliasOf string `json:"aliasOf,omitempty"`
+	// WarmedAt is when a warm-up turn last succeeded for this binding. Zero on
+	// an adopted thread means the sentinel never landed, which is a state the
+	// syncer retries rather than latches (decision 11).
+	WarmedAt time.Time `json:"warmedAt,omitempty"`
 	// UpdatedAt is when the binding was last written, in UTC. Put stamps it
 	// when it is zero, so callers normally leave it alone.
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// Who chose a session's tmux name. The lobby is the writer of record for
+// existence and naming (decision 2), so OriginLobby is the default and the
+// interesting value is the other one: a session the BRIDGE created for a thread
+// born in T3, whose name is a slug of the workspace root and carries no
+// information T3 does not already have.
+const (
+	OriginLobby = "lobby"
+	OriginT3    = "t3"
+)
+
+// FromT3 reports whether the bridge created this session for a T3-born thread.
+func (b Binding) FromT3() bool { return b.Origin == OriginT3 }
 
 // Index is the durable uuid → Binding store shared by tl-t3-bridge and
 // tl-t3-sync, at ~/.local/state/terminal-lobby/t3-bridge/index.json.
@@ -137,6 +168,34 @@ func (ix *Index) Put(claudeID string, b Binding) error {
 	}
 	return ix.Update(func(m map[string]Binding) error {
 		m[claudeID] = b
+		return nil
+	})
+}
+
+// Merge writes one binding through a callback that receives whatever is
+// already stored, so a writer that knows three of the five facts cannot erase
+// the other two.
+//
+// Put REPLACES, which is right for a caller that knows the whole entry and
+// wrong for the bridge: it attaches with a tmux name and a cwd in hand and no
+// idea which thread the session belongs to, and a plain Put wrote "" over a
+// threadId the syncer had recorded. The reconciler then saw an unadopted
+// session, created a second thread for it, and the kill path read whichever of
+// the two the index happened to name.
+//
+// The callback runs under the same exclusive lock as every other write, and
+// UpdatedAt is stamped afterwards unless the callback set it.
+func (ix *Index) Merge(claudeID string, apply func(Binding) Binding) error {
+	if claudeID == "" {
+		return fmt.Errorf("index merge: empty claude session id")
+	}
+	return ix.Update(func(m map[string]Binding) error {
+		before := m[claudeID]
+		next := apply(before)
+		if next.UpdatedAt.Equal(before.UpdatedAt) {
+			next.UpdatedAt = time.Now().UTC()
+		}
+		m[claudeID] = next
 		return nil
 	})
 }
