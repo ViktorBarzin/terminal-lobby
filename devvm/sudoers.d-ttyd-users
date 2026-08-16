@@ -43,6 +43,14 @@
 # (GET /dirs) is granted alongside the attach binaries so the directory picker
 # works for every user, not just wizard (whose own tmux-api runs its home scan
 # directly, no sudo).
+#
+# These same grants carry the admin ACT-AS switch (?as=<user>, see the README):
+# an administrator working as another user reaches tmux, tmux-user-attach and
+# file-api through exactly these lines. No new grant was needed for it — who may
+# use the switch is decided in the services against /etc/ttyd-admins, and
+# tmux-attach.sh sources the decision from tmux-api's /internal/attach rather
+# than from any client argument. Removing a user from /etc/ttyd-user-map is
+# still what revokes everything here.
 wizard ALL=(emo) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api
 wizard ALL=(ancamilea) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api
 
