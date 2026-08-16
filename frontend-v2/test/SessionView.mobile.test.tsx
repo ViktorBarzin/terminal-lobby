@@ -3,7 +3,7 @@
  * controls into, and the `visible` flag that keeps a hidden pane from resizing
  * the real tmux window.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "@solidjs/testing-library";
 import { SessionView } from "../src/components/SessionView";
@@ -38,32 +38,55 @@ function mountVisible(initial: boolean | undefined): {
 const lastView = (posted: Posted[]): Posted | undefined =>
   [...posted].reverse().find((p) => p.type === "tl-view");
 
+/** Answer media queries from a viewport, not from a substring of the query. */
+function stubViewport(vp: { width: number; height: number; coarse: boolean }): void {
+  window.matchMedia = ((q: string) => {
+    const ok = () => {
+      if (q.includes("pointer: coarse") && !vp.coarse) return false;
+      if (q === "(pointer: coarse)") return vp.coarse;
+      const w = q.match(/max-width:\s*(\d+)px/);
+      const h = q.match(/max-height:\s*(\d+)px/);
+      return (w ? vp.width <= Number(w[1]) : false) || (h ? vp.height <= Number(h[1]) : false);
+    };
+    return {
+      media: q,
+      get matches() {
+        return ok();
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      onchange: null,
+      dispatchEvent: () => false,
+    } as unknown as MediaQueryList;
+  }) as typeof window.matchMedia;
+}
+
+const PHONE = { width: 390, height: 844, coarse: true };
+const TABLET = { width: 768, height: 1024, coarse: true };
+const realMatchMedia = window.matchMedia;
+
 describe("<SessionView> — the merged phone bar", () => {
-  it("renders the shell's controls in its own bar, leading and trailing", () => {
+  it("renders the shell's back control first in its own bar", () => {
     const { container } = render(() => (
       <SessionView
         session="qa-mobile"
         leading={<button class="tl-back-btn">back</button>}
-        trailing={<button class="tl-settings-btn">gear</button>}
       />
     ));
     const bar = container.querySelector(".tl-session-bar")!;
     const back = bar.querySelector(".tl-back-btn");
-    const gear = bar.querySelector(".tl-settings-btn");
     expect(back).not.toBeNull();
-    expect(gear).not.toBeNull();
-    // Order matters as much as presence: back reads first (it is the way out),
-    // the gear last, with the session's own controls between them.
-    const kids = [...bar.children];
-    expect(kids.indexOf(back!)).toBe(0);
-    expect(kids.indexOf(gear!)).toBe(kids.length - 1);
+    // Position matters as much as presence: it is the way out of the terminal.
+    expect([...bar.children].indexOf(back!)).toBe(0);
   });
 
   it("renders nothing extra when the shell keeps its own bar", () => {
     const { container } = render(() => <SessionView session="qa-mobile" />);
     const bar = container.querySelector(".tl-session-bar")!;
     expect(bar.querySelector(".tl-back-btn")).toBeNull();
-    expect(bar.querySelector(".tl-settings-btn")).toBeNull();
+    expect(bar.querySelector(".tl-bar-menu-btn")).toBeNull();
   });
 });
 
@@ -89,5 +112,83 @@ describe("<SessionView> — visible: a hidden pane must not resize tmux", () => 
     const { posted, setVisible } = mountVisible(false);
     setVisible(undefined);
     expect(lastView(posted)?.hidden).toBe(false);
+  });
+});
+
+describe("<SessionView> — the phone bar's overflow menu", () => {
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+    vi.restoreAllMocks();
+  });
+
+  it("moves Files and Watch behind a ⋯ on a phone", () => {
+    stubViewport(PHONE);
+    const { container } = render(() => <SessionView session="qa-mobile" />);
+    const bar = container.querySelector(".tl-session-bar")!;
+    // Measured at 390px, the bar's own controls left the session name 29px.
+    expect(bar.querySelector('[aria-label="File preview"]')).toBeNull();
+    expect(bar.querySelector(".tl-watch-btn")).toBeNull();
+    const dots = bar.querySelector<HTMLButtonElement>(".tl-bar-menu-btn");
+    expect(dots).not.toBeNull();
+    expect(dots!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps them as buttons on a tablet, which has the room", () => {
+    stubViewport(TABLET);
+    const { container } = render(() => <SessionView session="qa-mobile" />);
+    const bar = container.querySelector(".tl-session-bar")!;
+    expect(bar.querySelector(".tl-bar-menu-btn")).toBeNull();
+    expect(bar.querySelector('[aria-label="File preview"]')).not.toBeNull();
+  });
+
+  it("opens on tap and offers Files, Watch and the shell's own items", () => {
+    stubViewport(PHONE);
+    const { container } = render(() => (
+      <SessionView
+        session="qa-mobile"
+        menuExtra={<button class="tl-menu-item">Settings</button>}
+      />
+    ));
+    const dots = container.querySelector<HTMLButtonElement>(".tl-bar-menu-btn")!;
+    expect(container.querySelector(".tl-menu")).toBeNull();
+    dots.click();
+    const items = [...container.querySelectorAll(".tl-menu-item")].map((e) =>
+      (e.textContent || "").trim(),
+    );
+    expect(items).toEqual(["Files", "Watch only", "Settings"]);
+    expect(dots.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("closes when one of the shell's items is picked", () => {
+    // The shell has no handle on this menu, so its rows would otherwise leave
+    // it open behind whatever they just opened.
+    stubViewport(PHONE);
+    const onPick = vi.fn();
+    const { container } = render(() => (
+      <SessionView
+        session="qa-mobile"
+        menuExtra={
+          <button class="tl-menu-item" onClick={onPick}>
+            Settings
+          </button>
+        }
+      />
+    ));
+    container.querySelector<HTMLButtonElement>(".tl-bar-menu-btn")!.click();
+    const settings = [...container.querySelectorAll<HTMLButtonElement>(".tl-menu-item")].find(
+      (e) => (e.textContent || "").trim() === "Settings",
+    )!;
+    settings.click();
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".tl-menu")).toBeNull();
+  });
+
+  it("closes on Escape, like every other overlay", () => {
+    stubViewport(PHONE);
+    const { container } = render(() => <SessionView session="qa-mobile" />);
+    container.querySelector<HTMLButtonElement>(".tl-bar-menu-btn")!.click();
+    expect(container.querySelector(".tl-menu")).not.toBeNull();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(container.querySelector(".tl-menu")).toBeNull();
   });
 });

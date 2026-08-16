@@ -449,9 +449,14 @@ describe("<SessionView> — terminal controls in the session bar", () => {
 
   it("hides the terminal controls on a coarse pointer, where the soft keys carry them", () => {
     const orig = window.matchMedia;
+    // A TABLET: coarse, but not the phone flip. The distinction matters here —
+    // the phone moves Files and Watch into the bar's ⋯ (there is no room for
+    // them beside a back control at 390px), so answering every query that
+    // mentions "coarse" with true would test a different layout than the one
+    // this case is about.
     window.matchMedia = ((q: string) =>
       ({
-        matches: q.includes("coarse"),
+        matches: q.includes("coarse") && !q.includes("max-width"),
         media: q,
         addEventListener: () => {},
         removeEventListener: () => {},
