@@ -111,6 +111,42 @@ by a 30-day grace. Non-image file drops are NOT session images (they
 stay 7-day transfer ephemera in /tmp).
 _Avoid_: screenshots, attachments (images need not come from pastes)
 
+### The text view
+
+**Text view**:
+The structured rendering of a Session, read from its Claude Code transcript
+rather than its pty — the other of the two views the session bar switches
+between. It renders the same conversation the Terminal view shows live, as a
+foldable timeline with a composer. Not a second session and not a second
+Claude.
+_Avoid_: chat view, console view, text mode (the mode is the switch's state,
+the view is the thing rendered)
+
+**Item type**:
+What a tool call *did*, independent of which tool did it: `file_read`,
+`file_change`, `command_execution`, `web_search`, `image_view`,
+`mcp_tool_call`, `dynamic_tool_call`. Every tool is classified into one on the
+way to the renderer, so the view never branches on a tool's name.
+_Avoid_: tool kind, category
+
+**Work log**:
+The stream of things a turn *did* — tool calls, approvals, thinking, errors —
+kept separate from the turn's message text and merged with it only at render.
+Each entry carries a **tone** (`info` / `tool` / `approval` / `error`).
+_Avoid_: activity feed, events (Event is the wire type)
+
+**Working row**:
+The live row standing for a turn in flight: the tool currently running, an
+elapsed timer, and the step count so far. It exists only while a turn is
+unsettled, and is what the view shows in place of streaming text.
+
+**Blocking prompt**:
+Something the CLI is waiting on a human for, which the transcript does not
+report while it is pending — a permission prompt, or an `AskUserQuestion`
+menu. The text view mirrors it as a card and answers it by injecting keys into
+the pty (ADR-0010). Distinct from **Session state** *awaiting input*, which is
+the sidebar's coarser signal that some prompt exists.
+
 ### T3 interoperability
 
 **Thread**:
