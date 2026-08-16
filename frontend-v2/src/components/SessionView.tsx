@@ -65,11 +65,6 @@ export const SessionView: Component<{
   /** the owning project's base directory, so a session born here starts in the
    *  project rather than in $HOME (the attach URL's arg3). */
   dir?: string;
-  /** TRUE when someone is already DRIVING this session (a read-write client is
-   *  attached). With no explicit Watch choice recorded, this device then joins
-   *  as a viewer — v2 is terminal-first, so selecting a session attaches in the
-   *  same tick and there is no moment in which to set the toggle by hand. */
-  driven?: () => boolean;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** roamed prefs — the A−/A+ buttons step fontSize, which the store persists
@@ -107,7 +102,7 @@ export const SessionView: Component<{
   const [mode, setMode, toggleMode] = createViewMode(() => session);
   // Watch mode is per (session, device) and lives only in this browser — the
   // desktop keeps driving the same session while the phone watches it.
-  const [watch, , toggleWatch] = createWatchMode(() => session, () => props.driven?.() ?? false);
+  const [watch, , toggleWatch] = createWatchMode(() => session);
 
   // The transcript stream is opened by the Text view, not by mounting this one.
   // v1 is terminal-first: a session opens on the Terminal view and Text is

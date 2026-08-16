@@ -379,12 +379,6 @@ export const App: Component = () => {
               <SessionView
                 session={name}
                 owner={store.selected()?.owner}
-                // Whether someone is already DRIVING this session, so a second
-                // device joins as a viewer instead of taking the grid. Polled,
-                // so it can lag a few seconds — being wrong costs one click.
-                driven={() =>
-                  store.sessions.some((s) => s.name === name && s.driven === true)
-                }
                 creating={selectedIsCreating()}
                 dir={selectedDir()}
                 newCommand={newCommand}
