@@ -54,11 +54,15 @@ its slot).
 _Avoid_: default project, inbox
 
 **Assignment**:
-The session→project mapping. Server-side state owned by tmux-api in the
-global project store (each project lists its member sessions as
-`(owner, name)`), so it follows users across devices and survives tmux
-crashes and restores. (Historically per-user layout state; migrated into the
-global store on first run of the shared-projects feature.)
+The session→project mapping. Server-side state owned by tmux-api, so it
+follows users across devices and survives tmux crashes and restores. It is
+read from two stores, in this order: the per-user **Layout**, which is the
+arrangement the sidebar renders and keeps referencing a session after it
+dies; and the **global project store**, which lists each project's member
+sessions as `(owner, name)` and covers sessions grouped through sharing. A
+third, narrower store — `assignments/<user>.json` — remembers what a
+deliberate kill drops from the layout, so restoring a session later puts it
+back in its project rather than Ungrouped.
 
 **Layout**:
 The per-user sidebar arrangement owned by tmux-api: the ordered list

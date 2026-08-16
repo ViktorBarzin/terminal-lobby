@@ -586,6 +586,10 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	}
 	// A UI kill is deliberate — drop the session's project assignment.
 	// (Deaths outside the API keep theirs so a restore regroups them.)
+	// Remember it first: the picker can restore this session from an older
+	// snapshot long after the layout has forgotten where it went, and landing
+	// in Ungrouped is where a recovered session is hardest to find again.
+	rememberKilledAssignment(osUser, name)
 	if err := layoutStoreInstance.removeSession(osUser, name); err != nil {
 		log.Printf("layout cleanup after killing %s for %s failed: %v", name, osUser, err)
 	}

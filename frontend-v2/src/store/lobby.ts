@@ -608,6 +608,12 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       }
       return;
     }
+    // tmux-api places restored sessions back in their projects, so the server's
+    // layout is now ahead of ours. Disarm the write-grace: holding our copy
+    // would hide the placement until the next poll, and the conflict check
+    // would blame another tab for a change this click asked for.
+    graceUntil = 0;
+    lastWritten = null;
     await refresh();
   }
 

@@ -121,6 +121,9 @@ export interface SnapshotRow {
   default: boolean;
   /** Set when a deliberate kill is why `default` is false. */
   killedAt?: number;
+  /** The project restoring this row would put the session in, resolved
+   *  server-side (tmux-api `assignments.go`). Absent/"" means Ungrouped. */
+  project?: string;
 }
 
 /** POST /api/restore body for a picker restore. */
