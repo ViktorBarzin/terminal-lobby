@@ -22,6 +22,17 @@
 #                                      resurrect it. Self-validates both args
 #                                      (user against /etc/ttyd-user-map, session
 #                                      against tmux-api's session-name charset).
+#   /usr/local/bin/file-api           file-api re-execs ITSELF as the mapped
+#                                      user (`-privop list|read|write`) so the
+#                                      four-layer path validation in paths.go
+#                                      runs with THAT user's view of the
+#                                      filesystem — symlink resolution needs
+#                                      their read access — confined to their own
+#                                      home. Writes then land with their
+#                                      ownership rather than the service's. The
+#                                      child re-validates containment itself, so
+#                                      the grant is scoped to one fixed
+#                                      behaviour and takes no path it trusts.
 #
 # Add one line per OS user listed on the right-hand side of
 # /etc/ttyd-user-map. The mapping file is the source of truth for which
@@ -32,8 +43,8 @@
 # (GET /dirs) is granted alongside the attach binaries so the directory picker
 # works for every user, not just wizard (whose own tmux-api runs its home scan
 # directly, no sudo).
-wizard ALL=(emo) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist
-wizard ALL=(ancamilea) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist
+wizard ALL=(emo) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api
+wizard ALL=(ancamilea) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api
 
 # Restore button (POST /restore): run the validated root wrapper. It accepts a
 # single OS-user arg and re-checks it against /etc/ttyd-user-map, so this grant
