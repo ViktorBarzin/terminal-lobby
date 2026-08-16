@@ -36,10 +36,12 @@ type attachFakeTmux struct {
 	created []sessionio.NewSessionSpec
 	kills   []string
 
-	promptErr error
-	cancelErr error
-	newErr    error
-	listErr   error
+	promptErr  error
+	cancelErr  error
+	newErr     error
+	readyCalls []string
+	readyErr   error
+	listErr    error
 
 	// onNew runs inside NewSession, standing in for the SessionStart hook that
 	// stamps @claude_transcript once Claude is up.
@@ -135,6 +137,23 @@ func (f *attachFakeTmux) Cancel(_, session string) error {
 	}
 	f.cancels = append(f.cancels, session)
 	return f.cancelErr
+}
+
+// readyWaits returns the sessions AwaitInputReady was called for.
+func (f *attachFakeTmux) readyWaits() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.readyCalls...)
+}
+
+// readyCalls records each AwaitInputReady, so a test can assert the resurrect
+// path waited for the pane before anything was typed into it.
+func (f *attachFakeTmux) AwaitInputReady(ctx context.Context, osUser, session string, wait, poll time.Duration) error {
+	f.mu.Lock()
+	f.readyCalls = append(f.readyCalls, session)
+	err := f.readyErr
+	f.mu.Unlock()
+	return err
 }
 
 func (f *attachFakeTmux) NewSession(spec sessionio.NewSessionSpec) error {

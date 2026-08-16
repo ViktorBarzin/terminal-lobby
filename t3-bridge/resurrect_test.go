@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -355,5 +356,42 @@ func TestResurrectFreeName(t *testing.T) {
 		if len(got) > MaxTmuxNameLen {
 			t.Errorf("resurrectFreeName(%q) = %q, over the %d character budget", c.base, got, MaxTmuxNameLen)
 		}
+	}
+}
+
+// The prompt that goes missing does so because the resumed TUI was not reading
+// keys yet, so the resurrect path must wait for the pane before it hands the
+// target back to whoever is about to type into it. Pinning the ORDER matters as
+// much as the call: waiting after the paste would be no wait at all.
+func TestResurrectWaitsForThePaneBeforeReturning(t *testing.T) {
+	rig := newResurrectRig(t)
+	root := t.TempDir()
+	rig.stampsTranscript(root, "/tmp/ws", resurrectID)
+
+	target, err := rig.r.Resurrect(ResurrectSpec{
+		ClaudeID: resurrectID, Resume: true, TmuxName: "revived", CWD: "/tmp/ws",
+	})
+	if err != nil {
+		t.Fatalf("Resurrect: %v", err)
+	}
+	if got := rig.tmux.readyWaits(); len(got) != 1 || got[0] != target.TmuxName {
+		t.Fatalf("expected exactly one readiness wait on %q, got %v", target.TmuxName, got)
+	}
+}
+
+// A pane that never settles must not sink the resurrection. Losing the
+// operator's prompt is the failure being fixed here; typing into a pane that is
+// probably ready is the lesser risk, and the give-up is logged rather than
+// silent.
+func TestResurrectStillReturnsWhenThePaneNeverSettles(t *testing.T) {
+	rig := newResurrectRig(t)
+	root := t.TempDir()
+	rig.stampsTranscript(root, "/tmp/ws", resurrectID)
+	rig.tmux.readyErr = errors.New("drew no settled prompt")
+
+	if _, err := rig.r.Resurrect(ResurrectSpec{
+		ClaudeID: resurrectID, Resume: true, TmuxName: "revived", CWD: "/tmp/ws",
+	}); err != nil {
+		t.Fatalf("a pane that never settled must not fail the resurrection: %v", err)
 	}
 }

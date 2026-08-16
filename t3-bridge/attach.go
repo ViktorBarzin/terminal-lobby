@@ -49,6 +49,10 @@ type TmuxDriver interface {
 	HasSession(osUser, session string) bool
 	ListSessions(osUser string) ([]sessionio.TmuxSession, error)
 	NewSession(spec sessionio.NewSessionSpec) error
+	// AwaitInputReady blocks until the session's pane is drawn and settled.
+	// Only the resurrect path needs it — a session that was already running
+	// when the bridge attached has been ready for a long time.
+	AwaitInputReady(ctx context.Context, osUser, session string, wait, poll time.Duration) error
 }
 
 // Target is the tmux session a thread is bound to, with everything the bridge
