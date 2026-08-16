@@ -29,6 +29,15 @@ const flipBlock = (): string => {
   return css.slice(at);
 };
 
+/** The touch-ergonomics block: everything a FINGER needs, phone or tablet. */
+const TOUCH_HEADER = "/* ---- Touch ergonomics";
+const touchBlock = (): string => {
+  const css = readCss();
+  const at = css.indexOf(TOUCH_HEADER);
+  expect(at, "the touch-ergonomics block").toBeGreaterThan(-1);
+  return css.slice(at, css.indexOf("/* ---- Phone: one view at a time"));
+};
+
 /**
  * A matchMedia that answers from a real viewport rather than from a substring
  * guess: the flip query is a compound of three clauses, and a stub that only
@@ -208,5 +217,54 @@ describe("Sidebar — the Settings route the phone needs", () => {
     expect(gear!.getAttribute("aria-label")).toBe("Settings");
     gear!.click();
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("touch ergonomics — sized for a finger, phone or tablet", () => {
+  it("lives under the pointer query, not the phone flip", () => {
+    // A finger is a finger at 768px. Measured on a tablet, the session bar's
+    // buttons were the one row still at their 28px mouse size because the rule
+    // had been written into the flip block by mistake — everything around them
+    // had already grown.
+    const block = touchBlock();
+    expect(block).toContain("@media (pointer: coarse)");
+    expect(block).not.toContain(FLIP_QUERY);
+    expect(flipBlock()).not.toContain(".tl-session-bar .tl-icon-btn");
+  });
+
+  it("reveals the card's action menu, which hover used to gate", () => {
+    // .tl-card-actions is opacity:0 until :hover. There is no hover on a touch
+    // screen, so rename/kill/move were reachable only by tabbing a card into
+    // :focus-within with a keyboard the phone does not have.
+    const block = touchBlock();
+    expect(block).toMatch(/\.tl-card-actions\s*\{[^}]*opacity:\s*1/);
+  });
+
+  const FLOOR_SELECTORS = [
+    ".tl-card-actions",
+    ".tl-menu-item",
+    ".tl-head-btn",
+    ".tl-foot-btn",
+    ".tl-group-header",
+    ".tl-session-bar .tl-icon-btn",
+  ];
+  for (const sel of FLOOR_SELECTORS) {
+    it(`gives ${sel} a 40px target`, () => {
+      const block = touchBlock();
+      const at = block.indexOf(sel + " {");
+      expect(at, `${sel} in the touch block`).toBeGreaterThan(-1);
+      const rule = block.slice(at, block.indexOf("}", at));
+      expect(rule, sel).toMatch(/(min-)?height:\s*40px/);
+    });
+  }
+
+  it("sets 16px on every text input, or iOS zooms the page on focus", () => {
+    // Safari zooms when a focused field is under 16px and does not zoom back
+    // out, which on the phone layout leaves a list you have to pan sideways.
+    const block = touchBlock();
+    for (const sel of [".tl-new-input", ".tl-new-cmd", ".tl-add-input", ".tl-card-rename"]) {
+      expect(block, sel).toContain(sel);
+    }
+    expect(block).toMatch(/font-size:\s*16px/);
   });
 });

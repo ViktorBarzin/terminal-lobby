@@ -159,12 +159,20 @@ class QaAgent:
 
     def __init__(self, area: str, *, harness: str = HARNESS,
                  headless: bool = True, viewport: tuple[int, int] = (1440, 900),
-                 artifacts: Optional[Path] = None, slow_mo: int = 0) -> None:
+                 artifacts: Optional[Path] = None, slow_mo: int = 0,
+                 touch: bool = False) -> None:
         self.area = area
         self.harness = harness.rstrip("/")
         self.headless = headless
         self.viewport = viewport
         self.slow_mo = slow_mo
+        # touch=True is what makes `(pointer: coarse)` match. Every mobile-only
+        # affordance in the app is gated on that query — the soft-key row, the
+        # keyboard-offset plumbing, and the phone layout flip — so a sweep that
+        # only shrinks the viewport tests the DESKTOP page at 390px wide and
+        # reports on a layout no phone ever sees. Sizing without touch is the
+        # single easiest way to file a mobile finding that is not real.
+        self.touch = touch
         self.dir = Path(artifacts or (ARTIFACTS / area))
         self.dir.mkdir(parents=True, exist_ok=True)
         self.findings: list[Finding] = []
@@ -198,6 +206,11 @@ class QaAgent:
             viewport={"width": self.viewport[0], "height": self.viewport[1]},
             permissions=["clipboard-read", "clipboard-write"],
             base_url=self.harness,
+            # is_mobile also honours the page's meta viewport, which is what
+            # decides whether 390px means 390 CSS pixels or a zoomed-out 980.
+            has_touch=self.touch,
+            is_mobile=self.touch,
+            device_scale_factor=3 if self.touch else 1,
         )
         # The lobby asks for notification permission (area 11). Granting it up
         # front keeps the prompt from eating clicks — and with the full browser
