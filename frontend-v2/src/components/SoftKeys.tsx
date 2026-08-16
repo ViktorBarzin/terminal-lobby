@@ -250,9 +250,35 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
     { label: "→", bytes: "right", ariaLabel: "Right arrow", repeat: true, narrow: true },
   ];
 
+  /**
+   * Publish this toolbar's live height as `--sk-h`, which is how much room the
+   * views above it reserve (app.css, `body.has-soft-keys .tl-views`).
+   *
+   * A ResizeObserver rather than the viewport listeners alone: the row changes
+   * height without any window resize behind it — the overflow tier expands and
+   * collapses under the ⋯ toggle, and the key rows re-wrap when a longer label
+   * renders. viewport.ts writes the same property from window/visualViewport
+   * events, which seeds it before this mounts and zeroes it after; both read
+   * the same element, so they agree. On cleanup the toolbar is gone, so the
+   * space it was reserving goes back to the views.
+   */
+  const measure = (el: HTMLDivElement): void => {
+    const write = () =>
+      document.documentElement.style.setProperty("--sk-h", el.offsetHeight + "px");
+    write();
+    if (typeof ResizeObserver !== "function") return; // older Safari: seed only
+    const ro = new ResizeObserver(write);
+    ro.observe(el);
+    onCleanup(() => {
+      ro.disconnect();
+      document.documentElement.style.setProperty("--sk-h", "0px");
+    });
+  };
+
   return (
     <div
       id="soft-keys"
+      ref={measure}
       role="toolbar"
       aria-label="Terminal keys"
       classList={{ expanded: expanded() }}

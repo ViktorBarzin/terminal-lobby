@@ -690,6 +690,84 @@
   }
 }
 
+/* ---- Touch ergonomics -------------------------------------------------- */
+/* Gated on the pointer alone, NOT on the phone flip: a finger is a finger at
+   768px, so the tablet gets the same targets even though it keeps both panes.
+
+   Two things a mouse layout takes for granted and a finger does not have:
+   HOVER, which is how the card's action menu was revealed at all; and a
+   forgiving hit area, which 32px boxes and 6px paddings are not. 40px is the
+   floor both Apple's and Google's guidance land near, and it is what the merged
+   session bar above already uses. */
+@media (pointer: coarse) {
+  /* The card's action menu. It was opacity:0 until :hover — on a touch screen
+     that hover never arrives, so rename/kill/move were reachable only by
+     tabbing a card into :focus-within with a keyboard the phone does not have.
+     Always visible here, at a size a thumb can actually land on. */
+  .tl-card-actions {
+    opacity: 1;
+    min-width: 40px;
+    height: 40px;
+    padding: 0 8px;
+    font-size: 18px;
+  }
+  /* Its menu: rows a finger can pick apart, and a wider panel so a long label
+     does not wrap into a two-line target. */
+  .tl-menu {
+    min-width: 190px;
+  }
+  .tl-menu-item {
+    min-height: 40px;
+    padding: 0 12px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+  }
+  /* Header (bell, collapse-all) and the sidebar's own icon buttons. */
+  .tl-head-btn {
+    width: 40px;
+    height: 40px;
+  }
+  .tl-sidebar .tl-icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* The session bar's own controls. These are 28px boxes sized for a mouse;
+     measured on a tablet they were the one row left under the floor while
+     everything around them had grown. */
+  .tl-session-bar .tl-icon-btn {
+    min-width: 40px;
+    height: 40px;
+  }
+  /* + Project / Restore / the phone's Settings gear. */
+  .tl-foot-btn {
+    min-height: 40px;
+    font-size: 14px;
+  }
+  /* A group row is a tap target too — it opens and closes the group. */
+  .tl-group-header {
+    min-height: 40px;
+    padding: 0 6px 0 2px;
+  }
+  /* 16px or iOS Safari zooms the page on focus and leaves it zoomed, which on
+     the phone layout means a session list you then have to pan sideways to
+     read. The size is the fix; nothing about the field changes visually beyond
+     it. (.tl-composer-input already carries this in app.css.) */
+  .tl-new-input,
+  .tl-new-cmd,
+  .tl-add-input,
+  .tl-card-rename {
+    font-size: 16px;
+  }
+  .tl-new-input,
+  .tl-add-input {
+    min-height: 40px;
+  }
+}
+
 /* ---- Phone: one view at a time ----------------------------------------- */
 /* Two panes side by side is a desktop idea. On a phone the sidebar was taking
    42vh of a ~640px screen and leaving the terminal a letterbox, so here the app
@@ -716,6 +794,15 @@
     grid-template-rows: 1fr;
     height: var(--app-vh, 100%);
     overflow: hidden;
+    /* Full-screen means the panes now reach the notch and the rounded corners,
+       which the two-pane layout never did. index.html asks for viewport-fit=
+       cover, so these resolve to real numbers on a device that has them and to
+       0 everywhere else. Only top and sides here: the bottom belongs to whoever
+       owns the bottom of each screen — the soft-key row already adds it to its
+       own reservation, and the sidebar's footer does the same below. */
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0
+      env(safe-area-inset-left);
   }
   /* Browsing: the list has the screen. display:none, not a zero height — the
      session pane must not keep a measurable box, or the terminal inside it
@@ -738,6 +825,10 @@
   .tl-sidebar {
     width: 100%; /* the 260px is a desktop column width, not a phone's */
   }
+  /* The list screen's bottom row: clear of the home indicator. */
+  .tl-sidebar-foot {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
 
   /* One bar, not two. The shell bar's brand and gear are re-rendered into the
      session bar (App.tsx passes them as its leading/trailing slots), which buys
@@ -749,12 +840,6 @@
     min-height: 40px;
     padding: 0 6px;
     gap: 6px;
-  }
-  /* 40px is the touch floor. The bar's buttons are 28px boxes sized for a
-     mouse; a finger needs the whole row's height. */
-  .tl-session-bar .tl-icon-btn {
-    min-width: 40px;
-    height: 40px;
   }
   /* The session name yields first — it is the one thing here that can ellipsis
      instead of pushing a control off the bar. */
