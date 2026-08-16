@@ -182,6 +182,15 @@ body {
    a mode, not an action, so it stays visibly lit for as long as it is on: the
    terminal below refuses every keystroke, and this is the only thing on screen
    that explains why. */
+/* Sidebar card: this device opens the session as a viewer. Muted rather than
+   accent — it is a statement of fact about the next attach, not an alert. */
+.tl-card-watch {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.75;
+}
+
 .tl-watch-btn.tl-watch-on {
   color: var(--accent);
   border-color: var(--accent);

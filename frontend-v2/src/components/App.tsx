@@ -379,6 +379,9 @@ export const App: Component = () => {
               <SessionView
                 session={name}
                 owner={store.selected()?.owner}
+                driven={() =>
+                  store.sessions.some((s) => s.name === name && s.driven === true)
+                }
                 creating={selectedIsCreating()}
                 dir={selectedDir()}
                 newCommand={newCommand}
