@@ -31,6 +31,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -137,6 +138,57 @@ func (s *titleStore) prune(osUser string, keep map[string]bool) error {
 			}
 		}
 	})
+}
+
+// restoreRememberedTitles re-stamps @title on sessions a restore just brought
+// back under their own names.
+func restoreRememberedTitles(osUser string, names []string) {
+	same := make(map[string]string, len(names))
+	for _, n := range names {
+		same[n] = n
+	}
+	restoreRememberedTitlesAs(osUser, same)
+}
+
+// restoreRememberedTitlesAs re-stamps titles for sessions that came back, where
+// each key is the name the title was remembered under and each value is the
+// name the session actually returned as.
+//
+// The two differ when a restore has to rename: a name taken by a different
+// conversation brings the session back as <name>-<HHMM>. The title follows the
+// session to whatever it is now called, and is re-remembered there so a second
+// restore does not have to go looking under the original name.
+//
+// Best-effort throughout, matching placeRestoredSessions next door: the
+// sessions are already back by the time this runs, so a stamp that will not
+// land costs a title, never the recovery.
+func restoreRememberedTitlesAs(osUser string, restored map[string]string) {
+	if len(restored) == 0 {
+		return
+	}
+	remembered := titleStoreInstance.all(osUser)
+	if len(remembered) == 0 {
+		return
+	}
+	for origin, target := range restored {
+		title := remembered[origin]
+		if title == "" {
+			continue // never titled — no call to make
+		}
+		out, err := tmuxCmd(osUser, "set-option", "-t", exactPane(target),
+			sessionTitleOption, title).CombinedOutput()
+		if err != nil {
+			log.Printf("restore: re-stamping %s on %s/%s failed: %v: %s",
+				sessionTitleOption, osUser, target, err, strings.TrimSpace(string(out)))
+			continue
+		}
+		if target != origin {
+			if err := titleStoreInstance.rename(osUser, origin, target); err != nil {
+				log.Printf("restore: title memory rename %s→%s for %s failed: %v",
+					origin, target, osUser, err)
+			}
+		}
+	}
 }
 
 func (s *titleStore) update(osUser string, mutate func(map[string]string)) error {
