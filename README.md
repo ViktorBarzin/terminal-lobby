@@ -3,11 +3,15 @@
 Web tmux sessions, gated by Authentik, isolated per OS user. Lives at
 `https://terminal.viktorbarzin.me/`.
 
-A second, experimental frontend — the SolidJS **v2** rewrite (`frontend-v2/`) —
-runs at `https://terminal-dev.viktorbarzin.me/` over the **same backend**, so
-both frontends drive one shared set of tmux sessions. The vanilla page stays the
-stable daily driver; terminal-dev is where v2 is iterated on. Both hosts are gated
-to the Home Server Admins group. See **Two frontends** under Deployment.
+The lobby is the SolidJS SPA in `frontend-v2/`, built to a single
+`index.html` and served by ttyd. The original vanilla page (`frontend/index.html`)
+is kept in the tree as the rollback target and as the parity reference the
+sentinel tests compare against; it is no longer deployed. The host is gated to
+the Home Server Admins group.
+
+There used to be a second host, `terminal-dev.viktorbarzin.me`, running the SPA
+as a canary beside the vanilla page. It was retired on 2026-08-16 once the SPA
+became the daily driver — everything ships straight to prod now.
 
 A sidebar lists the current user's tmux sessions — grouped into
 collapsible **projects**, each session carrying a **Claude state dot**
@@ -167,15 +171,15 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 
 | Piece | Where it runs | Port | Purpose |
 |---|---|---|---|
-| `frontend/index.html` | Served by ttyd on the DevVM | 7681 | Lobby UI + xterm.js terminal |
-| `frontend-v2/` (SolidJS + Vite) | Built to a single `index-v2.html`, served by **ttyd-v2** on the DevVM | 7687 | The **v2** rewrite at `terminal-dev.viktorbarzin.me`. Same tmux-api / clipboard / session-events / file-api backends as the vanilla page; the terminal is an iframe of `/term.html`. Build: `npm run build` (vite-plugin-singlefile → one inlined file) |
+| `frontend-v2/` (SolidJS + Vite) | Built to a single `index.html`, served by ttyd on the DevVM | 7681 | **The lobby.** Terminal is an iframe of `/term.html`; backends are tmux-api / clipboard / session-events / file-api. Build: `npm run build` (vite-plugin-singlefile → one inlined file) |
+| `frontend/index.html` | Not deployed | — | The original vanilla page. Kept as the rollback target (`index.html.prev` on the devvm) and as the parity reference for `scripts/test_frontend_compat.py` |
 | `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions` (incl. per-session `state` + `project`), `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore` (blanket, or a `{snapshot, sessions[]}` body from the picker), `GET /snapshots` + `GET /snapshots/<ts>` (the session-snapshot series and one snapshot resolved against what is live), `GET`/`PUT /layout` (per-user sidebar layout, stored under `/var/lib/tmux-api/layout/`) |
 | `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session image store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded/dropped images and returns a path the terminal can paste (non-image drops stay in `/tmp/clipboard-files`), `POST /register` records `show-image` renders (localhost), `GET /list` + `GET /img/…` serve the gallery. Per-user isolation via `X-Authentik-Username` → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
 | `devvm/tmux-attach.sh` | DevVM, invoked by ttyd | — | Validates `X-authentik-username`, maps to OS user via `/etc/ttyd-user-map`, `sudo -u <user> tmux new-session -A` |
 | `devvm/claude-tmux-state` | DevVM, invoked by Claude Code hooks | — | Stamps `@claude_state` (running / awaiting / done) on the enclosing tmux session; wired org-wide via `/etc/claude-code/managed-settings.json` (infra repo, `scripts/workstation/`, self-deploys hourly). No-ops outside tmux. See `docs/adr/0001-claude-state-via-hooks.md` |
 | `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`, `GET /snapshots*`) | — | The tmux-persist gateway behind the Restore picker. Validates the user against `/etc/ttyd-user-map`, then runs one of `tmux-persist restore\|snapshots\|snapshot\|restore-selection`. The bare one-argument form still means "restore now". Snapshot ids and session names are re-validated here because the sudo grant places no restriction on argv. Idempotent — live sessions are left alone. Useful after an OOM kills sessions without a reboot (the boot-only restore never fires) |
 | `devvm/show-image` | DevVM, `/usr/local/bin/show-image`, run inside sessions | — | Shows an image at the terminal. Inside tmux: temporary split pane running `viu` (sixel; Enter closes) — the reliable path for Claude/agents, whose captured stdout breaks bare `viu` — then fire-and-forgets a localhost `/register` so the image joins the session gallery. Outside tmux: plain `viu`. See "Showing images in sessions" |
-| `devvm/ttyd.service`, `ttyd-ro.service`, `ttyd-v2.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units (`ttyd-v2` = the :7687 second ttyd serving the v2 SPA at terminal-dev) |
+| `devvm/ttyd.service`, `ttyd-ro.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units. `ttyd` :7681 serves the lobby; `ttyd-ro` :7682 is the read-only view. (`ttyd-v2` :7687 served the retired terminal-dev canary and was removed 2026-08-16.) |
 | `devvm/clipboard-cleanup.service` + `.timer` + `clipboard-store-clean` | DevVM | — | Daily retention sweep: store dirs live while their session does (live tmux or saved layout) + 30-day `.deleted-at` grace; `_unsorted` 90 d; `/tmp/clipboard-files` 7 d |
 | `devvm/ttyd-user-map`, `sudoers.d-ttyd-users` | `/etc/` on DevVM | — | Authentik → OS-user mapping + sudo grant |
 | `devvm/start-claude.sh` | Per-user, e.g. `/home/bob/` | — | Optional Claude-Code launcher invoked by tmux `default-command` |
@@ -203,8 +207,8 @@ two of them:
 | Script | Ships | Restarts | Blast radius |
 |---|---|---|---|
 | `./scripts/deploy.sh` | vanilla `index.html`, PWA assets + webfonts, `tmux-api`, `clipboard-upload`, the patched `ttyd`, the devvm helper scripts + `/etc` config | `ttyd`, `ttyd-ro`, `tmux-api`, `clipboard-upload` | **Shared** — both hosts, every user |
-| `./scripts/deploy-v2.sh` | `index-v2.html`, `ttyd-v2.service`, `term.html` | `ttyd-v2` only | terminal-dev only |
-| `./scripts/deploy-services.sh` | `session-events` (:7685), `file-api` (:7686) + their units | those two only | terminal-dev only (the vanilla page calls neither) |
+| `./scripts/deploy-v2.sh` | the lobby `index.html`, `term.html` | `ttyd` only | **Shared** — every user of the lobby |
+| `./scripts/deploy-services.sh` | `session-events` (:7685), `file-api` (:7686) + their units | those two only | the Text view + file preview |
 
 ```bash
 ./scripts/deploy.sh                      # full deploy
@@ -217,55 +221,58 @@ service in the tree — `session-events` and `file-api` are
 `deploy-services.sh`'s), ships the patched `ttyd` only if `out/ttyd` exists,
 and smoke-tests `/whoami` + `/health` + the public assets.
 
-### Two frontends (terminal + terminal-dev)
-
-The vanilla page (`frontend/index.html`) and the SolidJS **v2** rewrite
-(`frontend-v2/`) run as **two separate ttyd instances over one shared backend**:
+### The lobby page (deploy-v2.sh)
 
 | Host | ttyd | `-I` index | Deploy |
 |---|---|---|---|
-| `terminal.viktorbarzin.me` | `ttyd` :7681 | `index.html` (vanilla) | `./scripts/deploy.sh` |
-| `terminal-dev.viktorbarzin.me` | `ttyd-v2` :7687 | `index-v2.html` (v2 SPA) | `./scripts/deploy-v2.sh` |
+| `terminal.viktorbarzin.me` | `ttyd` :7681 | `index.html` (the SolidJS SPA) | `./scripts/deploy-v2.sh` |
 
-`deploy-v2.sh` builds `frontend-v2` (vite single-file) into `index-v2.html`,
-installs `devvm/ttyd-v2.service`, and **restarts only ttyd-v2** — never ttyd
-:7681, ttyd-ro, or any shared backend, so the vanilla page is unaffected. It
-also installs **`term.html`**, the terminal-mode page the SPA frames
+`deploy-v2.sh` builds `frontend-v2` (vite single-file) into `index.html` and
+**restarts only ttyd** — never `ttyd-ro`, never a shared backend. It installs no
+systemd unit: `ttyd.service` belongs to `deploy.sh` and its `ExecStart` already
+points at `index.html`, so shipping the lobby swaps the *file*, not the unit.
+That is what keeps the rollback a single `install` of `index.html.prev` plus a
+restart (the command is printed at the end of every deploy).
+
+`deploy.sh` deliberately does **not** install the lobby page — it ships the
+shared backends and the PWA assets. Having it write `index.html` too would
+silently revert whatever `deploy-v2.sh` last deployed.
+
+It also installs **`term.html`**, the terminal-mode page the SPA frames
 (`config.TERMINAL_BASE = "/term.html"`, emitted by the `copyTermHtml` plugin in
 `frontend-v2/vite.config.ts`): that one file lands in the *shared* asset dir
 `/usr/local/share/ttyd/`, where **clipboard-upload** serves it from its
-exact-path whitelist — so no service is restarted for it, and only the v2 SPA
-ever fetches it (the vanilla page has no reference to `/term.html`).
+exact-path whitelist — so no service is restarted for it.
 
 Both artefacts are stamped independently (`__TL_BUILD__` = git SHA,
 `__TL_ASSET__` = a fingerprint of the file's own bytes, ADR-0007) because each
 runs the zero-touch self-update healer against its *own* identity. Two skips
 keep repeated deploys cheap: `npm ci` is skipped while `package-lock.json`
 hashes the same as the last install (stamp at
-`frontend-v2/node_modules/.tl-lock-hash`), and the `ttyd-v2` restart is skipped
+`frontend-v2/node_modules/.tl-lock-hash`), and the `ttyd` restart is skipped
 when the installed artefacts were byte-identical — an unnecessary restart drops
 every attached terminal's WebSocket. `enable --now` still runs either way, so a
 stopped unit comes back up.
 
-Both frontends attach the SAME per-uid tmux server (like `ttyd` + `ttyd-ro`), so
-sessions/clipboard/prefs are shared: opening the same session on both hosts at
-once makes tmux clamp to the smaller client's viewport (use different sessions,
-or one host at a time).
+`ttyd` and `ttyd-ro` attach the SAME per-uid tmux server, so sessions,
+clipboard and prefs are shared. Opening one session from two clients at once
+makes tmux clamp to the smaller client's viewport (use different sessions, or
+one client at a time).
 
-The k8s routing for `terminal-dev` (its own ingress + per-path routes + PWA
-carve-out, all reusing the shared backend Services) lives in
-`infra/stacks/terminal/terminal-dev.tf`; the Authentik admin-gate for the host is
-in `infra/stacks/authentik/admin-services-restriction.tf` (`ADMIN_ONLY_HOSTS`).
+The k8s routing (ingress + per-path routes to tmux-api / clipboard-upload /
+session-events / file-api + the PWA carve-out) lives in
+`infra/stacks/terminal/main.tf`; the Authentik admin-gate for the host is in
+`infra/stacks/authentik/admin-services-restriction.tf` (`ADMIN_ONLY_HOSTS`).
 
 ```bash
-./scripts/deploy-v2.sh                    # build frontend-v2 + (re)deploy ttyd-v2
+./scripts/deploy-v2.sh                    # build frontend-v2 + deploy the lobby
 SKIP_BUILD=1 ./scripts/deploy-v2.sh       # reuse frontend-v2/dist/{index,term}.html
 ```
 
-### v2-only backends (session-events + file-api)
+### SPA-only backends (session-events + file-api)
 
 `session-events` (:7685, the Text view's SSE transcript stream + `/prompt` +
-`/cancel`) and `file-api` (:7686, the file preview/editor) back **only** the v2
+`/cancel`) and `file-api` (:7686, the file preview/editor) back **only** the
 SPA — the vanilla page calls neither. They were installed by hand until
 `deploy-services.sh` gave them a release path:
 

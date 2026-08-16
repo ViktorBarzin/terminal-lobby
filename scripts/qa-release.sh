@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# qa-release.sh — land ONE fix lane and ship it to the dev tier, serialized.
+# qa-release.sh — land ONE fix lane and ship it, serialized. Ships to prod:
+# the terminal-dev canary was retired 2026-08-16 and there is one tier now.
 #
 # The QA→fix loop runs lanes in parallel worktrees but releases per lane, so
 # without a mutex two lanes would merge, push and run deploy-v2.sh over each
@@ -136,8 +137,8 @@ if [[ -z "$DEPLOYED" ]]; then
   log "nothing deployable changed (docs/tests/harness only) — landed, no release"
 else
   log "released: ${DEPLOYED}"
-  ASSET=$(curl -s -H "X-authentik-username: alice" http://127.0.0.1:7687/ \
+  ASSET=$(curl -s -H "X-authentik-username: alice" http://127.0.0.1:7681/ \
           | grep -o 'tl-asset" content="[a-f0-9]*"' | head -1 || true)
-  log "dev tier now serving ${ASSET:-<asset id unreadable>}"
+  log "prod now serving ${ASSET:-<asset id unreadable>}"
 fi
 log "done"
