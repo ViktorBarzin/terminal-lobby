@@ -23,8 +23,20 @@ import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # TL_INDEX aims the same guards at a candidate file — out/index.html before a
-# deploy, or an already-installed page you want to audit.
-INDEX = os.environ.get("TL_INDEX") or os.path.join(REPO, "frontend", "index.html")
+# deploy, or an already-installed page you want to audit. With it unset, EVERY
+# page that mounts xterm is checked: the vanilla lobby and term.html, the
+# terminal the v2 SPA frames. term.html was left on a CDN xterm for a while
+# after the vanilla page was vendored, which would have handed bob's iPad the
+# same blank terminal the vendoring existed to fix — so the guard covers both
+# rather than trusting whoever bumps a version to remember the second page.
+PAGES = (
+    [os.environ["TL_INDEX"]]
+    if os.environ.get("TL_INDEX")
+    else [
+        os.path.join(REPO, "frontend", "index.html"),
+        os.path.join(REPO, "frontend", "term.html"),
+    ]
+)
 
 # The floor is set by the oldest engine in use: bob's iPad, which cannot be
 # upgraded past iPadOS 15.8. Keep this in sync with vendor-xterm.py's BASELINE.
@@ -39,17 +51,22 @@ FATAL_SYNTAX = {
 }
 
 
+@pytest.fixture(scope="module", params=PAGES, ids=lambda p: os.path.basename(p))
+def page_path(request: pytest.FixtureRequest) -> str:
+    return request.param
+
+
 @pytest.fixture(scope="module")
-def index() -> str:
-    with open(INDEX, encoding="utf-8") as f:
+def index(page_path: str) -> str:
+    with open(page_path, encoding="utf-8") as f:
         return f.read()
 
 
 @pytest.mark.parametrize("name", sorted(FATAL_SYNTAX))
-def test_no_syntax_fatal_on_baseline_engine(index: str, name: str) -> None:
+def test_no_syntax_fatal_on_baseline_engine(index: str, page_path: str, name: str) -> None:
     hits = FATAL_SYNTAX[name].findall(index)
     assert not hits, (
-        f"frontend/index.html contains {len(hits)} instance(s) of {name}, which "
+        f"{os.path.basename(page_path)} contains {len(hits)} instance(s) of {name}, which "
         f"is a parse-time SyntaxError on {BASELINE} (iPadOS 15.8). The enclosing "
         f"script will not run at all there. If this came from a vendor bump, "
         f"re-run scripts/vendor-xterm.py instead of editing the page by hand."
@@ -82,7 +99,7 @@ def _esbuild() -> list[str] | None:
     return [shutil.which("esbuild")] if shutil.which("esbuild") else None
 
 
-def test_esbuild_agrees_nothing_needs_lowering(tmp_path) -> None:
+def test_esbuild_agrees_nothing_needs_lowering(tmp_path, page_path: str) -> None:
     """Catches post-baseline syntax the regexes above do not enumerate.
 
     `esbuild --target=safari15` on its own is NOT a compatibility check -- it
@@ -97,7 +114,7 @@ def test_esbuild_agrees_nothing_needs_lowering(tmp_path) -> None:
     # Only the vendored block is machine-generated third-party code; the app's
     # own inline script is hand-written against the baseline and is covered by
     # the regex tests above.
-    with open(INDEX, encoding="utf-8") as f:
+    with open(page_path, encoding="utf-8") as f:
         html = f.read()
     assert "BEGIN VENDOR JS" in html and "END VENDOR JS" in html, (
         "no vendored block to check — xterm is not vendored into this page "
