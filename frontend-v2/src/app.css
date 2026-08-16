@@ -331,6 +331,80 @@ body {
   cursor: pointer;
 }
 
+/* A labelled slider with its value: line height, letter spacing. The value is
+   tabular so the row does not jog as digits change under the thumb. */
+.tl-settings-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.tl-settings-range > span {
+  flex: 0 0 92px;
+}
+.tl-settings-range input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.tl-settings-num {
+  flex: 0 0 46px;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+/* A labelled segmented control: bold weight, cursor shape, scroll speed. */
+.tl-settings-seg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.tl-settings-seg-row > span {
+  flex: 0 0 92px;
+}
+.tl-settings-seg {
+  display: flex;
+  gap: 4px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+.tl-settings-seg button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 9px;
+  color: var(--text-muted);
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tl-settings-seg button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.tl-settings-seg button.active {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-page));
+}
+.tl-settings-seg button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.tl-settings-btn-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.tl-settings-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-page));
+}
+
 /* ---- Toast stack (top-right) ------------------------------------------- */
 .tl-toaster {
   position: fixed;
