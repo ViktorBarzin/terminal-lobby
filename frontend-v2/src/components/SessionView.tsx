@@ -6,6 +6,7 @@ import {
   onMount,
   Show,
   type Component,
+  type JSX,
 } from "solid-js";
 import { createSessionStore, type NotifyKind } from "../store/session";
 import type { SseStatus } from "../sse/client";
@@ -56,6 +57,19 @@ const connTitle = (s: SseStatus): string =>
  */
 export const SessionView: Component<{
   session: string;
+  /** FALSE while an ancestor is display:none — the phone layout hides the whole
+   *  session pane to give the list the screen. It folds into TerminalView's
+   *  `active`, so the frame is told it is hidden and stops fitting: a fit
+   *  measured against a 0x0 box would resize the REAL tmux window, and tmux
+   *  sizes a window to its smallest attached client — every other client on
+   *  that session would be dragged down with it. Defaults to visible. */
+  visible?: boolean;
+  /** Bar slots. On a phone the shell bar is folded into this one to buy back a
+   *  40px row, so the back control and Settings are passed in from the shell
+   *  rather than duplicated here. Empty on a desktop, where the shell bar
+   *  carries them itself. */
+  leading?: JSX.Element;
+  trailing?: JSX.Element;
   /** real OS-user owner when this is a shared/foreign attach (else undefined). */
   owner?: string;
   /** TRUE while the app is CREATING this session (the poll has never seen it):
@@ -305,6 +319,7 @@ export const SessionView: Component<{
   return (
     <div class="tl-session-view" data-mode={mode()}>
       <div class="tl-session-bar">
+        {props.leading}
         <span class="tl-session" title="session">
           {session}
         </span>
@@ -412,6 +427,7 @@ export const SessionView: Component<{
           textDot={textDot()}
           terminalDot={terminalDot()}
         />
+        {props.trailing}
       </div>
 
       <main class="tl-views">
@@ -431,7 +447,7 @@ export const SessionView: Component<{
           <TerminalView
             session={session}
             owner={props.owner}
-            active={mode() === "terminal"}
+            active={mode() === "terminal" && props.visible !== false}
             creating={props.creating}
             dir={props.dir}
             watch={watch()}

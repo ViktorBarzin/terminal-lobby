@@ -671,7 +671,10 @@
   pointer-events: none;
 }
 
-/* ---- Narrow screens ---------------------------------------------------- */
+/* ---- Narrow screens (mouse) -------------------------------------------- */
+/* A narrow DESKTOP window still shows both panes, stacked: there is a pointer,
+   the list is a useful glance, and nothing here is a touch target. The phone
+   block below overrides this whenever the pointer is coarse. */
 @media (max-width: 720px) {
   .tl-shell {
     grid-template-columns: 1fr;
@@ -684,6 +687,102 @@
   }
   .tl-shell-collapsed .tl-shell-sidebar {
     max-height: 0;
+  }
+}
+
+/* ---- Phone: one view at a time ----------------------------------------- */
+/* Two panes side by side is a desktop idea. On a phone the sidebar was taking
+   42vh of a ~640px screen and leaving the terminal a letterbox, so here the app
+   shows ONE pane full-screen and `.tl-shell-collapsed` stops meaning "narrow
+   sidebar" and starts meaning "the session is on screen".
+
+   The query catches landscape too (`max-height: 480px`): a phone turned
+   sideways is wide enough to miss a width-only query while having even less
+   height to give away. `pointer: coarse` keeps every small desktop window out.
+
+   Kept in sync with FLIP_QUERY in src/mobile/pointer.ts, which drives the same
+   switch in TS (the back control, the merged bar, the terminal's visibility).
+   The two must agree: CSS hiding a pane the TS thinks is on screen is how the
+   terminal ends up fitting itself against a 0x0 box. test/mobile-flip.test.tsx
+   compares the two strings so the pair cannot drift. */
+@media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
+  /* One cell. --app-vh is the window height in px (mobile/viewport.ts, seeded
+     pre-paint in index.html) — height:100% would inherit from a chain that
+     resolves to the LARGE viewport in an iOS standalone PWA, which renders the
+     shell taller than the screen and clips whatever sits at its bottom. */
+  .tl-shell,
+  .tl-shell-collapsed {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    height: var(--app-vh, 100%);
+    overflow: hidden;
+  }
+  /* Browsing: the list has the screen. display:none, not a zero height — the
+     session pane must not keep a measurable box, or the terminal inside it
+     fits itself to nothing and tmux resizes the REAL window to match (tmux
+     sizes a window to its SMALLEST attached client, so every other device on
+     that session shrinks with it). SessionView's `visible` prop tells the
+     frame the same thing; this rule and that prop are one decision. */
+  .tl-shell:not(.tl-shell-collapsed) .tl-shell-content {
+    display: none;
+  }
+  /* Session open: the sidebar steps aside entirely. */
+  .tl-shell-collapsed .tl-shell-sidebar {
+    display: none;
+  }
+  .tl-shell-sidebar {
+    max-height: none;
+    border-right: 0;
+    border-bottom: 0;
+  }
+  .tl-sidebar {
+    width: 100%; /* the 260px is a desktop column width, not a phone's */
+  }
+
+  /* One bar, not two. The shell bar's brand and gear are re-rendered into the
+     session bar (App.tsx passes them as its leading/trailing slots), which buys
+     back a whole 40px row on a screen that has none to spare. */
+  .tl-shellbar {
+    display: none;
+  }
+  .tl-session-bar {
+    min-height: 40px;
+    padding: 0 6px;
+    gap: 6px;
+  }
+  /* 40px is the touch floor. The bar's buttons are 28px boxes sized for a
+     mouse; a finger needs the whole row's height. */
+  .tl-session-bar .tl-icon-btn {
+    min-width: 40px;
+    height: 40px;
+  }
+  /* The session name yields first — it is the one thing here that can ellipsis
+     instead of pushing a control off the bar. */
+  .tl-session {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Back to the list. The one labelled control on the bar: an unlabelled `\2039`
+     in a row of icons is a guess, and this is the only way out of the terminal.
+     It re-shows the label the max-width:1000px rule above hides. */
+  .tl-back-btn {
+    padding: 0 10px 0 6px;
+    font-size: 17px;
+    line-height: 1;
+  }
+  .tl-back-btn .tl-btn-label {
+    display: inline;
+    font-size: 13px;
+  }
+  /* Settings, on the sidebar's own screen. The gear normally rides the shell
+     bar, which is folded away here, and the session bar only exists once a
+     session is open - without this the list screen has no route to Settings. */
+  .tl-foot-settings {
+    margin-left: auto;
+    min-width: 40px;
+    height: 40px;
   }
 }
 

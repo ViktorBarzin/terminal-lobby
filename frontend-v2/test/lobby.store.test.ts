@@ -598,6 +598,96 @@ describe("lobby store", () => {
    * next poll we accept: a server document that no longer matches it means
    * somebody else wrote in between, and the user gets told.
    */
+
+  /* The phone layout navigates on activation: opening a session IS the move to
+     the terminal screen. That makes "was a session activated?" a distinct
+     question from "did the selection change?", and the two answers differ in
+     both directions — hence a callback rather than an effect on selected(). */
+  describe("onActivate — the phone layout's navigation signal", () => {
+    it("fires when a session is selected", async () => {
+      const api = new FakeApi();
+      api.sessionsVal = [sess("a"), sess("b")];
+      const activated: string[] = [];
+      await withStore(
+        api,
+        async (store) => {
+          await store.refresh();
+          store.select("a");
+          expect(activated).toEqual(["a"]);
+          store.select("b");
+          expect(activated).toEqual(["a", "b"]);
+        },
+        { onActivate: (s) => activated.push(s.name) },
+      );
+    });
+
+    it("fires again when the SAME session is re-selected", async () => {
+      const api = new FakeApi();
+      api.sessionsVal = [sess("a")];
+      const activated: string[] = [];
+      await withStore(
+        api,
+        async (store) => {
+          await store.refresh();
+          store.select("a");
+          // Tapping the session you already had open is how you get BACK to a
+          // terminal you left to browse the list. The selection does not
+          // change, so an effect on selected() would never fire and the tap
+          // would do nothing at all.
+          store.select("a");
+          expect(activated).toEqual(["a", "a"]);
+        },
+        { onActivate: (s) => activated.push(s.name) },
+      );
+    });
+
+    it("carries the owner of a shared session", async () => {
+      const api = new FakeApi();
+      api.sessionsVal = [sess("shared", { owner: "bob" })];
+      const seen: Array<{ name: string; owner?: string }> = [];
+      await withStore(
+        api,
+        async (store) => {
+          await store.refresh();
+          store.select("shared", "bob");
+          expect(seen).toEqual([{ name: "shared", owner: "bob" }]);
+        },
+        { onActivate: (s) => seen.push({ name: s.name, owner: s.owner }) },
+      );
+    });
+
+    it("does NOT fire when a rename re-points the selection", async () => {
+      const api = new FakeApi();
+      api.sessionsVal = [sess("old")];
+      const activated: string[] = [];
+      await withStore(
+        api,
+        async (store) => {
+          await store.refresh();
+          store.select("old");
+          activated.length = 0;
+          await store.rename("old", "new");
+          // The selection follows the rename so the user keeps the session they
+          // were on — but they are already looking at it. Treating this as an
+          // activation would yank a phone off the list mid-rename.
+          expect(store.selected()?.name).toBe("new");
+          expect(activated).toEqual([]);
+        },
+        { onActivate: (s) => activated.push(s.name) },
+      );
+    });
+
+    it("is optional — the desktop passes nothing", async () => {
+      const api = new FakeApi();
+      api.sessionsVal = [sess("a")];
+      await withStore(api, async (store) => {
+        await store.refresh();
+        expect(() => store.select("a")).not.toThrow();
+        expect(store.selected()?.name).toBe("a");
+      });
+    });
+  });
+
   describe("layout conflicts between tabs", () => {
     /** Past the 4s grace, where a poll is allowed to overwrite local layout. */
     const pastGrace = () => vi.setSystemTime(Date.now() + 5000);
