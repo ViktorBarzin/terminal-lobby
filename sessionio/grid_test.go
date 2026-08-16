@@ -244,6 +244,61 @@ func TestPinnedGridStillFollowsTheReadWriteClient(t *testing.T) {
 	}
 }
 
+// Pinning must be INVISIBLE to whoever is driving. Switching a live window to
+// `manual` reverts it to the size the window was created at, so a naive pin
+// yanked a running session back to its birth size the instant someone started
+// watching — exactly the disruption this feature exists to prevent.
+//
+// The session here is deliberately born SMALL and grown by its client, so birth
+// size and current size differ. An earlier live check missed this bug precisely
+// because those two coincided in its fixture.
+func TestPinningDoesNotResizeARunningSession(t *testing.T) {
+	in, osUser, sock := scratchSession(t) // born 80x24
+	owner := attach(t, sock, "demo", 190, 56)
+	before := grid(t, sock)
+	if before == "80x24" {
+		t.Fatalf("fixture is not exercising the bug: the window never grew past its birth size")
+	}
+
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+	if got := grid(t, sock); got != before {
+		t.Errorf("pinning moved a running session from %s to %s", before, got)
+	}
+	_ = owner
+}
+
+// Pinning must not change the size tmux itself would have chosen for the same
+// client. It did: the hook resized to the raw client height, but tmux subtracts
+// the status lines, so every pinned session came out one row too tall and its
+// bottom row sat behind the status bar. Ran against the status line ON — and at
+// 2 and 3 rows — because that is the configuration the bug needed to show, and
+// the rest of this file deliberately turns the status line off.
+func TestPinnedGridMatchesTheSizeTmuxWouldHaveChosen(t *testing.T) {
+	for _, status := range []string{"on", "off", "2", "3"} {
+		t.Run("status="+status, func(t *testing.T) {
+			in, osUser, sock := scratchSession(t)
+			run(t, sock, "set-option", "-g", "status", status)
+
+			// What tmux picks for this client, unpinned.
+			owner := attach(t, sock, "demo", 190, 56)
+			want := grid(t, sock)
+
+			// The same client, pinned. The hook re-derives the size on attach,
+			// so a mismatch here is the hook disagreeing with tmux.
+			if err := in.PinGrid(osUser, "demo"); err != nil {
+				t.Fatalf("PinGrid: %v", err)
+			}
+			owner.resize(t, 190, 56) // fire the hook
+			if got := grid(t, sock); got != want {
+				t.Errorf("status=%s: pinned grid %s, but tmux chooses %s for the "+
+					"same 190x56 client", status, got, want)
+			}
+		})
+	}
+}
+
 // Pinning twice is what actually happens in production: every read-only attach
 // calls it, and a session can be watched many times over its life.
 func TestPinGridIsIdempotent(t *testing.T) {
