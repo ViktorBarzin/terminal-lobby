@@ -80,7 +80,12 @@ describe("term.html — the framed Ctrl+J chord reaches the v2 dispatcher", () =
 
   it("forwards a command the lobby dispatcher actually handles", () => {
     const j = jChord(true);
-    expect(j?.command).toBe("view.toggle");
+    // The framed meaning is the dock now: the v2 SPA grew one, so both lobbies
+    // get the same command and Ctrl+J opens a shell from inside a session — the
+    // only path it has, since a keydown in the frame never reaches the lobby's
+    // own listener.
+    expect(j?.command).toBe("session.new.shell");
+    const toggleDock = vi.fn();
     const toggleView = vi.fn(() => true);
     const notify = vi.fn();
     const run = createRunAppCommand({
@@ -105,12 +110,14 @@ describe("term.html — the framed Ctrl+J chord reaches the v2 dispatcher", () =
       openGallery: noop,
       forwardToTerminal: () => false,
       pasteToTerminal: () => true,
+      toggleDock,
       toggleView,
     });
 
     // Exactly what App.tsx does with a `tl-command` postMessage from the frame.
     run(j?.command ?? "");
-    expect(toggleView).toHaveBeenCalledTimes(1);
+    expect(toggleDock).toHaveBeenCalledTimes(1);
+    expect(toggleView).not.toHaveBeenCalled();
   });
 });
 
