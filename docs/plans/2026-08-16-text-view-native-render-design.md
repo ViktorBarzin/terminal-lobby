@@ -1,6 +1,6 @@
 # Text view — a native structured render of a Claude Code session
 
-**Status:** approved, not yet built · **Date:** 2026-08-16 · **Owner:** wizard
+**Status:** built and deployed · **Date:** 2026-08-16 · **Owner:** wizard
 
 The text view is the lobby's structured rendering of a session: the same tmux
 Claude the terminal view attaches to, read from its transcript instead of its
@@ -333,11 +333,55 @@ The dev tier was retired in `ae2bf15`, so verification is against prod with the
 - **The T3 bridge.** Unaffected — it reads the same transcript through the same
   package, and nothing here changes `sessionio`'s existing contract.
 
-## 11. Open questions
+## 11. What building it changed
 
-None blocking. Two things we expect to learn while building:
+Four things came out differently from the plan. Each is in the code with its
+measurement; they are collected here so the doc and the build agree.
+
+**Row virtualization is gone, and the plan was wrong to assume it.** §6 called
+it a hard requirement. The implementation derived its window from an average row
+height, with spacer divs standing in for the rows outside it — and those spacers
+are most of `scrollHeight`, so the average was computed from a number it had
+itself produced. It settled and stopped responding to scrolling: measured on a
+real 675-row session, the leading spacer read 21,863px at *every* scroll
+position and the same 29 rows stayed mounted, so a session holding 11 questions
+and 45 diffs appeared to hold none. What bounds the DOM instead is the data —
+20 turns on open, folding, and bounded "Load earlier" steps. That same session
+renders every row and expands all of its folds in 782ms. If this ever does hurt,
+the fix is a virtualizer that measures rows rather than averaging them.
+
+**An oversized tool result is pruned, not dropped.** §6 said the structured form
+would be dropped whole when it exceeded the cap, on the grounds that half a JSON
+object is worse than none. That reasoning held; the consequence did not.
+An Edit's `toolUseResult` carries `originalFile` — the whole file before the
+change — beside the `structuredPatch`, so results routinely blew the cap and
+took the diff with them: 209 results across the six most recent transcripts
+carried a diff, 54 exceeded the cap, so a quarter of all edits would have
+rendered as a file change with nothing visible changing. Pruning the bulky
+fields and trimming stdout/stderr brings 48 of those 54 back under the cap.
+
+**The window had to be made to apply at all.** A source's transcript was read by
+a goroutine started alongside it, so a client that opened the stream in that gap
+replayed an empty log and then received the whole session live, bypassing the
+window entirely — 3,396 events and 3.9 MB where 20 turns was 388 events and
+442 KB. Sources now hydrate before they are handed out.
+
+**The ingress needed four new routes.** `/earlier`, `/result`, `/pane` and
+`/keys` are new root paths on session-events, and the terminal stack's
+IngressRoute matched only `/events/`, `/prompt/` and `/cancel/` — the features
+would have shipped to the browser and 404'd at the edge. Added in infra
+`stacks/terminal/main.tf`.
+
+## 12. Open questions
 
 - Whether `capture-pane` reading of the permission dialog is stable enough
-  across Claude Code releases to keep, or whether it wants a version guard.
+  across Claude Code releases to keep, or whether it wants a version guard. The
+  question half of ADR-0010 is done and verified against real sessions; the
+  permission half is the one that reads the screen.
 - Whether the ~20-turn open window is the right size in practice, or whether it
-  should be measured in events rather than turns.
+  should be measured in events rather than turns. One real session put 1,005
+  events inside 3 turns, which is the case that would argue for events.
+- Whether SSE holds up through the prod Cloudflare ingress over a long
+  connection. The flush fix means it can now work at all, and the routes are in
+  place, but a sustained real-device test has not been run — decision 8's gate
+  is met in code, not yet in evidence.
