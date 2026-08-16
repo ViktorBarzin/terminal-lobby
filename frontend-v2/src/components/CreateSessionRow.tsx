@@ -1,6 +1,7 @@
-import { createSignal, onCleanup, onMount, type Component } from "solid-js";
+import { createSignal, onCleanup, onMount, Show, type Component } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
 import type { NewCommand, PrefsStore } from "../store/prefs";
+import { cleanTitle, MAX_TITLE_RUNES, nameForTitle } from "../lib/slug";
 
 const COMMANDS: { value: NewCommand; label: string }[] = [
   { value: "claude", label: "Claude" },
@@ -9,9 +10,15 @@ const COMMANDS: { value: NewCommand; label: string }[] = [
 ];
 
 /**
- * The new-session row (inventory Cat.2 "Create session"): a name input + a
- * command dropdown + Create. Enter submits. Name validation + the live-dup guard
- * live in store.create (which keeps the typed name on a dup by not clearing).
+ * The new-session row (inventory Cat.2 "Create session"): a title input + a
+ * command dropdown + Create. Enter submits. The dup guard lives in store.create
+ * (which keeps the typed text on a dup by not clearing).
+ *
+ * The box takes a TITLE — any text, any script — and the tmux name is derived
+ * from it. The derived name is shown under the box while it differs from what
+ * was typed, which is the only place the slug appears in the UI: it is what
+ * makes a "that name is taken" rejection make sense, since the name is not
+ * something the person chose.
  *
  * The dropdown is a view of the ROAMED `session.newCommand` pref — the same
  * value the Settings panel binds and the only one the terminal attach reads
@@ -41,19 +48,32 @@ export const CreateSessionRow: Component<{ store: LobbyStore; prefs: PrefsStore 
     if (ok) setName(""); // keep the typed name on failure (dup guard)
   };
 
+  /** The tmux name this title will get. Shown only when it differs from the
+   *  typed text — otherwise it is the same string printed twice. */
+  const derivedName = () => nameForTitle(cleanTitle(name()), new Set());
+  const showHint = () => name().trim() !== "" && derivedName() !== name();
+
   return (
     <div class="tl-new-row">
-      <input
-        ref={inputEl}
-        class="tl-new-input"
-        placeholder="new session…"
-        value={name()}
-        aria-label="New session name"
-        onInput={(e) => setName(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void submit();
-        }}
-      />
+      <span class="tl-new-input-wrap">
+        <input
+          ref={inputEl}
+          class="tl-new-input"
+          placeholder="new session…"
+          value={name()}
+          maxlength={MAX_TITLE_RUNES}
+          aria-label="New session name"
+          onInput={(e) => setName(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void submit();
+          }}
+        />
+        <Show when={showHint()}>
+          <span class="tl-new-input-hint" aria-hidden="true">
+            {derivedName()}
+          </span>
+        </Show>
+      </span>
       <select
         class="tl-new-cmd"
         aria-label="Command for new session"

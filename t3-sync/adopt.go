@@ -22,7 +22,7 @@ import (
 //
 //	read the session's name, cwd and transcript uuid
 //	project.create if no workspace root matches   (decision 8)
-//	thread.create with the tmux name as the title (decision 7)
+//	thread.create titled as the session is titled  (decision 7)
 //	stamp @t3_thread on the session, and record the binding durably
 //	thread.turn.start with the sentinel            (decision 11)
 //	  → T3 spawns the bridge, which swallows the sentinel and replays
@@ -43,8 +43,13 @@ type tmuxSource interface {
 
 // Candidate is a tmux session the reconciler is considering adopting.
 type Candidate struct {
-	// TmuxName is the session, and becomes the thread's title.
+	// TmuxName is the session — its identity on both surfaces.
 	TmuxName string
+	// Title is the display title someone gave the session (@title), and is what
+	// the thread is called. Empty for a session nobody has titled, which falls
+	// back to TmuxName — decision 7's "one name, tmux wins" with a better name
+	// to win with.
+	Title string
 	// CWD is where it is working — the input to workspace filing.
 	CWD string
 	// ClaudeID is the Claude session uuid, read from the transcript the
@@ -54,6 +59,20 @@ type Candidate struct {
 	Transcript string
 	// ThreadID is the @t3_thread stamp, "" when nothing has adopted it yet.
 	ThreadID string
+}
+
+// ThreadTitle is what the mirrored thread should be called: the session's
+// display title, or its tmux name when nobody has given it one.
+//
+// This is the point of decision 7 — one name, so both lists read as the same
+// sessions — now that the lobby has a name worth carrying. A T3 thread stops
+// being called `fix-the-header-la` because a tmux name had 32 characters to
+// work with.
+func (c Candidate) ThreadTitle() string {
+	if c.Title != "" {
+		return c.Title
+	}
+	return c.TmuxName
 }
 
 // Adopter turns candidates into threads.
@@ -100,8 +119,10 @@ func (a *Adopter) Candidates() ([]Candidate, error) {
 			continue
 		}
 		thread, _ := a.Tmux.Option(a.Cfg.OSUser, s.Name, sessionio.OptionThread)
+		title, _ := a.Tmux.Option(a.Cfg.OSUser, s.Name, sessionio.OptionTitle)
 		out = append(out, Candidate{
 			TmuxName:   s.Name,
+			Title:      title,
 			CWD:        candidateCWD(stamp, s.Dir),
 			ClaudeID:   claudeID,
 			Transcript: stamp,
@@ -153,7 +174,7 @@ func (a *Adopter) Adopt(ctx context.Context, c Candidate) (string, error) {
 	create, err := json.Marshal(threadCreate{
 		ThreadID:  threadID,
 		ProjectID: projectID,
-		Title:     c.TmuxName,
+		Title:     c.ThreadTitle(),
 		ModelSelection: ModelSelection{
 			InstanceID: InstanceBridged,
 			Model:      a.model(c),

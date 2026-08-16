@@ -1,3 +1,4 @@
+import { sessionLabel } from "../types/lobby";
 import { createMemo, createSignal, type Accessor } from "solid-js";
 import {
   buildGroups,
@@ -28,7 +29,7 @@ export interface PaletteAction {
 /** The host wiring the palette drives. */
 export interface PaletteEnv {
   /** the session list to rank (resolved once per open; may be async). */
-  sessions: () => Promise<{ name: string; state?: string }[]>;
+  sessions: () => Promise<{ name: string; title?: string; state?: string }[]>;
   /** the currently-attached session name (marked "current"), or null. */
   current: () => string | null;
   /** attach a session by name. */
@@ -78,7 +79,7 @@ export function createPaletteController(env: PaletteEnv): PaletteController {
   const [isOpen, setOpen] = createSignal(false);
   const [query, setQuerySig] = createSignal("");
   const [sessionsCache, setSessionsCache] = createSignal<
-    { name: string; state?: string }[] | null
+    { name: string; title?: string; state?: string }[] | null
   >(null);
   const [selIdx, setSelIdx] = createSignal(0);
   let openSeq = 0;
@@ -88,8 +89,11 @@ export function createPaletteController(env: PaletteEnv): PaletteController {
     if (!c) return [];
     const cur = env.current();
     return recentsFirst(c, readVisitTimes()).map((s) => ({
-      title: s.name,
-      terms: [s.name],
+      title: sessionLabel(s),
+      // Both strings are searchable: someone who knows a session by its title
+      // types that, and someone who has been working in a shell types the tmux
+      // name they saw there.
+      terms: s.title ? [s.title, s.name] : [s.name],
       meta: s.name === cur ? "current" : s.state || "",
       run: () => env.attach(s.name),
     }));

@@ -263,6 +263,15 @@ export function createNotificationSystem(
   // which is exactly what a visit is made of.
   const visits = createVisitStore();
   const isUnseen = opts.isUnseen ?? ((s: TitleSession) => visits.isUnseen(s));
+  // Retitling a session renames it, so visit records keyed by the old name have
+  // to move or the next poll prunes them as dead — and a completion the user
+  // already saw returns as an unseen tick. The lobby store announces the rename
+  // rather than calling in, because it is built before this system is.
+  const onRenamed = (e: Event): void => {
+    const d = (e as CustomEvent<{ from?: unknown; to?: unknown }>).detail;
+    if (typeof d?.from === "string" && typeof d?.to === "string") visits.rename(d.from, d.to);
+  };
+  if (hasWin) window.addEventListener("tl:session-renamed", onRenamed);
   const badger = createFaviconBadger();
   createEffect(() => {
     const list = opts.sessions();
@@ -463,6 +472,9 @@ export function createNotificationSystem(
     refreshDeviceState,
     testHere,
     testAll,
-    dispose: () => sw.dispose(),
+    dispose: () => {
+      if (hasWin) window.removeEventListener("tl:session-renamed", onRenamed);
+      sw.dispose();
+    },
   };
 }

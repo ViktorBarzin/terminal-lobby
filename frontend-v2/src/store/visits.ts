@@ -49,6 +49,15 @@ export interface VisitStore {
   observe(sessions: readonly VisitSession[], active: string | null): void;
   /** Stamp a visit right now (visibility/focus return). No-op for null. */
   stamp(name: string | null): void;
+  /**
+   * Carry a session's visit and state records to its new name.
+   *
+   * Retitling renames, so this happens whenever someone renames a session from
+   * this tab. Without it, `observe` prunes the old name as dead and the new one
+   * looks never-visited — so a completion the user already saw comes back as an
+   * unseen green tick.
+   */
+  rename(oldName: string, newName: string): void;
   /** true when this session finished AFTER the user last looked at it. */
   isUnseen(s: VisitSession): boolean;
   /**
@@ -175,5 +184,24 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
     sync();
   };
 
-  return { observe, stamp, isUnseen, revision };
+  const rename = (oldName: string, newName: string): void => {
+    if (oldName === newName) return;
+    let dirty = false;
+    if (oldName in visits) {
+      visits[newName] = visits[oldName]!;
+      delete visits[oldName];
+      dirty = true;
+    }
+    if (oldName in states) {
+      states[newName] = states[oldName]!;
+      delete states[oldName];
+    }
+    // `known` still describes the pre-rename poll; leaving the old name in it
+    // would let the next observe() prune what was just carried over.
+    known = known.map((s) => (s.name === oldName ? { ...s, name: newName } : s));
+    if (dirty) persistVisits(visits);
+    sync();
+  };
+
+  return { observe, stamp, isUnseen, rename, revision };
 }

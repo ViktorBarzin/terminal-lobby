@@ -189,8 +189,12 @@ func (r *Reconciler) Plan(ctx context.Context, snap Snapshot) (Plan, error) {
 			// that back over T3's own title would replace "Fix the header
 			// spacing" with "terminal-lobby-2" — decision 7's "tmux wins" is
 			// about names a HUMAN chose in the lobby.
-		case thread.Title != c.TmuxName:
-			p.Rename = append(p.Rename, Rename{ThreadID: threadID, Title: c.TmuxName})
+			//
+			// Session titles do not change this. A T3-born session still has no
+			// title of its own, so ThreadTitle() falls back to that same
+			// workspace slug and there is still nothing worth pushing.
+		case thread.Title != c.ThreadTitle():
+			p.Rename = append(p.Rename, Rename{ThreadID: threadID, Title: c.ThreadTitle()})
 		}
 	}
 
