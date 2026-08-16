@@ -60,13 +60,18 @@ func TestSlug(t *testing.T) {
 		want  string
 	}{
 		{"already a session name", "feat-header", "feat-header"},
-		{"spaces become dashes", "Fix the header layout", "Fix-the-header-layout"},
-		{"punctuation collapses", "Why is __init__.py failing?!", "Why-is-__init__-py-failing"},
+		{"spaces become dashes", "Fix the header layout", "fix-the-header-layout"},
+		{"punctuation collapses", "Why is __init__.py failing?!", "why-is-__init__-py-failing"},
 		{"slashes are not path separators here", "code/terminal-lobby", "code-terminal-lobby"},
 		{"leading and trailing junk is trimmed", "  --wat--  ", "wat"},
 		{"underscores survive", "snake_case_name", "snake_case_name"},
 		{"digits survive", "issue-4271", "issue-4271"},
-		{"non-ascii is dropped, not transliterated", "café ☕ time", "caf-time"},
+		// Lowercasing and transliteration arrived with session titles: the name
+		// is a normalized identifier now, and a thread's own phrasing reaches
+		// the lobby as the session's title instead.
+		{"case is normalized away", "Fix The Header", "fix-the-header"},
+		{"non-ascii is transliterated, not dropped", "café ☕ time", "cafe-time"},
+		{"cyrillic survives as latin", "тестова сесия", "testova-sesiya"},
 		{"a too-long title is cut to the budget", strings.Repeat("ab", 40), strings.Repeat("ab", 16)},
 		{"the cut never leaves a trailing dash", strings.Repeat("a", 31) + " tail", strings.Repeat("a", 31)},
 		{"nothing usable falls back", "☕☕☕", resurrectFallbackName},

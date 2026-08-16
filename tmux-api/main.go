@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"terminal-lobby/authuser"
+	"terminal-lobby/sessionio"
+	"terminal-lobby/slug"
 	"terminal-lobby/telemetry"
 )
 
@@ -30,10 +32,50 @@ const (
 	// command + pane_title (Task 2.5, live-command chip) come for free
 	// the same way — tmux tracks both natively, zero polling. All four
 	// pane_* fields resolve against the session's active pane, matching
-	// the one-claude-per-session usage pattern. pane_title stays LAST:
-	// applications set it freely (OSC 2) so it may contain '|' — the
-	// parser soaks embedded separators into the trailing field.
-	tmuxListFmt = "#{session_name}|#{session_attached}|#{session_activity}|#{session_created}|#{@claude_state}|#{pane_pid}|#{pane_current_command}|#{pane_title}"
+	// the one-claude-per-session usage pattern.
+	//
+	// @title is the DISPLAY TITLE a person chose (session-titles design,
+	// 2026-08-16) — arbitrary text, stored on the session exactly as
+	// @claude_state is, so it costs no extra call here and a guest attaching
+	// a shared session reads the same title its owner set.
+	//
+	// The separator is TAB, not '|'. TWO fields now carry arbitrary text —
+	// pane_title, which applications set freely via OSC 2, and @title — and
+	// only one field can be last, which is all '|' ever protected.
+	//
+	// Tab rather than a unit separator, measured on tmux 3.4: tmux ESCAPES
+	// non-printable bytes on output, in the format literal and inside values
+	// alike, so a \x1f separator comes back as the four characters \037 — and
+	// so does a \x1f inside a value, leaving the two indistinguishable. Tab
+	// passes through raw on both sides.
+	//
+	// What makes tab safe is the same argument that made '|' safe for one
+	// field, now good for two: a title cannot contain one, because CleanTitle
+	// strips every control character before a title is ever stored, and
+	// pane_title stays LAST so an embedded tab is soaked into the trailing
+	// field rather than shifting the row.
+	//
+	// session_id leads. It is the one field with a guaranteed shape ($N) and
+	// it SURVIVES A RENAME, which is what lets a second tab follow a session
+	// whose name changed instead of holding a stale name whose iframe would
+	// resurrect it as an empty session.
+	tmuxListFmt = "#{session_id}" + listSep + "#{session_name}" + listSep +
+		"#{session_attached}" + listSep + "#{session_activity}" + listSep +
+		"#{session_created}" + listSep + "#{@claude_state}" + listSep +
+		"#{pane_pid}" + listSep + "#{pane_current_command}" + listSep +
+		"#{" + sessionTitleOption + "}" + listSep + "#{pane_title}"
+
+	// listSep separates tmuxListFmt's fields; listFields is how many there are.
+	listSep    = "\t"
+	listFields = 10
+
+	// sessionTitleOption is where a display title lives, alongside
+	// @claude_state. Named in sessionio so this service, t3-sync and anything
+	// else reading a session's options agree on the spelling. Options die with
+	// the session that holds them, which is right for state and wrong for a
+	// title someone chose — the titles store (titles.go) is what carries a
+	// title across a restore.
+	sessionTitleOption = sessionio.OptionTitle
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
@@ -80,14 +122,20 @@ var selfUser = func() string {
 }()
 
 type Session struct {
-	Name         string `json:"name"`
-	Attached     int    `json:"attached"`
+	// ID is tmux's own session id ($0, $1, …). It survives a rename, which
+	// nothing else about a session does, so a client that had this session
+	// selected can follow it to its new name rather than holding a name whose
+	// attach would create a fresh empty session. omitempty keeps the old wire
+	// shape for consumers that predate it.
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name"`
+	Attached int    `json:"attached"`
 	// Driven is true when at least one attached client is READ-WRITE.
 	// Distinct from Attached, which counts watchers too: the lobby joins a
 	// new device as a viewer only when someone is actually driving.
-	Driven       bool   `json:"driven"`
-	LastActivity int64  `json:"lastActivity"`
-	Created      int64  `json:"created"`
+	Driven       bool  `json:"driven"`
+	LastActivity int64 `json:"lastActivity"`
+	Created      int64 `json:"created"`
 	// State of the Claude conversation inside the session: "running",
 	// "awaiting", "done", or "" when no live Claude. omitempty keeps the
 	// old wire shape for stateless sessions (external /sessions pollers).
@@ -103,12 +151,18 @@ type Session struct {
 	// Access is how the CALLER may attach a foreign session: "ro" (watch) or
 	// "rw" (drive-as-owner). Empty for the caller's own sessions (full control).
 	Access string `json:"access,omitempty"`
-	// Command/Title mirror the active pane's #{pane_current_command} /
+	// Command/PaneTitle mirror the active pane's #{pane_current_command} /
 	// #{pane_title} (Task 2.5): the lobby's live-command chip and the
 	// attached-tab title read them. omitempty keeps the old wire shape
 	// for consumers that predate the fields.
-	Command string `json:"pane_current_command,omitempty"`
-	Title   string `json:"pane_title,omitempty"`
+	Command   string `json:"pane_current_command,omitempty"`
+	PaneTitle string `json:"pane_title,omitempty"`
+	// Title is the DISPLAY TITLE a person chose — arbitrary text, up to 64
+	// runes, read from the session's @title option. Distinct from PaneTitle,
+	// which whatever is running in the pane sets for itself. Empty means the
+	// session has no title and its name is what gets shown, which is where
+	// every session that predates the feature sits.
+	Title string `json:"title,omitempty"`
 	// Tool is WHICH command the session runs — "claude", "codex" or "shell"
 	// — resolved from the pane's process tree (proc.go), never from Command:
 	// both agents launch through non-exec wrapper scripts, so the pane's
@@ -250,6 +304,18 @@ func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
 // notice this then posts would name the session the caller ASKED about rather
 // than the one that died. `=` makes tmux fail closed instead.
 func exactSession(name string) string { return "=" + name }
+
+// exactPane is the same rule for the verbs whose -t takes a PANE rather than a
+// session — set-option among them, which is how @title is stamped. `=name`
+// alone is rejected there even for a session that exists (measured on 3.4);
+// the trailing colon makes it a window target, and the window's session is the
+// one the option lands on.
+//
+// The prefix-match hazard exactSession describes is sharper here, not milder:
+// deriving names from titles makes pairs like `deploy` and `deploy-the-thing`
+// ordinary, and stamping a title onto the wrong one of those would be silent.
+// sessionio/tmux.go carries the same helper for the same reason.
+func exactPane(name string) string { return "=" + name + ":" }
 
 func tmuxCmd(osUser string, args ...string) *exec.Cmd {
 	if osUser == selfUser {
@@ -562,45 +628,59 @@ func buildSessionsBody(osUser string) []byte {
 	return append(body, '\n')
 }
 
+// sessionIDRe is the shape tmux guarantees for #{session_id}. Used as the
+// row's validity anchor — see parseSessions.
+var sessionIDRe = regexp.MustCompile(`^\$[0-9]+$`)
+
 // parseSessions decodes `tmux list-sessions -F tmuxListFmt` output. Short
 // lines are skipped (a tmux hiccup must not 500 the list); SplitN keeps a
-// pane_title with embedded '|' intact in the trailing field instead of
-// hiding the whole session. The three numeric columns parse strictly: a
-// pipe smuggled into a SESSION name (possible outside the API's NAME_RE)
-// shifts a non-numeric segment into them, and skipping such a row beats
-// serving a garbage session the UI can't act on. Unknown state values are
-// dropped; whether the claude behind a state is still alive is decided
-// later by clearDeadStates (proc.go).
+// pane_title containing the separator intact in the trailing field instead
+// of hiding the whole session.
+//
+// The row is validated from two directions. session_id leads and must look
+// like $N: a separator smuggled into a SESSION name (possible outside the
+// API's NAME_RE) shifts every field left, and the id anchor catches that
+// before anything else has to. The three numeric columns then parse strictly
+// as a second line of defence. Skipping such a row beats serving a garbage
+// session the UI can't act on.
+//
+// Unknown state values are dropped; whether the claude behind a state is
+// still alive is decided later by clearDeadStates (proc.go).
 func parseSessions(out []byte) []Session {
 	sessions := make([]Session, 0)
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 8)
-		if len(parts) != 8 {
+		parts := strings.SplitN(line, listSep, listFields)
+		if len(parts) != listFields {
 			continue
 		}
-		attached, errA := strconv.Atoi(parts[1])
-		activity, errB := strconv.ParseInt(parts[2], 10, 64)
-		created, errC := strconv.ParseInt(parts[3], 10, 64)
+		if !sessionIDRe.MatchString(parts[0]) {
+			continue
+		}
+		attached, errA := strconv.Atoi(parts[2])
+		activity, errB := strconv.ParseInt(parts[3], 10, 64)
+		created, errC := strconv.ParseInt(parts[4], 10, 64)
 		if errA != nil || errB != nil || errC != nil {
 			continue
 		}
-		state := parts[4]
+		state := parts[5]
 		if !knownStates[state] {
 			state = ""
 		}
-		panePID, _ := strconv.Atoi(parts[5])
+		panePID, _ := strconv.Atoi(parts[6])
 		sessions = append(sessions, Session{
-			Name:         parts[0],
+			ID:           parts[0],
+			Name:         parts[1],
 			Attached:     attached,
 			LastActivity: activity,
 			Created:      created,
 			State:        state,
 			PanePID:      panePID,
-			Command:      parts[6],
-			Title:        parts[7],
+			Command:      parts[7],
+			Title:        parts[8],
+			PaneTitle:    parts[9],
 		})
 	}
 	return sessions
@@ -631,6 +711,10 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 1 && r.Method == http.MethodPatch {
+		retitleSession(w, r, osUser, name)
+		return
+	}
 	if len(parts) == 1 {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -645,6 +729,14 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		renameSession(w, r, osUser, name)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "title" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		setSessionTitle(w, r, osUser, name)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "copy-mode" {
@@ -701,6 +793,12 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	// snapshot long after the layout has forgotten where it went, and landing
 	// in Ungrouped is where a recovered session is hardest to find again.
 	rememberKilledAssignment(osUser, name)
+	// The title goes with it, for the same reason the persist manifest row
+	// does: a deliberate kill means this session is not coming back, so
+	// keeping its title would only re-stamp a name someone else may reuse.
+	if err := titleStoreInstance.forget(osUser, name); err != nil {
+		log.Printf("title memory: forgetting %s for %s failed: %v", name, osUser, err)
+	}
 	if err := layoutStoreInstance.removeSession(osUser, name); err != nil {
 		log.Printf("layout cleanup after killing %s for %s failed: %v", name, osUser, err)
 	}
@@ -739,30 +837,161 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
-	out, err := tmuxCmd(osUser, "rename-session", "-t", exactSession(oldName), newName).CombinedOutput()
-	if err != nil {
-		msg := string(out)
-		if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") {
-			http.Error(w, "session not found", http.StatusNotFound)
-			return
-		}
-		if strings.Contains(msg, "duplicate session") || strings.Contains(msg, "session already exists") {
-			http.Error(w, "target name already exists", http.StatusConflict)
-			return
-		}
-		log.Printf("rename-session %s→%s as %s failed: %v: %s", oldName, newName, osUser, err, msg)
-		http.Error(w, "rename-session failed", http.StatusInternalServerError)
+	if !renameTmuxSession(w, osUser, oldName, newName) {
 		return
 	}
-	// Assignments are keyed by session name — follow the rename or the
-	// session would silently fall out of its project.
-	if err := layoutStoreInstance.renameSession(osUser, oldName, newName); err != nil {
-		log.Printf("layout rename %s→%s for %s failed: %v", oldName, newName, osUser, err)
-	}
+	carryRenameAcrossStores(osUser, oldName, newName)
 	sessionsCacheInstance.invalidate(osUser)
 	events.Emit("session.renamed", osUser, telemetry.Attrs{
 		"tl.from": oldName, "tl.to": newName, "tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// retitleSession is PATCH /sessions/{name} — the lobby's retitle.
+//
+// One call, because the two halves must not half-apply: a session renamed but
+// left holding its old title, or titled under a name the rename never reached,
+// are both states nothing else in the system knows how to read. The name comes
+// from the CLIENT rather than being derived here, because the browser has
+// already derived it (it needs a name to build the attach URL before any
+// server is involved) and both sides run the same slug package against the
+// same vectors.
+//
+// A name that has not moved skips the rename entirely. That is what keeps
+// adding an emoji to a title from reloading someone's terminal: the iframe
+// re-navigates on a name change, and most retitles do not produce one.
+func retitleSession(w http.ResponseWriter, r *http.Request, osUser, oldName string) {
+	var body struct {
+		Name  string `json:"name"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	newName := strings.TrimSpace(body.Name)
+	if !sessionNameRe.MatchString(newName) {
+		http.Error(w, "invalid new name", http.StatusBadRequest)
+		return
+	}
+	title := slug.CleanTitle(body.Title)
+
+	if newName != oldName {
+		// Rename FIRST. A 409 here has to leave the title alone as well as the
+		// name — stamping before renaming would retitle a session the caller
+		// was told they had not changed.
+		if !renameTmuxSession(w, osUser, oldName, newName) {
+			return
+		}
+		carryRenameAcrossStores(osUser, oldName, newName)
+		events.Emit("session.renamed", osUser, telemetry.Attrs{
+			"tl.from": oldName, "tl.to": newName, "tl.client": "retitle",
+		})
+	}
+	if !stampTitle(w, osUser, newName, title) {
+		return
+	}
+	sessionsCacheInstance.invalidate(osUser)
+	events.Emit("session.retitled", osUser, telemetry.Attrs{
+		"tl.session": newName, "tl.client": "api",
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setSessionTitle is POST /sessions/{name}/title — a title without a rename.
+// Two callers: the lobby stamping a title onto a session it has just created
+// (creation reaches no server, so this is the first the API hears of it), and
+// clearing a title back to nothing.
+func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string) {
+	var body struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if !stampTitle(w, osUser, name, slug.CleanTitle(body.Title)) {
+		return
+	}
+	sessionsCacheInstance.invalidate(osUser)
+	events.Emit("session.retitled", osUser, telemetry.Attrs{
+		"tl.session": name, "tl.client": "api",
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// stampTitle writes @title onto a live session and mirrors it into the titles
+// store, which is what carries it across a restore. An empty title UNSETS the
+// option rather than setting it to "", so a session goes back to showing its
+// name. Writes the response and returns false when it could not.
+//
+// The title reaches tmux as one argv element, never a shell word, so no
+// escaping question arises for the arbitrary text it carries.
+func stampTitle(w http.ResponseWriter, osUser, name, title string) bool {
+	args := []string{"set-option", "-t", exactPane(name), sessionTitleOption, title}
+	if title == "" {
+		// Measured on 3.4: unsetting an option that was never set exits 0
+		// silently, so clearing a title needs no "was it set" check.
+		args = []string{"set-option", "-u", "-t", exactPane(name), sessionTitleOption}
+	}
+	if out, err := tmuxCmd(osUser, args...).CombinedOutput(); err != nil {
+		msg := string(out)
+		if tmuxTargetMissing(msg) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return false
+		}
+		log.Printf("set %s on %s as %s failed: %v: %s", sessionTitleOption, name, osUser, err, msg)
+		http.Error(w, "set-option failed", http.StatusInternalServerError)
+		return false
+	}
+	if err := titleStoreInstance.set(osUser, name, title); err != nil {
+		// The option landed, so the title is live; only its survival across a
+		// restore is at risk. Not worth failing a request the user watched
+		// succeed.
+		log.Printf("title memory: remembering %s/%s failed: %v", osUser, name, err)
+	}
+	return true
+}
+
+// renameTmuxSession performs the tmux half of a rename and maps its failures
+// onto statuses. Writes the response and returns false when it did.
+func renameTmuxSession(w http.ResponseWriter, osUser, oldName, newName string) bool {
+	out, err := tmuxCmd(osUser, "rename-session", "-t", exactSession(oldName), newName).CombinedOutput()
+	if err == nil {
+		return true
+	}
+	msg := string(out)
+	if tmuxTargetMissing(msg) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return false
+	}
+	if strings.Contains(msg, "duplicate session") || strings.Contains(msg, "session already exists") {
+		http.Error(w, "target name already exists", http.StatusConflict)
+		return false
+	}
+	log.Printf("rename-session %s→%s as %s failed: %v: %s", oldName, newName, osUser, err, msg)
+	http.Error(w, "rename-session failed", http.StatusInternalServerError)
+	return false
+}
+
+// tmuxTargetMissing recognises "the thing you named is not there" across the
+// verbs this service runs. The spelling differs by verb and by how the server
+// is missing — measured on 3.4: kill/rename say "can't find session",
+// set-option says "no such session", a stopped server says "no server
+// running", and a socket whose directory is gone says "error connecting to".
+// All four mean the same thing to a caller: 404.
+func tmuxTargetMissing(msg string) bool {
+	for _, s := range []string{
+		"can't find session", "no such session",
+		"no server running", "error connecting to",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// carryRenameAcrossStores lives in rename_cascade.go — every store that keys
+// on a session's name, moved together.
