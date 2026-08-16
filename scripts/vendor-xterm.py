@@ -38,7 +38,14 @@ import tempfile
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-INDEX = os.path.join(REPO, "frontend", "index.html")
+# TL_INDEX aims this at a page other than the vanilla one — the same knob
+# scripts/test_frontend_compat.py uses, so vendoring a page and then checking it
+# name the target the same way. frontend/term.html is the second page that
+# mounts xterm (the terminal the v2 SPA frames), and it needs the identical
+# transpiled bundle: iPadOS 15.8 ships a WebKit that cannot PARSE xterm 6's
+# `static{}` blocks, so a CDN-loaded xterm there is a blank terminal on that
+# device, exactly as it was on the vanilla page before it was vendored.
+INDEX = os.environ.get("TL_INDEX") or os.path.join(REPO, "frontend", "index.html")
 
 # esbuild target. Floor is set by the oldest engine we serve: iPadOS 15.8.
 BASELINE = "safari15"
@@ -145,7 +152,7 @@ def main() -> None:
     html = splice(html, JS_BEGIN, JS_END, "\n".join(js))
     with open(INDEX, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"vendor-xterm: frontend/index.html is now {len(html)} bytes")
+    print(f"vendor-xterm: {INDEX} is now {len(html)} bytes")
 
 
 if __name__ == "__main__":
