@@ -7,12 +7,16 @@ import (
 	"testing"
 )
 
-// /sessions rows gain the active pane's current command + title (Task 2.5,
-// live-command chip). parseSessions decodes the two new trailing fields from
-// the extended tmuxListFmt; pane_title is LAST because applications set it
-// freely (OSC 2) and it may contain the field separator — the tail must soak
-// embedded pipes rather than shift fields (or worse, hide the session).
-func TestParseSessionsPaneCommandAndTitle(t *testing.T) {
+// row joins fields with the format separator, so fixtures stay readable even
+// though the real separator is an invisible control character.
+func row(fields ...string) string { return strings.Join(fields, listSep) }
+
+// /sessions rows carry TWO arbitrary-text fields: pane_title, which
+// applications set freely via OSC 2, and @title, the display title a person
+// chose. Only one field can be last, which is why the separator is \x1f rather
+// than '|' — neither a typed title nor a realistic pane title contains a unit
+// separator, so both are safe where '|' protected only the trailing one.
+func TestParseSessionsFields(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
@@ -20,51 +24,65 @@ func TestParseSessionsPaneCommandAndTitle(t *testing.T) {
 	}{
 		{
 			name: "full row",
-			in:   "work|1|1700000000|1690000000|running|4242|claude|~/code",
+			in:   row("$3", "work", "1", "1700000000", "1690000000", "running", "4242", "claude", "Deploy the thing", "~/code"),
 			want: []Session{{
-				Name: "work", Attached: 1, LastActivity: 1700000000,
+				ID: "$3", Name: "work", Attached: 1, LastActivity: 1700000000,
 				Created: 1690000000, State: "running", PanePID: 4242,
-				Command: "claude", Title: "~/code",
+				Command: "claude", Title: "Deploy the thing", PaneTitle: "~/code",
 			}},
 		},
 		{
-			name: "pipe in pane title survives verbatim",
-			in:   "logs|0|1700000001|1690000001||77|zsh|make | tee build.log",
+			name: "a pipe in either title survives verbatim",
+			in:   row("$4", "logs", "0", "1700000001", "1690000001", "", "77", "zsh", "Deploy | stage 2", "make | tee build.log"),
 			want: []Session{{
-				Name: "logs", LastActivity: 1700000001, Created: 1690000001,
-				PanePID: 77, Command: "zsh", Title: "make | tee build.log",
+				ID: "$4", Name: "logs", LastActivity: 1700000001, Created: 1690000001,
+				PanePID: 77, Command: "zsh",
+				Title: "Deploy | stage 2", PaneTitle: "make | tee build.log",
 			}},
 		},
 		{
-			name: "empty command and title stay empty",
-			in:   "bare|0|1|2|done|9||",
+			name: "a title in any script survives verbatim",
+			in:   row("$5", "testova-sesiya", "0", "1", "2", "", "9", "claude", "тестова сесия 🚀", ""),
 			want: []Session{{
-				Name: "bare", LastActivity: 1, Created: 2,
+				ID: "$5", Name: "testova-sesiya", LastActivity: 1, Created: 2,
+				PanePID: 9, Command: "claude", Title: "тестова сесия 🚀",
+			}},
+		},
+		{
+			name: "no title is no title — every session that predates the feature",
+			in:   row("$6", "bare", "0", "1", "2", "done", "9", "", "", ""),
+			want: []Session{{
+				ID: "$6", Name: "bare", LastActivity: 1, Created: 2,
 				State: "done", PanePID: 9,
 			}},
 		},
 		{
-			name: "legacy 6-field row is skipped, not mis-parsed",
-			in:   "old|1|1700000000|1690000000|running|4242",
+			name: "the pre-title 8-field row is skipped, not mis-parsed",
+			in:   row("old", "1", "1700000000", "1690000000", "running", "4242", "claude", "t"),
 			want: []Session{},
 		},
 		{
-			name: "pipe in a session name (created outside the API) drops the row",
-			// The name's pipe shifts a non-numeric segment into the attached
-			// column — the strict integer guard skips the row instead of
-			// serving a garbage session the UI can't act on.
-			in:   "we|ird|1|1700000000|1690000000|running|4242|claude|t",
+			name: "a row whose id is not a tmux session id is dropped",
+			// A separator smuggled into a session name (possible outside the
+			// API's NAME_RE) shifts every field left. The id anchor catches it
+			// before the numeric columns have to.
+			in:   row("we", "ird", "$7", "1", "1700000000", "1690000000", "running", "4242", "claude", "t"),
+			want: []Session{},
+		},
+		{
+			name: "a non-numeric count still drops the row",
+			in:   row("$8", "odd", "many", "1700000000", "1690000000", "running", "4242", "claude", "", ""),
 			want: []Session{},
 		},
 		{
 			name: "mixed good and bad lines keep the good ones",
-			in: "ok|0|10|20|awaiting|31|vim|edit\n" +
-				"broken|line\n" +
-				"also-ok|2|30|40||55|bash|",
+			in: row("$1", "ok", "0", "10", "20", "awaiting", "31", "vim", "Edit the thing", "edit") + "\n" +
+				"broken" + listSep + "line\n" +
+				row("$2", "also-ok", "2", "30", "40", "", "55", "bash", "", ""),
 			want: []Session{
-				{Name: "ok", LastActivity: 10, Created: 20, State: "awaiting",
-					PanePID: 31, Command: "vim", Title: "edit"},
-				{Name: "also-ok", Attached: 2, LastActivity: 30, Created: 40,
+				{ID: "$1", Name: "ok", LastActivity: 10, Created: 20, State: "awaiting",
+					PanePID: 31, Command: "vim", Title: "Edit the thing", PaneTitle: "edit"},
+				{ID: "$2", Name: "also-ok", Attached: 2, LastActivity: 30, Created: 40,
 					PanePID: 55, Command: "bash"},
 			},
 		},
@@ -79,36 +97,71 @@ func TestParseSessionsPaneCommandAndTitle(t *testing.T) {
 	}
 }
 
-// Wire shape: the new fields serialize as pane_current_command / pane_title
-// (the keys the frontend chip + title logic read) and vanish when empty —
-// stateless external pollers keep seeing the historic object shape.
+// The format string has to keep @title and pane_title adjacent-but-separate and
+// must not reintroduce '|' as the separator, since that is what made two
+// arbitrary-text fields impossible.
+func TestListFormatCarriesBothTitles(t *testing.T) {
+	for _, want := range []string{"#{session_id}", "#{@title}", "#{pane_title}", "#{session_name}"} {
+		if !strings.Contains(tmuxListFmt, want) {
+			t.Errorf("tmuxListFmt is missing %s: %q", want, tmuxListFmt)
+		}
+	}
+	if strings.Contains(tmuxListFmt, "|") {
+		t.Errorf("tmuxListFmt still separates on '|', which a title may contain: %q", tmuxListFmt)
+	}
+	if n := len(strings.Split(tmuxListFmt, listSep)); n != listFields {
+		t.Errorf("tmuxListFmt has %d fields, parser expects %d", n, listFields)
+	}
+}
+
+// Wire shape: the display title travels as "title" and the session id as "id",
+// and both vanish when empty so consumers that predate them see the historic
+// object. pane_title keeps its own key — they are different things.
 func TestSessionsJSONShape(t *testing.T) {
-	full, err := json.Marshal(parseSessions([]byte("work|1|10|20|running|42|claude|~/code\n")))
+	full, err := json.Marshal(parseSessions([]byte(
+		row("$3", "work", "1", "10", "20", "running", "42", "claude", "Deploy the thing", "~/code") + "\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"pane_current_command":"claude"`, `"pane_title":"~/code"`} {
+	for _, want := range []string{
+		`"pane_current_command":"claude"`,
+		`"pane_title":"~/code"`,
+		`"title":"Deploy the thing"`,
+		`"id":"$3"`,
+	} {
 		if !strings.Contains(string(full), want) {
 			t.Fatalf("marshaled sessions missing %s: %s", want, full)
 		}
 	}
-	bare, err := json.Marshal(parseSessions([]byte("bare|0|1|2||9||\n")))
+	bare, err := json.Marshal(parseSessions([]byte(
+		row("$4", "bare", "0", "1", "2", "", "9", "", "", "") + "\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, absent := range []string{"pane_current_command", "pane_title", "tool"} {
+	for _, absent := range []string{"pane_current_command", "pane_title", `"title"`, "tool"} {
 		if strings.Contains(string(bare), absent) {
 			t.Fatalf("empty %s must be omitted from the wire: %s", absent, bare)
 		}
 	}
-	// The tool mark travels under its own key — the frontends must never have
-	// to guess it from pane_current_command (which reads "bash" for both
-	// wrapper-launched agents).
 	tooled, err := json.Marshal([]Session{{Name: "w", Tool: toolCodex, Command: "bash"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(tooled), `"tool":"codex"`) {
 		t.Fatalf("marshaled session missing the tool key: %s", tooled)
+	}
+}
+
+// set-option's -t takes a PANE, so a session option needs the trailing colon —
+// `set-option -t "=name"` is rejected outright (measured on tmux 3.4). The '='
+// matters more than usual now that retitling derives names: with `deploy` and
+// `deploy-the-thing` both live, a bare target would resolve by prefix match and
+// stamp the wrong session, exiting 0 while doing it.
+func TestExactPaneTargetsOneSessionsWindow(t *testing.T) {
+	if got := exactPane("work"); got != "=work:" {
+		t.Errorf("exactPane(work) = %q, want %q", got, "=work:")
+	}
+	if got := exactSession("work"); got != "=work" {
+		t.Errorf("exactSession(work) = %q, want %q", got, "=work")
 	}
 }

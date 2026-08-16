@@ -21,3 +21,7 @@ replace terminal-lobby/sessionio => ../sessionio
 require terminal-lobby/authuser v0.0.0
 
 replace terminal-lobby/authuser => ../authuser
+
+require terminal-lobby/slug v0.0.0
+
+replace terminal-lobby/slug => ../slug
