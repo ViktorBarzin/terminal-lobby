@@ -48,10 +48,36 @@ func (in *Injector) PinGrid(osUser, session string) error {
 	// dead session would silently reconfigure a live neighbour.
 	target := exactPane(session)
 
+	// Read the size BEFORE pinning, and put it back afterwards.
+	//
+	// Switching a live window to `manual` does not freeze it where it is — it
+	// reverts it to the size the window was CREATED at, discarding whatever
+	// `latest` had negotiated since. Measured on 3.4: a window born 80x24, with
+	// a 190x56 client attached and sitting at 190x55, snaps straight back to
+	// 80x24 the moment the option is set. In production that is a session
+	// jumping to its birth size the instant somebody starts watching it, which
+	// is the opposite of this function's whole purpose.
+	//
+	// A pin must be invisible to the person driving. Capture, pin, restore.
+	size, err := in.Command(osUser, "display", "-p", "-t", target,
+		"#{window_width} #{window_height}").Output()
+	if err != nil {
+		return fmt.Errorf("pin grid %s: read size: %w", session, err)
+	}
+	var w, h int
+	if _, serr := fmt.Sscanf(strings.TrimSpace(string(size)), "%d %d", &w, &h); serr != nil || w <= 0 || h <= 0 {
+		return fmt.Errorf("pin grid %s: unreadable size %q", session, strings.TrimSpace(string(size)))
+	}
+
 	if out, err := in.Command(osUser, "set-option", "-t", target,
 		"window-size", "manual").CombinedOutput(); err != nil {
 		return fmt.Errorf("pin grid %s: window-size: %v: %s",
 			session, err, strings.TrimSpace(string(out)))
+	}
+	if out, err := in.Command(osUser, "resize-window", "-t", target,
+		"-x", fmt.Sprint(w), "-y", fmt.Sprint(h)).CombinedOutput(); err != nil {
+		return fmt.Errorf("pin grid %s: restore %dx%d: %v: %s",
+			session, w, h, err, strings.TrimSpace(string(out)))
 	}
 	hook := in.gridHook(session)
 	for _, name := range gridHooks {
@@ -95,10 +121,23 @@ func (in *Injector) gridHook(session string) string {
 		sock = "-L " + in.socket + " "
 	}
 	target := exactPane(session)
+	// The status line is NOT part of the window. tmux sizes a window to the
+	// client's height MINUS its status lines, so resizing to the raw
+	// client_height makes the window one row taller than the visible area and
+	// hides its bottom row behind the status bar. Measured on 3.4 with a 190x56
+	// client: tmux chooses 190x55 with `status on`, 190x54 with `status 2`.
+	//
+	// The subtraction is done here rather than in a format because 3.4 has no
+	// #{status_lines}; #{status} yields the option's word — off, on, or a count
+	// 2..5. An unrecognised value falls back to 1, matching tmux's default,
+	// rather than reaching the arithmetic and breaking the resize entirely.
 	return fmt.Sprintf(
 		`run-shell -b 'tmux %slist-clients -t %s `+
 			`-F "##{client_flags} ##{client_width} ##{client_height}" `+
 			`| grep -v read-only | tail -1 `+
-			`| while read f w h; do tmux %sresize-window -t %s -x $w -y $h; done'`,
-		sock, target, sock, target)
+			`| while read f w h; do `+
+			`s=$(tmux %sdisplay -p -t %s "##{status}"); `+
+			`case $s in off) n=0;; [0-9]) n=$s;; *) n=1;; esac; `+
+			`tmux %sresize-window -t %s -x $w -y $((h-n)); done'`,
+		sock, target, sock, target, sock, target)
 }
