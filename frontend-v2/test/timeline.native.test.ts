@@ -218,11 +218,29 @@ describe("session lifecycle", () => {
 
   it("lists prompts still sitting in the queue", () => {
     const events = [
+      ev({ kind: "user", body: "the prompt that opened this turn" }),
       ev({ kind: "meta", meta: "queued", body: "first" }),
       ev({ kind: "meta", meta: "queued", body: "second" }),
       ev({ kind: "user", body: "first" }), // Claude picked this one up
+      ev({ kind: "meta", meta: "queued", body: "third" }),
     ];
-    expect(queuedPrompts(events)).toEqual(["second"]);
+    // Anchored to the turn now running: what was queued before the last thing
+    // the human said has already been consumed or superseded.
+    expect(queuedPrompts(events)).toEqual(["third"]);
+  });
+
+  // The transcript never reports a prompt LEAVING the queue, so a list built
+  // from the whole session only grows — measured at twelve rows of background
+  // task notifications on a real session, a third of the screen.
+  it("does not accumulate every queue event in the session", () => {
+    const events = [
+      ...Array.from({ length: 12 }, (_, i) =>
+        ev({ kind: "meta", meta: "queued", body: `old ${i}` }),
+      ),
+      ev({ kind: "user", body: "a new prompt" }),
+      ev({ kind: "meta", meta: "queued", body: "still waiting" }),
+    ];
+    expect(queuedPrompts(events)).toEqual(["still waiting"]);
   });
 
   it("gives the composer its prompt history", () => {
