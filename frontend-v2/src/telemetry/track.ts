@@ -51,6 +51,11 @@ export type TlEvent =
   // sharing
   | "share.granted"
   | "share.revoked"
+  // acting as another user (admin). tl.to is the target; the server emits its
+  // own admin.actas at /whoami and at attach, which is the authoritative
+  // record — these two are the CLIENT's view of when the switch was asked for.
+  | "admin.actas"
+  | "admin.actas.exit"
   // navigation & keyboard
   | "palette.opened"
   | "palette.action"

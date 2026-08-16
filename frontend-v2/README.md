@@ -103,11 +103,16 @@ src/
   lib/
     config.ts            Endpoints: /events,/prompt,/cancel (session-events),
                          apiUrl() for /api/sessions, clipboardUrl(),
-                         file read/list/write, TERMINAL_BASE + build id
+                         file read/list/write, TERMINAL_BASE + build id;
+                         also ACT_AS (?as=) and the appendActAs() every
+                         builder applies — push is deliberately excluded
     lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/rename/…)
     file-api.ts          file-api client (list/read/write; maps 404/413/400)
+    act-as.ts            Admin act-as switch: the URL to navigate to in order
+                         to act as a user (or return) — switching is a load
     terminal-url.ts      ttyd `?arg=` POSITIONAL contract (incl. the foreign-
-                         owner 4th arg) — red-line-class, unit-tested
+                         owner 4th arg, which the act-as target defaults into)
+                         — red-line-class, unit-tested
   sse/client.ts          Resumable SSE client (Last-Event-ID, backoff+jitter,
                          instant-retry on visible/online) — DOM-free, testable
   store/

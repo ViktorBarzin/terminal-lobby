@@ -9,6 +9,16 @@ import {
 } from "../store/prefs";
 import type { NotificationSystem } from "../notify/notifications";
 
+/** What Settings needs to render the act-as picker. Absent for a non-admin. */
+export interface ActAsControl {
+  /** Mapped OS users this caller may act as (already excludes themselves). */
+  users: Accessor<string[]>;
+  /** The user currently being acted as, "" when it is your own lobby. */
+  current: Accessor<string>;
+  /** Switch to a user, or "" to return to your own lobby. Navigates. */
+  switchTo: (osUser: string) => void;
+}
+
 /**
  * Settings overlay (feature-inventory §6 + the §1 9-theme grid). Three groups:
  *   - Theme: a 9-button grid picker, per-DEVICE (`tmux-theme`), NOT roamed.
@@ -29,6 +39,9 @@ export const SettingsPanel: Component<{
   };
   /** the PWA notification system (per-device readouts + test actions). */
   notifications?: NotificationSystem;
+  /** the admin act-as picker. Supplied only when the CALLER administers this
+   *  box; absent for everyone else, so the section does not render at all. */
+  actAs?: ActAsControl;
 }> = (props) => {
   let dialogEl: HTMLDivElement | undefined;
 
@@ -121,6 +134,30 @@ export const SettingsPanel: Component<{
             ✕
           </button>
         </div>
+
+        <Show when={props.actAs}>
+          {(ctl) => (
+            <section class="tl-settings-group tl-actas-group">
+              <div class="tl-settings-label">Act as user</div>
+              <select
+                class="tl-settings-select"
+                aria-label="Act as another user"
+                value={ctl().current()}
+                onChange={(e) => ctl().switchTo(e.currentTarget.value)}
+              >
+                <option value="">— myself —</option>
+                <For each={ctl().users()}>
+                  {(u) => <option value={u}>{u}</option>}
+                </For>
+              </select>
+              <div class="tl-settings-hint">
+                This tab becomes that user: their sessions, files and terminal,
+                with full read-write access as them. Your other tabs are
+                unaffected. Every switch is recorded.
+              </div>
+            </section>
+          )}
+        </Show>
 
         <section class="tl-settings-group">
           <div class="tl-settings-label">Theme</div>
