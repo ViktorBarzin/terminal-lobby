@@ -258,6 +258,22 @@ describe("touch ergonomics — sized for a finger, phone or tablet", () => {
     });
   }
 
+  it("lets the 40px target BE the row, instead of padding around it", () => {
+    // The action button is the tallest thing in a session row, and it is a flex
+    // child of a card that also carries 6px of its own vertical padding — so the
+    // 40px floor rendered as a 54px row (measured, 390x844, 6 sessions). The
+    // padding is what has to go: the target stays 40px, the row becomes 40px,
+    // and the list gets 14px per session back. Same shape as the vanilla page's
+    // 2026-07-17 finding, where a 44px button inflated a 28px row.
+    const block = touchBlock();
+    const at = block.indexOf(".tl-card {");
+    expect(at, ".tl-card in the touch block").toBeGreaterThan(-1);
+    const rule = block.slice(at, block.indexOf("}", at));
+    expect(rule, "no vertical padding on top of the target").toMatch(
+      /padding:\s*0\s+8px/,
+    );
+  });
+
   it("sets 16px on every text input, or iOS zooms the page on focus", () => {
     // Safari zooms when a focused field is under 16px and does not zoom back
     // out, which on the phone layout leaves a list you have to pan sideways.
