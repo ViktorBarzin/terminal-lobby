@@ -220,8 +220,24 @@ func validNotifyAddr(addr string) error {
 	if err != nil || n < 1 || n > 65535 {
 		return fmt.Errorf("listen %q: %q is not a port — is TL_T3_SYNC_NOTIFY_PORT set?", addr, port)
 	}
+	// Loopback ONLY. The notice carries no credential — loopback plus "the only
+	// local accounts are the humans on this box" is the whole boundary
+	// (CONTRACT.md §8.2) — so a host that resolves off loopback is refused
+	// rather than bound. The shipped unit composes 127.0.0.1:<port>; this is
+	// what keeps a hand-run syncer or a later unit edit from quietly exposing
+	// an unauthenticated endpoint that archives threads.
 	if host == "" {
 		return fmt.Errorf("listen %q: no host; the notice endpoint is unauthenticated and must bind loopback", addr)
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("listen %q: %q does not resolve: %w", addr, host, err)
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() {
+			return fmt.Errorf("listen %q: %s is not loopback; the notice endpoint is unauthenticated and must bind loopback",
+				addr, ip)
+		}
 	}
 	return nil
 }

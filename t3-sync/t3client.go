@@ -596,3 +596,32 @@ func newUUID() (string, error) {
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
+
+// T3Version reports the t3 build on this box, or "" when it cannot be read.
+//
+// It is the trigger for re-running the handshake self-test. The bridge
+// implements a subset of a protocol we do not own under software that upgrades
+// nightly, and the design's mitigation is a self-test "at start and after any
+// t3 version change" — only the first half of which existed: a syncer up for
+// days went on reporting healthy while every bridge spawn stalled its thread,
+// with nobody told to reach for the claudeStock escape hatch.
+//
+// `t3 --version` on PATH is the reading taken, because a nightly replaces the
+// package and the unit restarts onto it. A version that cannot be read is not
+// an error and not a change: it simply never triggers a re-test.
+func T3Version(ctx context.Context) string {
+	bin, err := exec.LookPath("t3")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, t3VersionTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// t3VersionTimeout bounds the one subprocess this costs.
+const t3VersionTimeout = 5 * time.Second

@@ -59,10 +59,13 @@ func main() {
 			http.Error(w, "bad body (need text)", http.StatusBadRequest)
 			return
 		}
-		if injector.State(osUser, session) == sessionio.StateRunning {
-			http.Error(w, "turn in progress", http.StatusConflict)
-			return
-		}
+		// No turn gate. Claude Code queues typed input itself — its
+		// queue-operation records are in the transcript — and the queued prompt
+		// stays visible in the pane, so a mid-turn send is a normal thing to do
+		// rather than an error (design decision 9). The 409 that used to live
+		// here also made the two surfaces disagree: the bridge pastes whatever
+		// T3 sends, so the same prompt at the same moment ran from one window
+		// and was refused from the other.
 		if err := injector.Prompt(osUser, session, body.Text); err != nil {
 			http.Error(w, "inject failed", http.StatusBadGateway)
 			return

@@ -88,6 +88,26 @@ func (in *Injector) Command(osUser string, args ...string) *exec.Cmd {
 	return exec.Command("sudo", append([]string{"-n", "-u", osUser, "tmux"}, full...)...)
 }
 
+// exactPane targets the named session and NOTHING ELSE, for the verbs whose
+// -t takes a pane or window: send-keys, paste-buffer, set-option,
+// display-message.
+//
+// tmux resolves an absent session name by unambiguous PREFIX match, and exits 0
+// doing it (measured on 3.4: with only `agent-2` alive, `send-keys -t agent`
+// types into `agent-2`). That is not a hypothetical state here — a resurrection
+// that finds `agent` taken creates `agent-2` (resurrect.go), and `agent` then
+// dying is the normal case on this box. Without the `=` the next prompt for the
+// dead session is bracketed-pasted and Enter-submitted into a stranger's live
+// conversation.
+//
+// The trailing colon makes it a window target; `=name` alone is rejected by
+// set-option even for a session that exists, because its -t is a pane.
+func exactPane(session string) string { return "=" + session + ":" }
+
+// exactSession is the same rule for the verbs whose -t takes a session —
+// kill-session, where `=name:` is not accepted and `=name` is.
+func exactSession(session string) string { return "=" + session }
+
 // Prompt injects text as a bracketed paste, then submits with Enter.
 //
 // It clears the pane's input line first, so what is submitted is exactly what
@@ -103,17 +123,17 @@ func (in *Injector) Command(osUser string, args ...string) *exec.Cmd {
 // C-e is a literal control character in the line buffer, which the C-u then
 // erases along with everything else.
 func (in *Injector) Prompt(osUser, session, text string) error {
-	if err := in.Command(osUser, "send-keys", "-t", session, "C-e", "C-u").Run(); err != nil {
+	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run(); err != nil {
 		return err
 	}
 	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
 		return err
 	}
 	// -p = bracketed paste, -d = delete the buffer afterwards.
-	if err := in.Command(osUser, "paste-buffer", "-p", "-d", "-t", session).Run(); err != nil {
+	if err := in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run(); err != nil {
 		return err
 	}
-	return in.Command(osUser, "send-keys", "-t", session, "Enter").Run()
+	return in.Command(osUser, "send-keys", "-t", exactPane(session), "Enter").Run()
 }
 
 // Cancel sends Ctrl-C (interrupt) to the session, then re-derives
@@ -129,13 +149,13 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 // best-effort: the interrupt already landed, so a failure here must not fail
 // the cancel, but it silently re-creates the latch, so it is logged.
 func (in *Injector) Cancel(osUser, session string) error {
-	if err := in.Command(osUser, "send-keys", "-t", session, "C-c").Run(); err != nil {
+	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-c").Run(); err != nil {
 		return err
 	}
 	if in.State(osUser, session) == "" {
 		return nil
 	}
-	if err := in.Command(osUser, "set-option", "-t", session, OptionState, StateDone).Run(); err != nil {
+	if err := in.Command(osUser, "set-option", "-t", exactPane(session), OptionState, StateDone).Run(); err != nil {
 		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionState, err)
 	}
 	return nil
@@ -158,7 +178,7 @@ func (in *Injector) State(osUser, session string) string {
 // the requested name is printed back alongside the value and has to match, or
 // the value is not this session's to serve.
 func (in *Injector) Option(osUser, session, name string) (string, bool) {
-	out, err := in.Command(osUser, "display-message", "-p", "-t", session,
+	out, err := in.Command(osUser, "display-message", "-p", "-t", exactPane(session),
 		"#{session_name}\n#{"+name+"}").Output()
 	if err != nil {
 		return "", false
@@ -172,7 +192,7 @@ func (in *Injector) Option(osUser, session, name string) (string, bool) {
 
 // SetOption stamps a tmux session option. It fails if the session does not exist.
 func (in *Injector) SetOption(osUser, session, name, value string) error {
-	return in.Command(osUser, "set-option", "-t", session, name, value).Run()
+	return in.Command(osUser, "set-option", "-t", exactPane(session), name, value).Run()
 }
 
 // HasSession reports whether the named session is live on this user's tmux
@@ -273,7 +293,7 @@ func (in *Injector) NewSession(spec NewSessionSpec) error {
 // kills the tmux session (design decision 3) — and for no other reason. A
 // process merely exiting is not a kill and must not reach here.
 func (in *Injector) KillSession(osUser, session string) error {
-	out, err := in.Command(osUser, "kill-session", "-t", session).CombinedOutput()
+	out, err := in.Command(osUser, "kill-session", "-t", exactSession(session)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("kill-session %s: %v: %s", session, err, strings.TrimSpace(string(out)))
 	}
