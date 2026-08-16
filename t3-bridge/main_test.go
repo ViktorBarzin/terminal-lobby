@@ -429,7 +429,16 @@ func newProtoSideRig(t *testing.T) *protoSideRig {
 
 func (rig *protoSideRig) open(cfg Config) (protoSide, error) {
 	rig.t.Helper()
-	return protoOpenSide(cfg, NewEncoder(rig.out), rig.deps)
+	return rig.openAdopting(cfg, "")
+}
+
+func (rig *protoSideRig) openAdopting(cfg Config, adopting string) (protoSide, error) {
+	rig.t.Helper()
+	att, err := protoOpenSide(cfg, NewEncoder(rig.out), rig.deps, adopting)
+	if att == nil {
+		return nil, err
+	}
+	return att, err
 }
 
 // A session that is already running is attached to, not restarted: one Claude,
@@ -534,22 +543,35 @@ func TestOpenSideStartsAT3BornThread(t *testing.T) {
 }
 
 // The failure has to reach the operator: T3 is holding a turn open, and a
-// bridge that dies into the journal leaves the thread spinning.
+// bridge that reports only into the journal leaves the thread spinning.
+//
+// It is reported on the PROMPT rather than at start-up now. Opening the tmux
+// side is deferred until something needs it, so the frame that closes the turn
+// is the one the turn was opened by; a bridge nobody prompts has no turn to
+// close and says so in the journal instead.
 func TestRunReportsAFailedTmuxSideIntoTheThread(t *testing.T) {
-	restore := protoTmuxSide
-	t.Cleanup(func() { protoTmuxSide = restore })
-	protoTmuxSide = func(ctx context.Context, cfg Config, out *Encoder) (protoSide, error) {
-		return nil, errors.New("no tmux server")
+	tmux := newAttachFakeTmux()
+	tmux.listErr = errors.New("no tmux server")
+	restore := protoRealDeps
+	t.Cleanup(func() { protoRealDeps = restore })
+	protoRealDeps = func() (protoSideDeps, error) {
+		return protoSideDeps{
+			OSUser:   "wizard",
+			Tmux:     tmux,
+			Bindings: OpenBindingsAt(filepath.Join(t.TempDir(), "index.json")),
+			Cursors:  NewCursorStore(t.TempDir()),
+		}, nil
 	}
 
 	// Keep the handshake's version probe off the real claude: it is a
 	// subprocess, and this test is about what reaches the thread.
 	t.Setenv("TL_REAL_CLAUDE", protoStubBinary(t, "#!/bin/sh\necho '2.1.233 (Claude Code)'\n"))
-	stdout := protoPipeStdio(t, `{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}`)
+	stdout := protoPipeStdio(t,
+		`{"type":"control_request","request_id":"r1","request":{"subtype":"initialize"}}`,
+		`{"type":"user","message":{"role":"user","content":"hello"}}`)
 
-	err := run(context.Background(), Config{Resume: attachTestID, CWD: t.TempDir()})
-	if err == nil {
-		t.Fatal("run returned nil after the tmux side failed")
+	if err := run(context.Background(), Config{Resume: attachTestID, CWD: t.TempDir()}); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 	frames := protoStdoutFrames(t, stdout)
 	if len(frames) < 3 {
@@ -621,12 +643,12 @@ func TestProbeModeAnswersTheHandshakeAndTouchesNothing(t *testing.T) {
 	t.Setenv("TL_REAL_CLAUDE", protoStubBinary(t, "#!/bin/sh\necho '2.1.233 (Claude Code)'\n"))
 	t.Setenv(ProbeEnv, "1")
 
-	restore := protoTmuxSide
-	t.Cleanup(func() { protoTmuxSide = restore })
+	restore := protoRealDeps
+	t.Cleanup(func() { protoRealDeps = restore })
 	reached := false
-	protoTmuxSide = func(ctx context.Context, cfg Config, out *Encoder) (protoSide, error) {
+	protoRealDeps = func() (protoSideDeps, error) {
 		reached = true
-		return nil, errors.New("the probe reached the tmux side")
+		return protoSideDeps{}, errors.New("the probe reached the tmux side")
 	}
 
 	stdout := protoPipeStdio(t, `{"type":"control_request","request_id":"probe-1","request":{"subtype":"initialize"}}`)

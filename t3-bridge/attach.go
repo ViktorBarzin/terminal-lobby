@@ -64,6 +64,13 @@ type Target struct {
 	Transcript string
 	// ThreadID is the T3 thread, "" when nothing has recorded it yet.
 	ThreadID string
+	// Origin says who chose TmuxName — sessionio.OriginLobby for a session that
+	// existed before this bridge, OriginT3 for one the bridge created because
+	// T3 opened a thread with nowhere to run it.
+	Origin string
+	// AliasOf is set when T3's session id is a stand-in for a conversation that
+	// was already running under a different one; see sessionio.Binding.AliasOf.
+	AliasOf string
 }
 
 // Resolver answers "which tmux session is this Claude conversation running in".
@@ -110,6 +117,15 @@ var _ Resolver = (*SessionResolver)(nil)
 // write is best-effort — an unwritable state directory must not stop a thread
 // from opening — so it logs and carries on.
 func (r *SessionResolver) Resolve(claudeID string) (Target, bool, bool, error) {
+	return r.resolve(claudeID, 0)
+}
+
+// resolveAliasDepth bounds the alias hop. One is all the design needs — T3's
+// invented id stands in for a real conversation, and that conversation is real
+// — and a bound is what stops a corrupt index from looping.
+const resolveAliasDepth = 4
+
+func (r *SessionResolver) resolve(claudeID string, depth int) (Target, bool, bool, error) {
 	if claudeID == "" {
 		return Target{}, false, false, fmt.Errorf("resolve: empty claude session id")
 	}
@@ -126,11 +142,15 @@ func (r *SessionResolver) Resolve(claudeID string) (Target, bool, bool, error) {
 		if sessionio.ClaudeIDFromTranscript(stamp) != claudeID {
 			continue
 		}
+		// The @t3_thread stamp is only ever written by the syncer, and only on a
+		// session it adopted; a session the bridge created carries none. So an
+		// absent stamp means "not known here", never "no thread" — Record merges
+		// on that basis and leaves any stored pairing alone.
 		thread, _ := r.tmux.Option(r.osUser, s.Name, sessionio.OptionThread)
 		target := Target{
 			ClaudeID:   claudeID,
 			TmuxName:   s.Name,
-			CWD:        s.Dir,
+			CWD:        resolveCWD(stamp, s.Dir),
 			Transcript: stamp,
 			ThreadID:   thread,
 		}
@@ -152,6 +172,21 @@ func (r *SessionResolver) Resolve(claudeID string) (Target, bool, bool, error) {
 	if !ok {
 		return Target{}, false, false, nil
 	}
+	// An alias is T3's invented session id standing in for the conversation that
+	// was really adopted (sessionio.Binding.AliasOf). Following it is what makes
+	// the second and later spawns of an adopted thread land on the same tmux
+	// session instead of starting a second Claude for a conversation that never
+	// stopped running.
+	if b.AliasOf != "" && b.AliasOf != claudeID && depth < resolveAliasDepth {
+		aliased, live, found, err := r.resolve(b.AliasOf, depth+1)
+		if err == nil && found {
+			aliased.AliasOf = b.AliasOf
+			if aliased.ThreadID == "" {
+				aliased.ThreadID = b.ThreadID
+			}
+			return aliased, live, true, nil
+		}
+	}
 	// Deliberately no Transcript: the session is gone, so nothing is stamped,
 	// and guessing the path here would hand the attacher a file that may belong
 	// to a conversation the resurrection is about to replace.
@@ -160,7 +195,26 @@ func (r *SessionResolver) Resolve(claudeID string) (Target, bool, bool, error) {
 		TmuxName: b.TmuxName,
 		CWD:      b.CWD,
 		ThreadID: b.ThreadID,
+		Origin:   b.Origin,
+		AliasOf:  b.AliasOf,
 	}, false, true, nil
+}
+
+// resolveCWD is where the conversation is actually happening.
+//
+// The transcript's own cwd wins over tmux's session_path, which is only where a
+// NEW window in that session would start. `claude` is routinely started from a
+// subdirectory — `tmux new -s work -c ~/code/tl` then `cd .worktrees/x && claude`
+// — and filing the binding by session_path resurrects the session in the parent
+// directory, under a project slug that holds a different conversation's
+// transcripts. The syncer's adoption already files by the transcript's cwd
+// (sessionio.TranscriptCWD); this is the same rule on the bridge's side, so the
+// two writers of one index cannot disagree about where a session lives.
+func resolveCWD(transcript, tmuxDir string) string {
+	if cwd := sessionio.TranscriptCWD(transcript); cwd != "" {
+		return cwd
+	}
+	return tmuxDir
 }
 
 // AttacherDeps are the collaborators an Attacher is built from. They are
@@ -177,6 +231,10 @@ type AttacherDeps struct {
 	// Poll is how often the transcript is re-read while following. Zero takes
 	// the same 200ms session-events tails at.
 	Poll time.Duration
+	// StatePoll is how often @claude_state is re-read, which is a tmux fork
+	// rather than a file read and so is deliberately much slower. Zero takes
+	// attachStatePoll.
+	StatePoll time.Duration
 	// Cursors is where the replay position is kept. Zero falls back to the
 	// per-user default, which is what the real bridge wants and what every test
 	// must override.
@@ -187,6 +245,11 @@ type AttacherDeps struct {
 // at the same rate, so the two surfaces do not visibly disagree about when a
 // message arrived.
 const attachPoll = 200 * time.Millisecond
+
+// attachStatePoll is how often @claude_state is re-read. It is a subprocess,
+// not a file read, and the only consumer is a pin that re-asserts once a
+// minute — so it runs at seconds rather than at the transcript's cadence.
+const attachStatePoll = 3 * time.Second
 
 // Attacher mirrors one tmux session into one T3 thread for the life of the
 // bridge process.
@@ -224,6 +287,9 @@ type Attacher struct {
 func NewAttacher(target Target, deps AttacherDeps) *Attacher {
 	if deps.Poll <= 0 {
 		deps.Poll = attachPoll
+	}
+	if deps.StatePoll <= 0 {
+		deps.StatePoll = attachStatePoll
 	}
 	if deps.Cursors == nil {
 		dir, err := DefaultCursorDir()
@@ -277,6 +343,14 @@ func (a *Attacher) Replay(ctx context.Context) (int64, error) {
 func (a *Attacher) Follow(ctx context.Context) error {
 	ticker := time.NewTicker(a.deps.Poll)
 	defer ticker.Stop()
+	// The state read has its own, much slower cadence. It is a `tmux
+	// display-message` fork, and the thing it feeds — the liveness pin — only
+	// re-asserts once a minute anyway (liveness.go), so reading it at the
+	// transcript's 200 ms would fork tmux five times a second for the life of
+	// every open thread. On a box whose binding constraint is memory that is
+	// avoidable churn in the component the design justifies on resource grounds.
+	state := time.NewTicker(a.deps.StatePoll)
+	defer state.Stop()
 	defer func() {
 		if err := a.pin.Release(); err != nil {
 			log.Printf("follow %s: releasing the liveness pin failed: %v", a.target.TmuxName, err)
@@ -287,6 +361,13 @@ func (a *Attacher) Follow(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-state.C:
+			// The pin follows the session's own state stamp, so it is held
+			// exactly while a turn is in flight in the pane — whoever started it.
+			if err := a.pin.Sync(a.deps.Tmux.State(a.deps.OSUser, a.target.TmuxName)); err != nil {
+				return fmt.Errorf("follow %s: liveness pin: %w", a.target.TmuxName, err)
+			}
+			continue
 		case <-ticker.C:
 		}
 
@@ -298,12 +379,6 @@ func (a *Attacher) Follow(ctx context.Context) error {
 		a.mu.Unlock()
 		if err != nil {
 			return err
-		}
-
-		// The pin follows the session's own state stamp, so it is held exactly
-		// while a turn is in flight in the pane — whoever started it.
-		if err := a.pin.Sync(a.deps.Tmux.State(a.deps.OSUser, a.target.TmuxName)); err != nil {
-			return fmt.Errorf("follow %s: liveness pin: %w", a.target.TmuxName, err)
 		}
 	}
 }
@@ -336,7 +411,18 @@ func (a *Attacher) Send(text string) error {
 		}
 		return a.result("")
 	}
-	return a.deps.Tmux.Prompt(a.deps.OSUser, a.target.TmuxName, text)
+	if err := a.deps.Tmux.Prompt(a.deps.OSUser, a.target.TmuxName, text); err != nil {
+		// The turn is over as far as this attacher is concerned: the caller
+		// closes it with a result of its own. Leaving `owes` set would make the
+		// NEXT thing the pane settles — work the operator started in the
+		// terminal, minutes later — emit a second result for a turn T3 has
+		// nowhere to put.
+		a.mu.Lock()
+		a.owes = false
+		a.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // Interrupt maps T3's interrupt control_request to the existing Cancel path:
@@ -353,7 +439,15 @@ func (a *Attacher) Send(text string) error {
 // not be told it worked while the turn runs on.
 func (a *Attacher) Interrupt() error {
 	if err := a.deps.Tmux.Cancel(a.deps.OSUser, a.target.TmuxName); err != nil {
-		return err
+		if a.deps.Tmux.HasSession(a.deps.OSUser, a.target.TmuxName) {
+			return err
+		}
+		// The session is gone, so there is nothing left to interrupt and the
+		// turn is over whatever the operator meant by Stop. Reporting the
+		// failure instead would be true of the Ctrl-C and false of the
+		// question T3 asked — and would leave the turn open for ever.
+		log.Printf("interrupt %s: the session is gone; closing the turn", a.target.TmuxName)
+		return a.result("")
 	}
 	return a.result("")
 }
@@ -558,13 +652,58 @@ func (a *Attacher) saveCursorLocked() error {
 //
 // The wording is a shared constant rather than a heuristic, because both sides
 // have to agree exactly: the syncer dispatches SentinelPrompt and the bridge
-// swallows precisely that.
-func IsSentinel(text string) bool { return strings.TrimSpace(text) == SentinelPrompt }
+// swallows precisely that. A trailing conversation marker is allowed after it,
+// so the two constants still pin each other while the marker carries the one
+// fact T3 has no way to pass (see SentinelConversation).
+func IsSentinel(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), SentinelPrompt)
+}
 
 // SentinelPrompt is the warm-up turn's text. It is a legible provenance line
 // rather than a blank because it stays visible in the thread forever — one
 // phantom user message per adopted session is a known cost of the design.
 const SentinelPrompt = "[terminal-lobby] adopting this session — mirroring its transcript into this thread."
+
+// sentinelConversationPrefix introduces the uuid a warm-up turn is adopting.
+//
+// WHY THE PROMPT CARRIES IT. Adoption creates a thread for a conversation that
+// is ALREADY running, and T3 offers no way to tell the thread which one: no
+// dispatchable command seeds a provider session id, and the snapshot does not
+// project the one T3 mints for itself. So the bridge is spawned with a session
+// id T3 invented, finds nothing on the box under it, and — before this — took
+// that for a thread born in T3 and started a second Claude for a conversation
+// that had never stopped running, which is precisely what decision 1 exists to
+// prevent.
+//
+// The warm-up turn is the one message that reaches the bridge from the syncer,
+// so it is where the missing fact goes. It is a marker rather than a second
+// field because a turn's text is all T3 forwards.
+const sentinelConversationPrefix = "[conversation:"
+
+// SentinelConversation extracts the Claude session uuid a warm-up turn names,
+// or "" when it names none (an older syncer, or a hand-typed line that happens
+// to start with the sentinel).
+func SentinelConversation(text string) string {
+	_, rest, found := strings.Cut(text, sentinelConversationPrefix)
+	if !found {
+		return ""
+	}
+	id, closed := strings.CutSuffix(strings.TrimSpace(rest), "]")
+	if !closed {
+		return ""
+	}
+	return strings.TrimSpace(id)
+}
+
+// SentinelFor is the warm-up prompt for one conversation. The syncer builds the
+// same string from its own copy of SentinelPrompt; TestSentinelMatchesTheBridge
+// reads this file to keep the two from drifting.
+func SentinelFor(claudeID string) string {
+	if claudeID == "" {
+		return SentinelPrompt
+	}
+	return SentinelPrompt + "\n\n" + sentinelConversationPrefix + claudeID + "]"
+}
 
 // attachUUID mints a random v4 uuid for the frames that need one of their own
 // (the pin's task messages, and any frame the bridge originates rather than

@@ -40,12 +40,19 @@ import (
 // is where the deploy script puts things (t3-bridge/DEPLOY.md).
 const (
 	defaultBridgePath = "/usr/local/bin/tl-t3-bridge"
-	defaultModel      = "claude-opus-5"
+	// defaultModel is what a thread is stamped with when the session's own
+	// transcript does not say. T3 requires a model on thread.create and the
+	// bridge cannot change the pane's; this is the fallback, not a choice made
+	// on the operator's behalf (see adoptModel).
+	defaultModel = "claude-opus-5"
 	// defaultRuntimeMode is T3's own DEFAULT_RUNTIME_MODE. A bridged session's
 	// permissions are whatever the pane's claude was started with — the bridge
 	// cannot change them — so this is the value that stops T3 from expecting
 	// approvals it will never be asked for.
 	defaultRuntimeMode = "full-access"
+	// defaultInteractionMode is T3's own DEFAULT_PROVIDER_INTERACTION_MODE. The
+	// only other value is "plan".
+	defaultInteractionMode = "default"
 	// homeBase is where user home directories live on this box; it is a
 	// constant only so sessionio.ProjectsRoot has something to join.
 	homeBase = "/home"
@@ -67,6 +74,7 @@ func main() {
 	claudeBin := flag.String("claude", "", "path to the real claude (default: the first on PATH)")
 	model := flag.String("model", defaultModel, "model recorded on threads this syncer creates")
 	runtimeMode := flag.String("runtime-mode", defaultRuntimeMode, "T3 runtime mode for threads this syncer creates")
+	interactionMode := flag.String("interaction-mode", defaultInteractionMode, "T3 interaction mode for turns this syncer starts (default|plan)")
 	tmuxAPI := flag.String("tmux-api", defaultTmuxAPIEndpoint, "tmux-api base URL, used to kill a session whose thread was deleted")
 	flag.Parse()
 
@@ -85,22 +93,23 @@ func main() {
 	defer stop()
 
 	cfg := Config{
-		OSUser:         self.Username,
-		HomeDir:        self.HomeDir,
-		BaseDir:        *baseDir,
-		Endpoint:       *endpoint,
-		Interval:       *interval,
-		BearerTTL:      *ttl,
-		DryRun:         *dryRun,
-		MergeSettings:  *mergeSettings,
-		IgnorePrefixes: ParseIgnore(*ignore),
-		NotifyAddr:     *notifyAddr,
-		BridgePath:     *bridge,
-		ClaudePath:     *claudeBin,
-		Model:          *model,
-		RuntimeMode:    *runtimeMode,
-		TmuxAPI:        *tmuxAPI,
-		ProjectsRoot:   sessionio.ProjectsRoot(homeBase, self.Username),
+		OSUser:          self.Username,
+		HomeDir:         self.HomeDir,
+		BaseDir:         *baseDir,
+		Endpoint:        *endpoint,
+		Interval:        *interval,
+		BearerTTL:       *ttl,
+		DryRun:          *dryRun,
+		MergeSettings:   *mergeSettings,
+		IgnorePrefixes:  ParseIgnore(*ignore),
+		NotifyAddr:      *notifyAddr,
+		BridgePath:      *bridge,
+		ClaudePath:      *claudeBin,
+		Model:           *model,
+		RuntimeMode:     *runtimeMode,
+		InteractionMode: *interactionMode,
+		TmuxAPI:         *tmuxAPI,
+		ProjectsRoot:    sessionio.ProjectsRoot(homeBase, self.Username),
 	}
 	if err := run(ctx, cfg); err != nil {
 		log.Printf("%v", err)
@@ -138,11 +147,15 @@ type Config struct {
 	// ClaudePath is the real claude, which the claudeStock escape-hatch
 	// instance points at (decision 5).
 	ClaudePath string
-	// Model and RuntimeMode are stamped on threads this syncer creates. The
-	// bridged session's actual model is whatever the pane's claude was started
-	// with; this is what T3 displays and routes on.
+	// Model and RuntimeMode are stamped on threads this syncer creates. Model
+	// is a FALLBACK: the syncer reads the model out of the session's own
+	// transcript where it can, because stamping one value on every thread makes
+	// a Sonnet session read as an Opus one in T3's list and route on that.
 	Model       string
 	RuntimeMode string
+	// InteractionMode is T3's default/plan switch. thread.turn.start declares it
+	// required over HTTP, with no decoding default, so it is sent on every turn.
+	InteractionMode string
 	// TmuxAPI is the lobby's own API, which owns every mutation of a session.
 	TmuxAPI string
 	// ProjectsRoot is this user's ~/.claude/projects, the only place a
@@ -235,10 +248,12 @@ func run(ctx context.Context, cfg Config) error {
 		}
 	}
 
+	t3Version := T3Version(ctx)
 	if err := client.SelfTest(ctx); err != nil {
-		return fmt.Errorf("handshake self-test: %w — threads would stall; switch them to %s while this is fixed",
-			err, InstanceStock)
+		return fmt.Errorf("%w — threads would stall; switch them to %s while this is fixed",
+			selfTestError(err), InstanceStock)
 	}
+	log.Printf("handshake self-test passed against t3 %s", versionOrUnknown(t3Version))
 
 	if cfg.NotifyAddr != "" {
 		stopNotify, err := serveNotices(cfg.NotifyAddr, notices)
@@ -255,7 +270,29 @@ func run(ctx context.Context, cfg Config) error {
 
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
+	versionCheck := time.NewTicker(versionCheckInterval)
+	defer versionCheck.Stop()
 	for {
+		select {
+		case <-versionCheck.C:
+			// t3 upgrades nightly under a syncer that may have been up for days,
+			// and the handshake is the thing an upgrade can quietly change. A
+			// re-test on the version moving is the second half of the design's
+			// drift mitigation; without it the failure is silent on both sides.
+			if next := T3Version(ctx); next != t3Version && next != "" {
+				log.Printf("t3 changed from %s to %s; re-running the handshake self-test",
+					versionOrUnknown(t3Version), next)
+				t3Version = next
+				if err := client.SelfTest(ctx); err != nil {
+					log.Printf("%v — every bridged thread will stall; switch them to %s while this is fixed",
+						selfTestError(err), InstanceStock)
+				} else {
+					log.Printf("handshake self-test still passes against t3 %s", next)
+				}
+			}
+		default:
+		}
+
 		if err := reconcileOnce(ctx, reconciler, client); err != nil && !errors.Is(err, context.Canceled) {
 			// One bad pass is not a bad syncer: t3-serve restarts, the box gets
 			// busy, a dispatch races another writer. The next tick retries.
@@ -267,6 +304,22 @@ func run(ctx context.Context, cfg Config) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// versionCheckInterval is how often the t3 build is re-read. Minutes, because
+// the thing it watches for is a nightly package upgrade and the check costs a
+// subprocess.
+const versionCheckInterval = 5 * time.Minute
+
+// selfTestError wraps a failed handshake probe in the words an operator needs.
+func selfTestError(err error) error { return fmt.Errorf("handshake self-test: %w", err) }
+
+// versionOrUnknown keeps a log line legible when `t3 --version` said nothing.
+func versionOrUnknown(v string) string {
+	if v == "" {
+		return "(version unknown)"
+	}
+	return v
 }
 
 // reconcileOnce is one pass: read T3, work out the difference, close it.

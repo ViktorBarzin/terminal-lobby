@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -96,18 +97,25 @@ type protoSideDeps struct {
 	// Wait and Poll bound the wait for @claude_transcript after a resurrection.
 	// Zero takes resurrect.go's defaults.
 	Wait, Poll time.Duration
+	// AttachPoll and StatePoll are the attacher's own cadences; zero takes
+	// attach.go's defaults. Only tests set them.
+	AttachPoll, StatePoll time.Duration
+	// Ctx bounds the one part of opening that waits: a resurrection polling for
+	// @claude_transcript. Cancelling it is how a Stop pressed during those
+	// seconds is answered instead of ignored. Nil means "no deadline but the
+	// resurrector's own".
+	Ctx context.Context
 }
 
-// protoTmuxSide builds the downward half for this invocation: resolve the
-// Claude session uuid to a live tmux session, or bring one back.
+// protoRealDeps assembles the collaborators the downward half is built from,
+// from the real environment: the process's own user, the state directory, the
+// real claude.
 //
-// It stays a variable so run() can be tested against a side that fails, and so
-// the environment lookups below — the process's own user, the state directory,
-// the real claude — happen once, here, rather than inside the logic they feed.
-var protoTmuxSide = func(ctx context.Context, cfg Config, out *Encoder) (protoSide, error) {
+// It stays a variable so run() can be tested against a side that fails.
+var protoRealDeps = func() (protoSideDeps, error) {
 	self, err := user.Current()
 	if err != nil {
-		return nil, fmt.Errorf("cannot determine the current user: %w", err)
+		return protoSideDeps{}, fmt.Errorf("cannot determine the current user: %w", err)
 	}
 	deps := protoSideDeps{
 		OSUser: self.Username,
@@ -127,7 +135,7 @@ var protoTmuxSide = func(ctx context.Context, cfg Config, out *Encoder) (protoSi
 	} else {
 		deps.Claude = claude
 	}
-	return protoOpenSide(cfg, out, deps)
+	return deps, nil
 }
 
 // protoOpenSide resolves the conversation to a tmux session — creating one if
@@ -137,20 +145,54 @@ var protoTmuxSide = func(ctx context.Context, cfg Config, out *Encoder) (protoSi
 // windows), and only then consider starting one. A resurrection uses the name
 // and cwd the index remembered, because those are exactly the two facts tmux no
 // longer has once the session is gone.
-func protoOpenSide(cfg Config, out *Encoder, deps protoSideDeps) (protoSide, error) {
+//
+// adopting is the conversation a warm-up turn named, "" for every other spawn.
+// When it is set the bridge is opening a thread the syncer created for a
+// session that never stopped running, and the uuid in T3's argv is one T3
+// invented for itself — so the target is that conversation, and the invented id
+// is filed as an alias pointing at it.
+func protoOpenSide(cfg Config, out *Encoder, deps protoSideDeps, adopting string) (*Attacher, error) {
 	resolver := NewSessionResolver(deps.OSUser, deps.Tmux, deps.Bindings)
-	target, live, found, err := resolver.Resolve(cfg.ClaudeID())
+
+	wanted := cfg.ClaudeID()
+	if adopting != "" && adopting != wanted {
+		target, live, found, err := resolver.Resolve(adopting)
+		if err != nil {
+			return nil, err
+		}
+		if !live || !found {
+			return nil, fmt.Errorf(
+				"warm-up names conversation %s, which is not running here: nothing to adopt", adopting)
+		}
+		target.AliasOf = adopting
+		// The alias is what makes the SECOND spawn work. T3 keeps its invented
+		// id as the thread's resume cursor for as long as no provider session
+		// has reported another, so without this the next turn resolves nothing
+		// and resurrects a duplicate of a live conversation.
+		if deps.Bindings != nil {
+			alias := target
+			alias.ClaudeID = wanted
+			if err := deps.Bindings.Record(alias); err != nil {
+				log.Printf("adopting %s: recording the alias for %s failed: %v", adopting, wanted, err)
+			}
+		}
+		return protoAttacher(target, out, deps), nil
+	}
+
+	target, live, found, err := resolver.Resolve(wanted)
 	if err != nil {
 		return nil, err
 	}
 
 	if !live {
 		name, dir := target.TmuxName, target.CWD
+		origin := target.Origin
 		if name == "" {
 			// Nothing remembers this conversation, so it is a thread born in T3.
 			// The workspace root's own name is the closest thing to a title the
 			// bridge is given — T3 sends the directory, never the thread's title.
 			name = Slug(filepath.Base(cfg.CWD))
+			origin = sessionio.OriginT3
 		}
 		if dir == "" {
 			dir = cfg.CWD
@@ -160,17 +202,19 @@ func protoOpenSide(cfg Config, out *Encoder, deps protoSideDeps) (protoSide, err
 			Tmux:      deps.Tmux,
 			ClaudeBin: deps.Claude,
 			Bindings:  deps.Bindings,
+			ctx:       deps.Ctx,
 			wait:      deps.Wait,
 			poll:      deps.Poll,
 		}
 		target, err = r.Resurrect(ResurrectSpec{
-			ClaudeID: cfg.ClaudeID(),
+			ClaudeID: wanted,
 			// A conversation something already knows about is resumed; only one
 			// T3 has just invented is started fresh. Resuming a uuid with no
 			// transcript behind it would fail on the spot.
 			Resume:    cfg.Resume != "" || found,
 			TmuxName:  name,
 			CWD:       dir,
+			Origin:    origin,
 			MCPConfig: cfg.MCPConfig,
 			ExtraArgs: protoClaudeArgs(cfg),
 		})
@@ -179,12 +223,18 @@ func protoOpenSide(cfg Config, out *Encoder, deps protoSideDeps) (protoSide, err
 		}
 	}
 
+	return protoAttacher(target, out, deps), nil
+}
+
+func protoAttacher(target Target, out *Encoder, deps protoSideDeps) *Attacher {
 	return NewAttacher(target, AttacherDeps{
-		OSUser:  deps.OSUser,
-		Tmux:    deps.Tmux,
-		Out:     out,
-		Cursors: deps.Cursors,
-	}), nil
+		OSUser:    deps.OSUser,
+		Tmux:      deps.Tmux,
+		Out:       out,
+		Cursors:   deps.Cursors,
+		Poll:      deps.AttachPoll,
+		StatePoll: deps.StatePoll,
+	})
 }
 
 // protoClaudeArgs are the flags from T3's argv that a session the bridge
@@ -237,9 +287,16 @@ func probing() bool { return os.Getenv(ProbeEnv) != "" }
 // The order is fixed by the handshake (verified fact 2): read the initialize
 // control_request, answer it, THEN emit system/init — the session id in that
 // init becomes the thread's resume cursor, so it must be the tmux session's
-// Claude id and nothing else. Resolving that session comes after, because T3
-// holds a timeout on the initialize reply and bringing a dead session back can
-// take seconds.
+// Claude id and nothing else.
+//
+// Everything downward happens behind protoDeferredSide. Resolving a session
+// costs a walk of tmux; bringing a dead one back costs up to 45 seconds, and
+// before that work moved off this goroutine nothing read the pipe while it ran
+// — an operator pressing Stop got no answer at all. The deferred side also
+// covers the case the design has no other seam for: a spawn whose session id T3
+// invented for a thread it created over a conversation that is already running.
+// Only the warm-up turn says which conversation that is, so the bridge waits
+// for the first prompt rather than guessing and starting a second Claude.
 func run(ctx context.Context, cfg Config) error {
 	out := NewEncoder(os.Stdout)
 	loop := &protoLoop{In: NewDecoder(os.Stdin), Out: out, SessionID: cfg.ClaudeID()}
@@ -256,27 +313,22 @@ func run(ctx context.Context, cfg Config) error {
 		return nil
 	}
 
-	side, err := protoTmuxSide(ctx, cfg, out)
+	deps, err := protoRealDeps()
 	if err != nil {
-		// T3 is waiting on the turn that spawned us. Saying so in the thread is
-		// worth more than the same line in the journal, where nobody is looking.
-		if emitErr := out.Emit(protoResultError(cfg.ClaudeID(), err.Error())); emitErr != nil {
-			log.Printf("could not report %q to t3: %v", err, emitErr)
-		}
 		return err
 	}
+	side := newDeferredSide(ctx, cfg, out, deps)
+	defer side.Close()
 	loop.Handler = side
-
-	// A replay that failed is a thread missing its history, not a bridge that
-	// cannot work — the live tail is the half that matters.
-	if _, err := side.Replay(ctx); err != nil {
-		log.Printf("replay: %v", err)
-	}
 
 	served := make(chan error, 1)
 	go func() { served <- loop.Serve(pending) }()
 	followed := make(chan error, 1)
 	go func() { followed <- side.Follow(ctx) }()
+	// Opening eagerly, off the reading goroutine, so a thread nobody prompts
+	// still mirrors its session live. A conversation nothing on the box knows
+	// about is the one case this leaves alone; see protoDeferredSide.open.
+	go side.Warm()
 
 	// Neither goroutine can observe ctx while blocked on a read, so this select
 	// is what actually ends the process; the reads die with it.
@@ -295,6 +347,238 @@ func run(ctx context.Context, cfg Config) error {
 			return nil
 		}
 	}
+}
+
+// protoDeferredSide is the downward half, opened on demand.
+//
+// It exists for two reasons that turn out to be the same reason: the bridge
+// does not always know at start-up which tmux session it is for, and finding
+// out must not block the protocol.
+//
+//   - A spawn carrying --resume, or one whose id the index knows, can be opened
+//     immediately, and Warm does that on its own goroutine.
+//   - A spawn carrying a --session-id nothing on the box has heard of is
+//     AMBIGUOUS. It is either a thread born in T3 (create a session) or a thread
+//     the syncer created over a session that is already running (attach to it,
+//     and never create anything). T3 tells the bridge neither the thread id nor
+//     the conversation, so the warm-up turn is the only thing that
+//     distinguishes them — and it arrives as a prompt. Guessing "born in T3"
+//     was what started a second Claude for a live conversation.
+type protoDeferredSide struct {
+	ctx  context.Context
+	cfg  Config
+	out  *Encoder
+	deps protoSideDeps
+
+	// openMu serialises the open itself, so a Warm and a first prompt racing
+	// cannot both resolve — and, more importantly, the loser waits for the
+	// winner's answer rather than reading a half-set one.
+	openMu sync.Mutex
+
+	mu   sync.Mutex
+	att  *Attacher
+	err  error
+	done bool
+	// cancelOpen abandons an open that is waiting on a resurrection's stamp, so
+	// a Stop pressed during those 45 seconds is not simply ignored.
+	cancelOpen context.CancelFunc
+	// cancelFollow ends the mirror on the attacher Follow is currently running,
+	// so a replacement is picked up rather than ignored.
+	cancelFollow context.CancelFunc
+
+	// installs hands Follow the current attacher. Capacity one, latest wins: a
+	// mirror that has not started yet should start on the newest target rather
+	// than work through a queue of dead ones.
+	installs chan *Attacher
+}
+
+var _ protoSide = (*protoDeferredSide)(nil)
+
+func newDeferredSide(ctx context.Context, cfg Config, out *Encoder, deps protoSideDeps) *protoDeferredSide {
+	return &protoDeferredSide{ctx: ctx, cfg: cfg, out: out, deps: deps, installs: make(chan *Attacher, 1)}
+}
+
+// Warm opens the side when the conversation can be identified without a prompt.
+// A conversation nothing knows about is left for the first prompt to resolve.
+func (s *protoDeferredSide) Warm() {
+	if s.cfg.Resume == "" && !s.known() {
+		return
+	}
+	if _, err := s.open(""); err != nil {
+		log.Printf("opening the session for %s: %v", s.cfg.ClaudeID(), err)
+	}
+}
+
+// known reports whether the durable index has ever heard of this conversation.
+func (s *protoDeferredSide) known() bool {
+	if s.deps.Bindings == nil {
+		return false
+	}
+	_, ok, err := s.deps.Bindings.Lookup(s.cfg.ClaudeID())
+	if err != nil {
+		log.Printf("reading the binding index: %v", err)
+	}
+	return ok
+}
+
+// open resolves the target once and builds the attacher. Later calls return the
+// same one, so an eager Warm and a first prompt cannot open two sessions.
+func (s *protoDeferredSide) open(adopting string) (*Attacher, error) {
+	s.openMu.Lock()
+	defer s.openMu.Unlock()
+
+	s.mu.Lock()
+	if s.done {
+		att, err := s.att, s.err
+		s.mu.Unlock()
+		return att, err
+	}
+	openCtx, cancel := context.WithCancel(s.ctx)
+	s.cancelOpen = cancel
+	s.mu.Unlock()
+	defer cancel()
+
+	deps := s.deps
+	deps.Ctx = openCtx
+	att, err := protoOpenSide(s.cfg, s.out, deps, adopting)
+
+	s.mu.Lock()
+	// A FAILED open does not latch. The reasons it fails are mostly transient —
+	// tmux busy, session-events not up yet to stamp the transcript — and a
+	// bridge that answered every later prompt with the first failure would need
+	// T3 to reap it before the thread could work again.
+	s.att, s.err, s.done, s.cancelOpen = att, err, err == nil, nil
+	cancelFollow := s.cancelFollow
+	s.mu.Unlock()
+
+	if err != nil {
+		return nil, err
+	}
+	// Latest wins: drop a target Follow has not picked up yet.
+	select {
+	case <-s.installs:
+	default:
+	}
+	s.installs <- att
+	if cancelFollow != nil {
+		cancelFollow() // stop mirroring the session this one replaces
+	}
+	return att, nil
+}
+
+// Close abandons an open still in flight when the process is going away.
+func (s *protoDeferredSide) Close() {
+	s.mu.Lock()
+	cancel := s.cancelOpen
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// attacher returns the open one, or nil when nothing has opened yet.
+func (s *protoDeferredSide) attacher() *Attacher {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.att
+}
+
+// Send opens the side if it is not open yet, then pastes.
+//
+// A paste that fails because the session is GONE re-opens once and retries.
+// Resurrection used to live only in the start-up path, so a session that died
+// under a bridge T3 still had — and T3 does keep the process, it routes the
+// next turn to it — turned every later prompt into an error in the thread with
+// nothing brought back. The retry is a create, never a destroy: the "the bridge
+// never destroys a session" rule is untouched.
+func (s *protoDeferredSide) Send(text string) error {
+	att, err := s.open(SentinelConversation(text))
+	if err != nil {
+		return err
+	}
+	sendErr := att.Send(text)
+	if sendErr == nil || !s.sessionGone(att) {
+		return sendErr
+	}
+	log.Printf("session %s is gone; bringing it back and retrying the prompt", att.Target().TmuxName)
+	again, err := s.reopen()
+	if err != nil {
+		return fmt.Errorf("%v; and bringing the session back failed: %w", sendErr, err)
+	}
+	return again.Send(text)
+}
+
+// Interrupt stops the turn. With nothing open there is nothing to Ctrl-C, but
+// an open in flight is abandoned — a Stop pressed while a resurrection waits
+// for its stamp must not sit unanswered for 45 seconds.
+func (s *protoDeferredSide) Interrupt() error {
+	if att := s.attacher(); att != nil {
+		return att.Interrupt()
+	}
+	s.Close()
+	return nil
+}
+
+// Replay is part of protoSide; the deferred side replays inside Follow, as soon
+// as it has a target, so this only covers a side that is already open.
+func (s *protoDeferredSide) Replay(ctx context.Context) (int64, error) {
+	att := s.attacher()
+	if att == nil {
+		return 0, nil
+	}
+	return att.Replay(ctx)
+}
+
+// Follow mirrors whichever session the side currently points at, and follows a
+// replacement when a resurrection installs one.
+func (s *protoDeferredSide) Follow(ctx context.Context) error {
+	for {
+		var att *Attacher
+		select {
+		case <-ctx.Done():
+			return nil
+		case att = <-s.installs:
+		}
+
+		sub, cancel := context.WithCancel(ctx)
+		s.mu.Lock()
+		s.cancelFollow = cancel
+		s.mu.Unlock()
+
+		// A replay that failed is a thread missing its history, not a bridge
+		// that cannot work — the live tail is the half that matters.
+		if _, err := att.Replay(sub); err != nil {
+			log.Printf("replay: %v", err)
+		}
+		err := att.Follow(sub)
+		cancel()
+
+		s.mu.Lock()
+		s.cancelFollow = nil
+		s.mu.Unlock()
+
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		// sub was cancelled by an install: loop and mirror the new session.
+	}
+}
+
+// sessionGone reports whether the attacher's tmux session has disappeared,
+// which is the one send failure worth retrying.
+func (s *protoDeferredSide) sessionGone(att *Attacher) bool {
+	return !s.deps.Tmux.HasSession(s.deps.OSUser, att.Target().TmuxName)
+}
+
+// reopen resolves and resurrects again, replacing the attacher.
+func (s *protoDeferredSide) reopen() (*Attacher, error) {
+	s.mu.Lock()
+	s.done, s.att, s.err = false, nil, nil
+	s.mu.Unlock()
+	return s.open("")
 }
 
 // Config is the argv T3 spawned this bridge with, reduced to what the bridge

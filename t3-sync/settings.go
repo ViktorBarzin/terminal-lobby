@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -47,10 +48,14 @@ const (
 	DriverClaude = "claudeAgent"
 )
 
-// stockDisplayName labels the escape hatch in T3's provider picker. Without it
-// the two instances are indistinguishable in the UI, and the whole point of
-// decision 5 is that a human can reach for the second one in a hurry.
-const stockDisplayName = "Claude (stock)"
+// The two instances' names in T3's provider picker. Without them both entries
+// read simply as Claude, and the one that is actually the bridge is the
+// unlabelled default — which is the wrong way round for decision 5, whose whole
+// point is that a human can tell them apart and switch in a hurry.
+const (
+	bridgedDisplayName = "Claude (tmux)"
+	stockDisplayName   = "Claude (stock)"
+)
 
 // InstanceConfig is the per-instance provider config the merge writes.
 //
@@ -139,6 +144,12 @@ func (m SettingsMerge) Verify() error {
 		if err != nil {
 			return err
 		}
+		if got == "" {
+			// An empty path is not a match even against an empty want: it is an
+			// instance T3 cannot spawn, and reporting it healthy is how the
+			// escape hatch ends up broken in the one situation it exists for.
+			return fmt.Errorf("providerInstances.%s.config.binaryPath is empty", want.id)
+		}
 		if got != want.binary {
 			return fmt.Errorf("providerInstances.%s.config.binaryPath = %q, want %q", want.id, got, want.binary)
 		}
@@ -176,7 +187,7 @@ func (m SettingsMerge) load() (doc map[string]json.RawMessage, existed bool, err
 // loss. They only do that here because they are never decoded.
 func (m SettingsMerge) mergeInto(doc map[string]json.RawMessage) {
 	instances := childObject(doc, "providerInstances")
-	m.mergeInstance(instances, InstanceBridged, m.BridgePath, "")
+	m.mergeInstance(instances, InstanceBridged, m.BridgePath, bridgedDisplayName)
 	m.mergeInstance(instances, InstanceStock, m.ClaudePath, stockDisplayName)
 	doc["providerInstances"] = mustMarshal(instances)
 }
@@ -184,6 +195,13 @@ func (m SettingsMerge) mergeInto(doc map[string]json.RawMessage) {
 // mergeInstance sets one instance's driver and binaryPath, leaving every other
 // key on the instance and in its config untouched. displayName is only written
 // when the key is absent, so a name the operator chose survives.
+//
+// An EMPTY binaryPath is not written. There is one way to arrive here with one
+// — claude is not on the unit's PATH at start-up, after a failed self-update or
+// a reboot that has not populated ~/.local/bin yet — and writing "" then would
+// blank a good path on the escape hatch at exactly the moment the bridge is
+// most likely to be the thing that broke. Leaving the stored value alone is
+// both safer and what findClaude's own comment says happens.
 func (m SettingsMerge) mergeInstance(instances map[string]json.RawMessage, id, binaryPath, displayName string) {
 	inst := childObject(instances, id)
 	inst["driver"] = mustMarshal(DriverClaude)
@@ -193,7 +211,13 @@ func (m SettingsMerge) mergeInstance(instances map[string]json.RawMessage, id, b
 		}
 	}
 	cfg := childObject(inst, "config")
-	cfg["binaryPath"] = mustMarshal(binaryPath)
+	if binaryPath != "" {
+		cfg["binaryPath"] = mustMarshal(binaryPath)
+	} else if _, ok := cfg["binaryPath"]; !ok {
+		log.Printf("no binary for providerInstances.%s: leaving its binaryPath unset", id)
+	} else {
+		log.Printf("no binary for providerInstances.%s: leaving its existing binaryPath alone", id)
+	}
 	inst["config"] = mustMarshal(cfg)
 	instances[id] = mustMarshal(inst)
 }

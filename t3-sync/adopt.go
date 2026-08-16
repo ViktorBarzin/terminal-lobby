@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"terminal-lobby/sessionio"
 )
@@ -117,38 +117,14 @@ func (a *Adopter) Candidates() ([]Candidate, error) {
 // a NEW window in that session would start: `claude` is routinely run from a
 // subdirectory, and filing the thread by the wrong one puts it in the wrong T3
 // project (decision 8). tmux's answer is the fallback for a transcript that has
-// not been written to yet.
+// not been written to yet. The bridge applies the same rule on its side
+// (t3-bridge/attach.go resolveCWD), from the same shared reader, so the two
+// writers of one index cannot disagree about where a session lives.
 func candidateCWD(transcript, tmuxDir string) string {
-	if cwd := transcriptCWD(transcript); cwd != "" {
+	if cwd := sessionio.TranscriptCWD(transcript); cwd != "" {
 		return cwd
 	}
 	return tmuxDir
-}
-
-// transcriptFirstLines bounds how far into a transcript the cwd is looked for.
-// It is on the first line of every transcript Claude Code writes; a handful of
-// lines of slack covers a leading record type that carries none, and stops this
-// from reading a 2.5 MB file once per session per tick.
-const transcriptFirstLines = 16
-
-// transcriptCWD reads the working directory out of a transcript's opening
-// records, or "" when it cannot.
-func transcriptCWD(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for i := 0; i < transcriptFirstLines && sc.Scan(); i++ {
-		rec, ok := sessionio.DecodeRecord(sc.Bytes())
-		if ok && rec.CWD != "" {
-			return rec.CWD
-		}
-	}
-	return ""
 }
 
 // Adopt files a candidate under a T3 workspace, creates its thread, records the
@@ -180,7 +156,7 @@ func (a *Adopter) Adopt(ctx context.Context, c Candidate) (string, error) {
 		Title:     c.TmuxName,
 		ModelSelection: ModelSelection{
 			InstanceID: InstanceBridged,
-			Model:      a.Cfg.Model,
+			Model:      a.model(c),
 		},
 		RuntimeMode: a.Cfg.RuntimeMode,
 		// Both are NullOr rather than optional in T3's schema, so the keys are
@@ -211,33 +187,71 @@ func (a *Adopter) Adopt(ctx context.Context, c Candidate) (string, error) {
 		return "", fmt.Errorf("adopt %s: recording the binding: %w", c.TmuxName, err)
 	}
 
+	if err := a.WarmUp(ctx, threadID, c.ClaudeID); err != nil {
+		// The thread exists and is bound; only the warm-up failed. The binding
+		// carries no WarmedAt, so the next pass retries it rather than treating
+		// a bound thread as a finished one.
+		return threadID, fmt.Errorf("adopt %s: %w", c.TmuxName, err)
+	}
+	return threadID, nil
+}
+
+// WarmUp dispatches the sentinel turn that makes T3 spawn a bridge for a thread
+// (decision 11), and records that it landed.
+//
+// The sentinel NAMES THE CONVERSATION. Adoption creates a thread for a session
+// that is already running, and T3 mints the thread's provider session id
+// itself — no dispatchable command seeds one, and the snapshot does not project
+// it — so the bridge is spawned with a uuid nothing on the box has heard of.
+// The warm-up is the only message that reaches it from this side, so it is
+// where the conversation's real uuid goes; without it the bridge reads the
+// spawn as a thread born in T3 and starts a second Claude for a conversation
+// that never stopped running.
+func (a *Adopter) WarmUp(ctx context.Context, threadID, claudeID string) error {
 	messageID, err := newUUID()
 	if err != nil {
-		return "", fmt.Errorf("adopt %s: %w", c.TmuxName, err)
+		return fmt.Errorf("warm-up turn: %w", err)
 	}
 	turn, err := json.Marshal(turnStart{
 		ThreadID: threadID,
 		Message: turnMessage{
 			MessageID: messageID,
 			Role:      "user",
-			Text:      SentinelPrompt,
+			Text:      SentinelFor(claudeID),
 			// Present and empty: T3's schema declares an array, and a nil slice
 			// would marshal to null.
 			Attachments: []json.RawMessage{},
 		},
-		RuntimeMode: a.Cfg.RuntimeMode,
+		RuntimeMode:     a.Cfg.RuntimeMode,
+		InteractionMode: a.Cfg.InteractionMode,
 	})
 	if err != nil {
-		return "", fmt.Errorf("adopt %s: %w", c.TmuxName, err)
+		return fmt.Errorf("warm-up turn: %w", err)
 	}
 	if _, err := a.Client.Dispatch(ctx, VerbTurnStart, turn); err != nil {
-		// The thread exists and is bound; only the warm-up failed. Saying so
-		// leaves the retry to the next pass, which finds the thread already
-		// there and does nothing — the cost is a thread that stays empty until
-		// someone types in it.
-		return threadID, fmt.Errorf("adopt %s: warm-up turn: %w", c.TmuxName, err)
+		return fmt.Errorf("warm-up turn: %w", err)
 	}
-	return threadID, nil
+	if err := a.Bindings.Merge(claudeID, func(b sessionio.Binding) sessionio.Binding {
+		b.WarmedAt = time.Now().UTC()
+		return b
+	}); err != nil {
+		log.Printf("warm-up for thread %s landed but could not be recorded: %v", threadID, err)
+	}
+	return nil
+}
+
+// model is what the thread is stamped with.
+//
+// T3 requires a model on thread.create and routes and displays on it, and the
+// bridge cannot change the pane's — so the honest answer is the one the
+// session's own transcript gives, and the configured value is the fallback for
+// a session that has not answered yet. Stamping the flag on every thread made a
+// Sonnet session read as an Opus one in T3's list.
+func (a *Adopter) model(c Candidate) string {
+	if m := sessionio.TranscriptModel(c.Transcript); m != "" {
+		return m
+	}
+	return a.Cfg.Model
 }
 
 // threadCreate is the thread.create payload (T3's ThreadCreateCommand, minus
@@ -260,10 +274,20 @@ type projectCreate struct {
 }
 
 // turnStart is the thread.turn.start payload.
+//
+// runtimeMode and interactionMode are both REQUIRED and both carry no
+// omitempty, because the HTTP route decodes ClientThreadTurnStartCommand rather
+// than the internal ThreadTurnStartCommand: the internal one gives each of them
+// a decoding default and the client-facing one declares them plainly
+// (t3 v0.0.34-nightly.20260815.1098). A payload missing interactionMode comes
+// back HTTP 400 with an empty body and nothing logged server-side, which is
+// what silently left every adopted thread empty — the warm-up never ran, so
+// T3 never spawned a bridge, so no replay ever happened.
 type turnStart struct {
-	ThreadID    string      `json:"threadId"`
-	Message     turnMessage `json:"message"`
-	RuntimeMode string      `json:"runtimeMode,omitempty"`
+	ThreadID        string      `json:"threadId"`
+	Message         turnMessage `json:"message"`
+	RuntimeMode     string      `json:"runtimeMode"`
+	InteractionMode string      `json:"interactionMode"`
 }
 
 // turnMessage is the user message a turn carries.
@@ -382,3 +406,16 @@ func (a *Adopter) createProject(ctx context.Context, root string) (string, error
 // and this one string is not worth a third. CONTRACT.md pins it, and
 // TestSentinelMatchesTheBridge is what keeps them from drifting.
 const SentinelPrompt = "[terminal-lobby] adopting this session — mirroring its transcript into this thread."
+
+// sentinelConversationPrefix introduces the uuid the warm-up is adopting. The
+// bridge parses it back out (t3-bridge/attach.go SentinelConversation); the two
+// spellings are pinned to each other by TestSentinelMatchesTheBridge.
+const sentinelConversationPrefix = "[conversation:"
+
+// SentinelFor is the warm-up prompt for one conversation.
+func SentinelFor(claudeID string) string {
+	if claudeID == "" {
+		return SentinelPrompt
+	}
+	return SentinelPrompt + "\n\n" + sentinelConversationPrefix + claudeID + "]"
+}

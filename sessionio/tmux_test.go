@@ -267,3 +267,95 @@ func TestHasSessionDistinguishesMissingFromUnstamped(t *testing.T) {
 		t.Fatal("a session that does not exist reads as live")
 	}
 }
+
+// tmux resolves an ABSENT session name by unambiguous prefix match, so every
+// verb that takes a bare `-t <name>` lands on a stranger the moment the name it
+// was given has died and one sibling shares its prefix. That state is
+// manufactured routinely: a resurrection that finds `agent` taken creates
+// `agent-2`, and `agent` is then free to die.
+//
+// Measured on tmux 3.4: with only `t3e2e-sib-2` alive, `send-keys -t t3e2e-sib`
+// exits 0 and the keys arrive in `t3e2e-sib-2`; `kill-session -t t3e2e-sib`
+// kills it. Every verb below must fail closed instead.
+func TestVerbsRefuseAPrefixMatchOnAnAbsentSession(t *testing.T) {
+	in, osUser, sock := scratchServer(t)
+	if err := in.NewSession(NewSessionSpec{
+		OSUser: osUser, Name: "t3e2e-sib-2", Command: []string{"sh"},
+	}); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	const absent = "t3e2e-sib" // a prefix of the live one, and not a session
+
+	if in.HasSession(osUser, absent) {
+		t.Fatalf("HasSession(%q) answered yes for a session that does not exist", absent)
+	}
+	if err := in.Prompt(osUser, absent, "PROMPT-FOR-A-DIFFERENT-THREAD"); err == nil {
+		t.Errorf("Prompt(%q) succeeded against an absent session", absent)
+	}
+	if err := in.Cancel(osUser, absent); err == nil {
+		t.Errorf("Cancel(%q) succeeded against an absent session", absent)
+	}
+	if err := in.SetOption(osUser, absent, OptionThread, "wrong-thread"); err == nil {
+		t.Errorf("SetOption(%q) succeeded against an absent session", absent)
+	}
+	if err := in.KillSession(osUser, absent); err == nil {
+		t.Errorf("KillSession(%q) succeeded against an absent session", absent)
+	}
+
+	// The live sibling must be untouched: still there, unstamped, and with
+	// nothing typed into its pane.
+	if !in.HasSession(osUser, "t3e2e-sib-2") {
+		t.Fatal("the prefix-matching verbs killed the live sibling")
+	}
+	if v, ok := in.Option(osUser, "t3e2e-sib-2", OptionThread); ok && v != "" {
+		t.Errorf("@t3_thread on the sibling = %q; a stray SetOption landed on it", v)
+	}
+	out, err := exec.Command("tmux", "-L", sock, "capture-pane", "-p", "-t", "t3e2e-sib-2").Output()
+	if err != nil {
+		t.Fatalf("capture-pane: %v", err)
+	}
+	if strings.Contains(string(out), "PROMPT-FOR-A-DIFFERENT-THREAD") {
+		t.Errorf("a prompt for %q was pasted into the sibling's pane:\n%s", absent, out)
+	}
+}
+
+// The other half of the same rule: an EXACT name must still work for every
+// verb, or fixing the prefix hole would just break the bridge.
+func TestVerbsStillWorkOnAnExactName(t *testing.T) {
+	in, osUser, sock := scratchServer(t)
+	if err := in.NewSession(NewSessionSpec{
+		OSUser: osUser, Name: "t3e2e-exact-2", Command: []string{"sh"},
+	}); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	if err := in.Prompt(osUser, "t3e2e-exact-2", "echo exact-marker"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if err := in.SetOption(osUser, "t3e2e-exact-2", OptionThread, "thread-9"); err != nil {
+		t.Fatalf("SetOption: %v", err)
+	}
+	if v, ok := in.Option(osUser, "t3e2e-exact-2", OptionThread); !ok || v != "thread-9" {
+		t.Fatalf("@t3_thread = (%q, %v), want thread-9", v, ok)
+	}
+	if err := in.Cancel(osUser, "t3e2e-exact-2"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	out, err := exec.Command("tmux", "-L", sock, "capture-pane", "-p", "-t", "t3e2e-exact-2").Output()
+	if err != nil {
+		t.Fatalf("capture-pane: %v", err)
+	}
+	if !strings.Contains(string(out), "exact-marker") {
+		t.Fatalf("the prompt never reached the pane:\n%s", out)
+	}
+	if err := in.KillSession(osUser, "t3e2e-exact-2"); err != nil {
+		t.Fatalf("KillSession: %v", err)
+	}
+	if in.HasSession(osUser, "t3e2e-exact-2") {
+		t.Fatal("KillSession left the session alive")
+	}
+}

@@ -22,12 +22,25 @@ import (
 // no transcript and no T3 anywhere.
 type protoFakeHandler struct {
 	sent       []string
+	sentinels  int
 	interrupts int
 	sendErr    error
 	intErr     error
+	// swallowSentinel stands in for what every real handler does with the
+	// warm-up turn: recognise it, replay, close the turn, and let no pane see it.
+	swallowSentinel bool
+	out             *Encoder
+	sessionID       string
 }
 
 func (h *protoFakeHandler) Send(text string) error {
+	if h.swallowSentinel && IsSentinel(text) {
+		h.sentinels++
+		if h.out != nil {
+			return h.out.Emit(protoResult(h.sessionID, "end_turn"))
+		}
+		return nil
+	}
 	h.sent = append(h.sent, text)
 	return h.sendErr
 }
@@ -385,18 +398,25 @@ func TestServeDeliversPendingFramesFirst(t *testing.T) {
 	}
 }
 
-// The syncer's warm-up turn exists to make T3 spawn the bridge. Pasting it
-// would put a stray line into somebody's live session.
-func TestServeSwallowsTheSentinel(t *testing.T) {
-	h := &protoFakeHandler{}
+// The syncer's warm-up turn goes to the tmux side like any other prompt, and
+// the tmux side is where it stops: it is the frame that says WHICH conversation
+// an adoption is adopting, so nothing above the attacher can act on it. Every
+// handler swallows it before a pane sees it — TestSendSwallowsTheSentinel is
+// the other half of this rule.
+func TestServeHandsTheSentinelToTheTmuxSide(t *testing.T) {
+	h := &protoFakeHandler{swallowSentinel: true}
 	loop, out := protoLoopOver(t, h,
 		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%s}}`, mustJSON(t, SentinelPrompt)),
 	)
+	h.out, h.sessionID = loop.Out, loop.SessionID
 	if err := loop.Serve(nil); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 	if len(h.sent) != 0 {
 		t.Fatalf("sentinel reached the pane: %q", h.sent)
+	}
+	if h.sentinels != 1 {
+		t.Fatalf("the tmux side saw %d sentinels, want 1", h.sentinels)
 	}
 	// It still has to close the turn it opened: nothing in the transcript will
 	// ever settle a turn that never reached Claude.
