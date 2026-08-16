@@ -1,6 +1,6 @@
 # Restore: diff-first rows and project memory — design
 
-**Status:** approved 2026-08-16, executing
+**Status:** done — landed and deployed 2026-08-16
 **Date:** 2026-08-16
 **Author:** Viktor (decisions) + Claude (research, drafting)
 **Repos touched:** `terminal-lobby` (`tmux-api`, `frontend-v2`)
@@ -37,8 +37,8 @@ find again.
 
 ## Where assignment actually lives
 
-Worth stating plainly, because two stores hold overlapping information and the
-distinction decides the whole design.
+Worth stating plainly, because two stores hold overlapping information and
+which one is authoritative decides the design.
 
 | Store | Path | Holds | Prunes dead sessions? |
 |---|---|---|---|
@@ -53,9 +53,8 @@ live session the layout has never placed. On the live devvm today the layout's
 not copies of each other and the layout is the fuller record.
 
 That the layout keeps references to dead sessions is what makes an OOM restore
-regroup correctly today. The gap is narrower than "restore forgets projects": it
-is specifically the assignment the layout is asked to forget, plus names the
-layout has never seen.
+regroup correctly today. The gap is specific: the assignment the
+layout is asked to forget, plus names the layout has never seen.
 
 `CONTEXT.md` describes Assignment as owned by the global project store. That
 matched the intent of the shared-projects migration; the rendering path settled
@@ -88,6 +87,32 @@ the project it is a part of now.
 Decision 5 follows from 4: if the destination is "where it belongs now", the
 answer is derived from live lobby state, and `tmux-persist` never needs to know
 about projects.
+
+
+### As built
+
+All eight decisions shipped as designed, in `terminal-lobby` (`4545fae`,
+`28f7972`), deployed the same day to both tiers.
+
+Two things the design did not anticipate, both found while building:
+
+- **The `show` call had to move ahead of the restore.** Placement needs each
+  row's target name, and resolving the snapshot afterwards reports every row as
+  live — the `-HHMM` targets are gone by then. `restoreFromSelection` now reads
+  the snapshot first and restores second, which is also the view the picker
+  showed.
+- **The client's layout write-grace hid the placement.** v2 holds its own layout
+  for 4 s after a local change and warns when the server's copy differs. A
+  restore inside that window kept the old arrangement on screen and could warn
+  about a change the same click had asked for, so `restore()` now clears the
+  grace before refreshing.
+
+Verified on the live devvm: a throwaway session grouped into `code`, killed
+through the API — which wrote `qa-projmem → code` into the new memory and
+dropped the layout reference as before — then restored through the picker's own
+endpoint and rendered back inside `code`. The renamed path is covered by unit
+tests rather than that live run: reproducing it needs a live session running a
+different conversation under the same name.
 
 ---
 
@@ -132,8 +157,8 @@ flowchart TB
 ```
 
 The memory has exactly one writer (`killSession`) and one reader (the resolver),
-so it cannot drift with normal use: while a session is alive or merely dead, the
-layout answers first and the memory is never consulted.
+so it does not drift during normal use: while a session is alive or merely dead,
+the layout answers first and the memory is never consulted.
 
 ---
 
