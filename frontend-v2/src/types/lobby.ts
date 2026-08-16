@@ -70,7 +70,18 @@ export interface Layout {
 /** GET /api/whoami. */
 export interface Whoami {
   authentik: string;
+  /** The OS user this tab ACTS AS — the act-as target when switched, else the
+   *  caller. Everything the lobby shows belongs to them. */
   osUser: string;
+  /** The actual caller, present ONLY while acting as someone else. Its presence
+   *  is the SPA's "am I switched?" test, so the chip and the tinted frame never
+   *  have to trust the tab's own URL. */
+  realUser?: string;
+  /** Whether the CALLER administers this box (roster.yaml `tier: admin`, via
+   *  /etc/ttyd-admins). Gates whether Settings offers the picker at all; the
+   *  server refuses regardless, this only avoids showing a control that could
+   *  never work. */
+  admin?: boolean;
 }
 
 export const LAYOUT_VERSION = 1;

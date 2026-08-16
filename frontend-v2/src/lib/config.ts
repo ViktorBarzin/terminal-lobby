@@ -29,6 +29,55 @@ function readApiBase(): string {
 export const API_BASE = readApiBase();
 
 /**
+ * `?as=<osUser>` — the admin act-as switch (docs/plans/2026-08-16-admin-act-as-
+ * user-design.md). Present, a tab acts as that user throughout: sessions,
+ * layout, projects, prefs, files and gallery all belong to them.
+ *
+ * A query parameter rather than a header because two of the surfaces it must
+ * reach are not fetch() calls — file previews and gallery thumbnails are
+ * <img src> — and a parameter is the only form all of them can carry. On the
+ * URL rather than in memory so it survives a reload and stays visible in the
+ * address bar; per tab, so one tab can be someone else while another stays you.
+ *
+ * The server decides whether it is allowed; this is only how the ask travels.
+ * Push subscriptions deliberately do NOT carry it — pwa/push.ts spells its
+ * paths out verbatim rather than going through apiUrl, which is what keeps
+ * this browser from being enrolled as one of the target's devices.
+ */
+const ACT_AS_RE = /^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,31}$/;
+
+/** Pure half of the reader, so it is testable without touching the location. */
+export function readActAsFrom(search: string): string {
+  try {
+    const v = new URLSearchParams(search).get("as") ?? "";
+    // Matches the server's own charset (authuser.userRe), including its refusal
+    // of a leading dash. The server re-checks regardless; dropping it here just
+    // keeps a hand-edited URL from putting junk on every request.
+    return ACT_AS_RE.test(v) ? v : "";
+  } catch {
+    return "";
+  }
+}
+
+function readActAs(): string {
+  if (typeof window === "undefined") return "";
+  return readActAsFrom(window.location.search);
+}
+
+export const ACT_AS = readActAs();
+
+/** Append the act-as target to a backend URL. Inert when not switched. */
+export function appendActAs(url: string, actAs: string): string {
+  if (!actAs) return url;
+  return url + (url.includes("?") ? "&" : "?") + "as=" + encodeURIComponent(actAs);
+}
+
+/** Config-bound `appendActAs`, applied by every builder below. */
+function withActAs(url: string): string {
+  return appendActAs(url, ACT_AS);
+}
+
+/**
  * The tmux-api prefix. Every lobby data call built with `apiUrl` lives under it.
  * The PROD ingress routes `PathPrefix /api/sessions/` → tmux-api and STRIPS the
  * whole prefix, so tmux-api serves /whoami, /sessions, /layout, /prefs, … at its
@@ -45,7 +94,7 @@ export function eventsUrl(session: string, lastEventId: number): string {
   // EventSource's native header only survives within one instance; because we
   // recreate the source on every manual reconnect, we carry the cursor in the
   // query so a resumed connection replays only events with id > lastEventId.
-  return lastEventId > 0 ? `${u}?lastEventId=${lastEventId}` : u;
+  return withActAs(lastEventId > 0 ? `${u}?lastEventId=${lastEventId}` : u);
 }
 
 /**
@@ -67,19 +116,19 @@ export function permissionUrl(reqId: string): string {
 /** POST target to inject a prompt into the session's Claude (session-events).
  *  Body: {text}. 204 on success, 409 if a turn is already running. */
 export function promptUrl(session: string): string {
-  return `${API_BASE}/prompt/${encodeURIComponent(session)}`;
+  return withActAs(`${API_BASE}/prompt/${encodeURIComponent(session)}`);
 }
 
 /** POST target to cancel/interrupt the running turn (session-events). No body. */
 export function cancelUrl(session: string): string {
-  return `${API_BASE}/cancel/${encodeURIComponent(session)}`;
+  return withActAs(`${API_BASE}/cancel/${encodeURIComponent(session)}`);
 }
 
 /** Build a tmux-api URL under the /api/sessions prefix (e.g. apiUrl("/sessions")
  *  → "/api/sessions/sessions"; apiUrl("/whoami") → "/api/sessions/whoami"). */
 export function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE}${TMUX_API_PREFIX}${p}`;
+  return withActAs(`${API_BASE}${TMUX_API_PREFIX}${p}`);
 }
 
 /**
@@ -95,7 +144,7 @@ export const CLIPBOARD_PREFIX = "/clipboard";
 /** Build a clipboard-upload URL under the /clipboard prefix. */
 export function clipboardUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE}${CLIPBOARD_PREFIX}${p}`;
+  return withActAs(`${API_BASE}${CLIPBOARD_PREFIX}${p}`);
 }
 
 /** GET target listing the caller's stored images for one session (newest-first). */
@@ -125,14 +174,18 @@ export const FILE_API_PREFIX = "/files";
  *  home; the server enforces the boundary + a 10MB cap). Doubles as an <img>
  *  src for image previews. */
 export function fileReadUrl(path: string): string {
-  return `${API_BASE}${FILE_API_PREFIX}/read?path=${encodeURIComponent(path)}`;
+  return withActAs(
+    `${API_BASE}${FILE_API_PREFIX}/read?path=${encodeURIComponent(path)}`,
+  );
 }
 
 /** GET target listing a directory's entries (dirs first). `all` includes
  *  dotfiles. */
 export function fileListUrl(dir: string, all = false): string {
   const a = all ? "&all=1" : "";
-  return `${API_BASE}${FILE_API_PREFIX}/list?dir=${encodeURIComponent(dir)}${a}`;
+  return withActAs(
+    `${API_BASE}${FILE_API_PREFIX}/list?dir=${encodeURIComponent(dir)}${a}`,
+  );
 }
 
 /** POST target writing one file (roadmap pillar #6 editor). Body: JSON
@@ -140,7 +193,7 @@ export function fileListUrl(dir: string, all = false): string {
  *  content at 10MB, and replies 204. The /files prefix is verbatim (the ingress
  *  does not strip it), mirroring fileReadUrl / fileListUrl. */
 export function fileWriteUrl(): string {
-  return `${API_BASE}${FILE_API_PREFIX}/write`;
+  return withActAs(`${API_BASE}${FILE_API_PREFIX}/write`);
 }
 
 /** The tmux-api prefs endpoint (roamed settings). Whole-doc GET/PUT. */

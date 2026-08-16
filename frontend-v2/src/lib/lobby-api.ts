@@ -96,6 +96,25 @@ export function whoami(): Promise<Whoami> {
   return json<Whoami>("/whoami", { cache: "no-store" });
 }
 
+/**
+ * GET /api/users → every mapped OS user, sorted. Already served for the share
+ * and add-member pickers; the Settings act-as picker is a third reader.
+ * Degrades to an empty list, which simply leaves the picker with nothing to
+ * offer rather than breaking Settings.
+ *
+ * Deliberately NOT part of the injectable LobbyApi surface: only the Settings
+ * picker reads it, from the concrete client, so adding it to the interface
+ * would mean a stub in every store fake for a call none of them make.
+ */
+export async function listUsers(): Promise<string[]> {
+  try {
+    const arr = await json<string[]>("/users", { cache: "no-store" });
+    return Array.isArray(arr) ? arr.filter((u) => typeof u === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 /** GET /api/sessions → own + foreign sessions. */
 export async function listSessions(): Promise<Session[]> {
   const arr = await json<Session[]>("/sessions", { cache: "no-store" });
