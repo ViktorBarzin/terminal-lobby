@@ -1,7 +1,8 @@
 /**
  * Shared event types — mirror the Go wire contract EXACTLY.
  *
- * Source of truth: session-events/event.go (`type Event struct`) — all of it.
+ * Source of truth: sessionio/event.go (`type Event struct`) — all of it. It
+ * moved out of session-events into the shared sessionio package.
  * This file used to cite a second source, the web-mediated permission broker;
  * 575d4f5 deleted that broker, and the file it lived in. event.go still
  * declares the permission_request / permission_resolved kinds, so the union
