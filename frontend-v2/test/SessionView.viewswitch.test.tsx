@@ -129,10 +129,15 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(e.defaultPrevented).toBe(false);
   });
 
-  it("still toggles on Ctrl+J when no overlay is open", () => {
+  it("leaves Ctrl+J to the scratch-shell dock, as on the vanilla page", () => {
+    // Ctrl/Cmd+J opens a shell — that is what it has always done here, and the
+    // rewrite had quietly repurposed it for the view toggle. The toggle keeps
+    // the [Text|Terminal] control and window.__tlToggleView; only the chord
+    // moved.
     const { container } = render(() => (
       <SessionView session="qa-vs" overlayOpen={() => false} />
     ));
+    const before = mode(container);
     const e = new KeyboardEvent("keydown", {
       key: "j",
       ctrlKey: true,
@@ -141,8 +146,12 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     });
     window.dispatchEvent(e);
 
-    expect(mode(container)).toBe("text");
-    expect(e.defaultPrevented).toBe(true);
+    expect(mode(container)).toBe(before);
+    expect(e.defaultPrevented).toBe(false);
+    // the toggle itself is still reachable
+    expect(typeof window.__tlToggleView).toBe("function");
+    expect(window.__tlToggleView?.()).toBe(true);
+    expect(mode(container)).not.toBe(before);
   });
 
   it("dots the [Terminal] segment when output arrives while you're in text mode", () => {
