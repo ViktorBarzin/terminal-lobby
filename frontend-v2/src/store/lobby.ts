@@ -23,6 +23,7 @@ import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
 import {
   emptyLayout,
   NAME_RE,
+  type DockState,
   type Layout,
   type RestoreSelection,
   type Session,
@@ -31,6 +32,7 @@ import {
   type Whoami,
 } from "../types/lobby";
 import { track } from "../telemetry/track";
+import { hideDockedSession } from "./dock.logic";
 
 export interface SelectedSession {
   name: string;
@@ -63,6 +65,8 @@ export interface LobbyStore {
   hold(): () => void;
   select(name: string, owner?: string): void;
   create(name: string, group: string): Promise<boolean>;
+  /** write or clear layout.dock (the Ctrl+J scratch shell); undefined un-docks. */
+  setDock(next: DockState | undefined): Promise<boolean>;
   rename(oldName: string, newName: string): Promise<boolean>;
   kill(name: string): Promise<void>;
   /** Move into `group`; with an anchor, immediately above/below that card. */
@@ -232,8 +236,14 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   // not a change at all — /sessions handing back the same sessions in a
   // different order, or somebody else's session appearing — each of which used
   // to re-create every group and card on the screen.
+  // The docked scratch shell is not a thread: it has its own panel, so it is
+  // kept out of the sidebar (vanilla parity). ✕ clears layout.dock, and it
+  // reappears here as an ordinary card the very next derive.
   const model = createMemo<SidebarModel>((prev) =>
-    stabilizeModel(prev, deriveSidebar(layout(), mergedSessions(), me())),
+    stabilizeModel(
+      prev,
+      deriveSidebar(layout(), hideDockedSession(mergedSessions(), layout()), me()),
+    ),
   );
 
   /** The names a group renders right now ("" = ungrouped). */
@@ -545,6 +555,17 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     await refresh();
   }
 
+  /**
+   * Write (or clear) the Ctrl+J dock. It rides the roamed layout, so the dock
+   * follows the user across devices exactly as their grouping does; passing
+   * undefined un-docks, which is all ✕ has to do — the shell keeps running and
+   * the sidebar stops hiding it.
+   */
+  async function setDock(next: DockState | undefined): Promise<boolean> {
+    const { dock: _drop, ...rest } = layout();
+    return saveLayout(next ? { ...rest, dock: next } : rest);
+  }
+
   async function move(name: string, group: string, anchor?: DropAnchor): Promise<void> {
     // Swept-in members occupy rendered positions they have no raw entry for, so
     // nothing can be placed relative to them (nor after them) until they are
@@ -696,6 +717,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     hold,
     select,
     create,
+    setDock,
     rename,
     kill,
     move,
