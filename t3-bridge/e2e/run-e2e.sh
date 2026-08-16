@@ -339,14 +339,18 @@ hdr "S2 · does TranscriptPath agree with Claude Code's own cwd slug?"
     } > "$(evidence S2-slug)"
     cat "$(evidence S2-slug)" | tee -a "$RUNLOG"
 
-    DOTTED=$(find "$PROJ" -maxdepth 1 -type d -name '*.*' | wc -l)
-    DASHED=$(find "$PROJ" -maxdepth 1 -type d -name '*--*' | wc -l)
-    if [ "$DOTTED" -eq 0 ] && [ "$DASHED" -ge 1 ]; then
-        record S2 FAIL "Claude Code rewrites '.' to '-' in the cwd slug and sessionio.TranscriptPath does not: $DASHED of this user's project directories carry the rewritten form and not one of $(find "$PROJ" -maxdepth 1 -type d | tail -n +2 | wc -l) contains a dot. Any session whose cwd has a dot in it — every worktree under .worktrees/ — is stamped with a transcript path nothing ever writes, so its text view and its bridge both read an absent file."
-    elif [ "$DOTTED" -ge 1 ]; then
-        record S2 PASS "Claude Code keeps dots in the cwd slug on this build ($DOTTED directories carry one), so TranscriptPath's '/'-only rewrite agrees with it"
+    # The verdict comes from CALLING the function, never from the shape of the
+    # directory names. An earlier version of this check inferred the answer
+    # from "do dotted names exist?" and so reported the same result before and
+    # after the rule was fixed — a check that cannot change its mind is not a
+    # check. slugcheck slugs each transcript's own recorded cwd and compares it
+    # with the directory that transcript is actually sitting in.
+    if SLUGOUT=$( (cd "$E2E_DIR/.." && go run ./e2e/slugcheck) 2>&1 ); then
+        echo "$SLUGOUT" >> "$(evidence S2-slug)"
+        record S2 PASS "$(printf '%s' "$SLUGOUT" | tail -1)"
     else
-        record S2 SKIP "no project directory here has a dot or a '--' in it; nothing to compare"
+        echo "$SLUGOUT" >> "$(evidence S2-slug)"
+        record S2 FAIL "TranscriptSlug does not reproduce what Claude Code wrote: $(printf '%s' "$SLUGOUT" | tail -3 | tr '\n' ' ')"
     fi
 fi
 
