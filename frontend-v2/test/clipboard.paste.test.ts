@@ -205,3 +205,74 @@ describe("installImageClipboard — refuses while the session is only watched", 
     expect(sent).toHaveLength(1);
   });
 });
+
+// --- routing on the active view (design 2026-08-17 decision 5) --------------
+// The bug Viktor reported after the first deploy: in TEXT mode an image paste
+// still put its path on the terminal's input line. Declining the gesture was not
+// enough — a paste whose focus is outside the composer reaches no other handler,
+// so this module OWNS the image paste in both modes and routes on the mode.
+describe("image paste routes on the active view", () => {
+  const PNG = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+  const STORE = "/var/lib/clipboard-store/wizard/qa-sess";
+
+  const pasteEvent = (file: File): Event => {
+    const e = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "clipboardData", {
+      value: { items: [{ type: file.type, getAsFile: () => file }] },
+    });
+    return e;
+  };
+
+  const setup = (composerOwns: boolean) => {
+    const sent: string[] = [];
+    const toComposer: File[][] = [];
+    const clip = installImageClipboard({
+      session: () => "qa-sess",
+      sendToPty: (t: string) => {
+        sent.push(t);
+        return true;
+      },
+      composerOwns: () => composerOwns,
+      onComposerFiles: async (files: File[]) => {
+        toComposer.push(files);
+      },
+      upload: async (_b: Blob, o: UploadOptions) => ({
+        path: `${STORE}/${o.filename ?? "pasted.png"}`,
+        stored: true,
+      }),
+      toast: () => 0,
+      dismiss: () => {},
+    });
+    return { sent, toComposer, dispose: clip.dispose };
+  };
+
+  it("hands the image to the composer in text mode, and types nothing at the pty", async () => {
+    const { sent, toComposer, dispose } = setup(true);
+    document.dispatchEvent(pasteEvent(PNG));
+    await vi.waitFor(() => expect(toComposer).toHaveLength(1));
+    dispose();
+    expect(toComposer[0]?.[0]?.name).toBe("shot.png");
+    expect(sent).toEqual([]);
+  });
+
+  it("still types the path at the pty in terminal mode", async () => {
+    const { sent, toComposer, dispose } = setup(false);
+    document.dispatchEvent(pasteEvent(PNG));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    dispose();
+    expect(sent[0]).toBe(`${STORE}/pasted.png `);
+    expect(toComposer).toEqual([]);
+  });
+
+  // Whichever way it routes, the browser must not also drop the image into the
+  // focused field as a file — the event is ours once we have taken it.
+  it("consumes the event in both modes", () => {
+    for (const owns of [true, false]) {
+      const { dispose } = setup(owns);
+      const e = pasteEvent(PNG);
+      document.dispatchEvent(e);
+      expect(e.defaultPrevented, `composerOwns=${owns}`).toBe(true);
+      dispose();
+    }
+  });
+});
