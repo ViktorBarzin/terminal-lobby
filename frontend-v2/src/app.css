@@ -2421,3 +2421,15 @@ body {
   font-style: italic;
   opacity: 0.75;
 }
+
+/* While the newest rows are up and the rest are still mounting a chunk per
+   frame (MessagesTimeline), the reader gets a line rather than a jumping list
+   with no explanation. */
+.tl-row-filling {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}

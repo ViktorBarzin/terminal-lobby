@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, type Accessor } from "solid-js";
+import { batch, createSignal, onCleanup, type Accessor } from "solid-js";
 import { createStore } from "solid-js/store";
 import { SseClient, type SseStatus } from "../sse/client";
 import {
@@ -87,10 +87,51 @@ export function createSessionStore(
   // Assumed present until a load comes back empty.
   const [hasEarlier, setHasEarlier] = createSignal(true);
 
+  /**
+   * Arriving events are COALESCED into one store write per frame.
+   *
+   * Appending each event on its own made opening a session quadratic: every
+   * append re-ran the transcript→rows derivation over the whole array, plus the
+   * memos beside it (pending permissions, working state, prompt history, queued
+   * prompts, current mode). Measured on a real 1,383-event window: deriving
+   * once costs 10 ms, and deriving once per event costs 2,644 ms — 263x, and the
+   * bulk of it lands during the replay burst, when hundreds of events arrive in
+   * a single network chunk.
+   *
+   * A frame is the right grain. It collapses the burst into a couple of
+   * derivations, and for live events it adds at most one frame of latency to a
+   * transcript that is already a tail of a file being polled every 200 ms.
+   */
+  let pending: Event[] = [];
+  let flushHandle = 0;
+
+  const flush = (): void => {
+    flushHandle = 0;
+    if (pending.length === 0) return;
+    const arrived = pending;
+    pending = [];
+    // batch() so the derivation runs once for the whole group rather than once
+    // per index write.
+    batch(() => {
+      for (const e of arrived) setEvents(events.length, e);
+    });
+  };
+
+  const scheduleFlush = (): void => {
+    if (flushHandle) return;
+    flushHandle =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame(flush)
+        : (setTimeout(flush, 0) as unknown as number);
+  };
+
   const client = new SseClient({
     session,
     url: eventsUrl,
-    onEvent: (e: Event) => setEvents(events.length, e),
+    onEvent: (e: Event) => {
+      pending.push(e);
+      scheduleFlush();
+    },
     onStatus: setStatus,
   });
 
@@ -111,6 +152,15 @@ export function createSessionStore(
 
   const close = (): void => {
     closed = true;
+    // Anything buffered is delivered rather than dropped: a client that closes
+    // right after the replay would otherwise show a timeline missing its tail.
+    // The frame is cancelled first so the flush cannot run twice.
+    if (flushHandle) {
+      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(flushHandle);
+      clearTimeout(flushHandle);
+      flushHandle = 0;
+    }
+    flush();
     // Safe on a client that never opened anything: with no source, no timer and
     // no registered listeners, every teardown step inside is a no-op.
     client.close();

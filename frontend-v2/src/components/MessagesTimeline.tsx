@@ -106,6 +106,20 @@ const StatusRowView: Component<{ row: StatusRow }> = (props) => (
 const PIN_SLACK_PX = 40;
 
 /**
+ * How many rows mount immediately, and how many are added per frame after that.
+ *
+ * A transcript's newest rows are the ones being read, so they mount first and
+ * the rest fill in behind them a chunk at a time. Mounting all of them in one
+ * task is what made switching views feel stuck: measured on a cold open of a
+ * 1,383-event session, 485ms of main-thread blocking across three long tasks,
+ * the worst leaving the event loop unresponsive for 336ms — long enough that a
+ * click on the Terminal segment did nothing. Chunking keeps every frame short,
+ * so the switch stays live while the timeline is still filling.
+ */
+const FIRST_MOUNT_ROWS = 12;
+const MOUNT_CHUNK_ROWS = 8;
+
+/**
  * Why there is no row virtualization here.
  *
  * There was, briefly, and it was wrong in a way worth recording. Rows vary
@@ -200,6 +214,35 @@ export const MessagesTimeline: Component<{
       if (!next.delete(turnKey)) next.add(turnKey);
       return next;
     });
+
+  // Rows mount from the newest end, a chunk per frame, until all of them are
+  // up. This is NOT virtualization: nothing is ever unmounted, so scrolling and
+  // searching still reach the whole window (see the note above).
+  const [mounted, setMounted] = createSignal(FIRST_MOUNT_ROWS);
+  createEffect(() => {
+    const total = allKeys().length;
+    if (mounted() >= total) return;
+    const raf =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame(() => setMounted((m) => Math.min(total, m + MOUNT_CHUNK_ROWS)))
+        : (setTimeout(() => setMounted((m) => Math.min(total, m + MOUNT_CHUNK_ROWS)), 0) as unknown as number);
+    onCleanup(() => {
+      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(raf);
+      clearTimeout(raf);
+    });
+  });
+  /** The suffix of rows that is currently mounted, newest-first growth. */
+  const shownKeys = createMemo<string[]>(
+    () => {
+      const keys = allKeys();
+      const n = Math.min(keys.length, mounted());
+      return n >= keys.length ? keys : keys.slice(keys.length - n);
+    },
+    [],
+    { equals: sameKeys },
+  );
+  /** True while rows are still being mounted — the reader sees a hint. */
+  const filling = createMemo(() => shownKeys().length < allKeys().length);
 
   // A ticking clock for the working row's elapsed timer. One timer for the
   // whole timeline, running only while something is actually working — a
@@ -351,7 +394,15 @@ export const MessagesTimeline: Component<{
         when={allKeys().length > 0}
         fallback={<div class="tl-empty-state">No messages yet.</div>}
       >
-        <For each={allKeys()}>{(key) => renderRow(key)}</For>
+        <Show when={filling()}>
+          <div class="tl-row tl-row-filling" aria-live="polite">
+            <span class="tl-working-dot" />
+            <span class="tl-status-text">
+              loading earlier rows… ({allKeys().length - shownKeys().length} left)
+            </span>
+          </div>
+        </Show>
+        <For each={shownKeys()}>{(key) => renderRow(key)}</For>
       </Show>
       <Show when={!pinned()}>
         <button

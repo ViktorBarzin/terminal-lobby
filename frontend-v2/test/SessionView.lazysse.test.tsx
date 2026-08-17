@@ -95,7 +95,7 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
     expect(eventSources).toHaveLength(1);
   });
 
-  it("keeps the stream when you switch back to the Terminal", () => {
+  it("keeps the stream when you switch back to the Terminal", async () => {
     const { container } = render(() => <SessionView session="qa-lazy" />);
     fireEvent.click(segments(container)[0]!); // [Text]
     expect(eventSources).toHaveLength(1);
@@ -108,6 +108,9 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
     // ...and it is still filling the timeline, which is what the [Text]
     // segment's activity dot reports while you are not looking at it.
     feed(eventSources[0], 1, "arrived while you were in the terminal");
+    // The store coalesces arriving events into one write per frame, so the dot
+    // appears on the next frame rather than inside this tick.
+    await new Promise((r) => setTimeout(r, 40));
     expect(dots(container)).toEqual([true, false]);
   });
 
