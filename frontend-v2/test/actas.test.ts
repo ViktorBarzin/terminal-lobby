@@ -29,6 +29,19 @@ describe("actAsUrl — switching is a navigation", () => {
     expect(actAsUrl("http://x/#my-session", "bob")).toBe("/?as=bob");
     expect(actAsUrl("http://x/?as=bob#their-session", "")).toBe("/");
   });
+
+  // ?session= names a session the same way the hash does, and readInitialSelection
+  // reads it as a fallback — so leaving it on carried a name from the identity
+  // being left into the one being entered. On 2026-08-17 that put wizard's
+  // `Council-tax` into bob's account: the switched page attached the remembered
+  // name one second after the switch, with the owner defaulted to bob.
+  it("drops the selected-session query parameter too", () => {
+    expect(actAsUrl("http://x/?session=Council-tax", "bob")).toBe("/?as=bob");
+    expect(actAsUrl("http://x/?as=bob&session=their-work", "")).toBe("/");
+    expect(actAsUrl("http://x/?api=https%3A%2F%2Fd&session=mine", "bob")).toBe(
+      "/?api=https%3A%2F%2Fd&as=bob",
+    );
+  });
 });
 
 /**
