@@ -188,6 +188,20 @@ export function clipboardImgUrl(session: string, name: string): string {
 }
 
 /**
+ * GET target serving one stored DOCUMENT back — the read-back route a text-view
+ * attachment chip opens, and what the file preview reads a stored document
+ * through. Separate from /img because the two answer differently: /img serves
+ * only image bytes, while this one disables sniffing and forces a download for
+ * anything a browser could execute as markup. Both resolve inside the caller's
+ * own store directory.
+ */
+export function clipboardFileUrl(session: string, name: string): string {
+  return clipboardUrl(
+    `/file/${encodeURIComponent(session)}/${encodeURIComponent(name)}`,
+  );
+}
+
+/**
  * The file-api service prefix (roadmap pillar #6). The ingress routes /files/*
  * to the file-api service WITHOUT stripping the prefix (the service's own routes
  * are /files/list, /files/read, /files/write — see file-api/main.go), so from

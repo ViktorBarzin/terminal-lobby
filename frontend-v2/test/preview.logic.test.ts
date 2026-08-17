@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Event } from "../src/types/events";
+import { canEdit } from "../src/store/editor.logic";
 import {
   HTML_SANDBOX,
   basename,
@@ -55,7 +56,7 @@ describe("classifyFile — file-type -> renderer routing", () => {
   it("uses content-type to resolve an unknown extension", () => {
     expect(classifyFile("blob", "image/png").kind).toBe("image");
     expect(classifyFile("blob", "application/octet-stream").kind).toBe("binary");
-    expect(classifyFile("blob", "application/pdf").kind).toBe("binary");
+    expect(classifyFile("blob", "application/pdf").kind).toBe("pdf");
     expect(classifyFile("blob", "text/plain").kind).toBe("code");
     expect(classifyFile("data", "application/json").kind).toBe("code");
   });
@@ -207,5 +208,24 @@ describe("mode toggle helpers", () => {
     expect(modeApplies("code")).toBe(false);
     expect(modeApplies("image")).toBe(false);
     expect(modeApplies("binary")).toBe(false);
+  });
+});
+
+// A PDF is the most likely document to be attached to a text-view message
+// (docs/plans/2026-08-17-text-view-attachments-design.md decision 4), so it gets
+// its own renderer instead of falling to "binary — preview unavailable".
+describe("classifyFile — pdf", () => {
+  it("routes a pdf by extension", () => {
+    expect(classifyFile("report.pdf").kind).toBe("pdf");
+    expect(classifyFile("/a/b/REPORT.PDF").kind).toBe("pdf");
+  });
+
+  it("routes a pdf by content type when the name says nothing", () => {
+    expect(classifyFile("blob", "application/pdf").kind).toBe("pdf");
+  });
+
+  it("is not editable and has no raw/rendered toggle", () => {
+    expect(canEdit("pdf")).toBe(false);
+    expect(modeApplies("pdf")).toBe(false);
   });
 });

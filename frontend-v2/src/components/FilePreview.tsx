@@ -11,8 +11,7 @@ import {
 } from "solid-js";
 import type { PreviewStore } from "../store/preview";
 import { HTML_SANDBOX, dirname } from "../store/preview.logic";
-import { fileReadUrl } from "../lib/config";
-import { IMAGE_DECODE_MESSAGE, imageErrorMessage } from "../lib/file-api";
+import { IMAGE_DECODE_MESSAGE, contentUrl, imageErrorMessage } from "../lib/file-api";
 import { Markdown } from "./Markdown";
 import { CodeView } from "./CodeView";
 import { CodeEditor } from "./CodeEditor";
@@ -448,12 +447,30 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
                   >
                     <div class="tl-preview-image">
                       <img
-                        src={fileReadUrl(s.path()!)}
+                        src={contentUrl(s.path()!) ?? ""}
                         alt={s.name()}
                         onError={onImgError}
                       />
                     </div>
                   </Show>
+                </Match>
+
+                {/* A pdf renders in the browser's OWN viewer. <embed> loads it
+                    by URL, so nothing is fetched twice, and clipboard-upload
+                    serves a stored document with nosniff plus an inline
+                    disposition — anything that could execute as markup is
+                    forced to download instead, so this can only ever be a
+                    document. Before this it read "Binary file — preview
+                    unavailable", one click from a dead end on the format most
+                    likely to be attached. */}
+                <Match when={s.kind() === "pdf"}>
+                  <div class="tl-preview-pdf">
+                    <embed
+                      src={contentUrl(s.path()!) ?? ""}
+                      type="application/pdf"
+                      title={s.name()}
+                    />
+                  </div>
                 </Match>
 
                 <Match when={s.kind() === "markdown"}>
