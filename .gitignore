@@ -31,3 +31,4 @@ __pycache__/
 # one stray repro file blocks every lane in the fleet, not just its author.
 scripts/qa-repro-*
 /tmp-qa-*
+.playwright-mcp/
