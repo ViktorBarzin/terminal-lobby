@@ -6,6 +6,7 @@ import {
   pendingPermissions,
   sessionWorking,
   sameRow,
+  currentMode,
   type ToolRow,
   type MessageRow,
   type TurnFoldRow,
@@ -286,5 +287,73 @@ describe("pendingPermissions", () => {
     expect(pending).toHaveLength(1);
     expect(pending[0]!.reqId).toBe("p2");
     expect(pending[0]!.tool).toBe("Write");
+  });
+});
+
+// --- the mode/permission meta rows are noise in the timeline ---------------
+// Viktor, 2026-08-17, from a screenshot: "we don't need to add the mode or
+// permissions". Both are STATE, not events — the composer's chip always shows
+// the mode in force — so a divider announcing each change interrupts the
+// conversation to repeat what is already on screen. The events keep flowing;
+// only the row is dropped, so currentMode() still reads them.
+describe("mode and permission-mode do not become rows", () => {
+  const meta = (id: number, m: string, body: string): Event =>
+    ev({ id, kind: "meta", meta: m as Event["meta"], body });
+
+  it("drops a mode change", () => {
+    const rows = deriveRows([meta(1, "mode", "normal"), ev({ id: 2, kind: "turn_end" })]);
+    expect(rows.filter((r) => r.kind === "meta")).toHaveLength(0);
+  });
+
+  it("drops a permission-mode change", () => {
+    const rows = deriveRows([
+      meta(1, "permission-mode", "bypassPermissions"),
+      ev({ id: 2, kind: "turn_end" }),
+    ]);
+    expect(rows.filter((r) => r.kind === "meta")).toHaveLength(0);
+  });
+
+  // The ones that are genuinely events, and have nowhere else to show, stay —
+  // each where it already belonged: a failed hook is promoted to its own row,
+  // a compaction boundary rides inside the turn's folded work.
+  it("keeps a compaction boundary and a failed hook", () => {
+    const rows = deriveRows([
+      meta(1, "compact", ""),
+      meta(2, "hook-error", "PreToolUse failed"),
+      ev({ id: 3, kind: "turn_end" }),
+    ]);
+    const top = rows.filter((r) => r.kind === "meta").map((r) => (r as { meta: string }).meta);
+    expect(top).toEqual(["hook-error"]);
+    const folded = rows
+      .filter((r): r is TurnFoldRow => r.kind === "turn-fold")
+      .flatMap((r) => r.hidden)
+      .filter((h) => h.kind === "meta")
+      .map((h) => (h as { meta: string }).meta);
+    expect(folded).toEqual(["compact"]);
+  });
+
+  // A mode change must not survive inside the FOLD either — folding it away is
+  // still carrying it, and expanding a turn would put the divider back.
+  it("drops them from the folded work as well", () => {
+    const rows = deriveRows([
+      meta(1, "mode", "normal"),
+      meta(2, "permission-mode", "bypassPermissions"),
+      ev({ id: 3, kind: "turn_end" }),
+    ]);
+    const anywhere = rows
+      .flatMap((r) => (r.kind === "turn-fold" ? r.hidden : [r]))
+      .filter((r) => r.kind === "meta");
+    expect(anywhere).toHaveLength(0);
+  });
+
+  // The composer reads the mode from the same events, so dropping the ROW must
+  // not cost the chip its value.
+  it("still reports the mode in force to the composer", () => {
+    const events = [
+      meta(1, "permission-mode", "bypassPermissions"),
+      ev({ id: 2, kind: "turn_end" }),
+    ];
+    expect(deriveRows(events).filter((r) => r.kind === "meta")).toHaveLength(0);
+    expect(currentMode(events)).toBe("bypassPermissions");
   });
 });
