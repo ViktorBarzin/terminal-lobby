@@ -1,3 +1,5 @@
+import { diag } from "../telemetry/diag";
+
 /**
  * Mobile viewport / soft-keyboard plumbing, ported from the vanilla
  * frontend/index.html `syncViewport` + `refit` (~12365-12438).
@@ -81,17 +83,21 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   /**
    * Record the real geometry when the keyboard opens or closes.
    *
-   * TEMPORARY, and deliberately so. Two attempts at the mobile keyboard layout
-   * were reasoned from a model of the device rather than from the device, and
-   * both were wrong — iOS Safari, Chromium and the iOS standalone PWA each
-   * reserve the keyboard differently, and the repo's own iOS notes say to
-   * measure on real hardware rather than conclude. This rides the flight
-   * recorder (ADR-0008 diag.incident) so the numbers arrive without anyone
-   * having to read them off a screen.
+   * TEMPORARY. Attempts at the mobile keyboard layout that were reasoned from a
+   * model of the device rather than from the device kept being wrong — iOS
+   * Safari, Chromium and the iOS standalone PWA each account for the keyboard
+   * differently, and this repo's own iOS notes say to measure on real hardware.
+   * This rides the flight recorder (ADR-0008 diag.incident) so the numbers
+   * arrive without anyone reading them off a screen.
    *
-   * Fires only on a CHANGE of the keyboard state, so a keyboard's ~250ms
-   * animation contributes one record per edge rather than a burst. Remove once
-   * the layout is settled.
+   * Through diag(), the module singleton — an EARLIER version reached for a
+   * global named after the inlining placeholder, which does not exist at
+   * runtime (the placeholder is a marker in the HTML; the core installs itself
+   * as globalThis.tlDiag and the app binds an instance). It silently reported
+   * nothing at all.
+   *
+   * Fires only on a CHANGE of the keyboard state, so the ~250ms animation
+   * contributes one record per edge rather than a burst.
    */
   const measureSafeAreaBottom = (): number => {
     try {
@@ -108,59 +114,57 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
     }
   };
 
-  let lastReported = -1;
+  // Gated on the whole geometry, not just kb. On a platform that shrinks the
+  // LAYOUT viewport for the keyboard (Chromium via interactive-widget) kb stays
+  // 0 across the whole open/close cycle, so a kb-only gate reported nothing at
+  // all there — measured on the emulator.
+  let lastSig = "";
   const reportGeometry = (kb: number): void => {
-    if (kb === lastReported) return;
-    lastReported = kb;
+    const sig = [kb, window.innerHeight, vv ? Math.round(vv.height) : -1,
+                 vv ? Math.round(vv.offsetTop) : -1].join("/");
+    if (sig === lastSig) return;
+    lastSig = sig;
     try {
-      // The diagnostics global is reached through a key ASSEMBLED at runtime,
-      // and its name is deliberately not written out anywhere in this file —
-      // not even in a comment.
-      //
-      // scripts/deploy-v2.sh inlines diag.js with a sed that DELETES every LINE
-      // containing that placeholder name. The shipped bundle is minified onto
-      // very long lines, so a source file which merely mentions it loses its
-      // whole line, taking neighbouring code with it. Not hypothetical: it
-      // shipped a lobby that threw "missing ) after argument list" and rendered
-      // nothing (2026-08-17). The join also stops a minifier folding the parts
-      // back into the literal.
-      const diagKey = ["__TL", "DIAG__"].join("_");
-      const diag = (window as unknown as Record<string, unknown>)[diagKey] as
-        | { incident?: (kind: string, attrs: Record<string, unknown>) => void }
-        | undefined;
-      if (!diag?.incident) return;
-      const box = (sel: string): number[] => {
+      const box = (sel: string): string => {
         const el = document.querySelector(sel);
-        if (!el) return [];
+        if (!el) return "";
         const r = el.getBoundingClientRect();
-        return [Math.round(r.top), Math.round(r.bottom)];
+        return Math.round(r.top) + "," + Math.round(r.bottom);
       };
       const cs = getComputedStyle(document.documentElement);
       const px = (n: string): string => cs.getPropertyValue(n).trim();
-      diag.incident("viewport", {
+      const timeline = document.querySelector(".tl-timeline");
+      diag().incident("viewport", {
         "tl.vp.inner_h": window.innerHeight,
         "tl.vp.screen_h": typeof screen !== "undefined" ? screen.height : 0,
         "tl.vp.vv_h": vv ? Math.round(vv.height) : -1,
+        // The one that separates the two candidate causes: a non-zero offset
+        // means iOS PANNED the visual viewport to bring the focused field into
+        // view, which moves everything on screen. Zero means the layout moved
+        // under a still viewport instead.
         "tl.vp.vv_top": vv ? Math.round(vv.offsetTop) : -1,
-        "tl.vp.vv_scale": vv ? vv.scale : -1,
-        "tl.vp.root": box("#root").join(","),
-        "tl.vp.views": box(".tl-views").join(","),
-        "tl.vp.composer": box(".tl-composer").join(","),
-        "tl.vp.softkeys": box("#soft-keys").join(","),
+        "tl.vp.doc_scroll": Math.round(
+          document.scrollingElement ? document.scrollingElement.scrollTop : -1,
+        ),
+        "tl.vp.root": box("#root"),
+        "tl.vp.views": box(".tl-views"),
+        "tl.vp.composer": box(".tl-composer"),
+        "tl.vp.softkeys": box("#soft-keys"),
+        // The transcript scroller: if this jumps while vv_top stays 0, the
+        // movement is the list re-anchoring, not the page panning.
+        "tl.vp.tl_scroll": timeline ? Math.round(timeline.scrollTop) : -1,
+        "tl.vp.tl_h": timeline ? Math.round(timeline.clientHeight) : -1,
+        "tl.vp.tl_scroll_h": timeline ? Math.round(timeline.scrollHeight) : -1,
         "tl.vp.kb_offset": px("--kb-offset"),
-        "tl.vp.kb_reserve": px("--kb-reserve"),
         "tl.vp.sk_h": px("--sk-h"),
         "tl.vp.app_vh": px("--app-vh"),
-        // env(safe-area-inset-bottom) cannot be read from JS, so measure a
-        // throwaway element sized by it. It matters here because the
-        // reservation adds it on top of the keyboard, and whether iOS keeps
-        // reporting an inset while the keyboard covers the home indicator is
-        // exactly the sort of thing worth measuring rather than assuming.
         "tl.vp.safe_b": measureSafeAreaBottom(),
         "tl.vp.standalone":
           typeof matchMedia === "function" &&
           matchMedia("(display-mode: standalone)").matches,
-        "tl.vp.kb_inline": !!document.querySelector(".tl-views.tl-kb-inline"),
+        "tl.vp.active": document.activeElement
+          ? document.activeElement.className || document.activeElement.tagName
+          : "",
       });
     } catch {
       /* a diagnostic must never be the thing that breaks the app */
