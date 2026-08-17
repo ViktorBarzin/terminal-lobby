@@ -24,6 +24,12 @@ export interface ImageClipboardDeps {
   session: () => string;
   /** send text (an uploaded path) to the pty; true if a frame received it. */
   sendToPty: (text: string) => boolean;
+  /** FALSE while this client only WATCHES the session, which refuses both
+   *  intakes. The upload is why it is refused up front rather than left to fail
+   *  at the pty: it files the image in that session's gallery — someone else's,
+   *  in a tab acting as another user — and only then types the path, so a
+   *  refused write would leave a half-done action behind. Absent = enabled. */
+  enabled?: () => boolean;
   /** seams for tests (default to the live document/window/uploader/toaster). */
   doc?: Document;
   win?: Window;
@@ -74,12 +80,23 @@ export function installImageClipboard(
 
   const [dropActive, setDropActive] = createSignal(false);
 
+  /** TRUE when this client only watches — both intakes stop here and say so,
+   *  rather than uploading into a session nothing can be typed into. */
+  const refused = (): boolean => {
+    if (deps.enabled && !deps.enabled()) {
+      toast("Watching this session — nothing is typed into it", "info", 4000);
+      return true;
+    }
+    return false;
+  };
+
   // ---- one PASTED image → its path typed into the pty ----------------------
   // Paste-only: the drop path is uploadDropped, which handles many files of any
   // type. A `filename` parameter here once made this look shared, and its
   // telemetry branched on it — but no caller ever passed one, so the
   // "image.dropped" arm was unreachable and every drop went unrecorded.
   async function uploadImageToPty(blob: Blob): Promise<void> {
+    if (refused()) return;
     track("image.pasted", { "tl.count": blob.size });
     const loading = toast("Uploading image…", "loading");
     try {
@@ -110,6 +127,7 @@ export function installImageClipboard(
     files: File[],
     via: "drop" | "picker" = "drop",
   ): Promise<void> {
+    if (refused()) return;
     // Up front, and counting the files the GESTURE carried rather than the ones
     // that uploaded: the event records the gesture (ADR-0006 attributes
     // paste/drop to both lobbies), so a failing intake must not erase it from

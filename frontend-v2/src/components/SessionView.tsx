@@ -97,6 +97,12 @@ export const SessionView: Component<{
    *  viewer — read ONCE when the view takes the session on, never after, since
    *  the count includes this client's own attach. */
   driven?: () => boolean;
+  /** TRUE while this tab is acting as another user, which may only WATCH: the
+   *  Watch control comes up on and stops being a toggle, and everything that
+   *  types into the pty goes with it. Absent = an ordinary tab. */
+  watchLocked?: () => boolean;
+  /** The user this tab is acting as, for the copy on the locked control. */
+  actingAs?: () => string;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** roamed prefs — the A−/A+ buttons step fontSize, which the store persists
@@ -141,7 +147,18 @@ export const SessionView: Component<{
   const [watch, , toggleWatch] = createWatchMode(
     () => session,
     () => props.driven?.() ?? false,
+    () => props.watchLocked?.() ?? false,
   );
+  const locked = () => props.watchLocked?.() ?? false;
+  /** Why the pty controls are inert, or "" when they are not. Watching at all
+   *  makes them inert — a read-only tmux client drops what it is sent — so this
+   *  answers for an ordinary Watch too, not only for a lens. */
+  const inertReason = () =>
+    locked()
+      ? `Acting as ${props.actingAs?.() || "another user"} — this tab can only watch`
+      : watch()
+        ? "Watching: this device does not type into the session"
+        : "";
   // The sidebar reads this view's resolved state for the open session; drop it
   // when the view goes so a stale decision cannot outlive the attach it
   // described.
@@ -292,7 +309,17 @@ export const SessionView: Component<{
   // can rebuild underneath them.
   const flip = createMobileFlip();
   const barMenu = createDismissableMenu(() => () => {});
+  // The soft-key row and the Text view's send-to-terminal both write bytes at
+  // the pty. A read-only tmux client discards them, so while watching this
+  // refuses and says why once, rather than leaving a row of keys that look live.
+  // The row itself stays put: the real keyboard is equally inert while watching,
+  // and Dismiss keyboard lives in there, so removing it would strip the way off
+  // a raised keyboard on a phone.
   const sendBytesToPty = (bytes: string): void => {
+    if (watch()) {
+      props.notify?.(inertReason(), "info");
+      return;
+    }
     window.__tlSendToTerminal?.(bytes);
   };
   const dismissKeyboard = (): void => {
@@ -331,6 +358,7 @@ export const SessionView: Component<{
   const image = installImageClipboard({
     session: () => session,
     sendToPty: (t) => window.__tlSendToTerminal?.(t) ?? false,
+    enabled: () => !watch(),
   });
   onCleanup(image.dispose);
 
@@ -340,6 +368,14 @@ export const SessionView: Component<{
   // the lobby (clipboard/paste.ts). Published on the window so the command
   // palette and the Paste chord reach the same routine as the button.
   const doPaste = (): boolean => {
+    // The button is disabled while watching, but this routine is also the
+    // command palette's Paste, the Paste chord and the soft-keys' Paste — all of
+    // which reach it without a button. Answered here so every one of them says
+    // the same thing instead of appearing to work.
+    if (watch()) {
+      props.notify?.(inertReason(), "info");
+      return true;
+    }
     void pasteIntoTerminal({
       sendPasteText: (t) => window.__tlPasteToTerminal?.(t) ?? false,
       uploadFiles: image.uploadFiles,
@@ -482,10 +518,18 @@ export const SessionView: Component<{
               <ImageIcon />
               <span class="tl-btn-label">Images</span>
             </button>
+            {/* Upload and Paste both end by TYPING a path or the clipboard into
+                the pty, so a read-only client cannot complete either — and an
+                upload is the worse half: it files the image in the session's
+                gallery first, so leaving it enabled while watching means a
+                half-done action (the image lands, the path never arrives).
+                Disabled rather than hidden, so the bar keeps its shape and the
+                tooltip says why. */}
             <button
               class="tl-icon-btn tl-upload-btn"
               aria-label="Upload image"
-              title="Upload image"
+              disabled={watch()}
+              title={inertReason() || "Upload image"}
               onClick={() => fileInput?.click()}
             >
               <CameraIcon />
@@ -494,7 +538,8 @@ export const SessionView: Component<{
             <button
               class="tl-icon-btn tl-paste-btn"
               aria-label="Paste from clipboard"
-              title="Paste from clipboard"
+              disabled={watch()}
+              title={inertReason() || "Paste from clipboard"}
               onClick={() => doPaste()}
             >
               <ClipboardIcon />
@@ -524,13 +569,22 @@ export const SessionView: Component<{
               below keeps that property: the bar is shared by both views. */}
           <button
             class="tl-icon-btn tl-watch-btn"
-            classList={{ "tl-watch-on": watch() }}
-            aria-label={watch() ? "Watching — tap to take control" : "Watch only"}
+            classList={{ "tl-watch-on": watch(), "tl-watch-locked": locked() }}
+            aria-label={
+              locked()
+                ? "Watching — a tab acting as another user cannot take control"
+                : watch()
+                  ? "Watching — tap to take control"
+                  : "Watch only"
+            }
             aria-pressed={watch()}
+            disabled={locked()}
             title={
-              watch()
-                ? "Watching: this device can't type and never resizes the session"
-                : "Watch only: observe without typing or resizing the session"
+              locked()
+                ? inertReason()
+                : watch()
+                  ? "Watching: this device can't type and never resizes the session"
+                  : "Watch only: observe without typing or resizing the session"
             }
             onClick={() => toggleWatch()}
           >
@@ -565,6 +619,8 @@ export const SessionView: Component<{
                   class="tl-menu-item"
                   role="menuitemcheckbox"
                   aria-checked={watch()}
+                  disabled={locked()}
+                  title={locked() ? inertReason() : undefined}
                   onClick={() => {
                     barMenu.close();
                     toggleWatch();
@@ -646,7 +702,9 @@ export const SessionView: Component<{
 
       <Show when={image.dropActive()}>
         <div class="tl-drop-overlay" aria-hidden="true">
-          Drop files — paths are typed into the session (images join its gallery)
+          {watch()
+            ? inertReason()
+            : "Drop files — paths are typed into the session (images join its gallery)"}
         </div>
       </Show>
 

@@ -20,6 +20,8 @@ import {
   type WatchChoice,
 } from "../store/watchmode";
 import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
+import { watchLockedFor } from "../lib/act-as";
+import { ACT_AS } from "../lib/config";
 
 const isCoarse = (): boolean =>
   typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
@@ -60,10 +62,17 @@ export const SessionCard: Component<{
   const titleAttr = () => s().pane_title || s().name;
 
   const choice = () => watchChoice(s().name);
+  /** TRUE while this tab acts as another user: every session in it opens as a
+   *  viewer, so Attach as has nothing left to choose. Derived from the store's
+   *  own /whoami rather than passed down, so the sidebar and the session bar
+   *  cannot disagree about it. */
+  const locked = () => watchLockedFor(props.store.whoami(), ACT_AS);
   const willWatch = () =>
-    resolvedWatchFor(s().name) ?? resolveWatch(choice(), s().driven === true);
+    resolvedWatchFor(s().name) ??
+    resolveWatch(choice(), s().driven === true, locked());
 
   const setChoice = (c: WatchChoice) => {
+    if (locked()) return;
     saveWatch(s().name, c);
     menu.close();
   };
@@ -395,30 +404,41 @@ export const SessionCard: Component<{
           <button class="tl-menu-item tl-menu-danger" role="menuitem" onClick={() => void kill()}>
             Kill
           </button>
-          <div class="tl-menu-label">Attach as</div>
+          {/* Attach as. In a tab acting as another user the three rows are
+              disabled and Watch only reads as the standing answer: the choice
+              was made by being in a lens, and a control that re-navigated to
+              the same read-only attach would only look broken. */}
+          <div class="tl-menu-label">
+            {locked()
+              ? "Attach as — watching (acting as another user)"
+              : "Attach as"}
+          </div>
           <button
             class="tl-menu-item"
             role="menuitemradio"
-            aria-checked={choice() === undefined}
+            aria-checked={!locked() && choice() === undefined}
+            disabled={locked()}
             onClick={() => setChoice(undefined)}
           >
-            {choice() === undefined ? "✓ " : "\u2007 "}Auto — watch if busy
+            {!locked() && choice() === undefined ? "✓ " : "\u2007 "}Auto — watch if busy
           </button>
           <button
             class="tl-menu-item"
             role="menuitemradio"
-            aria-checked={choice() === true}
+            aria-checked={locked() || choice() === true}
+            disabled={locked()}
             onClick={() => setChoice(true)}
           >
-            {choice() === true ? "✓ " : "\u2007 "}Watch only
+            {locked() || choice() === true ? "✓ " : "\u2007 "}Watch only
           </button>
           <button
             class="tl-menu-item"
             role="menuitemradio"
-            aria-checked={choice() === false}
+            aria-checked={!locked() && choice() === false}
+            disabled={locked()}
             onClick={() => setChoice(false)}
           >
-            {choice() === false ? "✓ " : "\u2007 "}Take control
+            {!locked() && choice() === false ? "✓ " : "\u2007 "}Take control
           </button>
           <Show when={targets().length > 0}>
             <div class="tl-menu-label">Move to</div>
