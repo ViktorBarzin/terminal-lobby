@@ -182,9 +182,14 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
         if (e.target === e.currentTarget) s.close();
       }}
     >
+      {/* data-kind lets the stylesheet treat a picture differently from a
+          document. The panel is otherwise a fixed 85vh whatever it holds, which
+          is right for text that scrolls and wrong for an image, which has a size
+          of its own and ended up centred between two empty bands. */}
       <div
         ref={panelEl}
         class="tl-preview-panel"
+        data-kind={s.kind() ?? undefined}
         role="dialog"
         aria-modal="true"
         aria-label="File preview"
@@ -300,7 +305,12 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
           </button>
         </form>
 
-        <Show when={s.recentFiles().length > 0 && !s.browsing()}>
+        {/* Recent is how you FIND a file, so it stands down once one is on
+            screen: with a file loaded it was a band of the panel (two wrapped
+            rows on a narrow one) spent on files you are not looking at, above
+            the one you are. Still there the moment you close the file or open
+            the overlay from the Files button. */}
+        <Show when={s.recentFiles().length > 0 && !s.browsing() && !s.path()}>
           <div class="tl-preview-recents">
             <span class="tl-preview-recents-label">Recent</span>
             <For each={s.recentFiles()}>

@@ -578,3 +578,57 @@ describe("fmtBytes — the header's size chip", () => {
     expect(bad).toEqual([]);
   });
 });
+
+// --- panel chrome around a previewed file (Viktor's screenshot, 2026-08-17) --
+// Opening an attachment showed the picture floating between two large voids: a
+// Recent strip that belongs to FINDING a file, and the fixed-height panel
+// centring a picture that has a natural size of its own.
+describe("<FilePreview> — chrome around a loaded file", () => {
+  const recentEvents: Event[] = [
+    ev({ id: 1, kind: "tool_use", tool: "Read", toolId: "t1", body: '{"file_path":"/a/one.ts"}' }),
+    ev({ id: 2, kind: "tool_use", tool: "Read", toolId: "t2", body: '{"file_path":"/a/two.ts"}' }),
+  ];
+
+  const withRecents = (): PreviewStore =>
+    makeStore({
+      loadFile: async () => ({ kind: "image" }),
+      events: () => recentEvents,
+    });
+
+  it("offers Recent while no file is loaded — that is when it helps you find one", async () => {
+    const store = withRecents();
+    store.show();
+    const { container } = render(() => <FilePreview store={store} />);
+    await waitFor(() => expect(container.querySelector(".tl-preview-pathbar")).not.toBeNull());
+    expect(store.recentFiles().length).toBeGreaterThan(0);
+    expect(container.querySelector(".tl-preview-recents")).not.toBeNull();
+  });
+
+  it("drops Recent once a file is on screen", async () => {
+    const store = withRecents();
+    await store.open("/a/shot.png");
+    const { container } = render(() => <FilePreview store={store} />);
+    await waitFor(() => expect(container.querySelector(".tl-preview-image")).not.toBeNull());
+    // The recents are still THERE — they are just not taking a band of the
+    // panel while you are looking at something.
+    expect(store.recentFiles().length).toBeGreaterThan(0);
+    expect(container.querySelector(".tl-preview-recents")).toBeNull();
+  });
+
+  // The panel is a fixed 85vh whatever it holds. A picture has its own size, so
+  // it is the one kind that should make the panel hug its content instead of
+  // centring it between two empty bands. The CSS keys off this attribute.
+  it("labels the panel with the loaded kind so an image can hug its content", async () => {
+    const store = await loaded(async () => ({ kind: "image" }), "/a/shot.png");
+    const { container } = render(() => <FilePreview store={store} />);
+    await waitFor(() => expect(container.querySelector(".tl-preview-image")).not.toBeNull());
+    expect(container.querySelector(".tl-preview-panel")?.getAttribute("data-kind")).toBe("image");
+  });
+
+  it("labels a non-image kind too, so only the image rule can match", async () => {
+    const store = await loaded(async () => ({ kind: "code", text: "x" }), "/a/m.ts");
+    const { container } = render(() => <FilePreview store={store} />);
+    await waitFor(() => expect(container.querySelector(".tl-codeview")).not.toBeNull());
+    expect(container.querySelector(".tl-preview-panel")?.getAttribute("data-kind")).toBe("code");
+  });
+});
