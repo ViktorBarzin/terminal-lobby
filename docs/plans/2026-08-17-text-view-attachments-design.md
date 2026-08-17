@@ -277,6 +277,30 @@ becomes a tray chip and text lands at the composer's caret with nothing written
 to the pty bridge, while the same button in terminal mode still pastes into the
 pane.
 
+## After use
+
+Two things the first day of using it turned up, both about chrome rather than
+behaviour.
+
+**The preview panel stood at its full height around a picture.** Opening an
+attachment put the image between two empty bands, with the Recent strip above
+it. Recent is how you find a file, so it stands down once one is on screen — it
+returns when the overlay is opened without one. And the panel now hugs its
+content for the image kind, keyed off a `data-kind` attribute; `max-height`
+still caps a tall one. Deliberately not applied to every kind: the browse pane
+has no height of its own, so a directory listing would resize the panel as you
+walk the tree. Measured after: a 428px image in a 456px body, the 28px being the
+body's own padding.
+
+**The timeline announced every mode change.** `mode · normal` and
+`permissions · bypassPermissions` drew labelled dividers between the messages.
+Both are state rather than events, and the composer's chip already shows the
+mode in force, so the divider interrupted the conversation to repeat what was on
+screen. The rows are dropped outright rather than folded, since expanding a turn
+would put the divider back; the events still flow, so the chip is unaffected.
+(That row belongs to the text-view design of 2026-08-16, not to attachments —
+recorded here because this is where the feedback landed.)
+
 ## Open questions
 
 - Whether a doc large enough to be refused from the store should still be
