@@ -30,7 +30,10 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
+  /* Shrinkable, unlike the other controls: the username inside it ellipsizes,
+     so giving up width costs legibility rather than breaking the layout. */
+  flex: 0 1 auto;
+  min-width: 0;
   padding: 3px 8px;
   border: 1px solid var(--tl-actas);
   border-radius: 999px;
@@ -1008,10 +1011,13 @@
     white-space: nowrap;
   }
   /* The view switch is the widest thing on the bar after the back control
-     (131px of 390 at its desktop size). Tightened here so the session name
-     keeps a readable share; the segments stay well past the 40px floor. */
+     (131px of 390 at its labelled size). On a phone it goes icon-only — each
+     segment keeps its glyph, its tooltip and its aria-label, and the pair drops
+     to about 80px, which is what buys the session name and the act-as chip room
+     to be legible. This is what the pillar-#2 research asked for ("icon-only on
+     mobile"); it was specified and never built. */
   .tl-viewswitch .tl-seg {
-    padding: 0 9px;
+    padding: 0 10px;
     min-height: 36px;
     font-size: 12px;
   }
@@ -1106,6 +1112,60 @@
 }
 @media (pointer: coarse) {
   .tl-dock {
+    display: none;
+  }
+}
+
+/* ---- A header narrow enough that every item has to earn its width --------- */
+/* Keyed on WIDTH, not on pointer type. The bar is constrained by how much room
+   it has, and a 500px browser window is as short of it as a phone is — the first
+   attempt put these rules in the coarse-pointer block and left a narrow desktop
+   window worse than before (the switch grew to 173px once it had an icon AND a
+   label). Measured at 390px with an act-as chip before this: the bar's content
+   ran 67px past its right edge and the session name was 18px wide. */
+@media (max-width: 520px) {
+  /* Nothing paints outside the header. Everything below makes the content FIT;
+     this is the guard that makes a future addition get noticed rather than
+     silently drawn over its neighbour. */
+  .tl-session-bar {
+    overflow: hidden;
+  }
+  /* The name is the one thing that says WHICH session you are typing into. */
+  .tl-session {
+    min-width: 5ch;
+  }
+  /* Icon-only segments: each keeps its glyph, tooltip and aria-label, and the
+     pair drops from 131px (or 173px with icons) to about 80px. This is what the
+     pillar-#2 research asked for and never got built. */
+  .tl-viewswitch .tl-seg-label {
+    display: none;
+  }
+  .tl-viewswitch .tl-seg {
+    padding: 0 9px;
+  }
+  /* The terminal's own tools are 148px of a 390px bar. On a screen this narrow
+     the soft-key row below carries paste/upload/images and a pinch sets the
+     font, so the bar does not need to. */
+  .tl-term-tools {
+    display: none;
+  }
+  /* The act-as chip: 40vw is 156px of a 390px bar. A quarter still shows enough
+     of a username to recognise, and the ✕ stays reachable.
+     The `> ` selector is deliberate: the touch block sets
+     `.tl-session-bar > * { flex: 0 0 auto }` so a control cannot shrink below
+     its content, which is right for buttons and wrong for this — the username
+     inside it ellipsizes, so the chip is the one item that should give up width
+     before anything is clipped. Matching that selector's specificity from later
+     in the file is what lets it. */
+  .tl-session-bar > .tl-actas-chip {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 26vw;
+    padding: 3px 6px;
+    font-size: 11.5px;
+  }
+  /* "as" is redundant beside the tinted frame and the ✕, and it costs ~18px. */
+  .tl-actas-chip::before {
     display: none;
   }
 }
