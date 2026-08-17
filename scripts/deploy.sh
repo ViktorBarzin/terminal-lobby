@@ -158,7 +158,6 @@ scp -o BatchMode=yes \
   devvm/claude-se-hook \
   devvm/show-image \
   devvm/clipboard-store-clean \
-  devvm/ttyd-user-map \
   devvm/tmux.conf.system \
   devvm/sudoers.d-ttyd-users \
   devvm/ttyd.service \
@@ -238,7 +237,14 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
     /tmp/dm-sans-latin-wght-normal.woff2 \
     /tmp/tl-symbols.woff2 \
     /usr/local/share/ttyd/fonts/
-  sudo install -m 0644 /tmp/ttyd-user-map    /etc/ttyd-user-map
+  # NO ttyd-user-map here. `/etc/ttyd-user-map` (and `/etc/ttyd-admins`) are
+  # GENERATED from `infra/scripts/workstation/roster.yaml` by roster_engine.py,
+  # installed by the hourly t3-provision-users reconcile. This script used to
+  # install a copy carried in this repo, which outranked the generated file on
+  # every deploy: by 2026-08-17 that copy had gone stale and would have dropped
+  # `ancaelena98=ancamilea`, locking that user out of the lobby until the next
+  # reconcile. Adding a user is a roster edit; if the map is missing on a fresh
+  # box, run the reconcile rather than recreating it from here.
   # System tmux conf: RGB terminal feature for xterm* clients (Task 1.14;
   # tmux otherwise down-converts 24-bit SGR to 256 colours for the lobby).
   # Additive — loads before user confs; running servers apply it on their
@@ -267,7 +273,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-user-dirlist /tmp/tmux-user-setfacl /tmp/tmux-restore-user /tmp/tmux-persist-forget /tmp/claude-tmux-state /tmp/claude-se-hook /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html /tmp/sw.js
   rm -f /tmp/manifest.webmanifest /tmp/icon-192.png /tmp/icon-512.png /tmp/icon-512-maskable.png
   rm -f /tmp/JetBrainsMono-Regular.woff2 /tmp/JetBrainsMono-Bold.woff2 /tmp/JetBrainsMono-Italic.woff2 /tmp/JetBrainsMono-BoldItalic.woff2 /tmp/dm-sans-latin-wght-normal.woff2 /tmp/tl-symbols.woff2
-  rm -f /tmp/ttyd-user-map /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users /tmp/vapid.env
+  rm -f /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users /tmp/vapid.env
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
   rm -f /tmp/clipboard-upload.service /tmp/clipboard-cleanup.service /tmp/clipboard-cleanup.timer
 REMOTE
@@ -275,6 +281,17 @@ REMOTE
 echo "==> Verifying..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" '
   systemctl is-active ttyd ttyd-ro tmux-api clipboard-upload
+  # The identity map is not ours to install (see the note above), but every
+  # service here is useless without it — an absent map denies everyone, with no
+  # fallback. Report it rather than let a deploy look clean while nobody can log
+  # in; the fix is the infra reconcile, not a file in this repo.
+  if [[ -r /etc/ttyd-user-map ]] && grep -qE "^[^#[:space:]]+=" /etc/ttyd-user-map; then
+    echo "identity map OK ($(grep -cE "^[^#[:space:]]+=" /etc/ttyd-user-map) users)"
+  else
+    echo "WARNING: /etc/ttyd-user-map is missing or has no mappings — every login will be denied."
+    echo "         It is generated from infra/scripts/workstation/roster.yaml; run"
+    echo "         sudo /home/wizard/code/infra/scripts/t3-provision-users.sh to reconcile."
+  fi
   curl -sf -H "X-Authentik-Username: vbarzin" http://localhost:7684/whoami >/dev/null && echo "tmux-api OK"
   curl -sf http://localhost:7684/push/vapid-public >/dev/null && echo "Web Push VAPID endpoint OK" || echo "Web Push dark (no VAPID key configured)"
   curl -sf http://localhost:7683/health >/dev/null && echo "clipboard-upload OK"

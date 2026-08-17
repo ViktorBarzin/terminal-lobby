@@ -35,9 +35,14 @@
 #                                      behaviour and takes no path it trusts.
 #
 # Add one line per OS user listed on the right-hand side of
-# /etc/ttyd-user-map. The mapping file is the source of truth for which
-# Authentik usernames are accepted; this file is the kernel-level grant
-# that makes the per-user attach actually work.
+# /etc/ttyd-user-map — which is itself GENERATED, hourly, from
+# infra/scripts/workstation/roster.yaml (the one place a user is declared; this
+# repo carried a second copy of the map until 2026-08-17 and no longer does).
+# The roster says who exists and which Authentik username reaches them; this
+# file is the kernel-level grant that makes the per-user attach actually work,
+# and it stays hand-maintained on purpose — adding a roster user does NOT
+# grant anything here, so a new user's attaches fail until this file gains
+# their line and is deployed.
 
 # One line per non-wizard OS user in /etc/ttyd-user-map. tmux-user-dirlist
 # (GET /dirs) is granted alongside the attach binaries so the directory picker
