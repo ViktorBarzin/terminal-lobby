@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { keyboardOffset } from "../src/mobile/viewport";
+import { installViewportSync, keyboardOffset } from "../src/mobile/viewport";
 
 describe("viewport — keyboardOffset", () => {
   it("is 0 when the visual viewport fills the layout viewport (no keyboard)", () => {
@@ -18,4 +18,32 @@ describe("viewport — keyboardOffset", () => {
   it("never goes negative (visual viewport reported taller than layout)", () => {
     expect(keyboardOffset(800, 850, 0)).toBe(0);
   });
+});
+
+describe("viewport — teardown", () => {
+// A frame scheduled just before teardown must not run after it: it would
+// measure a surface that no longer exists and publish 0px over a live value.
+// This is also what made the suite order-dependent — a stray frame from one
+// file's unmounted view overwrote what another file's test had just asserted.
+it("cancels its pending frame on cleanup", () => {
+  const frames: Array<() => void> = [];
+  const realRaf = globalThis.requestAnimationFrame;
+  const realCancel = globalThis.cancelAnimationFrame;
+  let cancelled: number[] = [];
+  globalThis.requestAnimationFrame = ((cb: () => void) => {
+    frames.push(cb);
+    return frames.length;
+  }) as typeof requestAnimationFrame;
+  globalThis.cancelAnimationFrame = ((h: number) => cancelled.push(h)) as typeof cancelAnimationFrame;
+  try {
+    document.documentElement.style.removeProperty("--sk-h");
+    const stop = installViewportSync();
+    window.dispatchEvent(new Event("resize"));
+    stop();
+    expect(cancelled.length).toBeGreaterThan(0);
+  } finally {
+    globalThis.requestAnimationFrame = realRaf;
+    globalThis.cancelAnimationFrame = realCancel;
+  }
+});
 });

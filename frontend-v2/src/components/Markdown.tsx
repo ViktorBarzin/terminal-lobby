@@ -3,6 +3,7 @@ import { SolidMarkdown, type SolidMarkdownComponents } from "solid-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Mermaid } from "./Mermaid";
+import { CodeView } from "./CodeView";
 import { fileReadUrl } from "../lib/config";
 
 /**
@@ -10,7 +11,11 @@ import { fileReadUrl } from "../lib/config";
  * with mermaid + inline images", beating T3 which renders neither).
  *   - remark-gfm: tables, task lists, strikethrough, autolinks.
  *   - rehype-sanitize: the transcript can carry arbitrary HTML, so sanitize.
- *   - custom `code`: ```mermaid → <Mermaid>; other fences → <pre>.
+ *   - custom `code`: ```mermaid → <Mermaid>; other fences → <CodeView>, which
+ *     lazily highlights them (highlight.js, already in the bundle for the file
+ *     preview). An agent transcript is mostly code, and it read as a wall of
+ *     grey before this; CodeView renders the plain text first and swaps in the
+ *     highlighted markup, so a language it does not know loses nothing.
  *   - custom `pre`: pass-through, so a fence is wrapped exactly once.
  *   - custom `img`: lazy, constrained inline images.
  */
@@ -90,9 +95,9 @@ const components: SolidMarkdownComponents = {
     const lang = hastLang(node);
     if (lang === "mermaid") return <Mermaid code={text} />;
     return (
-      <pre class="tl-code" data-lang={lang || undefined}>
-        <code>{text}</code>
-      </pre>
+      <div class="tl-code-block" data-lang={lang || undefined}>
+        <CodeView code={text} {...(lang ? { language: lang } : {})} />
+      </div>
     );
   },
   img: imgFor(),

@@ -32,8 +32,15 @@ describe("<FilePreview> — quick-edit mode", () => {
     const edit = getByRole("button", { name: "Edit" });
     fireEvent.click(edit);
     expect(store.editing()).toBe(true);
-    // the read-only code body is replaced by the CodeMirror editor (lazy mount).
-    await waitFor(() => expect(container.querySelector(".cm-editor")).toBeTruthy());
+    // The read-only code body is replaced by the CodeMirror editor (lazy
+    // mount). The timeout is explicit because this waits on a COLD dynamic
+    // import of the whole editor: ~530ms with the file to itself, and past
+    // waitFor's 1s default when the suite's isolated workers are competing for
+    // CPU — which is the one test that made a full run fail while passing
+    // alone.
+    await waitFor(() => expect(container.querySelector(".cm-editor")).toBeTruthy(), {
+      timeout: 15_000,
+    });
     // Save is present but disabled while clean; a View button exits.
     const save = getByRole("button", { name: "Save" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
