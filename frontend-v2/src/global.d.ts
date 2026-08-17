@@ -43,6 +43,8 @@ interface Window {
   // bridge message (the ttyd page already refits on its own visualViewport
   // listeners); belt-and-braces for the SPA-driven resize.
   __tlRefitTerminal?: () => boolean;
+  /** Publish the soft-keyboard height (px) into the terminal frame (tl-kb). */
+  __tlKeyboardOffset?: (px: number) => boolean;
   // Set by the mounted TerminalView — hands keyboard focus BACK to the terminal
   // after a lobby overlay (command palette, shortcuts help) closes. Those
   // overlays live outside the iframe, so dismissing one leaves focus on <body>

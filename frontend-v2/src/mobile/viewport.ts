@@ -35,6 +35,19 @@ export interface ViewportSyncOptions {
   onRefit?: () => void;
   /** Debounce window for onRefit (ms). Default 120 (matches the vanilla fit). */
   refitDebounceMs?: number;
+  /**
+   * The covered height, whenever it CHANGES — for surfaces that cannot measure
+   * it themselves.
+   *
+   * The terminal is an iframe, and an iframe's visualViewport does not move when
+   * the keyboard opens: only the top window's does. So the frame cannot see the
+   * keyboard, and it has to be told (TerminalView posts it as `tl-kb`).
+   *
+   * On CHANGE rather than on every event: the keyboard animates over ~250ms and
+   * fires resize/scroll throughout, and each post makes the frame re-fit and
+   * tmux resize.
+   */
+  onKeyboard?: (px: number) => void;
 }
 
 /**
@@ -53,6 +66,10 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   let rafScheduled = false;
   let rafHandle = 0;
   let fitTimer: ReturnType<typeof setTimeout> | undefined;
+  // The last height published to onKeyboard. -1 rather than 0 so the seeding
+  // write always reports once, telling the frame where it stands before the
+  // first keyboard ever opens.
+  let lastKb = -1;
 
   const writeOffset = (): void => {
     const h = vv ? vv.height : window.innerHeight;
@@ -60,6 +77,10 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
     const kb = keyboardOffset(window.innerHeight, h, top);
     const root = document.documentElement.style;
     root.setProperty("--kb-offset", kb + "px");
+    if (kb !== lastKb) {
+      lastKb = kb;
+      opts.onKeyboard?.(kb);
+    }
     // Publish the live soft-key toolbar height so the surface above it can
     // reserve the exact space (a hidden toolbar reads 0 → the surface reclaims
     // it). Mirrors the vanilla syncViewport --sk-h write.

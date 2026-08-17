@@ -47,3 +47,63 @@ it("cancels its pending frame on cleanup", () => {
   }
 });
 });
+
+/**
+ * Forwarding the keyboard height across the frame boundary.
+ *
+ * The terminal lives in an iframe, and an iframe's visualViewport does not move
+ * when the soft keyboard opens — only the top window's does. The lobby used to
+ * reserve the space by shrinking the iframe's CONTAINER, which pulled the frame
+ * out from under the tap that had just opened the keyboard: the delayed compat
+ * mousedown then landed on a non-focusable shell element and blurred the field,
+ * so the keyboard flashed shut for taps below ~54% of the screen (2026-08-17).
+ * The height is forwarded into the frame instead, so the frame never moves.
+ */
+describe("viewport — the keyboard height is published to the frame", () => {
+  function withFakeViewport(height: number, run: () => void): void {
+    const real = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: { height, offsetTop: 0, addEventListener() {}, removeEventListener() {} },
+    });
+    try {
+      run();
+    } finally {
+      if (real) Object.defineProperty(window, "visualViewport", real);
+      else delete (window as unknown as Record<string, unknown>).visualViewport;
+    }
+  }
+
+  it("reports the covered height when the keyboard opens", () => {
+    const seen: number[] = [];
+    withFakeViewport(window.innerHeight - 336, () => {
+      const stop = installViewportSync({ onKeyboard: (px) => seen.push(px) });
+      stop();
+    });
+    expect(seen.at(-1)).toBe(336);
+  });
+
+  it("reports 0 when there is no keyboard", () => {
+    const seen: number[] = [];
+    withFakeViewport(window.innerHeight, () => {
+      const stop = installViewportSync({ onKeyboard: (px) => seen.push(px) });
+      stop();
+    });
+    expect(seen.at(-1)).toBe(0);
+  });
+
+  it("publishes only on a CHANGE — the keyboard fires a burst of events", () => {
+    // The keyboard animates over ~250ms and fires resize/scroll throughout.
+    // Posting into the frame on every one of them would have the terminal
+    // re-fit (and tmux resize) repeatedly for one keyboard.
+    const seen: number[] = [];
+    withFakeViewport(window.innerHeight - 300, () => {
+      const stop = installViewportSync({ onKeyboard: (px) => seen.push(px) });
+      window.dispatchEvent(new Event("resize"));
+      window.dispatchEvent(new Event("resize"));
+      window.dispatchEvent(new Event("resize"));
+      stop();
+    });
+    expect(seen).toEqual([300]);
+  });
+});

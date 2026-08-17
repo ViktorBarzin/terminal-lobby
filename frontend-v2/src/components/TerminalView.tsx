@@ -295,6 +295,24 @@ export const TerminalView: Component<{
     return true;
   };
   let prevRefit: (() => boolean) | undefined;
+  /**
+   * Tell the frame how much of the bottom the soft keyboard covers.
+   *
+   * The frame cannot work this out for itself: an iframe's visualViewport does
+   * not move when the keyboard opens, only the top window's does. The lobby
+   * used to reserve the space out here instead, by shrinking this iframe's
+   * container — which pulled the frame out from under the tap that had just
+   * opened the keyboard, so the tap's delayed compat mousedown landed on a
+   * non-focusable shell element and blurred the field (the keyboard flashed
+   * shut for any tap below ~54% of the screen). Reserving INSIDE the frame
+   * leaves the frame where it is.
+   */
+  const keyboardToFrame = (px: number): boolean => {
+    if (!iframe?.contentWindow) return false;
+    postToFrame({ type: "tl-kb", px });
+    return true;
+  };
+  let prevKeyboard: ((px: number) => boolean) | undefined;
 
   // Live prefs bridge — store/prefs.ts calls window.__tlPrefsLive after it has
   // PERSISTED a change. The v2 rewrite carried the theme half of the bridge and
@@ -337,6 +355,8 @@ export const TerminalView: Component<{
       window.__tlPasteToTerminal = pasteToFrame;
       prevRefit = window.__tlRefitTerminal;
       window.__tlRefitTerminal = refitFrame;
+      prevKeyboard = window.__tlKeyboardOffset;
+      window.__tlKeyboardOffset = keyboardToFrame;
       prevFocus = window.__tlFocusTerminal;
       window.__tlFocusTerminal = focusFrame;
       prevPrefsLive = window.__tlPrefsLive;
@@ -368,6 +388,9 @@ export const TerminalView: Component<{
     }
     if (typeof window !== "undefined" && window.__tlRefitTerminal === refitFrame) {
       window.__tlRefitTerminal = prevRefit;
+    }
+    if (typeof window !== "undefined" && window.__tlKeyboardOffset === keyboardToFrame) {
+      window.__tlKeyboardOffset = prevKeyboard;
     }
     if (typeof window !== "undefined" && window.__tlFocusTerminal === focusFrame) {
       window.__tlFocusTerminal = prevFocus;
