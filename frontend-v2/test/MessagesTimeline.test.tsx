@@ -327,3 +327,55 @@ describe("<MessagesTimeline> — image srcs are never rewritten", () => {
     ]);
   });
 });
+
+// --- attachments in the timeline (design 2026-08-17, decisions 2 and 8) -----
+describe("attachments render in place", () => {
+  const IMG = "/var/lib/clipboard-store/wizard/qa/pasted-20260817-150232-a1.png";
+
+  /** One settled turn, so the assistant text renders as a finished message. */
+  const renderTimeline = (events: Event[]) =>
+    render(() => (
+      <MessagesTimeline events={[...events, ev({ id: 99, kind: "turn_end" })]} me="wizard" />
+    ));
+
+  it("draws an image where the user's message named it", () => {
+    const { container } = renderTimeline([
+      ev({ id: 1, kind: "user", body: `what's wrong here? ${IMG}` }),
+    ]);
+    const img = container.querySelector(".tl-row-user img");
+    expect(img?.getAttribute("src")).toBe("/clipboard/img/qa/pasted-20260817-150232-a1.png");
+    expect(container.querySelector(".tl-row-user")?.textContent).not.toContain(IMG);
+  });
+
+  it("draws an image Claude named in its own prose", () => {
+    const { container } = renderTimeline([
+      ev({ id: 1, kind: "text", body: `the new chart is at ${IMG}` }),
+    ]);
+    expect(container.querySelector(".tl-row-message img")).not.toBeNull();
+  });
+
+  // The one regression this change is most likely to cause: a path inside a
+  // fence is sample text, not an attachment.
+  it("leaves a path inside a code fence as code", () => {
+    const { container } = renderTimeline([
+      ev({ id: 1, kind: "text", body: "```bash\ncp " + IMG + " .\n```" }),
+    ]);
+    expect(container.querySelector(".tl-row-message img")).toBeNull();
+    expect(container.querySelector(".tl-row-message")?.textContent).toContain(IMG);
+  });
+
+  it("leaves a path in inline code alone", () => {
+    const { container } = renderTimeline([
+      ev({ id: 1, kind: "text", body: "run `cat " + IMG + "` first" }),
+    ]);
+    expect(container.querySelector(".tl-row-message img")).toBeNull();
+    expect(container.querySelector(".tl-row-message")?.textContent).toContain(IMG);
+  });
+
+  it("still renders a markdown image reference the way it always did", () => {
+    const { container } = renderTimeline([
+      ev({ id: 1, kind: "text", body: "![shot](/files/read?path=%2Ftmp%2Fa.png)" }),
+    ]);
+    expect(container.querySelector(".tl-row-message img")).not.toBeNull();
+  });
+});

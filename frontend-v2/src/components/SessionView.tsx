@@ -35,7 +35,9 @@ import {
 } from "./Icons";
 import { clampFontSize, type PrefsStore } from "../store/prefs";
 import { listDir as fileList } from "../lib/file-api";
-import { uploadBlob } from "../clipboard/upload";
+import { uploadBlob, uploadField } from "../clipboard/upload";
+import { attachmentKind } from "../lib/attachments";
+import type { DraftAttachment } from "../store/drafts";
 
 /**
  * The stream badge's wording. Every status but one reads fine as-is; a session
@@ -85,6 +87,12 @@ export const SessionView: Component<{
   menuExtra?: JSX.Element;
   /** real OS-user owner when this is a shared/foreign attach (else undefined). */
   owner?: string;
+  /** The EFFECTIVE OS user (whoami.osUser — the act-as target in a lens). What
+   *  decides whether an attachment path in a message is ours to fetch: the
+   *  clipboard read-back routes resolve inside the CALLER's own store directory,
+   *  so a path belonging to someone else stays plain text (design 2026-08-17
+   *  decisions 7 and 12). */
+  me?: () => string;
   /** TRUE while the app is CREATING this session (the poll has never seen it):
    *  the terminal attach is what brings its tmux into being, so it must not wait
    *  for the Terminal view the way an existing session's attach does. */
@@ -281,18 +289,58 @@ export const SessionView: Component<{
     }
   };
 
-  /** Paste or drop an image into the composer: store it, reference its path. */
-  const attachImage = async (file: File): Promise<string | null> => {
-    try {
-      return await uploadBlob(file, {
-        session,
-        field: "image",
-        filename: file.name,
-      });
-    } catch (err) {
-      props.notify?.(err instanceof Error ? err.message : "Couldn't attach the image", "error");
-      return null;
+  /**
+   * Attach files to the text view's composer: upload each one, and return the
+   * ones the chat can actually read back (design 2026-08-17).
+   *
+   * The SERVER decides what became attachable. An image always reaches the
+   * per-(user, session) store; a document does only up to the store cap, and
+   * above it stays an ephemeral /tmp transfer whose path is still useful to
+   * Claude but which a chip would outlive. `stored:false` is that answer, and it
+   * earns a toast rather than a chip — sending a message whose attachment quietly
+   * expires in seven days would be worse than saying so now.
+   */
+  const attachFiles = async (files: File[]): Promise<DraftAttachment[]> => {
+    const added: DraftAttachment[] = [];
+    const transferred: string[] = [];
+    for (const file of files) {
+      try {
+        const up = await uploadBlob(file, {
+          session,
+          field: uploadField(file.type),
+          filename: file.name,
+        });
+        const name = up.path.slice(up.path.lastIndexOf("/") + 1);
+        if (!up.stored) {
+          transferred.push(up.path);
+          continue;
+        }
+        added.push({ path: up.path, name, kind: attachmentKind(name) });
+      } catch (err) {
+        props.notify?.(
+          `Couldn't attach ${file.name}: ${err instanceof Error ? err.message : "upload failed"}`,
+          "error",
+        );
+      }
     }
+    if (transferred.length) {
+      // The path IS on the way to the prompt — it just cannot carry a chip. Told
+      // plainly, because the alternative is a message that looks attached and is
+      // not.
+      props.notify?.(
+        `Too large to attach (${transferred.length} file${transferred.length > 1 ? "s" : ""}) — ` +
+          `the path is available but will not render: ${transferred.join(" ")}`,
+        "info",
+      );
+    }
+    // Chromium cannot decode HEIF, which clipboard-upload deliberately accepts,
+    // and Claude Code's Read does not take it either — so an iPhone-native photo
+    // is worth flagging at the moment it is attached rather than when the answer
+    // comes back confused.
+    if (added.some((a) => /\.hei[cf]$/i.test(a.name))) {
+      props.notify?.("HEIC images may not display or be readable — a JPEG is safer", "info");
+    }
+    return added;
   };
   const resolve = (reqId: string, d: PermissionDecision) =>
     void store.resolvePermission(reqId, d);
@@ -348,6 +396,10 @@ export const SessionView: Component<{
     onCleanup(dispose);
   });
 
+  /** The composer's tray-add, handed over when the Text view mounts. Files
+   *  dropped on the WINDOW arrive here rather than in the composer. */
+  let trayAdd: ((items: DraftAttachment[]) => void) | undefined;
+
   // ---- image clipboard subsystem (design pillar #2 — Gallery/Images) -------
   // Paste path + full-screen drop-target: an image paste/drop uploads to the
   // per-session clipboard store and the returned path is typed into the pty via
@@ -359,6 +411,16 @@ export const SessionView: Component<{
     session: () => session,
     sendToPty: (t) => window.__tlSendToTerminal?.(t) ?? false,
     enabled: () => !watch(),
+    // Route on the ACTIVE VIEW (design 2026-08-17 decision 5). In the text view a
+    // paste or a drop belongs to the composer — which is the bug this fixes: the
+    // capture-phase paste listener swallowed every image and typed its path at a
+    // terminal the reader was not looking at. Watching keeps the old path, so the
+    // one "nothing is typed into it" refusal still comes from one place.
+    composerOwns: () => mode() === "text" && !watch(),
+    onComposerFiles: async (files) => {
+      const added = await attachFiles(files);
+      if (added.length) attachToComposer(added);
+    },
   });
   onCleanup(image.dispose);
 
@@ -393,6 +455,25 @@ export const SessionView: Component<{
   });
   onCleanup(() => {
     if (window.__tlDoPaste === doPaste) window.__tlDoPaste = prevDoPaste;
+  });
+
+  // The 🖼 gallery is a lobby overlay and the tray belongs to the composer, so
+  // neither has a handle on the other. Same bridge the paste routine uses.
+  const attachToComposer = (items: DraftAttachment[]): boolean => {
+    if (!trayAdd || watch()) return false;
+    if (mode() !== "text") setMode("text");
+    trayAdd(items);
+    return true;
+  };
+  let prevAttach: typeof window.__tlAttachToComposer;
+  onMount(() => {
+    prevAttach = window.__tlAttachToComposer;
+    window.__tlAttachToComposer = attachToComposer;
+  });
+  onCleanup(() => {
+    if (window.__tlAttachToComposer === attachToComposer) {
+      window.__tlAttachToComposer = prevAttach;
+    }
   });
 
   // ---- terminal controls in the session bar -------------------------------
@@ -488,10 +569,27 @@ export const SessionView: Component<{
         <span class="tl-session-bar-spacer" />
         {/* Terminal controls, in the order the vanilla page's floating cluster
             uses them: size, then the three things you put INTO the session.
-            Hidden on a coarse pointer, where the soft-key row already carries
-            paste/upload/images and a two-finger pinch sets the font — the same
-            split vanilla makes. */}
+            Hidden on a coarse pointer, where a two-finger pinch sets the font and
+            the composer's own 📎 attaches — the same split vanilla makes.
+            Also hidden in the TEXT view (design 2026-08-17 decision 6): A−/A+
+            size a terminal you are not looking at, and Upload/Paste would type a
+            path into it, which is the behaviour this change exists to stop. The
+            gallery is not in here — it is view-agnostic and stays. */}
+        {/* The gallery is view-agnostic: every image the session touched, whether
+            you are reading the transcript or driving the pty. So it sits OUTSIDE
+            the terminal tools, which the text view hides. */}
         <Show when={!coarse()}>
+          <button
+            class="tl-icon-btn tl-gallery-btn"
+            aria-label="Session images"
+            title="Session images"
+            onClick={() => props.onOpenGallery?.()}
+          >
+            <ImageIcon />
+            <span class="tl-btn-label">Images</span>
+          </button>
+        </Show>
+        <Show when={!coarse() && mode() === "terminal"}>
           <span class="tl-term-tools">
             <button
               class="tl-icon-btn tl-font-btn"
@@ -508,15 +606,6 @@ export const SessionView: Component<{
               onClick={() => stepFont(1)}
             >
               A+
-            </button>
-            <button
-              class="tl-icon-btn tl-gallery-btn"
-              aria-label="Session images"
-              title="Session images"
-              onClick={() => props.onOpenGallery?.()}
-            >
-              <ImageIcon />
-              <span class="tl-btn-label">Images</span>
             </button>
             {/* Upload and Paste both end by TYPING a path or the clipboard into
                 the pty, so a read-only client cannot complete either — and an
@@ -671,7 +760,11 @@ export const SessionView: Component<{
             }}
             hasEarlier={store.hasEarlier()}
             onListDir={listDir}
-            onAttachImage={attachImage}
+            session={session}
+            me={props.me?.() ?? ""}
+            onAttach={attachFiles}
+            inertReason={inertReason()}
+            register={(add) => (trayAdd = add)}
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
@@ -704,7 +797,9 @@ export const SessionView: Component<{
         <div class="tl-drop-overlay" aria-hidden="true">
           {watch()
             ? inertReason()
-            : "Drop files — paths are typed into the session (images join its gallery)"}
+            : mode() === "text"
+              ? "Drop files — they attach to the message you are writing"
+              : "Drop files — paths are typed into the session (images join its gallery)"}
         </div>
       </Show>
 

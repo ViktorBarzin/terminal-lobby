@@ -60,4 +60,12 @@ interface Window {
   // (term.html reads localStorage as the truth; the payload covers a failed
   // write). Returns true when a frame was available to receive it.
   __tlPrefsLive?: (prefs: { fontSize: number }) => boolean;
+  // Set by the mounted SessionView — attach stored files to the TEXT view's
+  // composer tray from outside it (design 2026-08-17 decision 14). The 🖼 gallery
+  // is a lobby overlay and the tray belongs to the composer, so the two have no
+  // handle on each other; same bridge pattern as __tlDoPaste. Returns false when
+  // no text-view composer is mounted to receive them.
+  __tlAttachToComposer?: (
+    items: { path: string; name: string; kind: "image" | "doc" }[],
+  ) => boolean;
 }

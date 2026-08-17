@@ -578,6 +578,73 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* ---- Attachments in the chat (design 2026-08-17) -----------------------
+   Rendered INSIDE the user bubble's <pre> and inside assistant markdown, so
+   everything here is phrasing content by construction: <img> and <button> both
+   are, which is what lets the surrounding text keep its own whitespace. */
+
+/* An image reads at full bubble width, capped in height (decision 13): a
+   screenshot has to be legible without opening anything, and on a phone this is
+   roughly a third of the screen — scrollable past, one tap for full size. */
+.tl-attach-image {
+  display: block;
+  margin: 6px 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  max-width: 100%;
+}
+.tl-attach-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  width: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.tl-attach-image:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* A document is a chip, inline with the prose it sits in. */
+.tl-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: baseline;
+  margin: 0 2px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 0.92em;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  max-width: 100%;
+}
+.tl-attach-chip:hover {
+  background: var(--bg-card-hover);
+}
+.tl-attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Nothing could serve it: another user's store file, a path outside the home,
+   a swept file, an image the browser cannot decode. Showing the path is what
+   this surface did before attachments rendered at all. */
+.tl-attach-path {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+  word-break: break-all;
+  color: var(--text-muted);
+}
+
 .tl-linkbtn {
   background: none;
   border: 0;
@@ -902,6 +969,88 @@ body {
   align-items: flex-end;
   max-width: 860px;
   margin: 0 auto;
+}
+/* ---- the attachment tray (design 2026-08-17 decision 1) ----------------
+   Above the input, so the field stays prose and the path never has to be read
+   or edited by hand. */
+.tl-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 860px;
+  margin: 0 auto 8px;
+}
+.tl-tray-item {
+  position: relative;
+  display: flex;
+}
+.tl-tray-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  max-width: 220px;
+}
+.tl-tray-item[data-kind="doc"] .tl-tray-open {
+  padding: 6px 10px;
+}
+.tl-tray-open img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+}
+.tl-tray-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+/* Deliberately a real target rather than a hover affordance: the tray is used on
+   a phone, where there is no hover. */
+.tl-tray-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.tl-attach-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tl-attach-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+.tl-attach-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .tl-composer-input {
   flex: 1 1 auto;
@@ -1374,6 +1523,36 @@ body {
   gap: 8px;
   overflow-y: auto;
   min-height: 0;
+}
+/* The tile plus its Attach action. The cell keeps its own square aspect ratio,
+   so the wrapper carries the positioning context for the button. */
+.tl-gallery-item {
+  position: relative;
+  display: flex;
+}
+.tl-gallery-item > .tl-gallery-cell {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Always visible, not hover-revealed: the gallery is used on a phone, where
+   there is no hover. */
+.tl-gallery-attach {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-page) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tl-gallery-attach:hover {
+  border-color: var(--accent);
+  background: var(--bg-page);
 }
 .tl-gallery-cell {
   position: relative;

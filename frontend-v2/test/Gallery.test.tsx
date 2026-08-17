@@ -255,3 +255,47 @@ describe("<Gallery> — the overlay takes the keyboard while it is open", () => 
     dispose();
   });
 });
+
+// --- Attach to the message (design 2026-08-17 decision 14) ------------------
+// The gallery already holds every image the session touched, including a
+// `show-image` render Claude produced, so attaching one costs a call rather than
+// a re-upload. The bridge is a window function because the gallery is a lobby
+// overlay and the tray belongs to the composer.
+describe("attaching from the gallery", () => {
+  afterEach(() => {
+    delete window.__tlAttachToComposer;
+  });
+
+  it("hands the tile's stored path to the composer", async () => {
+    const seen: unknown[] = [];
+    window.__tlAttachToComposer = (items) => {
+      seen.push(items);
+      return true;
+    };
+    const { store, dispose } = stubStore([img("pasted-1.png")]);
+    const { container } = render(() => <Gallery store={store} />);
+
+    fireEvent.click(container.querySelector<HTMLElement>(".tl-gallery-attach")!);
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]).toEqual([
+      {
+        path: "/var/lib/clipboard-store/u/s/pasted-1.png",
+        name: "pasted-1.png",
+        kind: "image",
+      },
+    ]);
+    dispose();
+  });
+
+  // A tile the browser could not decode has nothing to attach: Claude cannot read
+  // it either, so offering the action would only produce a confused answer.
+  it("offers no action on an undecodable tile", async () => {
+    const { store, dispose } = stubStore([img("broken.png")]);
+    const { container } = render(() => <Gallery store={store} />);
+    fireEvent.error(container.querySelector("img")!);
+    await waitFor(() =>
+      expect(container.querySelector(".tl-gallery-attach")).toBeNull(),
+    );
+    dispose();
+  });
+});
