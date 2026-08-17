@@ -176,3 +176,63 @@ describe("persistence", () => {
     expect(field.value).toBe("");
   });
 });
+
+// --- the outside-in sinks (the Paste button, the ⌘V chord, the palette) -----
+// Those all go through pasteIntoTerminal, which lands in the SESSION view, not
+// in the composer. In text mode they have to reach the message being written
+// rather than the pty, so the composer hands its two sinks out on mount.
+describe("register", () => {
+  const mountWithRegister = () => {
+    let api: { add: (i: DraftAttachment[]) => void; insertText: (t: string) => void } | undefined;
+    const onSend = vi.fn().mockResolvedValue(true);
+    const r = render(() => (
+      <Composer
+        working={false}
+        pending={[]}
+        session="qa"
+        me="wizard"
+        onSend={onSend}
+        onStop={() => {}}
+        onResolve={() => {}}
+        onAttach={vi.fn().mockResolvedValue([])}
+        register={(a) => (api = a)}
+      />
+    ));
+    return { ...r, api: () => api!, onSend, field: r.container.querySelector("textarea")! };
+  };
+
+  it("hands out both sinks on mount", () => {
+    const { api } = mountWithRegister();
+    expect(typeof api().add).toBe("function");
+    expect(typeof api().insertText).toBe("function");
+  });
+
+  it("adds an attachment to the tray from outside", async () => {
+    const { api, container } = mountWithRegister();
+    api().add([IMG]);
+    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
+  });
+
+  it("inserts pasted text at the caret rather than replacing the message", async () => {
+    const { api, field } = mountWithRegister();
+    fireEvent.input(field, { target: { value: "before after" } });
+    field.setSelectionRange(7, 7); // between "before " and "after"
+    fireEvent.click(field);
+    api().insertText("MIDDLE ");
+    await waitFor(() => expect(field.value).toBe("before MIDDLE after"));
+  });
+
+  it("appends when the field has never been focused", async () => {
+    const { api, field } = mountWithRegister();
+    api().insertText("pasted");
+    await waitFor(() => expect(field.value).toBe("pasted"));
+  });
+
+  it("sends what was inserted from outside", async () => {
+    const { api, onSend, getByText } = mountWithRegister();
+    api().insertText("from the palette");
+    await waitFor(() => {});
+    fireEvent.click(getByText("Send"));
+    expect(onSend).toHaveBeenCalledWith("from the palette");
+  });
+});
