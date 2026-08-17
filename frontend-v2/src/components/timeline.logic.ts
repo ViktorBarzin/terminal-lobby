@@ -462,17 +462,27 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           }
           break;
         }
-        case "meta":
+        case "meta": {
+          const meta = e.meta ?? "mode";
+          // `mode` and `permission-mode` are STATE, not events: the composer's
+          // chip always shows the mode in force, so a divider announcing each
+          // change interrupts the conversation to repeat what is already on
+          // screen (Viktor, 2026-08-17). The EVENTS still flow — currentMode()
+          // reads them for that chip — only the row is dropped, and dropped
+          // outright rather than folded, since expanding a turn would put the
+          // divider back.
+          if (meta === "mode" || meta === "permission-mode") break;
           add({
             kind: "meta",
             key: `meta-${e.id}`,
             id: e.id,
-            meta: e.meta ?? "mode",
+            meta,
             body: e.body ?? "",
             turnKey: turn.key,
             ...(e.at !== undefined ? { at: e.at } : {}),
           });
           break;
+        }
         case "permission_request":
           work.push({
             kind: "permission",
