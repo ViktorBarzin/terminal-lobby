@@ -1,7 +1,0 @@
-[     132ms] ReferenceError: __TL_DIAG__ is not defined
-    at http://127.0.0.1:5199/?session=sessions:32:7
-[     399ms] [LOG] terminal-lobby build: __TL_BUILD__ @ http://127.0.0.1:5199/src/deploy/healer.ts:28
-[     441ms] [WARNING] computations created outside a `createRoot` or `render` will never be disposed @ http://127.0.0.1:5199/node_modules/.vite/deps/chunk-FSZV5AEM.js?v=4e518312:787
-[     764ms] ReferenceError: __TL_DIAG__ is not defined
-    at http://127.0.0.1:5199/term.html?arg=sessions:32:7
-[     755ms] [LOG] terminal-lobby build: __TL_BUILD__ @ http://127.0.0.1:5199/src/deploy/healer.ts:28

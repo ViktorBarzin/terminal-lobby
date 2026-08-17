@@ -1,6 +1,0 @@
-[      46ms] ReferenceError: __TL_DIAG__ is not defined
-    at http://127.0.0.1:5199/?session=text-mode:32:7
-[     307ms] [LOG] terminal-lobby build: __TL_BUILD__ @ http://127.0.0.1:5199/src/deploy/healer.ts:28
-[   26256ms] ReferenceError: __TL_DIAG__ is not defined
-    at http://127.0.0.1:5199/term.html?arg=text-mode&arg=claude:32:7
-[   26410ms] [LOG] terminal-lobby build: __TL_BUILD__ @ http://127.0.0.1:5199/src/deploy/healer.ts:28
