@@ -74,13 +74,23 @@ export function saveWatch(session: string, choice: WatchChoice): void {
 }
 
 /**
- * How a client should join: an explicit choice always wins; with none recorded,
- * join as a viewer when someone is already driving.
+ * How a client should join: `locked` wins over everything, then an explicit
+ * choice, and with none recorded join as a viewer when someone is already
+ * driving.
+ *
+ * `locked` is the act-as case — a tab acting as someone else only ever watches,
+ * so neither a stored choice nor the automatic rule gets a say (see
+ * `watchLockedFor`).
  *
  * `driven` is a courtesy signal, not an access decision — it comes from the
  * polled session list and can be seconds stale. Being wrong costs one click.
  */
-export function resolveWatch(choice: WatchChoice, driven: boolean): boolean {
+export function resolveWatch(
+  choice: WatchChoice,
+  driven: boolean,
+  locked = false,
+): boolean {
+  if (locked) return true;
   return choice ?? driven;
 }
 
@@ -129,6 +139,7 @@ export function resolvedWatchFor(session: string): boolean | undefined {
 export function createWatchMode(
   session: Accessor<string>,
   driven: Accessor<boolean>,
+  locked?: Accessor<boolean>,
 ): [Accessor<boolean>, (w: boolean) => void, () => void] {
   // THE LATCH: depends on `session` and reads `driven` UNTRACKED, so it is
   // re-taken when this view moves to another session and at no other time.
@@ -143,13 +154,20 @@ export function createWatchMode(
   });
 
   const watch = createMemo(() =>
-    resolveWatch(watchChoice(session()), joinedDriven()),
+    resolveWatch(watchChoice(session()), joinedDriven(), locked?.() ?? false),
   );
 
   // Tell the sidebar what we actually resolved, so the card for an open session
   // reflects this view rather than a `driven` count that includes us.
   createEffect(() => publishResolvedWatch(session(), watch()));
 
-  const set = (w: boolean) => saveWatch(session(), w);
+  // A locked tab records NOTHING. The stored choice is keyed by session name
+  // alone, so it is shared with your own session of that name — writing from a
+  // lens would leave your own session watching (or driving) because of
+  // something you did while looking at someone else's.
+  const set = (w: boolean) => {
+    if (locked?.()) return;
+    saveWatch(session(), w);
+  };
   return [watch, set, () => set(!watch())];
 }

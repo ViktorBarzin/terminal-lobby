@@ -218,6 +218,22 @@ body {
   color: var(--accent);
   border-color: var(--accent);
 }
+/* Locked on — a tab acting as another user only ever watches, so this is a
+   readout rather than a control. It keeps the accent (it IS on) and loses the
+   pointer affordance; the tooltip names the user being acted as. Full opacity
+   deliberately, unlike the disabled controls beside it: this one is stating the
+   mode, not refusing an action. */
+.tl-watch-btn.tl-watch-locked {
+  cursor: default;
+  opacity: 1;
+}
+/* The pty-write controls, inert while watching: a read-only tmux client drops
+   what they send, and an upload would file an image in the session's gallery
+   with no path ever typed. */
+.tl-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
 /* Settings → Notifications: per-device readouts + test buttons. */
 .tl-settings-readouts {
