@@ -227,3 +227,66 @@ describe("pasteIntoTerminal — when the browser refuses read()", () => {
     expect(JSON.stringify(failed.attrs)).not.toContain("secret-token");
   });
 });
+
+// --- the refusal names the surface you are looking at ----------------------
+// In the text view the terminal is off screen, so "long-press the terminal"
+// sends someone to a pane they cannot see.
+describe("surface-aware advice", () => {
+  const refusing = (): Clipboard =>
+    ({
+      read: async () => {
+        throw Object.assign(new Error("Read permission denied."), {
+          name: "NotAllowedError",
+        });
+      },
+      readText: async () => {
+        throw Object.assign(new Error("Read permission denied."), {
+          name: "NotAllowedError",
+        });
+      },
+    }) as unknown as Clipboard;
+
+  const run = async (surface: "terminal" | "composer", coarse: boolean) => {
+    const said: string[] = [];
+    await pasteIntoTerminal({
+      clipboard: refusing(),
+      sendPasteText: () => true,
+      uploadFiles: async () => {},
+      toast: (m) => said.push(m),
+      coarsePointer: coarse,
+      surface,
+      track: () => {},
+    });
+    return said.join(" ");
+  };
+
+  it("names the message box in the composer, on a phone", async () => {
+    const said = await run("composer", true);
+    expect(said).toContain("the message box");
+    expect(said).not.toContain("terminal");
+  });
+
+  it("names the message box in the composer, on a desktop", async () => {
+    const said = await run("composer", false);
+    expect(said).toContain("the message box");
+    expect(said).not.toContain("terminal");
+  });
+
+  it("still names the terminal when that is where the paste is going", async () => {
+    expect(await run("terminal", true)).toContain("terminal");
+    expect(await run("terminal", false)).toContain("terminal");
+  });
+
+  it("defaults to the terminal when no surface is given", async () => {
+    const said: string[] = [];
+    await pasteIntoTerminal({
+      clipboard: refusing(),
+      sendPasteText: () => true,
+      uploadFiles: async () => {},
+      toast: (m) => said.push(m),
+      coarsePointer: false,
+      track: () => {},
+    });
+    expect(said.join(" ")).toContain("terminal");
+  });
+});
