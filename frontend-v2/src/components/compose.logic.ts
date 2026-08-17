@@ -100,34 +100,75 @@ export function completionFor(
 }
 
 /**
- * The permission modes Shift+Tab cycles, in the CLI's order. `bypassPermissions`
- * is deliberately NOT in the cycle: it is a deliberate choice made once at
- * startup, not something to land on by pressing a key one time too many.
+ * The permission mode the session's pane is reporting, or "" if its status line
+ * says nothing about one.
+ *
+ * This is the only LIVE source for the mode. The transcript's `permission-mode`
+ * record is written when a turn happens, not when the mode changes: measured
+ * 2026-08-17, Shift+Tab moved a session from bypass to auto in 40ms while its
+ * transcript sat unwritten for the next twenty minutes, still saying bypass. So
+ * a chip fed only by the transcript cannot show what pressing it just did.
+ *
+ * The status lines, captured from the CLI's own cycle in that session:
+ *
+ *   ⏵⏵ bypass permissions on (shift+tab to cycle)   bypassPermissions
+ *   ⏵⏵ auto mode on (shift+tab to cycle)            auto
+ *   ⏸ manual mode on                                manual
+ *   ⏵⏵ accept edits on (shift+tab to cycle)         acceptEdits
+ *   ⏸ plan mode on (shift+tab to cycle)             plan
+ *
+ * The identifiers are the CLI's own (`claude --help`: acceptEdits, auto,
+ * bypassPermissions, manual, dontAsk, plan). `default` is the older name for
+ * `manual` and still appears in transcripts written before the rename.
+ *
+ * Matched on the phrase alone — the ⏵⏵/⏸ glyph, the "(shift+tab to cycle)" tail
+ * and the "· ← for agents" suffix all vary with the session and the build.
  */
-export const PERMISSION_MODES: ReadonlyArray<string> = [
-  "default",
-  "acceptEdits",
-  "plan",
+const PANE_MODES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/bypass permissions on/i, "bypassPermissions"],
+  [/accept edits on/i, "acceptEdits"],
+  [/auto mode on/i, "auto"],
+  [/manual mode on/i, "manual"],
+  [/plan mode on/i, "plan"],
+  [/don'?t ask mode on/i, "dontAsk"],
 ];
 
-export function nextMode(current: string): string {
-  const i = PERMISSION_MODES.indexOf(current);
-  return PERMISSION_MODES[(i + 1) % PERMISSION_MODES.length] ?? "default";
+export function modeFromPane(pane: string): string {
+  // Last match wins: a pane holds scrollback, and the status line is the most
+  // recent thing in it. Transcript text quoting an older status line would
+  // otherwise outrank the live one.
+  let found = "";
+  let at = -1;
+  for (const [re, mode] of PANE_MODES) {
+    const i = pane.search(re);
+    if (i > at) {
+      at = i;
+      found = mode;
+    }
+  }
+  return found;
 }
 
 /**
  * The mode, short enough to sit in a chip beside the input. The full names run
  * to `bypassPermissions`, which on a 390px screen crowds out both the message
  * field and the Send button.
+ *
+ * The words are the CLI's own, so the chip and the status line under the
+ * terminal agree.
  */
 export function modeLabel(mode: string): string {
   switch (mode) {
     case "bypassPermissions":
       return "bypass";
     case "acceptEdits":
-      return "auto-edit";
+      return "edits";
+    case "dontAsk":
+      return "no ask";
+    // `default` is what transcripts written before the rename call `manual`.
+    case "manual":
     case "default":
-      return "ask";
+      return "manual";
     default:
       return mode;
   }
