@@ -424,6 +424,15 @@ and is the one control allowed to shrink. Keyed on width rather than pointer
 type: the first attempt used the coarse-pointer block and made a narrow desktop
 window worse.
 
+**The mode was announced twice.** Every `mode` and `permission-mode` record drew
+a labelled divider across the timeline — `mode · normal`,
+`permissions · bypassPermissions` — between the messages. Carrying everything
+the transcript holds (decision 2) was right for content; these two are state,
+and the composer's chip already shows the mode in force, so the divider
+interrupted the conversation to repeat what was on screen. The rows are dropped
+outright rather than folded, since expanding a turn would put them back. The
+events still flow: `currentMode()` reads them for the chip.
+
 ## 13. Open questions
 
 - Whether `capture-pane` reading of the permission dialog is stable enough
