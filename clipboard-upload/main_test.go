@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -567,5 +568,343 @@ func TestUploadRejectsEmptyImagePart(t *testing.T) {
 	}
 	if names := storedNames(t, root, "qauser", "qa"); len(names) != 0 {
 		t.Fatalf("a rejected empty upload still wrote to the store: %v", names)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Attachments in the text view (docs/plans/2026-08-17-text-view-attachments-
+// design.md). Decision 3 puts a non-image upload in the per-(user, session)
+// store so the chat can render a chip for it, decision 11 caps that at 25MB and
+// leaves anything larger as today's ephemeral /tmp transfer, and the
+// consequences section restricts /list to the gallery's own prefixes.
+// ---------------------------------------------------------------------------
+
+// docUpload builds what the SPA sends for a non-image attachment: the generic
+// "file" part, the session field, and the ingress's identity header. Mirrors
+// imageUpload, which covers the "image" part.
+func docUpload(t *testing.T, session, filename, declaredType string, body []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filename))
+	h.Set("Content-Type", declaredType)
+	part, err := mw.CreatePart(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("session", session); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set(authHeader, "qa.tester")
+	return req
+}
+
+// uploadReply is the /upload response body. `stored` is what tells the client a
+// chip is possible: a path alone cannot say whether it landed somewhere the
+// chat can read back.
+type uploadReply struct {
+	Path   string `json:"path"`
+	Stored bool   `json:"stored"`
+}
+
+func decodeUpload(t *testing.T, rec *httptest.ResponseRecorder) uploadReply {
+	t.Helper()
+	var got uploadReply
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("reply %q is not JSON: %v", rec.Body.String(), err)
+	}
+	return got
+}
+
+func TestDocUnderTheCapLandsInTheSessionStore(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+
+	rec := httptest.NewRecorder()
+	handleUpload(rec, docUpload(t, "qa", "report.pdf", "application/pdf", []byte("%PDF-1.4 hello")))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got := decodeUpload(t, rec)
+	if !got.Stored {
+		t.Errorf("a stored doc must report stored:true, got %+v", got)
+	}
+	want := filepath.Join(root, "qauser", "qa")
+	if !strings.HasPrefix(got.Path, want+string(os.PathSeparator)) {
+		t.Errorf("path %q is not inside %q", got.Path, want)
+	}
+	names := storedNames(t, root, "qauser", "qa")
+	if len(names) != 1 {
+		t.Fatalf("want exactly one stored file, got %v", names)
+	}
+	if !strings.HasPrefix(names[0], "file-") {
+		t.Errorf("a stored doc needs the file- prefix so /list can skip it, got %q", names[0])
+	}
+	if !strings.HasSuffix(names[0], "report.pdf") {
+		t.Errorf("the original name must survive (sanitized), got %q", names[0])
+	}
+}
+
+// withAttachCap shrinks the store cap so the size fork can be exercised without
+// pushing 25MB through a multipart encoder.
+func withAttachCap(t *testing.T, n int64) {
+	t.Helper()
+	old := maxAttach
+	maxAttach = n
+	t.Cleanup(func() { maxAttach = old })
+}
+
+func TestDocOverTheCapStaysAnEphemeralTransfer(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	withAttachCap(t, 64)
+
+	rec := httptest.NewRecorder()
+	handleUpload(rec, docUpload(t, "qa", "big.bin", "application/octet-stream",
+		make([]byte, 65)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	got := decodeUpload(t, rec)
+	if got.Stored {
+		t.Errorf("an over-cap doc must report stored:false so the client says 'path only', got %+v", got)
+	}
+	if !strings.HasPrefix(got.Path, fileDir+string(os.PathSeparator)) {
+		t.Errorf("an over-cap doc belongs in %q, got %q", fileDir, got.Path)
+	}
+	if names := storedNames(t, root, "qauser", "qa"); len(names) != 0 {
+		t.Errorf("an over-cap doc must not reach the 30-day-grace store: %v", names)
+	}
+	_ = os.Remove(got.Path)
+}
+
+func TestDocUploadRequiresIdentity(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	withStore(t)
+
+	req := docUpload(t, "qa", "report.pdf", "application/pdf", []byte("%PDF-1.4"))
+	req.Header.Del(authHeader)
+	rec := httptest.NewRecorder()
+	handleUpload(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("a store write needs an owner: want 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// storeFile writes one file straight into the store, standing in for an upload
+// that already happened.
+func storeFile(t *testing.T, root, osUser, session, name string, body []byte) {
+	t.Helper()
+	dir := filepath.Join(root, osUser, session)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func serveStored(t *testing.T, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set(authHeader, "qa.tester")
+	rec := httptest.NewRecorder()
+	handleStoredFile(rec, req)
+	return rec
+}
+
+func TestStoredDocIsServedBackWithSniffingDisabled(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	storeFile(t, root, "qauser", "qa", "file-20260817-abcd-report.pdf", []byte("%PDF-1.4 hello"))
+
+	rec := serveStored(t, "/file/qa/file-20260817-abcd-report.pdf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); body != "%PDF-1.4 hello" {
+		t.Errorf("body = %q", body)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/pdf") {
+		t.Errorf("Content-Type = %q, want application/pdf so the browser viewer opens it", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "inline") {
+		t.Errorf("Content-Disposition = %q, want inline for a pdf", cd)
+	}
+}
+
+// An uploaded doc whose bytes are HTML must never be served in a way that lets
+// it run against the authed lobby origin.
+func TestStoredHTMLDocIsForcedToDownload(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	storeFile(t, root, "qauser", "qa", "file-20260817-abcd-evil.html",
+		[]byte("<html><body><script>alert(document.cookie)</script></body></html>"))
+
+	rec := serveStored(t, "/file/qa/file-20260817-abcd-evil.html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment") {
+		t.Errorf("Content-Disposition = %q, want attachment for html", cd)
+	}
+	if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "html") {
+		t.Errorf("Content-Type = %q must not invite the browser to render html", ct)
+	}
+}
+
+func TestStoredSVGDocIsForcedToDownload(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	storeFile(t, root, "qauser", "qa", "file-20260817-abcd-x.svg",
+		[]byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))
+
+	rec := serveStored(t, "/file/qa/file-20260817-abcd-x.svg")
+	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment") {
+		t.Errorf("Content-Disposition = %q, want attachment for svg", cd)
+	}
+}
+
+func TestStoredFileRouteGuards(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	storeFile(t, root, "qauser", "qa", "file-20260817-abcd-report.pdf", []byte("%PDF"))
+
+	cases := []struct {
+		name, target string
+		want         int
+	}{
+		{"missing file", "/file/qa/file-nope.pdf", http.StatusNotFound},
+		{"bad session charset", "/file/has%20spaces/file-x.pdf", http.StatusBadRequest},
+		// %2F decodes to a separator before the split, so it lands as three
+		// segments rather than a name containing one — refused either way.
+		{"encoded separator in the name", "/file/qa/..%2Fescape.pdf", http.StatusNotFound},
+		{"dot-dot inside the name", "/file/qa/a..b.pdf", http.StatusBadRequest},
+		{"dotfile", "/file/qa/.deleted-at", http.StatusBadRequest},
+		{"too few segments", "/file/qa", http.StatusNotFound},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if rec := serveStored(t, c.target); rec.Code != c.want {
+				t.Errorf("%s: want %d, got %d: %s", c.target, c.want, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestStoredFileRouteRequiresAuth(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	storeFile(t, root, "qauser", "qa", "file-20260817-abcd-report.pdf", []byte("%PDF"))
+
+	req := httptest.NewRequest(http.MethodGet, "/file/qa/file-20260817-abcd-report.pdf", nil)
+	rec := httptest.NewRecorder()
+	handleStoredFile(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+}
+
+// The gallery grid is images. A doc sharing the directory must not become an
+// undecodable tile — the same failure byte-sniffing was added to the upload
+// path to prevent.
+func TestListSkipsStoredDocs(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	storeFile(t, root, "qauser", "qa", "pasted-20260817-abcd.png", realPNG(t))
+	storeFile(t, root, "qauser", "qa", "displayed-20260817-plot.png", realPNG(t))
+	storeFile(t, root, "qauser", "qa", "file-20260817-abcd-report.pdf", []byte("%PDF"))
+
+	req := httptest.NewRequest(http.MethodGet, "/list?session=qa", nil)
+	req.Header.Set(authHeader, "qa.tester")
+	rec := httptest.NewRecorder()
+	handleList(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var listed []storedImage
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("reply is not JSON: %v", err)
+	}
+	for _, e := range listed {
+		if strings.HasPrefix(e.Name, "file-") {
+			t.Errorf("a stored doc leaked into the gallery listing: %q", e.Name)
+		}
+	}
+	if len(listed) != 2 {
+		t.Errorf("want the two images, got %d: %+v", len(listed), listed)
+	}
+}
+
+// /img shares the directory with docs now, and it serves whatever it sniffs. An
+// uploaded HTML file fetched through the image route would otherwise execute on
+// the authed origin.
+func TestImageRouteRefusesNonImageBytes(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	storeFile(t, root, "qauser", "qa", "file-20260817-abcd-evil.html",
+		[]byte("<html><body><script>alert(document.cookie)</script></body></html>"))
+
+	req := httptest.NewRequest(http.MethodGet, "/img/qa/file-20260817-abcd-evil.html", nil)
+	req.Header.Set(authHeader, "qa.tester")
+	rec := httptest.NewRecorder()
+	handleImage(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("the image route must only serve images: want 404, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "html") {
+		t.Errorf("Content-Type = %q must never be html here", ct)
+	}
+}
+
+func TestImageRouteStillServesRealImages(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	root := withStore(t)
+	storeFile(t, root, "qauser", "qa", "pasted-20260817-abcd.png", realPNG(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/img/qa/pasted-20260817-abcd.png", nil)
+	req.Header.Set(authHeader, "qa.tester")
+	rec := httptest.NewRecorder()
+	handleImage(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+}
+
+func TestImageUploadAlsoReportsStored(t *testing.T) {
+	withUserMap(t, "qa.tester=qauser\n")
+	withStore(t)
+
+	rec := httptest.NewRecorder()
+	handleUpload(rec, imageUpload(t, "qa", "shot.png", "image/png", realPNG(t)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeUpload(t, rec)
+	if !got.Stored {
+		t.Errorf("an image always reaches the store: want stored:true, got %+v", got)
+	}
+	if got.Path == "" {
+		t.Error("path must keep its name and position for every existing reader")
 	}
 }
