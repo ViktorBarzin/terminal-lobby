@@ -248,6 +248,21 @@ was for) and document formats a person attaches and cannot read as text. Inside
 the store, anything renders, because the user put it there. Source paths keep
 the affordance they already had: the tool row that read them opens the preview.
 
+**Decision 5 needed a second pass.** The first deploy made the document-level
+paste and drop listeners route on the view, and that left two ways for an image
+to reach the pty from text mode. The Paste button, the ⌘V chord, the soft-keys and
+the command palette all share `pasteIntoTerminal`, which was still wired to the
+terminal for both text and images — and on a phone that button is the only way to
+paste, which is where the report came from. The second was self-inflicted: making
+the capture-phase listener *decline* in text mode assumed the composer's own
+handler would pick the paste up, but that one fires only when the textarea has
+focus while the listener sees a paste wherever focus is, so a paste anywhere else
+in the text view reached nothing at all. The listener now owns the image paste in
+both modes and routes on the mode — one owner rather than two that disagree — and
+`pasteIntoTerminal` takes the composer's sinks when text mode is showing. The
+lesson worth keeping: declining a gesture is not the same as routing it, when the
+handler you are deferring to is focus-dependent.
+
 **Verified against the deployed stack**, not only in tests: a document uploads
 and comes back through the new route with `nosniff` and an inline disposition,
 while an HTML upload is forced to download and is refused outright by the image
@@ -256,7 +271,11 @@ browser driving the deployed page, the tray renders a thumbnail the browser
 decoded from the live store, a PDF chip opens the browser's own viewer, and the
 timeline draws the image in all three shapes the design asks for — our
 paths-first send, a historical mid-sentence path, and Claude's own prose — while
-a path inside a fence stays a command and a source path stays text.
+a path inside a fence stays a command and a source path stays text. After the
+second pass, the Paste route was measured directly: in text mode an image
+becomes a tray chip and text lands at the composer's caret with nothing written
+to the pty bridge, while the same button in terminal mode still pastes into the
+pane.
 
 ## Open questions
 
