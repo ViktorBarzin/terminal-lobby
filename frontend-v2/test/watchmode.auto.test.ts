@@ -152,3 +152,52 @@ describe("createWatchMode — the join decision is latched", () => {
     });
   });
 });
+
+/**
+ * The LOCK: a tab acting as someone else may only watch. The automatic rule and
+ * a stored choice both stop mattering — you are looking at another account, and
+ * a lens has no keyboard.
+ */
+describe("createWatchMode — locked to watching", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("resolves to watching whatever the automatic rule would have said", () => {
+    expect(resolveWatch(undefined, false, true)).toBe(true);
+    expect(resolveWatch(false, false, true)).toBe(true);
+  });
+
+  it("overrides an explicit choice to drive", () => {
+    createRoot((dispose) => {
+      saveWatch("main", false); // this device chose to drive this session name
+      const [driven] = createSignal(false);
+      const [watch] = createWatchMode(() => "main", driven, () => true);
+      expect(watch()).toBe(true);
+      dispose();
+    });
+  });
+
+  // The stored choice is per session NAME, shared with your own sessions of the
+  // same name — so a locked tab must not write to it. Otherwise looking at
+  // bob's `code` session would leave YOUR `code` session in watch mode.
+  it("refuses to record a choice, so a lens cannot change your own sessions", () => {
+    createRoot((dispose) => {
+      const [driven] = createSignal(false);
+      const [watch, set] = createWatchMode(() => "main", driven, () => true);
+      set(false);
+      expect(watch()).toBe(true);
+      expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull();
+      dispose();
+    });
+  });
+
+  it("leaves an unlocked tab exactly as it was", () => {
+    createRoot((dispose) => {
+      const [driven] = createSignal(false);
+      const [watch, set] = createWatchMode(() => "main", driven, () => false);
+      expect(watch()).toBe(false);
+      set(true);
+      expect(watch()).toBe(true);
+      dispose();
+    });
+  });
+});

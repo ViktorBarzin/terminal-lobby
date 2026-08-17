@@ -25,6 +25,9 @@ function stubStore(): LobbyStore {
     sessions: [],
     me: () => "wizard",
     selected: () => null,
+    // The card reads /whoami to know whether this tab is acting as another user
+    // (which locks Attach as to watching). An ordinary tab: no realUser.
+    whoami: () => ({ authentik: "alice", osUser: "wizard" }),
     // The card holds the poll open while its menu is up; the real store returns
     // a release function.
     hold: () => () => {},

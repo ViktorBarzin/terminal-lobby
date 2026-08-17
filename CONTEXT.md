@@ -61,7 +61,9 @@ Server state in the share store; the owner grants, the owner or guest removes.
 How a viewer may attach a session that isn't theirs: **ro** (watch) or **rw**
 (drive, i.e. run as the owner). Set per-share, or blanket per shared project.
 Server-side and per-share — it is the **ceiling** on what an attach may get,
-not what a given client asked for. _Compare_: Watch mode.
+not what a given client asked for. A **Lens** attach has no share row at all:
+administering the box is the authorization and the ceiling is **rw**, which the
+lens then declines by always asking to watch. _Compare_: Watch mode.
 
 **Watch mode**:
 A client's own choice to attach read-only, so it observes without driving and
@@ -73,8 +75,23 @@ on. Per (session, device), remembered in the browser and never sent to the
 server as state — the desktop keeps driving while the phone
 watches the same session. Applies to your own sessions as well as shared ones;
 owning a session is what authorizes watching it. A client may only ever request
-**at or below** its Attach mode, so asking to watch can never grant access.
+**at or below** its Attach mode, so asking to watch can never grant access. In a
+**Lens** it is **locked** on: the choice is gone, the controls that type are
+disabled, and nothing is recorded (the stored choice is keyed by session name, so
+a lens that wrote would change how your own session of that name opens).
 _Avoid_: read-only mode (ambiguous against a share's `ro`), observer mode
+
+**Lens**:
+A browser tab acting as another OS user — an administrator's view of someone
+else's lobby, carried as `?as=<osUser>` and confirmed by `/whoami` answering with
+a **realUser**. Everything the tab shows belongs to the target: their sessions,
+Layout, Projects, prefs, files and gallery. It watches: every attach it makes is
+read-only (Watch mode locked), and it cannot start a session in their account.
+Per tab, so another tab stays you. Acting as yourself is not a lens. Two surfaces
+resolve the real caller instead of the target — push subscriptions, and
+telemetry, which records both identities.
+_Avoid_: impersonation, sudo mode, admin mode (the switch is one tab's view, not
+a state of the app)
 
 **Grid**:
 The size of a session's tmux window, in columns and rows. Owned exclusively by

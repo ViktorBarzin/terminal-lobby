@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { appendActAs, readActAsFrom } from "../src/lib/config";
-import { actAsUrl } from "../src/lib/act-as";
+import { actAsUrl, watchLockedFor } from "../src/lib/act-as";
 
 describe("actAsUrl — switching is a navigation", () => {
   it("adds the target", () => {
@@ -51,6 +51,35 @@ describe("actAsUrl — switching is a navigation", () => {
  * gallery thumbnails are <img src> — and a parameter is the only form all of
  * them can carry.
  */
+
+describe("watchLockedFor — a lens watches, it does not drive", () => {
+  const me = { authentik: "alice", osUser: "wizard" };
+  const switched = { authentik: "alice", osUser: "bob", realUser: "wizard" };
+
+  it("does not lock an ordinary tab", () => {
+    expect(watchLockedFor(me, "")).toBe(false);
+    expect(watchLockedFor(null, "")).toBe(false);
+  });
+
+  it("locks a tab the server confirms is switched", () => {
+    expect(watchLockedFor(switched, "bob")).toBe(true);
+  });
+
+  // Acting as yourself is not a switch: it is your own account, so it drives.
+  it("does not lock a tab acting as its own user", () => {
+    expect(watchLockedFor({ authentik: "bob.smith", osUser: "bob" }, "bob")).toBe(
+      false,
+    );
+  });
+
+  // The lock holds until the server answers. The first attach happens early, and
+  // an unnecessary lock costs one click — coming up driving in someone else's
+  // account is the thing being prevented.
+  it("locks while ?as= is set and whoami has not landed", () => {
+    expect(watchLockedFor(null, "bob")).toBe(true);
+    expect(watchLockedFor(undefined, "bob")).toBe(true);
+  });
+});
 
 describe("appendActAs — the pure half", () => {
   it("is inert without a target (the state every request has ever been in)", () => {

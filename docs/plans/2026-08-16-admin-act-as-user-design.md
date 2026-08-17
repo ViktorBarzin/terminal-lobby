@@ -1,7 +1,42 @@
 # Act as user — an admin lens on another account's lobby
 
 **Status:** Shipped 2026-08-16, live on `terminal.viktorbarzin.me` (build
-`675772e`). **Author:** Viktor Barzin (design), Claude (research + build).
+`675772e`). **Revised 2026-08-17** — the lens watches rather than drives, and can
+no longer start a session in the target's account. **Author:** Viktor Barzin
+(design), Claude (research + build).
+
+## What changed on 2026-08-17
+
+Two days of use turned up one thing that had gone wrong and one decision worth
+taking again. Both are recorded here rather than in a second document, because
+this is the design record for the feature.
+
+**Sessions appeared in bob's account that bob had not created.** The attach path
+answered `create: true` whenever the caller held the owner's own access and the
+session was not running — reachable only from the act-as branch. So opening a
+session *name* that did not exist under the target started it there, read-write,
+running their default command as them: wizard's `Council-tax` was live in bob's
+account from 08:02:24 until it was killed, and `image-paste` and
+`qa-actas-probe` before it. Three things made it easy to reach without meaning
+to — a switched page kept `?session=` from the identity it had left, a
+notification tap always names one of *your* sessions, and every attach in a
+switched tab defaults its owner to the target. The answer is gone, and so is the
+branch in `tmux-attach.sh` that acted on it: a foreign attach now only ever
+attaches something already running.
+
+**The lens watches.** A tab acting as another user comes up read-only on every
+session it opens, the Watch control is a readout rather than a toggle, and the
+controls that type into the pty are disabled with it. Enforcement is
+client-side: the server's ceiling for an act-as attach is still `rw`, so this is
+an accident guard rather than a privilege boundary — which is the same thing the
+rest of this document says about every guard in the feature. Taking control
+means leaving the lens: ask the owner for an `rw` share, or use `sudo -u <user>
+tmux attach` from a shell. The audit line now names the mode each act-as attach
+resolved to, and says `DRIVING (read-write)` in words when it is not watching,
+so the journal answers "did anyone type in their session, or only watch it".
+
+The sections below are the original design, with the two behaviours corrected in
+place.
 
 ## What we wanted
 
@@ -103,9 +138,14 @@ all follow with no per-endpoint work.
 ### What the switch covers
 
 While a tab is acting as bob, it **is** bob to every service: their sessions,
-their sidebar arrangement, their projects, their prefs, their files, their
-gallery, and a read-write terminal attach. Creating, killing and renaming
-sessions all operate on their account.
+their sidebar arrangement, their projects, their prefs, their files and their
+gallery. Killing and renaming sessions operate on their account.
+
+The terminal attach is **read-only** (2026-08-17). Every session the tab opens —
+including one a third party shared with bob read-write, since that grant is
+theirs — comes up watching, and the tab cannot start a session in their account
+at all. What the lens is for is seeing what is happening on a shared box, and
+watching is what that needs.
 
 Two deliberate exceptions:
 
@@ -136,20 +176,24 @@ sequenceDiagram
   Note over TTYD: TTYD_USER=alice → os_user=wizard<br/>owner_arg=bob ≠ wizard → foreign attach
   TTYD->>API: POST {owner: bob, guest: wizard, tty, requested}
   Note over API: share row? no.<br/>guest in /etc/ttyd-admins? yes.<br/>owner mapped? yes.
+  Note over SPA: a switched tab always asks to watch (arg5=ro)
   alt session exists
-    API-->>TTYD: {"mode":"rw"}
-    TTYD->>TMUX: sudo -n -H -u bob tmux attach-session -t name
+    API-->>TTYD: {"mode":"ro"}
+    TTYD->>TMUX: sudo -n -H -u bob tmux attach-session -r -t name
   else session does not exist
-    API-->>TTYD: {"mode":"rw","create":true}
-    TTYD->>TMUX: sudo -n -H -u bob tmux-user-attach name dir cmd
+    API-->>TTYD: {"mode":"ro"}
+    TTYD->>TMUX: attach fails — nothing to watch, and nothing is started
   end
 ```
 
-The `create` answer is new. Today a foreign attach never creates — the
-`SELF ONLY` branch in `shares.go` is explicit that raising a guest from `ro` to
-`rw` because a session happens to be missing would be an escalation, and a racy
-one. That reasoning still holds for guests: `create` is returned only when the
-caller's ceiling is already `rw`, so it grants nothing the caller did not have.
+There is no `create` answer (2026-08-17). It was returned when the caller held
+the owner's own access and the session was missing, so that opening a
+not-yet-started session brought it into being — which is right for your own
+session and wrong for someone else's, where it produced a live session in their
+account from a name that had never been theirs. The "nothing to watch, so drive
+instead" fallback is now self-only, for the same reason the `SELF ONLY` branch in
+`shares.go` already excluded guests: a caller who asks for less access should
+never be handed more because the session happened to be absent.
 
 ## What this protects, and what it does not
 
@@ -165,17 +209,22 @@ capability, and the same is true of every guard in it.
 
 **A boundary against accident.** With a
 full identity switch there is no server-side difference between the admin and
-the person they are acting as: keystrokes land in that user's shell history and
-their agent's transcript, indistinguishable from their own. Two things stand
-against that:
+the person they are acting as: keystrokes would land in that user's shell history
+and their agent's transcript, indistinguishable from their own. Three things
+stand against that:
 
+- **The lens does not type** (2026-08-17). Every attach in a switched tab is
+  read-only, so there are no keystrokes to confuse in the first place. This is
+  the guard that closes the case above, where a session name from one identity
+  came to life in another.
 - **A tab acting as someone else looks different.** A chip in the shell bar (the
   session bar on a phone) names the target and returns you in one click, and the
   whole app carries a coloured frame and tinted bar, recognisable from a glance
-  at a background tab.
+  at a background tab. The Watch control in the session bar reads *Watching* and
+  names the target in its tooltip.
 - **Every switch is recorded.** A journal line plus an `admin.actas` telemetry
-  event carrying actor, target and session, so "was anyone in bob's account on
-  Tuesday" has an answer.
+  event carrying actor, target, session and the mode the attach resolved to, so
+  "was anyone in bob's account on Tuesday, and did they type" has an answer.
 
 **What the target sees:** the attach count on the affected session, which tmux
 surfaces already, and nothing naming the admin. A visible banner in the target's
@@ -204,11 +253,16 @@ anything below the UI.
 2. **Shared resolution** — an act-as capable `resolveOSUser` in `tmux-api`,
    `file-api` and `clipboard-upload`, plus a `resolveRealOSUser` for the push
    handlers.
-3. **Attach path** — `/internal/attach` admin branch and the `create` answer;
-   `tmux-attach.sh` acts on it.
+3. **Attach path** — `/internal/attach` admin branch. (The `create` answer built
+   here was removed on 2026-08-17; the ro→rw "nothing to watch" fallback is
+   self-only.)
 4. **SPA** — `?as=` in `config.ts` and every URL builder, the Settings picker
    from `GET /users`, the chip, and the tinted frame.
-5. **Telemetry** — `admin.actas` at the switch, actor and target both recorded.
+5. **Telemetry** — `admin.actas` at the switch, actor and target both recorded;
+   an attach also records the mode it resolved to (2026-08-17).
+6. **The watch lock** (2026-08-17) — `watchLockedFor` from `/whoami`, threaded
+   into the session bar's Watch control, the sidebar card's `Attach as` menu, and
+   the controls that write at the pty.
 
 ## Verification
 
@@ -217,8 +271,9 @@ Each of these is a behaviour to prove on the live devvm, not a unit test:
 | Check | Expected |
 |---|---|
 | wizard `?as=bob` → session list | bob's sessions, bob's layout |
-| wizard `?as=bob` → open a session | attaches read-write as bob; `id -un` says `bob` |
-| wizard `?as=bob` → new session | created under bob's uid |
+| wizard `?as=bob` → open a session | attaches **read-only** as bob (2026-08-17); `tmux list-clients` says `client_readonly=1` |
+| wizard `?as=bob` → a session that is not running | the attach fails; nothing is created in bob's account (2026-08-17) |
+| wizard `?as=bob` → the Watch control | on, disabled, tooltip names bob (2026-08-17) |
 | wizard `?as=bob` → write a file | lands `owner=bob group=bob` |
 | bob `?as=wizard` | 403, logged |
 | bob `?as=bob` (self) | works — it is their own account |
@@ -250,6 +305,11 @@ these are the ones worth recording because they were not obvious beforehand.
 | Push list under `?as=bob` | identical to wizard's own — the switch does not reach it |
 | Audit line | `admin.actas user.id=wizard tl.to=bob tl.client=whoami\|attach` |
 
+Two of those rows describe behaviour that has since been withdrawn: a session
+created from a switched browser, and the working directory it landed in, were
+the `create` answer, removed on 2026-08-17 (see *What changed* at the top). They
+are left in place because they are what the build measured on the day.
+
 ### One thing found along the way, unrelated to this work
 
 The Text view's SSE endpoint has been answering **500 "streaming unsupported"**
@@ -272,3 +332,20 @@ None blocking. Two things we chose to leave open deliberately: whether the
 target should eventually see a banner naming the admin, and whether the Text
 view's cross-user reader is worth building on its own or should wait until text
 mode is finished.
+
+Three more came out of the 2026-08-17 revision, all decided rather than open,
+recorded here so the reasoning survives:
+
+- **The server ceiling stays `rw`.** Enforcing `ro` server-side was considered
+  and set aside: wizard holds `sudo` on this box, so it would add friction rather
+  than capability, and the lock's purpose is to stop an accident. What that
+  leaves is a residual — a client that does not ask to watch still gets `rw` on a
+  session that is running — which the audit line now names in words.
+- **The rest of the lens still writes.** Kill, rename, layout, prefs, files and
+  the gallery are unchanged. They are deliberate, single-shot, audited actions;
+  continuous typing into a live agent session is the thing that could not be told
+  apart from the target's own work.
+- **A read-only attach pins the target's grid** (`window-size manual`, never
+  reverted). Accepted: without the pin, a watching browser joins tmux's size
+  negotiation and could reflow their session whenever they have no read-write
+  client attached. The pin is what makes watching non-invasive.

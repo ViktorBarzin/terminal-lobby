@@ -132,3 +132,74 @@ describe("installImageClipboard — an uploaded path is separated from what foll
     ]);
   });
 });
+
+/**
+ * Watching a session means nothing is typed into it, so an image paste or drop
+ * must not upload either. The upload half is the reason: it files the image in
+ * THAT session's gallery (someone else's, in an act-as tab) and only then types
+ * the path — so a paste that is allowed to start leaves a half-done action
+ * behind when the typing is discarded by a read-only tmux client.
+ */
+describe("installImageClipboard — refuses while the session is only watched", () => {
+  const PNG = new File([new Uint8Array([1, 2, 3])], "shot.png", {
+    type: "image/png",
+  });
+
+  const pasteEvent = (file: File): Event => {
+    const e = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "clipboardData", {
+      value: { items: [{ type: file.type, getAsFile: () => file }] },
+    });
+    return e;
+  };
+
+  const setup = (enabled: () => boolean) => {
+    const sent: string[] = [];
+    const uploaded: string[] = [];
+    const toasts: string[] = [];
+    const clip = installImageClipboard({
+      session: () => "qa-sess",
+      enabled,
+      sendToPty: (t: string) => {
+        sent.push(t);
+        return true;
+      },
+      upload: async (_blob: Blob, opts: UploadOptions) => {
+        uploaded.push(opts.filename ?? "pasted.png");
+        return "/store/" + (opts.filename ?? "pasted.png");
+      },
+      toast: (m: string) => {
+        toasts.push(m);
+        return 0;
+      },
+      dismiss: () => {},
+    });
+    return { sent, uploaded, toasts, clip };
+  };
+
+  it("uploads nothing and types nothing on a paste", async () => {
+    const { sent, uploaded, toasts, clip } = setup(() => false);
+    document.dispatchEvent(pasteEvent(PNG));
+    await vi.waitFor(() => expect(toasts.length).toBeGreaterThan(0));
+    clip.dispose();
+    expect(uploaded).toEqual([]);
+    expect(sent).toEqual([]);
+    expect(toasts.join(" ")).toMatch(/watch/i);
+  });
+
+  it("refuses the drop intake the Upload button shares", async () => {
+    const { sent, uploaded, clip } = setup(() => false);
+    await clip.uploadFiles([PNG], "picker");
+    clip.dispose();
+    expect(uploaded).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it("leaves an ordinary session alone", async () => {
+    const { sent, uploaded, clip } = setup(() => true);
+    await clip.uploadFiles([PNG], "picker");
+    clip.dispose();
+    expect(uploaded).toEqual(["shot.png"]);
+    expect(sent).toHaveLength(1);
+  });
+});
