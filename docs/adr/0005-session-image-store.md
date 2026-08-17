@@ -1,5 +1,21 @@
 # Session images persist in a per-user store served back as a gallery
 
+> **Amended 2026-08-17** by
+> `docs/plans/2026-08-17-text-view-attachments-design.md`: decision 1 below said
+> non-image drops stay ephemeral `/tmp` transfers because they are "arbitrary
+> file handoffs into a shell command, not gallery content". That reasoning still
+> holds for the gallery, and no longer holds for the chat — a surface that did not
+> exist when this was written. A document attached to a text-view message now
+> joins the same store directory under a `file-` prefix, up to 25MB (the cap this
+> ADR already names as one of the store's bounds), and is served back by a new
+> `GET /file/<session>/<name>`. Anything larger keeps the behaviour decided here.
+> Three consequences: `GET /list` lists the `pasted-`/`displayed-` prefixes only,
+> so a document cannot become an undecodable tile; `GET /img/` refuses non-image
+> bytes and sends `nosniff`, because it answers with whatever it sniffs and now
+> shares a directory with arbitrary uploads; and `/upload` requires identity on
+> both fields, since both write to a per-user store. The typed-path contract below
+> is unchanged, and the reply gained a `stored` field beside `path`.
+
 Goal (Viktor, 2026-07-08): pasted and displayed images must persist per
 session and be re-viewable from a gallery — an image pasted into a
 session, or rendered with `show-image`, should still be openable from

@@ -143,11 +143,33 @@ Claude turn state)
 The per-(user, session) store of images the session visually touched —
 pasted, uploaded, drag-dropped, or rendered via `show-image` — owned by
 clipboard-upload under `/var/lib/clipboard-store/` and browsed from the
-🖼 gallery in the terminal view. Server-side state like Layout: it
-survives reloads and session restores, and outlives a deleted session
-by a 30-day grace. Non-image file drops are NOT session images (they
-stay 7-day transfer ephemera in /tmp).
-_Avoid_: screenshots, attachments (images need not come from pastes)
+🖼 gallery, which is reachable from either view. Server-side state like
+Layout: it survives reloads and session restores, and outlives a
+deleted session by a 30-day grace. The same directory also holds
+**Attachments**, which are not session images: the gallery lists only
+the `pasted-` and `displayed-` prefixes, so a document is never drawn
+as a thumbnail.
+_Avoid_: screenshots (images need not come from pastes)
+
+**Attachment**:
+A file carried by one message in the **Text view** — a photo or a
+document, uploaded when it is attached and referenced by its absolute
+path in the prompt, which is what Claude reads. Up to 25MB it joins the
+session's store directory under a `file-` prefix and rides the same
+30-day grace as **Session images**; larger, it stays a 7-day transfer
+ephemeron in /tmp and carries no chip. Before sending it is a removable
+chip in the composer's **tray**; after sending it is drawn where its
+path stands in the message. An attachment whose bytes nothing can serve
+— another user's store, outside the caller's home, swept — shows its
+path instead.
+_Avoid_: upload (names the act, not the thing), image (a document is
+one too)
+
+**Tray**:
+The strip of pending Attachments above the composer's input, with the
+unsent message text its other half. Both persist per (session, browser)
+so a reload or an evicted tab does not lose a half-written message.
+_Avoid_: attachment bar, dropzone (the drop target is the whole window)
 
 ### The text view
 
