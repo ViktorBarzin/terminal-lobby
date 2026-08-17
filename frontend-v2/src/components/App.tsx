@@ -38,7 +38,8 @@ import { installSwipe } from "../mobile/swipe";
 import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
-import { actAsUrl } from "../lib/act-as";
+import { actAsUrl, watchLockedFor } from "../lib/act-as";
+import { ACT_AS } from "../lib/config";
 import { listUsers } from "../lib/lobby-api";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
@@ -216,6 +217,10 @@ export const App: Component = () => {
     return w?.realUser ? w.osUser : "";
   });
   const isAdmin = createMemo(() => store.whoami()?.admin === true);
+  // A tab acting as someone else may only WATCH what it opens (see
+  // watchLockedFor). Same derivation the sidebar's cards make from the same
+  // /whoami, so the two surfaces cannot disagree.
+  const watchLocked = createMemo(() => watchLockedFor(store.whoami(), ACT_AS));
   const [actAsUsers, setActAsUsers] = createSignal<string[]>([]);
   createEffect(() => {
     if (!isAdmin() || actAsUsers().length > 0) return;
@@ -518,6 +523,8 @@ export const App: Component = () => {
                   store.sessions.find((s) => s.name === name) ?? { name },
                 )}
                 owner={store.selected()?.owner}
+                watchLocked={watchLocked}
+                actingAs={actingAs}
                 otherSessions={() =>
                   flatSessionOrder(store.model())
                     .filter((o) => o.name !== name)

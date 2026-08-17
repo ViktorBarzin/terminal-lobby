@@ -159,3 +159,68 @@ describe("<SessionView> — the Watch toggle", () => {
     }
   });
 });
+
+/**
+ * The LOCK: a tab acting as another user watches and does not drive. Passed in
+ * as a prop here (App derives it from /whoami), so these mount it directly.
+ */
+describe("<SessionView> — locked to watching in a lens", () => {
+  const bar = (c: HTMLElement, cls: string) =>
+    c.querySelector<HTMLButtonElement>(`button.${cls}`)!;
+
+  it("comes up watching even with a stored choice to drive", () => {
+    localStorage.setItem(WATCH_KEY_PREFIX + "main", "rw");
+    const { container } = render(() => (
+      <SessionView session="main" watchLocked={() => true} actingAs={() => "emo"} />
+    ));
+    expect(watchButton(container).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("stops being a toggle, and says who it is acting as", () => {
+    const { container } = render(() => (
+      <SessionView session="main" watchLocked={() => true} actingAs={() => "emo"} />
+    ));
+    const btn = watchButton(container);
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toContain("emo");
+    expect(btn.title).toMatch(/only watch/i);
+  });
+
+  it("clicking it changes nothing, and records nothing", () => {
+    const { container } = render(() => (
+      <SessionView session="main" watchLocked={() => true} actingAs={() => "emo"} />
+    ));
+    fireEvent.click(watchButton(container));
+    expect(watchButton(container).getAttribute("aria-pressed")).toBe("true");
+    expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull();
+  });
+
+  it("attaches read-only", async () => {
+    render(() => (
+      <SessionView session="main" watchLocked={() => true} actingAs={() => "emo"} />
+    ));
+    await waitFor(() => expect(terminalUrl).toHaveBeenCalled());
+    const withWatch = vi
+      .mocked(terminalUrl)
+      .mock.calls.filter(([, opts]) => opts?.watch === true);
+    expect(withWatch.length).toBeGreaterThan(0);
+  });
+
+  // Paste and Upload end by typing at the pty, and an Upload files the image in
+  // the session's gallery first — a half-done action in someone else's account.
+  it("disables the controls that write into the session", () => {
+    const { container } = render(() => (
+      <SessionView session="main" watchLocked={() => true} actingAs={() => "emo"} />
+    ));
+    expect(bar(container, "tl-paste-btn").disabled).toBe(true);
+    expect(bar(container, "tl-upload-btn").disabled).toBe(true);
+    // Reading is untouched: the gallery and the file preview stay live.
+    expect(bar(container, "tl-gallery-btn").disabled).toBe(false);
+  });
+
+  it("leaves those controls alone on an ordinary session", () => {
+    const { container } = render(() => <SessionView session="main" />);
+    expect(bar(container, "tl-paste-btn").disabled).toBe(false);
+    expect(bar(container, "tl-upload-btn").disabled).toBe(false);
+  });
+});
