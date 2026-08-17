@@ -30,37 +30,6 @@ export function keyboardOffset(
   return Math.max(0, innerHeight - vvHeight - vvOffsetTop);
 }
 
-/**
- * How much the SHELL must still give up for the soft keyboard, measured rather
- * than assumed. PURE + parameterized for unit testing.
- *
- *   reserve = max(0, shellBottom − (visualViewport.offsetTop + height))
- *
- * `keyboardOffset` above answers "how far off the bottom must a fixed accessory
- * sit", which is right for the soft-key row and the terminal's own bar. This
- * answers a different question: how much of the SHELL the keyboard covers —
- * and the two are not the same number whenever something has already shortened
- * the shell.
- *
- * That "something" varies by platform: iOS Safari leaves the layout viewport
- * alone, Chromium shrinks it (interactive-widget=resizes-content, set in
- * index.html), and the iOS standalone PWA is its own case again. Subtracting a
- * modelled keyboard height from a shell that had already shrunk reserved it
- * TWICE and put the Text composer near the top of the screen with a dead gap
- * above the keyboard (reported 2026-08-17; reproduced at 390x844 with the
- * composer at 9% of the screen and 368px of nothing below it).
- *
- * Measuring where the shell actually ends removes the guess: a shell that
- * already clears the keyboard reserves nothing, whatever put it there.
- */
-export function keyboardReserve(
-  shellBottom: number,
-  vvHeight: number,
-  vvOffsetTop: number,
-): number {
-  return Math.max(0, shellBottom - (vvOffsetTop + vvHeight));
-}
-
 export interface ViewportSyncOptions {
   /** Debounced callback after the viewport settles (e.g. re-fit the terminal). */
   onRefit?: () => void;
@@ -79,6 +48,8 @@ export interface ViewportSyncOptions {
    * tmux resize.
    */
   onKeyboard?: (px: number) => void;
+  /** Quiet period before the settle re-measure (ms). Default 350. */
+  settleMs?: number;
 }
 
 /**
@@ -97,6 +68,11 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   let rafScheduled = false;
   let rafHandle = 0;
   let fitTimer: ReturnType<typeof setTimeout> | undefined;
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  // Long enough to outlast the keyboard's ~250ms animation and the burst of
+  // events it fires, short enough that a settled layout is not visibly wrong
+  // in the meantime.
+  const settleMs = opts.settleMs ?? 350;
   // The last height published to onKeyboard. -1 rather than 0 so the seeding
   // write always reports once, telling the frame where it stands before the
   // first keyboard ever opens.
@@ -197,17 +173,6 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
     const kb = keyboardOffset(window.innerHeight, h, top);
     const root = document.documentElement.style;
     root.setProperty("--kb-offset", kb + "px");
-    // --kb-reserve: how much of the SHELL the keyboard covers, measured off the
-    // shell's real box rather than derived from innerHeight. Distinct from
-    // --kb-offset, which positions FIXED accessories — see keyboardReserve.
-    // Falls back to --kb-offset's answer when there is no shell to measure
-    // (a test, or a mount before the element exists), which is the historic
-    // behaviour.
-    const shell = document.getElementById("root");
-    root.setProperty(
-      "--kb-reserve",
-      (shell ? keyboardReserve(shell.getBoundingClientRect().bottom, h, top) : kb) + "px",
-    );
     if (kb !== lastKb) {
       lastKb = kb;
       opts.onKeyboard?.(kb);
@@ -239,6 +204,25 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
       if (typeof requestAnimationFrame === "function") rafHandle = requestAnimationFrame(run);
       else run();
     }
+    // Re-measure once the events STOP.
+    //
+    // The keyboard animates over ~250ms and fires resize/scroll throughout, so
+    // the last event routinely arrives while the geometry is still moving — and
+    // nothing fires afterwards to correct whatever was measured at that
+    // instant, so the transient is what the layout keeps. Measured on the
+    // in-cluster Android emulator with a real keyboard: a reservation stuck at
+    // 311.76px (the pre-keyboard shell height minus the post-keyboard viewport)
+    // and the Text composer sat at the top of the screen; one further event
+    // settled it and the composer snapped back to the bottom.
+    //
+    // Separate from the onRefit debounce because it must run whether or not a
+    // caller wants a refit, and it costs one style write.
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      settleTimer = undefined;
+      writeOffset();
+    }, settleMs);
+
     if (opts.onRefit) {
       if (fitTimer) clearTimeout(fitTimer);
       fitTimer = setTimeout(() => {
@@ -265,6 +249,7 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
       vv.removeEventListener("scroll", sync);
     }
     if (fitTimer) clearTimeout(fitTimer);
+    if (settleTimer) clearTimeout(settleTimer);
     // Cancel the pending frame too. Without this a sync() scheduled just before
     // teardown still runs afterwards and writes --sk-h / --kb-offset for a
     // surface that no longer exists — measuring a soft-key row that is gone and
