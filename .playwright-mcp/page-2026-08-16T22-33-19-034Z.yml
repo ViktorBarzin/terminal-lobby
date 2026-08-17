@@ -1,0 +1,216 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - heading "tmux sessions" [level=1] [ref=e8]
+          - button "Reload the app" [ref=e9] [cursor=pointer]: ↻
+          - button "Notifications" [ref=e10] [cursor=pointer]:
+            - img [ref=e11]
+        - paragraph [ref=e14]: Logged in as wizard (vbarzin). Sessions are kernel-isolated per Unix user; you only see your own.
+      - generic [ref=e15]:
+        - textbox "New session name" [ref=e16]:
+          - /placeholder: new session…
+        - combobox "Command for new session" [ref=e17] [cursor=pointer]:
+          - option "Claude" [selected]
+          - option "Codex"
+          - option "Plain shell"
+        - button "Create" [ref=e18] [cursor=pointer]
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - button "tripit group" [expanded] [ref=e21] [cursor=pointer]:
+            - generic [ref=e22]: ▾
+            - generic [ref=e23]: tripit
+            - generic [ref=e25]: "1"
+            - generic [ref=e26]:
+              - button "New session in project" [ref=e27]: +
+              - button "Group actions" [ref=e28]: ⋯
+          - button "session tripit-casia, Claude Code, Done" [ref=e30] [cursor=pointer]:
+            - generic "Done" [ref=e31]
+            - generic "Running Claude Code" [ref=e32]:
+              - img [ref=e33]
+            - generic "✳ tripit-casia" [ref=e35]: tripit-casia
+            - button "Session actions" [ref=e36]: ⋯
+        - generic [ref=e37]:
+          - button "t3-code group" [expanded] [ref=e38] [cursor=pointer]:
+            - generic [ref=e39]: ▾
+            - generic [ref=e40]: t3-code
+            - generic [ref=e42]: "2"
+            - generic [ref=e43]:
+              - button "New session in project" [ref=e44]: +
+              - button "Group actions" [ref=e45]: ⋯
+          - generic [ref=e46]:
+            - button "session text-mode, Claude Code, Working" [ref=e47] [cursor=pointer]:
+              - generic "Working" [ref=e48]
+              - generic "Running Claude Code" [ref=e49]:
+                - img [ref=e50]
+              - generic "◑ rewrite" [ref=e52]: text-mode
+              - generic [ref=e53]: 0:00
+              - button "Session actions" [ref=e54]: ⋯
+            - button "session sessions, Claude Code, Working" [ref=e55] [cursor=pointer]:
+              - generic "Working" [ref=e56]
+              - generic "Running Claude Code" [ref=e57]:
+                - img [ref=e58]
+              - generic "◑ Allow spaces in terminal lobby session titles" [ref=e60]: sessions
+              - generic [ref=e61]: 0:00
+              - button "Session actions" [ref=e62]: ⋯
+        - generic [ref=e63]:
+          - button "code group" [expanded] [ref=e64] [cursor=pointer]:
+            - generic [ref=e65]: ▾
+            - generic [ref=e66]: code
+            - generic [ref=e68]: "1"
+            - generic [ref=e69]:
+              - button "New session in project" [ref=e70]: +
+              - button "Group actions" [ref=e71]: ⋯
+          - button "session health, Claude Code, Done" [ref=e73] [cursor=pointer]:
+            - generic "Done" [ref=e74]
+            - generic "Running Claude Code" [ref=e75]:
+              - img [ref=e76]
+            - generic "✳ health" [ref=e78]: health
+            - button "Session actions" [ref=e79]: ⋯
+        - generic [ref=e80]:
+          - button "Ungrouped group" [expanded] [ref=e81] [cursor=pointer]:
+            - generic [ref=e82]: ▾
+            - generic [ref=e83]: Ungrouped
+            - generic [ref=e85]: "1"
+            - button "Group actions" [ref=e87]: ⋯
+          - button "session Council-tax, Claude Code, Done" [ref=e89] [cursor=pointer]:
+            - generic "Done" [ref=e90]
+            - generic "Running Claude Code" [ref=e91]:
+              - img [ref=e92]
+            - generic "✳ Council-tax" [ref=e94]: Council-tax
+            - button "Session actions" [ref=e95]: ⋯
+      - generic [ref=e96]:
+        - button "+ Project" [ref=e97] [cursor=pointer]
+        - button "Restore" [ref=e98] [cursor=pointer]
+  - generic [ref=e99]:
+    - generic [ref=e100]:
+      - button "Hide sidebar" [ref=e101] [cursor=pointer]: ‹
+      - generic [ref=e102]: terminal-lobby
+      - button "Settings" [ref=e103] [cursor=pointer]:
+        - text: ⚙
+        - generic [ref=e104]: Settings
+    - generic [ref=e106]:
+      - generic [ref=e107]:
+        - generic "session" [ref=e108]: tripit-casia
+        - generic [ref=e109]:
+          - button "Smaller terminal font" [ref=e110] [cursor=pointer]: A−
+          - button "Larger terminal font" [ref=e111] [cursor=pointer]: A+
+          - button "Session images" [ref=e112] [cursor=pointer]:
+            - img [ref=e113]
+            - generic [ref=e117]: Images
+          - button "Upload image" [ref=e118] [cursor=pointer]:
+            - img [ref=e119]
+            - generic [ref=e122]: Upload
+          - button "Paste from clipboard" [ref=e123] [cursor=pointer]:
+            - img [ref=e124]
+            - generic [ref=e127]: Paste
+        - button "File preview" [ref=e128] [cursor=pointer]:
+          - img [ref=e129]
+          - generic [ref=e132]: Files
+        - button "Watch only" [ref=e133] [cursor=pointer]:
+          - img [ref=e134]
+          - generic [ref=e137]: Watch
+        - tablist "View mode" [ref=e138]:
+          - tab "Text" [ref=e139] [cursor=pointer]:
+            - generic [ref=e140]: Text
+          - tab "Terminal" [selected] [ref=e141] [cursor=pointer]:
+            - generic [ref=e142]: Terminal
+      - main [ref=e143]:
+        - iframe [active] [ref=e146]:
+          - generic [ref=f1e3]:
+            - complementary [ref=f1e4]:
+              - generic [ref=f1e5]:
+                - generic [ref=f1e6]:
+                  - generic [ref=f1e7]:
+                    - heading "tmux sessions" [level=1] [ref=f1e8]
+                    - button "Reload the app" [ref=f1e9] [cursor=pointer]: ↻
+                    - button "Notifications" [ref=f1e10] [cursor=pointer]:
+                      - img [ref=f1e11]
+                  - paragraph [ref=f1e14]: Logged in as wizard (vbarzin). Sessions are kernel-isolated per Unix user; you only see your own.
+                - generic [ref=f1e15]:
+                  - textbox "New session name" [ref=f1e16]:
+                    - /placeholder: new session…
+                  - combobox "Command for new session" [ref=f1e17] [cursor=pointer]:
+                    - option "Claude" [selected]
+                    - option "Codex"
+                    - option "Plain shell"
+                  - button "Create" [ref=f1e18] [cursor=pointer]
+                - generic [ref=f1e19]:
+                  - generic [ref=f1e20]:
+                    - button "tripit group" [expanded] [ref=f1e21] [cursor=pointer]:
+                      - generic [ref=f1e22]: ▾
+                      - generic [ref=f1e23]: tripit
+                      - generic [ref=f1e25]: "1"
+                      - generic [ref=f1e26]:
+                        - button "New session in project" [ref=f1e27]: +
+                        - button "Group actions" [ref=f1e28]: ⋯
+                    - button "session tripit-casia, Claude Code, Done" [ref=f1e30] [cursor=pointer]:
+                      - generic "Done" [ref=f1e31]
+                      - generic "Running Claude Code" [ref=f1e32]:
+                        - img [ref=f1e33]
+                      - generic "✳ tripit-casia" [ref=f1e35]: tripit-casia
+                      - button "Session actions" [ref=f1e36]: ⋯
+                  - generic [ref=f1e37]:
+                    - button "t3-code group" [expanded] [ref=f1e38] [cursor=pointer]:
+                      - generic [ref=f1e39]: ▾
+                      - generic [ref=f1e40]: t3-code
+                      - generic [ref=f1e42]: "2"
+                      - generic [ref=f1e43]:
+                        - button "New session in project" [ref=f1e44]: +
+                        - button "Group actions" [ref=f1e45]: ⋯
+                    - generic [ref=f1e46]:
+                      - button "session text-mode, Claude Code, Working" [ref=f1e47] [cursor=pointer]:
+                        - generic "Working" [ref=f1e48]
+                        - generic "Running Claude Code" [ref=f1e49]:
+                          - img [ref=f1e50]
+                        - generic "◑ rewrite" [ref=f1e52]: text-mode
+                        - generic [ref=f1e53]: 0:00
+                        - button "Session actions" [ref=f1e54]: ⋯
+                      - button "session sessions, Claude Code, Working" [ref=f1e55] [cursor=pointer]:
+                        - generic "Working" [ref=f1e56]
+                        - generic "Running Claude Code" [ref=f1e57]:
+                          - img [ref=f1e58]
+                        - generic "◑ Allow spaces in terminal lobby session titles" [ref=f1e60]: sessions
+                        - generic [ref=f1e61]: 0:00
+                        - button "Session actions" [ref=f1e62]: ⋯
+                  - generic [ref=f1e63]:
+                    - button "code group" [expanded] [ref=f1e64] [cursor=pointer]:
+                      - generic [ref=f1e65]: ▾
+                      - generic [ref=f1e66]: code
+                      - generic [ref=f1e68]: "1"
+                      - generic [ref=f1e69]:
+                        - button "New session in project" [ref=f1e70]: +
+                        - button "Group actions" [ref=f1e71]: ⋯
+                    - button "session health, Claude Code, Done" [ref=f1e73] [cursor=pointer]:
+                      - generic "Done" [ref=f1e74]
+                      - generic "Running Claude Code" [ref=f1e75]:
+                        - img [ref=f1e76]
+                      - generic "✳ health" [ref=f1e78]: health
+                      - button "Session actions" [ref=f1e79]: ⋯
+                  - generic [ref=f1e80]:
+                    - button "Ungrouped group" [expanded] [ref=f1e81] [cursor=pointer]:
+                      - generic [ref=f1e82]: ▾
+                      - generic [ref=f1e83]: Ungrouped
+                      - generic [ref=f1e85]: "1"
+                      - button "Group actions" [ref=f1e87]: ⋯
+                    - button "session Council-tax, Claude Code, Done" [ref=f1e89] [cursor=pointer]:
+                      - generic "Done" [ref=f1e90]
+                      - generic "Running Claude Code" [ref=f1e91]:
+                        - img [ref=f1e92]
+                      - generic "✳ Council-tax" [ref=f1e94]: Council-tax
+                      - button "Session actions" [ref=f1e95]: ⋯
+                - generic [ref=f1e96]:
+                  - button "+ Project" [ref=f1e97] [cursor=pointer]
+                  - button "Restore" [ref=f1e98] [cursor=pointer]
+            - generic [ref=f1e99]:
+              - generic [ref=f1e100]:
+                - button "Hide sidebar" [ref=f1e101] [cursor=pointer]: ‹
+                - generic [ref=f1e102]: terminal-lobby
+                - button "Settings" [ref=f1e103] [cursor=pointer]:
+                  - text: ⚙
+                  - generic [ref=f1e104]: Settings
+              - generic [ref=f1e106]: Select a session from the sidebar, or create one to begin.
+            - region "Notifications"
+      - button
+  - region "Notifications"

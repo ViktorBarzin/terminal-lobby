@@ -1,0 +1,1102 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - heading "tmux sessions" [level=1] [ref=e8]
+          - button "Reload the app" [ref=e9] [cursor=pointer]: ↻
+          - button "Notifications" [ref=e10] [cursor=pointer]:
+            - img [ref=e11]
+        - paragraph [ref=e14]: Logged in as wizard (vbarzin). Sessions are kernel-isolated per Unix user; you only see your own.
+      - generic [ref=e15]:
+        - textbox "New session name" [ref=e16]:
+          - /placeholder: new session…
+        - combobox "Command for new session" [ref=e17] [cursor=pointer]:
+          - option "Claude" [selected]
+          - option "Codex"
+          - option "Plain shell"
+        - button "Create" [ref=e18] [cursor=pointer]
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - button "tripit group" [expanded] [ref=e21] [cursor=pointer]:
+            - generic [ref=e22]: ▾
+            - generic [ref=e23]: tripit
+            - generic [ref=e25]: "1"
+            - generic [ref=e26]:
+              - button "New session in project" [ref=e27]: +
+              - button "Group actions" [ref=e28]: ⋯
+          - button "session tripit-casia, Claude Code, Done" [ref=e30] [cursor=pointer]:
+            - generic "Done" [ref=e31]
+            - generic "Running Claude Code" [ref=e32]:
+              - img [ref=e33]
+            - generic "✳ tripit-casia" [ref=e35]: tripit-casia
+            - button "Session actions" [ref=e36]: ⋯
+        - generic [ref=e37]:
+          - button "t3-code group" [expanded] [ref=e38] [cursor=pointer]:
+            - generic [ref=e39]: ▾
+            - generic [ref=e40]: t3-code
+            - generic [ref=e42]: "2"
+            - generic [ref=e43]:
+              - button "New session in project" [ref=e44]: +
+              - button "Group actions" [ref=e45]: ⋯
+          - generic [ref=e46]:
+            - button "session text-mode, Claude Code, Working" [ref=e47] [cursor=pointer]:
+              - generic "Working" [ref=e48]
+              - generic "Running Claude Code" [ref=e49]:
+                - img [ref=e50]
+              - generic "◑ rewrite" [ref=e52]: text-mode
+              - generic [ref=e53]: 3:56
+              - button "Session actions" [ref=e54]: ⋯
+            - button "session sessions, Claude Code, Working" [ref=e55] [cursor=pointer]:
+              - generic "Working" [ref=e56]
+              - generic "Running Claude Code" [ref=e57]:
+                - img [ref=e58]
+              - generic "◑ Allow spaces in terminal lobby session titles" [ref=e60]: sessions
+              - generic [ref=e61]: 3:56
+              - button "Session actions" [ref=e62]: ⋯
+        - generic [ref=e63]:
+          - button "code group" [expanded] [ref=e64] [cursor=pointer]:
+            - generic [ref=e65]: ▾
+            - generic [ref=e66]: code
+            - generic [ref=e68]: "1"
+            - generic [ref=e69]:
+              - button "New session in project" [ref=e70]: +
+              - button "Group actions" [ref=e71]: ⋯
+          - button "session health, Claude Code, Done" [ref=e73] [cursor=pointer]:
+            - generic "Done" [ref=e74]
+            - generic "Running Claude Code" [ref=e75]:
+              - img [ref=e76]
+            - generic "✳ health" [ref=e78]: health
+            - button "Session actions" [ref=e79]: ⋯
+        - generic [ref=e80]:
+          - button "Ungrouped group" [expanded] [ref=e81] [cursor=pointer]:
+            - generic [ref=e82]: ▾
+            - generic [ref=e83]: Ungrouped
+            - generic [ref=e85]: "1"
+            - button "Group actions" [ref=e87]: ⋯
+          - button "session Council-tax, Claude Code, Done" [ref=e89] [cursor=pointer]:
+            - generic "Done" [ref=e90]
+            - generic "Running Claude Code" [ref=e91]:
+              - img [ref=e92]
+            - generic "✳ Council-tax" [ref=e94]: Council-tax
+            - button "Session actions" [ref=e95]: ⋯
+      - generic [ref=e96]:
+        - button "+ Project" [ref=e97] [cursor=pointer]
+        - button "Restore" [ref=e98] [cursor=pointer]
+  - generic [ref=e99]:
+    - generic [ref=e100]:
+      - button "Hide sidebar" [ref=e101] [cursor=pointer]: ‹
+      - generic [ref=e102]: terminal-lobby
+      - button "Settings" [ref=e103] [cursor=pointer]: ⚙
+    - generic [ref=e105]:
+      - generic [ref=e106]:
+        - generic "session" [ref=e107]: tripit-casia
+        - 'generic "stream: open" [ref=e108]': open
+        - generic [ref=e109]:
+          - button "Smaller terminal font" [ref=e110] [cursor=pointer]: A−
+          - button "Larger terminal font" [ref=e111] [cursor=pointer]: A+
+          - button "Session images" [ref=e112] [cursor=pointer]:
+            - img [ref=e113]
+          - button "Upload image" [ref=e117] [cursor=pointer]:
+            - img [ref=e118]
+          - button "Paste from clipboard" [ref=e121] [cursor=pointer]:
+            - img [ref=e122]
+        - button "File preview" [ref=e125] [cursor=pointer]:
+          - img [ref=e126]
+        - button "Watch only" [ref=e129] [cursor=pointer]:
+          - img [ref=e130]
+        - tablist "View mode" [ref=e133]:
+          - tab "Text" [selected] [ref=e134] [cursor=pointer]:
+            - generic [ref=e135]: Text
+          - tab "Terminal" [ref=e136] [cursor=pointer]:
+            - generic [ref=e137]: Terminal
+      - main [ref=e138]:
+        - generic [ref=e140]:
+          - log "Session transcript" [ref=e141]:
+            - button "Load earlier turns" [ref=e143] [cursor=pointer]
+            - generic [ref=e146]: Okay, got it. What's left to do?
+            - button "▸ Worked for 36s · 3 steps 1.1k tok" [ref=e148] [cursor=pointer]:
+              - generic [ref=e149]: ▸
+              - generic [ref=e150]: Worked for 36s · 3 steps
+              - generic [ref=e151]: 1.1k tok
+            - generic [ref=e154]:
+              - paragraph [ref=e155]: Seven days out. Everything is booked except the car.
+              - heading "Yours to do" [level=2] [ref=e156]
+              - paragraph [ref=e157]:
+                - strong [ref=e158]: 1. Car — finish with Vladex.
+                - text: Get the reissue with return
+                - strong [ref=e159]: 28 August
+                - text: "(drops it to 235,000 ₸), and confirm two things in writing: the"
+                - strong [ref=e160]: power of attorney is notarised
+                - text: ", and"
+                - strong [ref=e161]: Kyrgyzstan is written into the contract's «Особые условия»
+                - text: . Korday refuses the car without that note and it can't be fixed at the border.
+              - paragraph [ref=e162]:
+                - strong [ref=e163]: 2. Two luggage messages.
+                - text: "Both are the same small favour, both worth arranging now:"
+              - list [ref=e164]:
+                - listitem [ref=e165]:
+                  - strong [ref=e166]: Otrar (23rd)
+                  - text: — you land 04:15, check-in is 14:00. Ten hours with bags otherwise.
+                - listitem [ref=e167]:
+                  - strong [ref=e168]: Manor (29th)
+                  - text: — checkout is late morning, your train is 16:00.
+              - paragraph [ref=e169]:
+                - strong [ref=e170]: 3. Cash.
+                - text: "Several unavoidable points, and the Kegen border has no exchange at all:"
+              - list [ref=e171]:
+                - listitem [ref=e172]: Charyn gate — cash tenge, original passports (border zone)
+                - listitem [ref=e173]: The car — full amount plus deposit, cash
+                - listitem [ref=e174]: Ailuu yurt camp — ~US$125 cash
+                - listitem [ref=e175]:
+                  - text: Get Kyrgyz som in
+                  - strong [ref=e176]: Karakol
+                  - text: ", before the south shore"
+              - paragraph [ref=e177]:
+                - strong [ref=e178]: "4. Optional, 27th–28th:"
+                - text: refresh eticket for a released morning Afrosiyob on the 29th. Cancelling the 054Ф costs ~£3 and you'd regain the whole day.
+              - heading "⚠️ The one thing I'd plan around" [level=2] [ref=e179]
+              - paragraph [ref=e180]:
+                - strong [ref=e181]: The Kegen/Karkara border runs 08:00–18:00, not 24/7.
+                - text: On the 24th you're doing Almaty → Charyn → border → Karakol, about 11–12 hours, with a 09:39 car pickup. If Charyn overruns you could reach a shut border with Karakol still 150 km away and your yurt on the far side. Cap Charyn at ~2 hours and aim to be at the border by mid-afternoon — another reason to push Vladex for an earlier handover.
+              - heading "Mine" [level=2] [ref=e182]
+              - paragraph [ref=e183]: Nothing outstanding. Both sheet tabs are accurate, TripIt has every confirmation plus the tickets and the Vladex thread as documents.
+              - paragraph [ref=e184]:
+                - text: "Two loose ends I can clear whenever you want: the"
+                - strong [ref=e185]: published plan page
+                - text: is stale, and there's an unidentified
+                - strong [ref=e186]:
+                  - code [ref=e187]: Booking.com_ Confirmation.pdf
+                - text: sitting at trip level — tell me which booking it's from and I'll attach it properly.
+            - generic [ref=e190]: What about the activities? Do we need to book any museums or anything else? For example, horse riding etc. I think we started this in another session. Let's continue here.
+            - button "▸ Worked for 1m 10s · 7 steps 2.2k tok" [ref=e192] [cursor=pointer]:
+              - generic [ref=e193]: ▸
+              - generic [ref=e194]: Worked for 1m 10s · 7 steps
+              - generic [ref=e195]: 2.2k tok
+            - generic [ref=e198]:
+              - paragraph [ref=e199]: Good — this was started on the 14th. Here's where it stands.
+              - heading "Needs booking — three things" [level=2] [ref=e200]
+              - paragraph [ref=e201]:
+                - strong [ref=e202]: 1. Eagle-hunter demo + horse trek (Wed 26)
+                - text: — the big one. A message went to
+                - strong [ref=e203]: Ailuu Yurt Camp (+996 702 473 263)
+                - text: on the 14th asking whether both are possible for three people, prices, duration and timing, plus whether the room total is payable in som or dollars.
+                - strong [ref=e204]: No reply yet — worth chasing today
+                - text: ", since the trip starts in a week."
+              - paragraph [ref=e205]:
+                - text: "Backup if they're vague:"
+                - strong [ref=e206]: CBT Bokonbaevo, +996 705 001 723
+                - text: . Visit Kyrgyzstan specifically recommends booking salburun through CBT or your guesthouse so the payment splits fairly with the hunters. Roughly
+                - strong [ref=e207]: 2,500 KGS pp
+                - text: for the demo, ~€40 for the trek.
+              - paragraph [ref=e208]:
+                - text: ⚠️
+                - strong [ref=e209]: Wednesday is over-stuffed as it stands
+                - text: — Barskoon waterfall and Manjyly-Ata in the morning, then a horse trek
+                - emphasis [ref=e210]: and
+                - text: an eagle demo. Let the camp tell you what genuinely fits rather than committing to a schedule.
+              - paragraph [ref=e211]:
+                - strong [ref=e212]: 2. Supara Ethno Complex, Bishkek (Thu 27)
+                - text: — a big, popular ethno complex outside the city; walk-ins aren't reliable at 20:00.
+                - strong [ref=e213]: +996 555 465 051
+                - text: ", and you can pre-order the beshbarmak platters."
+              - paragraph [ref=e214]:
+                - strong [ref=e215]: 3. Emirhan rooftop, Samarkand (Sat 29)
+                - text: — worth reserving a
+                - strong [ref=e216]: sunset-facing table
+                - text: ", since the whole point is the illuminated Registan."
+              - heading "Can't book yet — by design" [level=2] [ref=e217]
+              - paragraph [ref=e218]:
+                - strong [ref=e219]: Center for Islamic Civilization (Wed 2 Sep)
+                - text: sells timed sessions on
+                - strong [ref=e220]: iTicket.uz
+                - text: ", but the site only opens a"
+                - strong [ref=e221]: rolling ~2-day window
+                - text: — your date isn't selectable yet.
+                - strong [ref=e222]: Book it on 31 Aug or 1 Sep.
+                - text: From 25,000 UZS; the ticket is valid only 30 minutes from session start, non-refundable, no re-entry.
+              - heading "Everything else — just turn up" [level=2] [ref=e223]
+              - paragraph [ref=e224]:
+                - text: No advance booking for the Registan (100,000 UZS, and the
+                - strong [ref=e225]: ticket allows same-day re-entry
+                - text: ", so one ticket covers the daytime visit, sunset and the ~21:00 projection show), Shah-i-Zinda 80,000, Gur-e-Amir / Bibi-Khanym / Ulugh Beg 75,000 each, Afrasiab 80,000. Same for Charyn, Kok-Tobe, Burana, Skazka, Jeti-Oguz, Barskoon and Manjyly-Ata."
+              - paragraph [ref=e226]:
+                - text: "Two small gotchas: the"
+                - strong [ref=e227]: TV Tower requires your passport
+                - text: at the ticket desk, and any "skip the line" Registan or Afrosiyob products on Viator/GetYourGuide are reseller upsell — there's no queue system to skip.
+              - paragraph [ref=e228]: Want me to draft the chase to Ailuu and the messages to Supara and Emirhan?
+            - generic [ref=e231]: I want to ensure we have EagleHunterDemo plus the horse ride track. We already messaged once but it's weekend so maybe they're not working today. Let's message the other provider as well just in case, alright, we have multiple options. If you're messaging multiple people, do not message them all at once. wait for some time so that we do not trigger the WhatsApp bot protection policies.
+            - button "▸ Worked for 21m 53s · 23 steps 699 tok" [ref=e233] [cursor=pointer]:
+              - generic [ref=e234]: ▸
+              - generic [ref=e235]: Worked for 21m 53s · 23 steps
+              - generic [ref=e236]: 699 tok
+            - generic [ref=e239]:
+              - paragraph [ref=e240]: "Both providers are now covered, staggered:"
+              - table [ref=e241]:
+                - rowgroup [ref=e242]:
+                  - row "When Who Status" [ref=e243]:
+                    - columnheader "When" [ref=e244]
+                    - columnheader "Who" [ref=e245]
+                    - columnheader "Status" [ref=e246]
+                - rowgroup [ref=e247]:
+                  - row "Now CBT Bokonbaevo (+996 705 001 723) ✅ sent" [ref=e248]:
+                    - cell "Now" [ref=e249]
+                    - cell "CBT Bokonbaevo (+996 705 001 723)" [ref=e250]
+                    - cell "✅ sent" [ref=e251]
+                  - row "~16 min Ailuu Yurt Camp (+996 702 473 263) ⏳ queued chase (2nd contact — first went 14 Aug)" [ref=e252]:
+                    - cell "~16 min" [ref=e253]
+                    - cell "Ailuu Yurt Camp (+996 702 473 263)" [ref=e254]
+                    - cell "⏳ queued chase (2nd contact — first went 14 Aug)" [ref=e255]
+              - paragraph [ref=e256]: I'll report back when the Ailuu one fires — either "sent" or, if they've replied in the meantime, their actual answer instead of a pointless chase.
+              - paragraph [ref=e257]:
+                - text: "Worth knowing while we wait:"
+                - strong [ref=e258]: CBT is the more reliable of the two for salburun.
+                - text: Visit Kyrgyzstan recommends booking eagle demos through CBT precisely because they coordinate the hunters and split the payment fairly — Ailuu would likely subcontract to the same people anyway. If both come back positive, take whichever gives a clearer time and price; there's no cost to having asked twice.
+            - generic [ref=e261]: <task-notification> <task-id>bopogb4eh</task-id> <tool-use-id>toolu_01ETtz7BZzBm4upuoJKMQx1Y</tool-use-id> <output-file>/tmp/claude-1000/-home-wizard-code-tripit/8791a4d9-7193-4aae-9580-35b722ab5da4/tasks/bopogb4eh.output</output-file> <status>completed</status> <summary>Background command "Run delayed Ailuu chase in background" completed (exit code 0)</summary> </task-notification>
+            - button "▸ Worked for 1m 49s · 12 steps 633 tok" [ref=e263] [cursor=pointer]:
+              - generic [ref=e264]: ▸
+              - generic [ref=e265]: Worked for 1m 49s · 12 steps
+              - generic [ref=e266]: 633 tok
+            - generic [ref=e269]:
+              - paragraph [ref=e270]: Both are out, spaced ~20 minutes apart.
+              - paragraph [ref=e271]:
+                - strong [ref=e272]: "Ailuu chase (just sent):"
+              - blockquote [ref=e273]:
+                - paragraph [ref=e274]: Hello! Following up on my message from a few days ago.
+                - paragraph [ref=e275]: We arrive at the camp on Tuesday 25 August — 3 people, 2 nights.
+                - paragraph [ref=e276]: Could you confirm whether the eagle-hunter demonstration (salburun) and a horse ride are both possible on Wednesday 26 August? The price per person and roughly how long each one takes would help us plan the day.
+                - paragraph [ref=e277]: Thank you! Viktor
+              - paragraph [ref=e278]:
+                - text: "One correction to what I said earlier: the automated \"have they replied?\" guard I put on the chase"
+                - strong [ref=e279]: misfired
+                - text: "— it flagged our own 14 Aug message as incoming and held the send. I probed the thread directly and it has exactly two rows: the encryption notice and our own message."
+                - strong [ref=e280]: Ailuu has sent nothing back in the ~36 hours since first contact.
+                - text: "The chase then went out normally. (Cause: WhatsApp Web's"
+                - code [ref=e281]: data-id
+                - text: is a bare message id, not the
+                - code [ref=e282]: true_
+                - text: /
+                - code [ref=e283]: false_
+                - text: "-prefixed form the docs describe — noted so it doesn't bite again.)"
+              - paragraph [ref=e284]:
+                - strong [ref=e285]: "Where that leaves the two activities:"
+              - table [ref=e286]:
+                - rowgroup [ref=e287]:
+                  - row "Ailuu CBT Bokonbaevo" [ref=e288]:
+                    - columnheader [ref=e289]
+                    - columnheader "Ailuu" [ref=e290]
+                    - columnheader "CBT Bokonbaevo" [ref=e291]
+                - rowgroup [ref=e292]:
+                  - row "Contacted 14 Aug + chase now today" [ref=e293]:
+                    - cell "Contacted" [ref=e294]
+                    - cell "14 Aug + chase now" [ref=e295]
+                    - cell "today" [ref=e296]
+                  - row "Replies none yet pending" [ref=e297]:
+                    - cell "Replies" [ref=e298]
+                    - cell "none yet" [ref=e299]
+                    - cell "pending" [ref=e300]
+              - paragraph [ref=e301]:
+                - text: Ailuu's silence over a weekend isn't alarming on its own, but they're also your accommodation for those two nights — so it's worth watching. If neither answers by
+                - strong [ref=e302]: Monday 17 Aug
+                - text: ", the fallback is to arrange salburun through CBT on arrival (they operate a walk-in office in Bokonbaevo, ~20 min from the camp) and ask the camp about horses in person. Neither activity is capacity-constrained the way a museum slot is; the reason to book ahead is that the eagle hunters live off-site and need notice, not that they sell out."
+              - paragraph [ref=e303]: I'll flag anything that comes in.
+            - generic [ref=e306]: "the alamty hotel came back with this essge. i'm okay with the early checking fee. help me respond in russian: Здравствуйте, за ранний заезд с 5 утра нужно будет доплатить почасовую оплату. В вашем случае это составляет 1373тг за каждый час. Выезд будет 24го числа в 12:00"
+            - button "▸ Worked for 49s · 3 steps 3.3k tok" [ref=e308] [cursor=pointer]:
+              - generic [ref=e309]: ▸
+              - generic [ref=e310]: Worked for 49s · 3 steps
+              - generic [ref=e311]: 3.3k tok
+            - generic [ref=e314]:
+              - paragraph [ref=e315]:
+                - text: "Their message says: early check-in from 05:00 is charged hourly at"
+                - strong [ref=e316]: 1,373 ₸ per hour
+                - text: ", and checkout is the 24th at 12:00."
+              - paragraph [ref=e317]:
+                - text: Against a 14:00 standard check-in that's
+                - strong [ref=e318]: 9 hours ≈ 12,357 ₸ (~£20)
+                - text: for the three of you — reasonable for a bed after a 04:15 landing, and it's their published hourly rate rather than a made-up figure.
+              - paragraph [ref=e319]: "Here's the reply:"
+              - code [ref=e321]: Здравствуйте! Спасибо. Ранний заезд с 5 утра нас устраивает. Прилетаем в 04:15, в отеле будем примерно в 05:00–05:30. Правильно понимаю, что считается с 5:00 до обычного заезда в 14:00 — то есть 9 часов, около 12 350 тг? Подтвердите, пожалуйста, что номер к этому времени будет готов. Выезд 24-го в 12:00 подходит. Доплату можно внести на месте картой? Спасибо! Виктор
+              - paragraph [ref=e322]:
+                - text: "What it says:"
+                - emphasis [ref=e323]: Thanks — early check-in from 5am works for us. We land at 04:15 and will be at the hotel around 05:00–05:30. Am I right that it's counted from 05:00 to the normal 14:00 check-in, i.e. 9 hours, about 12,350 ₸? Please confirm the room will be ready by then. Checkout on the 24th at 12:00 is fine. Can we pay the supplement on arrival by card?
+              - paragraph [ref=e324]:
+                - text: "Two things it deliberately does: pins the arithmetic so the number can't drift at the desk, and confirms the room is actually"
+                - strong [ref=e325]: ready
+                - text: at 05:00 — paying for early check-in doesn't help if they then ask you to wait for housekeeping.
+              - paragraph [ref=e326]: Once they confirm, I'll add the early check-in and the fee to the TripIt lodging segment and the spreadsheet.
+            - generic [ref=e329]: Great. The ego camp came back to me on WhatsApp, check their message.
+            - button "▸ Worked for 10m 33s · 35 steps 1.3k tok" [ref=e331] [cursor=pointer]:
+              - generic [ref=e332]: ▸
+              - generic [ref=e333]: Worked for 10m 33s · 35 steps
+              - generic [ref=e334]: 1.3k tok
+            - generic [ref=e337]:
+              - paragraph [ref=e338]:
+                - text: It was
+                - strong [ref=e339]: CBT Bokonbaevo
+                - text: "that replied (the backup provider I messaged yesterday) — Ailuu is still silent. CBT gave you two options:"
+              - heading "Option 1 — Eagle hunting demonstration ✅ the one that fits" [level=2] [ref=e340]
+              - list [ref=e341]:
+                - listitem [ref=e342]:
+                  - strong [ref=e343]: ~1 hour
+                  - text: ","
+                  - strong [ref=e344]: 6,000 KGS for up to 2 people
+                  - text: (≈ US$69 / £54)
+                - listitem [ref=e345]: Introduction to the golden eagle and how it's trained
+                - listitem [ref=e346]: Live demonstration of the eagle hunting a moving target
+                - listitem [ref=e347]: The traditional eagle recall — hunter calls the bird back to his arm
+              - heading "Option 2 — Real eagle hunting adventure" [level=2] [ref=e348]
+              - list [ref=e349]:
+                - listitem [ref=e350]:
+                  - strong [ref=e351]: Full day
+                  - text: ", on horseback in the mountains with two experienced hunters"
+                - listitem [ref=e352]: Includes English-speaking guide, horse riding, lunch, local transport
+                - listitem [ref=e353]:
+                  - text: "Priced by group size:"
+                  - strong [ref=e354]: 400 / 430 / 525 / 600 / 725 USD
+              - paragraph [ref=e355]: Two things to be aware of before you decide.
+              - paragraph [ref=e356]:
+                - strong [ref=e357]: The Option 2 price list arrived malformed
+                - text: — the group-size numbers didn't survive WhatsApp's formatting, so each line reads just "person 400 usd". The ascending order strongly suggests these are
+                - emphasis [ref=e358]: totals
+                - text: for 1→5 people (so ~$525 for the three of you), but I can't confirm that from the message and it would be an expensive thing to assume.
+              - paragraph [ref=e359]:
+                - strong [ref=e360]: Option 2 would consume the whole of Wednesday
+                - text: ", replacing Barskoon waterfall and Manjyly-Ata rather than sitting alongside them. Option 1 is what actually fits the day you've planned — and note it covers the eagles only,"
+                - strong [ref=e361]: not
+                - text: the jailoo horse ride, which CBT didn't address at all. They also skipped the timing and som-vs-dollars questions.
+              - heading "The problem with sending a reply" [level=2] [ref=e362]
+              - paragraph [ref=e363]:
+                - strong [ref=e364]: WhatsApp has restricted your account on linked devices
+                - text: — the web session now says
+                - emphasis [ref=e365]: "\"Your account on linked devices is restricted. You can't start new chats right now.\""
+                - text: "Reading works; sending doesn't. This is the cold-outbound pattern being flagged: roughly twenty first-contact messages over five days to Almaty rental agencies and now these two Kyrgyz numbers. That's on my side of the ledger — it's the risk that comes with agent-driven outreach, and it landed."
+              - paragraph [ref=e366]: "Your phone is unaffected, so this reply needs to go from there:"
+              - blockquote [ref=e367]:
+                - paragraph [ref=e368]: Thank you! Option 1 works best for us — the one-hour demonstration on Wednesday 26 August.
+                - paragraph [ref=e369]: We are 3 people and I see the price covers up to 2 — what's the total for 3?
+                - paragraph [ref=e370]: "Two more things: can you also arrange a short horse ride on the jailoo that day? We're beginners, 1–2 hours would be plenty. And what time would you suggest — we're at Barskoon and Manjyly-Ata in the morning."
+                - paragraph [ref=e371]: Is payment in som or dollars, cash on the day?
+              - paragraph [ref=e372]:
+                - text: "Also worth knowing:"
+                - strong [ref=e373]: the chase I sent Ailuu on the 15th now shows as "You deleted this message."
+                - text: I didn't delete it, so either you removed it from your phone or WhatsApp pulled it as part of the restriction — I can't tell which from the web client. Either way Ailuu has never replied, and since they're also your accommodation for those two nights, it may be worth a direct message from your phone asking about the horse ride specifically. They're the ones with horses on site.
+            - generic [ref=e376]: Let's do some online research about this experience before we get to it. I want to know what others who have used it think about it. In parallel, let's also check our current itinerary and see how that can fit. I'm tempted for option 2 but I'm not sure if this can fit our itinerary. Create a workflow to research.
+            - button "▸ Worked for 17m 46s · 19 steps 2.4k tok" [ref=e378] [cursor=pointer]:
+              - generic [ref=e379]: ▸
+              - generic [ref=e380]: Worked for 17m 46s · 19 steps
+              - generic [ref=e381]: 2.4k tok
+            - generic [ref=e384]:
+              - paragraph [ref=e385]: "Itinerary's pulled. Here's the real shape of those three days:"
+              - paragraph [ref=e386]:
+                - strong [ref=e387]: Tue 25
+                - text: — check out Karakol 12:00 → Dungan Mosque, Holy Trinity Cathedral → Jeti-Oguz → Skazka Canyon → check in Ailuu 15:00
+                - strong [ref=e388]: Wed 26
+                - text: — Barskoon Waterfall & Gorge, Manjyly-Ata springs, jailoo horse trek,
+                - strong [ref=e389]: eagle demo pencilled at 16:00
+                - strong [ref=e390]: Thu 27
+                - text: — check out Ailuu 10:00 → Cholpon-Ata petroglyphs, Burana Tower, Supara → Bishkek (Inter Hotel), plus Ala-Too Square, Victory Square, Oak Park
+              - paragraph [ref=e391]: Two things stand out immediately.
+              - paragraph [ref=e392]:
+                - strong [ref=e393]: Wednesday is already over-subscribed before any eagle hunt.
+                - text: Barskoon's own note says the gorge is a 2.5–3 hour round trip on unpaved road — and Barskoon sits well east of Tong, back toward Karakol, so there's substantial driving on top. Adding Manjyly-Ata, a horse trek and a 16:00 demo to that was optimistic already. A full-day Option 2 wouldn't
+                - emphasis [ref=e394]: compete
+                - text: with Wednesday's plan, it would
+                - strong [ref=e395]: replace all of it
+                - text: .
+              - paragraph [ref=e396]:
+                - strong [ref=e397]: There's a geographic escape hatch worth testing.
+                - text: Jeti-Oguz, Barskoon, Skazka and Tong all lie along the same south-shore road running west from Karakol — so Barskoon is physically
+                - emphasis [ref=e398]: on the way
+                - text: on Tuesday, not a detour. Whether Tuesday can absorb it after a 12:00 checkout plus Jeti-Oguz and Skazka is the question the itinerary lane is checking with real drive times rather than my eyeballing it.
+              - paragraph [ref=e399]: The research is still running — reviews, August seasonality, price benchmarks, and what the full day physically involves, each then put through an adversarial pass. I'll bring you the combined picture when it lands.
+            - generic [ref=e402]: "<task-notification> <task-id>wkuj7ikhw</task-id> <tool-use-id>toolu_01FzFwqf8D1z6U2SuHDNnHVA</tool-use-id> <status>stopped</status> <summary>No completion record was found for background workflow \"eagle-hunting-option-research\" from the previous session. It may have been stopped (via the UI or TaskStop — these leave no transcript marker), or it may have been running when the previous Claude Code process exited. To pick up where it left off, relaunch with Workflow({scriptPath, resumeFromRunId: \"wf_ba4e007b-9c1\"}) — completed agent() calls return cached.</summary> </task-notification>"
+            - button "▸ Worked for 30m 9s · 26 steps eagle-hunting-option-research-wf_ba4e007b-9c1.js" [ref=e404] [cursor=pointer]:
+              - generic [ref=e405]: ▸
+              - generic [ref=e406]: Worked for 30m 9s · 26 steps
+              - generic [ref=e407]: eagle-hunting-option-research-wf_ba4e007b-9c1.js
+            - paragraph [ref=e411]: The seasonality answer is decisive and verified across multiple independent sources. Waiting on the price lane.
+            - generic [ref=e414]: "<task-notification> <task-id>w4mtwh6kv</task-id> <tool-use-id>toolu_01CDWFb4BQWEnJ935h467rMt</tool-use-id> <status>stopped</status> <summary>No completion record was found for background workflow \"eagle-hunting-option-research\" from the previous session. It may have been stopped (via the UI or TaskStop — these leave no transcript marker), or it may have been running when the previous Claude Code process exited. To pick up where it left off, relaunch with Workflow({scriptPath, resumeFromRunId: \"wf_de2c65dd-195\"}) — completed agent() calls return cached.</summary> </task-notification>"
+            - button "▸ Worked for 8m 15s · 20 steps 4.4k tok" [ref=e416] [cursor=pointer]:
+              - generic [ref=e417]: ▸
+              - generic [ref=e418]: Worked for 8m 15s · 20 steps
+              - generic [ref=e419]: 4.4k tok
+            - generic [ref=e422]:
+              - paragraph [ref=e423]: Research is in — five lanes, then an adversarial pass that overturned three claims, including one I'd have repeated to you.
+              - 'heading "Recommendation: Option 1, and add a short ride separately" [level=2] [ref=e424]'
+              - paragraph [ref=e425]:
+                - strong [ref=e426]: Option 2 does not buy you more eagle.
+                - text: "That's the finding that decides it. Late August is outside the hunting season by every source checked — Bradt, Visit Kyrgyzstan, Caravanistan, Advantour, Nomadays, plus independent traveller accounts. The nearest edge of the real season is more than five weeks after your date. Bradt describes what actually happens out of season: a semi-tame hare released from a sack, or lure work."
+                - strong [ref=e427]: That is the same bird content as Option 1.
+              - paragraph [ref=e428]: So the ~$525 premium buys horses, a second hunter, an English-speaking guide, lunch and transport — a full day's horseback outing. It does not buy a hunt, whatever the product is called.
+              - heading "What the adversarial pass corrected" [level=2] [ref=e429]
+              - paragraph [ref=e430]:
+                - text: I told you earlier the season question was about moulting birds being unable to fly.
+                - strong [ref=e431]: That's wrong and I'd have passed it on to you.
+                - text: Golden eagles moult a few primaries at a time precisely so they keep flying, and CBT's own listing says "all year round" — eagles were flown at the Bokonbaevo Salburun festival on 2 August last year. The real mechanism is that during moult birds are deliberately kept 10–15%
+                - emphasis [ref=e432]: above
+                - text: flying weight so energy goes into feather growth, which makes them less keen.
+              - paragraph [ref=e433]:
+                - text: "Practical consequence:"
+                - strong [ref=e434]: an eagle will be flown, but it may perform sluggishly
+                - text: — moult condition, high weight, afternoon heat. Worth asking for an early-morning slot rather than the 16:00 currently pencilled in.
+              - heading "The money" [level=2] [ref=e435]
+              - table [ref=e436]:
+                - rowgroup [ref=e437]:
+                  - row "Quoted Market check" [ref=e438]:
+                    - columnheader [ref=e439]
+                    - columnheader "Quoted" [ref=e440]
+                    - columnheader "Market check" [ref=e441]
+                - rowgroup [ref=e442]:
+                  - row "Option 1 6,000 KGS (~$69), up to 2 people Fair. Band for a 1h demo is 2,500–3,000 KGS pp, or 6,000–8,700 KGS as a group fee" [ref=e443]:
+                    - cell "Option 1" [ref=e444]
+                    - cell "6,000 KGS (~$69), up to 2 people" [ref=e445]
+                    - cell "Fair. Band for a 1h demo is 2,500–3,000 KGS pp, or 6,000–8,700 KGS as a group fee" [ref=e446]
+                  - row "Option 1, three people not stated Should land 6,000–9,000 KGS ($69–103). A second full 6,000 block for the third person would be out of line" [ref=e447]:
+                    - cell "Option 1, three people" [ref=e448]
+                    - cell "not stated" [ref=e449]
+                    - cell "Should land 6,000–9,000 KGS ($69–103). A second full 6,000 block for the third person would be out of line" [ref=e450]:
+                      - text: Should land
+                      - strong [ref=e451]: 6,000–9,000 KGS ($69–103)
+                      - text: . A second full 6,000 block for the third person would be out of line
+                  - row "Option 2, three people 525 USD (if the ladder is group totals) Defensible, premium end. Comparables run $142–168 pp/day" [ref=e452]:
+                    - cell "Option 2, three people" [ref=e453]
+                    - cell "525 USD (if the ladder is group totals)" [ref=e454]:
+                      - text: 525 USD
+                      - emphasis [ref=e455]: (if the ladder is group totals)
+                    - cell "Defensible, premium end. Comparables run $142–168 pp/day" [ref=e456]
+              - paragraph [ref=e457]:
+                - text: Two things worth knowing. CBT's own archived 2018 price list read
+                - emphasis [ref=e458]: "\"Eagle show (up to 4 persons) – 3,500 som\""
+                - text: — so the flat-fee-with-a-cap format is their long-standing structure, and inflation-adjusted that's ~6,400 KGS today. The group price is flat in real terms;
+                - strong [ref=e459]: what changed is the cap, from 4 people down to 2.
+              - paragraph [ref=e460]:
+                - text: "And a useful lever: a traveller blog from January 2026 booked with"
+                - strong [ref=e461]: this exact number
+                - text: and paid
+                - strong [ref=e462]: 2,500 KGS per person including return transport from their accommodation
+                - text: . So
+                - deletion [ref=e463]: 7,500 KGS (
+                - text: $86) for the three of you, with pickup, is precedented at this operator.
+              - paragraph [ref=e464]:
+                - strong [ref=e465]: "Still unresolved:"
+                - text: the malformed ladder. Reading 400/430/525/600/725 as group totals for 1–5 people is strongly supported — every published Kyrgyz ladder prices per person and
+                - emphasis [ref=e466]: descends
+                - text: with group size, so ascending numbers can't be per-person, and as totals it implies a clean $400/$215/$175/$150/$145 curve. But it's an inference. The difference for three people is
+                - strong [ref=e467]: $525 versus $1,575
+                - text: ", so get it in writing before committing."
+              - heading "One more thing about that number" [level=2] [ref=e468]
+              - paragraph [ref=e469]:
+                - code [ref=e470]: +996 705 001 723
+                - text: appears in traveller write-ups as
+                - strong [ref=e471]: "\"Visit Teskei\""
+                - text: ", a private Bokonbaevo operator — the official CBT Bokonbaevo office lists"
+                - code [ref=e472]: +996 779 455045
+                - text: ". Not a red flag: the 2026 traveller who used this number had a good experience, and no reports of no-shows or bait-and-switch turned up anywhere. But you're dealing with a private operator, not the community association, and it's worth knowing which. Review volume for CBT Bokonbaevo itself is genuinely thin — two TripAdvisor reviews total. The strongest data on the south shore is for a named hunter,"
+                - strong [ref=e473]: Salavat
+                - text: ": 18 reviews, all five-star, ranked first of eight activities in Bokonbaevo. Worth asking who you'd actually be with."
+              - 'heading "Itinerary: it fits, but costs Barskoon" [level=2] [ref=e474]'
+              - paragraph [ref=e475]:
+                - text: "A full day on Wednesday loses exactly one thing:"
+                - strong [ref=e476]: Barskoon Waterfall & Gorge
+                - text: ", a 5.5–6.5 hour block from Ailuu. Manjyly-Ata survives either way — it's 2–3 km from the camp, a walk rather than a day item. The horse trek and the 16:00 demo are absorbed by Option 2, not lost."
+              - paragraph [ref=e477]:
+                - text: Barskoon
+                - emphasis [ref=e478]: can
+                - text: move to Tuesday — the village sits directly on the Karakol→Ailuu road, so the marginal cost is the gorge itself, not a round trip.
+                - strong [ref=e479]: But Tuesday only absorbs it if you drop Jeti-Oguz
+                - text: ", and you'd need to leave Karakol around 08:00 rather than the 12:00 checkout. Keeping Karakol's churches, Jeti-Oguz, Barskoon"
+                - emphasis [ref=e480]: and
+                - text: Skazka makes an ~11-hour day finishing in fading light, on a highway currently under reconstruction.
+              - paragraph [ref=e481]:
+                - strong [ref=e482]: "Separately, and regardless of what you decide here: Thursday is already broken."
+                - text: As booked it's 481 km and roughly 9–10 hours of real driving against a 10:00 checkout — the Cholpon-Ata petroglyphs are what break it, costing ~165 km and ~3 extra hours because there's no road across the lake. That needs fixing on its own.
+              - heading "If you still want Option 2" [level=2] [ref=e483]
+              - paragraph [ref=e484]:
+                - text: "It's a defensible choice — a full day on the jailoo with hunters and horses is a genuine experience, and \"same eagle content\" doesn't mean \"same day\". Two honest caveats: it's"
+                - strong [ref=e485]: 4–6 hours in a hard Kyrgyz saddle for three people who don't ride
+                - text: ", which first-hand accounts are blunt about; and you'd be trading Barskoon for it."
+              - paragraph [ref=e486]: "Questions to put to them before paying, in order of impact:"
+              - list [ref=e487]:
+                - listitem [ref=e488]:
+                  - text: Is the 400/430/525/600/725 line a
+                  - strong [ref=e489]: total for the group
+                  - text: or per person?
+                - listitem [ref=e490]:
+                  - text: What will the eagle actually
+                  - strong [ref=e491]: do
+                  - text: in late August — and can we go early morning rather than afternoon?
+                - listitem [ref=e492]: Which hunter would we be with?
+                - listitem [ref=e493]:
+                  - text: "For Option 1: what's the total for"
+                  - strong [ref=e494]: three
+                  - text: ", and does it include transport from Ailuu?"
+              - paragraph [ref=e495]: Want me to draft that as a message for you to send from your phone?
+            - generic [ref=e497]:
+              - generic [ref=e498]: "<task-notification> <task-id>w7ydnblul</task-id> <tool-use-id>toolu_01NPhASgj7MEcEu5W4hgQxsX</tool-use-id> <output-file>/tmp/claude-1000/-home-wizard-code-tripit/8791a4d9-7193-4aae-9580-35b722ab5da4/tasks/w7ydnblul.output</output-file> <status>completed</status> <summary>Dynamic workflow \"Research CBT Bokonbaevo eagle-hunting experiences and whether the full-day option fits the 26 Aug itinerary\" completed</summary> <result>{\"lanes\":[{\"key\":\"seasonality\",\"confidence\":\"high\",\"summary\":\"A \\\"real eagle hunting\\\" experience on 25–26 August in Kyrgyzstan will almost certainly not be genuine hunting.…"
+              - button "Show more" [ref=e499] [cursor=pointer]
+            - button "▸ Worked for 1m 5s · 7 steps 340 tok" [ref=e501] [cursor=pointer]:
+              - generic [ref=e502]: ▸
+              - generic [ref=e503]: Worked for 1m 5s · 7 steps
+              - generic [ref=e504]: 340 tok
+            - generic [ref=e507]:
+              - paragraph [ref=e508]: "Findings stored (hub #11204 + detail #11205), including the correction to the moult mechanism so a future session doesn't repeat my original wrong version."
+              - paragraph [ref=e509]:
+                - text: "Where this leaves the decision, in one line:"
+                - strong [ref=e510]: Option 1 gets you the same eagle for roughly $86 with transport, keeps Barskoon, and spares three non-riders a full day in a Kyrgyz saddle
+                - text: — while Option 2 is a good day out that happens to be sold under a name it can't deliver in August.
+              - paragraph [ref=e511]: "Two things still need doing regardless of which way you go:"
+              - list [ref=e512]:
+                - listitem [ref=e513]:
+                  - strong [ref=e514]: Get the price ladder confirmed in writing
+                  - text: — $525 vs $1,575 for three people turns on an inference, not a stated fact.
+                - listitem [ref=e515]:
+                  - strong [ref=e516]: Thursday needs re-planning independently
+                  - text: — 481 km and 9–10 hours of driving against a 10:00 checkout and a 14:00 check-in doesn't work, and the Cholpon-Ata petroglyphs are what break it.
+              - paragraph [ref=e517]: Say the word and I'll draft the message to CBT for you to send from your phone, and work up a fixed Thursday.
+            - generic [ref=e520]: I would like to have the Eagle experience as well as some horse riding. Do we do it as part of this or do we book the horse riding separately?
+            - button "▸ Worked for 53s · 3 steps 3.7k tok" [ref=e522] [cursor=pointer]:
+              - generic [ref=e523]: ▸
+              - generic [ref=e524]: Worked for 53s · 3 steps
+              - generic [ref=e525]: 3.7k tok
+            - generic [ref=e528]:
+              - paragraph [ref=e529]:
+                - text: Book them separately — but ask
+                - strong [ref=e530]: the same operator to quote both as one morning
+                - text: . That's the sweet spot, and it isn't the Option 2 bundle.
+              - paragraph [ref=e531]:
+                - strong [ref=e532]: "Why not the bundle:"
+                - text: Option 2's riding is 4–6 hours, which is an endurance day rather than "some horse riding" — and it's the one part of that product first-hand accounts are consistently blunt about for people who don't ride. It also costs ~$525 against roughly $120–200 for the two booked as a half-day, includes transport you've already paid Vladex for, and eats Barskoon whole.
+              - paragraph [ref=e533]:
+                - strong [ref=e534]: "Why one operator rather than two:"
+                - text: the demonstration usually happens out on the jailoo anyway and the hunters are on horseback, so combining them is the natural shape of the morning, not a favour you're asking. One conversation, one price, no coordinating two providers on the same day.
+              - paragraph [ref=e535]: "Expected cost for the three of you:"
+              - table [ref=e536]:
+                - rowgroup [ref=e537]:
+                  - row "Range" [ref=e538]:
+                    - columnheader [ref=e539]
+                    - columnheader "Range" [ref=e540]
+                - rowgroup [ref=e541]:
+                  - row "Eagle demo, 3 people 6,000–9,000 KGS ($69–103)" [ref=e542]:
+                    - cell "Eagle demo, 3 people" [ref=e543]
+                    - cell "6,000–9,000 KGS ($69–103)" [ref=e544]
+                  - row "Beginner ride, ~2h, 3 people 4,500–9,000 KGS ($51–103)" [ref=e545]:
+                    - cell "Beginner ride, ~2h, 3 people" [ref=e546]
+                    - cell "4,500–9,000 KGS ($51–103)" [ref=e547]
+                  - row "Bundled morning should land 10,000–15,000 KGS ($115–170)" [ref=e548]:
+                    - cell "Bundled morning" [ref=e549]:
+                      - strong [ref=e550]: Bundled morning
+                    - cell "should land 10,000–15,000 KGS ($115–170)" [ref=e551]:
+                      - text: should land
+                      - strong [ref=e552]: 10,000–15,000 KGS ($115–170)
+              - paragraph [ref=e553]: Ailuu would be the other natural source of horses — they're a yurt camp on the jailoo, which is what the "south-shore jailoo horse trek" line in your itinerary assumed. But they haven't answered anything in three days, so I wouldn't build the morning around them.
+              - paragraph [ref=e554]:
+                - strong [ref=e555]: One consequence to accept.
+                - text: "Even at half a day, Wednesday can't also hold Barskoon — that's a 5.5–6.5 hour block from Ailuu, and mornings are when the bird performs best. So Wednesday becomes: Manjyly-Ata at sunrise (it's a 2–3 km walk from camp), then eagle plus ride, then an early evening before Thursday's drive."
+                - strong [ref=e556]: Barskoon moves to Tuesday, which means dropping Jeti-Oguz
+                - text: — or Barskoon goes. Your call which of those two you'd rather keep; I'd keep Jeti-Oguz and drop Barskoon, since the Seven Bulls are the more distinctive stop and Barskoon is a waterfall at the end of two hours of rough road.
+              - paragraph [ref=e557]: "Here's the message for your phone:"
+              - blockquote [ref=e558]:
+                - paragraph [ref=e559]: Thanks for the details. Option 1 is what we'd like — the one-hour demonstration, on Wednesday 26 August.
+                - paragraph [ref=e560]: We're 3 people and I see it covers up to 2 — what's the total for 3?
+                - paragraph [ref=e561]: We'd also like a short horse ride the same morning, around 2 hours. We're all beginners. Can you do both together as one morning, and what would that cost for the three of us?
+                - paragraph [ref=e562]: Morning suits us better than afternoon. Do you pick up from Ailuu Yurt Camp in Tong, or should we drive to you? We have a car.
+                - paragraph [ref=e563]: Payment in som or dollars, cash on the day?
+              - paragraph [ref=e564]: Send that and we'll have a firm number. Once it's confirmed I'll update the TripIt segments and the spreadsheet, and rework Tuesday and Thursday — Thursday needs fixing regardless of any of this.
+            - generic [ref=e567]: what about archery? where can i do archery in the reagion
+            - button "▸ Worked for 1m 23s · 14 steps 2.9k tok" [ref=e569] [cursor=pointer]:
+              - generic [ref=e570]: ▸
+              - generic [ref=e571]: Worked for 1m 23s · 14 steps
+              - generic [ref=e572]: 2.9k tok
+            - generic [ref=e575]:
+              - paragraph [ref=e576]:
+                - text: Archery is the natural third piece —
+                - strong [ref=e577]: "salburun literally means the combined hunt: eagle, taigan hounds, and bow."
+                - text: Splitting it out would be the odd choice.
+              - 'heading "Best option: add it to the Bokonbaevo morning" [level=2] [ref=e578]'
+              - paragraph [ref=e579]:
+                - text: Your itinerary note already carries the figure —
+                - emphasis [ref=e580]: "\"~2,500 KGS pp incl. handmade-bow archery\""
+                - text: — from this same operator.
+                - link "Visit Kyrgyzstan" [ref=e581] [cursor=pointer]:
+                  - /url: https://www.visitkyrgyzstan.org/destinations/bokonbaevo/
+                - text: lists archery alongside the eagle work at Bokonbaevo, so it's a normal add rather than a special request. What their page
+                - strong [ref=e582]: doesn't
+                - text: say is whether you shoot yourself or only watch, so that's worth asking outright.
+              - paragraph [ref=e583]:
+                - text: "One correction to what I told you earlier: that page publishes"
+                - strong [ref=e584]: +996 705 001 723 as CBT Bokonbaevo
+                - text: — the national tourism body's own listing. So the number is better-credentialled than the "private operator" framing I gave you; treat it as CBT-affiliated rather than something separate.
+              - 'heading "Backup already in your plan: Supara" [level=2] [ref=e585]'
+              - paragraph [ref=e586]:
+                - link "Supara Chunkurchak" [ref=e587] [cursor=pointer]:
+                  - /url: https://supara.kg/en/
+                - text: runs traditional Kyrgyz games — ordo, arkan tartysh and
+                - strong [ref=e588]: archery
+                - text: — plus riding and craft workshops, and Supara is already pencilled for Thursday 27th.
+              - paragraph [ref=e589]:
+                - text: Two caveats. There are
+                - strong [ref=e590]: two Suparas
+                - text: ": the restaurant in Bishkek, and Supara"
+                - emphasis [ref=e591]: Chunkurchak
+                - text: ", the ethno-resort"
+                - strong [ref=e592]: 40 km south of Bishkek
+                - text: at 2,150 m. The archery is at Chunkurchak — which is a detour in the wrong direction on a day already carrying 481 km. And their site publishes nothing about activity booking, so it'd need a call. Fine as a fallback, not something to plan around.
+              - heading "Almaty alternative — probably skip" [level=2] [ref=e593]
+              - paragraph [ref=e594]:
+                - link "Huns Ethno Village" [ref=e595] [cursor=pointer]:
+                  - /url: https://kazakhstan-tourism.com/huns-ethno-village-almaty/
+                - text: in Talgar gorge includes an archery master class in its standard half-day programme, alongside horse shows and a cooking class. But your Almaty days are Kok-Tobe on the 23rd and Charyn on the 24th, both full, and it's a staged tourist village rather than the real thing you'll get at Bokonbaevo.
+              - heading "Revised message" [level=2] [ref=e596]
+              - blockquote [ref=e597]:
+                - paragraph [ref=e598]: Thanks for the details. Option 1 is what we'd like — the one-hour demonstration, on Wednesday 26 August.
+                - paragraph [ref=e599]: We're 3 people and I see it covers up to 2 — what's the total for 3?
+                - paragraph [ref=e600]: "Two things we'd like to add the same morning: a short horse ride, about 2 hours (we're all beginners), and archery — can we shoot the bow ourselves, or is it demonstration only?"
+                - paragraph [ref=e601]: Can you do it all as one morning, and what's the cost for the three of us? Morning suits us better than afternoon.
+                - paragraph [ref=e602]: Do you pick up from Ailuu Yurt Camp in Tong, or should we drive to you? We have a car.
+                - paragraph [ref=e603]: Payment in som or dollars, cash on the day?
+              - paragraph [ref=e604]: That's eagle, horses and bow in one morning from one operator, which should land well under half of Option 2 and leaves your afternoon free.
+              - paragraph [ref=e605]:
+                - strong [ref=e606]: "Sources:"
+                - link "Visit Kyrgyzstan — Bokonbaevo" [ref=e607] [cursor=pointer]:
+                  - /url: https://www.visitkyrgyzstan.org/destinations/bokonbaevo/
+                - text: ·
+                - link "Salburun (Wikipedia)" [ref=e608] [cursor=pointer]:
+                  - /url: https://en.wikipedia.org/wiki/Salburun
+                - text: ·
+                - link "Caspian Post — Salburun festival" [ref=e609] [cursor=pointer]:
+                  - /url: https://caspianpost.com/kyrgyzstan/kyrgyzstan-s-salburun-festival-showcases-falconry-archery-and-nomadic-culture
+                - text: ·
+                - link "Supara" [ref=e610] [cursor=pointer]:
+                  - /url: https://supara.kg/en/
+                - text: ·
+                - link "Nomad's Land — Supara Chunkurchak" [ref=e611] [cursor=pointer]:
+                  - /url: https://www.nomadsland.travel/en/before-you-go/kyrgyzstan/places-to-stay/mountain-lodge/ethno-complex-supara-chunkurchak
+                - text: ·
+                - link "Huns Ethno Village" [ref=e612] [cursor=pointer]:
+                  - /url: https://kazakhstan-tourism.com/huns-ethno-village-almaty/
+            - generic [ref=e615]: actually i'm down for a full day of horseback riding nadd eagle hunting and dieally add archery.
+            - button "▸ Worked for 45s · 3 steps 3.0k tok" [ref=e617] [cursor=pointer]:
+              - generic [ref=e618]: ▸
+              - generic [ref=e619]: Worked for 45s · 3 steps
+              - generic [ref=e620]: 3.0k tok
+            - generic [ref=e623]:
+              - paragraph [ref=e624]: "Good — and you're buying it knowing exactly what it is: a full day on the jailoo with hunters and horses, with lure work rather than a winter hunt. That's a real day out, and archery makes it the complete salburun."
+              - paragraph [ref=e625]: "Here's the message:"
+              - blockquote [ref=e626]:
+                - paragraph [ref=e627]: We'd like Option 2 — the full day on Wednesday 26 August, for 3 people.
+                - paragraph [ref=e628]: Can you confirm the price first? Reading your list, I take 525 USD to be the total for 3 people — is that right?
+                - paragraph [ref=e629]: A few things. We're all beginners on horses, so is a full day OK for us, and can we have calm horses and someone to lead if needed? We'd also like to add archery if that's possible. And we have our own car, so we don't need transport from Bokonbaevo if that makes a difference to the price.
+                - paragraph [ref=e630]: What time does the day start and finish? We'd like an early start — we drive to Bishkek the next morning.
+                - paragraph [ref=e631]: Payment in som or dollars, cash on the day?
+              - paragraph [ref=e632]: The price question goes first deliberately. It's the one thing that could still change your mind, and $525 versus $1,575 turns on my reading of a mangled list, not on anything they've actually said.
+              - heading "What Wednesday now looks like" [level=2] [ref=e633]
+              - paragraph [ref=e634]:
+                - text: Full day out, roughly 09:00–17:00.
+                - strong [ref=e635]: Manjyly-Ata survives
+                - text: — it's a 2–3 km walk from the camp, so it works as a sunrise stroll before you leave.
+                - strong [ref=e636]: Barskoon doesn't.
+              - paragraph [ref=e637]: "So you've got a choice to make on Tuesday:"
+              - list [ref=e638]:
+                - listitem [ref=e639]:
+                  - strong [ref=e640]: Drop Barskoon
+                  - text: and keep Tuesday as planned (Karakol churches → Jeti-Oguz → Skazka → Ailuu). My pick — the Seven Bulls are the more distinctive stop, and Barskoon is a waterfall at the end of two hours of rough road.
+                - listitem [ref=e641]:
+                  - strong [ref=e642]: Or move Barskoon to Tuesday and drop Jeti-Oguz
+                  - text: ", leaving Karakol around 08:00 rather than the 12:00 checkout. Barskoon village sits directly on that road, so the only real cost is the gorge itself."
+              - heading "Thursday needs fixing either way" [level=2] [ref=e643]
+              - paragraph [ref=e644]: As booked it's 481 km and 9–10 hours of driving against a 10:00 checkout and a 14:00 Bishkek check-in. It doesn't work, and it never did — this isn't a consequence of the eagle day.
+              - paragraph [ref=e645]:
+                - text: The culprit is
+                - strong [ref=e646]: Cholpon-Ata
+                - text: ": it's on the"
+                - emphasis [ref=e647]: north
+                - text: shore, so reaching it from Tong means going east and doubling back, roughly +165 km and +3 hours. Drop the petroglyphs and Thursday becomes reasonable — Burana Tower is directly on the Bishkek road near Tokmok, so it stays for free.
+              - paragraph [ref=e648]:
+                - text: That leaves Supara, which is 40 km
+                - emphasis [ref=e649]: south
+                - text: of Bishkek at Chunkurchak — a genuine detour, though it's also where the archery and traditional games are if CBT can't do the bow on Wednesday.
+              - paragraph [ref=e650]: Tell me which way you want Barskoon and Jeti-Oguz to go, and whether Supara stays, and I'll update TripIt and the spreadsheet in one pass — including the eagle day once CBT confirms the number.
+            - generic [ref=e653]: is the archery from the same company?
+            - button "▸ Worked for 55s · 7 steps 1.5k tok" [ref=e655] [cursor=pointer]:
+              - generic [ref=e656]: ▸
+              - generic [ref=e657]: Worked for 55s · 7 steps
+              - generic [ref=e658]: 1.5k tok
+            - generic [ref=e661]:
+              - paragraph [ref=e662]: Checked. Here's the picture.
+              - paragraph [ref=e663]:
+                - strong [ref=e664]: Archery at Bokonbaevo is real and year-round
+                - text: — but the organisation most associated with it is the
+                - strong [ref=e665]: Salbuurun Federation
+                - text: ", also based in Bokonbaevo, whose whole purpose is the three disciplines together: eagle, taigan hounds, and bow on horseback. It's described as offering the more encompassing version, showing how the eagle and the dogs work with mounted hunters. Bokonbaevo is a village and this scene is small, so your operator very likely draws on the same hunters — but that's an inference, not something they've told you."
+              - paragraph [ref=e666]:
+                - strong [ref=e667]: What they haven't done is offer it.
+                - text: Both quoted products came without archery, so treat it as an open ask rather than something you've already bought.
+              - paragraph [ref=e668]:
+                - text: Two things worth knowing if they say no. The
+                - strong [ref=e669]: Destination South Shore
+                - text: office is the published meeting point for salburun bookings — Toichubekov Culture House, 37 B. Mambetov Street, in the centre of Bokonbaevo. Their website is dead (the domain no longer resolves, which is why everything runs through WhatsApp now), but the office is physical and you'll be in the village anyway. And note the wording in most write-ups is archery
+                - emphasis [ref=e670]: displays
+                - text: ", with visitors getting to hold the eagle and sit on a horse —"
+                - strong [ref=e671]: shooting the bow yourself may not be standard
+                - text: ", which is why the message asks outright rather than assuming."
+              - paragraph [ref=e672]: "I'd sharpen that line in your message to force a clear answer:"
+              - blockquote [ref=e673]:
+                - paragraph [ref=e674]: We'd also like to include archery — can we shoot the bow ourselves, or is it a display? If you don't do it, can you arrange it with the Salbuurun Federation?
+              - paragraph [ref=e675]: Naming the Federation signals you know the local landscape, which tends to get a straighter answer than an open-ended request. Everything else in the message stands.
+              - paragraph [ref=e676]:
+                - strong [ref=e677]: "Sources:"
+                - link "Visit Kyrgyzstan — eagle hunting" [ref=e678] [cursor=pointer]:
+                  - /url: https://www.visitkyrgyzstan.org/eagle-hunting/
+                - text: ·
+                - link "Visit Kyrgyzstan — Bokonbaevo" [ref=e679] [cursor=pointer]:
+                  - /url: https://www.visitkyrgyzstan.org/destinations/bokonbaevo/
+                - text: ·
+                - link "Uncornered Market — Issyk-Kul south shore" [ref=e680] [cursor=pointer]:
+                  - /url: https://uncorneredmarket.com/issyk-kul-southern-shore-travel-guide/
+                - text: ·
+                - link "Euronews — Salbuurun Festival" [ref=e681] [cursor=pointer]:
+                  - /url: https://www.euronews.com/culture/2025/08/04/eagles-archery-and-horseback-stunts-wow-crowds-at-kyrgyzstans-salbuurun-festival
+            - generic [ref=e684]: So did we connect the most popular and recommended agency for this?
+            - button "▸ Worked for 4m 0s · 32 steps 2.4k tok" [ref=e686] [cursor=pointer]:
+              - generic [ref=e687]: ▸
+              - generic [ref=e688]: Worked for 4m 0s · 32 steps
+              - generic [ref=e689]: 2.4k tok
+            - generic [ref=e692]:
+              - paragraph [ref=e693]:
+                - strong [ref=e694]: No — we contacted the legitimate one, not the best-reviewed one.
+              - paragraph [ref=e695]: "Here's the gap:"
+              - table [ref=e696]:
+                - rowgroup [ref=e697]:
+                  - row "Reviews Rank" [ref=e698]:
+                    - columnheader [ref=e699]
+                    - columnheader "Reviews" [ref=e700]
+                    - columnheader "Rank" [ref=e701]
+                - rowgroup [ref=e702]:
+                  - row "CBT Bokonbaevo (who we messaged) 2 —" [ref=e703]:
+                    - cell "CBT Bokonbaevo (who we messaged)" [ref=e704]:
+                      - text: CBT Bokonbaevo
+                      - emphasis [ref=e705]: (who we messaged)
+                    - cell "2" [ref=e706]
+                    - cell "—" [ref=e707]
+                  - 'row "Eagle Hunting Show by Salavat 11 #1 of 11 in Bokonbaevo" [ref=e708]':
+                    - cell "Eagle Hunting Show by Salavat" [ref=e709]:
+                      - strong [ref=e710]: Eagle Hunting Show by Salavat
+                    - cell "11" [ref=e711]
+                    - cell "#1 of 11 in Bokonbaevo" [ref=e712]:
+                      - strong [ref=e713]: "#1 of 11 in Bokonbaevo"
+              - paragraph [ref=e714]:
+                - strong [ref=e715]: Salavat
+                - text: "is a two-time world champion (2016 World Nomad Games), seventh-generation berkutchi, trained by his mentor Arstan; his eagle is Cagilgan, a female golden eagle. He works with the eagle, horses and two taigan dogs — and the detail that matters for you:"
+                - strong [ref=e716]: reviewers say he lets visitors try the bow themselves.
+                - text: That's precisely the thing CBT didn't offer.
+              - paragraph [ref=e717]:
+                - text: And he's local to you. The packaged version of his show meets in
+                - strong [ref=e718]: Tong
+                - text: — near the Bel Tam and Elestet yurt camps, i.e. minutes from Ailuu.
+              - heading "But don't book the packaged version" [level=2] [ref=e719]
+              - paragraph [ref=e720]:
+                - text: There's a product called
+                - emphasis [ref=e721]: "\"Eagle Show and Archery Masterclass in Bokonbaevo Village\""
+                - text: "sold on Expedia and TripAdvisor. I pulled the live page:"
+                - strong [ref=e722]: $99 per traveller
+                - text: ", one hour, operated by a reseller called"
+                - strong [ref=e723]: Datka Travel
+                - text: — and it's showing available on Wed 26 Aug.
+              - paragraph [ref=e724]:
+                - text: $99pp × 3 =
+                - strong [ref=e725]: $297 for one hour
+                - text: . Direct local rates for a berkutchi demonstration are
+                - strong [ref=e726]: $20–40 per person
+                - text: ", and CBT quoted you $69 for a group of two. That's a two-to-threefold reseller markup, and Datka Travel isn't Salavat — it's an agency selling his hour."
+              - paragraph [ref=e727]:
+                - emphasis [ref=e728]: "(One caveat on my earlier note: a search summary claimed $99 was a group price for up to 15. The live page says per traveller, with a discount for multiple travellers. The group reading was wrong.)"
+              - heading "What I'd do" [level=2] [ref=e729]
+              - paragraph [ref=e730]: "Add one line to your CBT message — it's the highest-value question you can ask them:"
+              - blockquote [ref=e731]:
+                - paragraph [ref=e732]: Which hunter would we be with? Is it Salavat?
+              - paragraph [ref=e733]: "Bokonbaevo is a village with a handful of berkutchi. There's a fair chance CBT already books Salavat, in which case you get the #1-rated hunter at local prices and the archery question answers itself. If it's someone else, you've learned something worth knowing before paying for a full day."
+              - paragraph [ref=e734]:
+                - strong [ref=e735]: I couldn't get Salavat's own number.
+                - text: "TripAdvisor 403s every route I tried — plain fetch, the cluster's stealth Chrome, and three locale domains — and the blog that profiles him lists no contact. Reviewers say his WhatsApp is on his TripAdvisor listing, so it's a thirty-second job in your own browser: open"
+                - emphasis [ref=e736]: Eagle Hunting Show by Salavat
+                - text: ", Bokonbayevo. Worth doing before you commit to the full day, since he rides and already does the archery."
+              - paragraph [ref=e737]: The Expedia listing has free cancellation, so it's a fallback if the direct route goes quiet — just an expensive one.
+            - generic [ref=e740]: I'm looking to organize a full day activity where we will do some horseback riding, some eagle hunting and archery. I'm happy to have it in a single package but doesn't have to be.
+            - button "▸ Worked for 1m 3s · 7 steps 2.5k tok" [ref=e742] [cursor=pointer]:
+              - generic [ref=e743]: ▸
+              - generic [ref=e744]: Worked for 1m 3s · 7 steps
+              - generic [ref=e745]: 2.5k tok
+            - generic [ref=e748]:
+              - paragraph [ref=e749]:
+                - text: Good — that's a clean brief, and it's achievable. CBT's Option 2 is already the right
+                - emphasis [ref=e750]: frame
+                - text: "(full day, horses, two hunters, guide, lunch); it's just missing archery and a confirmed price. Salavat is the one confirmed to do archery you can actually shoot. So: pin down CBT, and get a competing quote from Salavat."
+              - heading "Message 1 — to CBT, +996 705 001 723" [level=2] [ref=e751]
+              - blockquote [ref=e752]:
+                - paragraph [ref=e753]: We'd like to do your Option 2 — the full day — on Wednesday 26 August, for 3 people.
+                - paragraph [ref=e754]: Can you confirm the price first? Reading your list I take 525 USD to be the total for the 3 of us — is that right?
+                - paragraph [ref=e755]: We'd also like archery included, so we can shoot the bow ourselves rather than just watch. Is that possible? And we're all beginners on horses — is a full day fine for us, with calm horses and someone to lead if needed?
+                - paragraph [ref=e756]: "One more: which hunter would we be with?"
+                - paragraph [ref=e757]: If that all works we'll confirm and sort timing and payment with you.
+              - paragraph [ref=e758]: I've kept it to four asks. Start time, the transport discount and cash-vs-card are worth having, but they're logistics — asking everything at once tends to get you a partial reply, and the four above are the ones that decide whether this happens at all.
+              - heading "Message 2 — to Salavat" [level=2] [ref=e759]
+              - paragraph [ref=e760]:
+                - text: "You'll need to grab his number first: open"
+                - strong [ref=e761]: "\"Eagle Hunting Show by Salavat\", Bokonbayevo"
+                - text: on TripAdvisor in your own browser — reviewers say the WhatsApp is right there. I can't reach it; TripAdvisor 403s every route I have.
+              - blockquote [ref=e762]:
+                - paragraph [ref=e763]: Hello! We're 3 people staying at Ailuu Yurt Camp in Tong on 25–27 August.
+                - paragraph [ref=e764]: We'd like a full day on Wednesday 26 August — horseback riding, the eagle, and archery we can try ourselves. Can you do that for 3 people, and what would it cost?
+                - paragraph [ref=e765]: We're all beginners on horses. We have our own car, so we don't need transport.
+              - paragraph [ref=e766]:
+                - strong [ref=e767]: Space these out
+                - text: — a couple of hours between them, given the account restriction.
+              - heading "How to judge what comes back" [level=2] [ref=e768]
+              - table [ref=e769]:
+                - rowgroup [ref=e770]:
+                  - row "Benchmark Rate" [ref=e771]:
+                    - columnheader "Benchmark" [ref=e772]
+                    - columnheader "Rate" [ref=e773]
+                - rowgroup [ref=e774]:
+                  - row "Full-day eagle tours, other Kyrgyz operators ~$220 per person" [ref=e775]:
+                    - cell "Full-day eagle tours, other Kyrgyz operators" [ref=e776]
+                    - cell "~$220 per person" [ref=e777]:
+                      - strong [ref=e778]: ~$220 per person
+                  - row "CBT's $525, if it's a group total $175 per person" [ref=e779]:
+                    - cell "CBT's $525, if it's a group total" [ref=e780]
+                    - cell "$175 per person" [ref=e781]:
+                      - strong [ref=e782]: $175 per person
+                  - row "1h show + archery via Expedia reseller $99 per person" [ref=e783]:
+                    - cell "1h show + archery via Expedia reseller" [ref=e784]
+                    - cell "$99 per person" [ref=e785]
+                  - row "1h demonstration booked direct $20–40 per person" [ref=e786]:
+                    - cell "1h demonstration booked direct" [ref=e787]
+                    - cell "$20–40 per person" [ref=e788]
+              - paragraph [ref=e789]:
+                - text: So if CBT confirms $525 as the total,
+                - strong [ref=e790]: it's below the going rate for a full day
+                - text: — good value, and the group-total reading gains a lot of credibility. If they come back saying $525
+                - emphasis [ref=e791]: each
+                - text: ", that's $1,575 and well over market; walk away and take Salavat's quote."
+              - paragraph [ref=e792]: Send the first one and I'll work up the itinerary changes in the meantime — Wednesday going to a full day, Barskoon and Jeti-Oguz, and the Thursday fix, so it's all ready to apply the moment a price lands.
+            - generic [ref=e795]: is cbt the number ending in 723? I checked their site and they have another number - +996 770 443331
+            - button "▸ Worked for 58s · 11 steps 2.1k tok ✗ failed" [ref=e797] [cursor=pointer]:
+              - generic [ref=e798]: ▸
+              - generic [ref=e799]: Worked for 58s · 11 steps
+              - generic [ref=e800]: 2.1k tok
+              - generic [ref=e801]: ✗ failed
+            - generic [ref=e804]:
+              - paragraph [ref=e805]:
+                - text: Resolved — and
+                - strong [ref=e806]: your number is the official one; the one that replied to us isn't.
+              - paragraph [ref=e807]: "The CBT Kyrgyzstan association's own page for CBT Bokonbaevo lists exactly two numbers:"
+              - table [ref=e808]:
+                - rowgroup [ref=e809]:
+                  - row "Number Source What it is" [ref=e810]:
+                    - columnheader "Number" [ref=e811]
+                    - columnheader "Source" [ref=e812]
+                    - columnheader "What it is" [ref=e813]
+                - rowgroup [ref=e814]:
+                  - row "+996 770 443331 CBT association page (yours) Official CBT Bokonbaevo" [ref=e815]:
+                    - cell "+996 770 443331" [ref=e816]:
+                      - strong [ref=e817]: +996 770 443331
+                    - cell "CBT association page (yours)" [ref=e818]:
+                      - text: CBT association page
+                      - emphasis [ref=e819]: (yours)
+                    - cell "Official CBT Bokonbaevo" [ref=e820]
+                  - row "+996 779 455045 CBT association page Official CBT Bokonbaevo" [ref=e821]:
+                    - cell "+996 779 455045" [ref=e822]:
+                      - strong [ref=e823]: +996 779 455045
+                    - cell "CBT association page" [ref=e824]
+                    - cell "Official CBT Bokonbaevo" [ref=e825]
+                  - row "+996 705 001 723 Visit Kyrgyzstan, for eagle demos Not on CBT's own listing — a traveller blog names it \"Visit Teskei\", a private operator" [ref=e826]:
+                    - cell "+996 705 001 723" [ref=e827]
+                    - cell "Visit Kyrgyzstan, for eagle demos" [ref=e828]
+                    - cell "Not on CBT's own listing — a traveller blog names it \"Visit Teskei\", a private operator" [ref=e829]:
+                      - strong [ref=e830]: Not on CBT's own listing
+                      - text: — a traveller blog names it "Visit Teskei", a private operator
+              - paragraph [ref=e831]:
+                - text: "Also confirmed:"
+                - code [ref=e832]: cbt-bokonbaevo.com
+                - text: is dead (the domain no longer resolves), which is why the numbers scattered across third-party sites don't agree. The real office is
+                - strong [ref=e833]: 16 Mambetov St., café "Argymak"
+                - text: ", email"
+                - code [ref=e834]: cbtbokonbaevo@gmail.com
+                - text: .
+              - paragraph [ref=e835]:
+                - text: I need to correct something I told you earlier. I said that Visit Kyrgyzstan publishing 723 made it "better-credentialled" and to treat it as CBT-affiliated.
+                - strong [ref=e836]: That was too generous
+                - text: — the association's own page doesn't list it. It's a private operator that Visit Kyrgyzstan points at for eagle demonstrations.
+              - heading "But this doesn't mean we messaged the wrong people" [level=2] [ref=e837]
+              - paragraph [ref=e838]:
+                - text: Here's the useful part. The official CBT Bokonbaevo page lists yurt camps,
+                - strong [ref=e839]: horseback riding
+                - text: ", hiking and fishing — and says nothing about eagle hunting or archery. That fits everything else we've found:"
+                - strong [ref=e840]: the eagle work in Bokonbaevo is done by private berkutchi
+                - text: ", not by CBT itself."
+              - paragraph [ref=e841]: "So the two halves of your day come from different places:"
+              - list [ref=e842]:
+                - listitem [ref=e843]:
+                  - strong [ref=e844]: Horses
+                  - text: — CBT is a natural route, and it's their listed activity
+                - listitem [ref=e845]:
+                  - strong [ref=e846]: Eagle and archery
+                  - text: "— private hunters: Visit Teskei, or Salavat"
+              - paragraph [ref=e847]:
+                - text: Which is exactly why Visit Teskei quoting a full day
+                - emphasis [ref=e848]: with
+                - text: horses is a genuine offer worth pricing, and why they're the ones who'd have to sub-contract the archery.
+              - heading "Worth messaging CBT too" [level=2] [ref=e849]
+              - paragraph [ref=e850]: "Third quote, and the community route:"
+              - blockquote [ref=e851]:
+                - paragraph [ref=e852]: Hello! We're 3 people staying at Ailuu Yurt Camp in Tong on 25–27 August.
+                - paragraph [ref=e853]: We'd like to arrange a full day on Wednesday 26 August — horseback riding, an eagle hunter demonstration, and archery we can try ourselves. We're all beginners on horses.
+                - paragraph [ref=e854]: Can you organise that for the 3 of us, and what would it cost? We have our own car.
+              - paragraph [ref=e855]:
+                - text: "That gives you three quotes for the same day:"
+                - strong [ref=e856]: Visit Teskei
+                - text: (already engaged, has the full-day frame),
+                - strong [ref=e857]: official CBT
+                - text: (community route, owns the horses), and
+                - strong [ref=e858]: Salavat
+                - text: (best-reviewed, confirmed archery).
+              - paragraph [ref=e859]: Send them a couple of hours apart. If you want a running order, I'd do Visit Teskei first since they're mid-conversation, then CBT, then Salavat once you've pulled his number off TripAdvisor.
+            - generic [ref=e862]: if we have visit tashkei already wiht a good offer, shall we stick with that? we just need to figure out more details right?
+            - button "▸ Worked for 36s · 3 steps 2.2k tok" [ref=e864] [cursor=pointer]:
+              - generic [ref=e865]: ▸
+              - generic [ref=e866]: Worked for 36s · 3 steps
+              - generic [ref=e867]: 2.2k tok
+            - generic [ref=e870]:
+              - paragraph [ref=e871]: "Yes — stick with them. Three reasons that matter more than the alternatives:"
+              - paragraph [ref=e872]:
+                - text: They already have
+                - strong [ref=e873]: the hard part assembled
+                - text: — a full day with horses, two hunters, a guide and lunch. Assembling that yourself from three providers on one morning in rural Kyrgyzstan is real coordination risk for no obvious gain. They're
+                - strong [ref=e874]: responsive
+                - text: — a detailed, structured reply within a day, which is not a given here. And nothing negative turned up about them anywhere.
+              - paragraph [ref=e875]:
+                - text: "One correction to your framing, though:"
+                - strong [ref=e876]: we don't actually have a good offer yet — we have a good-looking one.
+                - text: The $525 is my reading of a price list that arrived with its labels stripped. They have never quoted you a number for three people. That's not a reason to shop around; it's a reason not to treat the price as settled until they write it down.
+              - paragraph [ref=e877]: "So yes, it's detail-gathering — but four specific details, one of which is decisive:"
+              - list [ref=e878]:
+                - listitem [ref=e879]:
+                  - strong [ref=e880]: The price for three.
+                  - text: $525 or $1,575 — this is the only one that could still change your mind.
+                - listitem [ref=e881]:
+                  - strong [ref=e882]: Archery.
+                  - text: Not in either of their offers. If they can't do it, it comes from Salavat or the Salbuurun Federation as a separate hour.
+                - listitem [ref=e883]:
+                  - strong [ref=e884]: Beginners on horses for a full day.
+                  - text: Their answer tells you how the day is really run.
+                - listitem [ref=e885]:
+                  - strong [ref=e886]: Start and finish time.
+                  - text: Thursday's drive to Bishkek depends on it.
+              - paragraph [ref=e887]: "Here's the message:"
+              - blockquote [ref=e888]:
+                - paragraph [ref=e889]: We'd like to do your Option 2 — the full day — on Wednesday 26 August, for 3 people.
+                - paragraph [ref=e890]: Can you confirm the price first? Reading your list I take 525 USD to be the total for the 3 of us — is that right?
+                - paragraph [ref=e891]: We'd also like archery included, so we can shoot the bow ourselves rather than just watch. Is that possible?
+                - paragraph [ref=e892]: We're all beginners on horses — is a full day fine for us, with calm horses and someone to lead if needed? And what time would the day start and finish? We drive to Bishkek the next morning, so an early start suits us.
+                - paragraph [ref=e893]: Which hunter would we be with?
+              - paragraph [ref=e894]:
+                - strong [ref=e895]: Hold CBT and Salavat.
+                - text: No reason to spend three conversations on a day you've decided to book with one provider. They become useful only if the reply comes back wrong — specifically if the price is per-person, or if archery is a flat no and you want it badly enough to bolt on a separate hour.
+              - paragraph [ref=e896]: "Send that, and while you wait I'll rework the itinerary: Wednesday as a full day out, the Barskoon-versus-Jeti-Oguz call on Tuesday, and the Thursday fix that's needed regardless. Then it's a single pass to apply once their number lands."
+            - generic [ref=e899]: "they have thisin their message: 1.⁠ ⁠person 400 usd 2.⁠ ⁠⁠person 430 usd 3.⁠ ⁠⁠person 525 usd 4.⁠ ⁠⁠person 600 usd 5.⁠ ⁠⁠person 725 usd"
+            - button "▸ Worked for 1m 18s · 8 steps 410 tok" [ref=e901] [cursor=pointer]:
+              - generic [ref=e902]: ▸
+              - generic [ref=e903]: Worked for 1m 18s · 8 steps
+              - generic [ref=e904]: 410 tok
+            - generic [ref=e907]:
+              - paragraph [ref=e908]: "Findings recorded (#11204 hub, #11205 pricing, #11236 contacts), including the lesson that scraped WhatsApp text drops list numbering — which is what created the $525-versus-$1,575 ambiguity in the first place. Pasting from your phone was what resolved it."
+              - paragraph [ref=e909]:
+                - strong [ref=e910]: "Where the booking stands:"
+                - text: the price is settled at $525 for three, and it's below market for a full day. Nothing outstanding can derail it — archery, beginner horses and start time are all refinements, not blockers.
+              - paragraph [ref=e911]: "Send that message and I'll rework the itinerary while you wait:"
+              - list [ref=e912]:
+                - listitem [ref=e913]:
+                  - strong [ref=e914]: Wednesday 26
+                  - text: → full day out; Manjyly-Ata survives as a sunrise walk from camp
+                - listitem [ref=e915]:
+                  - strong [ref=e916]: Tuesday 25
+                  - text: → your call between keeping Jeti-Oguz (drop Barskoon) or moving Barskoon in and dropping Jeti-Oguz
+                - listitem [ref=e917]:
+                  - strong [ref=e918]: Thursday 27
+                  - text: → drop the Cholpon-Ata petroglyphs; it's 481 km and 9–10 hours as booked, which doesn't fit a 10:00 checkout regardless of the eagle day
+              - paragraph [ref=e919]: Tell me which way you want Tuesday to go and I'll apply the whole thing — TripIt segments and the spreadsheet — in one pass once their reply lands.
+            - generic [ref=e922]: vladex came back with the car update /var/lib/clipboard-store/wizard/tripit-casia/pasted-20260816-204119-8aed57d5.png
+            - button "▸ Worked for 2m 6s · 9 steps 5.1k tok" [ref=e924] [cursor=pointer]:
+              - generic [ref=e925]: ▸
+              - generic [ref=e926]: Worked for 2m 6s · 9 steps
+              - generic [ref=e927]: 5.1k tok
+            - generic [ref=e930]:
+              - paragraph [ref=e931]: Two problems on that card, one of them serious.
+              - heading "The booking is in someone else's name" [level=2] [ref=e932]
+              - blockquote [ref=e933]:
+                - paragraph [ref=e934]:
+                  - strong [ref=e935]: Boris Ernest Halasan S
+                  - text: —
+                  - link "borisernest48@gmail.com" [ref=e936] [cursor=pointer]:
+                    - /url: mailto:borisernest48@gmail.com
+              - paragraph [ref=e937]:
+                - text: Your TripIt record has this booked as
+                - strong [ref=e938]: Barzin Viktor Emilov
+                - text: ", contact @viktorb. This card is either a different customer's reservation sent to you by mistake, or your booking filed under the wrong customer record. Either way it has to be fixed before pickup — you can't collect a car on a reservation in another person's name, and the driver's name has to match the licence and the доверенность."
+              - heading "The price didn't actually move" [level=2] [ref=e939]
+              - paragraph [ref=e940]: "Their own earlier explanation was 37,000/day plus a 50,000 border fee, with one extra day added because pickup and drop-off differed by more than an hour. That gives:"
+              - list [ref=e941]:
+                - listitem [ref=e942]:
+                  - strong [ref=e943]: "6"
+                  - text: × 37,000 + 50,000 =
+                  - strong [ref=e944]: 272,000
+                  - text: ← the original, with the disputed extra day
+                - listitem [ref=e945]:
+                  - strong [ref=e946]: "5"
+                  - text: × 37,000 + 50,000 =
+                  - strong [ref=e947]: 235,000
+                  - text: ← what it should be once that day comes off
+              - paragraph [ref=e948]:
+                - text: The new card says
+                - strong [ref=e949]: "суток: 5"
+                - text: — but still
+                - strong [ref=e950]: 272,000
+                - text: ", which it presents as 54,400/day. The day count was corrected; the money wasn't."
+              - heading "What they actually did" [level=2] [ref=e951]
+              - paragraph [ref=e952]:
+                - text: "Look at the dates:"
+                - strong [ref=e953]: 23-08 09:30 → 28-08 12:00
+                - text: . Your plan was pickup on the
+                - strong [ref=e954]: 24th
+                - text: . They've moved the pickup a day
+                - emphasis [ref=e955]: earlier
+                - text: while fixing the return to the 28th — so the window is still 5 days, and the 37,000 stays on the bill.
+              - paragraph [ref=e956]:
+                - text: That's not necessarily sharp practice. Read charitably, they've declined to refund the extra day and instead moved it from the back (where it was dead time — your flight leaves 17:15 on the 28th) to the front, where you could actually use a car in Almaty.
+                - strong [ref=e957]: Same money, more usable car.
+              - paragraph [ref=e958]:
+                - text: "So it comes down to one question:"
+                - strong [ref=e959]: do you want the car on the 23rd?
+                - text: You land 04:15 that day and Almaty is a taxi city, so a jet-lagged driving day may be worth nothing to you — in which case you're still paying the 37,000 for a day you didn't ask for.
+              - paragraph [ref=e960]: "Message either way, since the name must be fixed:"
+              - blockquote [ref=e961]:
+                - paragraph [ref=e962]: Thanks. Two things.
+                - paragraph [ref=e963]:
+                  - text: The booking is in the name Boris Ernest Halasan S, email
+                  - link "borisernest48@gmail.com" [ref=e964] [cursor=pointer]:
+                    - /url: mailto:borisernest48@gmail.com
+                  - text: . That's not me — it should be Barzin Viktor Emilov. Please correct it; I can't collect a car on someone else's reservation.
+                - paragraph [ref=e965]: "On the price: you explained the 272,000 as 37,000 per day plus 50,000 for the border, with one extra day because of the pick-up and drop-off time difference. With the return now on 28 August that extra day is gone, so it should be 5 × 37,000 + 50,000 = 235,000. The card still shows 272,000."
+                - paragraph [ref=e966]: I see you've moved the pick-up to 23 August. I don't need the car that day — I only need it from the 24th. So either 235,000 for 24–28 August, or please explain the 272,000.
+              - paragraph [ref=e967]: If you'd rather keep the 23rd, drop that last paragraph and just fix the name — 272,000 for five usable days is defensible, and it's still under the 320,000 you were originally quoted.
+              - paragraph [ref=e968]:
+                - text: "One more thing worth noting:"
+                - strong [ref=e969]: "оплачено: 0, долг: 272,000."
+                - text: Nothing is paid, so you have full leverage here, and the whole amount is due at pickup in cash.
+          - generic [ref=e971]:
+            - textbox "Message to send to the session" [ref=e972]:
+              - /placeholder: Message…  (Enter to send · Shift+Enter for newline)
+            - button "bypassPermissions" [ref=e973] [cursor=pointer]
+            - button "Send" [ref=e974] [cursor=pointer]
+      - button
+  - region "Notifications"

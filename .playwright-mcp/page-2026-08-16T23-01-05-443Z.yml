@@ -1,0 +1,211 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - heading "tmux sessions" [level=1] [ref=e8]
+          - button "Reload the app" [ref=e9] [cursor=pointer]: ↻
+          - button "Notifications" [ref=e10] [cursor=pointer]:
+            - img [ref=e11]
+        - paragraph [ref=e14]: Logged in as wizard (vbarzin). Sessions are kernel-isolated per Unix user; you only see your own.
+      - generic [ref=e15]:
+        - textbox "New session name" [ref=e16]:
+          - /placeholder: new session…
+        - combobox "Command for new session" [ref=e17] [cursor=pointer]:
+          - option "Claude" [selected]
+          - option "Codex"
+          - option "Plain shell"
+        - button "Create" [ref=e18] [cursor=pointer]
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - button "tripit group" [expanded] [ref=e21] [cursor=pointer]:
+            - generic [ref=e22]: ▾
+            - generic [ref=e23]: tripit
+            - generic [ref=e25]: "1"
+            - generic [ref=e26]:
+              - button "New session in project" [ref=e27]: +
+              - button "Group actions" [ref=e28]: ⋯
+          - button "session tripit-casia, Claude Code, Done" [ref=e30] [cursor=pointer]:
+            - generic "Done" [ref=e31]
+            - generic "Running Claude Code" [ref=e32]:
+              - img [ref=e33]
+            - generic "✳ tripit-casia" [ref=e35]: tripit-casia
+            - button "Session actions" [ref=e36]: ⋯
+        - generic [ref=e37]:
+          - button "t3-code group" [expanded] [ref=e38] [cursor=pointer]:
+            - generic [ref=e39]: ▾
+            - generic [ref=e40]: t3-code
+            - generic [ref=e42]: "2"
+            - generic [ref=e43]:
+              - button "New session in project" [ref=e44]: +
+              - button "Group actions" [ref=e45]: ⋯
+          - generic [ref=e46]:
+            - button "session text-mode, Claude Code, Working" [ref=e47] [cursor=pointer]:
+              - generic "Working" [ref=e48]
+              - generic "Running Claude Code" [ref=e49]:
+                - img [ref=e50]
+              - generic "◑ rewrite" [ref=e52]: text-mode
+              - generic [ref=e53]: 27:47
+              - button "Session actions" [ref=e54]: ⋯
+            - button "session sessions, Claude Code, Done" [ref=e55] [cursor=pointer]:
+              - generic "Done" [ref=e56]
+              - generic "Running Claude Code" [ref=e57]:
+                - img [ref=e58]
+              - generic "✳ Allow spaces in terminal lobby session titles" [ref=e60]: sessions
+              - button "Session actions" [ref=e61]: ⋯
+        - generic [ref=e62]:
+          - button "code group" [expanded] [ref=e63] [cursor=pointer]:
+            - generic [ref=e64]: ▾
+            - generic [ref=e65]: code
+            - generic [ref=e67]: "1"
+            - generic [ref=e68]:
+              - button "New session in project" [ref=e69]: +
+              - button "Group actions" [ref=e70]: ⋯
+          - button "session health, Claude Code, Done" [ref=e72] [cursor=pointer]:
+            - generic "Done" [ref=e73]
+            - generic "Running Claude Code" [ref=e74]:
+              - img [ref=e75]
+            - generic "✳ health" [ref=e77]: health
+            - button "Session actions" [ref=e78]: ⋯
+        - generic [ref=e79]:
+          - button "Ungrouped group" [expanded] [ref=e80] [cursor=pointer]:
+            - generic [ref=e81]: ▾
+            - generic [ref=e82]: Ungrouped
+            - generic [ref=e84]: "1"
+            - button "Group actions" [ref=e86]: ⋯
+          - button "session Council-tax, Claude Code, Done" [ref=e88] [cursor=pointer]:
+            - generic "Done" [ref=e89]
+            - generic "Running Claude Code" [ref=e90]:
+              - img [ref=e91]
+            - generic "✳ Council-tax" [ref=e93]: Council-tax
+            - button "Session actions" [ref=e94]: ⋯
+      - generic [ref=e95]:
+        - button "+ Project" [ref=e96] [cursor=pointer]
+        - button "Restore" [ref=e97] [cursor=pointer]
+  - generic [ref=e98]:
+    - generic [ref=e99]:
+      - button "Hide sidebar" [ref=e100] [cursor=pointer]: ‹
+      - generic [ref=e101]: terminal-lobby
+      - button "Settings" [ref=e102] [cursor=pointer]:
+        - text: ⚙
+        - generic [ref=e103]: Settings
+    - generic [ref=e105]:
+      - generic [ref=e106]:
+        - generic "session" [ref=e107]: Council-tax
+        - 'generic "stream: open" [ref=e108]': open
+        - generic [ref=e109]:
+          - button "Smaller terminal font" [ref=e110] [cursor=pointer]: A−
+          - button "Larger terminal font" [ref=e111] [cursor=pointer]: A+
+          - button "Session images" [ref=e112] [cursor=pointer]:
+            - img [ref=e113]
+            - generic [ref=e117]: Images
+          - button "Upload image" [ref=e118] [cursor=pointer]:
+            - img [ref=e119]
+            - generic [ref=e122]: Upload
+          - button "Paste from clipboard" [ref=e123] [cursor=pointer]:
+            - img [ref=e124]
+            - generic [ref=e127]: Paste
+        - button "File preview" [ref=e128] [cursor=pointer]:
+          - img [ref=e129]
+          - generic [ref=e132]: Files
+        - button "Watch only" [ref=e133] [cursor=pointer]:
+          - img [ref=e134]
+          - generic [ref=e137]: Watch
+        - tablist "View mode" [ref=e138]:
+          - tab "Text" [selected] [ref=e139] [cursor=pointer]:
+            - generic [ref=e140]: Text
+          - tab "Terminal" [ref=e141] [cursor=pointer]:
+            - generic [ref=e142]: Terminal
+      - main [ref=e143]:
+        - generic [ref=e145]:
+          - log "Session transcript" [ref=e146]:
+            - button "Load earlier turns" [ref=e148] [cursor=pointer]
+            - button "▸ Worked · 1 step" [ref=e150] [cursor=pointer]:
+              - generic [ref=e151]: ▸
+              - generic [ref=e152]: Worked · 1 step
+            - generic [ref=e155]: permissions · bypassPermissions
+            - generic [ref=e159]: a few weeks ago I submitted council tax refund. check memories. I want to follow up as there’s been no movement. /grilling
+            - button "▸ Worked for 2721m 35s · 71 steps" [ref=e161] [cursor=pointer]:
+              - generic [ref=e162]: ▸
+              - generic [ref=e163]: Worked for 2721m 35s · 71 steps
+            - paragraph [ref=e167]: Login expired · Please run /login
+            - button "▸ Worked for 5221m 3s · 199 steps 11 files 874 tok ✗ failed" [ref=e169] [cursor=pointer]:
+              - generic [ref=e170]: ▸
+              - generic [ref=e171]: Worked for 5221m 3s · 199 steps
+              - generic [ref=e172]: 11 files
+              - generic [ref=e173]: 874 tok
+              - generic [ref=e174]: ✗ failed
+            - generic [ref=e177]:
+              - paragraph [ref=e178]: Filed and acknowledged.
+              - heading "Where the £1,956.40 stands" [level=2] [ref=e179]
+              - table [ref=e180]:
+                - rowgroup [ref=e181]:
+                  - row "Step Date Reference Outcome" [ref=e182]:
+                    - columnheader "Step" [ref=e183]
+                    - columnheader "Date" [ref=e184]
+                    - columnheader "Reference" [ref=e185]
+                    - columnheader "Outcome" [ref=e186]
+                - rowgroup [ref=e187]:
+                  - row "Refund form 27 Jul MXVNRBWR Received, auto-acked, then nothing" [ref=e188]:
+                    - cell "Refund form" [ref=e189]
+                    - cell "27 Jul" [ref=e190]
+                    - cell "MXVNRBWR" [ref=e191]:
+                      - strong [ref=e192]: MXVNRBWR
+                    - cell "Received, auto-acked, then nothing" [ref=e193]
+                  - row "14-day standard expired 10 Aug — breached" [ref=e194]:
+                    - cell "14-day standard" [ref=e195]
+                    - cell "expired 10 Aug" [ref=e196]
+                    - cell "—" [ref=e197]
+                    - cell "breached" [ref=e198]
+                  - row "Chase 1 — email 10 Aug — blanket canned auto-reply only" [ref=e199]:
+                    - cell "Chase 1 — email" [ref=e200]
+                    - cell "10 Aug" [ref=e201]
+                    - cell "—" [ref=e202]
+                    - cell "blanket canned auto-reply only" [ref=e203]
+                  - row "Chase 2 — enquiry form 12 Aug WDJDCKTB auto-acked, no reply yet" [ref=e204]:
+                    - cell "Chase 2 — enquiry form" [ref=e205]
+                    - cell "12 Aug" [ref=e206]
+                    - cell "WDJDCKTB" [ref=e207]:
+                      - strong [ref=e208]: WDJDCKTB
+                    - cell "auto-acked, no reply yet" [ref=e209]
+                  - row "Stage 1 complaint 13 Aug 07:40 48737286 acked by casework@hackney.gov.uk within minutes" [ref=e210]:
+                    - cell "Stage 1 complaint" [ref=e211]:
+                      - strong [ref=e212]: Stage 1 complaint
+                    - cell "13 Aug 07:40" [ref=e213]:
+                      - strong [ref=e214]: 13 Aug 07:40
+                    - cell "48737286" [ref=e215]:
+                      - strong [ref=e216]: "48737286"
+                    - cell "acked by casework@hackney.gov.uk within minutes" [ref=e217]:
+                      - text: acked by
+                      - code [ref=e218]: casework@hackney.gov.uk
+                      - text: within minutes
+              - paragraph [ref=e219]:
+                - strong [ref=e220]: "Deadlines now running against Hackney:"
+                - text: acknowledgement due
+                - strong [ref=e221]: Thu 20 Aug
+                - text: (5 working days), full response due
+                - strong [ref=e222]: Thu 3 Sep
+                - text: (10 working days after that). If Stage 1 doesn't produce the money, Stage 2 is 20 working days, and only after that does the Local Government Ombudsman become available.
+              - paragraph [ref=e223]: "The complaint asks for three things: pay the £1,956.40 by BACS to the account already on file, confirm the release date, and explain why it missed the published 14 days. It cites the full chain — Ria Griffiths' own 27 July confirmation of the credit, MXVNRBWR, WDJDCKTB, and both ignored chases — so the case doesn't depend on Hackney reconstructing anything. It also flags that you've moved, so a cheque can't be posted to 37 Spenlow."
+              - paragraph [ref=e224]:
+                - text: Everything is in
+                - code [ref=e225]: ~/hackney-refund-MXVNRBWR/
+                - text: — confirmation screenshots for all three submissions and the automation scripts.
+              - paragraph [ref=e226]: "One note on how I got there: two submit attempts aborted on a phantom \"Incomplete pages\" error that Hackney's form platform keeps permanently in the markup regardless of state. I only submitted after proving the answers had genuinely persisted by walking back through the wizard and re-reading the stored values. That's now in memory, along with both form structures, so a future chase is a single scripted run."
+              - paragraph [ref=e227]: "The thing I'd still flag: you filed this while a human reply to WDJDCKTB may well have been in flight — Hackney answered ~10 days late last time, which would have been around 20–22 August. That's your call and it's made; the practical downside is small, since a Stage 1 complaint doesn't block the refund team from just paying, and the deadlines now work in your favour. Worth having in mind if a Council Tax officer replies next week sounding surprised."
+              - paragraph [ref=e228]: Want me to watch your inbox and Monzo and tell you the moment either the money lands or Hackney responds?
+            - generic [ref=e231]: <task-notification> <task-id>bv2dh3pll</task-id> <tool-use-id>toolu_01U1vnabUjPNSzjtUtNA1yCw</tool-use-id> <output-file>/tmp/claude-1000/-home-wizard/0c3a79e8-e571-4736-ac95-ede00b3ee752/tasks/bv2dh3pll.output</output-file> <status>killed</status> <summary>Background command "Wait for recon2 to finish" was stopped</summary> </task-notification>
+            - button "▸ Worked for 13s · 3 steps 585 tok" [ref=e233] [cursor=pointer]:
+              - generic [ref=e234]: ▸
+              - generic [ref=e235]: Worked for 13s · 3 steps
+              - generic [ref=e236]: 585 tok
+            - generic [ref=e239]:
+              - paragraph [ref=e240]: That was just a leftover waiter from the recon run I stopped earlier — expected cleanup, nothing to act on. No change to the refund position.
+              - paragraph [ref=e241]: "Still standing from my last message: the complaint (ref 48737286) is live with an acknowledgement due Thu 20 Aug, and my question about whether you want me watching your inbox and Monzo for the £1,956.40 is open whenever you get to it."
+          - generic [ref=e243]:
+            - textbox "Message to send to the session" [ref=e244]:
+              - /placeholder: Message…
+            - button "bypass" [ref=e245] [cursor=pointer]
+            - button "Send" [ref=e246] [cursor=pointer]
+      - button
+  - region "Notifications"

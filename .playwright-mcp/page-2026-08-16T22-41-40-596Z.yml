@@ -1,0 +1,186 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - heading "tmux sessions" [level=1] [ref=e8]
+          - button "Reload the app" [ref=e9] [cursor=pointer]: ↻
+          - button "Notifications" [ref=e10] [cursor=pointer]:
+            - img [ref=e11]
+        - paragraph [ref=e14]: Logged in as wizard (vbarzin). Sessions are kernel-isolated per Unix user; you only see your own.
+      - generic [ref=e15]:
+        - textbox "New session name" [ref=e16]:
+          - /placeholder: new session…
+        - combobox "Command for new session" [ref=e17] [cursor=pointer]:
+          - option "Claude" [selected]
+          - option "Codex"
+          - option "Plain shell"
+        - button "Create" [ref=e18] [cursor=pointer]
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - button "tripit group" [expanded] [ref=e21] [cursor=pointer]:
+            - generic [ref=e22]: ▾
+            - generic [ref=e23]: tripit
+            - generic [ref=e25]: "1"
+            - generic [ref=e26]:
+              - button "New session in project" [ref=e27]: +
+              - button "Group actions" [ref=e28]: ⋯
+          - button "session tripit-casia, Claude Code, Done" [ref=e30] [cursor=pointer]:
+            - generic "Done" [ref=e31]
+            - generic "Running Claude Code" [ref=e32]:
+              - img [ref=e33]
+            - generic "✳ tripit-casia" [ref=e35]: tripit-casia
+            - button "Session actions" [ref=e36]: ⋯
+        - generic [ref=e37]:
+          - button "t3-code group" [expanded] [ref=e38] [cursor=pointer]:
+            - generic [ref=e39]: ▾
+            - generic [ref=e40]: t3-code
+            - generic [ref=e42]: "2"
+            - generic [ref=e43]:
+              - button "New session in project" [ref=e44]: +
+              - button "Group actions" [ref=e45]: ⋯
+          - generic [ref=e46]:
+            - button "session text-mode, Claude Code, Working" [ref=e47] [cursor=pointer]:
+              - generic "Working" [ref=e48]
+              - generic "Running Claude Code" [ref=e49]:
+                - img [ref=e50]
+              - generic "◑ rewrite" [ref=e52]: text-mode
+              - generic [ref=e53]: 8:22
+              - button "Session actions" [ref=e54]: ⋯
+            - button "session sessions, Claude Code, Working" [ref=e55] [cursor=pointer]:
+              - generic "Working" [ref=e56]
+              - generic "Running Claude Code" [ref=e57]:
+                - img [ref=e58]
+              - generic "◑ Allow spaces in terminal lobby session titles" [ref=e60]: sessions
+              - generic [ref=e61]: 8:22
+              - button "Session actions" [ref=e62]: ⋯
+        - generic [ref=e63]:
+          - button "code group" [expanded] [ref=e64] [cursor=pointer]:
+            - generic [ref=e65]: ▾
+            - generic [ref=e66]: code
+            - generic [ref=e68]: "1"
+            - generic [ref=e69]:
+              - button "New session in project" [ref=e70]: +
+              - button "Group actions" [ref=e71]: ⋯
+          - button "session health, Claude Code, Done" [ref=e73] [cursor=pointer]:
+            - generic "Done" [ref=e74]
+            - generic "Running Claude Code" [ref=e75]:
+              - img [ref=e76]
+            - generic "✳ health" [ref=e78]: health
+            - button "Session actions" [ref=e79]: ⋯
+        - generic [ref=e80]:
+          - button "Ungrouped group" [expanded] [ref=e81] [cursor=pointer]:
+            - generic [ref=e82]: ▾
+            - generic [ref=e83]: Ungrouped
+            - generic [ref=e85]: "1"
+            - button "Group actions" [ref=e87]: ⋯
+          - button "session Council-tax, Claude Code, Done" [ref=e89] [cursor=pointer]:
+            - generic "Done" [ref=e90]
+            - generic "Running Claude Code" [ref=e91]:
+              - img [ref=e92]
+            - generic "✳ Council-tax" [ref=e94]: Council-tax
+            - button "Session actions" [ref=e95]: ⋯
+      - generic [ref=e96]:
+        - button "+ Project" [ref=e97] [cursor=pointer]
+        - button "Restore" [ref=e98] [cursor=pointer]
+  - generic [ref=e99]:
+    - generic [ref=e100]:
+      - button "Hide sidebar" [ref=e101] [cursor=pointer]: ‹
+      - generic [ref=e102]: terminal-lobby
+      - button "Settings" [ref=e103] [cursor=pointer]: ⚙
+    - generic [ref=e105]:
+      - generic [ref=e106]:
+        - generic "session" [ref=e107]: sessions
+        - 'generic "stream: open" [ref=e108]': open
+        - generic [ref=e109]:
+          - button "Smaller terminal font" [ref=e110] [cursor=pointer]: A−
+          - button "Larger terminal font" [ref=e111] [cursor=pointer]: A+
+          - button "Session images" [ref=e112] [cursor=pointer]:
+            - img [ref=e113]
+          - button "Upload image" [ref=e117] [cursor=pointer]:
+            - img [ref=e118]
+          - button "Paste from clipboard" [ref=e121] [cursor=pointer]:
+            - img [ref=e122]
+        - button "File preview" [ref=e125] [cursor=pointer]:
+          - img [ref=e126]
+        - button "Watch only" [ref=e129] [cursor=pointer]:
+          - img [ref=e130]
+        - tablist "View mode" [ref=e133]:
+          - tab "Text" [selected] [ref=e134] [cursor=pointer]:
+            - generic [ref=e135]: Text
+          - tab "Terminal" [ref=e136] [cursor=pointer]:
+            - generic [ref=e137]: Terminal
+      - main [ref=e138]:
+        - generic [ref=e140]:
+          - log "Session transcript" [ref=e141]:
+            - button "Load earlier turns" [ref=e143] [cursor=pointer]
+            - button "✳ Thought" [ref=e146] [cursor=pointer]:
+              - generic [ref=e147]: ✳
+              - generic [ref=e148]: Thought
+            - paragraph [ref=e152]: "Both repos clean and pushed. Storing the durable learnings (directly, not via a subagent, per your instruction):"
+            - generic [ref=e154]:
+              - button "$ Command homelab memory recall \"tmux format string escaping control characters list-sessions\" 2>&1 | head -20" [ref=e155] [cursor=pointer]:
+                - generic [ref=e156]: $
+                - generic [ref=e157]: Command
+                - generic "homelab memory recall \"tmux format string escaping control characters list-sessions\" 2>&1 | head -20" [ref=e158]
+              - generic [ref=e159]: ✓
+            - generic [ref=e161]:
+              - button "$ Command homelab memory recall \"terminal-lobby session name rename cascade shares projects\" 2>&1 | head -20" [ref=e162] [cursor=pointer]:
+                - generic [ref=e163]: $
+                - generic [ref=e164]: Command
+                - generic "homelab memory recall \"terminal-lobby session name rename cascade shares projects\" 2>&1 | head -20" [ref=e165]
+              - generic [ref=e166]: ✓
+            - generic [ref=e169]: mode · normal
+            - generic [ref=e173]: permissions · bypassPermissions
+            - generic [ref=e177]: mode · normal
+            - generic [ref=e181]: permissions · bypassPermissions
+            - button "✳ Thought" [ref=e184] [cursor=pointer]:
+              - generic [ref=e185]: ✳
+              - generic [ref=e186]: Thought
+            - generic [ref=e187]:
+              - paragraph [ref=e190]:
+                - text: "Existing memory #7327 already covers the"
+                - code [ref=e191]: "=name:"
+                - text: "targeting rule, so I'll link rather than duplicate. Two genuinely new things to store:"
+              - text: ▋
+            - generic [ref=e193]:
+              - button "$ Command homelab memory store \"tmux ESCAPES NON-PRINTABLE BYTES ON OUTPUT — measured on 3.4, 2026-08-16, building terminal-lobby …" [ref=e194] [cursor=pointer]:
+                - generic [ref=e195]: $
+                - generic [ref=e196]: Command
+                - generic "homelab memory store \"tmux ESCAPES NON-PRINTABLE BYTES ON OUTPUT — measured on 3.4, 2026-08-16, building terminal-lobby …" [ref=e197]
+              - generic [ref=e198]: ✓
+            - generic [ref=e200]:
+              - button "$ Command homelab memory store \"terminal-lobby SESSION TITLES shipped 2026-08-16 (master dadb84f, 7 commits, 47 files) — a session…" [ref=e201] [cursor=pointer]:
+                - generic [ref=e202]: $
+                - generic [ref=e203]: Command
+                - generic "homelab memory store \"terminal-lobby SESSION TITLES shipped 2026-08-16 (master dadb84f, 7 commits, 47 files) — a session…" [ref=e204]
+              - generic [ref=e205]: ✓
+            - generic [ref=e207]:
+              - 'button "$ Command homelab memory store \"terminal-lobby SESSION TITLES shipped 2026-08-16 (master dadb84f, 7 commits, 47 files): a session …" [ref=e208] [cursor=pointer]':
+                - generic [ref=e209]: $
+                - generic [ref=e210]: Command
+                - 'generic "homelab memory store \"terminal-lobby SESSION TITLES shipped 2026-08-16 (master dadb84f, 7 commits, 47 files): a session …" [ref=e211]'
+              - generic [ref=e212]: ✓
+            - generic [ref=e214]:
+              - button "$ Command homelab memory store \"terminal-lobby RENAME CASCADE — pre-existing bug found and fixed while shipping session titles (20…" [ref=e215] [cursor=pointer]:
+                - generic [ref=e216]: $
+                - generic [ref=e217]: Command
+                - generic "homelab memory store \"terminal-lobby RENAME CASCADE — pre-existing bug found and fixed while shipping session titles (20…" [ref=e218]
+              - generic [ref=e219]: ✓
+            - generic [ref=e221]:
+              - button "$ Command homelab memory store \"terminal-lobby PHANTOM-SESSION TRAP and its fix (2026-08-16, part of [[11242]]). ttyd's attach run…" [ref=e222] [cursor=pointer]:
+                - generic [ref=e223]: $
+                - generic [ref=e224]: Command
+                - generic "homelab memory store \"terminal-lobby PHANTOM-SESSION TRAP and its fix (2026-08-16, part of [[11242]]). ttyd's attach run…" [ref=e225]
+              - generic [ref=e226]: ✓
+            - generic [ref=e227]:
+              - generic [ref=e229]: Working…
+              - generic [ref=e230]: 50m 12s
+              - generic [ref=e231]: 597 steps
+          - generic [ref=e233]:
+            - textbox "Message to send to the session" [ref=e234]:
+              - /placeholder: Message…
+            - button "bypass" [ref=e235] [cursor=pointer]
+            - button "Stop" [ref=e236] [cursor=pointer]
+      - button
+  - region "Notifications"

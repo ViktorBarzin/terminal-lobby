@@ -1,0 +1,55 @@
+- generic [ref=e1]:
+  - generic:
+    - region "Status messages"
+  - generic [active] [ref=e7]:
+    - generic [ref=e8] [cursor=pointer]:
+      - generic "Select language":
+        - img
+      - combobox "Select language" [ref=e9]:
+        - option "English" [selected]
+        - option "čeština (Czech)"
+        - option "Nederlands (Dutch)"
+        - option "suomi (Finnish)"
+        - option "français (French)"
+        - option "Deutsch (German)"
+        - option "italiano (Italian)"
+        - option "polski (Polish)"
+        - option "português (Portuguese)"
+        - option "русский (Russian)"
+        - option "español (Spanish)"
+        - option "Türkçe (Turkish)"
+        - option "简体中文 (Simplified Chinese)"
+        - option "繁體中文 (Traditional Chinese)"
+        - option "日本語 (Japanese)"
+        - option "한국어 (Korean)"
+      - text: ⋯
+    - banner
+    - main "Authentication form" [ref=e10]:
+      - img "authentik Logo" [ref=e12]
+      - generic [ref=e13]:
+        - heading "Welcome to authentik!" [level=1] [ref=e15]
+        - generic [ref=e17]:
+          - paragraph [ref=e18]: Login to continue to Domain wide catch all.
+          - generic [ref=e19]:
+            - generic [ref=e21]: Email or Username
+            - textbox "Email or Username" [ref=e22]
+          - generic [ref=e23]:
+            - generic [ref=e25]: Password
+            - textbox "Password" [ref=e29]:
+              - /placeholder: Please enter your password
+          - button "Log in" [ref=e31] [cursor=pointer]
+          - generic [ref=e33]:
+            - generic: Or
+          - link "Use a security key" [ref=e34] [cursor=pointer]:
+            - /url: /if/flow/webauthn/?client_id=pG0Sdvh6Uixe4lxCuVOSZjVtNivVPnhbXaFCBkPB&redirect_uri=https%3A%2F%2Fauthentik.viktorbarzin.me%2Foutpost.goauthentik.io%2Fcallback%3FX-authentik-auth-callback%3Dtrue&response_type=code&scope=ak_proxy+profile+openid+email+entitlements&state=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2F1dGhlbnRpay5pby9vdXRwb3N0L3BHMFNkdmg2VWl4ZTRseEN1Vk9TWmpWdE5pdlZQbmhiWGFGQ0JrUEIiLCJzaWQiOiJPUEREWUk0UTJOVEVKM1VVNEg2TDZSSVBKWjVEUEFIVU5FWFhMNUdUWEJKRjRLRDJDVjRBIiwic3RhdGUiOiJJM3VHX3UteURRakJYWnFZQkpQQUk4RjZwTlNseFVxOHhQMTBVUlY0bUZFIiwicmVkaXJlY3QiOiJodHRwOi8vdGVybWluYWwudmlrdG9yYmFyemluLm1lLyJ9.82iOgsgZ_4E2hyVKZHQnsBpnNNk44dIIYK52j8klJgM&next=%2Fapplication%2Fo%2Fauthorize%2F%3Fclient_id%3DpG0Sdvh6Uixe4lxCuVOSZjVtNivVPnhbXaFCBkPB%26redirect_uri%3Dhttps%253A%252F%252Fauthentik.viktorbarzin.me%252Foutpost.goauthentik.io%252Fcallback%253FX-authentik-auth-callback%253Dtrue%26response_type%3Dcode%26scope%3Dak_proxy%2Bprofile%2Bopenid%2Bemail%2Bentitlements%26state%3DeyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnb2F1dGhlbnRpay5pby9vdXRwb3N0L3BHMFNkdmg2VWl4ZTRseEN1Vk9TWmpWdE5pdlZQbmhiWGFGQ0JrUEIiLCJzaWQiOiJPUEREWUk0UTJOVEVKM1VVNEg2TDZSSVBKWjVEUEFIVU5FWFhMNUdUWEJKRjRLRDJDVjRBIiwic3RhdGUiOiJJM3VHX3UteURRakJYWnFZQkpQQUk4RjZwTlNseFVxOHhQMTBVUlY0bUZFIiwicmVkaXJlY3QiOiJodHRwOi8vdGVybWluYWwudmlrdG9yYmFyemluLm1lLyJ9.82iOgsgZ_4E2hyVKZHQnsBpnNNk44dIIYK52j8klJgM
+        - group "Login sources" [ref=e36]:
+          - generic [ref=e37]: Login sources
+          - button "Continue with Facebook" [ref=e38] [cursor=pointer]:
+            - img "Facebook" [ref=e40]
+          - button "Continue with Github" [ref=e41] [cursor=pointer]:
+            - img "Github" [ref=e43]
+          - button "Continue with Google" [ref=e44] [cursor=pointer]:
+            - img "Google" [ref=e46]
+    - contentinfo "Site footer" [ref=e47]:
+      - list "Site links" [ref=e49]:
+        - listitem [ref=e50]: Powered by authentik

@@ -12,6 +12,14 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./test/setup.ts"],
-    isolate: false,
+    // Isolated per file. It was false, and that made the suite
+    // order-dependent: SoftKeys.height stubs HTMLElement.prototype.offsetHeight
+    // and the setup file installs a PointerEvent shim, both of which are shared
+    // state under a shared environment — whole files failed together depending
+    // on which other files ran alongside them (measured: 4 failures in roughly
+    // one run in three, moving between SoftKeys.height and Composer.keyboard
+    // with no source change). A suite that reports a different answer each run
+    // cannot be evidence for anything.
+    isolate: true,
   },
 });

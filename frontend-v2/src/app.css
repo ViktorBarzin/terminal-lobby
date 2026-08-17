@@ -832,14 +832,32 @@ body {
   height: auto;
   border-radius: 8px;
 }
+/* A diagram is rendered at its natural size (Mermaid.tsx sets useMaxWidth:false
+   per diagram type) and the CONTAINER scrolls sideways. The default shrink-to-
+   fit collapsed a six-node flowchart to a measured 355x27px on a 390px phone;
+   panning a legible diagram beats squinting at a squashed one. */
 .tl-mermaid {
   display: flex;
   justify-content: center;
   margin: 0.6em 0;
+  overflow-x: auto;
+  max-width: 100%;
 }
 .tl-mermaid svg {
-  max-width: 100%;
   height: auto;
+  /* A flex item shrinks by default, which quietly undid useMaxWidth:false —
+     the diagram fitted the line instead of overflowing it, so the container
+     never had anything to scroll. Measured at 390px: a 1042px-wide flowchart
+     rendered 308px wide. */
+  flex: none;
+}
+/* Paper cannot pan, so print goes back to fitting the page. */
+@media print {
+  .tl-mermaid svg {
+    max-width: 100%;
+    height: auto;
+    flex-shrink: 1;
+  }
 }
 
 /* ---- composer + permission panel -------------------------------------- */

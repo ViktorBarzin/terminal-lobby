@@ -1,0 +1,156 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - heading "tmux sessions" [level=1] [ref=e8]
+          - button "Reload the app" [ref=e9] [cursor=pointer]: ↻
+          - button "Notifications" [ref=e10] [cursor=pointer]:
+            - img [ref=e11]
+        - paragraph [ref=e14]: Logged in as wizard (vbarzin). Sessions are kernel-isolated per Unix user; you only see your own.
+      - generic [ref=e15]:
+        - textbox "New session name" [ref=e16]:
+          - /placeholder: new session…
+        - combobox "Command for new session" [ref=e17] [cursor=pointer]:
+          - option "Claude" [selected]
+          - option "Codex"
+          - option "Plain shell"
+        - button "Create" [ref=e18] [cursor=pointer]
+      - generic [ref=e20]: Failed to load sessions
+      - generic [ref=e21]:
+        - button "+ Project" [ref=e22] [cursor=pointer]
+        - button "Restore" [ref=e23] [cursor=pointer]
+  - generic [ref=e24]:
+    - generic [ref=e25]:
+      - button "Hide sidebar" [ref=e26] [cursor=pointer]: ‹
+      - generic [ref=e27]: terminal-lobby
+      - button "Settings" [ref=e28] [cursor=pointer]: ⚙
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - generic "session" [ref=e32]: text-mode
+        - 'generic "stream: open" [ref=e33]': open
+        - generic [ref=e34]:
+          - button "Smaller terminal font" [ref=e35] [cursor=pointer]: A−
+          - button "Larger terminal font" [ref=e36] [cursor=pointer]: A+
+          - button "Session images" [ref=e37] [cursor=pointer]:
+            - img [ref=e38]
+          - button "Upload image" [ref=e42] [cursor=pointer]:
+            - img [ref=e43]
+          - button "Paste from clipboard" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+        - button "File preview" [ref=e50] [cursor=pointer]:
+          - img [ref=e51]
+        - button "Watch only" [ref=e54] [cursor=pointer]:
+          - img [ref=e55]
+        - tablist "View mode" [ref=e58]:
+          - tab "Text" [selected] [ref=e59] [cursor=pointer]:
+            - generic [ref=e60]: Text
+          - tab "Terminal" [ref=e61] [cursor=pointer]:
+            - generic [ref=e62]: Terminal
+      - main [ref=e63]:
+        - generic [ref=e65]:
+          - log "Session transcript" [ref=e66]:
+            - button "Load earlier turns" [ref=e68] [cursor=pointer]
+            - generic [ref=e71]:
+              - button "$ Command python3 - <<'PY' …" [ref=e72] [cursor=pointer]:
+                - generic [ref=e73]: $
+                - generic [ref=e74]: Command
+                - generic "python3 - <<'PY' …" [ref=e75]
+              - generic [ref=e76]: ✓
+            - generic [ref=e78]:
+              - button "$ Command grep -n -A8 \"pruneResult(rec.ToolUseResult)\" sessionio/normalize.go | head -12" [ref=e79] [cursor=pointer]:
+                - generic [ref=e80]: $
+                - generic [ref=e81]: Command
+                - generic "grep -n -A8 \"pruneResult(rec.ToolUseResult)\" sessionio/normalize.go | head -12" [ref=e82]
+              - generic [ref=e83]: ✓
+            - generic [ref=e85]:
+              - button "$ Command grep -n -B2 -A10 \"case \\\"tool_result\\\":\" sessionio/normalize.go | head -25" [ref=e86] [cursor=pointer]:
+                - generic [ref=e87]: $
+                - generic [ref=e88]: Command
+                - generic "grep -n -B2 -A10 \"case \\\"tool_result\\\":\" sessionio/normalize.go | head -25" [ref=e89]
+              - generic [ref=e90]: ✓
+            - generic [ref=e93]: mode · normal
+            - button "✳ Thought" [ref=e96] [cursor=pointer]:
+              - generic [ref=e97]: ✳
+              - generic [ref=e98]: Thought
+            - paragraph [ref=e102]: "The replacement didn't match on indentation. Using the exact text:"
+            - generic [ref=e104]:
+              - button "✎ Edit sessionio/normalize.go" [ref=e105] [cursor=pointer]:
+                - generic [ref=e106]: ✎
+                - generic [ref=e107]: Edit
+                - generic "sessionio/normalize.go" [ref=e108]
+              - generic [ref=e109]:
+                - generic [ref=e110]: "+5"
+                - generic [ref=e111]: −8
+              - button "normalize.go" [ref=e112] [cursor=pointer]
+              - generic [ref=e113]: ✓
+            - generic [ref=e115]:
+              - button "$ Command /usr/bin/go test ./... 2>&1 | tail -6" [ref=e116] [cursor=pointer]:
+                - generic [ref=e117]: $
+                - generic [ref=e118]: Command
+                - generic "/usr/bin/go test ./... 2>&1 | tail -6" [ref=e119]
+              - generic [ref=e120]: ✓
+            - button "✳ Thought" [ref=e122] [cursor=pointer]:
+              - generic [ref=e123]: ✳
+              - generic [ref=e124]: Thought
+            - paragraph [ref=e128]: "The per-field cap has to leave room for the envelope. Fixing:"
+            - generic [ref=e130]:
+              - button "$ Command python3 - <<'PY' …" [ref=e131] [cursor=pointer]:
+                - generic [ref=e132]: $
+                - generic [ref=e133]: Command
+                - generic "python3 - <<'PY' …" [ref=e134]
+              - generic [ref=e135]: ✓
+            - button "✳ Thought" [ref=e137] [cursor=pointer]:
+              - generic [ref=e138]: ✳
+              - generic [ref=e139]: Thought
+            - paragraph [ref=e143]: "That's my own earlier test encoding the pre-pruning contract. Updating it:"
+            - generic [ref=e145]:
+              - button "$ Command python3 - <<'PY' …" [ref=e146] [cursor=pointer]:
+                - generic [ref=e147]: $
+                - generic [ref=e148]: Command
+                - generic "python3 - <<'PY' …" [ref=e149]
+              - generic [ref=e150]: ✗
+            - generic [ref=e153]: mode · normal
+            - generic [ref=e156]:
+              - button "$ Command python3 - <<'PY' …" [ref=e157] [cursor=pointer]:
+                - generic [ref=e158]: $
+                - generic [ref=e159]: Command
+                - generic "python3 - <<'PY' …" [ref=e160]
+              - generic [ref=e161]: ✓
+            - generic [ref=e163]:
+              - button "$ Command /usr/bin/go test ./... 2>&1 | tail -4" [ref=e164] [cursor=pointer]:
+                - generic [ref=e165]: $
+                - generic [ref=e166]: Command
+                - generic "/usr/bin/go test ./... 2>&1 | tail -4" [ref=e167]
+              - generic [ref=e168]: ✓
+            - generic [ref=e169]:
+              - paragraph [ref=e172]: "Green. Redeploying and re-verifying that diffs now render:"
+              - text: ▋
+            - generic [ref=e174]:
+              - button "$ Command PATH=/usr/bin:$PATH SKIP_T3=1 timeout 600 ./scripts/deploy-services.sh 2>&1 | tail -4 && sleep 2 && curl -s -H 'X-Authen…" [ref=e175] [cursor=pointer]:
+                - generic [ref=e176]: $
+                - generic [ref=e177]: Command
+                - generic "PATH=/usr/bin:$PATH SKIP_T3=1 timeout 600 ./scripts/deploy-services.sh 2>&1 | tail -4 && sleep 2 && curl -s -H 'X-Authen…" [ref=e178]
+              - generic [ref=e179]: ✗
+            - generic [ref=e180]:
+              - generic [ref=e182]: Working…
+              - generic [ref=e183]: 52m 49s
+              - generic [ref=e184]: 440 steps
+          - generic [ref=e185]:
+            - generic [ref=e186]:
+              - generic "also there’s something buggy with the mobile view - when tapping on a question tool, the keyboard quickly opens then closes. I need to tap very high in the screen to have it open. lets fix that bug" [ref=e187]:
+                - generic [ref=e188]: queued
+                - generic [ref=e189]: also there’s something buggy with the mobile view - when tapping on a question tool, the keyboard quickly opens then closes. I need to tap very high in the screen to have it open. lets fix that bug
+              - generic "also let’s make the sessions list bigger and easier to click from mobile. switching between sessions is a common flow" [ref=e190]:
+                - generic [ref=e191]: queued
+                - generic [ref=e192]: also let’s make the sessions list bigger and easier to click from mobile. switching between sessions is a common flow
+              - generic "<task-notification> <task-id>b1tmzxf8s</task-id> <tool-use-id>toolu_01XknUjDRtNsLTAZKzs2smgT</tool-use-id> <output-file>/tmp/claude-1000/-home-wizard-code-terminal-lobby/2e9f4375-190e-4f77-90d1-03c4600fb4eb/tasks/b1tmzxf8s.output</output-file> <status>completed</status> <summary>Background command \"Find where screenshots land\" completed (exit code 0)</summary> </task-notification>" [ref=e193]:
+                - generic [ref=e194]: queued
+                - generic [ref=e195]: <task-notification> <task-id>b1tmzxf8s</task-id> <tool-use-id>toolu_01XknUjDRtNsLTAZKzs2smgT</tool-use-id> <output-file>/tmp/claude-1000/-home-wizard-code-terminal-lobby/2e9f4375-190e-4f77-90d1-03c4600fb4eb/tasks/b1tmzxf8s.output</output-file> <status>completed</status> <summary>Background command "Find where screenshots land" completed (exit code 0)</summary> </task-notification>
+            - generic [ref=e196]:
+              - textbox "Message to send to the session" [ref=e197]:
+                - /placeholder: Message…
+              - button "ask" [ref=e198] [cursor=pointer]
+              - button "Stop" [ref=e199] [cursor=pointer]
+      - button
+  - region "Notifications"

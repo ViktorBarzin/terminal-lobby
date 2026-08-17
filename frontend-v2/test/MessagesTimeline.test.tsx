@@ -183,15 +183,19 @@ describe("<MessagesTimeline> fenced blocks", () => {
     ev({ id: 3, kind: "turn_end" }),
   ];
 
-  it("renders a code fence as exactly one <pre class=tl-code>", () => {
+  // Since 2026-08-17 a fence goes through CodeView, which highlights it lazily
+  // (highlight.js) — so the <pre> carries its classes as well. What has to stay
+  // true is the shape: ONE <pre> per fence, carrying the language and the code.
+  it("renders a code fence as exactly one <pre>", () => {
     const { container } = render(() => (
       <MessagesTimeline events={said("```bash\nls -la\n```")} />
     ));
     const md = container.querySelector(".tl-markdown")!;
     const pres = [...md.querySelectorAll("pre")];
-    expect(pres.map((p) => p.className)).toEqual(["tl-code"]);
+    expect(pres).toHaveLength(1);
+    expect(pres[0]!.classList.contains("tl-code")).toBe(true);
     expect(pres[0]!.getAttribute("data-lang")).toBe("bash");
-    expect(pres[0]!.querySelector("code")!.textContent).toBe("ls -la");
+    expect(pres[0]!.textContent).toBe("ls -la");
     // …and nothing wraps it in a second <pre>.
     expect(pres[0]!.parentElement!.closest("pre")).toBeNull();
   });
@@ -215,7 +219,8 @@ describe("<MessagesTimeline> fenced blocks", () => {
     expect(md.querySelector(".tl-inline-code")!.textContent).toBe("ls");
     expect(md.querySelector(".tl-inline-code")!.closest("pre")).toBeNull();
     const pres = [...md.querySelectorAll("pre")];
-    expect(pres.map((p) => p.className)).toEqual(["tl-code"]);
+    expect(pres).toHaveLength(1);
+    expect(pres[0]!.classList.contains("tl-code")).toBe(true);
     expect(pres[0]!.getAttribute("data-lang")).toBeNull();
   });
 });
