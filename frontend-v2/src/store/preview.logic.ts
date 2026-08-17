@@ -8,9 +8,9 @@ import type { Event } from "../types/events";
  */
 
 /** Which renderer a file routes to. */
-export type RendererKind = "markdown" | "html" | "image" | "code" | "binary";
+export type RendererKind = "markdown" | "html" | "image" | "pdf" | "code" | "binary";
 
-/** The md/html raw|rendered toggle. Ignored by image/code/binary. */
+/** The md/html raw|rendered toggle. Ignored by image/pdf/code/binary. */
 export type PreviewMode = "rendered" | "raw";
 
 /**
@@ -91,7 +91,9 @@ const PLAIN_TEXT_EXT = new Set([
   "lock",
 ]);
 
-const IMAGE_EXT = new Set([
+/** Exported for lib/attachments.ts, which draws chips from the same set (plus
+ *  the container formats clipboard-upload accepts but browsers may not decode). */
+export const IMAGE_EXT = new Set([
   "png",
   "jpg",
   "jpeg",
@@ -105,6 +107,11 @@ const IMAGE_EXT = new Set([
 
 const MARKDOWN_EXT = new Set(["md", "markdown", "mdx"]);
 const HTML_EXT = new Set(["html", "htm"]);
+
+/** A PDF renders in the browser's own viewer rather than as "binary — preview
+ *  unavailable": it is the document most likely to be attached to a message
+ *  (design 2026-08-17 decision 4), and it was one click from a dead end. */
+const PDF_EXT = new Set(["pdf"]);
 
 /** Lower-cased final extension of a path, or "" (also handles bare Dockerfile). */
 export function extOf(path: string): string {
@@ -158,6 +165,7 @@ export function languageForPath(path: string): string | undefined {
 function contentTypeKind(ct: string): RendererKind | null {
   const t = ct.toLowerCase();
   if (t.startsWith("image/")) return "image";
+  if (t === "application/pdf" || t.startsWith("application/pdf;")) return "pdf";
   if (
     t.startsWith("text/") ||
     t.includes("json") ||
@@ -169,7 +177,7 @@ function contentTypeKind(ct: string): RendererKind | null {
   ) {
     return "code";
   }
-  // Everything else (application/octet-stream, application/pdf, fonts, …).
+  // Everything else (application/octet-stream, fonts, archives, …).
   return "binary";
 }
 
@@ -186,6 +194,7 @@ export function classifyFile(
 ): { kind: RendererKind; language?: string } {
   const ext = extOf(name);
   if (IMAGE_EXT.has(ext)) return { kind: "image" };
+  if (PDF_EXT.has(ext)) return { kind: "pdf" };
   if (MARKDOWN_EXT.has(ext)) return { kind: "markdown" };
   if (HTML_EXT.has(ext)) return { kind: "html" };
 
@@ -197,6 +206,7 @@ export function classifyFile(
   if (contentType) {
     const k = contentTypeKind(contentType);
     if (k === "image") return { kind: "image" };
+    if (k === "pdf") return { kind: "pdf" };
     if (k === "binary") return { kind: "binary" };
     return { kind: "code" };
   }
