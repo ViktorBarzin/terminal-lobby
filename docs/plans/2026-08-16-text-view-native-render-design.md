@@ -372,7 +372,59 @@ IngressRoute matched only `/events/`, `/prompt/` and `/cancel/` — the features
 would have shipped to the browser and 404'd at the edge. Added in infra
 `stacks/terminal/main.tf`.
 
-## 12. Open questions
+## 12. The day after — what use turned up
+
+Everything below was found by using the view, and each item is in the code with
+its measurement.
+
+**Markdown was richer than the plan claimed, and mermaid was quietly broken.**
+Assistant text renders full CommonMark plus GFM tables, task lists,
+strikethrough, autolinks, sanitized HTML and inline images, and mermaid fences
+render as real SVG. But mermaid carried three defects this repo had already met
+on the pages site and never applied here: a fence that fails to parse stranded
+its error container in `<body>` (no `suppressErrorRendering`), diagrams shrank to
+their container instead of panning (`useMaxWidth` per diagram type, plus
+`flex: none` on the SVG — a flex item shrinks by default, which silently undid
+the config), and a theme switch left the palette baked in. Code fences are now
+highlighted through the same lazy highlight.js path the file preview uses.
+
+**Opening a session was quadratic.** The store appended each arriving event on
+its own, so the transcript→rows derivation re-ran over the whole array per event:
+deriving once cost 10ms and deriving per event cost 2,644ms on a real 1,383-event
+window. Events are coalesced into one store write per frame; the whole
+client-side cost of that open is 26ms.
+
+**The view switch was unreachable while text loaded.** With the derivation fixed,
+a cold open still blocked 485ms across three long tasks, the worst leaving the
+event loop unresponsive for 406ms — long enough that clicking Terminal did
+nothing. A row costs about 4ms of markdown and highlighting, so rows mount from
+the newest end in small chunks during idle time. First rows at 2ms, worst gap
+106ms, and the switch applies in 188ms mid-load.
+
+**Filling upward moved what the reader was looking at.** A short transcript hung
+from the top, so the first chunk pushed the newest message 495px down; then every
+chunk slid the content down by its own height (515px of drift, one 495px jump).
+The timeline bottom-aligns now, and each chunk adds back the height inserted
+above it — measured from an anchor row's `offsetTop`, not the container's
+`scrollHeight`, because that also grows when rows below get taller and
+compensating for it dragged a reader who had scrolled up 5,780px back to the live
+end.
+
+**Sending from a phone lost the message.** The composer forked on a coarse
+pointer and posted the text into the terminal iframe, which in Text mode has not
+attached — so the field cleared and nothing was sent. One route now on every
+device: the control channel, which reports whether it landed, so a refusal
+restores the text. The phone keyboard's send key is read from `beforeinput`
+(`insertLineBreak`), which is unambiguous where a keydown is not.
+
+**The header did not fit.** At 390px with an act-as chip the bar's content ran
+25px past its right edge and the session name was 18px wide. The view switch is
+icon-only on a narrow header, the terminal tools hide, the act-as chip is capped
+and is the one control allowed to shrink. Keyed on width rather than pointer
+type: the first attempt used the coarse-pointer block and made a narrow desktop
+window worse.
+
+## 13. Open questions
 
 - Whether `capture-pane` reading of the permission dialog is stable enough
   across Claude Code releases to keep, or whether it wants a version guard. The
@@ -385,3 +437,7 @@ would have shipped to the browser and 404'd at the edge. Added in infra
   connection. The flush fix means it can now work at all, and the routes are in
   place, but a sustained real-device test has not been run — decision 8's gate
   is met in code, not yet in evidence.
+- Whether the remaining per-row cost needs deferring. Total blocking on an open
+  scales with row count at roughly 4ms each; no single task is long enough to
+  lose a click today, and the next lever if it ever is would be holding a row's
+  markdown and highlighting until it is near the viewport.
