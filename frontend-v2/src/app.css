@@ -1320,12 +1320,26 @@ body {
 /* Ported from the vanilla frontend/index.html #soft-keys. Coarse-pointer only;
    fixed above the soft keyboard via --kb-offset (visualViewport-driven). A flex
    COLUMN of [overflow tier .sk-extra] over [always-visible .sk-line]. */
+/* The bottom inset, for the surfaces that stack on top of the keyboard.
+   `env(safe-area-inset-bottom)` keeps reporting 34px on an iPhone while the
+   keyboard is covering the home indicator, so adding it ON TOP of the keyboard
+   reservation leaves a dead strip between the soft-key row and the keyboard.
+   Measured on the device with the composer focused (2026-08-17): .tl-views
+   ended at 307, + --sk-h 95px = 402, and the shell ended at 436.
+   viewport.ts sets .tl-kb-up whenever the platform has taken the bottom edge. */
+:root {
+  --safe-b: env(safe-area-inset-bottom);
+}
+body.tl-kb-up {
+  --safe-b: 0px;
+}
+
 #soft-keys {
   display: none; /* the (pointer: coarse) query below un-hides it */
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+  bottom: calc(var(--kb-offset, 0px) + var(--safe-b, 0px));
   z-index: 40; /* above content; below settings(60)/palette(65)/toasts(70) */
   box-sizing: border-box;
   flex-direction: column;
@@ -1459,7 +1473,7 @@ body {
      shrink. --sk-h is the live toolbar height (viewport.ts), 50px pre-JS. */
   body.has-soft-keys .tl-views {
     margin-bottom: calc(
-      var(--sk-h, 50px) + var(--kb-offset, 0px) + env(safe-area-inset-bottom)
+      var(--sk-h, 50px) + var(--kb-offset, 0px) + var(--safe-b, 0px)
     );
   }
   /* TERMINAL view: leave the keyboard OUT of the reservation.
@@ -1472,7 +1486,7 @@ body {
      The frame is told the height instead (tl-kb) and shrinks its own terminal,
      so the prompt still clears the keyboard and the frame stays put. */
   body.has-soft-keys .tl-views.tl-kb-inline {
-    margin-bottom: calc(var(--sk-h, 50px) + env(safe-area-inset-bottom));
+    margin-bottom: calc(var(--sk-h, 50px) + var(--safe-b, 0px));
   }
   /* 16px blocks iOS Safari's focus auto-zoom on the compose field. */
   .tl-composer-input {

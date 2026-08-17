@@ -32,6 +32,36 @@ export function keyboardOffset(
   return Math.max(0, innerHeight - vvHeight - vvOffsetTop);
 }
 
+/**
+ * The smallest bottom-edge coverage that counts as a soft keyboard.
+ *
+ * An iOS URL bar is ~50-90px tall and a rounded viewport reading moves by a
+ * pixel or two; the shortest phone keyboard is ~216px. 120px sits between them.
+ */
+export const KEYBOARD_MIN_PX = 120;
+
+/**
+ * Pixels of the app's bottom edge the platform has covered, by EITHER of the
+ * two mechanisms a soft keyboard uses. PURE + parameterized for unit testing.
+ *
+ * `--kb-offset` alone does not answer "is the keyboard up": on a platform that
+ * shrinks the LAYOUT viewport (Chromium's interactive-widget=resizes-content,
+ * and the iOS standalone PWA once the keyboard settles) it is 0 for the whole
+ * cycle, and the keyboard shows only as a drop from the height the app had when
+ * nothing was covering it.
+ *
+ *   iOS Safari, mid-animation    innerHeight 812, unobstructed 812, kb 376 → 376
+ *   iOS standalone, settled      innerHeight 436, unobstructed 812, kb   0 → 376
+ *   Android emulator, measured   innerHeight 471, unobstructed 783, kb   0 → 312
+ */
+export function coveredAtBottom(
+  innerHeight: number,
+  unobstructed: number,
+  kbOffset: number,
+): number {
+  return Math.max(0, kbOffset, unobstructed - innerHeight);
+}
+
 export interface ViewportSyncOptions {
   /** Debounced callback after the viewport settles (e.g. re-fit the terminal). */
   onRefit?: () => void;
@@ -79,6 +109,13 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   // write always reports once, telling the frame where it stands before the
   // first keyboard ever opens.
   let lastKb = -1;
+  // The tallest layout viewport seen in this orientation — what the app gets
+  // when nothing is covering it. Re-learned whenever the width changes, because
+  // landscape is legitimately shorter than portrait and must not read as a
+  // keyboard. Seeded by the install-time writeOffset, so it is the real
+  // unobstructed height before any keyboard can open.
+  let unobstructed = 0;
+  let lastWidth = -1;
 
   /**
    * Record the real geometry when the keyboard opens or closes.
@@ -159,6 +196,9 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
         "tl.vp.sk_h": px("--sk-h"),
         "tl.vp.app_vh": px("--app-vh"),
         "tl.vp.safe_b": measureSafeAreaBottom(),
+        // Whether the inset is currently being reserved. With this true, the
+        // softkeys box above should end flush with #root, not an inset above it.
+        "tl.vp.kb_up": document.body?.classList.contains("tl-kb-up") ?? false,
         "tl.vp.standalone":
           typeof matchMedia === "function" &&
           matchMedia("(display-mode: standalone)").matches,
@@ -204,6 +244,18 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
     const kb = keyboardOffset(window.innerHeight, h, top);
     const root = document.documentElement.style;
     root.setProperty("--kb-offset", kb + "px");
+    // Is the platform sitting on our bottom edge? CSS reads this as --safe-b:
+    // the home-indicator inset is worth reserving only when the home indicator
+    // is actually below our content, and a keyboard covers it.
+    if (window.innerWidth !== lastWidth) {
+      lastWidth = window.innerWidth;
+      unobstructed = 0;
+    }
+    unobstructed = Math.max(unobstructed, window.innerHeight);
+    document.body?.classList.toggle(
+      "tl-kb-up",
+      coveredAtBottom(window.innerHeight, unobstructed, kb) >= KEYBOARD_MIN_PX,
+    );
     if (kb !== lastKb) {
       lastKb = kb;
       opts.onKeyboard?.(kb);
