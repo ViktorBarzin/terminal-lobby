@@ -512,6 +512,19 @@ body {
   flex-direction: column;
   gap: 14px;
 }
+/* A transcript is read from its newest end, so a SHORT one sits at the bottom of
+   the viewport rather than hanging from the top. This is what makes the first
+   paint land where the eye already is: the newest rows mount first and stay
+   exactly where they are as older ones fill in above them (measured before this:
+   the first chunk pushed the newest row 495px down the screen).
+
+   A margin-top:auto spacer rather than justify-content:flex-end — with flex-end,
+   content taller than the container has its overflowing top clipped and
+   unreachable, which is precisely the transcript we care about. */
+.tl-timeline::before {
+  content: "";
+  margin-top: auto;
+}
 /* Rows keep their natural height; the overflow goes to the scrollbar, not into
    the rows. Without this an overflowing flex column shrinks its children toward
    min-content first — and `.tl-row-tool` clips its overflow, which leaves it no
@@ -2437,11 +2450,22 @@ body {
 /* While the newest rows are up and the rest are still mounting a chunk per
    frame (MessagesTimeline), the reader gets a line rather than a jumping list
    with no explanation. */
+/* Floating, NOT in the flow: a hint that appears and disappears in the layout
+   would shift the rows below it twice, which is the opposite of quiet. */
 .tl-row-filling {
+  position: sticky;
+  top: 0;
+  align-self: center;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 2px;
+  margin-bottom: -28px; /* occupy no vertical space in the column */
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: 11.5px;
+  opacity: 0.9;
 }

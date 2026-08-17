@@ -13,6 +13,7 @@ import type { Event } from "../types/events";
 import {
   deriveRows,
   sameRow,
+  scrollTopAfterPrepend,
   visibleRows,
   type ErrorRow,
   type LeafRow,
@@ -219,13 +220,50 @@ export const MessagesTimeline: Component<{
   // up. This is NOT virtualization: nothing is ever unmounted, so scrolling and
   // searching still reach the whole window (see the note above).
   const [mounted, setMounted] = createSignal(FIRST_MOUNT_ROWS);
+
+  /**
+   * Add a chunk of older rows without moving anything the reader can see.
+   *
+   * Rows mount at the TOP of the list, and a scroll container keeps its
+   * scrollTop when content is prepended — so the visible content slid down by
+   * the height of every chunk. Solid applies the DOM update synchronously inside
+   * the setter, so the height can be measured on both sides of it and the
+   * difference handed straight back to scrollTop.
+   */
+  const growMounted = (total: number): void => {
+    const el = scroller;
+    // The anchor is the OLDEST row currently mounted: every new row lands above
+    // it, so the growth of its offsetTop is precisely the height inserted above
+    // the reader. scrollHeight would also count rows BELOW getting taller as
+    // their markdown and highlighting resolve, and compensating for that drags
+    // the reader down (measured: 5,780px, ending back at the live end).
+    const anchor = el?.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling)");
+    const before = anchor?.offsetTop ?? 0;
+    setMounted((m) => Math.min(total, m + MOUNT_CHUNK_ROWS));
+    if (!el || !anchor) return;
+    el.scrollTop = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
+  };
+
   createEffect(() => {
     const total = allKeys().length;
     if (mounted() >= total) return;
+    // requestIdleCallback where it exists: the fill is background work, and an
+    // idle callback does not run while the browser has input to handle, so
+    // scrolling and tapping stay ahead of it by construction. The timeout keeps
+    // it from starving on a busy page, and rAF is the fallback.
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
+      cancelIdleCallback?: (h: number) => void;
+    });
+    if (typeof ric.requestIdleCallback === "function") {
+      const handle = ric.requestIdleCallback(() => growMounted(total), { timeout: 200 });
+      onCleanup(() => ric.cancelIdleCallback?.(handle));
+      return;
+    }
     const raf =
       typeof requestAnimationFrame === "function"
-        ? requestAnimationFrame(() => setMounted((m) => Math.min(total, m + MOUNT_CHUNK_ROWS)))
-        : (setTimeout(() => setMounted((m) => Math.min(total, m + MOUNT_CHUNK_ROWS)), 0) as unknown as number);
+        ? requestAnimationFrame(() => growMounted(total))
+        : (setTimeout(() => growMounted(total), 0) as unknown as number);
     onCleanup(() => {
       if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(raf);
       clearTimeout(raf);
@@ -367,11 +405,14 @@ export const MessagesTimeline: Component<{
     if (!props.onLoadEarlier || loadingEarlier()) return;
     setLoadingEarlier(true);
     const el = scroller;
-    const before = el?.scrollHeight ?? 0;
+    const anchor = el?.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling)");
+    const before = anchor?.offsetTop ?? 0;
     await props.onLoadEarlier();
-    // Keep the reader where they were: prepending rows would otherwise push
-    // what they are looking at down the page by the height of everything added.
-    if (el) el.scrollTop += el.scrollHeight - before;
+    // Keep the reader where they were — the same anchor-based compensation the
+    // background mount uses, for the same reason.
+    if (el && anchor) {
+      el.scrollTop = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
+    }
     setLoadingEarlier(false);
   };
 
