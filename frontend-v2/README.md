@@ -113,7 +113,14 @@ src/
                          against the shared slug/vectors.json — the browser has
                          to derive a name unaided, since creating a session
                          reaches no server at all
-    file-api.ts          file-api client (list/read/write; maps 404/413/400)
+    file-api.ts          file-api client (list/read/write; maps 404/413/400).
+                         contentUrl() re-exports the resolver below, so a read
+                         of a clipboard-store path goes to clipboard-upload
+                         instead of the home-confined file-api
+    attachments.ts       PURE text-view attachments: which paths in a message are
+                         files worth drawing (store paths always; images and
+                         document formats anywhere — never source paths), and
+                         which of the two backends serves each one
     act-as.ts            Admin act-as switch: the URL to navigate to in order
                          to act as a user (or return) — switching is a load
     terminal-url.ts      ttyd `?arg=` POSITIONAL contract (incl. the foreign-
@@ -133,6 +140,9 @@ src/
     visits.ts            Per-browser seen/visit tracking (tl:session-visits:v1)
                          → the unseen-done predicate behind the tab-title (N✓)
                          badge and the favicon's green tick
+    drafts.ts            Per-browser composer drafts (tl:session-drafts:v1): the
+                         unsent text AND its attachment tray, pruned to the live
+                         session list the way visits.ts prunes
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
     device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
                          terminal flow control (tl-flow-control — the iframe
@@ -162,7 +172,12 @@ src/
     rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / working / …)
-    Markdown.tsx         solid-markdown + remark-gfm + rehype-sanitize
+    Markdown.tsx         solid-markdown + remark-gfm + rehype-sanitize, plus a
+                         rehype pass turning bare absolute paths in Claude's
+                         prose into attachments (code subtrees skipped)
+    Attachment.tsx       One attachment as the chat draws it: an image preview, a
+                         document chip, or the path when nothing can serve it —
+                         and MessageSegments, which substitutes in place
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
     Composer.tsx         Prompt input + Send↔Stop morph + mobile submit split
     PermissionPanel.tsx  INERT. Approve/Deny UI kept for a future gated

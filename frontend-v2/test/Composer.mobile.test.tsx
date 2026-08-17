@@ -135,7 +135,7 @@ describe("<Composer> — an image path already on the line", () => {
         line += t;
         return true;
       },
-      upload: async () => `${STORE}/pasted.png`,
+      upload: async () => ({ path: `${STORE}/pasted.png`, stored: true }),
       toast: () => 0,
       dismiss: () => {},
     });

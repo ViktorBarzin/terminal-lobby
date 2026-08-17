@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { uploadField, type UploadOptions } from "../src/clipboard/upload";
+import { uploadField, type UploadOptions, type UploadResult } from "../src/clipboard/upload";
 import { dragHasFiles } from "../src/clipboard/drop";
 import { installImageClipboard } from "../src/clipboard/attach";
 
@@ -83,8 +83,10 @@ describe("installImageClipboard — dropped paths are separated from what follow
         sent.push(t);
         return true;
       },
-      upload: async (_blob: Blob, opts: UploadOptions) =>
-        `${STORE}/${opts.filename ?? "dropped"}`,
+      upload: async (_blob: Blob, opts: UploadOptions) => ({
+        path: `${STORE}/${opts.filename ?? "dropped"}`,
+        stored: true,
+      }),
       toast: () => 0,
       dismiss: () => {},
     });
@@ -148,7 +150,7 @@ describe("installImageClipboard — a drop is distinguishable from a paste", () 
   // into a cascade.
   const installed: (() => void)[] = [];
   const setup = (
-    upload?: (blob: Blob, opts: UploadOptions) => Promise<string>,
+    upload?: (blob: Blob, opts: UploadOptions) => Promise<UploadResult>,
   ): { sent: string[] } => {
     const sent: string[] = [];
     const clip = installImageClipboard({
@@ -159,8 +161,10 @@ describe("installImageClipboard — a drop is distinguishable from a paste", () 
       },
       upload:
         upload ??
-        (async (_blob: Blob, opts: UploadOptions) =>
-          `${STORE}/${opts.filename ?? "pasted.png"}`),
+        (async (_blob: Blob, opts: UploadOptions) => ({
+          path: `${STORE}/${opts.filename ?? "pasted.png"}`,
+          stored: true,
+        })),
       toast: () => 0,
       dismiss: () => {},
     });

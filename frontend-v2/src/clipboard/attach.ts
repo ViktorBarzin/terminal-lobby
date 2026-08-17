@@ -22,6 +22,20 @@ import { track } from "../telemetry/track";
 export interface ImageClipboardDeps {
   /** the attached session name (the upload's per-session store bucket). */
   session: () => string;
+  /**
+   * TRUE when a paste or drop belongs to the TEXT view's composer rather than to
+   * the pty (design 2026-08-17 decision 5).
+   *
+   * This is the fix for the reported bug. The paste listener below is
+   * document-level and CAPTURE-phase, and it preventDefault()s and
+   * stopPropagation()s — so it ran before the composer's own handler could, and
+   * every pasted image ended up as a path on the terminal's input line, which a
+   * text-view reader never sees. When this says the text view owns the gesture,
+   * this module declines it entirely and lets it reach the composer.
+   *
+   * Absent → the pty, which is the behaviour the terminal view keeps unchanged.
+   */
+  composerOwns?: () => boolean;
   /** send text (an uploaded path) to the pty; true if a frame received it. */
   sendToPty: (text: string) => boolean;
   /** FALSE while this client only WATCHES the session, which refuses both
@@ -30,6 +44,8 @@ export interface ImageClipboardDeps {
    *  in a tab acting as another user — and only then types the path, so a
    *  refused write would leave a half-done action behind. Absent = enabled. */
   enabled?: () => boolean;
+  /** Hand dropped files to the text view's composer (used when composerOwns). */
+  onComposerFiles?: (files: File[]) => Promise<unknown>;
   /** seams for tests (default to the live document/window/uploader/toaster). */
   doc?: Document;
   win?: Window;
@@ -100,7 +116,7 @@ export function installImageClipboard(
     track("image.pasted", { "tl.count": blob.size });
     const loading = toast("Uploading image…", "loading");
     try {
-      const path = await upload(blob, {
+      const { path } = await upload(blob, {
         session: deps.session(),
         field: "image",
       });
@@ -115,6 +131,9 @@ export function installImageClipboard(
 
   // ---- paste: image items upload; text/other passes through ---------------
   const onPaste = (e: ClipboardEvent): void => {
+    // Text view: the composer attaches it to the message being written. Decline
+    // BEFORE reading the clipboard, so nothing is consumed on the way past.
+    if (deps.composerOwns?.()) return;
     const blob = firstImageBlob(e.clipboardData?.items);
     if (!blob) return; // text/other: let the focused field / browser handle it
     e.preventDefault();
@@ -144,7 +163,7 @@ export function installImageClipboard(
     const paths: string[] = [];
     for (const f of files) {
       try {
-        const path = await upload(f, {
+        const { path } = await upload(f, {
           session: deps.session(),
           field: uploadField(f.type),
           filename: f.name,
@@ -189,11 +208,22 @@ export function installImageClipboard(
     if (dragDepth === 0) setDropActive(false);
   };
   const onDrop = (e: DragEvent): void => {
-    e.preventDefault(); // UNCONDITIONAL (see onDragOver)
+    // preventDefault stays UNCONDITIONAL (see onDragOver): without it the browser
+    // opens the dropped file in a new tab, which is wrong in either view.
+    e.preventDefault();
     dragDepth = 0;
     setDropActive(false);
     const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
-    if (files.length) void uploadDropped(files);
+    if (!files.length) return;
+    // Text view: hand the files to the composer instead of typing paths at the
+    // pty. The overlay still raised, because a drop target is the right
+    // affordance either way — only the destination differs.
+    const toComposer = deps.onComposerFiles;
+    if (deps.composerOwns?.() && toComposer) {
+      void toComposer(files);
+      return;
+    }
+    void uploadDropped(files);
   };
 
   doc.addEventListener("paste", onPaste, true);

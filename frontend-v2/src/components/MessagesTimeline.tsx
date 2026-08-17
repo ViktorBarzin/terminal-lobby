@@ -32,6 +32,7 @@ import {
   type WorkingRow,
 } from "./timeline.logic";
 import { Markdown } from "./Markdown";
+import { MessageSegments } from "./Attachment";
 import {
   MetaRowView,
   PlanRowView,
@@ -45,7 +46,12 @@ import {
 
 const USER_COLLAPSE_CHARS = 600;
 
-const UserRowView: Component<{ row: UserRow }> = (props) => {
+const UserRowView: Component<{
+  row: UserRow;
+  /** effective OS user — decides whether a store path is ours to fetch. */
+  me?: string;
+  onOpenPreview?: (path: string) => void;
+}> = (props) => {
   const long = () => props.row.body.length > USER_COLLAPSE_CHARS;
   const [open, setOpen] = createSignal(false);
   const shown = () =>
@@ -55,7 +61,16 @@ const UserRowView: Component<{ row: UserRow }> = (props) => {
   return (
     <div class="tl-row tl-row-user">
       <div class="tl-bubble-user">
-        <pre class="tl-user-text">{shown()}</pre>
+        {/* Still a <pre>: the message's own whitespace is significant, and an
+            <img>/<button> is phrasing content, so substituting a path in place
+            costs the surrounding text nothing. */}
+        <pre class="tl-user-text">
+          <MessageSegments
+            text={shown()}
+            me={props.me ?? ""}
+            onOpen={props.onOpenPreview}
+          />
+        </pre>
         <Show when={long()}>
           <button
             type="button"
@@ -71,10 +86,12 @@ const UserRowView: Component<{ row: UserRow }> = (props) => {
   );
 };
 
-const MessageRowView: Component<{ row: MessageRow }> = (props) => (
+const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
   <div class="tl-row tl-row-message" classList={{ "tl-streaming": props.row.streaming }}>
     <Show when={props.row.body.trim()} fallback={<span class="tl-empty">(empty response)</span>}>
-      <Markdown text={props.row.body} />
+      {/* `me` turns bare absolute paths in Claude's prose into attachments too
+          (design 2026-08-17 decision 8), skipping code — see Markdown.tsx. */}
+      <Markdown text={props.row.body} attachAs={props.me} />
     </Show>
   </div>
 );
@@ -169,6 +186,15 @@ export const MessagesTimeline: Component<{
   onLoadEarlier?: () => Promise<void>;
   /** true while older turns exist to load. */
   hasEarlier?: boolean;
+  /**
+   * The effective OS user. Attachments in a message are drawn only when this
+   * says the file is ours to fetch: the clipboard read-back routes resolve inside
+   * the CALLER's own store directory, so a path belonging to someone else would
+   * either 404 or answer with our own same-named file (design 2026-08-17
+   * decisions 7 and 12). Absent → every path stays text, which is what this view
+   * did before attachments rendered at all.
+   */
+  me?: string;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -303,7 +329,7 @@ export const MessagesTimeline: Component<{
   const renderLeaf = (row: LeafRow): JSX.Element => {
     switch (row.kind) {
       case "message":
-        return <MessageRowView row={row} />;
+        return <MessageRowView row={row} me={props.me} />;
       case "thinking":
         return <ThinkingRowView row={row} />;
       case "tool":
@@ -321,7 +347,7 @@ export const MessagesTimeline: Component<{
       case "status":
         return <StatusRowView row={row} />;
       case "user":
-        return <UserRowView row={row} />;
+        return <UserRowView row={row} me={props.me} onOpenPreview={props.onOpenPreview} />;
       case "permission":
         return <PermissionRowView row={row} />;
     }
@@ -333,9 +359,15 @@ export const MessagesTimeline: Component<{
     const row = rowAt(key);
     switch (row().kind) {
       case "user":
-        return <UserRowView row={row() as UserRow} />;
+        return (
+          <UserRowView
+            row={row() as UserRow}
+            me={props.me}
+            onOpenPreview={props.onOpenPreview}
+          />
+        );
       case "message":
-        return <MessageRowView row={row() as MessageRow} />;
+        return <MessageRowView row={row() as MessageRow} me={props.me} />;
       case "thinking":
         return <ThinkingRowView row={row() as ThinkingRow} />;
       case "tool":
