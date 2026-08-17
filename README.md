@@ -221,7 +221,7 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 | `frontend-v2/` (SolidJS + Vite) | Built to a single `index.html`, served by ttyd on the DevVM | 7681 | **The lobby.** Terminal is an iframe of `/term.html`; backends are tmux-api / clipboard / session-events / file-api. Build: `npm run build` (vite-plugin-singlefile → one inlined file) |
 | `frontend/index.html` | Not deployed | — | The original vanilla page. Kept as the rollback target (`index.html.prev` on the devvm) and as the parity reference for `scripts/test_frontend_compat.py` |
 | `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions` (incl. per-session `state` + `project`), `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore` (blanket, or a `{snapshot, sessions[]}` body from the picker), `GET /snapshots` + `GET /snapshots/<ts>` (the session-snapshot series and one snapshot resolved against what is live), `GET`/`PUT /layout` (per-user sidebar layout, stored under `/var/lib/tmux-api/layout/`) |
-| `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session image store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded/dropped images and returns a path the terminal can paste (non-image drops stay in `/tmp/clipboard-files`), `POST /register` records `show-image` renders (localhost), `GET /list` + `GET /img/…` serve the gallery. Per-user isolation via `X-Authentik-Username` → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
+| `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session attachment store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded/dropped images, and documents up to 25MB under a `file-` prefix, replying `{path, stored}` — `stored:false` means it stayed an ephemeral `/tmp/clipboard-files` transfer, which is what a document over the cap does. `POST /register` records `show-image` renders (localhost). `GET /list` serves the gallery and lists the `pasted-`/`displayed-` prefixes only, so a document is never drawn as a thumbnail; `GET /img/…` serves image bytes and refuses anything that does not sniff as an image; `GET /file/…` serves a stored document with sniffing disabled, forcing a download for anything that could execute as markup. Per-user isolation via `X-Authentik-Username` → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
 | `devvm/tmux-attach.sh` | DevVM, invoked by ttyd | — | Validates `X-authentik-username`, maps to OS user via `/etc/ttyd-user-map`, `sudo -u <user> tmux new-session -A` |
 | `devvm/claude-tmux-state` | DevVM, invoked by Claude Code hooks | — | Stamps `@claude_state` (running / awaiting / done) on the enclosing tmux session; wired org-wide via `/etc/claude-code/managed-settings.json` (infra repo, `scripts/workstation/`, self-deploys hourly). No-ops outside tmux. See `docs/adr/0001-claude-state-via-hooks.md` |
 | `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`, `GET /snapshots*`) | — | The tmux-persist gateway behind the Restore picker. Validates the user against `/etc/ttyd-user-map`, then runs one of `tmux-persist restore\|snapshots\|snapshot\|restore-selection`. The bare one-argument form still means "restore now". Snapshot ids and session names are re-validated here because the sudo grant places no restriction on argv. Idempotent — live sessions are left alone. Useful after an OOM kills sessions without a reboot (the boot-only restore never fires) |
@@ -454,9 +454,10 @@ curl -H "X-Authentik-Username: $(whoami)" http://localhost:7684/sessions
 ```
 
 `clipboard-upload` reads the same user map and header for its store
-routes (`/upload` image field — pastes, uploads and dropped images
-alike — plus `/list`, `/img/…`); non-image drops still land
-header-free in `/tmp/clipboard-files`. Locally it needs a writable
+routes (`/upload` — pastes, uploads and dropped files alike — plus
+`/list`, `/img/…` and `/file/…`). Identity is now required on both
+upload fields, since a document joins the same per-user store; only a
+document over the 25MB cap still lands in `/tmp/clipboard-files`. Locally it needs a writable
 `/var/lib/clipboard-store` (`sudo install -d -o $USER
 /var/lib/clipboard-store`) — without it only the store routes 500.
 
