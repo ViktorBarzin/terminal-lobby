@@ -2,9 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   completionFor,
   composeMessage,
+  modeFromPane,
   modeLabel,
-  nextMode,
-  PERMISSION_MODES,
 } from "../src/components/compose.logic";
 
 const files = ["main.go", "main_test.go", "registry.go", "sub/"];
@@ -56,27 +55,62 @@ describe("@ path completion", () => {
   });
 });
 
-describe("mode cycling", () => {
-  it("walks the CLI's cycle and wraps", () => {
-    expect(nextMode("default")).toBe("acceptEdits");
-    expect(nextMode("plan")).toBe("default");
+/**
+ * Reading the mode off the pane.
+ *
+ * The transcript is not a live source: measured 2026-08-17, Shift+Tab moved a
+ * session from bypass to auto in 40ms and the transcript still said bypass
+ * twenty minutes later, because the CLI writes that record when a TURN happens,
+ * not when the mode changes. These are the real status lines from that session,
+ * one per stop of the CLI's own Shift+Tab cycle.
+ */
+describe("the permission mode, read off the pane", () => {
+  const line = (s: string) => `\n\u2500\u2500\u2500\u2500\n  ${s} \u00b7 \u2190 for agents\n`;
+
+  it("reads every stop of the cycle", () => {
+    expect(modeFromPane(line("\u23f5\u23f5 bypass permissions on (shift+tab to cycle)")))
+      .toBe("bypassPermissions");
+    expect(modeFromPane(line("\u23f5\u23f5 auto mode on (shift+tab to cycle)"))).toBe("auto");
+    // The one stop that carries no "(shift+tab to cycle)" tail.
+    expect(modeFromPane(line("\u23f8 manual mode on"))).toBe("manual");
+    expect(modeFromPane(line("\u23f5\u23f5 accept edits on (shift+tab to cycle)")))
+      .toBe("acceptEdits");
+    expect(modeFromPane(line("\u23f8 plan mode on (shift+tab to cycle)"))).toBe("plan");
   });
 
-  // Landing on bypassPermissions by pressing a key once too often would turn
-  // every later tool call silent; it is a startup choice, not a cycle stop.
-  it("never cycles into bypassPermissions", () => {
-    expect(PERMISSION_MODES).not.toContain("bypassPermissions");
-    expect(nextMode("bypassPermissions")).toBe("default");
+  it("says nothing when the pane says nothing", () => {
+    expect(modeFromPane("")).toBe("");
+    expect(modeFromPane("$ ls\nREADME.md\n$ ")).toBe("");
+  });
+
+  it("takes the LAST line, so scrollback cannot outrank the live one", () => {
+    // A pane holds scrollback, and a transcript quoting an older status line is
+    // ordinary content in it.
+    const pane =
+      "someone pasted: \u23f5\u23f5 bypass permissions on (shift+tab to cycle)\n" +
+      "\u2026 lots of output \u2026\n" +
+      "  \u23f8 plan mode on (shift+tab to cycle) \u00b7 \u2190 for agents\n";
+    expect(modeFromPane(pane)).toBe("plan");
   });
 });
 
 describe("the mode chip's label", () => {
   // `bypassPermissions` beside the input crowded out both the message field and
   // the Send button at 390px.
-  it("shortens the long mode names", () => {
+  it("shortens the long mode names, in the CLI's own words", () => {
     expect(modeLabel("bypassPermissions")).toBe("bypass");
-    expect(modeLabel("acceptEdits")).toBe("auto-edit");
-    expect(modeLabel("default")).toBe("ask");
+    expect(modeLabel("acceptEdits")).toBe("edits");
+    expect(modeLabel("auto")).toBe("auto");
+    expect(modeLabel("plan")).toBe("plan");
+    expect(modeLabel("manual")).toBe("manual");
+    expect(modeLabel("dontAsk")).toBe("no ask");
+  });
+
+  // `default` is what the CLI called `manual` before the rename, and it is
+  // still what older transcripts in ~/.claude/projects say — 281 of those
+  // records against 0 saying `manual` when this was written.
+  it("reads a pre-rename `default` as manual", () => {
+    expect(modeLabel("default")).toBe("manual");
   });
 
   it("passes an unfamiliar mode through unchanged", () => {
