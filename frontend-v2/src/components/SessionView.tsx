@@ -779,6 +779,7 @@ export const SessionView: Component<{
             sendToTerminal={coarse() ? sendBytesToPty : undefined}
             onOpenPreview={(path) => void preview.open(path)}
             onKeys={store.answer}
+            onPane={store.pane}
             onLoadFull={store.fullResult}
             onLoadEarlier={async () => {
               await store.loadEarlier();
@@ -809,7 +810,12 @@ export const SessionView: Component<{
         </section>
       </main>
 
-      <Show when={coarse()}>
+      {/* TERMINAL view only. The keys are terminal affordances — Esc, ⇧Tab, the
+          arrows, Ctrl/Alt — and text mode has a text field, not a pty: they
+          took two rows above the keyboard for nothing (Viktor, 2026-08-17).
+          Unmounting rather than hiding, so the toolbar's own cleanup hands
+          --sk-h back to the view and the composer sits on the keyboard. */}
+      <Show when={coarse() && mode() === "terminal"}>
         <SoftKeys
           send={sendBytesToPty}
           onCopy={() => window.__tlForwardToTerminal?.("terminal.copy")}
