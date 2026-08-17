@@ -129,15 +129,27 @@ export function installImageClipboard(
     }
   }
 
-  // ---- paste: image items upload; text/other passes through ---------------
+  // ---- paste: image items are OURS; text/other passes through -------------
+  //
+  // This listener owns the image paste in BOTH modes and routes on the mode,
+  // rather than declining in text mode and hoping something downstream catches
+  // it. Declining was the first attempt and it left a hole: the listener is on
+  // the DOCUMENT, so it sees a paste wherever focus is, while the composer's own
+  // handler only fires when the textarea has focus — a paste anywhere else in the
+  // text view then reached nothing at all. One owner, one decision.
+  //
+  // Text/other is still passed through untouched, so pasting text into the
+  // composer, the path box or any other field behaves natively.
   const onPaste = (e: ClipboardEvent): void => {
-    // Text view: the composer attaches it to the message being written. Decline
-    // BEFORE reading the clipboard, so nothing is consumed on the way past.
-    if (deps.composerOwns?.()) return;
     const blob = firstImageBlob(e.clipboardData?.items);
     if (!blob) return; // text/other: let the focused field / browser handle it
     e.preventDefault();
     e.stopPropagation();
+    const toComposer = deps.onComposerFiles;
+    if (deps.composerOwns?.() && toComposer) {
+      void toComposer([blob]);
+      return;
+    }
     void uploadImageToPty(blob);
   };
 
