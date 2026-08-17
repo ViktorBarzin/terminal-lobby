@@ -1293,8 +1293,15 @@ body {
      the FitAddon-honest equivalent of the vanilla `body.has-soft-keys #terminal`
      shrink. --sk-h is the live toolbar height (viewport.ts), 50px pre-JS. */
   body.has-soft-keys .tl-views {
+    /* --kb-reserve, NOT --kb-offset: how much of the shell the keyboard
+       actually covers, measured off the shell's own box (viewport.ts
+       keyboardReserve). --kb-offset answers a different question — how far a
+       FIXED accessory must sit off the bottom — and using it here reserved the
+       keyboard a second time on any platform that had already shortened the
+       shell, which put the Text composer near the top of the screen with a dead
+       gap above the keyboard (iPhone PWA, 2026-08-17). */
     margin-bottom: calc(
-      var(--sk-h, 50px) + var(--kb-offset, 0px) + env(safe-area-inset-bottom)
+      var(--sk-h, 50px) + var(--kb-reserve, 0px) + env(safe-area-inset-bottom)
     );
   }
   /* TERMINAL view: leave the keyboard OUT of the reservation.

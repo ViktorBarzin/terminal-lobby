@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { installViewportSync, keyboardOffset } from "../src/mobile/viewport";
+import { installViewportSync, keyboardOffset, keyboardReserve } from "../src/mobile/viewport";
 
 describe("viewport — keyboardOffset", () => {
   it("is 0 when the visual viewport fills the layout viewport (no keyboard)", () => {
@@ -105,5 +105,54 @@ describe("viewport — the keyboard height is published to the frame", () => {
       stop();
     });
     expect(seen).toEqual([300]);
+  });
+});
+
+/**
+ * How much the shell must still give up for the keyboard.
+ *
+ * BUG (reported 2026-08-17, iPhone installed PWA): in Text mode the composer
+ * ended up near the TOP of the screen with a large dead gap above the keyboard.
+ * Reproduced at 390x844: the composer landed at 9% of the screen with 368px of
+ * nothing below it.
+ *
+ * Cause: the keyboard's height was reserved TWICE — once by whatever shortened
+ * the shell (its height tracks window.innerHeight) and again by .tl-views
+ * subtracting --kb-offset. Which platforms shorten the shell varies (iOS Safari
+ * does not, Chromium does via interactive-widget=resizes-content, and the iOS
+ * standalone PWA is its own case), so the reservation is MEASURED rather than
+ * modelled: where the shell actually ends, minus where the keyboard actually
+ * starts. A shell that already clears the keyboard reserves nothing.
+ */
+describe("viewport — the reservation is measured, not assumed", () => {
+  it("reserves the overlap when the shell runs under the keyboard", () => {
+    // iOS Safari: the layout viewport ignores the keyboard, so the shell still
+    // spans the whole screen and the bottom 336px are covered.
+    expect(keyboardReserve(844, 508, 0)).toBe(336);
+  });
+
+  it("reserves NOTHING when the shell already ends above the keyboard", () => {
+    // Chromium with interactive-widget=resizes-content: the layout viewport
+    // shrank, so the shell stops at 508 and the keyboard starts at 508.
+    // Subtracting again is what put the composer at 9% of the screen.
+    expect(keyboardReserve(508, 508, 0)).toBe(0);
+  });
+
+  it("reserves nothing when the shell stops short of the keyboard", () => {
+    expect(keyboardReserve(400, 508, 0)).toBe(0);
+  });
+
+  it("accounts for a scrolled visual viewport", () => {
+    // visibleBottom is offsetTop + height, so a scrolled viewport moves the
+    // keyboard's top edge down in the shell's own coordinates.
+    expect(keyboardReserve(844, 500, 50)).toBe(294);
+  });
+
+  it("is 0 with no keyboard at all", () => {
+    expect(keyboardReserve(844, 844, 0)).toBe(0);
+  });
+
+  it("never goes negative", () => {
+    expect(keyboardReserve(844, 900, 0)).toBe(0);
   });
 });
