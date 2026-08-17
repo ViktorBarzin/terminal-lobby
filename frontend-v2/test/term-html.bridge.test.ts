@@ -717,3 +717,95 @@ describe("term.html — one slow-request surface, not two", () => {
     expect(src()).toMatch(/\/\\\/telemetry\$\/|\/telemetry\$\//);
   });
 });
+
+/**
+ * The soft keyboard, across the frame boundary.
+ *
+ * BUG (mobile, reported 2026-08-17): tapping the terminal to raise the keyboard
+ * made it flash open and shut, unless the tap was in the upper half of the
+ * screen. A terminal tap focuses the ghost mirror field INSIDE this iframe; the
+ * keyboard then opened, and the lobby reserved room for it by shrinking
+ * `.tl-views` — the iframe's own container — by the keyboard's height. The tap's
+ * delayed compat mousedown was then hit-tested where the finger had been, which
+ * was no longer the iframe but a non-focusable shell element, and a mousedown
+ * there blurs the focused field. Measured on a 390x844 phone: the container's
+ * bottom edge jumped 793 -> 457, so every tap below ~54% of the screen lost its
+ * keyboard.
+ *
+ * The fix moves the reservation INSIDE the frame: the lobby forwards the
+ * keyboard height (tl-kb) and stops shrinking the container, so the iframe
+ * element never moves out from under the tap while the terminal still ends up
+ * above the keyboard.
+ */
+type KbReserveFn = (
+  innerH: number,
+  vvH: number,
+  vvTop: number,
+  forwarded: number,
+) => { offset: number; shrink: number };
+
+function loadKbReserve(): KbReserveFn {
+  const src = sliceKernel(html(), "tl-kb-reserve");
+  return runInNewContext(`${src}; keyboardReserve`, {}) as KbReserveFn;
+}
+
+describe("term.html — keyboard reservation, framed and standalone", () => {
+  it("STANDALONE: believes its own viewport, and never double-subtracts it", () => {
+    // A phone on term.html directly: visualViewport DOES shrink, so vvH already
+    // excludes the keyboard. Lift the fixed accessories by it — but take
+    // nothing further off the terminal, or the page leaves a keyboard-sized
+    // gap under it.
+    const r = loadKbReserve()(844, 508, 0, 0);
+    expect(r.offset).toBe(336);
+    expect(r.shrink).toBe(0);
+  });
+
+  it("FRAMED: an iframe's visualViewport does not see the keyboard, so it takes the forwarded height", () => {
+    // The iframe's own reading is 0 (its viewport did not change); the lobby
+    // forwards the real height, which must come off the terminal here because
+    // nothing else has accounted for it.
+    const r = loadKbReserve()(844, 844, 0, 336);
+    expect(r.offset).toBe(336);
+    expect(r.shrink).toBe(336);
+  });
+
+  it("no keyboard at all leaves both at zero", () => {
+    const r = loadKbReserve()(844, 844, 0, 0);
+    expect(r).toEqual({ offset: 0, shrink: 0 });
+  });
+
+  it("never returns a negative reserve", () => {
+    // vvH can exceed innerHeight mid-rotation, and a forwarded value arriving
+    // from another document is untrusted arithmetic.
+    const r = loadKbReserve()(844, 900, 0, -50);
+    expect(r.offset).toBe(0);
+    expect(r.shrink).toBe(0);
+  });
+
+  it("takes the larger of the two rather than adding them", () => {
+    // Both readings describe the SAME keyboard. Summing would lift the bar
+    // twice as far as the keyboard is tall.
+    const r = loadKbReserve()(844, 600, 0, 200);
+    expect(r.offset).toBe(244);
+  });
+});
+
+describe("term.html — the tl-kb bridge", () => {
+  it("handles a tl-kb message from the lobby", () => {
+    expect(html()).toContain("'tl-kb'");
+  });
+
+  it("re-syncs the viewport when one arrives, so the change is painted", () => {
+    // Scoped to the branch rather than a byte count: the branch carries a long
+    // comment, and a fixed window would fail on the prose instead of the code.
+    const src = html();
+    const at = src.indexOf("e.data.type === 'tl-kb'");
+    expect(at).toBeGreaterThan(-1);
+    const next = src.indexOf("} else if", at);
+    expect(next).toBeGreaterThan(at);
+    const branch = src.slice(at, next);
+    expect(branch).toContain("syncViewport");
+    // Parent-only, like every other bridge message.
+    expect(branch).toContain("e.source === window.parent");
+  });
+});

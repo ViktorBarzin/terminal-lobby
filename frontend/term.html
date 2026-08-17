@@ -13269,10 +13269,45 @@ ${w.join(`
         //     every call; the keyboard animates over ~250ms firing a burst of
         //     resize/scroll events, so we coalesce them into a single resize
         //     instead of thrashing tmux (the "glitchy resize" on mobile).
+        // How much room the soft keyboard needs, from the two places that can
+        // know about it.
+        //
+        // Standalone (a phone on this page directly) visualViewport DOES shrink
+        // when the keyboard rises, so `vvH` already excludes it: lift the fixed
+        // accessories by that much and take NOTHING further off the terminal,
+        // or the page leaves a keyboard-sized gap under it.
+        //
+        // FRAMED (the v2 lobby) an iframe's visualViewport does not move when
+        // the keyboard opens — only the top window's does — so this page reads
+        // 0 and the lobby forwards the real height (tl-kb). That part IS still
+        // to be taken off the terminal, because nothing else has accounted for
+        // it. Before this, the lobby reserved the space by shrinking the
+        // iframe's own container instead, which moved the iframe out from under
+        // the tap that had just opened the keyboard: the tap's delayed compat
+        // mousedown then landed on a non-focusable shell element and blurred
+        // the field, so the keyboard flashed and shut for any tap below ~54% of
+        // the screen (2026-08-17).
+        //
+        // The two readings describe the SAME keyboard, so `offset` is the
+        // larger of them, never the sum.
+        // >>> tl-kb-reserve
+        function keyboardReserve(innerH, vvH, vvTop, forwarded) {
+            const own = Math.max(0, innerH - vvH - vvTop);
+            const fwd = Math.max(0, forwarded || 0);
+            return { offset: Math.max(own, fwd), shrink: fwd };
+        }
+        // <<< tl-kb-reserve
+
+        // The keyboard height the lobby last told us about (tl-kb). 0 when
+        // standalone, where nothing forwards and our own viewport is the truth.
+        let framedKb = 0;
+
         function syncViewport() {
             if (!window.visualViewport) return;
             const vv = window.visualViewport;
-            const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+            const reserve = keyboardReserve(
+                window.innerHeight, vv.height, vv.offsetTop, framedKb);
+            const kb = reserve.offset;
             document.documentElement.style.setProperty('--kb-offset', kb + 'px');
             // Gate on the pointer type, not body.has-soft-keys: since Task
             // M.6 the toolbar can be HIDDEN (2-finger tap drops the class),
@@ -13303,7 +13338,11 @@ ${w.join(`
                 const cb = document.getElementById('compose-bar');
                 const cbH = (cb && !cb.classList.contains('ghost')) ? cb.offsetHeight : 0;
                 document.documentElement.style.setProperty('--cb-h', cbH + 'px');
-                terminalEl.style.height = Math.max(0, vv.height - tbH - cbH) + 'px';
+                // reserve.shrink is 0 standalone (vv.height already excludes
+                // the keyboard) and the forwarded height while framed, where
+                // this page's own viewport never saw it.
+                terminalEl.style.height =
+                    Math.max(0, vv.height - reserve.shrink - tbH - cbH) + 'px';
             }
         }
         let kbRafScheduled = false;
@@ -14207,6 +14246,22 @@ ${w.join(`
                 if (e.source === window.parent && typeof e.data.text === 'string' && e.data.text) {
                     consumeSoftMods();
                     term.paste(e.data.text);
+                }
+            } else if (e.data.type === 'tl-kb') {
+                // frontend-v2 keyboard bridge (TerminalView __tlKeyboardOffset):
+                // how many pixels of the bottom the soft keyboard covers. An
+                // iframe's own visualViewport never sees the keyboard, so
+                // without this the terminal's last rows — the prompt — sit
+                // behind it. The lobby used to reserve that space by shrinking
+                // this iframe's CONTAINER instead, which moved the frame out
+                // from under the tap that had just opened the keyboard and made
+                // it flash shut (see keyboardReserve). Parent-only, like
+                // tl-input; a non-finite value is ignored rather than trusted
+                // into the layout.
+                if (e.source === window.parent && Number.isFinite(e.data.px)) {
+                    framedKb = Math.max(0, e.data.px);
+                    syncViewport();
+                    refit();
                 }
             } else if (e.data.type === 'tl-refit') {
                 // frontend-v2 refit bridge (TerminalView __tlRefitTerminal): the
