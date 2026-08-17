@@ -81,3 +81,21 @@ export const RotateCwIcon: Component<{ size?: number }> = (props) => (
     <path d="M21 3v5h-5" />
   </Svg>
 );
+
+/** lucide `message-square-text` — the Text view's segment. */
+export const MessageTextIcon: Component<{ size?: number }> = (props) => (
+  <Svg size={props.size}>
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    <path d="M7 8h10" />
+    <path d="M7 12h6" />
+  </Svg>
+);
+
+/** lucide `square-terminal` — the Terminal view's segment. */
+export const TerminalIcon: Component<{ size?: number }> = (props) => (
+  <Svg size={props.size}>
+    <path d="m7 11 2-2-2-2" />
+    <path d="M11 13h4" />
+    <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+  </Svg>
+);
