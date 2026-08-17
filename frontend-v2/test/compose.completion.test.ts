@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { completionFor, modeLabel, nextMode, PERMISSION_MODES } from "../src/components/compose.logic";
+import {
+  completionFor,
+  composeMessage,
+  modeLabel,
+  nextMode,
+  PERMISSION_MODES,
+} from "../src/components/compose.logic";
 
 const files = ["main.go", "main_test.go", "registry.go", "sub/"];
 
@@ -75,5 +81,43 @@ describe("the mode chip's label", () => {
 
   it("passes an unfamiliar mode through unchanged", () => {
     expect(modeLabel("somethingNew")).toBe("somethingNew");
+  });
+});
+
+// --- the wire format an attachment produces --------------------------------
+// docs/plans/2026-08-17-text-view-attachments-design.md decision 9: the paths
+// come first, one per line, then the prose. Bracketed paste (sessionio/tmux.go
+// pastes, then sends a separate Enter) makes the newlines soft, so a multi-line
+// prompt is one message rather than several submits.
+describe("composeMessage", () => {
+  const a = "/var/lib/clipboard-store/wizard/qa/pasted-20260817-a1.png";
+  const b = "/var/lib/clipboard-store/wizard/qa/file-20260817-abcd-report.pdf";
+
+  it("is just the text when nothing is attached", () => {
+    expect(composeMessage("what's wrong here?", [])).toBe("what's wrong here?");
+  });
+
+  it("puts each path on its own line ahead of the prose", () => {
+    expect(composeMessage("what's wrong, vs the pdf?", [a, b])).toBe(
+      `${a}\n${b}\nwhat's wrong, vs the pdf?`,
+    );
+  });
+
+  it("sends the paths alone when there is no prose", () => {
+    expect(composeMessage("", [a])).toBe(a);
+    expect(composeMessage("   ", [a])).toBe(a);
+  });
+
+  it("trims the prose but keeps its interior newlines", () => {
+    expect(composeMessage("  line one\nline two  ", [a])).toBe(`${a}\nline one\nline two`);
+  });
+
+  it("has nothing to send when both halves are empty", () => {
+    expect(composeMessage("", [])).toBe("");
+    expect(composeMessage("  \n ", [])).toBe("");
+  });
+
+  it("drops a duplicate path rather than asking Claude to read it twice", () => {
+    expect(composeMessage("look", [a, a])).toBe(`${a}\nlook`);
   });
 });
