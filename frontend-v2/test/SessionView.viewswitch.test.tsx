@@ -318,6 +318,10 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     await waitFor(() => expect(seen.at(-1)?.open).toBe(true));
     expect(seen.at(-1)).toEqual({ open: true, dirty: false });
 
+    // One store write per frame: the recent-files list is derived from the
+    // stream, so it lands on the next frame rather than in this tick.
+    await new Promise((r) => setTimeout(r, 40));
+
     // Open it, edit it, leave it unsaved.
     fireEvent.click(container.querySelector(".tl-preview-recents button")!);
     const editBtn = (): HTMLButtonElement | undefined =>

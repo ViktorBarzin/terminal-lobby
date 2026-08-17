@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { Composer } from "../src/components/Composer";
-import { BRACKET_END, BRACKET_START } from "../src/mobile/compose";
 import { installImageClipboard } from "../src/clipboard/attach";
 
 const noop = () => {};
@@ -29,9 +28,14 @@ describe("<Composer> — send routing", () => {
     expect(ta.value).toBe(""); // cleared after send
   });
 
-  it("mobile (sendToTerminal): sends a bracketed paste THEN a separate submit", () => {
-    const onSend = vi.fn(sent);
+  // Sending used to fork on a coarse pointer and post the bytes into the
+  // terminal IFRAME. In Text mode that iframe has not attached — the attach is
+  // lazy — so the post was dropped, the field was cleared, and the message went
+  // nowhere: type on a phone, press send, watch the text vanish. There is one
+  // route now, on every device.
+  it("sends through the control channel even when a pty bridge is offered", async () => {
     const sendToTerminal = vi.fn();
+    const onSend = vi.fn(sent);
     const { getByLabelText } = render(() => (
       <Composer
         working={false}
@@ -43,40 +47,25 @@ describe("<Composer> — send routing", () => {
       />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
-    fireEvent.input(ta, { target: { value: "run this" } });
+    fireEvent.input(ta, { target: { value: "  hello there  " } });
     fireEvent.keyDown(ta, { key: "Enter" });
 
-    expect(onSend).not.toHaveBeenCalled();
-    expect(sendToTerminal).toHaveBeenCalledTimes(2);
-    expect(sendToTerminal).toHaveBeenNthCalledWith(
-      1,
-      `${BRACKET_START}run this${BRACKET_END}`,
-    );
-    expect(sendToTerminal).toHaveBeenNthCalledWith(2, "\r");
+    expect(onSend).toHaveBeenCalledWith("hello there");
+    expect(sendToTerminal).not.toHaveBeenCalled();
     expect(ta.value).toBe("");
   });
 
-  it("mobile: a multiline message stays ONE bracketed paste (soft newlines)", () => {
-    const sendToTerminal = vi.fn();
+  it("sends a multiline message as one whole message", async () => {
+    const onSend = vi.fn(sent);
     const { getByLabelText } = render(() => (
-      <Composer
-        working={false}
-        pending={[]}
-        onSend={sent}
-        onStop={noop}
-        onResolve={noop}
-        sendToTerminal={sendToTerminal}
-      />
+      <Composer working={false} pending={[]} onSend={onSend} onStop={noop} onResolve={noop} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
-    fireEvent.input(ta, { target: { value: "line 1\nline 2" } });
+    fireEvent.input(ta, { target: { value: "first\nsecond\nthird" } });
     fireEvent.keyDown(ta, { key: "Enter" });
-    // Both lines in one paste; the CR (submit) is the SEPARATE second frame.
-    expect(sendToTerminal).toHaveBeenNthCalledWith(
-      1,
-      `${BRACKET_START}line 1\nline 2${BRACKET_END}`,
-    );
-    expect(sendToTerminal).toHaveBeenNthCalledWith(2, "\r");
+    // The newlines stay INSIDE one message; the server's injector is what turns
+    // it into a bracketed paste plus a separate submit (sessionio.Injector).
+    expect(onSend).toHaveBeenCalledWith("first\nsecond\nthird");
   });
 
   it("Shift+Enter does NOT submit (soft newline in the field)", () => {
@@ -130,18 +119,16 @@ describe("<Composer> — send routing", () => {
 });
 
 /**
- * On a coarse pointer the composer sends through the pty bridge, not through
- * /prompt — so the inject-side of the paste-glue bug has a SECOND path. This
- * models the pty input line: an uploaded image path is typed at it and left
- * there (installImageClipboard), then the mobile branch's bracketed paste lands
- * at the cursor. The two must not fuse into one token.
+ * An uploaded image's path is typed onto the pty input line by
+ * installImageClipboard, and the message the operator then sends must not fuse
+ * with it into one token. The composer's own send goes through the control
+ * channel, so what this pins down is the SPACING contract of the path emitter:
+ * the path arrives with its trailing space, whatever sends next.
  */
-describe("<Composer> — mobile send onto a line that already holds an image path", () => {
-  it("appends the prompt as its own token after the pasted path", async () => {
+describe("<Composer> — an image path already on the line", () => {
+  it("leaves the pasted path ending in a separator", async () => {
     const STORE = "/var/lib/clipboard-store/wizard/qa-sess";
-    let line = ""; // the pty input line
-
-    // 1. the image paste types its path at the line (the real emitter)
+    let line = "";
     const clip = installImageClipboard({
       session: () => "qa-sess",
       sendToPty: (t: string) => {
@@ -167,28 +154,8 @@ describe("<Composer> — mobile send onto a line that already holds an image pat
     await vi.waitFor(() => expect(line).not.toBe(""));
     clip.dispose();
 
-    // 2. the mobile composer sends through the same pty bridge
-    const { getByLabelText } = render(() => (
-      <Composer
-        working={false}
-        pending={[]}
-        onSend={sent}
-        onStop={noop}
-        onResolve={noop}
-        sendToTerminal={(bytes) => {
-          // the terminal inserts a bracketed paste's CONTENT at the cursor;
-          // the trailing \r submits the line.
-          if (bytes === "\r") return;
-          line += bytes.replace(BRACKET_START, "").replace(BRACKET_END, "");
-        }}
-      />
-    ));
-    const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
-    fireEvent.input(ta, { target: { value: "what colour is this" } });
-    fireEvent.keyDown(ta, { key: "Enter" });
-
-    expect(line).toBe(`${STORE}/pasted.png what colour is this`);
-    expect(line).not.toContain(".pngwhat");
+    expect(line).toBe(`${STORE}/pasted.png `);
+    expect(line.endsWith(" ")).toBe(true);
   });
 });
 

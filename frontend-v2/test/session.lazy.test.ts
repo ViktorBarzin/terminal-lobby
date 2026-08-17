@@ -139,16 +139,22 @@ describe("session store — lazy connect", () => {
     });
   });
 
-  it("delivers events once started", () => {
-    createRoot((dispose) => {
-      const store = createSessionStore("s", { autoStart: false });
+  // Events are coalesced into one store write per frame (see the store), so a
+  // delivery is visible after a frame rather than inside the same tick.
+  it("delivers events once started", async () => {
+    let store!: ReturnType<typeof createSessionStore>;
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      store = createSessionStore("s", { autoStart: false });
       store.start();
-      sources[0]?.onmessage?.({
-        data: JSON.stringify({ id: 1, kind: "text", session: "s", body: "hi" }),
-      });
-      expect(store.events).toHaveLength(1);
-      expect(store.events[0]?.body).toBe("hi");
-      dispose();
     });
+    sources[0]?.onmessage?.({
+      data: JSON.stringify({ id: 1, kind: "text", session: "s", body: "hi" }),
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(store.events).toHaveLength(1);
+    expect(store.events[0]?.body).toBe("hi");
+    dispose();
   });
 });
