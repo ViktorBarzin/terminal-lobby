@@ -51,6 +51,7 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   const refitDebounceMs = opts.refitDebounceMs ?? 120;
 
   let rafScheduled = false;
+  let rafHandle = 0;
   let fitTimer: ReturnType<typeof setTimeout> | undefined;
 
   const writeOffset = (): void => {
@@ -82,7 +83,7 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
         rafScheduled = false;
         writeOffset();
       };
-      if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+      if (typeof requestAnimationFrame === "function") rafHandle = requestAnimationFrame(run);
       else run();
     }
     if (opts.onRefit) {
@@ -111,5 +112,15 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
       vv.removeEventListener("scroll", sync);
     }
     if (fitTimer) clearTimeout(fitTimer);
+    // Cancel the pending frame too. Without this a sync() scheduled just before
+    // teardown still runs afterwards and writes --sk-h / --kb-offset for a
+    // surface that no longer exists — measuring a soft-key row that is gone and
+    // publishing 0px. It also made the test suite order-dependent: a stray
+    // frame from one file's unmounted SessionView overwrote the value another
+    // file's test had just asserted.
+    if (rafHandle && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(rafHandle);
+    }
+    rafScheduled = false;
   };
 }
