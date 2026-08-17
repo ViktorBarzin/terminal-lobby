@@ -795,3 +795,28 @@ export function promptHistory(events: Event[]): string[] {
   }
   return out;
 }
+
+/**
+ * Where the scroller must sit after rows were inserted ABOVE what the reader is
+ * looking at, so nothing they can see moves.
+ *
+ * The inputs are the offsetTop of an ANCHOR row — one that was already mounted —
+ * measured on both sides of the insertion. That is exactly the height that
+ * appeared above it. Using the container's scrollHeight instead looks
+ * equivalent and is not: scrollHeight also grows when rows BELOW get taller,
+ * which they do here as markdown renders and code highlights, and compensating
+ * for that scrolls the reader down through content they never asked to leave.
+ * Measured with the scrollHeight version: a reader who scrolled to the top
+ * mid-fill was dragged 5,780px and ended up back at the live end.
+ *
+ * PURE so the arithmetic is tested without a layout engine (jsdom has none).
+ */
+export function scrollTopAfterPrepend(
+  scrollTop: number,
+  anchorOffsetBefore: number,
+  anchorOffsetAfter: number,
+): number {
+  const insertedAbove = anchorOffsetAfter - anchorOffsetBefore;
+  if (insertedAbove <= 0) return scrollTop;
+  return scrollTop + insertedAbove;
+}
