@@ -6,12 +6,14 @@ import {
   earlierUrl,
   eventsUrl,
   keysUrl,
+  commandsUrl,
   paneUrl,
   permissionUrl,
   promptUrl,
   resultUrl,
 } from "../lib/config";
 import type { Event, PermissionDecision } from "../types/events";
+import type { SlashCommand } from "../components/compose.logic";
 
 export interface SessionStore {
   /** Reactive, ordered, deduped event list (Solid store proxy). */
@@ -38,6 +40,8 @@ export interface SessionStore {
   answer: (keys: string[]) => Promise<boolean>;
   /** Read what the pane shows, for mirroring a blocking prompt. */
   pane: () => Promise<{ pane: string; state: string } | null>;
+  /** The session's own slash commands, beyond the built-ins the page ships. */
+  commands: () => Promise<SlashCommand[]>;
   /** One tool result in full, after the wire capped it. */
   fullResult: (toolId: string) => Promise<string | null>;
   /** Prepend the window of turns before the oldest event held. Returns how
@@ -243,6 +247,22 @@ export function createSessionStore(
     }
   };
 
+  /**
+   * The session's own slash commands. Fetched once per view rather than polled:
+   * skills and commands are files on disk, and a session that gains one mid-turn
+   * is rare enough that a reload is a fair price. An unreachable catalogue is
+   * not an error — the composer still has the built-ins the page ships.
+   */
+  const commands = async (): Promise<SlashCommand[]> => {
+    try {
+      const res = await fetch(commandsUrl(session), { credentials: "same-origin" });
+      if (!res.ok) return [];
+      return ((await res.json()) as SlashCommand[] | null) ?? [];
+    } catch {
+      return [];
+    }
+  };
+
   const pane = async (): Promise<{ pane: string; state: string } | null> => {
     try {
       const res = await fetch(paneUrl(session), { credentials: "same-origin" });
@@ -303,6 +323,7 @@ export function createSessionStore(
     interrupt,
     answer,
     pane,
+    commands,
     fullResult,
     loadEarlier,
     hasEarlier,

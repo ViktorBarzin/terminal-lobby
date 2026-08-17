@@ -8,13 +8,27 @@ import {
 
 const files = ["main.go", "main_test.go", "registry.go", "sub/"];
 
+/** The names offered, in order. */
+const values = (c: { items: { value: string }[] } | null): string[] =>
+  (c?.items ?? []).map((i) => i.value);
+
 describe("slash completion", () => {
   it("offers the commands that match what has been typed", () => {
     const c = completionFor("/co", 3, []);
     expect(c?.trigger).toBe("/");
-    expect(c?.items).toContain("/compact");
-    expect(c?.items).toContain("/config");
-    expect(c?.items).not.toContain("/clear");
+    expect(values(c)).toContain("/compact");
+    expect(values(c)).toContain("/config");
+    // A prefix match comes first; /clear can still appear further down on a
+    // description match, but never ahead of them.
+    expect(values(c).indexOf("/compact")).toBeLessThan(values(c).indexOf("/clear") === -1 ? 99 : values(c).indexOf("/clear"));
+  });
+
+  it("carries each command's description into the menu", () => {
+    // The row is what makes 148 commands usable: the name alone does not say
+    // what /btw or /fork do.
+    const c = completionFor("/compact", 8, []);
+    expect(c?.items[0]?.value).toBe("/compact");
+    expect(c?.items[0]?.description).toMatch(/summar/i);
   });
 
   // `cd /usr` should not open a command menu.
@@ -31,13 +45,13 @@ describe("@ path completion", () => {
   it("filters the listing by the stem typed so far", () => {
     const c = completionFor("look at @main", 13, files);
     expect(c?.trigger).toBe("@");
-    expect(c?.items).toEqual(["@main.go", "@main_test.go"]);
+    expect(values(c)).toEqual(["@main.go", "@main_test.go"]);
   });
 
   it("keeps the directory prefix when completing a nested path", () => {
     const c = completionFor("@session-events/reg", 19, files);
     expect(c?.dir).toBe("session-events/");
-    expect(c?.items).toEqual(["@session-events/registry.go"]);
+    expect(values(c)).toEqual(["@session-events/registry.go"]);
   });
 
   it("offers everything for a bare @", () => {
@@ -51,7 +65,7 @@ describe("@ path completion", () => {
   });
 
   it("returns no items rather than throwing when nothing matches", () => {
-    expect(completionFor("@zzz", 4, files)?.items).toEqual([]);
+    expect(values(completionFor("@zzz", 4, files))).toEqual([]);
   });
 });
 
