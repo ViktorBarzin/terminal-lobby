@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { installViewportSync, keyboardOffset } from "../src/mobile/viewport";
+import {
+  KEYBOARD_MIN_PX,
+  coveredAtBottom,
+  installViewportSync,
+  keyboardOffset,
+} from "../src/mobile/viewport";
 
 describe("viewport — keyboardOffset", () => {
   it("is 0 when the visual viewport fills the layout viewport (no keyboard)", () => {
@@ -261,5 +266,153 @@ describe("viewport — the iPhone keyboard animation, replayed", () => {
     });
     expect(new Set(bottoms).size).toBeGreaterThan(1);
     expect(Math.min(...bottoms)).toBeLessThan(0); // off the top of the screen
+  });
+});
+
+/**
+ * The home-indicator inset, while the keyboard is up.
+ *
+ * `env(safe-area-inset-bottom)` keeps reporting 34px on an iPhone even when the
+ * keyboard is covering the home indicator, so reserving it on top of the
+ * keyboard reservation leaves a dead 34px strip between the soft-key row and
+ * the top of the keyboard. Measured on the device (2026-08-17, keyboard open,
+ * Text composer focused): #root 0..436, .tl-views 43..307, --sk-h 95px,
+ * --kb-offset 0px, safe-area 34px — 307 + 95 = 402, and the shell ends at 436.
+ *
+ * Whether the keyboard is up cannot be read off --kb-offset alone: the two
+ * platforms account for it differently, and on the one that shrinks the LAYOUT
+ * viewport the offset is 0 for the whole cycle.
+ */
+describe("viewport — how much of the bottom edge the platform covers", () => {
+  it("sees a keyboard that shrank the VISUAL viewport (iOS Safari)", () => {
+    // innerHeight stays put; visualViewport carries the whole keyboard.
+    expect(coveredAtBottom(812, 812, 376)).toBe(376);
+  });
+
+  it("sees a keyboard that shrank the LAYOUT viewport (iOS standalone, settled)", () => {
+    // The measured settled state: both collapsed to 436, so the offset is 0
+    // and only the drop from the unobstructed height shows the keyboard.
+    expect(coveredAtBottom(436, 812, 0)).toBe(376);
+  });
+
+  it("sees a keyboard on Chromium's interactive-widget=resizes-content", () => {
+    // Measured on the in-cluster Android emulator: 783 -> 471, offset stays 0.
+    expect(coveredAtBottom(471, 783, 0)).toBe(312);
+  });
+
+  it("is 0 with no keyboard, and never negative", () => {
+    expect(coveredAtBottom(812, 812, 0)).toBe(0);
+    // A taller viewport than anything seen before (rotation, a resized window).
+    expect(coveredAtBottom(900, 812, 0)).toBe(0);
+  });
+
+  it("does not call browser-chrome jitter a keyboard", () => {
+    // An iOS URL bar is ~50-90px; the smallest phone keyboard is ~216px.
+    expect(coveredAtBottom(812 - 90, 812, 0)).toBeLessThan(KEYBOARD_MIN_PX);
+    expect(coveredAtBottom(812 - 216, 812, 0)).toBeGreaterThanOrEqual(KEYBOARD_MIN_PX);
+  });
+});
+
+describe("viewport — the safe-area inset is dropped while the keyboard is up", () => {
+  function withViewport(
+    innerHeight: number,
+    vvHeight: number,
+    run: (set: (innerH: number, vvH: number) => void) => void,
+  ): void {
+    let ih = innerHeight;
+    let vh = vvHeight;
+    const realInner = Object.getOwnPropertyDescriptor(window, "innerHeight");
+    const realVv = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    // Run the coalescing frame inline so an assertion can read the class the
+    // event just produced.
+    const realRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    }) as typeof requestAnimationFrame;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      get: () => ih,
+    });
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        get height() {
+          return vh;
+        },
+        offsetTop: 0,
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    });
+    try {
+      run((nextInner, nextVv) => {
+        ih = nextInner;
+        vh = nextVv;
+      });
+    } finally {
+      globalThis.requestAnimationFrame = realRaf;
+      if (realInner) Object.defineProperty(window, "innerHeight", realInner);
+      if (realVv) Object.defineProperty(window, "visualViewport", realVv);
+      else delete (window as unknown as Record<string, unknown>).visualViewport;
+      document.body.classList.remove("tl-kb-up");
+    }
+  }
+
+  const flagged = (): boolean => document.body.classList.contains("tl-kb-up");
+
+  it("is not set with no keyboard", () => {
+    withViewport(812, 812, () => {
+      const stop = installViewportSync();
+      expect(flagged()).toBe(false);
+      stop();
+    });
+  });
+
+  it("is set once the layout viewport collapses (the measured iPhone state)", () => {
+    withViewport(812, 812, (set) => {
+      const stop = installViewportSync();
+      set(436, 436);
+      window.dispatchEvent(new Event("resize"));
+      expect(flagged()).toBe(true);
+      stop();
+    });
+  });
+
+  it("is set when only the visual viewport shrinks (iOS Safari)", () => {
+    withViewport(812, 812, (set) => {
+      const stop = installViewportSync();
+      set(812, 436);
+      window.dispatchEvent(new Event("resize"));
+      expect(flagged()).toBe(true);
+      stop();
+    });
+  });
+
+  it("clears again when the keyboard closes", () => {
+    withViewport(812, 812, (set) => {
+      const stop = installViewportSync();
+      set(436, 436);
+      window.dispatchEvent(new Event("resize"));
+      set(812, 812);
+      window.dispatchEvent(new Event("resize"));
+      expect(flagged()).toBe(false);
+      stop();
+    });
+  });
+
+  it("re-learns the unobstructed height after a rotation", () => {
+    // The tallest height seen is only meaningful for one orientation: landscape
+    // is shorter than portrait everywhere, and it must not read as a keyboard.
+    const realW = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    withViewport(812, 812, (set) => {
+      const stop = installViewportSync();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 812 });
+      set(390, 390); // rotated: the short side is now the height
+      window.dispatchEvent(new Event("orientationchange"));
+      expect(flagged()).toBe(false);
+      stop();
+    });
+    if (realW) Object.defineProperty(window, "innerWidth", realW);
   });
 });
