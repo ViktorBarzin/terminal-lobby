@@ -6,12 +6,22 @@
  * response content-type to route ext-less images / true binaries WITHOUT
  * downloading their bodies.
  */
-import { fileListUrl, fileReadUrl, fileWriteUrl } from "./config";
+import { fileListUrl, fileWriteUrl } from "./config";
+import { previewContentUrl } from "./attachments";
 import {
   byteLength,
   classifyFile,
   type RendererKind,
 } from "../store/preview.logic";
+
+/**
+ * Where one path's bytes are read from. The file-api serves anything under the
+ * caller's home; a path in the per-(user, session) clipboard store is outside
+ * every home, so it is read through clipboard-upload's own routes instead
+ * (lib/attachments.ts owns that decision, and the preview component builds its
+ * <img>/<embed> src from the same function).
+ */
+export const contentUrl = previewContentUrl;
 
 export class FileApiError extends Error {
   constructor(
@@ -38,8 +48,8 @@ export interface FileEntry {
 }
 
 /** A resolved file ready to render. `text` is set for markdown/html/code;
- *  `size` for binary (and text when known). Image bytes are never fetched here —
- *  the component points an <img> at fileReadUrl(path). */
+ *  `size` for binary (and text when known). Image and pdf bytes are never fetched
+ *  here — the component points an <img> or an <embed> at contentUrl(path). */
 export interface LoadedFile {
   kind: RendererKind;
   language?: string;
@@ -117,7 +127,9 @@ export const IMAGE_DECODE_MESSAGE = "Couldn't load image.";
  */
 export async function imageErrorMessage(path: string): Promise<string> {
   try {
-    const resp = await fetch(fileReadUrl(path), { credentials: "same-origin" });
+    const url = contentUrl(path);
+    if (!url) return IMAGE_DECODE_MESSAGE;
+    const resp = await fetch(url, { credentials: "same-origin" });
     if (resp.ok) {
       await resp.body?.cancel().catch(() => {});
       return IMAGE_DECODE_MESSAGE;
@@ -161,8 +173,13 @@ export async function readFile(path: string, name = path): Promise<LoadedFile> {
   // we avoid a redundant round-trip. A broken path surfaces via <img> onerror.
   const byName = classifyFile(name);
   if (byName.kind === "image") return { kind: "image" };
+  // A pdf is loaded by URL too (the browser's own viewer in an <embed>), so
+  // fetching it here would download the whole document a second time.
+  if (byName.kind === "pdf") return { kind: "pdf" };
 
-  const resp = await fetch(fileReadUrl(path), { credentials: "same-origin" });
+  const url = contentUrl(path);
+  if (!url) throw new FileApiError(400, readErrorMessage(400, ""));
+  const resp = await fetch(url, { credentials: "same-origin" });
   if (!resp.ok) {
     // 400 is the only status whose body distinguishes anything worth saying (a
     // directory, vs the three refusals that stay deliberately vague), so it is

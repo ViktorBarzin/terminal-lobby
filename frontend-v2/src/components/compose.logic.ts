@@ -132,3 +132,23 @@ export function modeLabel(mode: string): string {
       return mode;
   }
 }
+
+/**
+ * The message an attachment-carrying composer sends (design decision 9): each
+ * path on its own line, then the prose.
+ *
+ * Paths FIRST so Claude has the files before the instruction that refers to
+ * them, and one per line so a bubble reads as attachments-then-message.
+ * Newlines are safe because session-events pastes the prompt in bracketed mode
+ * and submits with a separate Enter (sessionio/tmux.go) — inside a bracketed
+ * paste a newline is a soft newline, not a submit.
+ *
+ * Returns "" when there is nothing to send, which is what the caller checks
+ * instead of testing the text alone: attachments with no prose is a valid send.
+ */
+export function composeMessage(text: string, paths: readonly string[]): string {
+  const body = text.trim();
+  const unique = [...new Set(paths)];
+  if (unique.length === 0) return body;
+  return [...unique, ...(body ? [body] : [])].join("\n");
+}
