@@ -37,6 +37,7 @@ import { clampFontSize, type PrefsStore } from "../store/prefs";
 import { listDir as fileList } from "../lib/file-api";
 import { uploadBlob, uploadField } from "../clipboard/upload";
 import { attachmentKind } from "../lib/attachments";
+import type { ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 
 /**
@@ -396,9 +397,10 @@ export const SessionView: Component<{
     onCleanup(dispose);
   });
 
-  /** The composer's tray-add, handed over when the Text view mounts. Files
-   *  dropped on the WINDOW arrive here rather than in the composer. */
-  let trayAdd: ((items: DraftAttachment[]) => void) | undefined;
+  /** The composer's sinks, handed over when the Text view mounts. Every gesture
+   *  that lands OUTSIDE the composer arrives through these: a window drop, the
+   *  Paste button, the ⌘V chord, the command palette, a gallery tile. */
+  let composer: ComposerSinks | undefined;
 
   // ---- image clipboard subsystem (design pillar #2 — Gallery/Images) -------
   // Paste path + full-screen drop-target: an image paste/drop uploads to the
@@ -438,13 +440,36 @@ export const SessionView: Component<{
       props.notify?.(inertReason(), "info");
       return true;
     }
+    // Routed on the ACTIVE VIEW, like every other intake (design 2026-08-17
+    // decision 5). This routine is what the Paste BUTTON, the ⌘V chord, the
+    // soft-keys and the command palette all take, and it still pointed at the
+    // pty after the first deploy — so in text mode a pasted screenshot uploaded
+    // and put its path on a terminal input line the reader could not see. On a
+    // phone that button is the only way to paste, which is where the report came
+    // from. `watch()` is already answered above, so the composer is drivable
+    // whenever text mode is showing and it has registered.
+    const toComposer = mode() === "text" ? composer : undefined;
     void pasteIntoTerminal({
-      sendPasteText: (t) => window.__tlPasteToTerminal?.(t) ?? false,
-      uploadFiles: image.uploadFiles,
-      // The advice when a read is refused has to match the device: a phone has
-      // no ⌘/Ctrl-V, but it does have a long-press Paste that needs no
-      // permission at all.
+      sendPasteText: (t) => {
+        if (toComposer) {
+          toComposer.insertText(t);
+          return true;
+        }
+        return window.__tlPasteToTerminal?.(t) ?? false;
+      },
+      uploadFiles: async (files) => {
+        if (!toComposer) {
+          await image.uploadFiles(files, "picker");
+          return;
+        }
+        const added = await attachFiles(files);
+        if (added.length) toComposer.add(added);
+      },
+      // The advice when a read is refused has to match the device AND the view:
+      // a phone has no ⌘/Ctrl-V but does have a long-press Paste, and in text
+      // mode the terminal is not on screen to long-press.
       coarsePointer: coarse(),
+      surface: toComposer ? "composer" : "terminal",
     });
     return true;
   };
@@ -460,9 +485,9 @@ export const SessionView: Component<{
   // The 🖼 gallery is a lobby overlay and the tray belongs to the composer, so
   // neither has a handle on the other. Same bridge the paste routine uses.
   const attachToComposer = (items: DraftAttachment[]): boolean => {
-    if (!trayAdd || watch()) return false;
+    if (!composer || watch()) return false;
     if (mode() !== "text") setMode("text");
-    trayAdd(items);
+    composer.add(items);
     return true;
   };
   let prevAttach: typeof window.__tlAttachToComposer;
@@ -764,7 +789,7 @@ export const SessionView: Component<{
             me={props.me?.() ?? ""}
             onAttach={attachFiles}
             inertReason={inertReason()}
-            register={(add) => (trayAdd = add)}
+            register={(api) => (composer = api)}
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
