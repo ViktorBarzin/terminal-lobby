@@ -228,7 +228,8 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 | `devvm/show-image` | DevVM, `/usr/local/bin/show-image`, run inside sessions | — | Shows an image at the terminal. Inside tmux: temporary split pane running `viu` (sixel; Enter closes) — the reliable path for Claude/agents, whose captured stdout breaks bare `viu` — then fire-and-forgets a localhost `/register` so the image joins the session gallery. Outside tmux: plain `viu`. See "Showing images in sessions" |
 | `devvm/ttyd.service`, `ttyd-ro.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units. `ttyd` :7681 serves the lobby; `ttyd-ro` :7682 is the read-only view. (`ttyd-v2` :7687 served the retired terminal-dev canary and was removed 2026-08-16.) |
 | `devvm/clipboard-cleanup.service` + `.timer` + `clipboard-store-clean` | DevVM | — | Daily retention sweep: store dirs live while their session does (live tmux or saved layout) + 30-day `.deleted-at` grace; `_unsorted` 90 d; `/tmp/clipboard-files` 7 d |
-| `devvm/ttyd-user-map`, `sudoers.d-ttyd-users` | `/etc/` on DevVM | — | Authentik → OS-user mapping + sudo grant |
+| `devvm/sudoers.d-ttyd-users` | `/etc/sudoers.d/ttyd-users` on DevVM | — | The per-user sudo grant every attach depends on. Hand-maintained here; validated with `visudo -cf` on install |
+| *(not in this repo)* `/etc/ttyd-user-map`, `/etc/ttyd-admins` | `/etc/` on DevVM | — | The Authentik → OS-user mapping and the admin list, **generated** from `infra/scripts/workstation/roster.yaml` by the hourly `t3-provision-users` reconcile. Read by every service here; written by nothing here (see "Per-user setup") |
 | `devvm/start-claude.sh` | Per-user, e.g. `/home/bob/` | — | Optional Claude-Code launcher invoked by tmux `default-command` |
 
 ## How a request flows
@@ -407,12 +408,31 @@ Until then: `./scripts/deploy.sh` after each push.
 
 ## Per-user setup
 
-Adding a new user (`auth_local_name` → `os_user`):
+**The identity map lives in one place, and it is not this repo.**
+`infra/scripts/workstation/roster.yaml` is the source of truth for who exists
+(`os_user` → `authentik_user` / `k8s_user` / `tier`); `roster_engine.py` derives
+`/etc/ttyd-user-map` and `/etc/ttyd-admins` from it and the hourly
+`t3-provision-users` reconcile installs them, alongside creating the OS account.
+Every service here reads that map and none of them write it. This repo carried a
+second copy at `devvm/ttyd-user-map` until 2026-08-17, installed on every
+`deploy.sh`; it had drifted from the roster, so it was removed rather than
+re-synced. Do not add it back — a user added to a file here would not exist to
+`t3-dispatch`, and a user removed from the roster would come back on the next
+deploy.
 
-1. Append `auth_local_name=os_user` to `devvm/ttyd-user-map`.
-2. Append `wizard ALL=(os_user) NOPASSWD: /usr/bin/tmux` to `devvm/sudoers.d-ttyd-users`.
-3. Ensure the OS user exists: `useradd -m os_user`.
-4. (Optional) Copy `devvm/start-claude.sh` into the user's home and reference it from their `~/.tmux.conf` via `set -g default-command "$HOME/start-claude.sh"`.
+Adding a new user:
+
+1. **Add them to `roster.yaml`** in the infra repo and let the reconcile run (or
+   run it: `sudo /home/wizard/code/infra/scripts/t3-provision-users.sh`). That
+   creates the account and regenerates the map and the admin list.
+2. **Append their sudo grant** to `devvm/sudoers.d-ttyd-users` here — one
+   `wizard ALL=(os_user) NOPASSWD: …` line, copying an existing user's binary
+   list — and deploy. This step is deliberately by hand and deliberately
+   separate: the roster says who exists, this file says what may be run as them.
+   **A roster entry alone is not enough.** Without the grant the user reaches the
+   lobby and sees their sidebar, but every attach fails, because `tmux-attach.sh`
+   cannot `sudo -u` into their account.
+3. (Optional) Copy `devvm/start-claude.sh` into the user's home and reference it from their `~/.tmux.conf` via `set -g default-command "$HOME/start-claude.sh"`.
 
 The K8s + Terraform side (services, endpoints, ingress, Traefik
 middlewares) lives in the `infra` repo at `infra/stacks/terminal/`.
