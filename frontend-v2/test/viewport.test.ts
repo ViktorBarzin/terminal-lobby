@@ -172,3 +172,94 @@ describe("viewport — a re-measure after the viewport settles", () => {
     }
   });
 });
+
+/**
+ * The document must never hold a scroll offset.
+ *
+ * Measured on an iPhone-26 installed PWA (85 records, 2026-08-17). Focusing the
+ * Text composer made iOS do two things at once: collapse window.innerHeight to
+ * the visual viewport (812 -> 436) AND scroll the document by 376px to bring
+ * the field "into view". The shell follows innerHeight, so it collapsed too,
+ * and the 376px scroll carried it off the top — the composer measured at
+ * -90,-25, above the screen. iOS then unwound both over FOURTEEN SECONDS
+ * (innerH 436->454->501->…->812, docScroll 376->0), which is the whole of the
+ * "everything scrolls" experience.
+ *
+ * The layout is invariant if that scroll is simply never held: across the same
+ * 85 samples, `innerH + vvTop` is a constant 812 and `vvH` a constant 436, so
+ * with the offset at 0 the reservation lands the composer at the same place in
+ * every frame of the animation.
+ *
+ * The page has no scrollable overflow of its own (html/body overflow:hidden,
+ * #root a fixed height) — any offset here is the platform's doing, not a
+ * reader's, so resetting it can never throw away a scroll position someone
+ * chose.
+ */
+describe("viewport — the document never holds a scroll offset", () => {
+  const scroller = (): HTMLElement =>
+    (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
+
+  it("resets a scroll the platform imposed", () => {
+    const stop = installViewportSync();
+    scroller().scrollTop = 376;
+    window.dispatchEvent(new Event("scroll"));
+    stop();
+    expect(scroller().scrollTop).toBe(0);
+  });
+
+  it("resets on a viewport resize too — the keyboard fires both", () => {
+    const stop = installViewportSync();
+    scroller().scrollTop = 200;
+    window.dispatchEvent(new Event("resize"));
+    stop();
+    expect(scroller().scrollTop).toBe(0);
+  });
+
+  it("leaves an already-zero offset alone", () => {
+    const stop = installViewportSync();
+    scroller().scrollTop = 0;
+    window.dispatchEvent(new Event("resize"));
+    stop();
+    expect(scroller().scrollTop).toBe(0);
+  });
+});
+
+/**
+ * The field data itself, as a regression test.
+ *
+ * These are real (innerHeight, visualViewport.height) pairs sampled from an
+ * iPhone-26 installed PWA while iOS animated the keyboard open — the sequence
+ * that put the Text composer above the top of the screen for fourteen seconds.
+ * `innerHeight` crawls from the visual viewport back to the full layout
+ * viewport; the visual viewport itself never moves.
+ *
+ * With the platform's scroll offset removed, the surface that has to clear the
+ * keyboard lands in the SAME place in every frame. If a future change makes
+ * that untrue, the keyboard animation becomes visible movement again.
+ */
+describe("viewport — the iPhone keyboard animation, replayed", () => {
+  // Sampled 2026-08-17; vvHeight held 436 across all of them.
+  const FRAMES = [436, 454, 501, 564, 625, 686, 743, 766, 793, 809, 812];
+  const VV_H = 436;
+  const CHROME = 51 + 34; // --sk-h + the measured safe-area inset
+
+  it("puts the composer in one place across the whole animation", () => {
+    const bottoms = FRAMES.map((innerH) => {
+      const kb = keyboardOffset(innerH, VV_H, 0);
+      return innerH - (CHROME + kb); // where .tl-views ends
+    });
+    expect(new Set(bottoms).size).toBe(1);
+    expect(bottoms[0]).toBe(VV_H - CHROME); // 351, as measured on the device
+  });
+
+  it("would NOT be stable if the platform's offset were left in", () => {
+    // The same frames with the offset iOS actually imposed (innerH + top = 812
+    // throughout) move the surface by hundreds of pixels — the reported bug.
+    const bottoms = FRAMES.map((innerH) => {
+      const top = 812 - innerH;
+      return innerH - (CHROME + keyboardOffset(innerH, VV_H, top)) - top;
+    });
+    expect(new Set(bottoms).size).toBeGreaterThan(1);
+    expect(Math.min(...bottoms)).toBeLessThan(0); // off the top of the screen
+  });
+});
