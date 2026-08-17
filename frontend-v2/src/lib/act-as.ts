@@ -14,11 +14,14 @@
  *
  * Takes the current URL and returns the switched one, preserving other query
  * parameters (`?api=`, `?terminal=` — a canary or a remote devvm stays pointed
- * where it was) and dropping the hash.
+ * where it was) and dropping everything that names a session.
  *
- * The hash names the selected session. It is dropped deliberately: it refers to
- * a session in the identity you are LEAVING, and carrying it across would ask
- * the new lobby to select a session that is very likely not there.
+ * BOTH the hash and `?session=` are dropped, because `readInitialSelection`
+ * reads them as one thing: they refer to a session in the identity you are
+ * LEAVING, and carrying one across asks the new lobby to open a session that is
+ * very likely not there. On 2026-08-17 a surviving `?session=` did exactly that
+ * — the switched page opened wizard's `Council-tax` one second after the switch,
+ * under emo, where the attach path then created it.
  */
 export function actAsUrl(currentUrl: string, target: string): string {
   const u = new URL(currentUrl, "http://localhost");
@@ -27,6 +30,7 @@ export function actAsUrl(currentUrl: string, target: string): string {
   } else {
     u.searchParams.delete("as");
   }
+  u.searchParams.delete("session");
   u.hash = "";
   // Relative form, so this works the same against a real origin and a test one.
   return u.pathname + u.search;

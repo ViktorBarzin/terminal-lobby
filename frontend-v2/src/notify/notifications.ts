@@ -57,6 +57,7 @@ import {
   type DeviceSubscriptionState,
 } from "../pwa/push";
 import { track } from "../telemetry/track";
+import { ACT_AS } from "../lib/config";
 
 type ToastKind = "info" | "error" | "warning" | "success";
 type ToastFn = (message: string, kind: ToastKind) => void;
@@ -182,8 +183,17 @@ export function createNotificationSystem(
   // the SW: a service worker cannot reach the telemetry batcher, and without this
   // event "did my tap land on the right session?" was unanswerable from the
   // journal — the cold/stash path below has always emitted it.
+  // A tab acting as someone else takes NEITHER handoff. Push subscriptions
+  // resolve the real caller (that carve-out is what keeps a lens from enrolling
+  // this browser as one of their devices), so every notification names one of
+  // YOUR sessions — and opening your session name inside a lens opens it under
+  // THEIR identity. Your own tab still receives the tap; the cold stash is left
+  // unread rather than cleared so it is still there for it.
+  const lens = ACT_AS !== "";
+
   const sw = registerServiceWorker({
     onActivateSession: (name) => {
+      if (lens) return;
       track("notify.clicked", { "tl.session": name });
       opts.onActivateSession(name);
     },
@@ -194,6 +204,7 @@ export function createNotificationSystem(
   // notificationclick), the SW stashed the tapped session — consume it and land
   // there, but only when fresh and nothing else is already selected.
   onMount(async () => {
+    if (lens) return;
     const pending = await readAndClearPendingSession();
     if ((await stashIsActionable(pending)) && opts.selected() == null) {
       const session = pending!.session;
