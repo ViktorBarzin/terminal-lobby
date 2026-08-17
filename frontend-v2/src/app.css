@@ -1811,11 +1811,23 @@ body.tl-kb-up {
 .tl-preview-error {
   color: var(--danger);
 }
+/* An image is the one previewed kind with a natural size, so the panel hugs it
+   rather than standing at its full height with the picture centred between two
+   empty bands (Viktor's screenshot, 2026-08-17). max-height still caps a tall
+   one, and the body keeps its own scroll for the overflow.
+   Deliberately NOT applied to every kind: .tl-preview-browse has no height of
+   its own, so a directory listing would resize the panel as you walk the tree. */
+.tl-preview-panel[data-kind="image"] {
+  height: auto;
+}
 .tl-preview-image {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100%;
+}
+.tl-preview-panel[data-kind="image"] .tl-preview-image {
+  min-height: 0;
 }
 .tl-preview-image img {
   max-width: 100%;
