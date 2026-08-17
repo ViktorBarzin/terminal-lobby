@@ -127,6 +127,19 @@ func main() {
 			State string `json:"state"`
 		}{text, injector.State(osUser, session)})
 	})
+	// The slash commands this session can run that the CLI does not build in:
+	// the user's skills and custom commands, the project's, and those of the
+	// plugins they have switched on. The composer offers them beside the
+	// built-ins it ships, so an unreachable catalogue costs completion of
+	// /help and /clear nothing.
+	web.HandleFunc("GET /commands/{session}", func(w http.ResponseWriter, r *http.Request) {
+		cmds, ok := rg.catalogue(osUserFrom(r.Context()), r.PathValue("session"))
+		if !ok {
+			http.Error(w, "session not registered", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, cmds)
+	})
 	// The answer to a blocking prompt, typed into the pane. sessionio.Injector
 	// allowlists the keys; anything outside the answer alphabet is refused there.
 	web.HandleFunc("POST /keys/{session}", func(w http.ResponseWriter, r *http.Request) {

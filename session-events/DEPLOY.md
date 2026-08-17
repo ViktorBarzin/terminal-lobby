@@ -26,7 +26,7 @@ install.
 | Piece | State |
 |---|---|
 | systemd unit on the devvm | installed, `enable --now`, listening on `:7685` |
-| Ingress | `terminal.viktorbarzin.me` routes `PathPrefix(/events/)`, `/prompt/` and `/cancel/` here behind Authentik (`infra/stacks/terminal/main.tf`). No strip — the service serves those at its root |
+| Ingress | `terminal.viktorbarzin.me` routes `PathPrefix(/events/)`, `/prompt/`, `/cancel/`, `/earlier/`, `/result/`, `/pane/`, `/keys/` and `/commands/` here behind Authentik (`infra/stacks/terminal/main.tf`). No strip — the service serves those at its root |
 | `SessionStart` hook | wired org-wide: `/usr/local/bin/claude-se-hook session-start` in `/etc/claude-code/managed-settings.json`, installed by `scripts/deploy.sh`. It registers (user, tmux session) so the SSE handler can find the transcript to tail |
 
 `/hooks/*` is **never** routed publicly, and the session-start handler is
