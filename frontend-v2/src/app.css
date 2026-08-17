@@ -1284,6 +1284,18 @@ body {
       var(--sk-h, 50px) + var(--kb-offset, 0px) + env(safe-area-inset-bottom)
     );
   }
+  /* TERMINAL view: leave the keyboard OUT of the reservation.
+     The focused field in this view is the ghost mirror INSIDE the terminal
+     iframe, so shrinking this container by the keyboard height moved the iframe
+     out from under the tap that had just focused it — the tap's delayed compat
+     mousedown then landed on a non-focusable shell element and blurred the
+     field, and the keyboard flashed shut for any tap below ~54% of the screen
+     (measured 390x844: this container's bottom edge jumped 793 -> 457).
+     The frame is told the height instead (tl-kb) and shrinks its own terminal,
+     so the prompt still clears the keyboard and the frame stays put. */
+  body.has-soft-keys .tl-views.tl-kb-inline {
+    margin-bottom: calc(var(--sk-h, 50px) + env(safe-area-inset-bottom));
+  }
   /* 16px blocks iOS Safari's focus auto-zoom on the compose field. */
   .tl-composer-input {
     font-size: 16px;

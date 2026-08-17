@@ -314,6 +314,9 @@ export const SessionView: Component<{
   onMount(() => {
     const dispose = installViewportSync({
       onRefit: () => window.__tlRefitTerminal?.(),
+      // The terminal frame reserves the keyboard's space itself — see
+      // .tl-kb-inline in app.css and keyboardReserve in term.html.
+      onKeyboard: (px) => window.__tlKeyboardOffset?.(px),
     });
     onCleanup(dispose);
   });
@@ -590,7 +593,11 @@ export const SessionView: Component<{
         />
       </div>
 
-      <main class="tl-views">
+      {/* tl-kb-inline: while the TERMINAL view shows, this container does NOT
+          reserve room for the soft keyboard — the frame does it internally, so
+          the frame never moves out from under the tap that opened the keyboard.
+          The Text view keeps the reservation: its composer is out here. */}
+      <main class="tl-views" classList={{ "tl-kb-inline": mode() === "terminal" }}>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "text" }} aria-hidden={mode() !== "text"}>
           <TextView
             events={store.events}
