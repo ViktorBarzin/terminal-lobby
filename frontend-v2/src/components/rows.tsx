@@ -380,6 +380,10 @@ export const PlanRowView: Component<{ row: PlanRow }> = (props) => (
   </div>
 );
 
+/* Keyed by the whole MetaKind because the wire contract carries all of them.
+   `mode` and `permission-mode` no longer reach this view — deriveRows drops
+   them, since the composer's chip already shows the mode in force — but the
+   record stays total so a new kind cannot be added without a label. */
 const META_LABEL: Record<MetaRow["meta"], string> = {
   mode: "mode",
   "permission-mode": "permissions",
