@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,27 +95,42 @@ func TestTitleStoreForget(t *testing.T) {
 }
 
 // The store outlives the sessions it describes on purpose — that is what makes
-// a title survive a reboot. Pruning is what stops it growing without bound, and
-// it must keep a name that is merely NOT RUNNING RIGHT NOW, since that is
-// exactly the session a restore is about to bring back.
-func TestTitleStorePruneKeepsWhatRestoreStillNeeds(t *testing.T) {
+// a title survive a reboot — so something has to stop it growing forever. An
+// entry goes when its session is deliberately killed; what accumulates is
+// titles of sessions that died without one and were never restored.
+func TestTitleStoreStaysWithinItsBudget(t *testing.T) {
 	s := titlesFixture(t)
-	mustSet(t, s, "wizard", "live", "Live one")
-	mustSet(t, s, "wizard", "restorable", "In a snapshot")
-	mustSet(t, s, "wizard", "gone", "Not anywhere")
-
-	keep := map[string]bool{"live": true, "restorable": true}
-	if err := s.prune("wizard", keep); err != nil {
-		t.Fatalf("prune: %v", err)
+	for i := 0; i < titlesKeep+50; i++ {
+		mustSet(t, s, "wizard", fmt.Sprintf("session-%d", i), fmt.Sprintf("Title %d", i))
 	}
-	for name, want := range map[string]string{
-		"live":       "Live one",
-		"restorable": "In a snapshot",
-		"gone":       "",
-	} {
-		if got := s.get("wizard", name); got != want {
-			t.Errorf("after prune, %s = %q, want %q", name, got, want)
-		}
+	set, err := s.loadForTest("wizard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.Titles) != titlesKeep {
+		t.Fatalf("store holds %d entries, want the %d budget", len(set.Titles), titlesKeep)
+	}
+	// The OLDEST go first: the newest writes are the sessions most likely to
+	// still be restorable.
+	if got := s.get("wizard", "session-0"); got != "" {
+		t.Errorf("the oldest entry survived the prune: %q", got)
+	}
+	if got := s.get("wizard", fmt.Sprintf("session-%d", titlesKeep+49)); got == "" {
+		t.Error("the newest entry was pruned")
+	}
+}
+
+// A session that is merely NOT RUNNING must keep its title — that is exactly
+// the session a restore is about to bring back, and it is why the bound is a
+// generous count rather than "is this name live right now".
+func TestTitleStoreKeepsTitlesOfSessionsThatAreNotRunning(t *testing.T) {
+	s := titlesFixture(t)
+	mustSet(t, s, "wizard", "long-dead-but-restorable", "Still wanted")
+	for i := 0; i < 50; i++ {
+		mustSet(t, s, "wizard", fmt.Sprintf("other-%d", i), "Other")
+	}
+	if got := s.get("wizard", "long-dead-but-restorable"); got != "Still wanted" {
+		t.Errorf("a dormant session lost its title: %q", got)
 	}
 }
 
