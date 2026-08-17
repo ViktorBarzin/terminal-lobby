@@ -1,11 +1,18 @@
 # Attachments in the text view: photos and docs render in the chat
 
-**Status:** Approved design, executing
+**Status:** Shipped — deployed and verified 2026-08-17
 **Date:** 2026-08-17 · **Owner:** wizard
 **Grilled from:** *"let's work on the uploading of files in text mode. right now
 it seems to still use the old upload then share path but the path is copied to
 the terminal view not text view. uploading photos and docs in the text view
 should render them in the chat inline."*
+
+```stats
+14 | decisions interview-locked
+25 MB | cap on a stored document
+320 px | tallest an image draws in a bubble
+30 days | grace a document rides after its session dies
+```
 
 ## Goal
 
@@ -55,7 +62,7 @@ it correctly regardless.
 
 | Fact | Where | Consequence |
 |---|---|---|
-| Stored images are served by `GET /clipboard/img/<session>/<name>`, resolved inside **the caller's own** store directory | `clipboard-upload/main.go` | A path naming another user's store cannot be served, and must not silently resolve to your own same-named file |
+| Stored images are served by `GET /clipboard/img/<session>/<name>`, resolved inside **the caller's own** store directory | `clipboard-upload/main.go` | A path naming another user's store cannot be served, and must not be resolved as your own same-named file |
 | `file-api` confines every path to the caller's home | `file-api/paths.go` | It cannot read `/var/lib/clipboard-store/…` or `/tmp/clipboard-files/…` |
 | Non-image uploads have **no** read-back route | `clipboard-upload/main.go` | A doc cannot be rendered or previewed until one exists |
 | `GET /clipboard/list` returns every regular non-dotfile in the store directory | `clipboard-upload/main.go` | Docs written there would appear in the gallery as undecodable thumbnails |
@@ -122,8 +129,8 @@ Fourteen decisions were interview-locked.
 
 4. **A doc chip opens the file preview, and the preview learns PDF.** The
    overlay already renders markdown, html, code and plain text. It gains a
-   `pdf` kind rendered by the browser's own viewer, so the most likely doc is
-   not one click from a dead end.
+   `pdf` kind rendered by the browser's own viewer, so the document most likely
+   to be attached renders instead of reporting that no preview is available.
 
 5. **Intake routes on the active view.** Text view sends paste, drop and the
    picker to the tray; Terminal view types the path at the pty exactly as
@@ -224,6 +231,32 @@ Fourteen decisions were interview-locked.
 
 - **📎 is disabled under a watch-mode lock**, with the same treatment as the
   other controls that type. A Lens always watches, so it never attaches.
+
+## What shipped
+
+Deployed 2026-08-17: `clipboard-upload` via `scripts/deploy.sh`, the SPA via
+`scripts/deploy-v2.sh`, both at `ded5749`. No infra change was needed — the
+ingress matches `PathPrefix(/clipboard/)` and strips the prefix, so
+`/clipboard/file/…` reached the new handler as soon as the binary landed.
+
+**One decision was refined while building it.** Decision 7 says "any absolute
+path with a known extension". Taken literally that includes `.ts`, `.go` and
+`.md`, and an agent transcript is mostly Claude naming source files — every one
+of them would have become a chip. The rule as built is narrower outside the
+store: images (so a plot Claude drew still shows up, which is what the decision
+was for) and document formats a person attaches and cannot read as text. Inside
+the store, anything renders, because the user put it there. Source paths keep
+the affordance they already had: the tool row that read them opens the preview.
+
+**Verified against the deployed stack**, not only in tests: a document uploads
+and comes back through the new route with `nosniff` and an inline disposition,
+while an HTML upload is forced to download and is refused outright by the image
+route; `/list` shows the image and not the document; another user gets 403. In a
+browser driving the deployed page, the tray renders a thumbnail the browser
+decoded from the live store, a PDF chip opens the browser's own viewer, and the
+timeline draws the image in all three shapes the design asks for — our
+paths-first send, a historical mid-sentence path, and Claude's own prose — while
+a path inside a fence stays a command and a source path stays text.
 
 ## Open questions
 
