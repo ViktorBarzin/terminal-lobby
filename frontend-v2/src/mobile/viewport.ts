@@ -30,6 +30,37 @@ export function keyboardOffset(
   return Math.max(0, innerHeight - vvHeight - vvOffsetTop);
 }
 
+/**
+ * How much the SHELL must still give up for the soft keyboard, measured rather
+ * than assumed. PURE + parameterized for unit testing.
+ *
+ *   reserve = max(0, shellBottom − (visualViewport.offsetTop + height))
+ *
+ * `keyboardOffset` above answers "how far off the bottom must a fixed accessory
+ * sit", which is right for the soft-key row and the terminal's own bar. This
+ * answers a different question: how much of the SHELL the keyboard covers —
+ * and the two are not the same number whenever something has already shortened
+ * the shell.
+ *
+ * That "something" varies by platform: iOS Safari leaves the layout viewport
+ * alone, Chromium shrinks it (interactive-widget=resizes-content, set in
+ * index.html), and the iOS standalone PWA is its own case again. Subtracting a
+ * modelled keyboard height from a shell that had already shrunk reserved it
+ * TWICE and put the Text composer near the top of the screen with a dead gap
+ * above the keyboard (reported 2026-08-17; reproduced at 390x844 with the
+ * composer at 9% of the screen and 368px of nothing below it).
+ *
+ * Measuring where the shell actually ends removes the guess: a shell that
+ * already clears the keyboard reserves nothing, whatever put it there.
+ */
+export function keyboardReserve(
+  shellBottom: number,
+  vvHeight: number,
+  vvOffsetTop: number,
+): number {
+  return Math.max(0, shellBottom - (vvOffsetTop + vvHeight));
+}
+
 export interface ViewportSyncOptions {
   /** Debounced callback after the viewport settles (e.g. re-fit the terminal). */
   onRefit?: () => void;
@@ -77,6 +108,17 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
     const kb = keyboardOffset(window.innerHeight, h, top);
     const root = document.documentElement.style;
     root.setProperty("--kb-offset", kb + "px");
+    // --kb-reserve: how much of the SHELL the keyboard covers, measured off the
+    // shell's real box rather than derived from innerHeight. Distinct from
+    // --kb-offset, which positions FIXED accessories — see keyboardReserve.
+    // Falls back to --kb-offset's answer when there is no shell to measure
+    // (a test, or a mount before the element exists), which is the historic
+    // behaviour.
+    const shell = document.getElementById("root");
+    root.setProperty(
+      "--kb-reserve",
+      (shell ? keyboardReserve(shell.getBoundingClientRect().bottom, h, top) : kb) + "px",
+    );
     if (kb !== lastKb) {
       lastKb = kb;
       opts.onKeyboard?.(kb);
