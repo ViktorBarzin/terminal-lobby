@@ -1,7 +1,14 @@
 import { createMemo, type Component } from "solid-js";
 import { SolidMarkdown, type SolidMarkdownComponents } from "solid-markdown";
+import type { PluggableList } from "unified";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
+import {
+  contentUrlFor,
+  segmentMessage,
+  storedDisplayName,
+  type Segment,
+} from "../lib/attachments";
 import { Mermaid } from "./Mermaid";
 import { CodeView } from "./CodeView";
 import { fileReadUrl } from "../lib/config";
@@ -20,11 +27,13 @@ import { fileReadUrl } from "../lib/config";
  *   - custom `img`: lazy, constrained inline images.
  */
 
-/** Minimal hast shape — avoids depending on @types/hast directly. */
+/** Minimal hast shape — avoids depending on @types/hast directly. Widened for
+ *  rehypeAttachments, which BUILDS nodes as well as reading them. */
 interface HastNode {
   type?: string;
+  tagName?: string;
   value?: string;
-  properties?: { className?: unknown };
+  properties?: Record<string, unknown> & { className?: unknown };
   children?: HastNode[];
 }
 
@@ -77,6 +86,89 @@ const imgFor =
     />
   );
 
+/**
+ * Turn bare absolute paths in Claude's prose into attachments
+ * (design 2026-08-17 decision 8): an image renders inline, a document becomes a
+ * link to its bytes. Runs AFTER rehype-sanitize in the plugin list, so the nodes
+ * it adds are not candidates for stripping.
+ *
+ * It emits plain `img` and `a` elements rather than a custom tag, so the `img`
+ * and `a` overrides below render them with no new mapping — an image gets the
+ * same lazy, constrained treatment a `![](…)` reference always got.
+ *
+ * CODE IS SKIPPED. A path inside a fence or an inline span is sample text — `cp
+ * /var/lib/clipboard-store/…/a.png .` is a command to read, not a picture to
+ * draw — so `code` and `pre` subtrees are left completely alone. This is the one
+ * part of the pass that can quietly ruin a transcript, which is why it has its
+ * own tests.
+ */
+function rehypeAttachments(options: { me: string }) {
+  const { me } = options;
+
+  const nodeFor = (seg: Extract<Segment, { kind: "file" }>): HastNode | null => {
+    const url = contentUrlFor(seg.path, me);
+    if (!url) return null; // not ours to fetch — leave the path as text
+    const label = storedDisplayName(seg.name);
+    if (seg.fileKind === "image") {
+      return {
+        type: "element",
+        tagName: "img",
+        properties: { src: url, alt: label },
+        children: [],
+      };
+    }
+    return {
+      type: "element",
+      tagName: "a",
+      properties: { href: url, className: ["tl-attach-chip"] },
+      children: [{ type: "text", value: label }],
+    };
+  };
+
+  const walk = (node: HastNode): void => {
+    const children = node.children;
+    if (!Array.isArray(children)) return;
+    const out: HastNode[] = [];
+    let touched = false;
+    for (const child of children) {
+      if (child.type === "element" && (child.tagName === "code" || child.tagName === "pre")) {
+        out.push(child);
+        continue;
+      }
+      if (child.type !== "text" || !child.value) {
+        walk(child);
+        out.push(child);
+        continue;
+      }
+      const segs = segmentMessage(child.value);
+      // One text segment covering the whole value means nothing matched.
+      if (segs.length === 1 && segs[0]!.kind === "text") {
+        out.push(child);
+        continue;
+      }
+      for (const seg of segs) {
+        if (seg.kind === "text") {
+          out.push({ type: "text", value: seg.text });
+          continue;
+        }
+        const el = nodeFor(seg);
+        if (el) {
+          out.push(el);
+          touched = true;
+        } else {
+          out.push({ type: "text", value: seg.path });
+        }
+      }
+      if (segs.some((s) => s.kind === "file")) touched = true;
+    }
+    if (touched) node.children = out;
+  };
+
+  return (tree: HastNode): void => {
+    walk(tree);
+  };
+}
+
 const components: SolidMarkdownComponents = {
   // solid-markdown renders every code block through its own default `pre` and
   // puts the `code` component inside it — but the `code` override below returns
@@ -113,17 +205,34 @@ const components: SolidMarkdownComponents = {
  * by the file preview (which knows the document's path on disk). It defaults to
  * undefined so the transcript renderer keeps the shared `components` object
  * verbatim and renders byte-identically.
+ *
+ * `attachAs` — the effective OS user, set by the transcript renderer. Its
+ * presence turns a bare absolute path in Claude's prose into an attachment
+ * (design 2026-08-17 decision 8): "I wrote the chart to /home/…/plot.png" shows
+ * the chart. Left unset by the file preview, whose markdown is a document on
+ * disk rather than a conversation.
  */
-export const Markdown: Component<{ text: string; base?: string }> = (props) => {
+export const Markdown: Component<{
+  text: string;
+  base?: string;
+  attachAs?: string;
+}> = (props) => {
   const comps = createMemo<SolidMarkdownComponents>(() =>
     props.base ? { ...components, img: imgFor(props.base) } : components,
+  );
+  // Rebuilt only when the user changes, so an ordinary re-render does not
+  // re-create the plugin list and make solid-markdown re-parse.
+  const rehype = createMemo<PluggableList>(() =>
+    props.attachAs
+      ? [rehypeSanitize, [rehypeAttachments, { me: props.attachAs }]]
+      : [rehypeSanitize],
   );
   return (
     <div class="tl-markdown">
       <SolidMarkdown
         children={props.text}
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
+        rehypePlugins={rehype()}
         components={comps()}
         renderingStrategy="memo"
       />

@@ -523,6 +523,7 @@ export const App: Component = () => {
                   store.sessions.find((s) => s.name === name) ?? { name },
                 )}
                 owner={store.selected()?.owner}
+                me={store.me}
                 watchLocked={watchLocked}
                 actingAs={actingAs}
                 otherSessions={() =>

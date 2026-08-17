@@ -86,8 +86,10 @@ describe("installImageClipboard — an uploaded path is separated from what foll
         sent.push(t);
         return true;
       },
-      upload: async (_blob: Blob, opts: UploadOptions) =>
-        `${STORE}/${opts.filename ?? `pasted-${++n}.png`}`,
+      upload: async (_blob: Blob, opts: UploadOptions) => ({
+        path: `${STORE}/${opts.filename ?? `pasted-${++n}.png`}`,
+        stored: true,
+      }),
       toast: () => 0,
       dismiss: () => {},
     });
@@ -166,7 +168,7 @@ describe("installImageClipboard — refuses while the session is only watched", 
       },
       upload: async (_blob: Blob, opts: UploadOptions) => {
         uploaded.push(opts.filename ?? "pasted.png");
-        return "/store/" + (opts.filename ?? "pasted.png");
+        return { path: "/store/" + (opts.filename ?? "pasted.png"), stored: true };
       },
       toast: (m: string) => {
         toasts.push(m);

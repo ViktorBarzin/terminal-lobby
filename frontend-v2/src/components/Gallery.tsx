@@ -14,6 +14,7 @@ import type { GalleryStore } from "../store/gallery";
 import { badgeLabel } from "../store/gallery.logic";
 import { clipboardImgUrl } from "../lib/config";
 import { refocusTerminal } from "../keybindings/refocus";
+import { PaperclipIcon } from "./Icons";
 
 /**
  * The session image-gallery overlay (feature-inventory Cat.8). A pure view over
@@ -160,6 +161,7 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
               <Match when={s.images().length > 0}>
                 <For each={s.images()}>
                   {(im, i) => (
+                    <div class="tl-gallery-item">
                     <button
                       type="button"
                       class="tl-gallery-cell"
@@ -195,6 +197,29 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
                         )}
                       </Show>
                     </button>
+                    {/* Attach an image the session already holds to the message
+                        being written (design 2026-08-17 decision 14) — including a
+                        `show-image` render Claude produced. The path is already
+                        known, so this costs one call and saves re-uploading a
+                        screenshot from an hour ago. Hidden when no text-view
+                        composer is mounted to receive it. */}
+                    <Show when={!isBroken(im.name)}>
+                      <button
+                        type="button"
+                        class="tl-gallery-attach"
+                        aria-label={`Attach ${im.name} to the message`}
+                        title="Attach to the message"
+                        onClick={() => {
+                          const ok = window.__tlAttachToComposer?.([
+                            { path: im.path, name: im.name, kind: "image" },
+                          ]);
+                          if (ok) s.close();
+                        }}
+                      >
+                        <PaperclipIcon />
+                      </button>
+                    </Show>
+                    </div>
                   )}
                 </For>
               </Match>
