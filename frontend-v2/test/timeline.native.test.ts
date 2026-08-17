@@ -7,6 +7,7 @@ import {
   promptHistory,
   queuedPrompts,
   sameRow,
+  scrollTopAfterPrepend,
   visibleRows,
   type QuestionRow,
   type TodoRow,
@@ -278,5 +279,40 @@ describe("sameRow", () => {
     seq = 0;
     const b = mk("two").find((r) => r.kind === "tool")!;
     expect(sameRow(a, b)).toBe(false);
+  });
+});
+
+describe("keeping the view still while older rows arrive", () => {
+  // Rows mount at the TOP, and a scroll container keeps its scrollTop when
+  // content is prepended — so without this the visible content slides down by
+  // the height of every chunk. Measured before the fix on a real session: the
+  // scroller ran from 0 to 4,118 while 33 rows mounted.
+  //
+  // The measurement is an ANCHOR ROW's offsetTop, not the container's
+  // scrollHeight: scrollHeight also grows when rows BELOW get taller, which
+  // they do as markdown renders, and compensating for that dragged a reader who
+  // had scrolled to the top 5,780px back down to the live end.
+  it("adds back exactly the height that appeared above the anchor", () => {
+    expect(scrollTopAfterPrepend(1000, 4000, 4600)).toBe(1600);
+  });
+
+  it("ignores growth that did not move the anchor", () => {
+    // The newest rows getting taller as they render moves nothing above the
+    // reader, so the position must not change.
+    expect(scrollTopAfterPrepend(1000, 4000, 4000)).toBe(1000);
+  });
+
+  it("leaves the position alone when nothing was added", () => {
+    expect(scrollTopAfterPrepend(1000, 4000, 4000)).toBe(1000);
+  });
+
+  // A row can also SHRINK (a fold collapsing while the fill runs). Compensating
+  // a negative delta would scroll the reader backwards for no reason.
+  it("never compensates a shrink", () => {
+    expect(scrollTopAfterPrepend(1000, 4000, 3500)).toBe(1000);
+  });
+
+  it("works from the very top, where there is nothing to give back", () => {
+    expect(scrollTopAfterPrepend(0, 500, 900)).toBe(400);
   });
 });
