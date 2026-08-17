@@ -221,7 +221,19 @@ read where `placeRestoredSessions` already runs, re-stamping `@title` on each
 restored session. This is the same shape as the killed-assignment memory: one
 fact that has to outlive the session.
 
-Entries are dropped when no live session and no snapshot mentions the name.
+An entry is removed when its session is deliberately killed, so what
+accumulates is titles of sessions that died without one — an OOM, a reboot —
+and were never restored. That is a slow trickle rather than a growth rate, but
+slow is not bounded, so the file keeps the newest 500 entries per user and
+drops the oldest beyond that (the same budget the killed-assignment memory
+uses). Timestamps are nanoseconds: a restore re-stamps a whole batch inside one
+second, and at second granularity those writes are mutually unordered.
+
+Bounding by count rather than by "is this session still restorable" is
+deliberate. Answering the latter needs every snapshot the persist wrapper
+holds, read per user through sudo — a lot of work to decide the fate of a few
+hundred bytes. A session that is merely not running keeps its title, which is
+what a restore actually needs.
 
 The alternative — a fourth column in the tmux-persist snapshot — is structurally
 tidier, since the snapshot already carries the facts that outlive a session. It
@@ -296,5 +308,6 @@ and migrating both. Worth doing as its own change.
 - The transliteration table covers Latin-1, Cyrillic and Greek. CJK and
   emoji-only titles fall through to `session-N`. Whether that is worth extending
   depends on whether anyone titles sessions in those scripts.
-- `titles/<owner>.json` grows with retitles and is pruned against live sessions
-  and snapshots. The pruning interval is not yet measured against a real store.
+- The 500-entry budget on `titles/<owner>.json` is a judgement, not a measured
+  figure — it is the number the killed-assignment memory already uses, and no
+  real store has yet come close to it.

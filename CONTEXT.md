@@ -7,10 +7,31 @@ tmux-api, and the devvm-side session plumbing.
 ## Language
 
 **Session**:
-One named tmux session belonging to one OS user, listed in the sidebar
-and rendered in the terminal pane. Usually runs a Claude Code
-conversation, but may be a plain shell.
+One tmux session belonging to one OS user, listed in the sidebar and
+rendered in the terminal pane. Usually runs a Claude Code conversation, but
+may be a plain shell. Carries a **name** and, optionally, a **title**.
 _Avoid_: terminal, tab, thread
+
+**Name** (of a session):
+The tmux session name: `^[a-zA-Z0-9_-]{1,32}$`. The identity everything is
+keyed by — tmux targets, URL segments, store keys, the session-images
+directory, the `?arg=` attach contract, the push tag. **Derived from the
+title, never typed directly**, and re-derived whenever the title changes.
+Unique within one OS user's tmux server, so a cross-user reference needs
+the owner too.
+_Avoid_: slug in anything a user reads (it is the right word in code)
+
+**Title**:
+The arbitrary display text a person chose for a session — spaces,
+punctuation, emoji, any script, up to 64 characters. What every surface
+shows: sidebar cards, the tab title, the command palette, the dock, push
+bodies, confirmations. Stored on the session itself (the `@title` tmux
+option), so everyone who can see the session sees the same title, and a
+durable copy re-stamps it after a restore. Optional — a session without one
+shows its **name**, which is where every session predating the feature
+sits. Clearing the title returns a session to showing its name.
+_Avoid_: label, nickname, display name; and do not confuse with **pane
+title**, which is whatever is running in the pane describing itself.
 
 **Project**:
 A first-class, server-owned object with a stable **id**, a **name**, an
