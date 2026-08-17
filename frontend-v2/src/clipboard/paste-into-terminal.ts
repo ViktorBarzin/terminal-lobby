@@ -37,6 +37,13 @@ export interface PasteIntoTerminalDeps {
   toast?: (message: string, kind: "error" | "info" | "success") => void;
   /** TRUE on a touch device, where the advice to give differs. */
   coarsePointer?: boolean;
+  /**
+   * Which surface the paste is destined for, so a refusal names the thing the
+   * user is actually looking at. In the TEXT view the terminal is not on screen,
+   * and "long-press the terminal" sends someone to a pane they cannot see.
+   * Defaults to the terminal, which is where this routine started.
+   */
+  surface?: "terminal" | "composer";
   /** usage events (defaults to the app tracker); injectable for tests. */
   track?: (name: string, attrs?: Record<string, unknown>) => void;
 }
@@ -65,18 +72,18 @@ function blobText(blob: Blob): Promise<string> {
  * on a phone it is a long-press on the terminal and the system Paste item.
  * Naming a keyboard chord to someone holding a phone is a dead end.
  */
-function readFailure(err: unknown, coarse: boolean): string {
+function readFailure(err: unknown, coarse: boolean, surface: Surface): string {
   const e = err as { name?: string; message?: string } | null;
+  const where = surface === "composer" ? "the message box" : "the terminal";
   const nativePaste = coarse
-    ? "Long-press the terminal and choose Paste."
-    : "Use ⌘/Ctrl-V in the terminal instead.";
+    ? `Long-press ${where} and choose Paste.`
+    : `Use ⌘/Ctrl-V in ${where} instead.`;
   // "Document is not focused" is worth naming: it is not a decision the user
   // made, and calling it denied access sends them looking for a permission
   // prompt that was never shown.
   if (e?.name === "NotAllowedError" && /not focused/i.test(e.message ?? "")) {
-    return coarse
-      ? "Couldn't read the clipboard — the page lost focus. Tap the terminal and try again."
-      : "Couldn't read the clipboard — the page lost focus. Click the terminal and try again.";
+    const act = coarse ? "Tap" : "Click";
+    return `Couldn't read the clipboard — the page lost focus. ${act} ${where} and try again.`;
   }
   if (e?.name === "NotAllowedError") {
     return "Clipboard access was blocked by the browser. " + nativePaste;
@@ -84,22 +91,27 @@ function readFailure(err: unknown, coarse: boolean): string {
   return "Couldn't read the clipboard: " + (e?.message || String(err));
 }
 
+/** Where the paste is headed — the terminal pane, or the text view's composer. */
+type Surface = "terminal" | "composer";
+
 export async function pasteIntoTerminal(
   deps: PasteIntoTerminalDeps,
 ): Promise<void> {
   const toast = deps.toast ?? showToast;
   const emit = deps.track ?? track;
   const coarse = deps.coarsePointer ?? isCoarsePointer();
+  const surface: Surface = deps.surface ?? "terminal";
   const clip =
     deps.clipboard ??
     (typeof navigator !== "undefined" ? navigator.clipboard : undefined);
 
   if (!clip) {
     emit("terminal.paste_failed", { "tl.api": "none", "tl.error": "unavailable" });
+    const where = surface === "composer" ? "the message box" : "the terminal";
     toast(
       coarse
-        ? "This browser gives the page no clipboard access. Long-press the terminal and choose Paste."
-        : "This browser gives the page no clipboard access. Use ⌘/Ctrl-V in the terminal.",
+        ? `This browser gives the page no clipboard access. Long-press ${where} and choose Paste.`
+        : `This browser gives the page no clipboard access. Use ⌘/Ctrl-V in ${where}.`,
       "error",
     );
     return;
@@ -167,6 +179,6 @@ export async function pasteIntoTerminal(
       "tl.focused": typeof document !== "undefined" ? document.hasFocus() : false,
       "tl.coarse": coarse,
     });
-    toast(readFailure(err, coarse), "error");
+    toast(readFailure(err, coarse, surface), "error");
   }
 }

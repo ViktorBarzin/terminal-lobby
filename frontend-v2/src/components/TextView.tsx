@@ -8,7 +8,7 @@ import {
   type QuestionRow,
 } from "./timeline.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { Composer } from "./Composer";
+import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 
 /**
@@ -48,8 +48,8 @@ export const TextView: Component<{
   onAttach?: (files: File[]) => Promise<DraftAttachment[]>;
   /** watching: the controls that type, and attaching, are inert. */
   inertReason?: string;
-  /** receive the composer's tray-add, for files dropped on the window. */
-  register?: (add: (items: DraftAttachment[]) => void) => void;
+  /** receive the composer's sinks, for gestures that land outside it. */
+  register?: (api: ComposerSinks) => void;
 }> = (props) => {
   const mode = createMemo(() => currentMode(props.events));
   const queued = createMemo(() => queuedPrompts(props.events));
