@@ -69,22 +69,53 @@ func TestAdminAttachesAForeignSessionWithoutAShare(t *testing.T) {
 	}
 }
 
-// The other half of a full identity switch: an admin creating a NEW session
-// under the target's account. The server decides this, so tmux-attach.sh keeps
-// its fixed argv.
-func TestAdminGetsCreateForASessionThatDoesNotExistYet(t *testing.T) {
+// An act-as attach NEVER spawns a session in the target's account. It used to:
+// `create` was returned whenever the caller held the owner's own access and the
+// session was missing, which is reachable only from this branch. On 2026-08-17
+// that turned a remembered session name into a live session inside emo's
+// account (`Council-tax`, 08:02:24) — wizard's work, running as them, appearing
+// in their sidebar as their own. There is nothing to watch on a session that is
+// not running, and starting one is not watching, so the answer carries no
+// instruction to spawn and the attach simply fails.
+//
+// The assertion reads an ABSENT field as false deliberately: absent and false
+// mean the same thing to tmux-attach.sh, so this holds whether the field is
+// dropped from the wire or explicitly false.
+func TestAdminNeverSpawnsASessionInAnotherAccount(t *testing.T) {
 	admin, other := attachFixture(t)
 	stubGrid(t) // nothing live
 
-	code, mode, create := attachFull(t, other, "brandnew", admin, "")
+	code, _, create := attachFull(t, other, "brandnew", admin, "")
 	if code != http.StatusOK {
 		t.Fatalf("admin attach to absent session: status %d, want 200", code)
 	}
-	if mode != shareModeRW {
-		t.Fatalf("mode %q, want rw", mode)
+	if create {
+		t.Fatal("create=true: an act-as attach must never start a session in another account")
 	}
-	if !create {
-		t.Fatal("create=false; an admin acting as the owner must be able to start a session")
+}
+
+// The "nothing to watch" fallback is SELF-ONLY, for the same reason it already
+// excludes a guest holding a share: it exists so your own not-yet-started
+// session comes into being when you open it, and an admin acting as someone
+// else has no session of their own here to start. Without this, asking to watch
+// an absent session in a lens came back rw — a read-write client in their
+// account, arrived at by asking for less access.
+func TestAdminWatchOfAnAbsentSessionStaysReadOnly(t *testing.T) {
+	admin, other := attachFixture(t)
+	pinned := stubGrid(t) // nothing live
+
+	code, mode, create := attachFull(t, other, "brandnew", admin, shareModeRO)
+	if code != http.StatusOK {
+		t.Fatalf("admin watch of absent session: status %d, want 200", code)
+	}
+	if mode != shareModeRO {
+		t.Fatalf("mode %q, want ro — asking to watch cannot come back read-write", mode)
+	}
+	if create {
+		t.Fatal("create=true on a watch request")
+	}
+	if len(*pinned) != 0 {
+		t.Fatalf("pinned a session that does not exist: %v", *pinned)
 	}
 }
 

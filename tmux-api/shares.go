@@ -374,8 +374,13 @@ var (
 //
 // A read-only attach also pins the session's grid on the way in, which is what
 // keeps the owner's size theirs after their last read-write client drops (see
-// sessionio.PinGrid). A session that does not exist yet cannot be watched — the
-// mode falls back to rw so the ordinary create path brings it into being.
+// sessionio.PinGrid). A session that does not exist yet cannot be watched — for
+// YOUR OWN session the mode falls back to rw so the ordinary create path brings
+// it into being; for anyone else's it does not, and the attach fails.
+//
+// The answer never asks the script to CREATE a session in another account: an
+// attach authorized by administering the box can watch or drive what is running
+// there, and nothing more.
 func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 	if internalToken == "" || r.Header.Get("X-Internal-Token") != internalToken {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -405,10 +410,10 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 
 	mode := ""
 	selfAttach := body.Owner == body.Guest
-	// asOwner is true when the caller is entitled to the owner's own access —
-	// either because they ARE the owner, or because they administer this box
-	// and are acting as them. It is what gates the create answer below.
-	asOwner := selfAttach
+	// actAs records that this attach was authorized by administering the box
+	// rather than by owning the session, so the audit line and the telemetry
+	// event below can name the mode it resolved to.
+	actAs := false
 	switch {
 	case selfAttach:
 		// Self attach. There is no share row to match, and matching one is what
@@ -429,11 +434,7 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mode = shareModeRW
-		asOwner = true
-		log.Printf("act-as attach: %s attaching %s/%s as owner", body.Guest, body.Owner, body.Name)
-		events.Emit("admin.actas", body.Guest, telemetry.Attrs{
-			"tl.to": body.Owner, "tl.session": body.Name, "tl.client": "attach",
-		})
+		actAs = true
 	default:
 		err := shareStoreInstance.update(func(ss *ShareSet) error {
 			for i := range ss.Shares {
@@ -458,6 +459,23 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 
 	mode = effectiveMode(mode, body.Requested)
 
+	// Recorded after the mode is final, and naming it: with the ceiling enforced
+	// on the client, the journal is where "did anyone type in their session, or
+	// only watch it" gets answered. A read-write act-as attach says so in words
+	// so it is greppable on its own.
+	if actAs {
+		what := "watching"
+		if mode == shareModeRW {
+			what = "DRIVING (read-write)"
+		}
+		log.Printf("act-as attach: %s attaching %s/%s as owner — %s",
+			body.Guest, body.Owner, body.Name, what)
+		events.Emit("admin.actas", body.Guest, telemetry.Attrs{
+			"tl.to": body.Owner, "tl.session": body.Name,
+			"tl.client": "attach", "tl.mode": mode,
+		})
+	}
+
 	// Whether the session is live decides all three things below. A self
 	// attach at rw needs none of them: it never reaches the script's attach
 	// branch, falling through to tmux-user-attach, which is attach-or-create
@@ -477,35 +495,36 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 				// read-write client drops.
 				log.Printf("pin grid %s/%s: %v", body.Owner, body.Name, err)
 			}
-		case asOwner:
-			// The session is not started yet, so there is nothing to watch:
+		case selfAttach:
+			// YOUR OWN session, not started yet: there is nothing to watch, so
 			// hand back rw and let the create path bring it into being rather
 			// than failing the attach.
 			//
-			// OWNER-EQUIVALENT ONLY — the caller's own session, or an admin
-			// acting as them. Doing this for a shared attach would raise a
-			// guest from the ro their share grants to rw whenever the owner's
-			// session happens to be missing: an escalation, and a racy one,
-			// since the session could appear between this check and the
-			// attach. A guest's ro attach to an absent session stays ro and
-			// simply fails, which is the safe outcome.
+			// SELF ONLY. Two other callers reach this line and neither may take
+			// it. A guest holding a share would be raised from the ro their
+			// share grants to rw whenever the owner's session happened to be
+			// missing: an escalation, and a racy one, since the session could
+			// appear between this check and the attach. An administrator acting
+			// as the owner has no session of their own to start here — asking to
+			// watch would have come back read-write, in someone else's account.
+			// Both simply fail instead, which is the safe outcome.
 			mode = shareModeRW
 		}
 	}
 
-	// create tells tmux-attach.sh to START the session under the owner's
-	// account instead of attaching an existing one — the other half of a full
-	// identity switch, decided here so the script keeps its fixed argv.
-	//
-	// Gated on asOwner for the same reason as the fallback above, and on
-	// !selfAttach because a self attach already creates by another route.
-	create := asOwner && !selfAttach && mode == shareModeRW && !exists
-
+	// NO create ANSWER. It used to be returned when the caller held the owner's
+	// own access and the session was missing, which is reachable only from the
+	// act-as branch — a self attach creates by another route. On 2026-08-17 that
+	// spawned a session inside another user's account from a remembered session
+	// name (`Council-tax` under emo, 08:02:24), read-write, indistinguishable
+	// from their own work. Watching a session that is not running is not
+	// something to arrange by starting one, so the answer carries no instruction
+	// to spawn and the attach fails. Starting a session in someone's account is
+	// done by that account.
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
-		Mode   string `json:"mode"`
-		Create bool   `json:"create"`
-	}{mode, create})
+		Mode string `json:"mode"`
+	}{mode})
 }
 
 var errShareNotFound = errors.New("share not found")
