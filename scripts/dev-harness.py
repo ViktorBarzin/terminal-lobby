@@ -6,6 +6,8 @@ Makes the REAL page fully functional on loopback without Authentik/nginx:
     browser ──► http://127.0.0.1:7997  (this aiohttp reverse proxy)
                    ├── /api/sessions/*  → http://127.0.0.1:7684/*  (live tmux-api,
                    │                      prefix stripped, X-Authentik-Username added)
+                   ├── /events|/prompt|/pane|/keys|/commands/* → :7685
+                   │                      (session-events, verbatim — text mode)
                    ├── /clipboard/*     → http://127.0.0.1:7683/*  (clipboard-upload,
                    │                      prefix stripped, X-Authentik-Username added
                    │                      — paste-upload + session-gallery E2E; run
@@ -212,6 +214,7 @@ def make_app(args: argparse.Namespace) -> web.Application:
     ttyd_base = f"http://127.0.0.1:{args.ttyd_port}"
     api_base = args.api_base
     clipboard_base = args.clipboard_base
+    session_events_base = args.session_events_base
 
     async def maybe_delay(*paths) -> None:
         """--delay debug hook: sleep before proxying a matching request.
@@ -255,6 +258,56 @@ def make_app(args: argparse.Namespace) -> web.Application:
         except aiohttp.ClientError as exc:
             log(f"{request.method} /api/sessions/{tail} → 502 ({exc})")
             return web.Response(status=502, text=f"tmux-api upstream error: {exc}")
+
+    # The session-events root paths, VERBATIM — the prod ingress routes these
+    # to :7685 with no strip, so the harness has to as well or text mode is
+    # inert here: no transcript, no pane, no `/` catalogue. Without it the one
+    # place this app can be driven with a real soft keyboard cannot exercise
+    # the half of it that lives in text mode.
+    SE_PREFIXES = ("events", "prompt", "cancel", "earlier", "result", "pane",
+                   "keys", "commands")
+
+    async def session_events_proxy(request: web.Request) -> web.StreamResponse:
+        path = request.rel_url.raw_path
+        url = f"{session_events_base}{path}"
+        headers = {
+            k: v for k, v in request.headers.items()
+            if k.lower() not in HOP_BY_HOP
+        }
+        headers["X-Authentik-Username"] = args.user
+        body = await request.read()
+        try:
+            async with request.app["client"].request(
+                request.method, url, params=request.rel_url.query,
+                headers=headers, data=body if body else None,
+                allow_redirects=False,
+            ) as upstream:
+                # /events is an SSE stream: relay it as one rather than waiting
+                # for a body that never ends.
+                if "text/event-stream" in upstream.headers.get("Content-Type", ""):
+                    resp = web.StreamResponse(
+                        status=upstream.status,
+                        headers={"Content-Type": "text/event-stream",
+                                 "Cache-Control": "no-cache"},
+                    )
+                    await resp.prepare(request)
+                    try:
+                        async for chunk in upstream.content.iter_any():
+                            await resp.write(chunk)
+                    except (ConnectionResetError, aiohttp.ClientError):
+                        pass  # the page navigated away mid-stream; ordinary
+                    return resp
+                payload = await upstream.read()
+                resp_headers = {
+                    k: v for k, v in upstream.headers.items()
+                    if k.lower() not in HOP_BY_HOP
+                }
+                log(f"{request.method} {path} → {upstream.status}")
+                return web.Response(status=upstream.status, body=payload,
+                                    headers=resp_headers)
+        except aiohttp.ClientError as exc:
+            log(f"{request.method} {path} → 502 ({exc})")
+            return web.Response(status=502, text=f"session-events upstream error: {exc}")
 
     async def clipboard_proxy(request: web.Request) -> web.StreamResponse:
         """/clipboard/<tail> → CLIPBOARD_BASE/<tail>, prefix stripped, auth
@@ -409,6 +462,8 @@ def make_app(args: argparse.Namespace) -> web.Application:
     app.on_cleanup.append(on_cleanup)
     app.router.add_route("*", "/api/sessions/{tail:.*}", api_proxy)
     app.router.add_route("*", "/clipboard/{tail:.*}", clipboard_proxy)
+    for pfx in SE_PREFIXES:
+        app.router.add_route("*", f"/{pfx}/{{tail:.*}}", session_events_proxy)
     for asset_path in ASSET_PATHS:  # exact paths, before the catch-all
         app.router.add_route("*", asset_path, asset_proxy)
     app.router.add_route("*", "/{tail:.*}", ttyd_proxy)
@@ -431,6 +486,9 @@ def main() -> None:
                              "(pre-battery behavior)")
     parser.add_argument("--proxy-port", type=int, default=7997)
     parser.add_argument("--ttyd-port", type=int, default=7996)
+    parser.add_argument("--session-events-base", default="http://127.0.0.1:7685",
+                        help="session-events base (default the live one on :7685) — "
+                             "text mode's transcript, pane and / catalogue")
     parser.add_argument("--tmux-api-port", type=int, default=7684,
                         help="tmux-api port on 127.0.0.1 (default 7684 = the live "
                              "service; point at a scratch `go run .` build to test "
