@@ -102,83 +102,6 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   // first keyboard ever opens.
   let lastKb = -1;
 
-  /**
-   * Record the real geometry when the keyboard opens or closes.
-   *
-   * TEMPORARY, and deliberately so. Two attempts at the mobile keyboard layout
-   * were reasoned from a model of the device rather than from the device, and
-   * both were wrong — iOS Safari, Chromium and the iOS standalone PWA each
-   * reserve the keyboard differently, and the repo's own iOS notes say to
-   * measure on real hardware rather than conclude. This rides the flight
-   * recorder (ADR-0008 diag.incident) so the numbers arrive without anyone
-   * having to read them off a screen.
-   *
-   * Fires only on a CHANGE of the keyboard state, so a keyboard's ~250ms
-   * animation contributes one record per edge rather than a burst. Remove once
-   * the layout is settled.
-   */
-  const measureSafeAreaBottom = (): number => {
-    try {
-      const probe = document.createElement("div");
-      probe.style.cssText =
-        "position:fixed;left:0;bottom:0;width:0;visibility:hidden;pointer-events:none;" +
-        "height:env(safe-area-inset-bottom)";
-      document.body.appendChild(probe);
-      const h = Math.round(probe.getBoundingClientRect().height);
-      probe.remove();
-      return h;
-    } catch {
-      return -1;
-    }
-  };
-
-  let lastReported = -1;
-  const reportGeometry = (kb: number): void => {
-    if (kb === lastReported) return;
-    lastReported = kb;
-    try {
-      const diag = (window as unknown as {
-        __TL_DIAG__?: { incident?: (kind: string, attrs: Record<string, unknown>) => void };
-      }).__TL_DIAG__;
-      if (!diag?.incident) return;
-      const box = (sel: string): number[] => {
-        const el = document.querySelector(sel);
-        if (!el) return [];
-        const r = el.getBoundingClientRect();
-        return [Math.round(r.top), Math.round(r.bottom)];
-      };
-      const cs = getComputedStyle(document.documentElement);
-      const px = (n: string): string => cs.getPropertyValue(n).trim();
-      diag.incident("viewport", {
-        "tl.vp.inner_h": window.innerHeight,
-        "tl.vp.screen_h": typeof screen !== "undefined" ? screen.height : 0,
-        "tl.vp.vv_h": vv ? Math.round(vv.height) : -1,
-        "tl.vp.vv_top": vv ? Math.round(vv.offsetTop) : -1,
-        "tl.vp.vv_scale": vv ? vv.scale : -1,
-        "tl.vp.root": box("#root").join(","),
-        "tl.vp.views": box(".tl-views").join(","),
-        "tl.vp.composer": box(".tl-composer").join(","),
-        "tl.vp.softkeys": box("#soft-keys").join(","),
-        "tl.vp.kb_offset": px("--kb-offset"),
-        "tl.vp.kb_reserve": px("--kb-reserve"),
-        "tl.vp.sk_h": px("--sk-h"),
-        "tl.vp.app_vh": px("--app-vh"),
-        // env(safe-area-inset-bottom) cannot be read from JS, so measure a
-        // throwaway element sized by it. It matters here because the
-        // reservation adds it on top of the keyboard, and whether iOS keeps
-        // reporting an inset while the keyboard covers the home indicator is
-        // exactly the sort of thing worth measuring rather than assuming.
-        "tl.vp.safe_b": measureSafeAreaBottom(),
-        "tl.vp.standalone":
-          typeof matchMedia === "function" &&
-          matchMedia("(display-mode: standalone)").matches,
-        "tl.vp.kb_inline": !!document.querySelector(".tl-views.tl-kb-inline"),
-      });
-    } catch {
-      /* a diagnostic must never be the thing that breaks the app */
-    }
-  };
-
   const writeOffset = (): void => {
     const h = vv ? vv.height : window.innerHeight;
     const top = vv ? vv.offsetTop : 0;
@@ -214,7 +137,6 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
     //  - visualViewport.height SHRINKS with the soft keyboard, which would
     //    resize the whole session list every time a rename box took focus.
     root.setProperty("--app-vh", window.innerHeight + "px");
-    reportGeometry(kb);
   };
 
   const sync = (): void => {
