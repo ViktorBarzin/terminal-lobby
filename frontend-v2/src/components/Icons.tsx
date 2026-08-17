@@ -66,6 +66,13 @@ export const FileTextIcon: Component<{ size?: number }> = (props) => (
   </Svg>
 );
 
+/** lucide `paperclip` — attach a file to the message being composed. */
+export const PaperclipIcon: Component<{ size?: number }> = (props) => (
+  <Svg size={props.size}>
+    <path d="M13.234 20.252 21 12.3a2.83 2.83 0 0 0 0-4 2.83 2.83 0 0 0-4 0l-8.586 8.586a4 4 0 1 0 5.656 5.656l.09-.09" />
+  </Svg>
+);
+
 /** lucide `eye` — Watch mode: this device observes without driving. */
 export const EyeIcon: Component<{ size?: number }> = (props) => (
   <Svg size={props.size}>

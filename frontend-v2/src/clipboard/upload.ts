@@ -20,6 +20,18 @@ export function uploadField(mime: string | null | undefined): "image" | "file" {
     : "file";
 }
 
+/**
+ * What one upload produced. `stored` says the bytes reached the per-(user,
+ * session) store, which is the only place the web surface can read them back
+ * from — so it is what decides between a clickable chip in the chat and a bare
+ * path. A document over clipboard-upload's store cap answers false and stays an
+ * ephemeral /tmp transfer; an image is always true.
+ */
+export interface UploadResult {
+  path: string;
+  stored: boolean;
+}
+
 export interface UploadOptions {
   session: string;
   field: "image" | "file";
@@ -30,14 +42,14 @@ export interface UploadOptions {
 }
 
 /**
- * POST one blob to /clipboard/upload and return the stored path. Throws on a
+ * POST one blob to /clipboard/upload and return where it landed. Throws on a
  * non-2xx response (message = the server's body, or `HTTP <status>`) so callers
  * can surface the failure as a toast — mirroring the vanilla upload flow.
  */
 export async function uploadBlob(
   blob: Blob,
   opts: UploadOptions,
-): Promise<string> {
+): Promise<UploadResult> {
   const fd = new FormData();
   if (opts.filename) fd.append(opts.field, blob, opts.filename);
   else fd.append(opts.field, blob);
@@ -53,9 +65,12 @@ export async function uploadBlob(
     const text = await resp.text().catch(() => "");
     throw new Error(text || `HTTP ${resp.status}`);
   }
-  const data = (await resp.json()) as { path?: unknown };
+  const data = (await resp.json()) as { path?: unknown; stored?: unknown };
   if (typeof data.path !== "string" || !data.path) {
     throw new Error("upload response missing path");
   }
-  return data.path;
+  // An older clipboard-upload does not send `stored`. Treating its absence as
+  // false keeps a pre-deploy server from promising a chip it cannot serve; the
+  // pty path, which is all that server supports, is unaffected either way.
+  return { path: data.path, stored: data.stored === true };
 }

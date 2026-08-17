@@ -9,6 +9,7 @@ import {
 } from "./timeline.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { Composer } from "./Composer";
+import type { DraftAttachment } from "../store/drafts";
 
 /**
  * Text mode — the PRIMARY view. Structured transcript render (MessagesTimeline)
@@ -39,8 +40,16 @@ export const TextView: Component<{
   hasEarlier?: boolean;
   /** list a directory for `@` completion. */
   onListDir?: (dir: string) => Promise<string[]>;
-  /** attach an image and get back the path to reference. */
-  onAttachImage?: (file: File) => Promise<string | null>;
+  /** the session, so the composer can key its unsent draft. */
+  session?: string;
+  /** the effective OS user — decides which store paths render as attachments. */
+  me?: string;
+  /** upload files and return the ones that became attachable. */
+  onAttach?: (files: File[]) => Promise<DraftAttachment[]>;
+  /** watching: the controls that type, and attaching, are inert. */
+  inertReason?: string;
+  /** receive the composer's tray-add, for files dropped on the window. */
+  register?: (add: (items: DraftAttachment[]) => void) => void;
 }> = (props) => {
   const mode = createMemo(() => currentMode(props.events));
   const queued = createMemo(() => queuedPrompts(props.events));
@@ -82,6 +91,7 @@ export const TextView: Component<{
         onAnswer={answerQuestion}
         onLoadEarlier={props.onLoadEarlier}
         hasEarlier={props.hasEarlier}
+        me={props.me}
       />
       <Composer
         working={props.working}
@@ -94,7 +104,12 @@ export const TextView: Component<{
         queued={queued()}
         {...(props.onKeys ? { mode: mode() || "default", onCycleMode: cycleMode } : {})}
         onListDir={props.onListDir}
-        onAttachImage={props.onAttachImage}
+        session={props.session}
+        me={props.me}
+        onAttach={props.onAttach}
+        onOpenPreview={props.onOpenPreview}
+        inertReason={props.inertReason}
+        register={props.register}
       />
     </div>
   );

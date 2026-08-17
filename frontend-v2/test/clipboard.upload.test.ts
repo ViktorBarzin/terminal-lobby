@@ -4,11 +4,11 @@ import { uploadBlob } from "../src/clipboard/upload";
 const blob = (): Blob =>
   new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
 
-const okResp = (path: unknown): Response =>
+const okResp = (path: unknown, stored?: unknown): Response =>
   ({
     ok: true,
     status: 200,
-    json: async () => ({ path }),
+    json: async () => (stored === undefined ? { path } : { path, stored }),
     text: async () => "",
   }) as unknown as Response;
 
@@ -46,13 +46,13 @@ function capturingFetch(resp: Response): {
 
 describe("uploadBlob — POST /clipboard/upload", () => {
   it("posts the blob under the given field + session and returns the path", async () => {
-    const f = capturingFetch(okResp("/store/u/s/pasted-1.png"));
-    const path = await uploadBlob(blob(), {
+    const f = capturingFetch(okResp("/store/u/s/pasted-1.png", true));
+    const got = await uploadBlob(blob(), {
       session: "sess",
       field: "image",
       fetchImpl: f.fetchImpl,
     });
-    expect(path).toBe("/store/u/s/pasted-1.png");
+    expect(got).toEqual({ path: "/store/u/s/pasted-1.png", stored: true });
     expect(f.calls()).toBe(1);
     expect(f.lastUrl()).toBe("/clipboard/upload");
     const fd = f.lastBody();
@@ -86,5 +86,24 @@ describe("uploadBlob — POST /clipboard/upload", () => {
     await expect(
       uploadBlob(blob(), { session: "s", field: "image", fetchImpl: f.fetchImpl }),
     ).rejects.toThrow(/path/);
+  });
+});
+
+// `stored` is what tells the caller a chip is possible: an image always reaches
+// the per-(user, session) store, a document only up to the store cap, and above
+// it the upload stays an ephemeral /tmp transfer whose path a chip would outlive.
+describe("uploadBlob — stored", () => {
+  it("reports what the server said", async () => {
+    const f = capturingFetch(okResp("/tmp/clipboard-files/big.bin", false));
+    const got = await uploadBlob(blob(), { session: "s", field: "file", fetchImpl: f.fetchImpl });
+    expect(got.stored).toBe(false);
+  });
+
+  // A clipboard-upload that predates the field cannot serve a chip either, so
+  // its silence has to read as "no".
+  it("treats a missing field as not stored", async () => {
+    const f = capturingFetch(okResp("/store/u/s/pasted-1.png"));
+    const got = await uploadBlob(blob(), { session: "s", field: "image", fetchImpl: f.fetchImpl });
+    expect(got.stored).toBe(false);
   });
 });
