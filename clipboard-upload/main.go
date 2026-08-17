@@ -31,8 +31,11 @@ const (
 	// real screenshot or photo, small enough that a stray path can't
 	// balloon the store.
 	maxRegister = 25 << 20 // 25MB
-	listenAddr  = "0.0.0.0:7683"
-	authHeader  = "X-Authentik-Username"
+	// attachPrefix marks a stored non-image attachment. The gallery lists by
+	// prefix, so this is what keeps a document out of a grid of thumbnails.
+	attachPrefix = "file-"
+	listenAddr   = "0.0.0.0:7683"
+	authHeader   = "X-Authentik-Username"
 	// unsortedSession is the store bucket for writes that arrive without a
 	// (valid) session name. Nothing ties its contents to a session's
 	// lifetime, so the cleaner (devvm/clipboard-store-clean) ages it out on
@@ -49,6 +52,17 @@ const (
 var (
 	storeRoot = "/var/lib/clipboard-store"
 	mapPath   = "/etc/ttyd-user-map"
+	// maxAttach bounds a non-image upload that joins the per-(user, session)
+	// store as a text-view attachment. Same number as maxRegister and for the
+	// same reason: ADR-0005 names those caps as what bounds a store whose
+	// contents are held for 30 days after a session dies, and a document is not
+	// a reason to loosen that. Above it the upload stays what this field has
+	// always produced — a /tmp transfer on the 7-day sweep.
+	//
+	// A var for the same test-seam reason as storeRoot: exercising the fork
+	// otherwise means pushing 25MB through a multipart encoder on every run.
+	// Production never reassigns it.
+	maxAttach int64 = 25 << 20 // 25MB
 )
 
 // Session names: same charset as tmux-api and the frontend's NAME_RE.
@@ -75,6 +89,7 @@ func main() {
 	http.HandleFunc("/register", handleRegister)
 	http.HandleFunc("/list", handleList)
 	http.HandleFunc("/img/", handleImage)
+	http.HandleFunc("/file/", handleStoredFile)
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
@@ -338,6 +353,23 @@ func osUserKnown(name string) bool {
 	return false
 }
 
+// galleryPrefixes are the stored-name prefixes the 🖼 gallery lists: a
+// clipboard paste/upload, and a `show-image` render registered by the script
+// itself. Everything else in a store directory — today, a document attached to
+// a text-view message — is chat content, reachable by its own path and never
+// drawn as a thumbnail.
+var galleryPrefixes = []string{"pasted-", "displayed-"}
+
+// isGalleryName reports whether a stored file belongs in the gallery listing.
+func isGalleryName(name string) bool {
+	for _, p := range galleryPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // storeSession maps a client-supplied session name onto a store bucket:
 // valid names key their own directory, everything else (absent, oversize,
 // bad charset) collapses to the shared "_unsorted" bucket.
@@ -349,12 +381,16 @@ func storeSession(name string) string {
 }
 
 // handleUpload accepts a multipart POST with EITHER a generic "file" field
-// (drag-dropped files of any type — transfer conveniences saved under
-// fileDir keeping the original name, NOT gallery content) OR an "image"
-// field (clipboard image paste/upload, must be image/*, persisted into the
-// caller's per-session store for the gallery; optional "session" field
-// picks the bucket). Responds {"path": "..."} — the frontend types that
-// path into the PTY, so the shape is load-bearing.
+// (any content type — a document attached to a text-view message, or a plain
+// transfer convenience) OR an "image" field (clipboard image paste/upload,
+// must be image/*; optional "session" field picks the bucket).
+//
+// Responds {"path": "...", "stored": bool}. `path` is load-bearing — the
+// frontend types it into the PTY, and splices it into a text-view prompt.
+// `stored` says whether the bytes landed in the per-(user, session) store,
+// which is the only place the chat can read them back from: a path alone
+// cannot answer that, and the client needs the answer to decide between a
+// clickable chip and a "path only" toast.
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -368,20 +404,52 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generic dropped file — any content type, keep the (sanitized) original name.
+	// Generic file — any content type, keeping the (sanitized) original name.
+	//
+	// Two destinations, forked on size (design decision 11). Up to maxAttach it
+	// joins the per-(user, session) store beside the images, so a text-view
+	// message can render a chip for it and still open it days later; the store's
+	// 30-day grace and the gallery's isolation come along unchanged. Anything
+	// larger keeps the behaviour this field has always had — an ephemeral
+	// /tmp transfer on the 7-day sweep — because the store's bound is the point
+	// of the cap, and a chat bubble outlives any file that expires.
 	if file, header, err := r.FormFile("file"); err == nil {
 		defer file.Close()
-		name := fmt.Sprintf("%s-%s-%s", stamp(), randToken(), sanitizeName(header.Filename))
+		// A store write needs an owner, so identity is mandatory on this branch
+		// too now. It always was on the image branch; the ingress adds the
+		// header either way, and 401 covers a direct unauthenticated hit.
+		osUser := resolveOSUser(w, r)
+		if osUser == "" {
+			return
+		}
+		clean := sanitizeName(header.Filename)
+		if header.Size <= maxAttach {
+			session := storeSession(r.FormValue("session"))
+			name := fmt.Sprintf("%s%s-%s-%s", attachPrefix, stamp(), randToken(), clean)
+			path, err := saveToStore(osUser, session, name, file)
+			if err != nil {
+				log.Printf("save attachment for %s/%s failed: %v", osUser, session, err)
+				http.Error(w, "Failed to save", http.StatusInternalServerError)
+				return
+			}
+			log.Printf("Saved attachment: %s (%d bytes)", path, header.Size)
+			events.Emit("file.attached", osUser, telemetry.Attrs{
+				"tl.session": session, "tl.count": header.Size, "tl.client": "api",
+			})
+			writeUpload(w, path, true)
+			return
+		}
+		name := fmt.Sprintf("%s-%s-%s", stamp(), randToken(), clean)
 		path, err := save(fileDir, name, file)
 		if err != nil {
 			http.Error(w, "Failed to save", http.StatusInternalServerError)
 			return
 		}
 		log.Printf("Saved dropped file: %s (%d bytes)", path, header.Size)
-		events.Emit("file.transferred", osUserQuiet(r), telemetry.Attrs{
+		events.Emit("file.transferred", osUser, telemetry.Attrs{
 			"tl.count": header.Size, "tl.client": "api",
 		})
-		writePath(w, path)
+		writeUpload(w, path, false)
 		return
 	}
 
@@ -433,7 +501,10 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	events.Emit("image.uploaded", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.kind": ct, "tl.count": header.Size, "tl.client": "api",
 	})
-	writePath(w, path)
+	// An image always reaches the store — that is the whole image branch — so
+	// `stored` is unconditionally true here. Reported anyway, so one reply shape
+	// answers the client's question regardless of which field it uploaded.
+	writeUpload(w, path, true)
 }
 
 // handleRegister (POST /register, fields user/session/path) records an
@@ -678,6 +749,15 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 		if !e.Type().IsRegular() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
+		// The gallery is a grid of thumbnails, and the store now also holds
+		// documents (design decision 3). Listing by the two prefixes the gallery
+		// itself writes is what keeps a PDF from becoming an undecodable tile —
+		// the same failure the upload path's byte-sniffing was added to prevent.
+		// An allow-list rather than a `file-` deny-list, so a future writer with
+		// a new prefix has to opt in instead of leaking by default.
+		if !isGalleryName(e.Name()) {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue
@@ -706,75 +786,175 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(images)
 }
 
-// handleImage (GET /img/<session>/<name>) serves one stored image back to
-// the gallery. Traversal-proof by construction: both path elements are
-// charset-pinned (no separator can pass), names containing '..' or leading
-// dots are rejected, and the joined path is re-checked to sit inside the
-// caller's own store directory.
-func handleImage(w http.ResponseWriter, r *http.Request) {
+// openStored resolves <prefix>/<session>/<name> to an open file inside the
+// CALLER's own store directory, writing the HTTP error itself and returning nil
+// when it cannot. Traversal-proof by construction: both path elements are
+// charset-pinned (no separator can pass), names containing '..' or leading dots
+// are rejected, and the joined path is re-checked to sit under the caller's own
+// directory. Shared by /img and /file so the two read surfaces cannot drift
+// apart on the part that enforces isolation.
+//
+// The caller closes the returned file. `head` is the first 512 bytes for
+// sniffing, with the file already rewound.
+func openStored(w http.ResponseWriter, r *http.Request, prefix, logTag string) (*os.File, os.FileInfo, []byte) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
-		return
+		return nil, nil, nil
 	}
 	osUser := resolveOSUser(w, r)
 	if osUser == "" {
-		return
+		return nil, nil, nil
 	}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/img/"), "/")
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix), "/")
 	if len(parts) != 2 {
 		http.Error(w, "not found", http.StatusNotFound)
-		return
+		return nil, nil, nil
 	}
 	session, name := parts[0], parts[1]
 	if !sessionNameRe.MatchString(session) {
 		http.Error(w, "invalid session", http.StatusBadRequest)
-		return
+		return nil, nil, nil
 	}
 	if !imageNameRe.MatchString(name) || strings.Contains(name, "..") ||
 		strings.HasPrefix(name, ".") || name != filepath.Base(name) {
 		http.Error(w, "invalid name", http.StatusBadRequest)
-		return
+		return nil, nil, nil
 	}
 	userDir := filepath.Join(storeRoot, osUser)
 	path := filepath.Join(userDir, session, name)
 	if !strings.HasPrefix(path, userDir+string(os.PathSeparator)) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
-		return
+		return nil, nil, nil
 	}
 
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		http.Error(w, "not found", http.StatusNotFound)
-		return
+		return nil, nil, nil
 	}
 	if err != nil {
-		log.Printf("img open %s failed: %v", path, err)
+		log.Printf("%s open %s failed: %v", logTag, path, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, nil, nil
 	}
-	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
+		f.Close()
 		http.Error(w, "not found", http.StatusNotFound)
-		return
+		return nil, nil, nil
 	}
 
 	// Sniff the real content type — stored extensions are advisory.
 	head := make([]byte, 512)
 	n, err := f.Read(head)
 	if err != nil && !errors.Is(err, io.EOF) {
-		log.Printf("img read %s failed: %v", path, err)
+		f.Close()
+		log.Printf("%s read %s failed: %v", logTag, path, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, nil, nil
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		log.Printf("img rewind %s failed: %v", path, err)
+		f.Close()
+		log.Printf("%s rewind %s failed: %v", logTag, path, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return nil, nil, nil
+	}
+	return f, info, head[:n]
+}
+
+// handleImage (GET /img/<session>/<name>) serves one stored image back to the
+// gallery, the lightbox and a text-view bubble.
+//
+// IMAGES ONLY, verified from the bytes. The store holds documents as well now
+// (design decision 3), and this route answers with whatever it sniffs — so an
+// uploaded .html fetched through here would have executed against the authed
+// lobby origin. Non-image content is answered 404 rather than 415: from the
+// gallery's point of view there is no image at that name.
+func handleImage(w http.ResponseWriter, r *http.Request) {
+	f, info, head := openStored(w, r, "/img/", "img")
+	if f == nil {
 		return
 	}
-	w.Header().Set("Content-Type", http.DetectContentType(head[:n]))
+	defer f.Close()
+
+	ct := http.DetectContentType(head)
+	if !strings.HasPrefix(ct, "image/") {
+		if iso := isoBMFFImageType(head); iso != "" {
+			ct = iso
+		} else {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// private: per-user content behind auth. An hour of browser caching
 	// keeps gallery re-opens cheap without letting shared caches hold it.
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	http.ServeContent(w, r, "", info.ModTime(), f)
+}
+
+// activeExt are the extensions a browser may treat as executable markup.
+var activeExt = map[string]bool{
+	".html": true, ".htm": true, ".xhtml": true, ".xht": true,
+	".svg": true, ".svgz": true, ".xml": true, ".xsl": true, ".xslt": true,
+	".mhtml": true, ".mht": true,
+}
+
+// isActiveContent reports whether a stored document must be answered as a
+// download rather than rendered, because a browser could execute it as markup
+// against the serving — authed — origin.
+//
+// BOTH the sniffed type and the extension decide, because neither alone is
+// enough. `http.DetectContentType` sniffs `<svg …>` as text/plain, which nosniff
+// makes inert but which is not something to depend on; and an extension is only
+// a claim about the bytes. Either signal being active is enough to force a
+// download, so the decision degrades safely on both sides.
+//
+// The file preview has its own safe route for HTML — a sandboxed srcdoc iframe
+// with neither allow-scripts nor allow-same-origin (HTML_SANDBOX in
+// store/preview.logic.ts) — and that is where such a document is meant to be
+// read.
+func isActiveContent(ct, name string) bool {
+	if activeExt[strings.ToLower(filepath.Ext(name))] {
+		return true
+	}
+	base := ct
+	if i := strings.IndexByte(base, ';'); i >= 0 {
+		base = base[:i]
+	}
+	switch strings.TrimSpace(strings.ToLower(base)) {
+	case "text/html", "image/svg+xml", "application/xhtml+xml", "text/xml", "application/xml":
+		return true
+	}
+	return false
+}
+
+// handleStoredFile (GET /file/<session>/<name>) serves one stored attachment
+// back — the read-back route a document chip in the text view opens, and what
+// the file preview reads a stored document through (design decision 3; ADR-0005
+// had no such route because non-image uploads were /tmp ephemera).
+//
+// Sniffing is always disabled, and active content is forced to download, so a
+// document can never run as script against the authed origin.
+func handleStoredFile(w http.ResponseWriter, r *http.Request) {
+	f, info, head := openStored(w, r, "/file/", "file")
+	if f == nil {
+		return
+	}
+	defer f.Close()
+
+	name := filepath.Base(info.Name())
+	ct := http.DetectContentType(head)
+	disposition := "inline"
+	if isActiveContent(ct, name) {
+		ct = "application/octet-stream"
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType(disposition, map[string]string{"filename": name}))
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, "", info.ModTime(), f)
 }
@@ -854,3 +1034,15 @@ func writePath(w http.ResponseWriter, path string) {
 	json.NewEncoder(w).Encode(map[string]string{"path": path})
 }
 
+// writeUpload answers /upload: the stored path, plus whether it landed
+// somewhere the web surface can read back (the per-(user, session) store) as
+// opposed to the ephemeral /tmp transfer area. `path` keeps its name and
+// position so every existing reader — the vanilla page, the SPA's pty typing —
+// is unaffected by the added field.
+func writeUpload(w http.ResponseWriter, path string, stored bool) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Path   string `json:"path"`
+		Stored bool   `json:"stored"`
+	}{path, stored})
+}
