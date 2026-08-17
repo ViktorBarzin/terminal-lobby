@@ -10,7 +10,16 @@ import {
 import type { PermissionDecision } from "../types/events";
 import { MAX_QUEUED_SHOWN, type PendingPermission } from "./timeline.logic";
 import { PermissionPanel } from "./PermissionPanel";
-import { composeMessage, completionFor, modeLabel, type Completion } from "./compose.logic";
+import {
+  composeMessage,
+  completionFor,
+  mergeCommands,
+  modeLabel,
+  BUILTIN_COMMANDS,
+  type Completion,
+  type CompletionItem,
+  type SlashCommand,
+} from "./compose.logic";
 import { clearDraft, loadDraft, saveDraft, type DraftAttachment } from "../store/drafts";
 import { contentUrlFor, storedDisplayName } from "../lib/attachments";
 import { FileTextIcon, PaperclipIcon } from "./Icons";
@@ -58,6 +67,9 @@ export const Composer: Component<{
   onCycleMode?: () => void;
   /** Directory listing for `@` path completion. */
   onListDir?: (dir: string) => Promise<string[]>;
+  /** The session's own skills / custom commands / plugin commands, offered by
+   *  `/` beside the built-ins this page ships. */
+  commands?: SlashCommand[];
   /**
    * The session this composer belongs to — the key its unsent draft is stored
    * under (store/drafts.ts). Attachments and text both persist, so a reload or an
@@ -194,8 +206,14 @@ export const Composer: Component<{
   };
 
   /** What `/` or `@` at the caret is currently offering. */
+  // Built-ins plus what this session actually has. Merged in a memo so a
+  // catalogue that arrives after the first keystroke shows up in the menu the
+  // reader is already looking at.
+  const catalogue = createMemo<SlashCommand[]>(() =>
+    mergeCommands(BUILTIN_COMMANDS, props.commands ?? []),
+  );
   const completion = createMemo<Completion | null>(() =>
-    completionFor(draft(), caret(), paths()),
+    completionFor(draft(), caret(), paths(), catalogue()),
   );
 
   // `@` completes against the real filesystem, so the listing is fetched for
@@ -212,9 +230,10 @@ export const Composer: Component<{
     setPaths(await props.onListDir(c.dir));
   };
 
-  const applyCompletion = (value: string) => {
+  const applyCompletion = (item: CompletionItem) => {
     const c = completion();
     if (!ta || !c) return;
+    const value = item.value;
     const before = draft().slice(0, c.start);
     const after = draft().slice(caret());
     // A directory keeps the menu open so the next segment can be picked.
@@ -482,8 +501,12 @@ export const Composer: Component<{
                 aria-selected={i() === picked()}
                 data-picked={i() === picked() ? "true" : undefined}
                 onClick={() => applyCompletion(item)}
+                title={item.description}
               >
-                {item}
+                <span class="tl-complete-name">{item.value}</span>
+                <Show when={item.description}>
+                  <span class="tl-complete-desc">{item.description}</span>
+                </Show>
               </button>
             )}
           </For>

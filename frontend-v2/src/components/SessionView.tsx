@@ -780,6 +780,7 @@ export const SessionView: Component<{
             onOpenPreview={(path) => void preview.open(path)}
             onKeys={store.answer}
             onPane={store.pane}
+            onCommands={store.commands}
             onLoadFull={store.fullResult}
             onLoadEarlier={async () => {
               await store.loadEarlier();

@@ -2624,7 +2624,9 @@ body.tl-kb-up {
 .tl-complete {
   display: flex;
   flex-direction: column;
-  max-height: 180px;
+  /* Room for ~4 two-line rows. The CLI's own menu shows three; more than this
+     on a phone eats the transcript the reader is completing against. */
+  max-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2632,6 +2634,9 @@ body.tl-kb-up {
   background: var(--bg-card);
 }
 .tl-complete-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   padding: 6px 10px;
   border: 0;
   background: transparent;
@@ -2642,6 +2647,21 @@ body.tl-kb-up {
   text-align: left;
   cursor: pointer;
   min-height: 32px;
+}
+/* The name is what gets typed, so it keeps the mono face and the full width.
+   The description is why you would pick it: one line, clipped rather than
+   wrapped, so every row is the same height and the list stays scannable. */
+.tl-complete-name {
+  white-space: nowrap;
+}
+.tl-complete-desc {
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tl-complete-item[data-picked="true"] {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
