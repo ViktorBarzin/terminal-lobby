@@ -171,7 +171,34 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
     }
   };
 
+  /**
+   * Undo a scroll offset the PLATFORM imposed on the document.
+   *
+   * Measured on an iPhone-26 installed PWA: focusing the Text composer made
+   * iOS collapse window.innerHeight to the visual viewport (812 -> 436) AND
+   * scroll the document 376px to bring the field "into view". The shell tracks
+   * innerHeight, so it collapsed with it, and the scroll carried it off the top
+   * — the composer measured at -90,-25, above the screen — after which iOS
+   * unwound both over FOURTEEN seconds. That crawl is the "everything scrolls"
+   * report.
+   *
+   * The layout is invariant without that offset: across the same samples
+   * `innerHeight + offsetTop` held constant at 812 and the visual viewport at
+   * 436, so with the offset at zero the reservation puts the composer in the
+   * same place in every frame of the animation.
+   *
+   * Safe to force: this page has no scrollable overflow of its own (html/body
+   * are overflow:hidden and the shell is a fixed height), so any offset here is
+   * the platform's, never a reader's scroll position.
+   */
+  const unpin = (): void => {
+    const el = (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
+    if (el && el.scrollTop !== 0) el.scrollTop = 0;
+    if (el && el.scrollLeft !== 0) el.scrollLeft = 0;
+  };
+
   const writeOffset = (): void => {
+    unpin();
     const h = vv ? vv.height : window.innerHeight;
     const top = vv ? vv.offsetTop : 0;
     const kb = keyboardOffset(window.innerHeight, h, top);
@@ -199,6 +226,9 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   };
 
   const sync = (): void => {
+    // Before the frame as well: the offset is what moves the app off screen,
+    // and a rAF away is a visible jump.
+    unpin();
     if (!rafScheduled) {
       rafScheduled = true;
       const run = () => {
@@ -238,6 +268,10 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
 
   window.addEventListener("resize", sync);
   window.addEventListener("orientationchange", sync);
+  // The document scrolling at all is the platform doing it — undo it as it
+  // happens rather than a frame later. Its own listener, not sync(), because
+  // this must be cheap enough to run on every scroll tick.
+  window.addEventListener("scroll", unpin, { passive: true });
   if (vv) {
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
@@ -248,6 +282,7 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   return () => {
     window.removeEventListener("resize", sync);
     window.removeEventListener("orientationchange", sync);
+    window.removeEventListener("scroll", unpin);
     if (vv) {
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
