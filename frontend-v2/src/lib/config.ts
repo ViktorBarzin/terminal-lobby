@@ -147,6 +147,12 @@ export function resultUrl(session: string, toolId: string): string {
   );
 }
 
+/** GET target for the slash commands this session can run beyond the built-ins
+ *  (its user's skills + custom commands, the project's, enabled plugins'). */
+export function commandsUrl(session: string): string {
+  return withActAs(`${API_BASE}/commands/${encodeURIComponent(session)}`);
+}
+
 /** GET target for what the session's pane currently shows, plus its state. */
 export function paneUrl(session: string): string {
   return withActAs(`${API_BASE}/pane/${encodeURIComponent(session)}`);

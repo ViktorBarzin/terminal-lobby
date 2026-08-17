@@ -7,7 +7,7 @@ import {
   type PendingPermission,
   type QuestionRow,
 } from "./timeline.logic";
-import { modeFromPane } from "./compose.logic";
+import { modeFromPane, type SlashCommand } from "./compose.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
@@ -43,6 +43,8 @@ export const TextView: Component<{
   onKeys?: (keys: string[]) => Promise<boolean>;
   /** read what the session's pane currently shows — the live permission mode. */
   onPane?: () => Promise<{ pane: string; state: string } | null>;
+  /** the session's own skills / custom commands, for the `/` menu. */
+  onCommands?: () => Promise<SlashCommand[]>;
   /** fetch a capped tool result in full. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
   /** load the window of turns before the oldest held. */
@@ -109,6 +111,10 @@ export const TextView: Component<{
   };
   onMount(() => void readMode(""));
 
+  // The catalogue is files on disk; one read when the view opens is enough.
+  const [commands, setCommands] = createSignal<SlashCommand[]>([]);
+  onMount(() => void props.onCommands?.().then(setCommands));
+
   /**
    * Answering a question: the option's ordinal is what the TUI's menu reads, so
    * the answer is the digit and an Enter. The options themselves came from the
@@ -161,6 +167,7 @@ export const TextView: Component<{
         queued={queued()}
         {...(props.onKeys ? { mode: mode(), onCycleMode: cycleMode } : {})}
         onListDir={props.onListDir}
+        commands={commands()}
         session={props.session}
         me={props.me}
         onAttach={props.onAttach}
