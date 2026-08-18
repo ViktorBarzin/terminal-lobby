@@ -9,6 +9,7 @@ import {
   type QuestionRow,
 } from "./timeline.logic";
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "./compose.logic";
+import { contextState } from "./context.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
@@ -120,6 +121,11 @@ export const TextView: Component<{
   };
   onMount(() => void readMode(""));
 
+  // How full the context is, from the CLI's own `/context` reading. The server
+  // refreshes it on open and after each settled turn; nothing here computes a
+  // context size, because the ceiling is not on the wire and is not a constant.
+  const context = createMemo(() => contextState(props.events));
+
   // The catalogue is files on disk; one read when the view opens is enough.
   const [commands, setCommands] = createSignal<SlashCommand[]>([]);
   onMount(() => void props.onCommands?.().then(setCommands));
@@ -176,6 +182,7 @@ export const TextView: Component<{
         history={history()}
         queued={queued()}
         {...(props.onKeys ? { mode: mode(), onCycleMode: cycleMode } : {})}
+        {...(context() ? { context: context()! } : {})}
         onListDir={props.onListDir}
         commands={commands()}
         session={props.session}

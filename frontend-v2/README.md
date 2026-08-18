@@ -185,6 +185,11 @@ src/
                          and MessageSegments, which substitutes in place
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
     Composer.tsx         Prompt input + Send↔Stop morph + mobile submit split
+    context.logic.ts     PURE reading of the `/context` meter (newest reading,
+                         staleness in settled turns, category breakdown)
+    ContextMeter.tsx     How full the context is, beside the mode chip, with the
+                         breakdown behind a tap. Figures are the CLI's own — the
+                         ceiling is not on the wire and is not a constant
     PermissionPanel.tsx  INERT. Approve/Deny UI kept for a future gated
                          re-enable; its server side was removed in 575d4f5, so
                          Composer still mounts it but it always renders nothing
