@@ -66,8 +66,8 @@ administering the box is the authorization and the ceiling is **rw**, which the
 lens then declines by always asking to watch. _Compare_: Watch mode.
 
 **Watch mode**:
-A client's own choice to attach read-only, so it observes without driving and
-without moving the Grid. Three states — watch, drive, or **unset** — set from
+A client's own choice to attach read-only, so it observes without driving,
+without moving the Grid, and without moving **Last driven**. Three states — watch, drive, or **unset** — set from
 the session bar or a sidebar card's `Attach as` menu. Unset resolves
 automatically, joining as a viewer when the session already has a read-write
 client (**driven**); that decision is taken once, when a view takes the session
@@ -92,6 +92,18 @@ resolve the real caller instead of the target — push subscriptions, and
 telemetry, which records both identities.
 _Avoid_: impersonation, sudo mode, admin mode (the switch is one tab's view, not
 a state of the app)
+
+**Last driven**:
+When a human last had hands on a Session — the newest moment a **read-write**
+client was attached. The relative time the sidebar shows, and the answer to "has
+anyone touched this today". A **Watch mode** client deliberately does not move it:
+watching a session leaves it as it was found, the clock included. Derived from the
+client list and kept in the session's `@last_drive` option, so it survives a
+tmux-api restart and a driver who attached from a shell counts like any other.
+Seeded from a session's creation time until its first driver is seen, so it is
+never empty.
+_Avoid_: last active (that is tmux's `session_activity`, which any attach bumps —
+a read-only one included — and which nothing displays)
 
 **Grid**:
 The size of a session's tmux window, in columns and rows. Owned exclusively by

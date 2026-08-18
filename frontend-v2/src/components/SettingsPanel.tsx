@@ -423,12 +423,13 @@ export const SettingsPanel: Component<{
                 })
               }
             />
-            <span>Show when each session was last active</span>
+            <span>Show when each session was last driven</span>
           </label>
           <div class="tl-settings-hint">
-            Roams across your devices. A running session still shows its live
-            timer, which counts the turn in flight rather than telling you when
-            it last did something.
+            The last time someone was attached to it and able to type — watching
+            a session does not move this. Roams across your devices. A running
+            session still shows its live timer instead, which counts the turn in
+            flight.
           </div>
         </section>
 
