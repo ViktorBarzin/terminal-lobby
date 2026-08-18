@@ -189,6 +189,50 @@ var answerKeys = map[string]bool{
 	"Up": true, "Down": true, "Left": true, "Right": true,
 }
 
+// MaxAnswerText bounds the free text of one answer. The AskUserQuestion dialog's
+// "Other" option is a single-line field, so this is generous for what it is; the
+// cap exists because the target is somebody's live pane.
+const MaxAnswerText = 2000
+
+// AnswerText types free text into the session's pane WITHOUT submitting it.
+//
+// It exists because neither of the other two routes can answer the "Other"
+// option of an AskUserQuestion:
+//
+//   - Keys cannot, by design. answerKeys carries no letters beyond y/n, and that
+//     allowlist is the whole security boundary of the keys route — widening it
+//     to spell words would turn it into an arbitrary-typing channel.
+//   - Prompt cannot, safely. It opens with C-e C-u to clear whatever the pane
+//     was holding and closes with an unconditional Enter. Inside a dialog's
+//     text field that prelude is unverified, and the forced Enter submits before
+//     the caller can read the pane back to confirm the text landed — which is
+//     the check the answer sequence is built on.
+//
+// So this does the one thing needed and stops: put the text in the buffer,
+// bracketed-paste it, and leave the Enter to the caller as its own verified
+// step. Bracketed paste also means the terminal treats the text as data rather
+// than as keystrokes, so a control character in it cannot become an action.
+//
+// A newline is refused rather than stripped: it would submit the field halfway
+// through the answer, and silently sending a different answer than the one asked
+// for is worse than refusing.
+func (in *Injector) AnswerText(osUser, session, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("answer text: nothing to type")
+	}
+	if len(text) > MaxAnswerText {
+		return fmt.Errorf("answer text: %d bytes exceeds the %d allowed", len(text), MaxAnswerText)
+	}
+	if strings.ContainsAny(text, "\r\n") {
+		return fmt.Errorf("answer text: a line break would submit the field mid-answer")
+	}
+	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
+		return err
+	}
+	// -p = bracketed paste, -d = delete the buffer afterwards. No Enter.
+	return in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run()
+}
+
 // Keys types an answer into the session's pane — the downward half of ADR-0010,
 // where the text view mirrors a blocking prompt and sends back what a person
 // would have pressed.
