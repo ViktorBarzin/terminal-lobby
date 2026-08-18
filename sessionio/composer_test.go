@@ -20,6 +20,15 @@ func TestPaneComposerEmpty(t *testing.T) {
 		want bool
 	}{
 		{
+			// The REAL pane puts a non-breaking space after the marker, not an
+			// ordinary one — read off a live session on 2026-08-18. A check that
+			// only knew about U+0020 would read every idle composer as a draft and
+			// quietly turn the refresh off for good.
+			name: "an idle composer uses a non-breaking space",
+			pane: rule + "\n\u276f\u00a0\n" + rule + "\n",
+			want: true,
+		},
+		{
 			name: "an idle composer is empty",
 			pane: rule + "\n❯ \n" + rule + "\n  /home/wizard/code/infra | opus-5\n" +
 				"  ⏵⏵ bypass permissions on (shift+tab to cycle)\n",
