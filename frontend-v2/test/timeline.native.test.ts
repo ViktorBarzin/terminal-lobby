@@ -218,25 +218,31 @@ describe("session lifecycle", () => {
   });
 
   it("lists prompts still sitting in the queue", () => {
+    // The CLI writes a departure for every arrival, so the queue is replayed
+    // rather than guessed at. Here Claude takes the head and the operator
+    // withdraws another, leaving one.
     const events = [
       ev({ kind: "user", body: "the prompt that opened this turn" }),
       ev({ kind: "meta", meta: "queued", body: "first" }),
       ev({ kind: "meta", meta: "queued", body: "second" }),
-      ev({ kind: "user", body: "first" }), // Claude picked this one up
       ev({ kind: "meta", meta: "queued", body: "third" }),
+      ev({ kind: "meta", meta: "dequeued" }), // Claude picked up "first"
+      ev({ kind: "meta", meta: "unqueued", body: "second" }),
     ];
-    // Anchored to the turn now running: what was queued before the last thing
-    // the human said has already been consumed or superseded.
     expect(queuedPrompts(events)).toEqual(["third"]);
   });
 
-  // The transcript never reports a prompt LEAVING the queue, so a list built
-  // from the whole session only grows — measured at twelve rows of background
-  // task notifications on a real session, a third of the screen.
-  it("does not accumulate every queue event in the session", () => {
+  // This used to rest on "the transcript never reports a prompt LEAVING the
+  // queue". It does — enqueue 1261, remove 841, dequeue 393, popAll 13 across
+  // 141 transcripts on this box — and building the list from arrivals alone is
+  // what made a session with an empty queue claim three were waiting.
+  it("comes back to empty when everything queued has been taken", () => {
     const events = [
       ...Array.from({ length: 12 }, (_, i) =>
         ev({ kind: "meta", meta: "queued", body: `old ${i}` }),
+      ),
+      ...Array.from({ length: 12 }, (_, i) =>
+        ev({ kind: "meta", meta: "unqueued", body: `old ${i}` }),
       ),
       ev({ kind: "user", body: "a new prompt" }),
       ev({ kind: "meta", meta: "queued", body: "still waiting" }),

@@ -63,6 +63,9 @@ export type MetaKind =
   | "mode"
   | "permission-mode"
   | "queued"
+  | "unqueued"
+  | "dequeued"
+  | "queue-cleared"
   | "compact"
   | "hook-error";
 

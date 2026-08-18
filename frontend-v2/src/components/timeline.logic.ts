@@ -473,6 +473,11 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           // outright rather than folded, since expanding a turn would put the
           // divider back.
           if (meta === "mode" || meta === "permission-mode") break;
+          // The queue's departures are bookkeeping for queuedPrompts(), the
+          // same way the mode events are for the chip: a divider saying a
+          // prompt left the queue tells the reader nothing the queue itself
+          // does not already say by shrinking.
+          if (meta === "unqueued" || meta === "dequeued" || meta === "queue-cleared") break;
           add({
             kind: "meta",
             key: `meta-${e.id}`,
@@ -767,34 +772,54 @@ export function currentMode(events: Event[]): string {
 export const MAX_QUEUED_SHOWN = 3;
 
 /**
- * Prompts sitting in Claude's queue.
+ * Prompts sitting in Claude's queue, oldest first.
  *
- * Only those enqueued since the last thing the human actually said, and only
- * while the turn that will consume them is still running. The transcript never
- * reports a prompt LEAVING the queue, so a list built from every queue-operation
- * in the session only grows: measured on a real session it reached twelve rows
- * of background-task notifications and took a third of the screen. Anchoring to
- * the running turn keeps the list to what is genuinely still waiting.
+ * Replayed from the queue's own operations rather than inferred. The CLI
+ * reports every arrival AND every departure — enqueue, remove (that one),
+ * dequeue (the head), popAll (all of them) — but only the arrivals were being
+ * carried, so the list grew for the life of the session. Viktor's session had
+ * an empty queue and showed three waiting (2026-08-18): his own message, which
+ * had been answered, and two background task notifications consumed minutes
+ * earlier.
+ *
+ * A windowed transcript can only make this UNDER-report — an enqueue older than
+ * the window is missed along with its removal — which is the safe direction for
+ * a list that claims work is still waiting.
+ *
+ * Task notifications are dropped: they are the harness telling Claude a
+ * background job finished, not something a person is waiting on, and they
+ * render as a wall of XML.
  */
 export function queuedPrompts(events: Event[]): string[] {
-  const spoken = new Set(
-    events.filter((e) => e.kind === "user").map((e) => (e.body ?? "").trim()),
-  );
-  // Everything after the last real prompt is the turn now running.
-  let from = 0;
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i]!.kind === "user") {
-      from = i;
-      break;
+  let queue: string[] = [];
+  for (const e of events) {
+    if (e.kind !== "meta") continue;
+    const text = (e.body ?? "").trim();
+    switch (e.meta) {
+      case "queued":
+        if (text) queue.push(text);
+        break;
+      case "unqueued": {
+        const at = queue.indexOf(text);
+        if (at >= 0) queue.splice(at, 1);
+        break;
+      }
+      case "dequeued":
+        queue.shift();
+        break;
+      case "queue-cleared":
+        queue = [];
+        break;
+      default:
+        break;
     }
   }
-  const out: string[] = [];
-  for (const e of events.slice(from)) {
-    if (e.kind !== "meta" || e.meta !== "queued") continue;
-    const text = (e.body ?? "").trim();
-    if (text && !spoken.has(text) && !out.includes(text)) out.push(text);
-  }
-  return out;
+  return queue.filter((t) => !isHarnessNotice(t));
+}
+
+/** The harness's own injected notices, which nobody queued and nobody reads. */
+function isHarnessNotice(text: string): boolean {
+  return /^<(task-notification|system-reminder|local-command-stdout)\b/.test(text);
 }
 
 /** Every prompt this session has sent, oldest first — the composer's history. */

@@ -640,8 +640,17 @@ func TestNormalizeDropsQuietSystemRecords(t *testing.T) {
 	if out := n.Line([]byte(`{"type":"system","subtype":"stop_hook_summary","hookErrors":[]}`)); len(out) != 0 {
 		t.Fatalf("a system record with no hook errors says nothing: %+v", out)
 	}
-	if out := n.Line([]byte(`{"type":"queue-operation","operation":"dequeue","content":"x"}`)); len(out) != 0 {
-		t.Fatalf("only an enqueue is news; a dequeue is the prompt being taken: %+v", out)
+	// A dequeue used to be dropped here, on the reasoning that only an enqueue
+	// is news. It is the OPPOSITE of quiet: it is the only thing that tells a
+	// client the prompt left the queue, and dropping it is why a session with
+	// an empty queue showed three prompts waiting (see queue_test.go).
+	if out := n.Line([]byte(`{"type":"queue-operation","operation":"dequeue"}`)); len(out) != 1 ||
+		out[0].Meta != MetaDequeued {
+		t.Fatalf("a dequeue is how the queue shrinks: %+v", out)
+	}
+	// An operation nobody has seen before still says nothing.
+	if out := n.Line([]byte(`{"type":"queue-operation","operation":"reorder","content":"x"}`)); len(out) != 0 {
+		t.Fatalf("an unknown queue operation is not news: %+v", out)
 	}
 }
 
