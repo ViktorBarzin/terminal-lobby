@@ -846,6 +846,8 @@ export const SessionView: Component<{
             onOpenPreview={(path) => void preview.open(path)}
             onKeys={store.answer}
             onPane={store.pane}
+            onAnswerText={store.answerText}
+            notify={props.notify}
             onCommands={store.commands}
             pendingPrompts={store.pendingPrompts}
             opening={store.opening()}

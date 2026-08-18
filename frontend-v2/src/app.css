@@ -2752,6 +2752,140 @@ body.tl-kb-up {
   filter: brightness(1.15);
 }
 
+/* The answer card, docked above the composer while a question is blocking. It
+   sits IN the composer's column rather than over the transcript, so the phone
+   keyboard pushes it up with the input instead of covering it. */
+.tl-qcard {
+  flex: none;
+  margin: 0 8px 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+  border-radius: 10px;
+  background: var(--bg-panel, var(--bg-page));
+  /* A long walk on a short phone scrolls inside the card, so the composer under
+     it never leaves the screen. */
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+.tl-qcard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.tl-qcard-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.tl-qcard-step,
+.tl-qcard-hint {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+.tl-qcard-question {
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+.tl-qcard-hint {
+  margin-top: 2px;
+}
+.tl-qcard-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.tl-qcard-option {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 2px 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-qcard-option:hover {
+  border-color: var(--accent);
+}
+.tl-qcard-option[data-chosen="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.tl-qcard-mark {
+  color: var(--accent);
+}
+.tl-qcard-desc {
+  grid-column: 2;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.tl-qcard-other {
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--bg-page);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+.tl-qcard-review {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tl-qcard-reviewrow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.tl-qcard-reviewq {
+  color: var(--fg-muted);
+}
+.tl-qcard-reviewa {
+  text-align: right;
+}
+.tl-qcard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.tl-qcard-back,
+.tl-qcard-next,
+.tl-qcard-send {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tl-qcard-next,
+.tl-qcard-send {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tl-qcard-next:disabled,
+.tl-qcard-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.tl-qcard-back {
+  margin-right: auto;
+}
+
 /* Find in session. Shares the palette's overlay shell, so it reads as the same
    surface; the rows differ because a hit is two lines — what it is and when,
    then the matched text. */
@@ -2934,6 +3068,13 @@ body.tl-kb-up {
   }
   .tl-ctx-chip {
     min-height: 32px;
+  }
+  /* The card is answered with a thumb. */
+  .tl-qcard-option,
+  .tl-qcard-back,
+  .tl-qcard-next,
+  .tl-qcard-send {
+    min-height: 40px;
   }
   .tl-mode-chip {
     min-height: 32px;
