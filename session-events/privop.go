@@ -41,18 +41,21 @@ type privRequest struct {
 	Off    int64  `json:"off,omitempty"`
 	ToolID string `json:"toolId,omitempty"`
 	CWD    string `json:"cwd,omitempty"`
+	Query  string `json:"query,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
 // privResponse is the child's answer. Err carries the reason on refusal; the
 // parent turns that into the same error the local reader would have returned.
 type privResponse struct {
-	OK       bool            `json:"ok"`
-	Err      string          `json:"err,omitempty"`
-	Lines    []string        `json:"lines,omitempty"`
-	Next     int64           `json:"next,omitempty"`
-	Body     string          `json:"body,omitempty"`
-	Result   json.RawMessage `json:"result,omitempty"`
-	Commands []Command       `json:"commands,omitempty"`
+	OK       bool                    `json:"ok"`
+	Err      string                  `json:"err,omitempty"`
+	Lines    []string                `json:"lines,omitempty"`
+	Next     int64                   `json:"next,omitempty"`
+	Body     string                  `json:"body,omitempty"`
+	Result   json.RawMessage         `json:"result,omitempty"`
+	Commands []Command               `json:"commands,omitempty"`
+	Matches  []sessionio.ResultMatch `json:"matches,omitempty"`
 }
 
 // ownHome is the home directory of the user the CHILD is running as, read from
@@ -131,6 +134,25 @@ func handlePrivop(req privRequest, home, root string) privResponse {
 			return fail("%v", err)
 		}
 		return privResponse{OK: true, Body: body, Result: result}
+
+	case "search":
+		if err := transcriptWithin(root, req.Path); err != nil {
+			return fail("%v", err)
+		}
+		f, err := os.Open(req.Path)
+		if err != nil {
+			return fail("%v", err)
+		}
+		defer f.Close()
+		// The child scans and returns only the matches, the same way fullresult
+		// returns one result — a search that shipped the transcript across the
+		// pipe to grep it on the other side would give up the whole point of
+		// keeping the reading on this side of the boundary.
+		matches, err := sessionio.ScanResults(f, req.Query, req.Limit)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return privResponse{OK: true, Matches: matches}
 
 	case "catalogue":
 		// No path check: Discover only ever reads .claude/{skills,commands}
