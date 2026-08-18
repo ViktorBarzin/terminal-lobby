@@ -2752,6 +2752,67 @@ body.tl-kb-up {
   filter: brightness(1.15);
 }
 
+/* Find in session. Shares the palette's overlay shell, so it reads as the same
+   surface; the rows differ because a hit is two lines — what it is and when,
+   then the matched text. */
+.tl-find-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tl-find-count {
+  flex: none;
+  padding-right: 10px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.tl-find-hit {
+  display: block;
+  padding: 7px 10px;
+}
+.tl-find-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.tl-find-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-find-when {
+  flex: none;
+}
+.tl-find-snippet {
+  margin-top: 2px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* The row a jump landed on. It fades rather than latching: after the scroll the
+   reader needs to find it with the eye once, and a permanent highlight would
+   become part of how the transcript looks. */
+.tl-row-found {
+  animation: tl-found-flash 1.6s ease-out;
+}
+@keyframes tl-found-flash {
+  0%,
+  40% {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
 /* How full the context is, beside the mode chip. The bar carries the reading at
    a glance and the number is there when a glance is not enough; both come from
    the CLI's own `/context` figures, so the chip and the pane agree. */

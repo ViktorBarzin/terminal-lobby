@@ -187,6 +187,11 @@ src/
     Composer.tsx         Prompt input + Send↔Stop morph + mobile submit split
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
                          staleness in settled turns, category breakdown)
+    find.logic.ts        PURE hit labelling + how far back a jump may reach
+    FindInSession.tsx    Find-in-session overlay. The search runs on the SERVER
+                         over the whole transcript — the window here is 20 turns
+                         — and a hit jumps by loading earlier turns until its
+                         row exists (Alt+Shift+F, or the bar menu on a phone)
     ContextMeter.tsx     How full the context is, beside the mode chip, with the
                          breakdown behind a tap. Figures are the CLI's own — the
                          ceiling is not on the wire and is not a constant

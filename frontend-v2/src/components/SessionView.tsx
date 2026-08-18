@@ -19,6 +19,8 @@ import { ViewSwitch } from "./ViewSwitch";
 import { TextView } from "./TextView";
 import { TerminalView } from "./TerminalView";
 import { FilePreview } from "./FilePreview";
+import { FindInSession } from "./FindInSession";
+import { isLoaded, MAX_JUMP_STEPS } from "./find.logic";
 import { createPreviewStore } from "../store/preview";
 import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
@@ -264,6 +266,55 @@ export const SessionView: Component<{
   onCleanup(() => {
     if (window.__tlToggleView === toggleView) window.__tlToggleView = prevToggleView;
   });
+
+  // Find in session. The overlay searches the whole transcript on the server;
+  // opening a hit is the part that happens here, because reaching an event from
+  // before the open window means loading the turns in between first.
+  const [finding, setFinding] = createSignal(false);
+  const openFind = (): boolean => {
+    // Only the text view has a transcript to search. In terminal mode the
+    // reader has the pty's own search, and pretending otherwise would open an
+    // overlay over a session whose rows are not mounted.
+    if (mode() !== "text") return false;
+    setFinding(true);
+    return true;
+  };
+  let prevOpenFind: (() => boolean) | undefined;
+  onMount(() => {
+    prevOpenFind = window.__tlOpenFind;
+    window.__tlOpenFind = openFind;
+  });
+  onCleanup(() => {
+    if (window.__tlOpenFind === openFind) window.__tlOpenFind = prevOpenFind;
+  });
+
+  /**
+   * Scroll to an event, loading earlier turns until it is reachable.
+   *
+   * Two things can put a row out of reach, and they need different answers: the
+   * event is older than the window held (load earlier), or its row exists in
+   * the data but has not been mounted yet by the progressive fill (wait a
+   * frame). The loop does both, bounded by MAX_JUMP_STEPS — a hit can sit
+   * thousands of events back, and a jump that never ends is worse than one that
+   * says it could not get there.
+   */
+  const jumpToEvent = async (id: number): Promise<void> => {
+    for (let step = 0; step < MAX_JUMP_STEPS; step++) {
+      if (window.__tlScrollToEvent?.(id)) return;
+      if (!isLoaded(store.events, id)) {
+        if (!store.hasEarlier()) break;
+        if ((await store.loadEarlier()) === 0) break;
+        continue;
+      }
+      // Loaded but not mounted yet — the fill adds rows a chunk per frame.
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    }
+    // One last try after the loop, so a row that mounted on the final frame is
+    // not reported as missing.
+    if (!window.__tlScrollToEvent?.(id)) {
+      props.notify?.("Couldn't reach that match — try loading earlier turns", "error");
+    }
+  };
 
   // The bar's session picker. Same dismissable-menu machinery as the bar's
   // overflow menu, so a press anywhere else closes it.
@@ -729,6 +780,21 @@ export const SessionView: Component<{
                 >
                   Files
                 </button>
+                {/* On a phone there is no chord to press, and the header has no
+                    room for another control — it measured 25px past its own
+                    edge at 390px. The menu is where this reaches a thumb. */}
+                <Show when={mode() === "text"}>
+                  <button
+                    class="tl-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      barMenu.close();
+                      openFind();
+                    }}
+                  >
+                    Find in session
+                  </button>
+                </Show>
                 <button
                   class="tl-menu-item"
                   role="menuitemcheckbox"
@@ -839,6 +905,14 @@ export const SessionView: Component<{
 
       <Show when={preview.isOpen()}>
         <FilePreview store={preview} />
+      </Show>
+
+      <Show when={finding()}>
+        <FindInSession
+          onSearch={store.search}
+          onJump={jumpToEvent}
+          onClose={() => setFinding(false)}
+        />
       </Show>
 
       {/* The Upload button's picker. `capture` is deliberately absent: on a

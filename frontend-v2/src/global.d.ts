@@ -38,6 +38,15 @@ interface Window {
   // mounted to toggle. Same bridge pattern as __tlForwardToTerminal: the lobby
   // shell owns neither the view mode nor the iframe.
   __tlToggleView?: () => boolean;
+  // Set by the mounted MessagesTimeline — scrolls to an event by id and flashes
+  // its row, for jumping to a search hit. False when no row with that id is in
+  // the DOM yet, which is how the caller knows to load earlier turns (or to
+  // wait for the progressive mount to reach it). Same bridge pattern as
+  // __tlToggleView: the timeline owns its scroller, and nothing above it does.
+  __tlScrollToEvent?: (id: number) => boolean;
+  // Set by the mounted SessionView while the text view is up — opens the
+  // find-in-session overlay. False when no text view is mounted to search.
+  __tlOpenFind?: () => boolean;
   // Set by the mounted TerminalView — asks the terminal iframe to re-fit its
   // xterm after a mobile viewport/keyboard change ({type:'tl-refit'}). Optional
   // bridge message (the ttyd page already refits on its own visualViewport
