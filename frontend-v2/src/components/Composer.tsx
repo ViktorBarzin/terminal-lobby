@@ -46,6 +46,9 @@ export interface ComposerSinks {
   add: (items: DraftAttachment[]) => void;
   /** Insert text at the caret (a clipboard paste that is not an image). */
   insertText: (text: string) => void;
+  /** Put the caret in the message field — what "Chat about this" does with a
+   *  question the reader would rather answer in their own words. */
+  focus: () => void;
 }
 
 export const Composer: Component<{
@@ -232,7 +235,9 @@ export const Composer: Component<{
     ta.focus();
   };
 
-  onMount(() => props.register?.({ add: addToTray, insertText }));
+  onMount(() =>
+    props.register?.({ add: addToTray, insertText, focus: () => ta?.focus() }),
+  );
 
   const removeAt = (path: string): void => {
     setTray((current) => current.filter((a) => a.path !== path));

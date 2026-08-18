@@ -187,6 +187,12 @@ src/
     Composer.tsx         Prompt input + Send↔Stop morph + mobile submit split
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
                          staleness in settled turns, category breakdown)
+    answer.logic.ts      PURE plan for answering an AskUserQuestion — the keys
+                         each question needs, and what the pane must show
+                         afterwards — plus the runner that checks between steps
+    QuestionCard.tsx     The docked answer card: walks the questions, reviews,
+                         then sends. Nothing is typed until Send, so abandoning
+                         the walk leaves the dialog untouched
     find.logic.ts        PURE hit labelling + how far back a jump may reach
     FindInSession.tsx    Find-in-session overlay. The search runs on the SERVER
                          over the whole transcript — the window here is 20 turns

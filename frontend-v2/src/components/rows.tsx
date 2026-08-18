@@ -313,17 +313,19 @@ export const TodoRowView: Component<{ row: TodoRow }> = (props) => {
 };
 
 /**
- * An AskUserQuestion. While it is pending this is the thing blocking the
- * session, so the options are buttons: picking one types the answer into the
- * pane (ADR-0010). Once answered it stays as the record of what was chosen.
+ * An AskUserQuestion, as the RECORD of what was asked and chosen.
+ *
+ * Answering happens in the card docked above the composer (QuestionCard), which
+ * walks every question rather than only the first and can carry a multi-select.
+ * This row is deliberately not a second way to answer: two paths into one dialog
+ * is how the same question gets answered twice, and the pane cannot tell the two
+ * senders apart. While the question is pending the row shows what is being
+ * asked; the card is where it is answered.
  */
-export const QuestionRowView: Component<{
-  row: QuestionRow;
-  onAnswer?: (optionIndex: number) => void;
-}> = (props) => (
+export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => (
   <div class="tl-row tl-row-question" data-eid={props.row.id} data-pending={props.row.pending ? "true" : undefined}>
     <For each={props.row.questions}>
-      {(q, qi) => (
+      {(q) => (
         <div class="tl-question">
           <div class="tl-question-head">
             <span class="tl-question-chip">{q.header || "Question"}</span>
@@ -332,28 +334,14 @@ export const QuestionRowView: Component<{
           <div class="tl-question-options">
             <For each={q.options}>
               {(o, oi) => (
-                <Show
-                  when={props.row.pending && qi() === 0}
-                  fallback={
-                    <div
-                      class="tl-question-option"
-                      data-chosen={props.row.answers.includes(o.label) ? "true" : undefined}
-                    >
-                      <span class="tl-option-key">{oi() + 1}</span>
-                      <span class="tl-option-label">{o.label}</span>
-                    </div>
-                  }
+                <div
+                  class="tl-question-option"
+                  data-chosen={props.row.answers.includes(o.label) ? "true" : undefined}
+                  title={o.description}
                 >
-                  <button
-                    type="button"
-                    class="tl-question-option tl-question-answerable"
-                    onClick={() => props.onAnswer?.(oi())}
-                    title={o.description}
-                  >
-                    <span class="tl-option-key">{oi() + 1}</span>
-                    <span class="tl-option-label">{o.label}</span>
-                  </button>
-                </Show>
+                  <span class="tl-option-key">{oi() + 1}</span>
+                  <span class="tl-option-label">{o.label}</span>
+                </div>
               )}
             </For>
           </div>
