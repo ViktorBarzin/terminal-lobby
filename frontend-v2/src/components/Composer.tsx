@@ -597,7 +597,10 @@ export const Composer: Component<{
           <button
             type="button"
             class="tl-mode-chip"
-            title="Permission mode (Shift+Tab)"
+            // The mode is the chip's whole meaning, so it drives the colour
+            // from CSS rather than a second mapping in here.
+            data-mode={props.mode}
+            title={`Permission mode: ${modeLabel(props.mode ?? "")} (Shift+Tab)`}
             onClick={() => props.onCycleMode?.()}
           >
             {modeLabel(props.mode ?? "")}
