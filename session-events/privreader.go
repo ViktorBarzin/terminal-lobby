@@ -173,6 +173,15 @@ func (p *privReader) FullResult(path, toolID string) (string, json.RawMessage, e
 	return resp.Body, resp.Result, nil
 }
 
+// SearchResults implements sessionio.Reader.
+func (p *privReader) SearchResults(path, q string, limit int) ([]sessionio.ResultMatch, error) {
+	resp, err := p.do(privRequest{Op: "search", Path: path, Query: q, Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Matches, nil
+}
+
 // Catalogue is the slash-command list, discovered inside the user's own home.
 func (p *privReader) Catalogue(cwd string) ([]Command, error) {
 	resp, err := p.do(privRequest{Op: "catalogue", CWD: cwd})
