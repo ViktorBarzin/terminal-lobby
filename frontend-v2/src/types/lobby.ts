@@ -39,7 +39,14 @@ export interface Session {
    *  typing is attached twice and driven by nobody. Watch mode joins a new
    *  device as a viewer only when this is true. */
   driven?: boolean;
+  /** tmux's #{session_activity}: output OR any attach, a read-only one included.
+   *  NOT displayed anywhere — see `lastDrive`, which is what the sidebar shows. */
   lastActivity: number;
+  /** When a human last had hands on this session: the newest moment a
+   *  READ-WRITE client was attached. This is the sidebar's relative time.
+   *  Watchers deliberately do not move it. Absent from a server that predates
+   *  the field, in which case no time is shown rather than a misleading one. */
+  lastDrive?: number;
   created: number;
   /** "" when no live Claude. */
   state?: ClaudeState | "";

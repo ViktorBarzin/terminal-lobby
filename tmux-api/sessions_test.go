@@ -24,7 +24,7 @@ func TestParseSessionsFields(t *testing.T) {
 	}{
 		{
 			name: "full row",
-			in:   row("$3", "work", "1", "1700000000", "1690000000", "running", "4242", "claude", "Deploy the thing", "~/code"),
+			in:   row("$3", "work", "1", "1700000000", "1690000000", "", "running", "4242", "claude", "Deploy the thing", "~/code"),
 			want: []Session{{
 				ID: "$3", Name: "work", Attached: 1, LastActivity: 1700000000,
 				Created: 1690000000, State: "running", PanePID: 4242,
@@ -33,7 +33,7 @@ func TestParseSessionsFields(t *testing.T) {
 		},
 		{
 			name: "a pipe in either title survives verbatim",
-			in:   row("$4", "logs", "0", "1700000001", "1690000001", "", "77", "zsh", "Deploy | stage 2", "make | tee build.log"),
+			in:   row("$4", "logs", "0", "1700000001", "1690000001", "", "", "77", "zsh", "Deploy | stage 2", "make | tee build.log"),
 			want: []Session{{
 				ID: "$4", Name: "logs", LastActivity: 1700000001, Created: 1690000001,
 				PanePID: 77, Command: "zsh",
@@ -42,7 +42,7 @@ func TestParseSessionsFields(t *testing.T) {
 		},
 		{
 			name: "a title in any script survives verbatim",
-			in:   row("$5", "testova-sesiya", "0", "1", "2", "", "9", "claude", "тестова сесия 🚀", ""),
+			in:   row("$5", "testova-sesiya", "0", "1", "2", "", "", "9", "claude", "тестова сесия 🚀", ""),
 			want: []Session{{
 				ID: "$5", Name: "testova-sesiya", LastActivity: 1, Created: 2,
 				PanePID: 9, Command: "claude", Title: "тестова сесия 🚀",
@@ -50,7 +50,7 @@ func TestParseSessionsFields(t *testing.T) {
 		},
 		{
 			name: "no title is no title — every session that predates the feature",
-			in:   row("$6", "bare", "0", "1", "2", "done", "9", "", "", ""),
+			in:   row("$6", "bare", "0", "1", "2", "", "done", "9", "", "", ""),
 			want: []Session{{
 				ID: "$6", Name: "bare", LastActivity: 1, Created: 2,
 				State: "done", PanePID: 9,
@@ -66,19 +66,19 @@ func TestParseSessionsFields(t *testing.T) {
 			// A separator smuggled into a session name (possible outside the
 			// API's NAME_RE) shifts every field left. The id anchor catches it
 			// before the numeric columns have to.
-			in:   row("we", "ird", "$7", "1", "1700000000", "1690000000", "running", "4242", "claude", "t"),
+			in:   row("we", "ird", "$7", "1", "1700000000", "", "1690000000", "running", "4242", "claude", "t"),
 			want: []Session{},
 		},
 		{
 			name: "a non-numeric count still drops the row",
-			in:   row("$8", "odd", "many", "1700000000", "1690000000", "running", "4242", "claude", "", ""),
+			in:   row("$8", "odd", "many", "1700000000", "1690000000", "", "running", "4242", "claude", "", ""),
 			want: []Session{},
 		},
 		{
 			name: "mixed good and bad lines keep the good ones",
-			in: row("$1", "ok", "0", "10", "20", "awaiting", "31", "vim", "Edit the thing", "edit") + "\n" +
+			in: row("$1", "ok", "0", "10", "20", "", "awaiting", "31", "vim", "Edit the thing", "edit") + "\n" +
 				"broken" + listSep + "line\n" +
-				row("$2", "also-ok", "2", "30", "40", "", "55", "bash", "", ""),
+				row("$2", "also-ok", "2", "30", "40", "", "", "55", "bash", "", ""),
 			want: []Session{
 				{ID: "$1", Name: "ok", LastActivity: 10, Created: 20, State: "awaiting",
 					PanePID: 31, Command: "vim", Title: "Edit the thing", PaneTitle: "edit"},
@@ -119,7 +119,7 @@ func TestListFormatCarriesBothTitles(t *testing.T) {
 // object. pane_title keeps its own key — they are different things.
 func TestSessionsJSONShape(t *testing.T) {
 	full, err := json.Marshal(parseSessions([]byte(
-		row("$3", "work", "1", "10", "20", "running", "42", "claude", "Deploy the thing", "~/code") + "\n")))
+		row("$3", "work", "1", "10", "20", "", "running", "42", "claude", "Deploy the thing", "~/code") + "\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestSessionsJSONShape(t *testing.T) {
 		}
 	}
 	bare, err := json.Marshal(parseSessions([]byte(
-		row("$4", "bare", "0", "1", "2", "", "9", "", "", "") + "\n")))
+		row("$4", "bare", "0", "1", "2", "", "", "9", "", "", "") + "\n")))
 	if err != nil {
 		t.Fatal(err)
 	}

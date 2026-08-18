@@ -115,7 +115,12 @@ describe("sidebar.showLastActive — the roamed pref", () => {
 const sess = (over: Partial<Session> = {}): Session => ({
   name: "s1",
   attached: 0,
-  lastActivity: Math.floor(Date.now() / 1000) - 300, // 5m ago
+  // The card reads lastDrive (when a human last had hands on it); lastActivity
+  // is tmux's raw number, which a read-only attach also bumps and which nothing
+  // displays. Deliberately different values here, so this fixture would catch a
+  // regression back to the wrong field.
+  lastDrive: Math.floor(Date.now() / 1000) - 300, // driven 5m ago
+  lastActivity: Math.floor(Date.now() / 1000) - 2, // "active" 2s ago (a watcher)
   created: 1000,
   owner: "wizard",
   ...over,
