@@ -394,6 +394,7 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   unqueued: "left the queue",
   dequeued: "taken from the queue",
   "queue-cleared": "queue cleared",
+  skill: "skill",
   compact: "context compacted",
   "hook-error": "hook failed",
 };

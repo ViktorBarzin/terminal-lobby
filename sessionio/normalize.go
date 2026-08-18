@@ -183,6 +183,19 @@ func (n *Normalizer) Record(rec Record) []Event {
 		return out
 	}
 
+	// Loading a skill injects the WHOLE SKILL.md as an isMeta user record, and
+	// it rendered as an enormous message nobody wrote — 312 of them across this
+	// box's transcripts, median 3,125 characters (see skill.go). The load is
+	// worth one line, so that a skill the MODEL chose is not a silent change in
+	// how it behaves; the body is not.
+	if rec.IsMeta && role == "user" {
+		if name, ok := skillLoad(blockText(blocks)); ok {
+			e := n.emit(KindMeta, at)
+			e.Meta, e.Body = MetaSkill, name
+			return []Event{e}
+		}
+	}
+
 	// isPrompt: the human actually said something (see the turn model above).
 	// isMeta lines are skill/system text injected as if the user typed it.
 	isPrompt := role == "user" && !rec.IsMeta && hasBlock(blocks, "text")

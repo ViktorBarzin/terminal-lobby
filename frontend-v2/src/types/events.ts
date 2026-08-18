@@ -66,6 +66,7 @@ export type MetaKind =
   | "unqueued"
   | "dequeued"
   | "queue-cleared"
+  | "skill"
   | "compact"
   | "hook-error";
 
