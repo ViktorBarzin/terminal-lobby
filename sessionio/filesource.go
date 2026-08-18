@@ -1,14 +1,10 @@
 package sessionio
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 )
@@ -43,14 +39,29 @@ type FileSource struct {
 	normMu sync.Mutex
 	norm   *Normalizer
 	offset int64 // touched only by the Run goroutine
+
+	// How this source reaches the transcript. Fixed at construction and never
+	// reassigned, so the Run goroutine reads it without a lock.
+	reader Reader
 }
 
 // NewFileSource builds a source over one transcript. session is the tmux
 // session name, carried on every event; poll is the tail interval used by Run.
 func NewFileSource(session, path string, poll time.Duration) *FileSource {
+	return NewFileSourceWith(session, path, poll, LocalReader{})
+}
+
+// NewFileSourceWith builds a source that reaches its transcript through r. The
+// registry uses it to give another OS user's session a reader that can actually
+// open their 0750 home, while a session this process owns keeps LocalReader.
+func NewFileSourceWith(session, path string, poll time.Duration, r Reader) *FileSource {
+	if r == nil {
+		r = LocalReader{}
+	}
 	return &FileSource{
 		session: session, path: path, poll: poll,
 		subs: map[int]chan Event{}, norm: NewNormalizer(session),
+		reader: r,
 	}
 }
 
@@ -178,7 +189,7 @@ func (f *FileSource) Subscribe() (<-chan Event, func()) {
 // TailOnce consumes whatever the transcript has gained since the last read.
 // Run calls it on a ticker; tests call it directly.
 func (f *FileSource) TailOnce() {
-	lines, next, err := ReadFrom(f.path, f.offset)
+	lines, next, err := f.reader.ReadFrom(f.path, f.offset)
 	if err != nil {
 		return // transcript may not exist yet; try again next tick
 	}
@@ -205,34 +216,7 @@ func (f *FileSource) FullResult(toolID string) (string, json.RawMessage, error) 
 	if toolID == "" {
 		return "", nil, errors.New("full result: no tool id")
 	}
-	file, err := os.Open(f.path)
-	if err != nil {
-		return "", nil, err
-	}
-	defer file.Close()
-
-	sc := bufio.NewScanner(file)
-	sc.Buffer(make([]byte, 0, 64<<10), maxTranscriptLine)
-	for sc.Scan() {
-		line := sc.Bytes()
-		// Cheap reject before the JSON decode — most lines are not this one.
-		if !bytes.Contains(line, []byte(toolID)) {
-			continue
-		}
-		rec, ok := DecodeRecord(line)
-		if !ok {
-			continue
-		}
-		for _, bl := range rec.Blocks() {
-			if bl.Type == "tool_result" && bl.ToolUseID == toolID {
-				return decodeToolResult(bl.Content), rec.ToolUseResult, nil
-			}
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return "", nil, err
-	}
-	return "", nil, fmt.Errorf("full result: no result for tool %q in this transcript", toolID)
+	return f.reader.FullResult(f.path, toolID)
 }
 
 // Interrupt records an operator interrupt on this session at `at` (epoch ms)
