@@ -47,7 +47,14 @@ BASELINE = "safari15"
 FATAL_SYNTAX = {
     "class static block": re.compile(r"\bstatic\s*\{"),        # ES2022, Safari 16.4
     "regexp lookbehind": re.compile(r"\(\?<[=!]"),             # Safari 16.4
-    "regexp v flag": re.compile(r"/[gimsuy]*v[gimsuy]*;"),     # Safari 17
+    # NO "regexp v flag" entry. The v flag (Safari 17) genuinely is fatal here,
+    # but it cannot be spotted by regex on this input without crying wolf: telling
+    # a literal from division needs a parser, and both attempts produced false
+    # positives on real bytes — flags-before-semicolon matched mermaid's
+    # arithmetic (`w=b/O,T=b/v;`), and requiring a plausible body matched
+    # URL-encoded SVG data URIs in the vanilla pages (`/%3E%3C/svg`). The esbuild
+    # differential below is a real parser and covers the v flag wherever it is
+    # applied, so the cheap layer keeps only what it can judge honestly.
 }
 
 
@@ -137,4 +144,100 @@ def test_esbuild_agrees_nothing_needs_lowering(tmp_path, page_path: str) -> None
     assert outs[BASELINE] == outs["esnext"], (
         f"the vendored block still contains syntax newer than {BASELINE} — "
         f"esbuild had to lower it, so the real {BASELINE} engine cannot parse it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The BUILT SPA (frontend-v2).
+#
+# The lobby stopped being frontend/index.html on 2026-08-16, when the SolidJS
+# SPA was promoted to /usr/local/share/ttyd/index.html. The guards above only
+# ever read the vanilla pages, so the promotion quietly moved the shipped bytes
+# out from under the check that existed for exactly this failure: vite's
+# build.target decides what syntax survives, it was "es2022", and viteSingleFile
+# inlines the whole bundle into ONE script — so one ES2022 construct anywhere in
+# it takes the entire lobby down on the baseline engine.
+#
+# It did. On 2026-08-18 the shipped bundle held 270 class static blocks, and
+# emo's iPad (iPadOS 15.8) rendered a blank page: the tab title arrived, nothing
+# else ran, and the device sent no telemetry at all — silence being the
+# signature, since a page that cannot parse cannot report that it could not.
+#
+# These read the BUILT artifact rather than the source: the source is TypeScript
+# and says nothing about what vite will emit.
+# ---------------------------------------------------------------------------
+
+def _spa_candidates() -> list[str]:
+    if os.environ.get("TL_SPA"):
+        return [os.environ["TL_SPA"]]
+    return [
+        os.path.join(REPO, "out", "index.html"),                 # stamped, about to ship
+        os.path.join(REPO, "frontend-v2", "dist", "index.html"),  # a fresh local build
+    ]
+
+
+@pytest.fixture(scope="module")
+def spa() -> tuple[str, str]:
+    for path in _spa_candidates():
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                return path, f.read()
+    pytest.skip(
+        "no built SPA found — run `npm run build` in frontend-v2, or point "
+        "TL_SPA at the page to audit"
+    )
+
+
+# Only the static block is regex-checked on the SPA. The other two patterns
+# cannot gate a MINIFIED bundle without false positives, measured on the
+# 2026-08-18 build: every "v flag" hit was inline SVG path data inside a string
+# (`<svg><circle cx=9 ...</svg>`), and two of the three "lookbehind" hits were a
+# lookbehind inside a STRING — marked's `new RegExp("(?<=1)(?<!1)")` capability
+# probe, which is wrapped in try/catch precisely so an engine without lookbehind
+# takes the fallback branch. Telling a literal from division, or from a string,
+# needs a parser; that is what the esbuild differential below is for. The static
+# block stays because it is the construct that has now broken this page twice
+# and `static {` does not plausibly occur in minified string data.
+def test_spa_no_class_static_blocks(spa: tuple[str, str]) -> None:
+    path, html = spa
+    hits = FATAL_SYNTAX["class static block"].findall(html)
+    assert not hits, (
+        f"the built SPA ({os.path.basename(path)}) contains {len(hits)} class static "
+        f"block(s), a parse-time SyntaxError on {BASELINE} (iPadOS 15.8). "
+        f"viteSingleFile ships the bundle as ONE script, so the whole lobby fails to "
+        f"start there — a blank page, not a degraded one. Set build.target to "
+        f"'{BASELINE}' in frontend-v2/vite.config.ts."
+    )
+
+
+def test_spa_esbuild_agrees_nothing_needs_lowering(tmp_path, spa: tuple[str, str]) -> None:
+    """The authoritative check: a real parser, not the regexes above.
+
+    Same differential the vendored block gets — `--target=safari15` on its own
+    only tells you esbuild COULD lower the input, silently. Comparing it against
+    `--target=esnext` is what reveals that lowering was necessary at all.
+    """
+    esb = _esbuild()
+    if not esb:
+        pytest.skip("esbuild not available (frontend-v2/node_modules or PATH)")
+
+    path, html = spa
+    code = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", html, re.S))
+    assert code.strip(), f"no inline script found in {path}"
+
+    src = tmp_path / "spa.js"
+    src.write_text(code, encoding="utf-8")
+    outs = {}
+    for target in (BASELINE, "esnext"):
+        r = subprocess.run(
+            esb + [str(src), f"--target={target}", "--log-level=silent"],
+            capture_output=True, check=True,
+        )
+        outs[target] = r.stdout
+
+    assert outs[BASELINE] == outs["esnext"], (
+        f"the built SPA contains syntax newer than {BASELINE}, so esbuild had to "
+        f"lower it — meaning the real engine on emo's iPad cannot parse the bundle "
+        f"and the lobby comes up blank. Set build.target to '{BASELINE}' in "
+        f"frontend-v2/vite.config.ts and rebuild."
     )
