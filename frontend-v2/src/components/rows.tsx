@@ -388,6 +388,12 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   mode: "mode",
   "permission-mode": "permissions",
   queued: "queued",
+  // deriveRows drops these three, the way it drops the mode kinds — they are
+  // bookkeeping for the queue list. The record stays total so a new kind
+  // cannot be added without a label.
+  unqueued: "left the queue",
+  dequeued: "taken from the queue",
+  "queue-cleared": "queue cleared",
   compact: "context compacted",
   "hook-error": "hook failed",
 };
