@@ -198,11 +198,18 @@ func (n *Normalizer) Record(rec Record) []Event {
 		switch bl.Type {
 		case "text":
 			k := KindText
+			body := bl.Text
 			if isPrompt {
 				k = KindUser // rendered as a plain bubble, never as markdown
+				// A slash command is recorded as markup rather than as the line
+				// the operator typed; unwrapped here so the chat shows the
+				// command (see command.go).
+				if line, ok := commandLine(body); ok {
+					body = line
+				}
 			}
 			e := n.emit(k, at)
-			e.Body = bl.Text
+			e.Body = body
 			out = append(out, e)
 		case "thinking":
 			e := n.emit(KindThinking, at)
