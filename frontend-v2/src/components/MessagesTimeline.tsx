@@ -195,6 +195,8 @@ export const MessagesTimeline: Component<{
    * did before attachments rendered at all.
    */
   me?: string;
+  /** the opening window has not arrived yet — this is "not yet", not "none". */
+  opening?: boolean;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -522,7 +524,11 @@ export const MessagesTimeline: Component<{
       </Show>
       <Show
         when={allKeys().length > 0}
-        fallback={<div class="tl-empty-state">No messages yet.</div>}
+        fallback={
+          <div class="tl-empty-state">
+            {props.opening ? "Loading the conversation…" : "No messages yet."}
+          </div>
+        }
       >
         <Show when={filling()}>
           <div class="tl-row tl-row-filling" aria-live="polite">

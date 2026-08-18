@@ -29,7 +29,13 @@ if (typeof document !== "undefined" && typeof EventSource === "undefined") {
     onmessage: ((ev: { data: string }) => void) | null = null;
     constructor(public url: string) {}
     close(): void {}
-    addEventListener(): void {}
+    // The server marks the end of the opening window with a named `ready`
+    // event; the store holds its first paint until it arrives. These fakes have
+    // no replay to finish, so the window is complete the moment it is asked
+    // for.
+    addEventListener(type: string, fn: (ev: { data: string }) => void): void {
+      if (type === "ready") fn({ data: "0" });
+    }
     removeEventListener(): void {}
   };
 }

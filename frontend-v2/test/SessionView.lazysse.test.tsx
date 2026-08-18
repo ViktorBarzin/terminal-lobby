@@ -59,6 +59,11 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
       constructor(public url: string) {
         eventSources.push(this);
       }
+      // The store holds its first paint until the opening window is complete;
+      // this fake has no replay, so it is complete the moment it is asked for.
+      addEventListener(type: string, fn: (ev: { data: string }) => void): void {
+        if (type === "ready") fn({ data: "0" });
+      }
       close(): void {
         this.closed = true;
       }
