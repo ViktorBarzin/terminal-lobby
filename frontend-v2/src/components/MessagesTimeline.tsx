@@ -266,7 +266,23 @@ export const MessagesTimeline: Component<{
     const anchor = el?.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling)");
     const before = anchor?.offsetTop ?? 0;
     setMounted((m) => Math.min(total, m + MOUNT_CHUNK_ROWS));
-    if (!el || !anchor) return;
+    if (!el) return;
+    // At the bottom, being at the bottom IS the position to keep — and it is
+    // the one the fill runs against, since a session opens there. Say so
+    // directly rather than deriving it from the anchor.
+    //
+    // Both this and the transcript pin write scrollTop, and during the opening
+    // fill both are firing: chunks land every idle callback while the stream's
+    // opening window arrives in batches. The anchor arithmetic is computed
+    // around ITS OWN setter, so a pin scroll landing in between moved the
+    // target it measured, and the two produced a lurch. Measured opening a real
+    // session: scrollTop went 307 -> 1850 -> 250 -> 547 and what sat at the
+    // middle of the screen changed four times in the first second.
+    if (pinned()) {
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      return;
+    }
+    if (!anchor) return;
     el.scrollTop = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
   };
 
