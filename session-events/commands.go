@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -280,6 +281,18 @@ func (rg *registry) catalogue(osUser, session string) ([]Command, bool) {
 	us.mu.Unlock()
 	if !ok {
 		return nil, false
+	}
+	// Another user's skills and commands live inside their 0750 home, so the
+	// discovery walk has to run as them. An unreachable catalogue costs the
+	// composer only its non-built-in entries, so a failure here is logged and
+	// answered as "none" rather than failing the request.
+	if us.priv != nil {
+		cmds, err := us.priv.Catalogue(info.CWD)
+		if err != nil {
+			log.Printf("catalogue: %s/%s: %v", osUser, session, err)
+			return nil, true
+		}
+		return cmds, true
 	}
 	return Discover(filepath.Join(rg.homeBase, osUser), info.CWD), true
 }

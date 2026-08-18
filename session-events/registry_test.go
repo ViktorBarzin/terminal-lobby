@@ -17,7 +17,7 @@ func TestRegistrySourceRequiresSessionStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	opts := siotest.NewFakeOptions("wizard/demo")
-	rg := newRegistry(ctx, time.Millisecond, "/root", opts)
+	rg := newRegistry(ctx, time.Millisecond, "/root", opts, "wizard")
 
 	if _, ok := rg.source("wizard", "demo"); ok {
 		t.Fatal("unregistered session must not resolve")
@@ -44,7 +44,7 @@ func TestRegistrySourceRequiresSessionStart(t *testing.T) {
 func TestRegistrySessionStartFailsWhenItCannotRecord(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, "/root", siotest.NewFakeOptions()) // no live sessions
+	rg := newRegistry(ctx, time.Millisecond, "/root", siotest.NewFakeOptions(), "wizard") // no live sessions
 
 	w := httptest.NewRecorder()
 	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
@@ -121,14 +121,14 @@ func TestRegistryResolvesSessionsRegisteredBeforeARestart(t *testing.T) {
 	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
 
 	ctxA, cancelA := context.WithCancel(context.Background())
-	before := newRegistry(ctxA, time.Millisecond, homeBase, opts)
+	before := newRegistry(ctxA, time.Millisecond, homeBase, opts, osUser)
 	register(t, before, osUser, "aaaa-1111", cwd, tmux)
 	if _, ok := before.source(osUser, tmux); !ok {
 		t.Fatal("session should resolve in the process that received the hook")
 	}
 	cancelA() // the service exits — deploy, crash, restart, all the same
 
-	after := newRegistry(context.Background(), time.Millisecond, homeBase, opts)
+	after := newRegistry(context.Background(), time.Millisecond, homeBase, opts, osUser)
 	fs, ok := after.source(osUser, tmux)
 	if !ok {
 		t.Fatal("session does not resolve after a restart — the Text view renders NO TRANSCRIPT")
@@ -152,7 +152,7 @@ func TestRegistryStopsServingAfterTheTmuxSessionIsReplaced(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts)
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
 	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
 	fs, ok := rg.source(osUser, tmux)
 	if !ok {
@@ -196,7 +196,7 @@ func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts)
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
 
 	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
 	first, ok := rg.source(osUser, tmux)
@@ -247,7 +247,7 @@ func TestRegistrySourceKeptWhenTranscriptUnchanged(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts)
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, "wizard")
 
 	for i := 0; i < 2; i++ {
 		register(t, rg, "wizard", "aaaa-1111", "/home/wizard/qa", "qa-stable")
@@ -263,7 +263,7 @@ func TestRegistrySourceKeptWhenTranscriptUnchanged(t *testing.T) {
 func TestRegistryMissingSessionStartFields(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, "/root", siotest.NewFakeOptions())
+	rg := newRegistry(ctx, time.Millisecond, "/root", siotest.NewFakeOptions(), "wizard")
 	w := httptest.NewRecorder()
 	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"user":"wizard"}`)))
 	if w.Code != 400 {
@@ -293,7 +293,7 @@ func TestSourceIsHydratedBeforeItIsReturned(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rg := newRegistry(ctx, time.Hour, home, siotest.NewFakeOptions(user+"/s"))
+	rg := newRegistry(ctx, time.Hour, home, siotest.NewFakeOptions(user+"/s"), user)
 	if err := rg.user(user).sm.Put(sessionio.SessionInfo{
 		TmuxSession: "s", CWD: "/x", ClaudeID: "sess",
 	}); err != nil {
@@ -307,5 +307,32 @@ func TestSourceIsHydratedBeforeItIsReturned(t *testing.T) {
 	// No sleep, no poll: the transcript must already be readable.
 	if got := len(fs.Replay(0)); got == 0 {
 		t.Fatal("the source was handed out before its transcript was read")
+	}
+}
+
+// The regression this whole path exists for. session-events runs as one user
+// and serves several; a home is 0750, so reading another user's transcript with
+// this process's own file access fails — and it failed SILENTLY, as an empty
+// stream the text view drew as an empty conversation. Every user who was not
+// the service's own saw a blank session.
+func TestRegistryReadsAForeignUserThroughAChildAndItsOwnUserDirectly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, t.TempDir(), siotest.NewFakeOptions(), "wizard")
+
+	own := rg.user("wizard")
+	if own.priv != nil {
+		t.Fatal("the service's own user must be read directly, not through sudo")
+	}
+	if _, ok := own.reader.(sessionio.LocalReader); !ok {
+		t.Fatalf("own user reader is %T, want sessionio.LocalReader", own.reader)
+	}
+
+	foreign := rg.user("bob")
+	if foreign.priv == nil {
+		t.Fatal("another user must be read through a child running as them")
+	}
+	if foreign.reader != sessionio.Reader(foreign.priv) {
+		t.Fatal("the foreign user's source must read through that same child")
 	}
 }
