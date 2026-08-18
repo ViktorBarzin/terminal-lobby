@@ -56,6 +56,43 @@ export interface Event {
   sidechain?: boolean;
   /** body/result were capped for the wire; the rest is fetched on demand. */
   truncated?: boolean;
+  /** A `/context` reading, on `meta` events whose meta is "context". */
+  context?: ContextReading;
+}
+
+/** One row of the `/context` usage-by-category table. */
+export interface ContextCategory {
+  name: string;
+  tokens: number;
+  percent: number;
+}
+
+/**
+ * A `/context` reading, as the CLI published it.
+ *
+ * The numbers are its own rounded display values — 65.2k arrives as 65,200 —
+ * because the point of reading `/context` rather than doing the arithmetic is
+ * that the CLI knows the ceiling and we do not: it is not on the wire, and it is
+ * not a constant (a session on this box reads 65.2k / 1m).
+ */
+export interface ContextReading {
+  model?: string;
+  usedTokens: number;
+  maxTokens: number;
+  percent: number;
+  categories?: ContextCategory[];
+}
+
+/** One search hit. `id` is the event to scroll to, in the same id space the
+ *  stream and Last-Event-ID use. */
+export interface SearchHit {
+  id: number;
+  kind: EventKind;
+  tool?: string;
+  /** Where the match was: message | thinking | input | result. */
+  field: string;
+  snippet: string;
+  at?: number;
 }
 
 /** The subtype of a `meta` event — the session's lifecycle, not its content. */
@@ -68,7 +105,8 @@ export type MetaKind =
   | "queue-cleared"
   | "skill"
   | "compact"
-  | "hook-error";
+  | "hook-error"
+  | "context";
 
 export interface TokenUsage {
   input_tokens?: number;
@@ -126,5 +164,8 @@ export function parseEvent(data: string): Event | null {
   if (typeof o.meta === "string") ev.meta = o.meta as MetaKind;
   if (o.sidechain === true) ev.sidechain = true;
   if (o.truncated === true) ev.truncated = true;
+  if (o.context && typeof o.context === "object") {
+    ev.context = o.context as ContextReading;
+  }
   return ev;
 }

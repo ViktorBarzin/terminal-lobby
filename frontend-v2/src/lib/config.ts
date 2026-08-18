@@ -158,6 +158,34 @@ export function paneUrl(session: string): string {
   return withActAs(`${API_BASE}/pane/${encodeURIComponent(session)}`);
 }
 
+/**
+ * GET target for finding text anywhere in the session (session-events).
+ *
+ * The server searches the WHOLE transcript, not the window this client holds:
+ * the view opens on 20 turns and the largest transcript on this box is 28.9 MB
+ * over 7,964 records, so a client-side find would quietly cover a few percent of
+ * a long session. Hits carry event ids, which `earlierUrl` resolves.
+ */
+export function searchUrl(session: string, q: string, limit = 50): string {
+  return withActAs(
+    `${API_BASE}/search/${encodeURIComponent(session)}?q=${encodeURIComponent(q)}&limit=${limit}`,
+  );
+}
+
+/**
+ * POST target that types free text into the session's pane WITHOUT submitting
+ * it (session-events). Body: {text}.
+ *
+ * This is how the "Other" option of an AskUserQuestion is answered. `keysUrl`
+ * cannot do it — its allowlist carries no letters, and that allowlist is the
+ * whole security boundary of the route — and `promptUrl` would clear the line
+ * first and force an Enter, which is wrong inside a dialog field and takes the
+ * Enter away from the caller that needs to send it as its own verified step.
+ */
+export function answerTextUrl(session: string): string {
+  return withActAs(`${API_BASE}/answer-text/${encodeURIComponent(session)}`);
+}
+
 /** Build a tmux-api URL under the /api/sessions prefix (e.g. apiUrl("/sessions")
  *  → "/api/sessions/sessions"; apiUrl("/whoami") → "/api/sessions/whoami"). */
 export function apiUrl(path: string): string {

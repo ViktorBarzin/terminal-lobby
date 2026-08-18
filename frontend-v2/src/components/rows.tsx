@@ -397,6 +397,9 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   skill: "skill",
   compact: "context compacted",
   "hook-error": "hook failed",
+  // Dropped by deriveRows too — the reading belongs to the meter beside the
+  // composer, and one row per settled turn would divide the whole transcript.
+  context: "context",
 };
 
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (

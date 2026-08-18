@@ -473,6 +473,11 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           // outright rather than folded, since expanding a turn would put the
           // divider back.
           if (meta === "mode" || meta === "permission-mode") break;
+          // A `/context` reading is state for the same reason, and the meter
+          // beside the composer is where it shows. It matters more here than
+          // for the mode: the server refreshes on every settled turn, so a row
+          // per reading would put a divider between every pair of turns.
+          if (meta === "context") break;
           // The queue's departures are bookkeeping for queuedPrompts(), the
           // same way the mode events are for the chip: a divider saying a
           // prompt left the queue tells the reader nothing the queue itself
