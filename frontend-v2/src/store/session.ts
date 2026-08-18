@@ -13,7 +13,12 @@ import {
   resultUrl,
 } from "../lib/config";
 import type { Event, PermissionDecision } from "../types/events";
-import type { SlashCommand } from "../components/compose.logic";
+import {
+  isSlashCommand,
+  sameCommand,
+  type SentCommand,
+  type SlashCommand,
+} from "../components/compose.logic";
 
 export interface SessionStore {
   /** Reactive, ordered, deduped event list (Solid store proxy). */
@@ -42,6 +47,8 @@ export interface SessionStore {
   pane: () => Promise<{ pane: string; state: string } | null>;
   /** The session's own slash commands, beyond the built-ins the page ships. */
   commands: () => Promise<SlashCommand[]>;
+  /** Commands sent from here that the transcript has not accounted for. */
+  sentCommands: () => SentCommand[];
   /** One tool result in full, after the wire capped it. */
   fullResult: (toolId: string) => Promise<string | null>;
   /** Prepend the window of turns before the oldest event held. Returns how
@@ -109,6 +116,18 @@ export function createSessionStore(
   let pending: Event[] = [];
   let flushHandle = 0;
 
+  /**
+   * Slash commands sent from here that the transcript has not accounted for.
+   *
+   * The CLI records some commands and not others (measured 2026-08-18: /wrap-up
+   * and /model yes, /help and /context no), so waiting for a record that may
+   * never come leaves the chat blank after a command that in fact ran. These
+   * stand in until a matching user event arrives — and for the ones the CLI
+   * never writes, they are the only account of it.
+   */
+  const [sentCommands, setSentCommands] = createSignal<SentCommand[]>([]);
+  let sentSeq = 0;
+
   const flush = (): void => {
     flushHandle = 0;
     if (pending.length === 0) return;
@@ -118,6 +137,13 @@ export function createSessionStore(
     // per index write.
     batch(() => {
       for (const e of arrived) setEvents(events.length, e);
+      // The transcript caught up with a command we were standing in for.
+      const spoken = arrived.filter((e) => e.kind === "user").map((e) => e.body ?? "");
+      if (spoken.length > 0) {
+        setSentCommands((cur) =>
+          cur.filter((c) => !spoken.some((body) => sameCommand(body, c.text))),
+        );
+      }
     });
   };
 
@@ -209,6 +235,11 @@ export function createSessionStore(
             : `Couldn't send prompt (HTTP ${res.status})`,
           "error",
         );
+      }
+      if (res.ok && isSlashCommand(text)) {
+        sentSeq += 1;
+        const at = Date.now();
+        setSentCommands((cur) => [...cur, { id: -sentSeq, text: text.trim(), at }]);
       }
       return res.ok;
     } catch {
@@ -324,6 +355,7 @@ export function createSessionStore(
     answer,
     pane,
     commands,
+    sentCommands,
     fullResult,
     loadEarlier,
     hasEarlier,
