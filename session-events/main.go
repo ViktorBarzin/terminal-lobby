@@ -45,6 +45,8 @@ func main() {
 
 	injector := sessionio.NewInjector(self.Username)
 	rg := newRegistry(ctx, *poll, *homeBase, injector, self.Username)
+	// Keeps the context meter current, and touches nothing nobody is watching.
+	refresh := newRefresher(injector)
 
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()
@@ -54,12 +56,18 @@ func main() {
 			http.Error(w, "session not registered", http.StatusNotFound)
 			return
 		}
-		events.Emit("events.stream_opened", osUserFrom(r.Context()), telemetry.Attrs{
-			"tl.session": r.PathValue("session"), "tl.client": "api",
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		events.Emit("events.stream_opened", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.client": "api",
 		})
-		writeSSE(w, r, fs, *hb)
-		events.Emit("events.stream_closed", osUserFrom(r.Context()), telemetry.Attrs{
-			"tl.session": r.PathValue("session"), "tl.client": "api",
+		// A text viewer is attached for exactly the life of its stream, which is
+		// the whole window in which the context refresh may touch this pane.
+		refresh.attach(osUser, session)
+		defer refresh.detach(osUser, session)
+
+		writeSSE(w, r, fs, *hb, func(id int64) { refresh.turnSettled(osUser, session, id) })
+		events.Emit("events.stream_closed", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.client": "api",
 		})
 	})
 	web.HandleFunc("POST /prompt/{session}", func(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +127,48 @@ func main() {
 			Body   string          `json:"body"`
 			Result json.RawMessage `json:"result,omitempty"`
 		}{body, result})
+	})
+	// Finding something in a session that has scrolled past. The view opens on a
+	// 20-turn window, so most of a long session is not in the browser and a
+	// client-side find would answer "no matches" for the part most worth
+	// searching. Hits carry event ids, which the client resolves with /earlier.
+	web.HandleFunc("GET /search/{session}", func(w http.ResponseWriter, r *http.Request) {
+		fs, ok := rg.source(osUserFrom(r.Context()), r.PathValue("session"))
+		if !ok {
+			http.Error(w, "session not registered", http.StatusNotFound)
+			return
+		}
+		q := r.URL.Query().Get("q")
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		hits := fs.Search(q, limit)
+		if hits == nil {
+			hits = []sessionio.SearchHit{} // an empty list, never a JSON null
+		}
+		writeJSON(w, hits)
+	})
+	// Free text for the "Other" option of an AskUserQuestion. Separate from
+	// /prompt on purpose: Prompt clears the line first and forces an Enter,
+	// neither of which is right inside a dialog field, and the answer sequence
+	// sends its own Enter once it has read the pane back (design 2026-08-18).
+	web.HandleFunc("POST /answer-text/{session}", func(w http.ResponseWriter, r *http.Request) {
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "bad body (need text)", http.StatusBadRequest)
+			return
+		}
+		if err := injector.AnswerText(osUser, session, body.Text); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// The same event the keys route emits: from the session's point of view
+		// this IS answering, and the text itself is never recorded.
+		events.Emit("claude.answered", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.count": len(body.Text), "tl.client": "api-text",
+		})
+		w.WriteHeader(http.StatusNoContent)
 	})
 	// What the pane currently shows. The text view reads it to mirror a blocking
 	// prompt, which the transcript does not report while it is pending (ADR-0010).
