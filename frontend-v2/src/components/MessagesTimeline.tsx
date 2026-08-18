@@ -235,12 +235,28 @@ export const MessagesTimeline: Component<{
     );
   };
 
-  const toggleTurn = (turnKey: string) =>
+  const toggleTurn = (turnKey: string) => {
+    // Unfolding inserts the turn's hidden rows into the list, and the mounted
+    // window is a SUFFIX BY COUNT — so without growing the count by the same
+    // number, the window slides forward over the new rows and unmounts rows
+    // that were on screen ABOVE the one just clicked. Their height goes with
+    // them, and the reader's view moves even though scrollTop never changed.
+    // Measured on a real session (2026-08-18): unfolding a 467-step turn
+    // replaced what was at the top of the screen while scrollTop held still.
+    //
+    // Collapsing needs no adjustment: the count is clamped to the list length,
+    // so a window wider than the list simply covers all of it.
+    const fold = derived().find(
+      (r): r is TurnFoldRow => r.kind === "turn-fold" && r.turnKey === turnKey,
+    );
+    const expanding = !expandedTurns().has(turnKey);
+    if (expanding && fold) setMounted((m) => m + fold.hidden.length);
     setExpandedTurns((prev) => {
       const next = new Set(prev);
       if (!next.delete(turnKey)) next.add(turnKey);
       return next;
     });
+  };
 
   // Rows mount from the newest end, a chunk per frame, until all of them are
   // up. This is NOT virtualization: nothing is ever unmounted, so scrolling and
