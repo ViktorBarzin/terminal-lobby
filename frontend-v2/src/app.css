@@ -134,6 +134,23 @@ body {
   color: var(--text-primary);
   box-shadow: var(--surface-shadow);
 }
+/* "still in testing", in one glyph. Riding high like a superscript rather than
+   sitting on the baseline keeps it from reading as part of the label, and
+   flex:none stops it being the thing that gives up width when the bar is
+   tight. The switch is icon-only below 380px, where this is the only mark
+   left. */
+.tl-seg-alpha {
+  flex: none;
+  align-self: flex-start;
+  margin-left: -3px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--accent);
+}
+.tl-seg:not(.active) .tl-seg-alpha {
+  opacity: 0.7;
+}
 .tl-activity-dot {
   width: 7px;
   height: 7px;
