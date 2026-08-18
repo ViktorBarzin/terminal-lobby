@@ -4,10 +4,11 @@ import {
   currentMode,
   promptHistory,
   queuedPrompts,
+  withSentCommands,
   type PendingPermission,
   type QuestionRow,
 } from "./timeline.logic";
-import { modeFromPane, type SlashCommand } from "./compose.logic";
+import { modeFromPane, type SentCommand, type SlashCommand } from "./compose.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
@@ -45,6 +46,8 @@ export const TextView: Component<{
   onPane?: () => Promise<{ pane: string; state: string } | null>;
   /** the session's own skills / custom commands, for the `/` menu. */
   onCommands?: () => Promise<SlashCommand[]>;
+  /** commands sent from here the transcript has not accounted for. */
+  sentCommands?: () => SentCommand[];
   /** fetch a capped tool result in full. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
   /** load the window of turns before the oldest held. */
@@ -63,6 +66,10 @@ export const TextView: Component<{
   /** receive the composer's sinks, for gestures that land outside it. */
   register?: (api: ComposerSinks) => void;
 }> = (props) => {
+  // What the transcript says, plus the commands it has not caught up with.
+  const shown = createMemo(() =>
+    withSentCommands(props.events, props.sentCommands?.() ?? []),
+  );
   const queued = createMemo(() => queuedPrompts(props.events));
   const history = createMemo(() => promptHistory(props.events));
   const [modeBusy, setModeBusy] = createSignal(false);
@@ -148,7 +155,7 @@ export const TextView: Component<{
   return (
     <div class="tl-textview">
       <MessagesTimeline
-        events={props.events}
+        events={shown()}
         onOpenPreview={props.onOpenPreview}
         onLoadFull={props.onLoadFull}
         onAnswer={answerQuestion}

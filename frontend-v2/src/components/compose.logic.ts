@@ -342,3 +342,30 @@ export function composeMessage(text: string, paths: readonly string[]): string {
   if (unique.length === 0) return body;
   return [...unique, ...(body ? [body] : [])].join("\n");
 }
+
+/**
+ * A slash command this surface sent, which the transcript may never mention.
+ *
+ * Measured 2026-08-18: the CLI records /wrap-up, /model, /compact and /login,
+ * and records NOTHING at all for /help, /context or /status. So a command sent
+ * from the composer can land, do exactly what it was asked to, and leave the
+ * chat with no trace that anything was sent — which is what Viktor reported.
+ * The surface that sent it is the only thing that can account for those.
+ */
+export interface SentCommand {
+  /** Negative, so it can never collide with a transcript event's id. */
+  id: number;
+  text: string;
+  at: number;
+}
+
+/** Whether a composed message is a slash command rather than prose. */
+export function isSlashCommand(text: string): boolean {
+  return /^\/[A-Za-z0-9][\w:-]*(\s|$)/.test(text.trim());
+}
+
+/** Whitespace-insensitive, so `/doc-tone  a.md` matches the recorded form. */
+export function sameCommand(a: string, b: string): boolean {
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ");
+  return norm(a) === norm(b);
+}
