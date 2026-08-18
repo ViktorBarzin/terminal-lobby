@@ -1,6 +1,6 @@
 # Answering, finding, and measuring: three additions to the text view
 
-**Status:** Designed, not built · **Date:** 2026-08-18 · **Owner:** wizard
+**Status:** Built · **Date:** 2026-08-18 · **Owner:** wizard
 **Grilled from:** *"let's get some design ideas from t3 code for our text mode."*
 
 ```stats
@@ -317,3 +317,78 @@ Claude Code specific, so we can read the figure the CLI already publishes.
 - **Whether the walk should be skippable** for the single-question single-select
   case, which the CLI submits immediately and which works today. A one-question
   walk with a review step may be one tap more than that case deserves.
+
+---
+
+## 11. What building it changed
+
+Six things came out differently from the plan, or were learned only by building
+it. Each is in the code with its reasoning; they are collected here so the doc
+and the build agree.
+
+**The refresh needed a guard the design did not know it needed.** Decision 11
+runs `/context` in the session's pane, and `Injector.Prompt` — the only route
+that submits a command — opens with `C-e C-u` to clear the input line. The first
+pane sampled on this box while building had an unsent draft sitting in it, so a
+refresh nobody asked for would have deleted something its author typed. The
+refresh now reads the pane first and only proceeds when the composer is empty,
+and that check fails closed: a screen it does not positively recognise means
+"do not touch", so a future CLI restyle turns the refresh off rather than turning
+it destructive. An empty composer is the marker alone on its line, with no
+placeholder text to tell apart from a draft, which is what makes the check
+reliable.
+
+**A `/context` run cannot feed the refresher.** This was an unnamed risk: if
+running the command opened a turn, the turn's end would trigger another refresh
+and the loop would never stop — and the session would look busy forever. It does
+not. The CLI records the invocation as a `system` record and the output as an
+`isMeta` user record, and the turn model treats neither as a prompt.
+
+**The reading is carried as structure, not as its markdown.** The plan said the
+client would show the headline and keep the breakdown behind an expand, which
+read as "send the markdown". At 14,930 characters per reading and one reading per
+settled turn, a 50-turn session would have put about 750 KB of it on the wire.
+Go parses the reading instead and carries the headline plus the category table;
+the per-tool, per-agent, per-memory and per-skill tables below them are most of
+that size and are not what a meter shows.
+
+**Searching the uncapped results needed a second pass.** Decision 7 promised
+messages, thinking, tool inputs *and the uncapped tool results*. The in-memory
+log — which is what makes the search cheap and what gives every hit an event id
+the client can already scroll to — holds results capped at 8 KB. So the search
+runs over memory first and then, only when the session actually has a truncated
+result, scans the transcript for matches past the cut and maps each back to its
+event through the tool id. Most searches never touch the disk at all.
+
+**Two ways into one dialog is one too many.** The inline question row was
+answerable for its first question; the card now answers all of them. Leaving both
+would have meant two senders typing into one pane with no way for either to know
+about the other, so the row became what it should have been — the record of what
+was asked and chosen.
+
+**Rows needed an identity in the DOM.** Jumping to a hit means finding its row,
+and rows were reconciled by key with nothing in the markup naming the event. Each
+row now carries its event id, which is also what lets the jump tell "not loaded
+yet" apart from "not mounted yet" — the first wants an earlier window, the second
+wants a frame.
+
+### One thing that turned out not to be true
+
+The pane's status line on this box shows a live context percentage, which looked
+for a moment like a better source than `/context` — free, always current, no
+transcript growth. It comes from a personal statusline plugin
+(`meta-statusline-pro`), not from Claude Code, so it is not there for every user
+and could not be what the meter reads. The transcript reading stands.
+
+## 12. What is still open
+
+- **How a multi-select question advances** remains unverified against a live
+  dialog, as §10 said. The plan assumes `Enter` leaves a multi-select question
+  and that the review screen opens with Submit focused. Both assumptions are
+  guarded rather than trusted: if either is wrong the pane check fails and the
+  sequence stops with the Terminal offered, which is the designed behaviour for
+  exactly this case.
+- **Whether `/context` is reliably recorded** is still verification item 1, and
+  still unreconciled with the earlier measurement. The fallback named in §7 has
+  not been needed, but it has not been ruled out either.
+- **Search latency on the largest transcripts** is still unmeasured.
