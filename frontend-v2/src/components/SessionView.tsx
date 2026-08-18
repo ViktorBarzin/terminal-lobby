@@ -781,7 +781,7 @@ export const SessionView: Component<{
             onKeys={store.answer}
             onPane={store.pane}
             onCommands={store.commands}
-            sentCommands={store.sentCommands}
+            pendingPrompts={store.pendingPrompts}
             onLoadFull={store.fullResult}
             onLoadEarlier={async () => {
               await store.loadEarlier();

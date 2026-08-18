@@ -1,5 +1,5 @@
 import type { Event, MetaKind, PermissionDecision, TokenUsage } from "../types/events";
-import type { SentCommand } from "./compose.logic";
+import type { PendingPrompt } from "./compose.logic";
 import {
   describe as describeTool,
   extractTodoSteps,
@@ -833,18 +833,18 @@ export function scrollTopAfterPrepend(
 }
 
 /**
- * The events the transcript reports, plus the slash commands this surface sent
- * that it has not.
+ * The events the transcript reports, plus the prompts this surface has sent
+ * that it has not shown yet.
  *
- * They go at the END rather than at their timestamp: a command is sent from the
- * bottom of a live conversation, and the transcript's own account of it (when
- * there is one) arrives later and replaces this. Each gets its own turn key, so
- * a command with no response reads as a turn with nothing in it — which is what
- * happened.
+ * They go at the END rather than at their timestamp: a prompt is sent from the
+ * bottom of a live conversation, and the transcript's own account of it arrives
+ * later and replaces this. Each gets its own turn key, so a prompt still
+ * waiting on a response reads as a turn with nothing in it yet — which is
+ * exactly what it is.
  */
-export function withSentCommands(
+export function withPendingPrompts(
   events: Event[],
-  sent: ReadonlyArray<SentCommand>,
+  sent: ReadonlyArray<PendingPrompt>,
 ): Event[] {
   if (sent.length === 0) return events;
   return [
