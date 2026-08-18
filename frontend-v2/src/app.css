@@ -2752,11 +2752,127 @@ body.tl-kb-up {
   filter: brightness(1.15);
 }
 
+/* How full the context is, beside the mode chip. The bar carries the reading at
+   a glance and the number is there when a glance is not enough; both come from
+   the CLI's own `/context` figures, so the chip and the pane agree. */
+.tl-ctx {
+  position: relative;
+  flex: none;
+  align-self: flex-end;
+}
+.tl-ctx-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tl-ctx-bar {
+  display: block;
+  width: 26px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg-muted) 25%, transparent);
+  overflow: hidden;
+}
+.tl-ctx-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+}
+/* Coloured by how much room is LEFT, because compaction is the thing worth
+   noticing before it happens — read as a traffic light, like the mode chip. */
+.tl-ctx-chip[data-tone="ok"] {
+  color: var(--fg-muted);
+}
+.tl-ctx-chip[data-tone="warn"] {
+  color: var(--state-awaiting);
+  border-color: color-mix(in srgb, var(--state-awaiting) 45%, transparent);
+}
+.tl-ctx-chip[data-tone="full"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.tl-ctx-chip:hover {
+  border-color: currentColor;
+  filter: brightness(1.15);
+}
+/* The breakdown opens UPWARD: the chip sits on the composer at the bottom of
+   the screen, so a panel below it would be off-screen on a phone. */
+.tl-ctx-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  min-width: 210px;
+  max-width: min(300px, calc(100vw - 24px));
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel, var(--bg-page));
+  box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
+  font-size: 12px;
+}
+.tl-ctx-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-ctx-total {
+  font-weight: 600;
+}
+.tl-ctx-model,
+.tl-ctx-age,
+.tl-ctx-empty {
+  color: var(--fg-muted);
+}
+.tl-ctx-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tl-ctx-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+.tl-ctx-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-ctx-tokens {
+  flex: none;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tl-ctx-age {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
 @media (pointer: coarse) {
   /* Everything answerable is a finger target. */
   .tl-question-option,
   .tl-complete-item {
     min-height: 40px;
+  }
+  .tl-ctx-chip {
+    min-height: 32px;
   }
   .tl-mode-chip {
     min-height: 32px;
