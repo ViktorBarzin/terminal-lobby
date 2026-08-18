@@ -148,6 +148,25 @@ if grep -q '__TL_[A-Z]*__' out/index.html; then
 fi
 echo "    build=${REV} asset=${ASSET}"
 
+# The baseline-engine gate, run on the EXACT bytes about to ship (out/index.html,
+# so the inlined diag.js is covered too) rather than on whatever sits in dist/.
+# viteSingleFile emits ONE script: a construct the oldest engine we serve cannot
+# parse is not a degraded feature there, it is a blank lobby. That has now
+# happened twice — xterm 6.0.0's class static blocks in the vanilla page
+# (2026-07-13), and the SPA's own es2022 build target after the page was promoted
+# to the lobby (2026-08-16 to 2026-08-18, on bob's iPadOS 15.8 iPad).
+echo "==> Checking the bundle against the baseline engine..."
+if python3 -c 'import pytest' 2>/dev/null; then
+  TL_SPA="$ROOT/out/index.html" python3 -m pytest "$ROOT/scripts/test_frontend_compat.py" \
+      -k spa -q || {
+    echo "deploy-v2.sh: the built SPA cannot parse on the baseline engine —" >&2
+    echo "  refusing to ship a lobby that comes up blank on the oldest device." >&2
+    exit 1
+  }
+else
+  echo "    NOTE: pytest unavailable — baseline-engine check SKIPPED" >&2
+fi
+
 # term.html is a SEPARATE artifact with its OWN update identity, and it needs
 # the same two stamps. vite's copyTermHtml plugin passes the source through
 # with both placeholders intact (BUILD_ID defaults to the literal
