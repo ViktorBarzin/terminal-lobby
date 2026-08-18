@@ -78,13 +78,16 @@ var actAsGate = authuser.Default
 // authMiddleware resolves the Authentik header to an OS user (401 missing / 403
 // unmapped / 500 if the OS user is absent) and stashes it in the request context.
 //
-// It also REFUSES an act-as request rather than ignoring it. This service reads
-// /home/<user>/.claude/projects directly and has no cross-user path yet — other
-// homes are 0750, and its tail polls every 200 ms, so it needs a persistent
-// streaming child rather than the per-operation sudo re-exec file-api uses.
-// Ignoring the parameter would be worse than refusing: the handler would resolve
-// the CALLER and serve their own transcripts under the target's name. 501 says
-// "this view is not available here" instead of quietly showing wrong data.
+// It also REFUSES an act-as request rather than ignoring it, and still does now
+// that the cross-user read exists (privreader.go — the persistent streaming
+// child this comment used to describe as missing, built on 2026-08-18 so that a
+// user's OWN text view works at all). The mechanism is no longer the obstacle;
+// whether an administrator may READ another person's conversations is a separate
+// decision from whether that person can read their own, and it has not been
+// taken. Ignoring the parameter would still be the worst option: the handler
+// would resolve the CALLER and serve their own transcripts under the target's
+// name. 501 says "this view is not available here" rather than quietly showing
+// wrong data.
 func authMiddleware(mapPath string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authValue := r.Header.Get(authHeader)

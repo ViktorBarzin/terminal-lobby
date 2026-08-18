@@ -20,6 +20,14 @@ type userState struct {
 	sm     *sessionio.SessionMap
 	mu     sync.Mutex
 	srcs   map[string]*liveSource // key: tmux session name
+
+	// How this user's files are read. The service's own user is read directly;
+	// everyone else goes through a child running as them, because a home is
+	// 0750 and this process cannot open what is inside one. priv is nil for the
+	// former and is the same object as reader for the latter — it is kept
+	// separately because the slash-command catalogue is not a sessionio read.
+	reader sessionio.Reader
+	priv   *privReader
 }
 
 // liveSource is a running FileSource plus the handle that stops its tail. A
@@ -41,12 +49,13 @@ type registry struct {
 	poll     time.Duration
 	homeBase string // "/home" (overridable for tests)
 	opts     sessionio.Options
+	self     string // the OS user this process runs as
 }
 
-func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts sessionio.Options) *registry {
+func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts sessionio.Options, self string) *registry {
 	return &registry{
 		users: map[string]*userState{}, ctx: ctx,
-		poll: poll, homeBase: homeBase, opts: opts,
+		poll: poll, homeBase: homeBase, opts: opts, self: self,
 	}
 }
 
@@ -60,6 +69,12 @@ func (rg *registry) user(osUser string) *userState {
 			osUser: osUser, root: root,
 			sm:   sessionio.NewSessionMap(osUser, root, rg.opts),
 			srcs: map[string]*liveSource{},
+		}
+		if osUser == rg.self {
+			us.reader = sessionio.LocalReader{}
+		} else {
+			us.priv = newPrivReader(osUser)
+			us.reader = us.priv
 		}
 		rg.users[osUser] = us
 	}
@@ -97,7 +112,7 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 		ls.stop()
 		delete(us.srcs, session)
 	}
-	ls := rg.start(session, info.Transcript)
+	ls := rg.start(session, info.Transcript, us.reader)
 	us.srcs[session] = ls
 	return ls.fs, true
 }
@@ -116,9 +131,9 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 // The cost is that the first request for a session waits for its transcript to
 // be parsed, once per session per process — the same work, moved to where its
 // result is actually used.
-func (rg *registry) start(session, transcript string) *liveSource {
+func (rg *registry) start(session, transcript string, reader sessionio.Reader) *liveSource {
 	ctx, stop := context.WithCancel(rg.ctx)
-	fs := sessionio.NewFileSource(session, transcript, rg.poll)
+	fs := sessionio.NewFileSourceWith(session, transcript, rg.poll, reader)
 	fs.TailOnce()
 	done := make(chan struct{})
 	go func() {

@@ -22,7 +22,18 @@ func main() {
 	homeBase := flag.String("home-base", "/home", "base dir holding per-user homes")
 	poll := flag.Duration("poll", 200*time.Millisecond, "transcript tail interval")
 	hb := flag.Duration("heartbeat", 20*time.Second, "SSE heartbeat interval")
+	// The privileged read child (privop.go). It serves ONE user — whoever sudo
+	// started it as — over stdin/stdout and never listens on anything, so it is
+	// handled before any of the service's own setup.
+	privop := flag.Bool("privop", false, "run as the privileged read child for the invoking user")
 	flag.Parse()
+
+	if *privop {
+		if err := runPrivop(); err != nil {
+			log.Fatalf("privop: %v", err)
+		}
+		return
+	}
 
 	self, err := user.Current()
 	if err != nil {
@@ -33,7 +44,7 @@ func main() {
 	defer stop()
 
 	injector := sessionio.NewInjector(self.Username)
-	rg := newRegistry(ctx, *poll, *homeBase, injector)
+	rg := newRegistry(ctx, *poll, *homeBase, injector, self.Username)
 
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()

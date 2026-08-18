@@ -33,6 +33,21 @@
 #                                      child re-validates containment itself, so
 #                                      the grant is scoped to one fixed
 #                                      behaviour and takes no path it trusts.
+#   /usr/local/bin/session-events     session-events re-execs ITSELF as the
+#                                      mapped user (`-privop`) to read that
+#                                      user's Claude transcripts, which sit
+#                                      inside a 0750 home the service cannot
+#                                      open. It is a LONG-LIVED child, not a
+#                                      per-operation re-exec like file-api's:
+#                                      the transcript tail polls every 200 ms,
+#                                      so one process per read would be one
+#                                      fork per 200 ms per open session. It
+#                                      speaks a fixed request/response protocol
+#                                      on stdin/stdout, takes no arguments, and
+#                                      re-validates every path against its OWN
+#                                      projects root — so the grant, like
+#                                      file-api's, trusts no path from the
+#                                      caller.
 #
 # Add one line per OS user listed on the right-hand side of
 # /etc/ttyd-user-map — which is itself GENERATED, hourly, from
@@ -56,8 +71,8 @@
 # tmux-attach.sh sources the decision from tmux-api's /internal/attach rather
 # than from any client argument. Removing a user from /etc/ttyd-user-map is
 # still what revokes everything here.
-wizard ALL=(emo) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api
-wizard ALL=(ancamilea) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api
+wizard ALL=(emo) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events
+wizard ALL=(ancamilea) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events
 
 # Restore button (POST /restore): run the validated root wrapper. It accepts a
 # single OS-user arg and re-checks it against /etc/ttyd-user-map, so this grant
