@@ -480,3 +480,38 @@ describe("<SessionView> — terminal controls in the session bar", () => {
     }
   });
 });
+
+/**
+ * The text view is the newer of the two and still in testing, so the switch
+ * says so (Viktor, 2026-08-18).
+ *
+ * In one glyph, because the control is already 131px of a 390px header at its
+ * labelled size — and because below 380px the labels are hidden entirely, so a
+ * word would have nothing to attach to. The word itself lives in the title and
+ * the aria-label.
+ */
+describe("<ViewSwitch> — the text view is marked as alpha", () => {
+  const switchOf = (root: HTMLElement) =>
+    Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"));
+
+  it("marks the text segment, and only that one", () => {
+    const { container } = render(() => <SessionView session="qa-alpha" />);
+    const [text, terminal] = switchOf(container as HTMLElement);
+    expect(text!.querySelector(".tl-seg-alpha")?.textContent?.trim()).toBe("α");
+    expect(terminal!.querySelector(".tl-seg-alpha")).toBeNull();
+  });
+
+  it("says the word where there is room for it", () => {
+    // The glyph is aria-hidden, so this is the only thing that announces it.
+    const { container } = render(() => <SessionView session="qa-alpha" />);
+    const [text] = switchOf(container as HTMLElement);
+    expect(text!.getAttribute("aria-label")).toMatch(/alpha/i);
+    expect(text!.getAttribute("title")).toMatch(/alpha/i);
+  });
+
+  it("does not announce it twice", () => {
+    const { container } = render(() => <SessionView session="qa-alpha" />);
+    const mark = container.querySelector(".tl-seg-alpha")!;
+    expect(mark.getAttribute("aria-hidden")).toBe("true");
+  });
+});
