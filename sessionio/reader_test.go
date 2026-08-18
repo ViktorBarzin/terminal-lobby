@@ -29,6 +29,11 @@ func (f *fakeReader) FullResult(path, toolID string) (string, json.RawMessage, e
 	return f.result, nil, nil
 }
 
+func (f *fakeReader) SearchResults(path, q string, limit int) ([]ResultMatch, error) {
+	f.asked = append(f.asked, path)
+	return nil, nil
+}
+
 // The point of the seam: session-events runs as one OS user but serves several,
 // and other homes are 0750. A source for another user must read through their
 // reader, never through this process's own file access.
