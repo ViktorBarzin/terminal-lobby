@@ -155,7 +155,9 @@ describe("<SessionView> — the phone bar's overflow menu", () => {
     const items = [...container.querySelectorAll(".tl-menu-item")].map((e) =>
       (e.textContent || "").trim(),
     );
-    expect(items).toEqual(["Files", "Watch only", "Settings"]);
+    // Find is here rather than in the header, which measured 25px past its own
+    // edge at 390px — and there is no chord to press on a phone.
+    expect(items).toEqual(["Files", "Find in session", "Watch only", "Settings"]);
     expect(dots.getAttribute("aria-expanded")).toBe("true");
   });
 

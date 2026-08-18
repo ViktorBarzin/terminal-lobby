@@ -106,6 +106,11 @@ export const KB_DEFAULT_BINDINGS: Binding[] = [
   { key: "alt+shift+n", command: "session.new", when: LOBBY_WHEN },
   { key: "alt+shift+w", command: "session.kill.current", when: LOBBY_WHEN },
   { key: "alt+shift+r", command: "session.rename.current", when: LOBBY_WHEN },
+  // Find in the open session's transcript. Alt+Shift rather than Ctrl/Cmd+F for
+  // the reason the whole namespace exists: Ctrl+F belongs to the TUI, and this
+  // chord has to be safe to press with a session open. Refused behind an
+  // overlay, which already owns the keyboard.
+  { key: "alt+shift+f", command: "find.open", when: "!overlayOpen" },
   // Alt+/ (Option+/) opens the shortcuts help from anywhere, incl. inside a
   // session — bare "/" is lobby-only (it must reach the pty inside the terminal).
   // Overlay-scoped on its own overlay: the help dialog's Escape/"/" exits read
