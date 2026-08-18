@@ -1,7 +1,7 @@
 import { createMemo, type Component } from "solid-js";
 import { SolidMarkdown, type SolidMarkdownComponents } from "solid-markdown";
 import type { PluggableList } from "unified";
-import remarkGfm from "remark-gfm";
+import { remarkPlugins } from "../lib/markdown-plugins";
 import rehypeSanitize from "rehype-sanitize";
 import {
   contentUrlFor,
@@ -16,7 +16,9 @@ import { fileReadUrl } from "../lib/config";
 /**
  * Assistant markdown renderer (design pillar #2: "full-width assistant markdown
  * with mermaid + inline images", beating T3 which renders neither).
- *   - remark-gfm: tables, task lists, strikethrough, autolinks.
+ *   - remark-gfm: tables, task lists, strikethrough, autolinks — gated on the
+ *     engine supporting lookbehind, which its autolink extension needs on
+ *     every render (see lib/markdown-plugins).
  *   - rehype-sanitize: the transcript can carry arbitrary HTML, so sanitize.
  *   - custom `code`: ```mermaid → <Mermaid>; other fences → <CodeView>, which
  *     lazily highlights them (highlight.js, already in the bundle for the file
@@ -231,7 +233,7 @@ export const Markdown: Component<{
     <div class="tl-markdown">
       <SolidMarkdown
         children={props.text}
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={rehype()}
         components={comps()}
         renderingStrategy="memo"

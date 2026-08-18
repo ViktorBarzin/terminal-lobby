@@ -108,6 +108,11 @@ src/
                          builder applies — push is deliberately excluded
     lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/rename/
                          retitle/title/…)
+    markdown-plugins.ts  Which remark plugins THIS ENGINE can run. remark-gfm's
+                         autolink extension builds an email pattern with a
+                         lookbehind on every render, and lookbehind is Safari
+                         16.4 — so on iPadOS 15.8 it is dropped and the message
+                         still renders, minus tables/task lists/strikethrough
     slug.ts              Display TITLE → tmux session NAME: romanize, lowercase,
                          collapse, cap at 32. Mirrors Go's terminal-lobby/slug
                          against the shared slug/vectors.json — the browser has
