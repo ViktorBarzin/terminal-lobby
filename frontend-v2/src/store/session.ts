@@ -49,6 +49,8 @@ export interface SessionStore {
   commands: () => Promise<SlashCommand[]>;
   /** Prompts sent from here that the transcript has not shown yet. */
   pendingPrompts: () => PendingPrompt[];
+  /** True until the opening window has arrived — "not yet", not "nothing". */
+  opening: () => boolean;
   /** One tool result in full, after the wire capped it. */
   fullResult: (toolId: string) => Promise<string | null>;
   /** Prepend the window of turns before the oldest event held. Returns how
@@ -117,6 +119,43 @@ export function createSessionStore(
   let flushHandle = 0;
 
   /**
+   * Hold the first paint until the opening window has all arrived.
+   *
+   * The server sends the window it had when the stream opened, then goes live.
+   * Painting as it arrives means deriving turns and folds from a PARTIAL
+   * transcript and then re-deriving them: rows that were already on screen
+   * change identity and are rebuilt under the reader. Measured opening a real
+   * session (2026-08-18): with the row count flat at 14, the content went
+   * 2194px -> 594px -> 851px as the markdown and code blocks in those rows were
+   * torn down and built again, and what sat at the middle of the screen changed
+   * four times inside a second.
+   *
+   * One paint, from a complete window, lands the newest messages where they
+   * belong and leaves them there. `ready` is a named SSE event, so a stream
+   * that never sends it — an older server, a proxy that drops named events —
+   * falls back to the timeout and behaves as before rather than showing
+   * nothing.
+   */
+  const [opening, setOpening] = createSignal(true);
+  let holding = true;
+  const OPEN_WINDOW_TIMEOUT_MS = 2500;
+  let holdTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    holdTimer = undefined;
+    release();
+  }, OPEN_WINDOW_TIMEOUT_MS);
+
+  const release = (): void => {
+    if (!holding) return;
+    holding = false;
+    setOpening(false);
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = undefined;
+    }
+    flush();
+  };
+
+  /**
    * Prompts sent from here that the transcript has not shown yet.
    *
    * Measured 2026-08-18 on a live session: the POST returns in ~23ms and the
@@ -135,6 +174,8 @@ export function createSessionStore(
 
   const flush = (): void => {
     flushHandle = 0;
+    // Still waiting on the rest of the opening window: keep buffering.
+    if (holding) return;
     if (pending.length === 0) return;
     const arrived = pending;
     pending = [];
@@ -188,6 +229,8 @@ export function createSessionStore(
       scheduleFlush();
     },
     onStatus: setStatus,
+    // The opening window is complete: paint it, once.
+    onReady: release,
   });
 
   /** has the stream been opened, and has it been closed for good? */
@@ -389,6 +432,7 @@ export function createSessionStore(
     pane,
     commands,
     pendingPrompts,
+    opening,
     fullResult,
     loadEarlier,
     hasEarlier,

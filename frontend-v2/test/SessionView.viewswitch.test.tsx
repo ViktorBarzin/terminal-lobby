@@ -79,6 +79,11 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
       constructor(public url: string) {
         eventSources.push(this);
       }
+      // The store holds its first paint until the opening window is complete;
+      // this fake has no replay, so it is complete at once.
+      addEventListener(type: string, fn: (ev: { data: string }) => void): void {
+        if (type === "ready") fn({ data: "0" });
+      }
       close(): void {}
     };
     localStorage.clear();
@@ -462,7 +467,11 @@ describe("<SessionView> — terminal controls in the session bar", () => {
       ({
         matches: q.includes("coarse") && !q.includes("max-width"),
         media: q,
-        addEventListener: () => {},
+        // The store holds its first paint until the opening window is
+        // complete; this fake has no replay, so it is complete at once.
+        addEventListener: (type: string, fn: (ev: { data: string }) => void) => {
+          if (type === "ready") fn({ data: "0" });
+        },
         removeEventListener: () => {},
         addListener: () => {},
         removeListener: () => {},
