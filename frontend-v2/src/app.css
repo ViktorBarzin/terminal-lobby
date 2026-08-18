@@ -2712,6 +2712,45 @@ body.tl-kb-up {
   border-color: var(--accent);
   color: var(--accent);
 }
+/* The chip says what this session will do WITHOUT asking, so it is coloured by
+   how much that is — read as a traffic light rather than as a label you have to
+   parse. The tokens are the theme's own, so every theme gets it.
+
+   manual  asks before anything                     safe
+   plan    will not execute at all                  its own colour, not a risk
+   edits   file changes land unasked                caution
+   auto    most things land unasked                 caution
+   bypass  nothing is asked, ever                   the loudest one
+   no ask  same, under the CLI's newer name         the loudest one
+
+   `default` is what transcripts written before the rename call `manual`. */
+.tl-mode-chip[data-mode="manual"],
+.tl-mode-chip[data-mode="default"] {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+}
+.tl-mode-chip[data-mode="plan"] {
+  color: var(--state-awaiting);
+  border-color: color-mix(in srgb, var(--state-awaiting) 45%, transparent);
+}
+.tl-mode-chip[data-mode="acceptEdits"],
+.tl-mode-chip[data-mode="auto"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.tl-mode-chip[data-mode="bypassPermissions"],
+.tl-mode-chip[data-mode="dontAsk"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+/* Hover keeps the mode's own colour rather than flipping every chip to the
+   accent, which would make bypass look like accept-edits for as long as the
+   pointer sat on it. */
+.tl-mode-chip[data-mode]:hover {
+  border-color: currentColor;
+  filter: brightness(1.15);
+}
 
 @media (pointer: coarse) {
   /* Everything answerable is a finger target. */
