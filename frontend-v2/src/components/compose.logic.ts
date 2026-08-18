@@ -344,19 +344,34 @@ export function composeMessage(text: string, paths: readonly string[]): string {
 }
 
 /**
- * A slash command this surface sent, which the transcript may never mention.
+ * A prompt this surface has sent that the transcript has not shown yet.
  *
- * Measured 2026-08-18: the CLI records /wrap-up, /model, /compact and /login,
- * and records NOTHING at all for /help, /context or /status. So a command sent
- * from the composer can land, do exactly what it was asked to, and leave the
- * chat with no trace that anything was sent — which is what Viktor reported.
- * The surface that sent it is the only thing that can account for those.
+ * The transcript is not fast enough to be the only source. Measured on a live
+ * session 2026-08-18: POST /prompt returns in ~23ms and the tail delivers in
+ * ~50ms, but the CLI takes 620-680ms to write its own record of the prompt —
+ * 1.2s on the first turn of a session, and unbounded when the prompt is QUEUED
+ * because a turn is already running (that record only lands when the queue
+ * drains). So a prompt sat invisible for most of a second or longer after the
+ * operator pressed Send, which is what Viktor reported.
+ *
+ * Slash commands go further: /help, /context and /status leave the transcript
+ * untouched entirely, so for those this is not a stand-in but the only account
+ * there will ever be.
  */
-export interface SentCommand {
+export interface PendingPrompt {
   /** Negative, so it can never collide with a transcript event's id. */
   id: number;
   text: string;
   at: number;
+  /** A slash command, which the transcript may never mention at all. */
+  command: boolean;
+  /**
+   * The highest event id seen when this was sent. A prose prompt is let go once
+   * the transcript records ANY prompt after that — which is this one, and is
+   * true whatever the CLI did to the text on the way in (it trims trailing
+   * whitespace, and rewrites a slash command into markup entirely).
+   */
+  afterId: number;
 }
 
 /** Whether a composed message is a slash command rather than prose. */

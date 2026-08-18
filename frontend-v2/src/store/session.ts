@@ -16,7 +16,7 @@ import type { Event, PermissionDecision } from "../types/events";
 import {
   isSlashCommand,
   sameCommand,
-  type SentCommand,
+  type PendingPrompt,
   type SlashCommand,
 } from "../components/compose.logic";
 
@@ -47,8 +47,8 @@ export interface SessionStore {
   pane: () => Promise<{ pane: string; state: string } | null>;
   /** The session's own slash commands, beyond the built-ins the page ships. */
   commands: () => Promise<SlashCommand[]>;
-  /** Commands sent from here that the transcript has not accounted for. */
-  sentCommands: () => SentCommand[];
+  /** Prompts sent from here that the transcript has not shown yet. */
+  pendingPrompts: () => PendingPrompt[];
   /** One tool result in full, after the wire capped it. */
   fullResult: (toolId: string) => Promise<string | null>;
   /** Prepend the window of turns before the oldest event held. Returns how
@@ -117,16 +117,21 @@ export function createSessionStore(
   let flushHandle = 0;
 
   /**
-   * Slash commands sent from here that the transcript has not accounted for.
+   * Prompts sent from here that the transcript has not shown yet.
    *
-   * The CLI records some commands and not others (measured 2026-08-18: /wrap-up
-   * and /model yes, /help and /context no), so waiting for a record that may
-   * never come leaves the chat blank after a command that in fact ran. These
-   * stand in until a matching user event arrives — and for the ones the CLI
-   * never writes, they are the only account of it.
+   * Measured 2026-08-18 on a live session: the POST returns in ~23ms and the
+   * tail delivers in ~50ms, but the CLI takes 620-680ms to write its own record
+   * of a prompt (1.2s on a session's first turn), and unboundedly longer when
+   * the prompt is QUEUED behind a running turn. Waiting for that record is why
+   * a message sat invisible for most of a second after Send.
+   *
+   * So the prompt is shown the moment the send is accepted, and let go when the
+   * transcript catches up. For a slash command that may be never — /help,
+   * /context and /status are not recorded at all — which is why the two are let
+   * go by different rules.
    */
-  const [sentCommands, setSentCommands] = createSignal<SentCommand[]>([]);
-  let sentSeq = 0;
+  const [pendingPrompts, setPendingPrompts] = createSignal<PendingPrompt[]>([]);
+  let pendingSeq = 0;
 
   const flush = (): void => {
     flushHandle = 0;
@@ -137,12 +142,32 @@ export function createSessionStore(
     // per index write.
     batch(() => {
       for (const e of arrived) setEvents(events.length, e);
-      // The transcript caught up with a command we were standing in for.
-      const spoken = arrived.filter((e) => e.kind === "user").map((e) => e.body ?? "");
+      // The transcript caught up with something we were standing in for.
+      // One record accounts for ONE prompt, oldest first: sending two in
+      // quick succession queues them, and the first record must not clear the
+      // second prompt as well.
+      const spoken = arrived.filter((e) => e.kind === "user");
       if (spoken.length > 0) {
-        setSentCommands((cur) =>
-          cur.filter((c) => !spoken.some((body) => sameCommand(body, c.text))),
-        );
+        setPendingPrompts((cur) => {
+          let left = cur;
+          const drop = (i: number) => (left = left.filter((_, n) => n !== i));
+          for (const e of spoken) {
+            // Either kind is let go when the transcript says the same thing.
+            const said = left.findIndex((p) => sameCommand(e.body ?? "", p.text));
+            if (said >= 0) {
+              drop(said);
+              continue;
+            }
+            // No text match. Prose is ALWAYS recorded, so a record made after
+            // one was sent is that one — whatever the CLI did to the text on
+            // the way in (it trims trailing whitespace). A command is not
+            // released this way: it may never be recorded at all, and a later
+            // prompt must not sweep away the only account of it.
+            const oldest = left.findIndex((p) => !p.command && p.afterId < e.id);
+            if (oldest >= 0) drop(oldest);
+          }
+          return left;
+        });
       }
     });
   };
@@ -236,10 +261,18 @@ export function createSessionStore(
           "error",
         );
       }
-      if (res.ok && isSlashCommand(text)) {
-        sentSeq += 1;
-        const at = Date.now();
-        setSentCommands((cur) => [...cur, { id: -sentSeq, text: text.trim(), at }]);
+      if (res.ok) {
+        pendingSeq += 1;
+        setPendingPrompts((cur) => [
+          ...cur,
+          {
+            id: -pendingSeq,
+            text: text.trim(),
+            at: Date.now(),
+            command: isSlashCommand(text),
+            afterId: events.length > 0 ? (events[events.length - 1]?.id ?? 0) : 0,
+          },
+        ]);
       }
       return res.ok;
     } catch {
@@ -355,7 +388,7 @@ export function createSessionStore(
     answer,
     pane,
     commands,
-    sentCommands,
+    pendingPrompts,
     fullResult,
     loadEarlier,
     hasEarlier,
