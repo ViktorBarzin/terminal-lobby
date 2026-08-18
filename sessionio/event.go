@@ -41,6 +41,10 @@ const (
 	MetaSkill        Meta = "skill"         // Body = the skill that was loaded
 	MetaCompact      Meta = "compact"       // the context was compacted here
 	MetaHookError    Meta = "hook-error"    // Body = what the hook reported
+	// MetaContext carries a `/context` reading in Event.Context (see
+	// context.go). Like the mode, it is session STATE rather than something
+	// said, so the reader shows it in a chip rather than as a row.
+	MetaContext Meta = "context"
 )
 
 // Event is the renderer's contract. Field order is fixed by the struct so the
@@ -76,6 +80,11 @@ type Event struct {
 	// Truncated says Body and/or Result were capped for the wire (see
 	// MaxInlineResult). The full payload is fetched on demand by ToolID.
 	Truncated bool `json:"truncated,omitempty"`
+	// Context is the `/context` reading on a MetaContext event. It carries the
+	// headline and the category table only — the record it comes from also
+	// holds per-tool, per-agent, per-memory and per-skill tables, which are
+	// most of its 14.9 KB and are not what a meter shows.
+	Context *ContextReading `json:"context,omitempty"`
 }
 
 // JSON returns the compact wire encoding of the event.
