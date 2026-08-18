@@ -189,9 +189,18 @@ func (n *Normalizer) Record(rec Record) []Event {
 	// worth one line, so that a skill the MODEL chose is not a silent change in
 	// how it behaves; the body is not.
 	if rec.IsMeta && role == "user" {
-		if name, ok := skillLoad(blockText(blocks)); ok {
+		text := blockText(blocks)
+		if name, ok := skillLoad(text); ok {
 			e := n.emit(KindMeta, at)
 			e.Meta, e.Body = MetaSkill, name
+			return []Event{e}
+		}
+		// `/context` writes its own markdown here — 14,930 characters of it,
+		// which otherwise renders as a block attributed to Claude. It is a
+		// reading of session state, so it leaves as structure (see context.go).
+		if r, ok := contextReading(text); ok {
+			e := n.emit(KindMeta, at)
+			e.Meta, e.Context = MetaContext, r
 			return []Event{e}
 		}
 	}
