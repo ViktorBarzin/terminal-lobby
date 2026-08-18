@@ -369,3 +369,30 @@ export function sameCommand(a: string, b: string): boolean {
   const norm = (s: string) => s.trim().replace(/\s+/g, " ");
   return norm(a) === norm(b);
 }
+
+/**
+ * Where a scroller has to sit for the picked row to be visible, given where the
+ * row is within it. PURE + parameterized, because jsdom does no layout: every
+ * height it reports is zero, so this cannot be tested through the element.
+ *
+ * "Nearest" semantics, like scrollIntoView({block:"nearest"}) — the row is
+ * brought to whichever edge it left, so a one-row step moves the list by one
+ * row rather than centring it. Done as arithmetic on the container rather than
+ * with scrollIntoView, which also scrolls ANCESTORS: on an installed iOS PWA
+ * this app is laid out against a viewport the platform already likes to drag
+ * (see mobile/viewport.ts), and nothing here needs to touch the document.
+ */
+export function scrollTopFor(
+  itemTop: number,
+  itemHeight: number,
+  scrollTop: number,
+  viewHeight: number,
+): number {
+  if (itemTop < scrollTop) return Math.max(0, itemTop);
+  const below = itemTop + itemHeight - (scrollTop + viewHeight);
+  if (below > 0) {
+    // A row taller than the view would otherwise scroll past its own top.
+    return Math.max(0, Math.min(itemTop, scrollTop + below));
+  }
+  return scrollTop;
+}

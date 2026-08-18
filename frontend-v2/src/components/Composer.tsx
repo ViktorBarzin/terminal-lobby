@@ -14,6 +14,7 @@ import {
   composeMessage,
   completionFor,
   mergeCommands,
+  scrollTopFor,
   modeLabel,
   BUILTIN_COMMANDS,
   type Completion,
@@ -109,6 +110,34 @@ export const Composer: Component<{
   const [caret, setCaret] = createSignal(0);
   const [paths, setPaths] = createSignal<string[]>([]);
   const [picked, setPicked] = createSignal(0);
+  let menuEl: HTMLDivElement | undefined;
+
+  /**
+   * Follow the selection with the scroller.
+   *
+   * The menu shows about four rows of a catalogue that runs to 148, so arrowing
+   * down without this picked rows nobody could see after the fourth press.
+   * Measured against the CONTAINER rather than with scrollIntoView, which also
+   * scrolls ancestors — this app is laid out against a mobile viewport the
+   * platform already drags around on its own.
+   *
+   * Re-runs on the completion as well as on the index: typing re-filters the
+   * list and resets the selection to the first row, which has to bring the
+   * scroller back to the top with it.
+   */
+  createEffect(() => {
+    completion();
+    const i = picked();
+    const menu = menuEl;
+    if (!menu) return;
+    const item = menu.children[i] as HTMLElement | undefined;
+    if (!item) return;
+    const top =
+      item.getBoundingClientRect().top -
+      menu.getBoundingClientRect().top +
+      menu.scrollTop;
+    menu.scrollTop = scrollTopFor(top, item.offsetHeight, menu.scrollTop, menu.clientHeight);
+  });
   /** Where ↑ has walked to in history; -1 is "not browsing". */
   const [histAt, setHistAt] = createSignal(-1);
 
@@ -491,7 +520,7 @@ export const Composer: Component<{
         </div>
       </Show>
       <Show when={completion() && completion()!.items.length > 0}>
-        <div class="tl-complete" role="listbox">
+        <div class="tl-complete" role="listbox" ref={menuEl}>
           <For each={completion()!.items}>
             {(item, i) => (
               <button
