@@ -6,8 +6,8 @@
 ```stats
 3 | additions, one landing
 1 of 4 | AskUserQuestion shapes the view can answer today
-95% | of the largest session that lives outside the open window
-1m | context ceiling on a real session here — 5× the obvious guess
+~95% | of the largest session that lives outside the open window
+1m | context ceiling on a real session here — 5× a 200k assumption
 ```
 
 The text view shipped on 2026-08-16 and has been in daily use since. This
@@ -37,11 +37,11 @@ The survey put four lanes on the table. Two were taken:
 
 Within the taken lanes we also set aside T3's review-and-comment flow (diffs stay
 read-only; steering keeps going through the composer), the session-level changed-files
-tree, the richer plan card, and git controls — the last of which would sit
-awkwardly here anyway, since the agent does all git mechanics on this estate.
+tree, the richer plan card, and git controls — the last of which would have
+limited use here, since the agent does all git mechanics on this estate.
 
 Permissions were scoped in and then scoped back out: **sessions run in
-bypass-permissions**, so a permission dialog is not the blocker it looked like.
+bypass-permissions**, so a permission dialog is not a blocker for this work.
 `PermissionPanel` and `pendingPermissions()` stay as they are — inert, and
 documented as inert.
 
@@ -71,7 +71,7 @@ call therefore works — and has been verified in use — while a multi-select
 question, or any call carrying two to four questions, cannot be completed from
 the text view.
 
-**One code comment is out of date.** `TextView.tsx:136` reads *"more robust than
+**One code comment predates this finding.** `TextView.tsx:136` reads *"more robust than
 assuming digits select, which they do not in every dialog."* For this dialog they
 do, per the handler above. The arrow-key route still works; the comment's reason
 for preferring it does not hold here, and the `keys.slice(0, 8)` cap silently
@@ -95,7 +95,7 @@ boundary of the keys route, and this design does not widen it.
 | 4 | **Docked above the composer while pending; settles into the inline timeline row once answered.** | Above the phone keyboard and unable to scroll away mid-walk, then the permanent record of what was asked and chosen — a row `rows.tsx` already renders. |
 | 5 | **Free text goes through a new bounded `/answer-text` route**: `set-buffer` + `paste-buffer -p` only. | `Injector.Prompt` opens with `C-e C-u` and closes with a forced `Enter` (`sessionio/tmux.go:131`). Inside a dialog field that prelude is unverified, and the forced Enter takes the sequencing away from decision 2. Keeping the routes separate also keeps telemetry honest: `claude.answered`, not `claude.prompt_sent`. |
 | 6 | **Chunks stay at or below 8 keys, so `MaxKeys` does not change.** | Verification between chunks makes chunk granularity free, so there is no reason to raise a cap that exists to stop a browser typing a paragraph into somebody's shell. |
-| 7 | **Search runs server-side over the whole transcript**, across messages, thinking, tool inputs and the uncapped tool results. | The open window is 20 turns; the largest transcript here is 28.9 MB / 7,964 records. A client-side search would quietly cover a few percent of such a session and answer "no matches" for the rest. |
+| 7 | **Search runs server-side over the whole transcript**, across messages, thinking, tool inputs and the uncapped tool results. | The open window is 20 turns; the largest transcript here is 28.9 MB / 7,964 records. A client-side search would cover a few percent of such a session and answer "no matches" for the rest. |
 | 8 | **Search opens through the existing command palette.** | The header measurably did not fit at 390px and already sheds controls; this adds nothing to it. |
 | 9 | **The context meter reads `/context`'s own output**, not our token arithmetic. | The CLI computes the ceiling, the percentage and the category breakdown, and writes them to the transcript as markdown. |
 | 10 | **The `## Context Usage` record is recognised in the normalizer**, the way `skillLoad` recognises a skill load. | Today it renders as a 14,930-character block attributed to Claude — the same pathology `skill.go` was written to fix. |
@@ -104,9 +104,9 @@ boundary of the keys route, and this design does not widen it.
 | 13 | **One landing.** | Chosen over three sequential landings. |
 
 > [!NOTE]
-> Decision 12's last clause is the one to hold onto. The failure in `575d4f5`
-> was not the broker's logic but its reach: it acted on every session on a
-> shared devvm, including those nobody had open. Any refresh loop we add
+> Decision 12's last clause is there for a specific reason. What `575d4f5` had
+> to remove was not the broker's logic but its reach: it acted on every session
+> on a shared devvm, including those nobody had open. Any refresh loop we add
 > inherits that lesson.
 
 ---
@@ -180,7 +180,7 @@ sequenceDiagram
 
 If a verification read does not show what the next chunk expects, the sequence
 **stops where it is** and the card offers the Terminal. That is a visible,
-recoverable state; a wrong answer submitted silently is not.
+recoverable state; a wrong answer submitted without notice is not.
 
 **The `Other` option** needs the text route, because `/keys` carries no letters:
 `Tab` into input mode, verify the field is focused, `POST /answer-text`, verify
@@ -203,7 +203,7 @@ through the existing `/earlier` machinery and scrolls to it.
 
 Search runs on submit, not per keystroke — one pass per query rather than one per
 letter. It covers what the client never receives: the uncapped tool results, where
-the stderr line you half-remember actually lives.
+an error seen only in output lives.
 
 ---
 
@@ -244,6 +244,22 @@ the tables render already, since assistant markdown goes through full GFM.
 This fixes a present defect on the way past: a `/context` run today produces a
 14,930-character block in the timeline, styled as though Claude wrote it.
 
+> [!IMPORTANT]
+> **That the reading reaches the transcript at all is evidence, not a
+> settled rule.** Four genuine `## Context Usage` records exist across this
+> box's transcripts — three of them written on 2026-08-18 against CLI
+> `2.1.234`, at 14,929–14,930 characters each. Against that, an earlier
+> measurement the same day (recorded while fixing slash-command rendering)
+> found `/context` writing nothing in an isolated session, alongside `/help`
+> and `/status`, while `/wrap-up`, `/model` and `/compact` did write. Both
+> observations are real and they have not been reconciled. Decision 11 rests
+> on the reading being recorded, so this is verification item 1 below.
+>
+> **Fallback if it proves unreliable:** read the value off the pane instead.
+> `capture-pane` and a client-side parse are machinery the mode chip already
+> uses (`modeFromPane`, `compose.logic.ts:285`), so the meter would keep its
+> source — the CLI's own figure — and change only how it is collected.
+
 ---
 
 ## 8. What we took from T3, and what we did not
@@ -259,26 +275,28 @@ name their upstream path and commit.
 | `ContextWindowMeter.tsx` | The idea of a persistent context reading. **Not** its derivation — ours comes from `/context`, which is a source T3 does not have |
 | `ChangedFilesTree`, `ReviewSheet`, `ProposedPlanCard`, the mobile shell | Surveyed, not taken this pass |
 
-Worth stating plainly: on the context meter we ended up **not** following T3.
-Their ring is computed from token arithmetic because that is what their provider
-abstraction exposes. We are Claude Code specific, and Claude Code will tell us the
-answer if we ask it.
+On the context meter we ended up not following T3. Their ring is computed from
+token arithmetic because that is what their provider abstraction exposes. We are
+Claude Code specific, so we can read the figure the CLI already publishes.
 
 ---
 
 ## 9. Verification
 
-1. **A multi-select question, answered from a phone**, with the pane watched to
+1. **Whether a `/context` run is reliably recorded**, on the CLI version in use,
+   in a session the lobby is watching. This gates decision 11; if it is not
+   reliable, the meter takes its value from the pane instead of the transcript.
+2. **A multi-select question, answered from a phone**, with the pane watched to
    confirm one submission and no double-send.
-2. **A three-question call**, including one multi-select and one answered through
+3. **A three-question call**, including one multi-select and one answered through
    `Other`, walked and submitted.
-3. **A deliberate desync** — answer in the Terminal mid-walk, then Send from the
+4. **A deliberate desync** — answer in the Terminal mid-walk, then Send from the
    card — confirming it stops and offers the Terminal rather than typing on.
-4. **Search on the 28.9 MB transcript**: query latency, hit quality, and a jump
+5. **Search on the 28.9 MB transcript**: query latency, hit quality, and a jump
    to a hit that sits outside the open window.
-5. **Refresh cost over a working day**: transcript growth, and confirmation that
+6. **Refresh cost over a working day**: transcript growth, and confirmation that
    an unwatched session receives nothing.
-6. **Suite green**, plus tests for the chunk planner over the option shapes in §2.
+7. **Suite green**, plus tests for the chunk planner over the option shapes in §2.
 
 ---
 
