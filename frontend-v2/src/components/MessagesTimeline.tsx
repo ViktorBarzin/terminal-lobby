@@ -418,10 +418,34 @@ export const MessagesTimeline: Component<{
   let scroller: HTMLDivElement | undefined;
   const [pinned, setPinned] = createSignal(true);
 
-  const onScroll = () => {
+  const atBottom = (): boolean => {
     const el = scroller;
-    if (!el) return;
-    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX);
+    return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX;
+  };
+  const onScroll = () => setPinned(atBottom());
+
+  /**
+   * Anything clicked in here may have changed the transcript's height — a turn
+   * unfolded, a command opened, a tool result loaded in full — and whether the
+   * reader is still at the bottom is then a different question.
+   *
+   * Without this the pin kept whatever the last SCROLL event decided, and
+   * expanding fires no scroll. Measured on a live session (2026-08-18): sitting
+   * at the bottom, opening a command left the view 101px above it and still
+   * flagged as pinned, so the next event to arrive scrolled to the bottom and
+   * took the row that had just been opened 140px off with it. Which is the
+   * opposite of why anyone clicks to expand something.
+   *
+   * On the frame after, because a native <details> toggles after its click and
+   * the layout is not final until then. Recomputing when nothing moved is
+   * harmless: it writes back the value it already had.
+   */
+  const onClick = () => {
+    if (typeof requestAnimationFrame !== "function") {
+      setPinned(atBottom());
+      return;
+    }
+    requestAnimationFrame(() => setPinned(atBottom()));
   };
 
   createEffect(() => {
@@ -455,6 +479,7 @@ export const MessagesTimeline: Component<{
       aria-label="Session transcript"
       ref={scroller}
       onScroll={onScroll}
+      onClick={onClick}
     >
       <Show when={props.hasEarlier}>
         <div class="tl-row tl-row-earlier">
