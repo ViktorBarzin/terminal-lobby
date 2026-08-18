@@ -181,7 +181,17 @@ export default defineConfig({
   server: { proxy },
   preview: { proxy },
   build: {
-    target: "es2022",
+    // The floor is emo's iPad — iPadOS 15.8, a Safari 15.6-era WebKit the device
+    // cannot be upgraded past, and the same engine scripts/vendor-xterm.py pins
+    // as its BASELINE. This is not a style preference: viteSingleFile inlines the
+    // whole bundle into ONE script, so a single construct the engine cannot parse
+    // is a SyntaxError that takes the entire lobby down rather than degrading one
+    // feature. At "es2022" the shipped bundle carried 270 class static blocks, and
+    // that iPad rendered a blank page — tab title, nothing else, and no telemetry,
+    // since a page that cannot parse cannot report that it could not — from the
+    // 2026-08-16 SPA promotion until 2026-08-18.
+    // Guarded by scripts/test_frontend_compat.py, which scripts/deploy-v2.sh runs.
+    target: "safari15",
     // xterm stays EXTERNAL per the deploy decision (design §2, decision #7):
     // it must never be bundled into the no-store single-file blob (that would
     // re-download xterm on every deploy/stale-heal). The terminal view is a
