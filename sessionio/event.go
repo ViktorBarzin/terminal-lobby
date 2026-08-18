@@ -38,6 +38,7 @@ const (
 	MetaUnqueued     Meta = "unqueued"      // Body = the prompt that left
 	MetaDequeued     Meta = "dequeued"      // the head was taken; no body
 	MetaQueueCleared Meta = "queue-cleared" // the whole queue was drained
+	MetaSkill        Meta = "skill"         // Body = the skill that was loaded
 	MetaCompact      Meta = "compact"       // the context was compacted here
 	MetaHookError    Meta = "hook-error"    // Body = what the hook reported
 )
