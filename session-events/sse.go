@@ -70,6 +70,12 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 		fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, e.JSON())
 		lastID = e.ID
 	}
+	// The opening window is complete. A client cannot tell that from the events
+	// alone — they simply stop for a moment — so it either paints a partial
+	// transcript and rebuilds it as the rest lands, or waits on a guess. This
+	// says so once, as a NAMED event, so it reaches a listener rather than the
+	// event array: nothing downstream has to learn to ignore it.
+	fmt.Fprintf(w, "event: ready\ndata: %d\n\n", lastID)
 	fl.Flush()
 
 	ticker := time.NewTicker(hb)

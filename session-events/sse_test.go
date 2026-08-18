@@ -124,3 +124,31 @@ func TestSSEWindowsAFreshOpenButNotAResume(t *testing.T) {
 		t.Fatalf("resume cursor lost: from=%d", src2.windowFrom)
 	}
 }
+
+// The opening window ends with a marker, so a client can paint once from a
+// complete window instead of rebuilding a partial one as the rest arrives.
+//
+// A NAMED event: it reaches a listener rather than the message handler, so it
+// never enters the client's event array and nothing downstream has to learn to
+// ignore it.
+func TestWriteSSEMarksTheEndOfTheOpeningWindow(t *testing.T) {
+	src := &fakeSource{all: []sessionio.Event{
+		{ID: 1, Kind: sessionio.KindUser, Body: "hello"},
+		{ID: 2, Kind: sessionio.KindText, Body: "hi"},
+	}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/events/s", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	cancel() // return after the replay
+	writeSSE(rec, req, src, time.Hour)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: ready\ndata: 2\n\n") {
+		t.Errorf("no ready marker naming the last replayed id:\n%s", body)
+	}
+	// It has to come AFTER the window it is marking the end of.
+	if strings.Index(body, "event: ready") < strings.LastIndex(body, `"id":2`) {
+		t.Errorf("the marker precedes the window it closes:\n%s", body)
+	}
+}
