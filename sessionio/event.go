@@ -32,8 +32,14 @@ const (
 	MetaMode           Meta = "mode"            // Body = the mode now in force
 	MetaPermissionMode Meta = "permission-mode" // Body = the permission mode
 	MetaQueued         Meta = "queued"          // Body = the queued prompt text
-	MetaCompact        Meta = "compact"         // the context was compacted here
-	MetaHookError      Meta = "hook-error"      // Body = what the hook reported
+	// The CLI reports a prompt LEAVING the queue three different ways, and all
+	// three have to be carried or the queue only ever grows. Measured across
+	// 141 transcripts: enqueue 1261, remove 841, dequeue 393, popAll 13.
+	MetaUnqueued     Meta = "unqueued"      // Body = the prompt that left
+	MetaDequeued     Meta = "dequeued"      // the head was taken; no body
+	MetaQueueCleared Meta = "queue-cleared" // the whole queue was drained
+	MetaCompact      Meta = "compact"       // the context was compacted here
+	MetaHookError    Meta = "hook-error"    // Body = what the hook reported
 )
 
 // Event is the renderer's contract. Field order is fixed by the struct so the

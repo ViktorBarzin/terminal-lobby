@@ -287,8 +287,25 @@ func (n *Normalizer) meta(rec Record) []Event {
 			return emit(MetaPermissionMode, rec.PermissionMode)
 		}
 	case RecordQueueOperation:
-		if rec.Operation == "enqueue" && rec.Content != "" {
-			return emit(MetaQueued, rec.Content)
+		// A queue that is only ever added to is not a queue. The CLI reports
+		// every departure too — see the Meta constants — and without them the
+		// list of "waiting" prompts grows for the life of the session, which is
+		// how a session with an empty queue came to show three.
+		switch rec.Operation {
+		case "enqueue":
+			if rec.Content != "" {
+				return emit(MetaQueued, rec.Content)
+			}
+		case "remove":
+			if rec.Content != "" {
+				return emit(MetaUnqueued, rec.Content)
+			}
+		case "dequeue":
+			// Carries no content: the head was taken.
+			return emit(MetaDequeued, "")
+		case "popAll":
+			// Drains the whole queue; the content names what it took.
+			return emit(MetaQueueCleared, rec.Content)
 		}
 	case RecordSystem:
 		if s := string(rec.HookErrors); s != "" && s != "[]" && s != "null" {
