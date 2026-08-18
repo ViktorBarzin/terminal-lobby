@@ -540,6 +540,19 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* This transcript owns its own scroll position, so the browser must not also
+     adjust it. Scroll anchoring picks a node near the top of the scrollport and
+     keeps THAT still across a layout change — which is the wrong invariant when
+     a turn is unfolded: the 146 rows land BELOW the row that was clicked, and if
+     the browser's chosen anchor is below them it compensates by their whole
+     height and drags the clicked row off the top. Measured on a real session
+     (2026-08-18): unfolding moved scrollTop +5878px and replaced everything on
+     screen. With this off, content inserted below the click cannot move what is
+     above it, which is the invariant a reader expects from "show me more".
+     The two places that DO insert above the reader — the opening fill and
+     `Load earlier turns` — compensate for themselves, and did so while fighting
+     this. */
+  overflow-anchor: none;
   padding: 16px clamp(12px, 6vw, 80px);
   display: flex;
   flex-direction: column;
