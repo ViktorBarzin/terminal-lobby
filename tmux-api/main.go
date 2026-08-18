@@ -61,13 +61,14 @@ const (
 	// resurrect it as an empty session.
 	tmuxListFmt = "#{session_id}" + listSep + "#{session_name}" + listSep +
 		"#{session_attached}" + listSep + "#{session_activity}" + listSep +
-		"#{session_created}" + listSep + "#{@claude_state}" + listSep +
+		"#{session_created}" + listSep + "#{" + lastDriveOption + "}" + listSep +
+		"#{@claude_state}" + listSep +
 		"#{pane_pid}" + listSep + "#{pane_current_command}" + listSep +
 		"#{" + sessionTitleOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 10
+	listFields = 11
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service, t3-sync and anything
@@ -135,7 +136,14 @@ type Session struct {
 	// new device as a viewer only when someone is actually driving.
 	Driven       bool  `json:"driven"`
 	LastActivity int64 `json:"lastActivity"`
-	Created      int64 `json:"created"`
+	// LastDrive is when a human last had hands on this session: the newest
+	// moment a READ-WRITE client was attached, kept in @last_drive (lastdrive.go).
+	// This is what the session list shows, NOT LastActivity — tmux bumps
+	// session_activity on any attach, a read-only one included, so a viewer used
+	// to reset the number just by looking. Seeded from Created for a session that
+	// has not been driven since the option existed, so it is never empty.
+	LastDrive int64 `json:"lastDrive"`
+	Created   int64 `json:"created"`
 	// State of the Claude conversation inside the session: "running",
 	// "awaiting", "done", or "" when no live Claude. omitempty keeps the
 	// old wire shape for stateless sessions (external /sessions pollers).
@@ -556,6 +564,11 @@ func userSessions(osUser string) []Session {
 	// round — the lobby then attaches read-write exactly as it did before.
 	if clients, cerr := tmuxCmd(osUser, "list-clients", "-F", drivenListFmt).Output(); cerr == nil {
 		markDriven(sessions, clients)
+		// Driven is what "last driven" is derived from, so the stamp is written
+		// here, while the client list is in hand. A read-only client reaches
+		// markDriven and is skipped by it, which is exactly why watching a
+		// session no longer moves its clock.
+		stampDrives(osUser, sessions, time.Now().Unix())
 	}
 	// One /proc snapshot serves two readers: the liveness backstop (drop
 	// states whose claude died without a SessionEnd hook) and the tool mark
@@ -665,22 +678,27 @@ func parseSessions(out []byte) []Session {
 		if errA != nil || errB != nil || errC != nil {
 			continue
 		}
-		state := parts[5]
+		// Parsed leniently on purpose: @last_drive renders EMPTY when unset,
+		// which is every session predating the option — dropping those rows
+		// would empty the sidebar on the deploy that introduced the field.
+		lastDrive, _ := strconv.ParseInt(parts[5], 10, 64)
+		state := parts[6]
 		if !knownStates[state] {
 			state = ""
 		}
-		panePID, _ := strconv.Atoi(parts[6])
+		panePID, _ := strconv.Atoi(parts[7])
 		sessions = append(sessions, Session{
 			ID:           parts[0],
 			Name:         parts[1],
 			Attached:     attached,
 			LastActivity: activity,
+			LastDrive:    lastDrive,
 			Created:      created,
 			State:        state,
 			PanePID:      panePID,
-			Command:      parts[7],
-			Title:        parts[8],
-			PaneTitle:    parts[9],
+			Command:      parts[8],
+			Title:        parts[9],
+			PaneTitle:    parts[10],
 		})
 	}
 	return sessions

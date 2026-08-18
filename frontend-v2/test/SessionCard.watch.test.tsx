@@ -28,6 +28,9 @@ function stubStore(): LobbyStore {
     // The card reads /whoami to know whether this tab is acting as another user
     // (which locks Attach as to watching). An ordinary tab: no realUser.
     whoami: () => ({ authentik: "alice", osUser: "wizard" }),
+    // A running session shows its live working timer instead of a relative
+    // time; the card asks the store when the turn started.
+    workingSince: () => Date.now() - 5000,
     // The card holds the poll open while its menu is up; the real store returns
     // a release function.
     hold: () => () => {},
@@ -157,5 +160,60 @@ describe("<SessionCard> — the Attach as menu", () => {
     expect(container.querySelector(".tl-menu")).not.toBeNull();
     fireEvent.click(menuItem(container, "Watch only")!);
     await waitFor(() => expect(container.querySelector(".tl-menu")).toBeNull());
+  });
+});
+
+/**
+ * The card's relative time is LAST DRIVEN, not tmux's activity.
+ *
+ * tmux bumps #{session_activity} on any attach, read-only included, so opening a
+ * session to watch it used to reset the "5m ago" — the opposite of what Watch
+ * mode promises, which is that a viewer leaves the session as it found it.
+ */
+describe("<SessionCard> — the relative time answers 'when was this last driven'", () => {
+  const withTime = (over: Partial<Session>) =>
+    card(session({ state: "", lastActivity: 0, created: 0, ...over }));
+
+  it("shows the drive time, not the activity time", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { container } = render(() => (
+      <SessionCard
+        store={stubStore()}
+        session={session({
+          state: "",
+          lastDrive: now - 3 * 3600, // driven 3h ago
+          lastActivity: now - 5,     // "active" 5s ago, because a watcher just attached
+          created: now - 4 * 3600,
+        })}
+        groupName=""
+        tick={() => 0}
+        confirm={() => true}
+        showLastActive={() => true}
+      />
+    ));
+    const t = container.querySelector(".tl-card-time")?.textContent ?? "";
+    expect(t).toMatch(/3h/);
+    expect(t).not.toMatch(/5s|now/);
+  });
+
+  it("says nothing rather than falling back to the activity time", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { container } = render(() => (
+      <SessionCard
+        store={stubStore()}
+        session={session({ state: "", lastActivity: now - 5, created: now - 60 })}
+        groupName=""
+        tick={() => 0}
+        confirm={() => true}
+        showLastActive={() => true}
+      />
+    ));
+    expect(container.querySelector(".tl-card-time")).toBeNull();
+  });
+
+  it("still yields to the live working timer on a running session", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { container } = withTime({ state: "running", lastDrive: now - 7200 });
+    expect(container.querySelector(".tl-card-time")?.textContent ?? "").not.toMatch(/2h/);
   });
 });

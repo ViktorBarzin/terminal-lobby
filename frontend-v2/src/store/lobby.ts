@@ -567,6 +567,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
         owner: me(),
         attached: 0,
         lastActivity: nowSec,
+        // Creating a session attaches read-write, so it counts as driving it —
+        // without this the optimistic card reads with no time at all for the
+        // second before the server answers.
+        lastDrive: nowSec,
         created: nowSec,
         state: "",
       },

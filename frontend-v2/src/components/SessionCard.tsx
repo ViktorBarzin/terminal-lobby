@@ -113,7 +113,12 @@ export const SessionCard: Component<{
     }
     if (!props.showLastActive?.()) return "";
     props.tick();
-    return relativeTime(s().lastActivity);
+    // lastDrive, never lastActivity: tmux bumps session_activity on any attach
+    // (read-only included), so the old number reset itself whenever somebody
+    // opened the session to WATCH it. No stamp yet — a server predating the
+    // field — shows nothing, which beats showing a number that means something
+    // else.
+    return s().lastDrive ? relativeTime(s().lastDrive!) : "";
   };
 
   // ---- activation ----
