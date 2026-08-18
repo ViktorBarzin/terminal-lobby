@@ -3,6 +3,7 @@ package sessionio
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -212,6 +213,19 @@ func (n *Normalizer) Record(rec Record) []Event {
 			e.Body = body
 			out = append(out, e)
 		case "thinking":
+			// A thinking block whose text is empty has nothing to render, and
+			// it renders as a bare "Thought" label floating in the transcript.
+			// They are not rare: across 60 transcripts on this box, 4,602 of
+			// 4,602 thinking blocks carry an empty `thinking` and only a
+			// `signature` — the reasoning itself is never written to the
+			// transcript. So every one of these rows was a stub with nothing
+			// behind it (Viktor, 2026-08-18).
+			//
+			// Emitting on the TEXT rather than on the block's presence means a
+			// future CLI that does persist it needs no change here.
+			if strings.TrimSpace(bl.Thinking) == "" {
+				break
+			}
 			e := n.emit(KindThinking, at)
 			e.Body = bl.Thinking
 			out = append(out, e)
