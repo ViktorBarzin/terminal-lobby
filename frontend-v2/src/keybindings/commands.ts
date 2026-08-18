@@ -41,6 +41,10 @@ export interface CommandDeps {
    *  mounted SessionView installs (same pattern as __tlForwardToTerminal) — the
    *  lobby shell does not own the per-session view mode. */
   toggleView?: () => boolean;
+  /** open the find-in-session overlay on the mounted text view; false if
+   *  there is none. Same `window.__tlOpenFind` bridge shape as toggleView —
+   *  the lobby shell does not own the session's transcript. */
+  openFind?: () => boolean;
   /** confirm/prompt seams (window.* by default; injectable for tests). */
   confirm?: (message: string) => boolean;
   prompt?: (message: string, def?: string) => string | null;
@@ -51,6 +55,7 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
   const confirmFn = deps.confirm ?? ((m: string) => window.confirm(m));
   const promptFn = deps.prompt ?? ((m: string, d?: string) => window.prompt(m, d));
   const toggleViewFn = deps.toggleView ?? (() => window.__tlToggleView?.() ?? false);
+  const openFindFn = deps.openFind ?? (() => window.__tlOpenFind?.() ?? false);
 
   const current = (): string | null => store.selected()?.name ?? null;
   /** What to SHOW for a session name: its title when it has one. */
@@ -136,6 +141,13 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
       // chrome SessionView's own listener handles the chord directly. Both ends
       // land on the same toggle, which is what makes the chord two-way.
       if (!toggleViewFn()) deps.notify("Open a session first", "error");
+      return;
+    }
+
+    if (cmd === "find.open") {
+      // Only the text view has a transcript to search, and the bridge says so
+      // by returning false — the same shape as view.toggle above.
+      if (!openFindFn()) deps.notify("Open a session in Text view first", "error");
       return;
     }
 

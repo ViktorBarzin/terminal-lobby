@@ -11,8 +11,10 @@ import {
   permissionUrl,
   promptUrl,
   resultUrl,
+  answerTextUrl,
+  searchUrl,
 } from "../lib/config";
-import type { Event, PermissionDecision } from "../types/events";
+import type { Event, PermissionDecision, SearchHit } from "../types/events";
 import {
   isSlashCommand,
   sameCommand,
@@ -45,6 +47,12 @@ export interface SessionStore {
   answer: (keys: string[]) => Promise<boolean>;
   /** Read what the pane shows, for mirroring a blocking prompt. */
   pane: () => Promise<{ pane: string; state: string } | null>;
+  /** Type free text into the pane WITHOUT submitting it — how the "Other"
+   *  option of an AskUserQuestion is answered. Returns true on 204. */
+  answerText: (text: string) => Promise<boolean>;
+  /** Find text anywhere in the session. The server searches the whole
+   *  transcript, not the window held here. */
+  search: (q: string) => Promise<SearchHit[]>;
   /** The session's own slash commands, beyond the built-ins the page ships. */
   commands: () => Promise<SlashCommand[]>;
   /** Prompts sent from here that the transcript has not shown yet. */
@@ -354,6 +362,37 @@ export function createSessionStore(
     }
   };
 
+  // Free text for an "Other" answer. Separate from `send` because the pane is
+  // showing a dialog, not a prompt: this types and stops, and the caller sends
+  // the Enter itself once it has read the pane back and confirmed the text
+  // landed in the field.
+  const answerText = async (text: string): Promise<boolean> => {
+    try {
+      const res = await fetch(answerTextUrl(session), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) opts.notify?.(`Couldn't type the answer (HTTP ${res.status})`, "error");
+      return res.ok;
+    } catch {
+      opts.notify?.("Couldn't reach the session", "error");
+      return false;
+    }
+  };
+
+  const search = async (q: string): Promise<SearchHit[]> => {
+    try {
+      const res = await fetch(searchUrl(session, q), { credentials: "same-origin" });
+      if (!res.ok) return [];
+      return ((await res.json()) as SearchHit[] | null) ?? [];
+    } catch {
+      opts.notify?.("Couldn't search this session", "error");
+      return [];
+    }
+  };
+
   /**
    * The session's own slash commands. Fetched once per view rather than polled:
    * skills and commands are files on disk, and a session that gains one mid-turn
@@ -429,6 +468,8 @@ export function createSessionStore(
     send,
     interrupt,
     answer,
+    answerText,
+    search,
     pane,
     commands,
     pendingPrompts,

@@ -73,7 +73,7 @@ export const ThinkingRowView: Component<{ row: ThinkingRow }> = (props) => {
   // A one-line preview is enough to decide whether to read the rest.
   const preview = () => props.row.body.trim().split("\n")[0] ?? "";
   return (
-    <div class="tl-row tl-row-thinking" classList={{ "tl-open": open() }}>
+    <div class="tl-row tl-row-thinking" data-eid={props.row.id} classList={{ "tl-open": open() }}>
       <button
         type="button"
         class="tl-thinking-head"
@@ -188,7 +188,7 @@ export const ToolRowView: Component<{
   };
 
   return (
-    <div class="tl-row tl-row-tool" data-status={status()} data-item={props.row.itemType}>
+    <div class="tl-row tl-row-tool" data-eid={props.row.id} data-status={status()} data-item={props.row.itemType}>
       <div class="tl-tool-head">
         <button
           type="button"
@@ -289,7 +289,7 @@ export const ToolRowView: Component<{
 export const TodoRowView: Component<{ row: TodoRow }> = (props) => {
   const done = () => props.row.steps.filter((s) => s.status === "completed").length;
   return (
-    <div class="tl-row tl-row-todo">
+    <div class="tl-row tl-row-todo" data-eid={props.row.id}>
       <div class="tl-todo-head">
         <span class="tl-todo-count">
           {done()}/{props.row.steps.length}
@@ -321,7 +321,7 @@ export const QuestionRowView: Component<{
   row: QuestionRow;
   onAnswer?: (optionIndex: number) => void;
 }> = (props) => (
-  <div class="tl-row tl-row-question" data-pending={props.row.pending ? "true" : undefined}>
+  <div class="tl-row tl-row-question" data-eid={props.row.id} data-pending={props.row.pending ? "true" : undefined}>
     <For each={props.row.questions}>
       {(q, qi) => (
         <div class="tl-question">
@@ -367,7 +367,7 @@ export const QuestionRowView: Component<{
 );
 
 export const PlanRowView: Component<{ row: PlanRow }> = (props) => (
-  <div class="tl-row tl-row-plan">
+  <div class="tl-row tl-row-plan" data-eid={props.row.id}>
     <div class="tl-plan-head">
       <span class="tl-plan-chip">Plan</span>
       <Show when={props.row.pending}>
@@ -403,7 +403,7 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
 };
 
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
-  <div class="tl-row tl-row-meta" data-meta={props.row.meta}>
+  <div class="tl-row tl-row-meta" data-eid={props.row.id} data-meta={props.row.meta}>
     <span class="tl-meta-rule" />
     <span class="tl-meta-text">
       {META_LABEL[props.row.meta]}

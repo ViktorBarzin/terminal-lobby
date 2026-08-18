@@ -4,6 +4,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  onMount,
   Show,
   type Accessor,
   type Component,
@@ -59,7 +60,7 @@ const UserRowView: Component<{
       ? props.row.body.slice(0, USER_COLLAPSE_CHARS) + "…"
       : props.row.body;
   return (
-    <div class="tl-row tl-row-user">
+    <div class="tl-row tl-row-user" data-eid={props.row.id}>
       <div class="tl-bubble-user">
         {/* Still a <pre>: the message's own whitespace is significant, and an
             <img>/<button> is phrasing content, so substituting a path in place
@@ -87,7 +88,7 @@ const UserRowView: Component<{
 };
 
 const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
-  <div class="tl-row tl-row-message" classList={{ "tl-streaming": props.row.streaming }}>
+  <div class="tl-row tl-row-message" data-eid={props.row.id} classList={{ "tl-streaming": props.row.streaming }}>
     <Show when={props.row.body.trim()} fallback={<span class="tl-empty">(empty response)</span>}>
       {/* `me` turns bare absolute paths in Claude's prose into attachments too
           (design 2026-08-17 decision 8), skipping code — see Markdown.tsx. */}
@@ -122,6 +123,10 @@ const StatusRowView: Component<{ row: StatusRow }> = (props) => (
 
 /** How far off the bottom still counts as "reading the live end". */
 const PIN_SLACK_PX = 40;
+
+/** How long a jumped-to row stays highlighted — long enough to find with the
+ *  eye after the scroll, short enough not to become part of the layout. */
+const FOUND_FLASH_MS = 1600;
 
 /**
  * How many rows mount immediately, and how many are added per frame after that.
@@ -457,6 +462,35 @@ export const MessagesTimeline: Component<{
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX;
   };
   const onScroll = () => setPinned(atBottom());
+
+  /**
+   * Scroll to one event and flash its row — how a search hit is opened.
+   *
+   * False when no row carries that id yet, which has two causes and one answer:
+   * the event is older than the window held (the caller loads earlier turns and
+   * asks again), or its row has not been mounted yet by the progressive fill
+   * (the caller waits a frame and asks again). Either way, unpinning first
+   * matters — landing mid-transcript while still pinned means the next arriving
+   * event scrolls straight back to the bottom.
+   */
+  const scrollToEvent = (id: number): boolean => {
+    const el = scroller;
+    const row = el?.querySelector<HTMLElement>(`[data-eid="${id}"]`);
+    if (!el || !row) return false;
+    setPinned(false);
+    row.scrollIntoView({ block: "center" });
+    row.classList.add("tl-row-found");
+    setTimeout(() => row.classList.remove("tl-row-found"), FOUND_FLASH_MS);
+    return true;
+  };
+  let prevScrollTo: ((id: number) => boolean) | undefined;
+  onMount(() => {
+    prevScrollTo = window.__tlScrollToEvent;
+    window.__tlScrollToEvent = scrollToEvent;
+  });
+  onCleanup(() => {
+    if (window.__tlScrollToEvent === scrollToEvent) window.__tlScrollToEvent = prevScrollTo;
+  });
 
   /**
    * Anything clicked in here may have changed the transcript's height — a turn
