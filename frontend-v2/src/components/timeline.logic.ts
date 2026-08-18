@@ -1,4 +1,5 @@
 import type { Event, MetaKind, PermissionDecision, TokenUsage } from "../types/events";
+import type { SentCommand } from "./compose.logic";
 import {
   describe as describeTool,
   extractTodoSteps,
@@ -829,4 +830,35 @@ export function scrollTopAfterPrepend(
   const insertedAbove = anchorOffsetAfter - anchorOffsetBefore;
   if (insertedAbove <= 0) return scrollTop;
   return scrollTop + insertedAbove;
+}
+
+/**
+ * The events the transcript reports, plus the slash commands this surface sent
+ * that it has not.
+ *
+ * They go at the END rather than at their timestamp: a command is sent from the
+ * bottom of a live conversation, and the transcript's own account of it (when
+ * there is one) arrives later and replaces this. Each gets its own turn key, so
+ * a command with no response reads as a turn with nothing in it — which is what
+ * happened.
+ */
+export function withSentCommands(
+  events: Event[],
+  sent: ReadonlyArray<SentCommand>,
+): Event[] {
+  if (sent.length === 0) return events;
+  return [
+    ...events,
+    ...sent.map(
+      (c): Event =>
+        ({
+          id: c.id,
+          kind: "user",
+          session: "",
+          turnId: `cmd${c.id}`,
+          body: c.text,
+          at: c.at,
+        }) as Event,
+    ),
+  ];
 }
