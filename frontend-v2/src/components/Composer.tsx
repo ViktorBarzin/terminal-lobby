@@ -24,6 +24,8 @@ import {
 import { clearDraft, loadDraft, saveDraft, type DraftAttachment } from "../store/drafts";
 import { contentUrlFor, storedDisplayName } from "../lib/attachments";
 import { FileTextIcon, PaperclipIcon } from "./Icons";
+import { ContextMeter } from "./ContextMeter";
+import type { ContextState } from "./context.logic";
 
 /**
  * Prompt composer with the permission panel docked above it. Send↔Stop morphs
@@ -64,6 +66,8 @@ export const Composer: Component<{
   queued?: string[];
   /** The permission mode in force, shown as a chip. */
   mode?: string;
+  /** The newest `/context` reading, shown as a fill chip beside the mode. */
+  context?: ContextState;
   /** Cycle the permission mode (Shift+Tab in the CLI). */
   onCycleMode?: () => void;
   /** Directory listing for `@` path completion. */
@@ -592,6 +596,9 @@ export const Composer: Component<{
           >
             <PaperclipIcon />
           </button>
+        </Show>
+        <Show when={props.context}>
+          {(ctx) => <ContextMeter state={ctx()} />}
         </Show>
         <Show when={props.mode && props.onCycleMode}>
           <button
