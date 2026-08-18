@@ -79,6 +79,10 @@ export interface EventSourceLike {
   onopen: ((ev: unknown) => void) | null;
   onerror: ((ev: unknown) => void) | null;
   onmessage: ((ev: { data: string; lastEventId?: string }) => void) | null;
+  /** Named events. Optional so a stub that only speaks `onmessage` still
+   *  satisfies this — the only named event is `ready`, and a stream that never
+   *  sends it is handled by a timeout rather than by waiting forever. */
+  addEventListener?: (type: string, fn: (ev: { data: string }) => void) => void;
   close(): void;
 }
 
@@ -88,6 +92,15 @@ export interface SseClientOptions {
   url: (session: string, lastEventId: number) => string;
   onEvent: (e: Event) => void;
   onStatus?: (s: SseStatus) => void;
+  /**
+   * The opening window is complete — everything the server had when the stream
+   * opened has been delivered, and what follows is live.
+   *
+   * A client cannot tell that from the events alone: they just stop for a
+   * moment. Without it the transcript paints a partial window and rebuilds it
+   * as the rest lands (see store/session.ts).
+   */
+  onReady?: () => void;
   /** injectable for tests; defaults to the browser EventSource. */
   createSource?: (url: string) => EventSourceLike;
   /** reads the stream URL's HTTP status (null = unreachable). Injectable so
@@ -126,9 +139,9 @@ export interface SseClientOptions {
  */
 export class SseClient {
   private readonly o: Required<
-    Omit<SseClientOptions, "onStatus" | "createSource">
+    Omit<SseClientOptions, "onStatus" | "createSource" | "onReady">
   > &
-    Pick<SseClientOptions, "onStatus" | "createSource">;
+    Pick<SseClientOptions, "onStatus" | "createSource" | "onReady">;
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
@@ -150,6 +163,7 @@ export class SseClient {
       url: opts.url,
       onEvent: opts.onEvent,
       onStatus: opts.onStatus,
+      onReady: opts.onReady,
       createSource: opts.createSource,
       probeStatus: opts.probeStatus ?? probeViaFetch,
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -206,6 +220,10 @@ export class SseClient {
       this.lastEventId = e.id;
       this.o.onEvent(e);
     };
+    es.addEventListener?.("ready", () => {
+      this.markAlive();
+      this.o.onReady?.();
+    });
     es.onerror = () => this.onError();
   }
 

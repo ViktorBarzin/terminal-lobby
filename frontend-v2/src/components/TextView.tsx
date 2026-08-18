@@ -48,6 +48,8 @@ export const TextView: Component<{
   onCommands?: () => Promise<SlashCommand[]>;
   /** prompts sent from here the transcript has not shown yet. */
   pendingPrompts?: () => PendingPrompt[];
+  /** the opening window is still arriving. */
+  opening?: boolean;
   /** fetch a capped tool result in full. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
   /** load the window of turns before the oldest held. */
@@ -155,6 +157,7 @@ export const TextView: Component<{
   return (
     <div class="tl-textview">
       <MessagesTimeline
+        opening={props.opening}
         events={shown()}
         onOpenPreview={props.onOpenPreview}
         onLoadFull={props.onLoadFull}

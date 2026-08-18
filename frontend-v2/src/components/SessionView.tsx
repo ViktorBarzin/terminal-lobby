@@ -782,6 +782,7 @@ export const SessionView: Component<{
             onPane={store.pane}
             onCommands={store.commands}
             pendingPrompts={store.pendingPrompts}
+            opening={store.opening()}
             onLoadFull={store.fullResult}
             onLoadEarlier={async () => {
               await store.loadEarlier();
