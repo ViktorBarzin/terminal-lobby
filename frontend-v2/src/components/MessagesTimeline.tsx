@@ -185,8 +185,6 @@ export const MessagesTimeline: Component<{
   onOpenPreview?: (path: string) => void;
   /** fetch a capped tool result in full. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
-  /** answer the blocking question by its option index. */
-  onAnswer?: (row: QuestionRow, optionIndex: number) => void;
   /** load the window of turns before the oldest one held. */
   onLoadEarlier?: () => Promise<void>;
   /** true while older turns exist to load. */
@@ -424,7 +422,6 @@ export const MessagesTimeline: Component<{
         return (
           <QuestionRowView
             row={row() as QuestionRow}
-            onAnswer={(i) => props.onAnswer?.(row() as QuestionRow, i)}
           />
         );
       case "plan":

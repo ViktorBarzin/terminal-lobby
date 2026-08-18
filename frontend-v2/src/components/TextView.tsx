@@ -1,15 +1,18 @@
-import { createMemo, createSignal, onMount, type Component } from "solid-js";
+import { createMemo, createSignal, onMount, Show, type Component } from "solid-js";
 import type { Event, PermissionDecision } from "../types/events";
 import {
   currentMode,
+  deriveRows,
+  pendingQuestion,
   promptHistory,
   queuedPrompts,
   withPendingPrompts,
   type PendingPermission,
-  type QuestionRow,
 } from "./timeline.logic";
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "./compose.logic";
 import { contextState } from "./context.logic";
+import { planAnswer, runAnswer, type DraftAnswer } from "./answer.logic";
+import { QuestionCard } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
@@ -45,6 +48,10 @@ export const TextView: Component<{
   onKeys?: (keys: string[]) => Promise<boolean>;
   /** read what the session's pane currently shows — the live permission mode. */
   onPane?: () => Promise<{ pane: string; state: string } | null>;
+  /** type free text into the pane WITHOUT submitting it, for an "Other" answer. */
+  onAnswerText?: (text: string) => Promise<boolean>;
+  /** surface a failed answer sequence to the app's toast stack. */
+  notify?: (message: string, kind: "info" | "error" | "warning" | "success") => void;
   /** the session's own skills / custom commands, for the `/` menu. */
   onCommands?: () => Promise<SlashCommand[]>;
   /** prompts sent from here the transcript has not shown yet. */
@@ -121,6 +128,55 @@ export const TextView: Component<{
   };
   onMount(() => void readMode(""));
 
+  /**
+   * The question the session is blocked on, if any.
+   *
+   * Derived from the transcript, which records the questions, their options and
+   * their descriptions — so only the SELECTION is ever inferred, which is the
+   * low-risk half of ADR-0010. The card is dismissed the moment the transcript
+   * shows a result, whether it was answered from here or from the Terminal.
+   */
+  const blocking = createMemo(() => pendingQuestion(deriveRows(props.events)));
+  const [answering, setAnswering] = createSignal(false);
+
+  // The composer's own handle, so "Chat about this" can hand the reader the
+  // message field rather than an answer they did not want to give.
+  let sinks: ComposerSinks | undefined;
+  const focusComposer = () => sinks?.focus();
+
+  /**
+   * Send the assembled answers, checking the pane between questions.
+   *
+   * Nothing has been typed until this runs, so up to here the dialog is
+   * untouched. From here the sequence stops the moment the pane stops matching
+   * what the plan expected, rather than typing the remaining answers into
+   * whatever screen is actually there — a half-answered dialog can be finished
+   * in the Terminal, and a wrong answer submitted unseen cannot be taken back.
+   */
+  const sendAnswers = async (answers: DraftAnswer[]): Promise<void> => {
+    const q = blocking();
+    if (!q || !props.onKeys || answering()) return;
+    const steps = planAnswer(q.questions, answers);
+    if (steps.length === 0) return;
+    setAnswering(true);
+    const res = await runAnswer(steps, {
+      keys: props.onKeys,
+      text: async (t: string) => (await props.onAnswerText?.(t)) ?? false,
+      pane: async () => (await props.onPane?.())?.pane ?? null,
+    });
+    setAnswering(false);
+    if (!res.ok) {
+      props.notify?.(
+        res.reason === "refused"
+          ? `The session refused the answer while ${res.what}.`
+          : res.reason === "unreadable"
+            ? `Couldn't read the session's screen while ${res.what} — finish it in Terminal.`
+            : `The dialog moved while ${res.what} — finish it in Terminal.`,
+        "error",
+      );
+    }
+  };
+
   // How full the context is, from the CLI's own `/context` reading. The server
   // refreshes it on open and after each settled turn; nothing here computes a
   // context size, because the ceiling is not on the wire and is not a constant.
@@ -129,24 +185,6 @@ export const TextView: Component<{
   // The catalogue is files on disk; one read when the view opens is enough.
   const [commands, setCommands] = createSignal<SlashCommand[]>([]);
   onMount(() => void props.onCommands?.().then(setCommands));
-
-  /**
-   * Answering a question: the option's ordinal is what the TUI's menu reads, so
-   * the answer is the digit and an Enter. The options themselves came from the
-   * transcript, so only the SELECTION is inferred — the low-risk half of
-   * ADR-0010.
-   */
-  const answerQuestion = (_row: QuestionRow, optionIndex: number) => {
-    if (!props.onKeys) return;
-    // The menu opens on the first option, so N presses of Down then Enter picks
-    // the Nth — more robust than assuming digits select, which they do not in
-    // every dialog.
-    const keys = [
-      ...Array.from({ length: optionIndex }, () => "Down"),
-      "Enter",
-    ];
-    void props.onKeys(keys.slice(0, 8));
-  };
 
   const cycleMode = () => {
     // Shift+Tab in the CLI cycles the permission mode. One press, then the pane
@@ -167,11 +205,22 @@ export const TextView: Component<{
         events={shown()}
         onOpenPreview={props.onOpenPreview}
         onLoadFull={props.onLoadFull}
-        onAnswer={answerQuestion}
         onLoadEarlier={props.onLoadEarlier}
         hasEarlier={props.hasEarlier}
         me={props.me}
       />
+      {/* Docked, not inline: on a phone the timeline scrolls and the keyboard
+          covers it, and a walk that slides out from under a thumb mid-answer is
+          worse than no walk. The permanent record is the inline row, which
+          appears the moment the transcript carries the result. */}
+      <Show when={blocking() && props.onKeys}>
+        <QuestionCard
+          questions={blocking()!.questions}
+          onSend={sendAnswers}
+          onChat={focusComposer}
+          busy={answering()}
+        />
+      </Show>
       <Composer
         working={props.working}
         pending={props.pending}
@@ -190,7 +239,10 @@ export const TextView: Component<{
         onAttach={props.onAttach}
         onOpenPreview={props.onOpenPreview}
         inertReason={props.inertReason}
-        register={props.register}
+        register={(api) => {
+          sinks = api;
+          props.register?.(api);
+        }}
       />
     </div>
   );
