@@ -183,18 +183,34 @@ describe("the Mine tab", () => {
     await waitFor(() => expect(calls).toContain("toggle:caveman@skills-dir:true"));
   });
 
-  it("confirms before removing, and does nothing when that is declined", async () => {
-    const { getByText, calls } = open({}, { confirm: () => false });
+  it("acts from the row, with no expand first — the way a plugin row does", async () => {
+    const { getAllByText, calls, queryByText } = open({}, { confirm: () => true });
+    // Nothing expanded: the description is not on screen, but the actions are.
+    expect(queryByText("Grill a plan")).toBeNull();
+    expect(getAllByText("Remove")).toHaveLength(3); // one per skill
+    expect(getAllByText("Delete")).toHaveLength(3);
+    fireEvent.click(getAllByText("Remove")[0]!);
+    await waitFor(() => expect(calls).toContain("remove:grilling"));
+  });
+
+  it("expands for reading rather than for acting", () => {
+    const { getByText, queryByText } = open();
+    expect(queryByText("Grill a plan")).toBeNull();
     fireEvent.click(getByText("grilling"));
-    fireEvent.click(getByText("Remove"));
+    expect(getByText("Grill a plan")).toBeTruthy();
+    expect(getByText("1 file · 900 B")).toBeTruthy();
+  });
+
+  it("confirms before removing, and does nothing when that is declined", async () => {
+    const { getAllByText, calls } = open({}, { confirm: () => false });
+    fireEvent.click(getAllByText("Remove")[0]!);
     await waitFor(() => expect(calls).not.toContain("remove:grilling"));
   });
 
-  it("removes when the confirmation is accepted", async () => {
-    const { getByText, calls } = open({}, { confirm: () => true });
-    fireEvent.click(getByText("grilling"));
-    fireEvent.click(getByText("Remove"));
-    await waitFor(() => expect(calls).toContain("remove:grilling"));
+  it("removes the row it was clicked on", async () => {
+    const { getAllByText, calls } = open({}, { confirm: () => true });
+    fireEvent.click(getAllByText("Remove")[2]!); // caveman, the third row
+    await waitFor(() => expect(calls).toContain("remove:caveman"));
   });
 
   it("warns before an update would displace local edits", async () => {
@@ -320,27 +336,24 @@ describe("what the panel always says", () => {
 });
 
 describe("permanent removal", () => {
-  it("offers Remove and Delete as different things", () => {
-    const { getByText, getByTitle } = open();
-    fireEvent.click(getByText("grilling"));
-    expect(getByTitle("Keeps a copy under .backup/")).toBeTruthy();
-    expect(getByTitle("Permanent: the skill and every backup of it")).toBeTruthy();
+  it("offers Remove and Delete as different things, on every row", () => {
+    const { getAllByTitle } = open();
+    expect(getAllByTitle("Keeps a copy under .backup/")).toHaveLength(3);
+    expect(getAllByTitle("Permanent: the skill and every backup of it")).toHaveLength(3);
   });
 
   it("warns that an authored skill has no other copy", async () => {
     const asked: string[] = [];
-    const { getByText, calls } = open({}, { confirm: (m) => (asked.push(m), true) });
-    fireEvent.click(getByText("grilling"));
-    fireEvent.click(getByText("Delete"));
+    const { getAllByText, calls } = open({}, { confirm: (m) => (asked.push(m), true) });
+    fireEvent.click(getAllByText("Delete")[0]!);
     await waitFor(() => expect(calls).toContain("delete:grilling"));
     expect(asked[0]).toContain("Nothing else has a copy");
   });
 
   it("says an installed skill can be taken again from whoever has it", async () => {
     const asked: string[] = [];
-    const { getByText } = open({}, { confirm: (m) => (asked.push(m), false) });
-    fireEvent.click(getByText("caveman"));
-    fireEvent.click(getByText("Delete"));
+    const { getAllByText } = open({}, { confirm: (m) => (asked.push(m), false) });
+    fireEvent.click(getAllByText("Delete")[2]!); // caveman, installed from bob
     expect(asked[0]).toContain("install it again from bob");
   });
 
@@ -348,16 +361,14 @@ describe("permanent removal", () => {
     const inv = inventory();
     inv.skills[0]!.symlink = true;
     const asked: string[] = [];
-    const { getByText } = open({ inventory: () => inv }, { confirm: (m) => (asked.push(m), false) });
-    fireEvent.click(getByText("grilling"));
-    fireEvent.click(getByText("Delete"));
+    const { getAllByText } = open({ inventory: () => inv }, { confirm: (m) => (asked.push(m), false) });
+    fireEvent.click(getAllByText("Delete")[0]!);
     expect(asked[0]).toContain("points at is left alone");
   });
 
   it("does nothing when the deletion is declined", async () => {
-    const { getByText, calls } = open({}, { confirm: () => false });
-    fireEvent.click(getByText("grilling"));
-    fireEvent.click(getByText("Delete"));
+    const { getAllByText, calls } = open({}, { confirm: () => false });
+    fireEvent.click(getAllByText("Delete")[0]!);
     await waitFor(() => expect(calls).not.toContain("delete:grilling"));
   });
 
