@@ -348,6 +348,13 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => (
           <Show when={!props.row.pending && props.row.answers.length > 0}>
             <div class="tl-question-answer">answered: {props.row.answers.join(", ")}</div>
           </Show>
+          {/* Asked, never answered, and no longer on screen — Claude Code takes
+              a dialog down when something else claims the turn and re-asks.
+              Saying so beats a row that keeps the live-dialog look for the rest
+              of the session. */}
+          <Show when={props.row.superseded}>
+            <div class="tl-question-answer">unanswered — the session moved on</div>
+          </Show>
         </div>
       )}
     </For>

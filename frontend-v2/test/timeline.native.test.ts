@@ -134,18 +134,77 @@ describe("questions", () => {
     expect(pendingQuestion(rows)).toBeNull();
   });
 
-  // A question inside a settled turn is folded away, but it is still the thing
-  // blocking the session, so the search has to look inside folds.
-  it("is found even when the turn folded around it", () => {
+  // The working row is what a LIVE question is followed by: the turn cannot
+  // settle while the dialog is up, so the derivation appends one. Finding the
+  // question means looking past it.
+  it("is found under the working row of the open turn", () => {
+    const rows = rowsOf(prompt(), askEvent());
+    expect(rows[rows.length - 1]!.kind).toBe("working");
+    expect(pendingQuestion(rows)).not.toBeNull();
+  });
+
+  /**
+   * A question the transcript never resolved is not necessarily still being
+   * asked.
+   *
+   * Measured in a real session (2026-08-16, `-home-wizard-code/35b0d4b1`): an
+   * `AskUserQuestion` at line 121 got no `tool_result` ever. A task-notification
+   * from a background agent arrived as a queued user message, which took the
+   * dialog down, and Claude re-asked at line 131 — that one was answered
+   * normally. The first call stays unresolved in the transcript for good.
+   *
+   * Before 2026-08-19 the search walked back for the newest PENDING question
+   * and looked inside folds, so it kept finding line 121 and kept the answer
+   * card docked over a dialog that had not been on screen for hours — including
+   * straight after answering the live one, which is how it was reported.
+   */
+  it("stops being asked once the session moves past it", () => {
     const rows = rowsOf(
       prompt(),
       ev({ kind: "text", body: "some words" }),
       askEvent(),
-      ev({ kind: "text", body: "more words" }),
       ev({ kind: "user", body: "next", turnId: "t2" }), // a later turn settles t1
+      ev({ kind: "text", body: "moved on", turnId: "t2" }),
     );
     expect(rows.some((r) => r.kind === "turn-fold")).toBe(true);
-    expect(pendingQuestion(rows)).not.toBeNull();
+    expect(pendingQuestion(rows)).toBeNull();
+    // …and the row says so rather than keeping the live-dialog highlight.
+    const q = flat(rows).find((r) => r.kind === "question") as QuestionRow;
+    expect(q.pending).toBe(false);
+    expect(q.superseded).toBe(true);
+    expect(q.answers).toEqual([]);
+  });
+
+  // The reported symptom, end to end: answering the live question must not
+  // re-dock the card on a stale one from earlier in the session.
+  it("answers the newest question, never an abandoned older one", () => {
+    const stale = askEvent();
+    // The live one belongs to the LATER turn, the way a re-ask does.
+    const live = ev({ ...askEvent(), toolId: "q2", turnId: "t2" });
+    const rows = rowsOf(
+      prompt(),
+      stale,
+      ev({ kind: "user", body: "something else", turnId: "t2" }),
+      live,
+    );
+    const found = pendingQuestion(rows);
+    expect(found).not.toBeNull();
+    expect(found!.toolId).toBe("q2");
+
+    const answered = rowsOf(
+      prompt(),
+      stale,
+      ev({ kind: "user", body: "something else", turnId: "t2" }),
+      live,
+      ev({
+        kind: "tool_result",
+        toolId: "q2",
+        turnId: "t2",
+        body: "",
+        result: { answers: { Route: "Left" } },
+      }),
+    );
+    expect(pendingQuestion(answered)).toBeNull();
   });
 });
 
