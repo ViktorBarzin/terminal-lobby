@@ -1,4 +1,4 @@
-# Skills move between users by copy, from a Skills group in Settings
+# Skills move between users by copy, from their own Skills panel
 
 Every lobby user has a set of skills their Claude sessions load from
 `~/.claude/skills`. Until now a skill reached a second person only through the
@@ -8,8 +8,8 @@ directory was absent. That got a starter set onto the box, and it does two
 things we now want differently: a skill never updates after its first copy, and
 nobody chooses their own set.
 
-We add a **Skills group to the lobby's Settings overlay**, backed by a new
-`skills-api` service on `:7688`. Every mapped user's skills are visible to every
+We add a **Skills overlay to the lobby**, its own dialog off the shell bar
+beside Settings, backed by a new `skills-api` service on `:7688`. Every mapped user's skills are visible to every
 other one; **the recipient installs**, which **copies a snapshot** into
 `~/.claude/skills/<name>` and records `{from, sourceHash, installedAt}` in
 `.manager.json`. Enable/disable is a direct write of Claude Code's own
@@ -64,6 +64,20 @@ already allow.
   user. Retiring the step outright was chosen instead: with every user's skills
   visible, a new person can pull a sensible set from a colleague, and one
   distribution path is easier to reason about than two.
+
+## Where the surface went (2026-08-19, same day)
+
+It shipped as a group inside the Settings overlay and moved out within hours of
+being used. The reason is the row counts: 38 own skills, 7 plugins, 21 of one
+peer's and every live session, in a 420px column under six other settings groups.
+The panel it moved to is wider, gives each list its own tab with a count, and
+carries a name/description filter; the row behaviour — the verdicts, the diff, the
+backups, the restart rule — is unchanged and still lives in `skills.logic.ts`.
+Settings went back to being settings.
+
+The full-screen variant was one of the options considered at design time and was
+passed over then in favour of the smaller change. Seeing the real lists is what
+settled it.
 
 ## Consequences
 
