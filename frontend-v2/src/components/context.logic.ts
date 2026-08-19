@@ -9,14 +9,17 @@ import type { ContextReading, Event } from "../types/events";
  * and is not a constant (a session on this box reads 65.2k of 1m), which is why
  * reading what the CLI published beats deriving a worse version of it.
  *
- * A reading is a point in time, so the chip says how old it is. The server
- * refreshes on open and after each turn settles, so "just now" is the normal
- * case and anything else means a refresh was declined — the session was busy,
- * blocked, or holding an unsent draft.
+ * A reading is a point in time, and nothing refreshes it: the meter shows what
+ * the last `/context` in the session said, and a session where nobody has run
+ * one has no meter at all. Automating that was built and then removed on
+ * 2026-08-19 — keeping the number current meant typing into somebody's pane on
+ * a schedule, and the text view does not write to a terminal unattended. So the
+ * chip says how old its reading is, in settled turns, and a stale one reads as
+ * stale rather than as live.
  */
 export interface ContextState {
   reading: ContextReading;
-  /** Turns that have ended since the reading. 0 = current. */
+  /** Turns that have ended since the reading. 0 = read in the current turn. */
   turnsAgo: number;
 }
 

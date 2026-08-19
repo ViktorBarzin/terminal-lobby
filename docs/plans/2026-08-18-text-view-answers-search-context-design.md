@@ -1,6 +1,6 @@
 # Answering, finding, and measuring: three additions to the text view
 
-**Status:** Built · **Date:** 2026-08-18 · **Owner:** wizard
+**Status:** Built · **Date:** 2026-08-18 · **Revised:** 2026-08-19 · **Owner:** wizard
 **Grilled from:** *"let's get some design ideas from t3 code for our text mode."*
 
 ```stats
@@ -99,15 +99,18 @@ boundary of the keys route, and this design does not widen it.
 | 8 | **Search opens through the existing command palette.** | The header measurably did not fit at 390px and already sheds controls; this adds nothing to it. |
 | 9 | **The context meter reads `/context`'s own output**, not our token arithmetic. | The CLI computes the ceiling, the percentage and the category breakdown, and writes them to the transcript as markdown. |
 | 10 | **The `## Context Usage` record is recognised in the normalizer**, the way `skillLoad` recognises a skill load. | Today it renders as a 14,930-character block attributed to Claude — the same pathology `skill.go` was written to fix. |
-| 11 | **The reading refreshes on open and after each turn settles.** | The meter is current at the moment you look at a finished turn, which is when it gets read. Costs roughly 15 KB of transcript per turn. |
-| 12 | **The refresh is server-owned, one per session, gated on `@claude_state == done`, and runs only while a text viewer is attached.** | Three devices watching must not mean three injections. `running` would queue the command as a prompt; `awaiting` would type into a live dialog. And a background mechanism acting on sessions nobody is watching is exactly what `575d4f5` had to be removed for. |
+| 11 | **The meter shows the newest reading the transcript holds, and nothing runs `/context` to produce one.** *(Revised 2026-08-19; the note below says what this row used to say.)* | A reading exists because somebody asked for one. A session where nobody has is a session with no chip, which is a smaller cost than the alternative in row 12. |
+| 12 | **The text view writes to a pane only behind a tap** — a prompt, an answer, a key. Nothing it does is on a schedule. | Keeping a meter current automatically means typing a command into somebody's terminal while they are not looking at it. `575d4f5` had to remove a mechanism for its reach rather than its logic, and a scheduled writer is that shape of reach however well it is gated. |
 | 13 | **One landing.** | Chosen over three sequential landings. |
 
-> [!NOTE]
-> Decision 12's last clause is there for a specific reason. What `575d4f5` had
-> to remove was not the broker's logic but its reach: it acted on every session
-> on a shared devvm, including those nobody had open. Any refresh loop we add
-> inherits that lesson.
+> [!IMPORTANT]
+> **Rows 11 and 12 were revised on 2026-08-19.** As first built and shipped they
+> read: *the reading refreshes on open and after each turn settles*, through a
+> server-owned loop gated on an attached text viewer, `@claude_state == done`,
+> and an empty composer. It was built, tested and verified live. It was removed
+> the following day, on the rule it sits under rather than on a fault of its own
+> — the text view does not put anything into a terminal by itself
+> (Viktor, 2026-08-19). §13 records what came out and what stayed.
 
 ---
 
@@ -123,7 +126,6 @@ flowchart TD
   subgraph go["Go — session-events"]
     N["normalizer<br/>+ Context Usage record"]
     S["GET /search<br/>whole transcript, all fields"]
-    R["refresh loop<br/>viewer attached AND state==done"]
     I["Injector<br/>keys · answer-text"]
     C["GET /pane<br/>verification read"]
   end
@@ -137,7 +139,6 @@ flowchart TD
   T --> N -->|SSE| M
   T --> S --> F
   F -->|"tap a hit"| E["GET /earlier"] --> F
-  R -->|"inject /context"| P
   P --> T
   Q -->|"POST /keys · /answer-text"| I --> P
   C --> Q
@@ -241,6 +242,10 @@ recognises a skill load, and emits it as a reading rather than as a message. The
 client shows the headline as a chip and keeps the breakdown behind an expand —
 the tables render already, since assistant markdown goes through full GFM.
 
+The readings it shows are the ones the session already has. Running `/context`
+is the reader's to do, from the Terminal view or from the composer, and the chip
+says how many settled turns old its reading is so an old one reads as old.
+
 This fixes a present defect on the way past: a `/context` run today produces a
 14,930-character block in the timeline, styled as though Claude wrote it.
 
@@ -252,13 +257,14 @@ This fixes a present defect on the way past: a `/context` run today produces a
 > measurement the same day (recorded while fixing slash-command rendering)
 > found `/context` writing nothing in an isolated session, alongside `/help`
 > and `/status`, while `/wrap-up`, `/model` and `/compact` did write. Both
-> observations are real and they have not been reconciled. Decision 11 rests
-> on the reading being recorded, so this is verification item 1 below.
+> observations are real and they have not been reconciled. What rests on it is
+> now narrower than it was: an unrecorded run means the chip does not appear,
+> not that a scheduled command ran for nothing.
 >
-> **Fallback if it proves unreliable:** read the value off the pane instead.
-> `capture-pane` and a client-side parse are machinery the mode chip already
-> uses (`modeFromPane`, `compose.logic.ts:285`), so the meter would keep its
-> source — the CLI's own figure — and change only how it is collected.
+> The fallback first named here — read the value off the pane, the way
+> `modeFromPane` reads the mode — turned out not to be available: the pane
+> percentage on this box comes from a personal statusline plugin rather than
+> from Claude Code (§11).
 
 ---
 
@@ -294,8 +300,9 @@ Claude Code specific, so we can read the figure the CLI already publishes.
    card — confirming it stops and offers the Terminal rather than typing on.
 5. **Search on the 28.9 MB transcript**: query latency, hit quality, and a jump
    to a hit that sits outside the open window.
-6. **Refresh cost over a working day**: transcript growth, and confirmation that
-   an unwatched session receives nothing.
+6. ~~**Refresh cost over a working day**~~ — moot since 2026-08-19 (§13). What
+   replaces it: a session holding no reading shows no chip, rather than a zero
+   or a guess.
 7. **Suite green**, plus tests for the chunk planner over the option shapes in §2.
 
 ---
@@ -312,8 +319,9 @@ Claude Code specific, so we can read the figure the CLI already publishes.
 - **Search latency on the largest transcripts** is unmeasured. If a full grep per
   query proves slow, the next lever is an offset index built as the source
   hydrates.
-- **What the refresh costs in practice.** Roughly 15 KB per settled turn is the
-  estimate; a day of real use is what would confirm or correct it.
+- ~~**What the refresh costs in practice.**~~ Answered by removal: the refresh
+  came out on 2026-08-19 (§13), so a reading costs its ~15 KB only when someone
+  runs `/context` themselves.
 - **Whether the walk should be skippable** for the single-question single-select
   case, which the CLI submits immediately and which works today. A one-question
   walk with a review step may be one tap more than that case deserves.
@@ -324,7 +332,10 @@ Claude Code specific, so we can read the figure the CLI already publishes.
 
 Six things came out differently from the plan, or were learned only by building
 it. Each is in the code with its reasoning; they are collected here so the doc
-and the build agree.
+and the build agree. The first two describe the refresh loop, which was removed
+on 2026-08-19 (§13) — they are kept because what they record was measured, and
+because the composer finding is the reason a scheduled writer is a bigger thing
+than it looks.
 
 **The refresh needed a guard the design did not know it needed.** Decision 11
 runs `/context` in the session's pane, and `Injector.Prompt` — the only route
@@ -388,7 +399,41 @@ and could not be what the meter reads. The transcript reading stands.
   guarded rather than trusted: if either is wrong the pane check fails and the
   sequence stops with the Terminal offered, which is the designed behaviour for
   exactly this case.
-- **Whether `/context` is reliably recorded** is still verification item 1, and
-  still unreconciled with the earlier measurement. The fallback named in §7 has
-  not been needed, but it has not been ruled out either.
+- **Whether `/context` is reliably recorded** is still unreconciled with the
+  earlier measurement. It now decides whether a chip appears at all for a
+  reader who ran the command, and the §7 fallback is not available.
 - **Search latency on the largest transcripts** is still unmeasured.
+
+---
+
+## 13. Revision — 2026-08-19: the meter stopped asking
+
+The refresh loop was removed the day after it shipped, on a standing rule for
+the text view: it does not put anything into a terminal by itself. Every write
+it makes now follows a tap — a prompt, an answer, a key.
+
+The loop was not misbehaving. It was gated four ways, verified live, and the
+guard §11 describes did its job on the first pane it met. The rule is about what
+a mechanism is allowed to do unattended, not about how carefully it does it, and
+a scheduled writer on a shared box is the reach `575d4f5` had to remove.
+
+**Out:**
+
+- `session-events/refresh.go` and its tests — the loop that ran `/context` on
+  open and once per settled turn.
+- `writeSSE`'s turn-end hook, which existed only to feed it.
+- `sessionio.PaneComposerEmpty` and its tests — the empty-composer guard, whose
+  only caller was the refresh.
+
+**Kept:**
+
+- The normalizer's reading of `## Context Usage` (decision 10): the parse, the
+  structure on the wire, and the row dropped from the timeline.
+- The chip and its breakdown panel, which appear when the session holds a
+  reading and stay away when it does not.
+- The age in settled turns. Its meaning shifts — it used to mean a refresh had
+  been declined, and now means how long ago somebody ran the command.
+
+**What it costs:** a session where nobody runs `/context` has no meter. The
+breakdown panel names the command, so the way to a newer reading is on screen
+rather than in this document.
