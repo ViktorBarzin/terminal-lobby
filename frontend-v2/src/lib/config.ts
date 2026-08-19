@@ -272,6 +272,44 @@ export function fileWriteUrl(): string {
   return withActAs(`${API_BASE}${FILE_API_PREFIX}/write`);
 }
 
+/**
+ * The skills-api service prefix. Like /files, the ingress routes /skills/* to the
+ * service WITHOUT stripping it (its own routes carry the prefix — see
+ * skills-api/main.go), so every call from the browser is /skills/... verbatim.
+ * The vite dev proxy reproduces it.
+ */
+export const SKILLS_API_PREFIX = "/skills";
+
+/** GET the whole panel: the caller's skills and plugins, plus every other
+ *  terminal account's skills with a verdict against the caller's own. */
+export function skillsUrl(): string {
+  return withActAs(`${API_BASE}${SKILLS_API_PREFIX}`);
+}
+
+/** GET one skill's SKILL.md, file list and stat. owner "" means the caller. */
+export function skillViewUrl(owner: string, name: string): string {
+  return withActAs(
+    `${API_BASE}${SKILLS_API_PREFIX}/view?owner=${encodeURIComponent(owner)}` +
+      `&name=${encodeURIComponent(name)}`,
+  );
+}
+
+/** GET the SKILL.md diff between a peer's copy and the caller's own. */
+export function skillDiffUrl(owner: string, name: string): string {
+  return withActAs(
+    `${API_BASE}${SKILLS_API_PREFIX}/diff?owner=${encodeURIComponent(owner)}` +
+      `&name=${encodeURIComponent(name)}`,
+  );
+}
+
+/** POST target for one of the manager's actions: install | toggle | remove |
+ *  plugin-update | restart. */
+export function skillActionUrl(
+  action: "install" | "toggle" | "remove" | "plugin-update" | "restart",
+): string {
+  return withActAs(`${API_BASE}${SKILLS_API_PREFIX}/${action}`);
+}
+
 /** The tmux-api prefs endpoint (roamed settings). Whole-doc GET/PUT. */
 export const PREFS_PATH = "/prefs";
 

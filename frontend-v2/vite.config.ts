@@ -64,6 +64,9 @@ const CLIPBOARD_UPLOAD = process.env.TL_CLIPBOARD_UPLOAD || "http://127.0.0.1:76
 // WITHOUT stripping (its own routes already carry the /files prefix), so the dev
 // proxy forwards verbatim. Override with TL_FILE_API.
 const FILE_API = process.env.TL_FILE_API || "http://127.0.0.1:7686";
+// skills-api (the skill manager): /skills/* verbatim, same shape as /files.
+// Override with TL_SKILLS_API.
+const SKILLS_API = process.env.TL_SKILLS_API || "http://127.0.0.1:7688";
 // ttyd (the terminal attach): the terminal-mode page (term.html, the iframe)
 // opens /ws (WebSocket) + /token same-origin, and in prod the ingress routes
 // "everything else" -> ttyd (:7681). The dev proxy reproduces that so `vite
@@ -127,6 +130,13 @@ const proxy: Record<string, ProxyOptions> = {
   // file-api: /files/* -> service verbatim (no rewrite; routes carry /files).
   "/files": {
     target: FILE_API,
+    changeOrigin: true,
+    ws: false,
+    configure: injectAuth,
+  },
+  // skills-api: /skills/* -> service verbatim (its routes carry /skills).
+  "/skills": {
+    target: SKILLS_API,
     changeOrigin: true,
     ws: false,
     configure: injectAuth,
