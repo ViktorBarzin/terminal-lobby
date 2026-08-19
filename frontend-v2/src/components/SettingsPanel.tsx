@@ -33,8 +33,6 @@ import {
 } from "../store/device-prefs";
 import { diagnosticsWanted, setDiagnosticsEnabled } from "../telemetry/diag";
 import type { NotificationSystem } from "../notify/notifications";
-import { SkillsSection } from "./SkillsSection";
-import type { SkillsStore } from "../store/skills";
 
 /** What Settings needs to render the act-as picker. Absent for a non-admin. */
 export interface ActAsControl {
@@ -69,12 +67,6 @@ export const SettingsPanel: Component<{
   /** the admin act-as picker. Supplied only when the CALLER administers this
    *  box; absent for everyone else, so the section does not render at all. */
   actAs?: ActAsControl;
-  /** the skill manager's store (ADR-0011). Absent -> the group does not render,
-   *  which is what keeps this panel testable without a skills backend. */
-  skills?: SkillsStore;
-  /** the caller's live sessions, so the Skills group can say which of them are
-   *  still running an older skill set. */
-  sessions?: Accessor<ReadonlyArray<{ name: string; state?: string }>>;
   /** confirm seam for Clear local data (tests inject it). */
   confirm?: (message: string) => boolean;
   /** reload seam for Clear local data (tests inject it). */
@@ -459,14 +451,6 @@ export const SettingsPanel: Component<{
             Applies to newly created sessions only.
           </div>
         </section>
-
-        <Show when={props.skills}>
-          <SkillsSection
-            skills={props.skills!}
-            sessions={props.sessions}
-            confirm={props.confirm}
-          />
-        </Show>
 
         <Show when={props.keybindings}>
           {(kb) => (

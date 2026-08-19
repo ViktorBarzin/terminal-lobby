@@ -185,8 +185,11 @@ _Avoid_: attachment bar, dropzone (the drop target is the whole window)
 
 ### Skills
 
-Managed from the Settings overlay's **Skills** group, backed by `skills-api`
-(`docs/adr/0011-skills-move-between-users-by-copy.md`).
+Managed from the **Skills** overlay — its own dialog off the shell bar, beside
+Settings — backed by `skills-api`
+(`docs/adr/0011-skills-move-between-users-by-copy.md`). It began as a group
+inside Settings and moved out on 2026-08-19: the lists are long enough that they
+need a tab each.
 
 **Skill**:
 A directory under a user's `~/.claude/skills/` containing a `SKILL.md`, loaded
