@@ -474,9 +474,9 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           // divider back.
           if (meta === "mode" || meta === "permission-mode") break;
           // A `/context` reading is state for the same reason, and the meter
-          // beside the composer is where it shows. It matters more here than
-          // for the mode: the server refreshes on every settled turn, so a row
-          // per reading would put a divider between every pair of turns.
+          // beside the composer is where it shows. A reading also arrives as a
+          // 15 KB block of markdown the CLI already rendered in the pane, so a
+          // row per reading would be the biggest thing in the log.
           if (meta === "context") break;
           // The queue's departures are bookkeeping for queuedPrompts(), the
           // same way the mode events are for the chip: a divider saying a

@@ -49,13 +49,7 @@ func parseLastEventID(r *http.Request) int64 {
 // the resume cursor, then tails live, emitting a heartbeat comment every hb to
 // keep NAT/proxy timeouts from silently dropping the connection. Returns when the
 // request context is cancelled or the live channel closes.
-//
-// onTurnEnd, when set, is called with the id of each turn_end that goes out
-// live. It is how the context refresh learns a turn has settled. Only LIVE
-// events are reported: a replay is history, and re-running `/context` for every
-// turn a reconnecting client catches up on would put one command in the pane per
-// turn of scrollback.
-func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Duration, onTurnEnd func(int64)) {
+func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Duration) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -100,9 +94,6 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, e.JSON())
 			lastID = e.ID
 			fl.Flush()
-			if e.Kind == sessionio.KindTurnEnd && onTurnEnd != nil {
-				onTurnEnd(e.ID)
-			}
 		case <-ticker.C:
 			fmt.Fprint(w, ": hb\n\n")
 			fl.Flush()

@@ -35,7 +35,7 @@ describe("contextState", () => {
     expect(contextState([ev({ kind: "text", body: "hi" })])).toBeNull();
   });
 
-  it("takes the NEWEST reading, since the server refreshes each settled turn", () => {
+  it("takes the NEWEST reading, since a session may hold several", () => {
     const got = contextState([
       ev({ kind: "meta", meta: "context", context: reading({ usedTokens: 10_000 }) }),
       ev({ kind: "turn_end" }),
