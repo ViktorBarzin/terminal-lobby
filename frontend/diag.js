@@ -63,6 +63,55 @@ globalThis.tlDiag = (function () {
    * reservoir sampling past the cap, so a long window stays representative
    * instead of only remembering its beginning.
    */
+  /**
+   * What this ENGINE cannot do, out of the short list the lobby actually
+   * depends on. Reported so a device that quietly loses a feature is visible
+   * here instead of arriving as a screenshot.
+   *
+   * Measured, not inferred from the user agent: every browser on iPadOS uses
+   * the system WebKit whatever its name says, so a Chrome version there tells
+   * you nothing. It also runs BEFORE any polyfill: this file is inlined as the
+   * first classic script on the page and the SPA bundle is a deferred module,
+   * so what is recorded is the engine as it shipped, not as we patched it.
+   *
+   * Keep the list in step with frontend-v2/src/lib/baseline-polyfills.ts. A gap
+   * named here and filled there is a device running on the polyfill; a gap
+   * named here and NOT filled there is a feature that device is losing.
+   */
+  var ENGINE_PROBES = [
+    // Safari 16.0. Read on the way into every lobby request, so its absence
+    // threw before fetch and the session list never loaded (2026-08-19).
+    ["AbortSignal.timeout", function (g) {
+      return !!g.AbortSignal && typeof g.AbortSignal.timeout === "function";
+    }],
+    // Safari 17.0. Reached inside the URL sanitizer mermaid bundles.
+    ["URL.canParse", function (g) {
+      return !!g.URL && typeof g.URL.canParse === "function";
+    }],
+    // Safari 16.4. remark-gfm's autolink extension builds one on every markdown
+    // render, so without it the text view drops the GFM extensions.
+    ["RegExp lookbehind", function (g) {
+      new (g.RegExp || RegExp)("(?<=a)b");
+      return true;
+    }],
+  ];
+
+  /** Comma-joined names of what `scope` is missing; "" when it has everything. */
+  function engineGaps(scope) {
+    var g = scope || globalThis;
+    var out = [];
+    for (var i = 0; i < ENGINE_PROBES.length; i++) {
+      var ok = false;
+      try {
+        ok = !!ENGINE_PROBES[i][1](g);
+      } catch (e) {
+        ok = false; // a probe that throws IS the absence it tests for
+      }
+      if (!ok) out.push(ENGINE_PROBES[i][0]);
+    }
+    return out.join(",");
+  }
+
   function samples(max, random) {
     var vals = [],
       n = 0,
@@ -826,6 +875,10 @@ globalThis.tlDiag = (function () {
       context["tl.dev.w"] = window.screen ? window.screen.width : 0;
       context["tl.dev.h"] = window.screen ? window.screen.height : 0;
       context["tl.dev.plat"] = (navigator.platform || "").slice(0, 40);
+      // "" on a current browser; on the oldest device we serve it names what
+      // that engine lacks, which is the difference between a working lobby and
+      // a screenshot of one.
+      context["tl.eng.missing"] = engineGaps(globalThis);
     } catch (e) {
       /* context is a nicety; its absence must not cost the boot record */
     }
@@ -844,6 +897,7 @@ globalThis.tlDiag = (function () {
   return {
     create: create,
     bind: bind,
+    engineGaps: engineGaps,
     instrumentFetch: instrumentFetch,
     instrumentWebSocket: instrumentWebSocket,
     DEFAULTS: DEFAULTS,
