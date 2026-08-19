@@ -16,6 +16,11 @@ import {
  * disagree, and the ceiling is right even on a 1m-context session where the
  * familiar 200k would have been wrong fivefold.
  *
+ * The reading is whatever the last `/context` in the session said. Nothing here
+ * asks for a fresh one: the chip appears when a reading exists and stays away
+ * when none does, rather than the view typing a command into somebody's pane to
+ * have something to show.
+ *
  * Tapping opens the breakdown, which is the part that answers "what is eating
  * it": on the session this was built against, MCP tool definitions were 95.3k
  * against 25.8k of actual conversation.
@@ -75,11 +80,13 @@ export const ContextMeter: Component<{ state: ContextState }> = (props) => {
               </For>
             </ul>
           </Show>
-          {/* A reading is a point in time. The server refreshes on open and
-              after each settled turn, so anything but "just now" means a
-              refresh was declined — the session was busy, blocked, or holding
-              an unsent draft. Saying so beats showing a stale number as live. */}
-          <div class="tl-ctx-age">read {readingAge(props.state.turnsAgo)}</div>
+          {/* A reading is a point in time and nothing renews it, so the age
+              is part of the reading rather than a footnote to it — and the way
+              to a newer one is named, since it is the reader's to run. */}
+          <div class="tl-ctx-age">
+            read {readingAge(props.state.turnsAgo)} — <code>/context</code> for a
+            newer one
+          </div>
         </div>
       </Show>
     </div>

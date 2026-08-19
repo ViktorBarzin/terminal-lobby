@@ -177,9 +177,10 @@ export const TextView: Component<{
     }
   };
 
-  // How full the context is, from the CLI's own `/context` reading. The server
-  // refreshes it on open and after each settled turn; nothing here computes a
-  // context size, because the ceiling is not on the wire and is not a constant.
+  // How full the context is, from the CLI's own `/context` reading — whenever
+  // one is in the transcript, because somebody ran the command. Nothing injects
+  // it and nothing here computes a context size: the ceiling is not on the wire
+  // and is not a constant.
   const context = createMemo(() => contextState(props.events));
 
   // The catalogue is files on disk; one read when the view opens is enough.

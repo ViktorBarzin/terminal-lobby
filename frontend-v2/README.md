@@ -186,7 +186,8 @@ src/
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
     Composer.tsx         Prompt input + Send↔Stop morph + mobile submit split
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
-                         staleness in settled turns, category breakdown)
+                         staleness in settled turns, category breakdown).
+                         Nothing runs the command — no reading, no chip
     answer.logic.ts      PURE plan for answering an AskUserQuestion — the keys
                          each question needs, and what the pane must show
                          afterwards — plus the runner that checks between steps

@@ -45,8 +45,6 @@ func main() {
 
 	injector := sessionio.NewInjector(self.Username)
 	rg := newRegistry(ctx, *poll, *homeBase, injector, self.Username)
-	// Keeps the context meter current, and touches nothing nobody is watching.
-	refresh := newRefresher(injector)
 
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()
@@ -60,12 +58,7 @@ func main() {
 		events.Emit("events.stream_opened", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.client": "api",
 		})
-		// A text viewer is attached for exactly the life of its stream, which is
-		// the whole window in which the context refresh may touch this pane.
-		refresh.attach(osUser, session)
-		defer refresh.detach(osUser, session)
-
-		writeSSE(w, r, fs, *hb, func(id int64) { refresh.turnSettled(osUser, session, id) })
+		writeSSE(w, r, fs, *hb)
 		events.Emit("events.stream_closed", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.client": "api",
 		})
