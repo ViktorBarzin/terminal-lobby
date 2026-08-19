@@ -18,6 +18,8 @@ terminal.viktorbarzin.me serves.
       ├─ /prompt/*  /cancel/*    → :7685 session-events, no strip, authed
       ├─ /permission/*           → :7681 ttyd catch-all, as in production (†)
       ├─ /files/*                → :7686 file-api, no strip, authed
+      ├─ /skills, /skills/*      → :7688 skills-api, no strip, authed; READS are
+      │                            free, every mutation is refused by default
       └─ everything else + /ws   → :7681 ttyd, the DEPLOYED lobby index.html
 
 (†) /permission has no working destination anywhere, and this proxy cannot
@@ -123,6 +125,7 @@ TMUX_API = "http://127.0.0.1:7684"
 CLIPBOARD = "http://127.0.0.1:7683"
 SESSION_EVENTS = "http://127.0.0.1:7685"
 FILE_API = "http://127.0.0.1:7686"
+SKILLS_API = "http://127.0.0.1:7688"
 
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -328,6 +331,21 @@ class Guard:
                         f"{self.scratch}")
         return None
 
+    def check_skills(self, method: str, path: str) -> Optional[str]:
+        """Reads are unrestricted; mutations are not.
+
+        Unlike a session, a skill has no qa-* namespace to sandbox into: an
+        install, a toggle, a remove or a restart lands in the real account the
+        harness is authenticating as. Browsing the panel is what a QA lane needs,
+        so reads pass and writes are refused with the curl that would do it for
+        real — deliberately, rather than by omission.
+        """
+        if method in ("GET", "HEAD", "OPTIONS"):
+            return None
+        return (f"refusing {method} {path} — a skill mutation lands in the real "
+                f"account (no qa-* namespace exists for skills). Run it against "
+                f"127.0.0.1:7688 directly if that is what you mean.")
+
     def check_ws(self, query) -> Optional[str]:
         args = query.getall("arg", [])
         if not args:
@@ -505,6 +523,15 @@ def build_app(args: argparse.Namespace) -> web.Application:
         return await forward(request, f"{FILE_API}{request.rel_url.raw_path}",
                              auth=True, label=request.rel_url.path, body=body)
 
+    async def skills_proxy(request: web.Request) -> web.StreamResponse:
+        reason = guard.check_skills(request.method, request.rel_url.path)
+        if reason:
+            return guard.deny(reason, request.rel_url.path)
+        # raw_path, not raw_path_qs: forward() already passes the query through
+        # as params, so carrying it in the URL too would duplicate every one.
+        return await forward(request, f"{SKILLS_API}{request.rel_url.raw_path}",
+                             auth=True, label=request.rel_url.path)
+
     async def clipboard_proxy(request: web.Request) -> web.StreamResponse:
         tail = request.match_info["tail"]
         return await forward(request, f"{CLIPBOARD}/{tail}", auth=True,
@@ -667,6 +694,9 @@ def build_app(args: argparse.Namespace) -> web.Application:
     for prefix in ("prompt", "cancel", "permission"):
         app.router.add_route("*", f"/{prefix}/{{tail:.*}}", control_proxy)
     app.router.add_route("*", "/files/{tail:.*}", files_proxy)
+    # Both forms: the inventory is GET /skills exactly, the rest are /skills/<verb>.
+    app.router.add_route("*", "/skills", skills_proxy)
+    app.router.add_route("*", "/skills/{tail:.*}", skills_proxy)
     app.router.add_route("*", "/{tail:.*}", ttyd_proxy)
     return app
 
