@@ -303,6 +303,67 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"name": body.Name, "backup": res.Backup})
 }
 
+// --- POST /skills/delete -----------------------------------------------------
+
+// handleDelete removes a skill for good: the directory, every backup of it, its
+// enabled state and its provenance.
+//
+// Distinct from /skills/remove, which keeps a backup. This is the one that means
+// it, so the panel asks a harder question before calling it.
+func handleDelete(w http.ResponseWriter, r *http.Request) {
+	me := resolveOSUser(w, r)
+	if me == "" {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if err := skillscan.ValidName(body.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := run(me, opDelete, request{Name: body.Name})
+	if res.Status != 200 {
+		http.Error(w, res.Error, res.Status)
+		return
+	}
+	events.Emit("skill.deleted", me, telemetry.Attrs{"tl.key": body.Name})
+	log.Printf("delete: %s deleted %s permanently (%+v)", me, body.Name, res.Deleted)
+	writeJSON(w, map[string]any{"name": body.Name, "deleted": res.Deleted})
+}
+
+// --- POST /skills/plugin-uninstall -------------------------------------------
+
+// handlePluginUninstall uninstalls a marketplace plugin through the caller's own
+// claude CLI, then reclaims what it leaves behind.
+func handlePluginUninstall(w http.ResponseWriter, r *http.Request) {
+	me := resolveOSUser(w, r)
+	if me == "" {
+		return
+	}
+	var body struct {
+		Plugin string `json:"plugin"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if !pluginIDRe.MatchString(body.Plugin) {
+		http.Error(w, "invalid plugin id", http.StatusBadRequest)
+		return
+	}
+	res := run(me, opUninstall, request{Plugin: body.Plugin})
+	if res.Status != 200 {
+		writeStatusJSON(w, res.Status, map[string]any{"plugin": body.Plugin, "error": res.Error, "output": res.Output})
+		return
+	}
+	events.Emit("plugin.uninstalled", me, telemetry.Attrs{"tl.key": body.Plugin})
+	log.Printf("uninstall: %s removed plugin %s (%d bytes reclaimed)", me, body.Plugin, res.Freed)
+	writeJSON(w, map[string]any{"plugin": body.Plugin, "freed": res.Freed, "output": res.Output})
+}
+
 // --- POST /skills/plugin-update ----------------------------------------------
 
 // handlePluginUpdate updates one marketplace plugin by running the caller's own

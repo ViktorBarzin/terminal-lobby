@@ -79,6 +79,24 @@ The full-screen variant was one of the options considered at design time and was
 passed over then in favour of the smaller change. Seeing the real lists is what
 settled it.
 
+## Removal has two forms (2026-08-19)
+
+**Remove** keeps a backup and is what the panel offers first; **Delete** is
+permanent — the skill, every backup of it, its enabled state and its provenance —
+and asks a question that names what cannot come back, which differs by row: a
+skill installed from a peer is one click from returning, one this account authored
+is not, and a symlinked entry loses only its link.
+
+Plugins get **Uninstall**, which is the CLI's own (`claude plugin uninstall`).
+Measured on 2.1.235: it drops the `installed_plugins.json` entry and the
+`enabledPlugins` key — no stale marker, unlike the skill path, which is why that
+one needed fixing ourselves — but it does not delete the files. It writes
+`.orphaned_at` into the cached version directory and leaves it, and `claude plugin
+prune` does not take those either, so the manager reclaims them and reports the
+bytes. It also rewrites the whole `settings.json` through its own serializer,
+reordering top-level keys and reformatting nested values; nothing is lost, and it
+owns that file, but it is why a plain enable/disable is written by us instead.
+
 ## Consequences
 
 - A skill can now diverge between users on purpose. The manager makes that
