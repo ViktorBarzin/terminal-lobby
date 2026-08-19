@@ -62,6 +62,7 @@ without CORS (`vite.config.ts`):
 | `/api/sessions` | **tmux-api** (`TL_TMUX_API`, default `:7684`) | strips the whole prefix |
 | `/clipboard` | **clipboard-upload** (`TL_CLIPBOARD_UPLOAD`, default `:7683`) | strips the prefix |
 | `/files` | **file-api** (`TL_FILE_API`, default `:7686`) | verbatim — its own routes carry `/files` |
+| `/skills` | **skills-api** (`TL_SKILLS_API`, default `:7688`) | verbatim — its own routes carry `/skills` |
 | `/ws`, `/token` | **ttyd** (`TL_TTYD`, default `:7681`) | the terminal attach + its token fetch |
 | `/fonts` | **clipboard-upload** | the webfonts `term.html` sources |
 
@@ -132,6 +133,11 @@ src/
                          files worth drawing (store paths always; images and
                          document formats anywhere — never source paths), and
                          which of the two backends serves each one
+    skills-api.ts        skills-api client (inventory/view/diff/install/toggle/
+                         remove/plugin-update/restart). Maps each status the
+                         panel says something different about: 409 is a name
+                         collision with a diff to show, 404 a list drawn before
+                         someone else removed that skill
     act-as.ts            Admin act-as switch: the URL to navigate to in order
                          to act as a user (or return) — switching is a load
     terminal-url.ts      ttyd `?arg=` POSITIONAL contract (incl. the foreign-
@@ -166,6 +172,13 @@ src/
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
     preview.logic.ts     PURE file-type → renderer + transcript → file-path
     preview.ts           File-preview store (open file, raw|rendered, browse)
+    skills.logic.ts      PURE skill-row rules: what a row says about itself
+                         (own / from X / update / edited), what a peer's skill
+                         offers (install / replace / nothing), and which sessions
+                         may be restarted
+    skills.ts            Skill-manager store (lazy: the group asks on first
+                         render, and every action reloads rather than patching
+                         the list, so the verdicts stay the server's to compute)
     editor.logic.ts      PURE edit mode: ext → CodeMirror language, dirty/save
   components/
     App.tsx              Lobby shell (sidebar + selected SessionView + overlays)
@@ -226,8 +239,13 @@ src/
     RestorePicker.tsx    Restore overlay: pick a session snapshot, see what it
                          would recreate, choose which rows to bring back
     SettingsPanel.tsx    Settings overlay: theme, font size, session-list
-                         last-active time, new-session command, keyboard,
+                         last-active time, new-session command, skills, keyboard,
                          notifications, and the admin act-as picker
+    SkillsSection.tsx    The Skills group of that overlay (docs/adr/0011): this
+                         account's skills and plugins, what the other people on
+                         this box have with a same/differs verdict, and the
+                         install / replace-with-backup / disable / remove / restart
+                         actions
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     BellIcon.tsx         Header notification-bell glyph (on/off)
