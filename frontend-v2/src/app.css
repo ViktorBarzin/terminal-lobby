@@ -3059,6 +3059,12 @@ body.tl-kb-up {
   border-top: 1px solid var(--border);
   font-size: 11px;
 }
+/* The command that produces a newer reading, named at the size of the line it
+   sits in rather than at the browser's default for `code`. */
+.tl-ctx-age code {
+  font-family: var(--font-mono, monospace);
+  font-size: inherit;
+}
 
 @media (pointer: coarse) {
   /* Everything answerable is a finger target. */
