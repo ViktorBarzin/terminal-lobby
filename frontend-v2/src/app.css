@@ -2237,7 +2237,7 @@ body.tl-kb-up {
    line tall until you open it. */
 
 .tl-row-thinking {
-  margin: 2px 0;
+  margin-block: 2px;
 }
 .tl-thinking-head {
   display: flex;
@@ -2413,7 +2413,7 @@ body.tl-kb-up {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 8px 10px;
-  margin: 6px 0;
+  margin-block: 6px;
   background: var(--bg-card);
 }
 .tl-todo-head {
@@ -2463,7 +2463,7 @@ body.tl-kb-up {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px;
-  margin: 8px 0;
+  margin-block: 8px;
   background: var(--bg-card);
 }
 .tl-row-question[data-pending="true"] {
@@ -2544,7 +2544,7 @@ body.tl-kb-up {
   border: 1px solid var(--accent);
   border-radius: var(--radius);
   padding: 10px;
-  margin: 8px 0;
+  margin-block: 8px;
   background: var(--bg-card);
 }
 .tl-plan-head {
@@ -2563,7 +2563,7 @@ body.tl-kb-up {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 10px 0;
+  margin-block: 10px;
   color: var(--fg-muted);
   font-size: 11.5px;
 }
