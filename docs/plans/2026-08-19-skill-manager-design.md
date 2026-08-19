@@ -1,6 +1,6 @@
 # Skill manager in the lobby's Settings panel
 
-**Status:** design approved, not yet implemented
+**Status:** built, deployed and verified on 2026-08-19
 **Date:** 2026-08-19
 **Owner:** wizard
 **Repo:** `terminal-lobby` (a small companion change lands in `infra`)
@@ -430,6 +430,44 @@ only for idle sessions.
 Manual check: install one of the 8 skills only emo has, restart an idle session,
 confirm the skill appears in that session's `/` menu.
 
+## As built
+
+Landed and live the same day. What is running: `skillscan/` and `skills-api` on
+`:7688` (unit + sudoers grant + `deploy-services.sh`), the `/skills/` ingress
+route (applied by CI, pipeline #1173), the Skills group in the deployed lobby SPA,
+and the provisioner's vendoring step retired. 75 Go tests and 36 frontend tests,
+plus a run against the two real accounts: 38 own skills, 7 plugins, and of emo's
+21 exactly the 4 identical / 9 divergent / 8 absent the design predicted.
+
+Four things came out differently from the design above, all of them from building it:
+
+- **An install is a packed hand-off, not a directory copy.** The design said copy;
+  the constraint that forced the shape is that peer homes are `0700` in *both*
+  directions, so no single process can read the owner's skill and write the
+  recipient's. `skillscan.Pack` runs as the owner, `Unpack` as the recipient, and
+  the skill travels between them as a validated value. Unpack re-checks every path
+  for traversal and excluded directories, requires the assembled tree to hash to
+  what the owner reported, and leaves nothing behind when it refuses.
+- **The hash ignores every mode bit except the executable one.** Users here have
+  different umasks — the same file is `0664` in wizard's home and `0644` in emo's —
+  so hashing the full mode would have reported all 13 shared names as divergent.
+  Copy normalises modes for the same reason, which is what makes a copied skill
+  hash identically to its source.
+- **Remove clears the enabled state as well.** Found by exercising the live
+  service: a skill removed while switched off left `"<name>@skills-dir": false`
+  behind, so installing it again later would have come back silently disabled from
+  a marker nobody would think to look for.
+- **The session list shows every live session**, with the mid-turn ones marked,
+  rather than only the ones running an older skill set. Nothing records when a
+  session's Claude last read its skills, so "affected" is honestly all of them.
+
+Two of the repo's own guards earned their keep. The docs-truth test refused the
+frontend until the new dev-proxy prefix and the four new files were in the README
+layout map. The Safari-baseline gate refused the deploy over a class static
+block — which turned out to be a CSS class named `tl-skill-static` matching
+`\bstatic\s*\{` in the single-file bundle; the pattern now has a lookbehind and a
+test in both directions, and the class was renamed.
+
 ## Open questions and known limits
 
 - **`--continue` picks the most recent conversation for the pane's directory.**
@@ -437,14 +475,17 @@ confirm the skill appears in that session's `/` menu.
   wizard's shell wrapper already records a pane→session-id map at
   `~/.local/state/claude-pane-sessions.json`, so `--resume <id>` would be exact
   where that map exists; worth doing if it proves to be a real problem.
-- **`enabledPlugins` is Claude Code's format, not ours.** Verified on 2.1.235.
-  If a future version changes it, toggles need a matching update — the tests are
-  there to catch it loudly.
-- **`/commands/` and `/search/` are not routed** by the ingress today (only
+- **`enabledPlugins` is Claude Code's format, not ours.** Verified on 2.1.235,
+  and exercised against the real `settings.json`: a toggle produced a two-line
+  diff and a remove left the file byte-identical to before, with mode `0600`
+  preserved. If a future version changes the format, toggles need a matching
+  update — the tests are there to catch it loudly.
+- **`/commands/` and `/search/` are still not routed** by the ingress (only
   `/events/ /prompt/ /cancel/ /earlier/ /result/ /pane/ /keys/` are), so the
-  composer's per-user slash-command catalogue currently falls back to built-ins.
-  Unrelated to this feature and a one-line fix in the same terraform file —
-  listed here so the choice to include it is deliberate rather than accidental.
+  composer's per-user slash-command catalogue still falls back to built-ins.
+  Deliberately left alone: it is a pre-existing gap unrelated to this feature, and
+  the terraform change here was kept to the three resources the plan named. Still
+  a one-line fix in that file when someone wants it.
 - **`devvm/sudoers.d-ttyd-users` still carries a line for `ancamilea`**, who left
   the roster on 2026-08-17. Noted for a separate tidy, not changed here.
 - **Trust remains manual.** Nothing scans an installed skill for what its scripts
