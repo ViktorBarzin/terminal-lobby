@@ -28,6 +28,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import { Toaster } from "./Toaster";
 import { createPrefsStore } from "../store/prefs";
 import { createSkillsStore } from "../store/skills";
+import { SkillsPanel } from "./SkillsPanel";
 import { toasts } from "../store/toast";
 import { createKeybindingEngine } from "../keybindings/engine";
 import { keyContext } from "../keybindings/bindings.logic";
@@ -223,6 +224,7 @@ export const App: Component = () => {
   };
 
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [skillsOpen, setSkillsOpen] = createSignal(false);
 
   // --- act as another user (admin only) -------------------------------------
   //
@@ -369,6 +371,7 @@ export const App: Component = () => {
       const acts: PaletteAction[] = [
         { label: "New session", hint: "name box", keepFocus: true, run: () => run("session.new") },
         { label: "Keyboard shortcuts", hint: "/", run: () => run("shortcuts.help") },
+        { label: "Skills", hint: "install, disable, share", run: () => setSkillsOpen(true) },
       ];
       if (cur) {
         acts.push(
@@ -425,6 +428,7 @@ export const App: Component = () => {
       paletteOpen: palette.isOpen(),
       helpOpen: help.isOpen(),
       settingsOpen: settingsOpen(),
+      skillsOpen: skillsOpen(),
       galleryOpen: gallery.view() !== "closed",
       previewOpen: previewState().open,
       previewDirty: previewState().dirty,
@@ -508,6 +512,22 @@ export const App: Component = () => {
     </button>
   );
 
+  // Beside Settings, and labelled for the same reason: a bare glyph in the far
+  // corner of a wide bar is findable only if you already know it is there. It is
+  // its own control rather than a Settings group because the lists are long —
+  // 38 own skills, a peer's 21, the plugins and every live session.
+  const skillsButton = () => (
+    <button
+      class="tl-icon-btn tl-skills-btn"
+      aria-label="Skills"
+      title="Skills"
+      aria-expanded={skillsOpen()}
+      onClick={() => setSkillsOpen((v) => !v)}
+    >
+      ⌘<span class="tl-btn-label">Skills</span>
+    </button>
+  );
+
   return (
     <div
       class="tl-shell"
@@ -559,6 +579,7 @@ export const App: Component = () => {
               collapse arrow, the brand and Settings. */}
           <span class="tl-shellbar-spacer" />
           {actAsChip()}
+          {skillsButton()}
           {settingsButton()}
         </div>
 
@@ -612,6 +633,13 @@ export const App: Component = () => {
                     }
                     menuExtra={
                       <Show when={flip()}>
+                        <button
+                          class="tl-menu-item"
+                          role="menuitem"
+                          onClick={() => setSkillsOpen((v) => !v)}
+                        >
+                          Skills
+                        </button>
                         <button
                           class="tl-menu-item"
                           role="menuitem"
@@ -671,8 +699,14 @@ export const App: Component = () => {
           }}
           notifications={notifications}
           actAs={actAsControl()}
+        />
+      </Show>
+
+      <Show when={skillsOpen()}>
+        <SkillsPanel
           skills={skills}
           sessions={skillSessions}
+          onClose={() => setSkillsOpen(false)}
         />
       </Show>
 

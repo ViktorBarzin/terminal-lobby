@@ -203,6 +203,8 @@ export interface KeyContextInput {
   helpOpen: boolean;
   /** the ⚙ Settings dialog (aria-modal, traps Tab). */
   settingsOpen: boolean;
+  /** the Skills panel (aria-modal, traps Tab, like Settings). */
+  skillsOpen: boolean;
   /** the session image gallery. */
   galleryOpen: boolean;
   /** the per-session file-preview overlay. */
@@ -246,7 +248,8 @@ export function keyContext(s: KeyContextInput): KeyContext {
   return {
     terminalFocus: false,
     lobbyOpen: true,
-    overlayOpen: s.paletteOpen || s.helpOpen || s.settingsOpen || s.galleryOpen,
+    overlayOpen:
+      s.paletteOpen || s.helpOpen || s.settingsOpen || s.skillsOpen || s.galleryOpen,
     paletteOpen: s.paletteOpen,
     helpOpen: s.helpOpen,
     galleryOpen: s.galleryOpen,
