@@ -101,6 +101,9 @@ export interface QuestionRow {
   /** What was chosen, once the transcript records an answer. */
   answers: string[];
   pending: boolean;
+  /** Asked, never resolved, and no longer on screen — the session moved past
+   *  it. See `markSuperseded`. */
+  superseded?: boolean;
   turnKey: string;
   at?: number;
 }
@@ -643,7 +646,33 @@ export function deriveRows(events: Event[]): TimelineRow[] {
     }
   });
 
+  markSuperseded(out);
   return out;
+}
+
+/**
+ * Clear the pending flag on every question the session has moved past.
+ *
+ * A question is pending because the transcript holds no result for it, and that
+ * stays true forever when the dialog is taken down without one — measured in a
+ * real session on 2026-08-16, where a background agent's task-notification
+ * arrived as a queued message, took the dialog down, and Claude re-asked. The
+ * row would otherwise keep the live-dialog highlight for the rest of the
+ * session, and the answer card would dock over it.
+ *
+ * `superseded` is the honest state for those: asked, never answered, no longer
+ * being asked.
+ */
+function markSuperseded(out: TimelineRow[]): void {
+  const newest = newestSubstantive(out);
+  for (const r of out) {
+    for (const row of r.kind === "turn-fold" ? r.hidden : [r]) {
+      if (row.kind === "question" && row.pending && row !== newest) {
+        row.pending = false;
+        row.superseded = true;
+      }
+    }
+  }
 }
 
 /**
@@ -747,21 +776,37 @@ export function sessionWorking(rows: TimelineRow[]): boolean {
 }
 
 /**
- * The question the session is blocked on, if any — an AskUserQuestion whose
- * result has not arrived. This is the transcript-derived half of ADR-0010: the
- * options are recorded losslessly, so only the ANSWER has to be inferred.
+ * The newest row that says something happened — everything except the open
+ * turn's working marker, which is appended after the turn's own rows and is
+ * therefore what a LIVE question is followed by.
  */
-export function pendingQuestion(rows: TimelineRow[]): QuestionRow | null {
+function newestSubstantive(rows: TimelineRow[]): TimelineRow | null {
   for (let i = rows.length - 1; i >= 0; i--) {
     const r = rows[i]!;
-    if (r.kind === "question" && r.pending) return r;
-    if (r.kind === "turn-fold") {
-      for (const h of r.hidden) {
-        if (h.kind === "question" && h.pending) return h;
-      }
-    }
+    if (r.kind === "working") continue;
+    return r;
   }
   return null;
+}
+
+/**
+ * The question the session is blocked on, if any — an AskUserQuestion whose
+ * result has not arrived AND which nothing has happened since. This is the
+ * transcript-derived half of ADR-0010: the options are recorded losslessly, so
+ * only the ANSWER has to be inferred.
+ *
+ * The second half of that rule is not a nicety. An unresolved question is not
+ * proof of a dialog on screen: Claude Code takes the dialog down when something
+ * else claims the turn — a task-notification delivered as a queued message is
+ * the case measured — and re-asks, leaving the first call unresolved for good.
+ * Searching for the newest PENDING question found that abandoned one and docked
+ * the answer card over it indefinitely, including right after the live question
+ * was answered. So a question is being asked only while it is the last thing
+ * that happened.
+ */
+export function pendingQuestion(rows: TimelineRow[]): QuestionRow | null {
+  const newest = newestSubstantive(rows);
+  return newest && newest.kind === "question" && newest.pending ? newest : null;
 }
 
 /** The mode in force, from the most recent mode marker. */
