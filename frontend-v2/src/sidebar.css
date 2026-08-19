@@ -1149,6 +1149,29 @@
   .tl-term-tools {
     display: none;
   }
+  /* The session name is the one item on this bar that may give up width, and on
+     a coarse pointer it is not the flex child: the name is a PICKER (tap it to
+     switch session), so the child is the `.tl-session-picker` wrapper and the
+     shrink rule on `.tl-session` applies to a button INSIDE a `flex: 0 0 auto`
+     item, where it can do nothing.
+
+     Measured at 390px on a session named `debug-bob-blank-screen`: the bar's
+     content ran to 432px, and the Terminal segment started at x=389.6 — off the
+     screen and clipped by the `overflow: hidden` above, so the text view had no
+     way back to the terminal. The wrapper carries the shrink; `display: flex`
+     is what lets the button inside it take the ellipsis rather than sizing the
+     wrapper to the full name. */
+  .tl-session-bar > .tl-session-picker {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .tl-session-picker > .tl-session {
+    min-width: 0;
+    /* Beat the 40vw cap downward only: the name gets the room that is left after
+       the controls, never more than 40vw of it. */
+    max-width: 100%;
+  }
   /* The act-as chip: 40vw is 156px of a 390px bar. A quarter still shows enough
      of a username to recognise, and the ✕ stays reachable.
      The `> ` selector is deliberate: the touch block sets
