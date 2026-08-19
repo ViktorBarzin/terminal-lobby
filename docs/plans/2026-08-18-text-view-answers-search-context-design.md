@@ -99,18 +99,18 @@ boundary of the keys route, and this design does not widen it.
 | 8 | **Search opens through the existing command palette.** | The header measurably did not fit at 390px and already sheds controls; this adds nothing to it. |
 | 9 | **The context meter reads `/context`'s own output**, not our token arithmetic. | The CLI computes the ceiling, the percentage and the category breakdown, and writes them to the transcript as markdown. |
 | 10 | **The `## Context Usage` record is recognised in the normalizer**, the way `skillLoad` recognises a skill load. | Today it renders as a 14,930-character block attributed to Claude — the same pathology `skill.go` was written to fix. |
-| 11 | **The meter shows the newest reading the transcript holds, and nothing runs `/context` to produce one.** *(Revised 2026-08-19; the note below says what this row used to say.)* | A reading exists because somebody asked for one. A session where nobody has is a session with no chip, which is a smaller cost than the alternative in row 12. |
-| 12 | **The text view writes to a pane only behind a tap** — a prompt, an answer, a key. Nothing it does is on a schedule. | Keeping a meter current automatically means typing a command into somebody's terminal while they are not looking at it. `575d4f5` had to remove a mechanism for its reach rather than its logic, and a scheduled writer is that shape of reach however well it is gated. |
+| 11 | **The meter shows the newest reading the transcript holds, and nothing runs `/context` to produce one.** *(Revised 2026-08-19; the note below says what this row used to say.)* | A reading exists because somebody asked for one. A session where nobody has is a session with no chip, which is what row 12 costs. |
+| 12 | **The text view writes to a pane only behind a tap** — a prompt, an answer, a key. Nothing it does is on a schedule. | Keeping a meter current automatically means typing a command into somebody's terminal while they are not looking at it. `575d4f5` had to remove a mechanism for its reach rather than its logic, and a scheduled writer is that shape of reach whatever gates it carries. |
 | 13 | **One landing.** | Chosen over three sequential landings. |
 
 > [!IMPORTANT]
 > **Rows 11 and 12 were revised on 2026-08-19.** As first built and shipped they
 > read: *the reading refreshes on open and after each turn settles*, through a
 > server-owned loop gated on an attached text viewer, `@claude_state == done`,
-> and an empty composer. It was built, tested and verified live. It was removed
-> the following day, on the rule it sits under rather than on a fault of its own
-> — the text view does not put anything into a terminal by itself
-> (Viktor, 2026-08-19). §13 records what came out and what stayed.
+> and an empty composer. It was built, tested and verified live, and it was
+> removed the following day under the rule it sits beneath: the text view does
+> not put anything into a terminal by itself (Viktor, 2026-08-19). §13 records
+> what came out and what stayed.
 
 ---
 
@@ -334,8 +334,7 @@ Six things came out differently from the plan, or were learned only by building
 it. Each is in the code with its reasoning; they are collected here so the doc
 and the build agree. The first two describe the refresh loop, which was removed
 on 2026-08-19 (§13) — they are kept because what they record was measured, and
-because the composer finding is the reason a scheduled writer is a bigger thing
-than it looks.
+because the composer finding shows what an unattended writer can reach.
 
 **The refresh needed a guard the design did not know it needed.** Decision 11
 runs `/context` in the session's pane, and `Injector.Prompt` — the only route
@@ -412,10 +411,10 @@ The refresh loop was removed the day after it shipped, on a standing rule for
 the text view: it does not put anything into a terminal by itself. Every write
 it makes now follows a tap — a prompt, an answer, a key.
 
-The loop was not misbehaving. It was gated four ways, verified live, and the
-guard §11 describes did its job on the first pane it met. The rule is about what
-a mechanism is allowed to do unattended, not about how carefully it does it, and
-a scheduled writer on a shared box is the reach `575d4f5` had to remove.
+The loop behaved as designed: gated four ways, verified live, and the guard §11
+describes held on the first pane it met. The rule concerns what a mechanism may
+do unattended rather than how carefully it does it, and a scheduled writer on a
+shared box is the reach `575d4f5` had to remove.
 
 **Out:**
 
