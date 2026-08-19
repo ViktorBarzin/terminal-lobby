@@ -140,12 +140,21 @@ func freeBackupPath(dir, name string, at time.Time) (string, error) {
 	return "", fmt.Errorf("too many backups of %s at %s", name, stamp(at))
 }
 
-// Remove backs a skill up, drops it, and forgets its provenance. The row
-// disappears from the panel; the bytes do not disappear from the disk.
+// Remove backs a skill up, drops it, forgets its provenance, and clears its
+// enabled state. The row disappears from the panel; the bytes do not disappear
+// from the disk.
+//
+// Clearing the enabled state matters: a skill removed while switched off would
+// otherwise leave "<name>@skills-dir": false behind, and installing it again
+// later would come back silently disabled from a marker nobody would think to
+// look for.
 func Remove(home, name string, at time.Time) (string, error) {
 	backup, err := Backup(home, name, at)
 	if err != nil {
 		return "", err
+	}
+	if err := ClearEnabled(home, name+"@skills-dir"); err != nil {
+		return backup, err
 	}
 	man, err := LoadManifest(home)
 	if err != nil {

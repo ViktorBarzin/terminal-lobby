@@ -392,3 +392,58 @@ func TestPluginsLeaveAnUnknowableLatestEmpty(t *testing.T) {
 		t.Fatalf("want no latest and not stale, got %+v", got)
 	}
 }
+
+func TestClearEnabledDropsTheKeyEntirely(t *testing.T) {
+	// Removing a skill has to clear its enabled state as well, or re-installing it
+	// later would come back silently disabled from a marker nobody remembers.
+	home := t.TempDir()
+	write(t, filepath.Join(home, ".claude", "settings.json"), `{
+  "model": "opus",
+  "enabledPlugins": {
+    "keep@skills-dir": true,
+    "gone@skills-dir": false
+  }
+}`)
+	if err := ClearEnabled(home, "gone@skills-dir"); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "gone@skills-dir") {
+		t.Errorf("the key should be gone, not set to a value:\n%s", body)
+	}
+	var doc struct {
+		Model          string          `json:"model"`
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, body)
+	}
+	if doc.Model != "opus" || !doc.EnabledPlugins["keep@skills-dir"] {
+		t.Errorf("the rest of the file must survive: %+v", doc)
+	}
+	// Clearing something absent is not an error, and leaves the file valid.
+	if err := ClearEnabled(home, "never-there@skills-dir"); err != nil {
+		t.Fatalf("clearing an absent key: %v", err)
+	}
+	if err := ClearEnabled(t.TempDir(), "x@skills-dir"); err != nil {
+		t.Fatalf("clearing in a home with no settings file: %v", err)
+	}
+}
+
+func TestRemoveAlsoClearsTheEnabledState(t *testing.T) {
+	home := t.TempDir()
+	skill(t, Root(home), "caveman", map[string]string{"SKILL.md": "c\n"})
+	if err := SetEnabled(home, "caveman@skills-dir", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(home, "caveman", time.Date(2026, 8, 19, 9, 12, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if strings.Contains(string(body), "caveman") {
+		t.Errorf("Remove left the disabled marker behind:\n%s", body)
+	}
+}

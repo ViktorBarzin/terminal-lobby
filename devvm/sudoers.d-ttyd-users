@@ -68,6 +68,12 @@
 #                                      file-api's, trusts no path from the
 #                                      caller.
 #
+# NOTE on what these lines are worth today: the service user (wizard) is an
+# administrator with (ALL) NOPASSWD: ALL, so every grant below is already implied
+# for them. They are kept exact and per-binary anyway — they document which
+# binaries are meant to run as whom, and they are what would carry the behaviour
+# if the services ever ran as a non-admin account.
+#
 # Add one line per OS user listed on the right-hand side of
 # /etc/ttyd-user-map — which is itself GENERATED, hourly, from
 # infra/scripts/workstation/roster.yaml (the one place a user is declared; this
