@@ -157,6 +157,13 @@ func SetEnabled(home, id string, on bool) error {
 		top = append(top, kv{key: "enabledPlugins", raw: rendered})
 	}
 
+	return writeTopLevel(path, top, mode)
+}
+
+// writeTopLevel re-emits a settings document from its keys in original order,
+// each value's own bytes untouched, and refuses to write anything that is not
+// valid JSON.
+func writeTopLevel(path string, top []kv, mode os.FileMode) error {
 	var buf bytes.Buffer
 	buf.WriteString("{\n")
 	for i, e := range top {
@@ -175,6 +182,59 @@ func SetEnabled(home, id string, on bool) error {
 		return fmt.Errorf("%s: refusing to write invalid JSON", path)
 	}
 	return writeFileAtomic(path, buf.Bytes(), mode)
+}
+
+// ClearEnabled removes an id from enabledPlugins entirely, rather than setting it
+// to a value. Remove uses it: a leftover "false" would silently disable the skill
+// if it were ever installed again, from a marker nobody would think to look for.
+// Clearing something that is not there, or in a home with no settings file, is a
+// no-op rather than an error.
+func ClearEnabled(home, id string) error {
+	path := settingsPath(home)
+	body, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	top, err := objectInOrder(body)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	var plugins []kv
+	found := false
+	for _, e := range top {
+		if e.key != "enabledPlugins" {
+			continue
+		}
+		found = true
+		if plugins, err = objectInOrder(e.raw); err != nil {
+			return fmt.Errorf("%s: enabledPlugins: %w", path, err)
+		}
+	}
+	if !found {
+		return nil
+	}
+	kept := make([]kv, 0, len(plugins))
+	for _, e := range plugins {
+		if e.key != id {
+			kept = append(kept, e)
+		}
+	}
+	if len(kept) == len(plugins) {
+		return nil // nothing to do; do not rewrite the file for no reason
+	}
+	for i := range top {
+		if top[i].key == "enabledPlugins" {
+			top[i].raw = renderEnabledPlugins(kept)
+		}
+	}
+	return writeTopLevel(path, top, mode)
 }
 
 func renderEnabledPlugins(plugins []kv) json.RawMessage {
@@ -480,11 +540,23 @@ func Diff(mine, theirs string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if a == b {
-		return "", nil
-	}
-	return unified(strings.Split(a, "\n"), strings.Split(b, "\n"), 200), nil
+	return DiffText(a, b), nil
 }
+
+// DiffText is Diff over two SKILL.md bodies already in hand. skills-api reads
+// each side through a separate privileged child, so it holds the text rather
+// than two directories it could open itself.
+func DiffText(mine, theirs string) string {
+	mine = strings.ReplaceAll(mine, "\r\n", "\n")
+	theirs = strings.ReplaceAll(theirs, "\r\n", "\n")
+	if mine == theirs {
+		return ""
+	}
+	return unified(strings.Split(mine, "\n"), strings.Split(theirs, "\n"), maxDiffLines)
+}
+
+// maxDiffLines bounds a diff so one rewritten skill cannot flood a response.
+const maxDiffLines = 200
 
 func readSkillMd(dir string) (string, error) {
 	real, err := filepath.EvalSymlinks(dir)

@@ -223,9 +223,12 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" bash -se <<'REMOTE'
   code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://localhost:7688/skills || echo 000)
   [ "$code" = "401" ] && echo "skills-api authed surface gated OK"     || { echo "skills-api /skills unauthenticated -> $code, want 401"; exit 1; }
   # The privileged child is what makes a cross-user install possible, so the
-  # deploy proves the GRANT as well as the process: one op as each other terminal
-  # user must answer with a JSON envelope. A missing sudoers line shows up here
-  # rather than as an unreachable peer in somebody's panel.
+  # deploy exercises it: one op as each other terminal user must answer with a
+  # JSON envelope, which is what an unreachable peer in the panel would mean.
+  # Note what it does NOT prove today: the service user is an admin with
+  # (ALL) NOPASSWD: ALL, so this passes whether or not /etc/sudoers.d/ttyd-users
+  # carries the skills-api line. That line is what would carry it for a service
+  # user without blanket sudo, and it is kept in step deliberately.
   for u in $(cut -d= -f2 /etc/ttyd-user-map | cut -d: -f1 | sort -u); do
     [ "$u" = "$(id -un)" ] && continue
     id "$u" >/dev/null 2>&1 || continue
