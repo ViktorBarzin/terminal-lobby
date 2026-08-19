@@ -3254,6 +3254,22 @@ body.tl-kb-up {
   font-size: 11px;
   white-space: nowrap;
 }
+/* Row actions, for skills and plugins alike. They never shrink — a Delete button
+   squeezed to an ellipsis is worse than a wrapped row — so under ~560px the row
+   wraps and the buttons take a line of their own. */
+.tl-skill-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+@media (max-width: 560px) {
+  .tl-skill-row {
+    flex-wrap: wrap;
+  }
+  .tl-skill-actions {
+    margin-left: 22px; /* line up under the name, past the checkbox */
+  }
+}
 .tl-skill-muted {
   color: var(--text-muted);
 }

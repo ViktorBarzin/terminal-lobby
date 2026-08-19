@@ -186,31 +186,54 @@ def m1():
 # M2 — an expanded row
 # =============================================================================
 def m2():
-    s = Svg(W, 300, "An expanded skill row with its actions")
+    """Actions on the row; the expansion is for reading."""
+    s = Svg(560, 300, "A skill row: actions inline, detail on expand")
     s.panel()
     y = 34
-    s.group_label(y, "Skills", right="⟳ refresh")
-    y += 24
-    s.check(PAD, y, True)
-    s.text(PAD + 22, y + 4, "diagnose", size=13, font=MONO)
-    s.text(W - PAD, y + 4, "from emo · ⟳ update", size=11, fill=ACCENT, anchor="end")
+    s.group_label(y, "Mine (38)")
+    y += 26
 
-    # expanded body
-    y += 16
-    s.rect(PAD + 22, y, W - PAD * 2 - 22, 118, fill=BG_PAGE, stroke=BORDER, rx=R)
-    s.text(PAD + 34, y + 22, "Diagnosis loop for hard bugs and performance", size=11, fill=MUTED)
-    s.text(PAD + 34, y + 37, "regressions. Use when the user says \"diagnose\".", size=11, fill=MUTED)
-    s.text(PAD + 34, y + 60, "4 files · 2 executable · 6.1 KB", size=11, fill=MUTED, font=MONO)
-    s.text(PAD + 34, y + 76, "emo changed SKILL.md 3 days ago", size=11, fill=ACCENT, font=MONO)
-    bx = PAD + 34
-    for label, kind in (("View", "normal"), ("Update", "accent"),
-                        ("Disable", "normal"), ("Remove", "danger")):
-        bx += s.btn(bx, y + 100, label, kind=kind) + 7
+    def row(name, meta, buttons, *, on=True, metafill=MUTED, y=0):
+        s.check(PAD, y, on)
+        s.text(PAD + 22, y + 4, name, size=13, font=MONO,
+               fill=FG if on else MUTED, op=None if on else 0.75)
+        # buttons are laid out from the right edge, so the row never depends on
+        # the name's length
+        x = s.w - PAD
+        for label, kind in reversed(buttons):
+            w = len(label) * 6.7 + 20
+            x -= w
+            s.rect(x, y - 12, w, 24, fill=BG_PAGE,
+                   stroke=DANGER if kind == "danger" else BORDER, rx=R)
+            s.text(x + w / 2, y + 4, label, size=12,
+                   fill=DANGER if kind == "danger" else FG, anchor="middle")
+            x -= 6
+        s.text(x - 8, y + 4, meta, size=11, fill=metafill, anchor="end")
 
-    y += 134
-    s.text(PAD, y + 4, "Remove backs the directory up first, it never just deletes.",
+    row("grilling", "own", [("Remove", "normal"), ("Delete", "danger")], y=y)
+    y += 30
+    row("cluster-health", "from emo \u00b7 \u27f3 update",
+        [("Update", "normal"), ("Remove", "normal"), ("Delete", "danger")],
+        metafill=ACCENT, y=y)
+    y += 18
+
+    # the expansion under it: description and what installing took on
+    s.rect(PAD + 22, y, s.w - PAD * 2 - 22, 74, fill=BG_PAGE, stroke=BORDER, rx=R)
+    s.text(PAD + 34, y + 22, "Check Kubernetes cluster health and fix common issues.",
            size=11, fill=MUTED)
-    s.h = y + 24
+    s.text(PAD + 34, y + 44, "3 files \u00b7 1 executable \u00b7 4 KB", size=11,
+           fill=MUTED, font=MONO)
+    s.text(PAD + 34, y + 62, "emo has changed their copy since you installed it.",
+           size=11, fill=ACCENT)
+    y += 90
+
+    row("caveman", "from emo", [("Remove", "normal"), ("Delete", "danger")],
+        on=False, y=y)
+    y += 34
+    s.text(PAD, y, "Remove keeps a copy under .backup/. Delete takes the skill and",
+           size=11, fill=MUTED)
+    s.text(PAD, y + 15, "every backup of it, and says so before it does.", size=11, fill=MUTED)
+    s.h = y + 34
     return s
 
 
@@ -312,9 +335,11 @@ CAPTIONS = {
         "brings the marketplace ones into the same inventory, and <em>From emo</em> is what "
         "is there to take — an identical skill says so and offers nothing to do."),
     "m2-row-expanded.svg": (
-        "<strong>2 — a row opened.</strong> The description, the file count, and how many of "
-        "those files are executable, because installing a skill puts its scripts in your "
-        "sessions. Update appears only when the owner's copy has moved on."),
+        "<strong>2 — a row acts, an expansion explains.</strong> Remove, Delete and (when "
+        "the owner has moved on) Update sit on the row itself, the way a plugin's do. "
+        "Expanding one adds what you would want before acting: the description, the file "
+        "count, and how many of those files are executable — because installing a skill "
+        "puts its scripts in your sessions."),
     "m3-collision.svg": (
         "<strong>3 — a name you already use.</strong> 13 of emo's 22 names already exist in "
         "wizard's account and 9 of those differ, so this is ordinary traffic: the diff comes "

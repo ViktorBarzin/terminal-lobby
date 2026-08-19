@@ -261,7 +261,8 @@ src/
                          replace-with-backup / disable / remove / update / restart
                          actions, plus the two permanent ones — Delete (the
                          skill and every backup of it) and Uninstall (a plugin
-                         and its files). It started as a group INSIDE Settings and
+                         and its files). Every action is ON the row for both
+                         lists; expanding one is for reading, not for acting. It started as a group INSIDE Settings and
                          outgrew it: 38 own skills and a peer's 21 do not read as
                          one 420px column
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
