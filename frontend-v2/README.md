@@ -109,6 +109,9 @@ src/
                          builder applies — push is deliberately excluded
     lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/rename/
                          retitle/title/…)
+    ownwhile.ts          Hold a window.__tl* handle only while a view is the one
+                         on screen. With several sessions mounted, mount order
+                         stopped meaning anything; handover is order-independent
     baseline-polyfills.ts  AbortSignal.timeout (Safari 16) and URL.canParse
                          (Safari 17), filled in for the oldest engine we serve.
                          Installed from index.tsx before anything else runs,
@@ -151,6 +154,11 @@ src/
     viewmode.ts          Per-session/per-device {mode} persistence. The default
                          is TERMINAL on every device (2026-08-19); storage holds
                          only the sessions that chose text
+    keepalive.ts         PURE rules for which sessions stay MOUNTED behind the
+                         one on screen (every session visited, one-day TTL).
+                         Appends only and hands back stable entries: moving or
+                         replacing a slot reloads its iframe, which is the
+                         1,797 ms cover this exists to remove
     watchmode.ts         Per-session/per-device Watch mode (attach read-only)
     dock.logic.ts        PURE Ctrl+J dock decisions (shell naming, create→hide→
                          show, sidebar hiding, split clamp)
