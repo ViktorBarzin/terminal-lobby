@@ -18,6 +18,7 @@ import { SessionView } from "./SessionView";
 import { SettingsPanel } from "./SettingsPanel";
 import { Toaster } from "./Toaster";
 import { createPrefsStore } from "../store/prefs";
+import { createSkillsStore } from "../store/skills";
 import { toasts } from "../store/toast";
 import { createKeybindingEngine } from "../keybindings/engine";
 import { keyContext } from "../keybindings/bindings.logic";
@@ -107,6 +108,14 @@ export const App: Component = () => {
   onCleanup(() => store.dispose());
 
   const prefs = createPrefsStore();
+  // The skill manager's store (ADR-0011). Created here so it survives the panel
+  // being closed and reopened, but it fetches nothing until the group renders.
+  const skills = createSkillsStore();
+  // What the Skills group needs to say which sessions still run an older skill
+  // set: the live list, name and Claude state only.
+  const skillSessions = createMemo(() =>
+    store.sessions.map((s) => ({ name: s.name, state: s.state || "" })),
+  );
   // One event per tab boot: the denominator every other count is read against.
   onMount(() => track("app.loaded", { "tl.kind": isCoarsePointer() ? "touch" : "desktop" }));
   onCleanup(() => {
@@ -604,6 +613,8 @@ export const App: Component = () => {
           }}
           notifications={notifications}
           actAs={actAsControl()}
+          skills={skills}
+          sessions={skillSessions}
         />
       </Show>
 
