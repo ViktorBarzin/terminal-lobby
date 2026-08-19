@@ -183,6 +183,37 @@ unsent message text its other half. Both persist per (session, browser)
 so a reload or an evicted tab does not lose a half-written message.
 _Avoid_: attachment bar, dropzone (the drop target is the whole window)
 
+### Skills
+
+**Skill**:
+A directory under a user's `~/.claude/skills/` containing a `SKILL.md`, loaded
+by that user's Claude sessions at start. Belongs to exactly one OS user; a
+second user gets it by **installing** a copy. May carry more than prose —
+scripts, agents, templates — which is why installing one is an act of trust.
+_Avoid_: plugin (that is the marketplace-installed kind, see below), command
+
+**Plugin**:
+A marketplace-installed bundle (`<name>@<marketplace>`) cached under
+`~/.claude/plugins/cache/`, which may ship skills, commands, agents and hooks
+under its own namespace. Listed beside skills in the Skills settings group, and
+switched on and off through the same `enabledPlugins` key, but never copied
+between users.
+_Avoid_: skill, extension
+
+**Install** (a skill):
+Copying another user's skill into your own `~/.claude/skills/<name>` as a real
+directory, recording where it came from and the source's hash in
+`.manager.json`. Always initiated by the recipient. A copy, so it never changes
+under you: divergence later shows as **update available** (the owner's changed)
+or **locally modified** (yours has).
+_Avoid_: sync, share, push
+
+**Disable** (a skill or plugin):
+Setting `enabledPlugins["<id>"] = false` in the user's `~/.claude/settings.json`
+so new sessions stop loading it, while the files stay on disk. Distinct from
+**remove**, which backs the directory up and deletes it.
+_Avoid_: uninstall, turn off
+
 ### The text view
 
 **Text view**:
