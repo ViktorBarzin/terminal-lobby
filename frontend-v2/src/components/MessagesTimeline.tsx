@@ -4,7 +4,6 @@ import {
   createSignal,
   For,
   onCleanup,
-  onMount,
   Show,
   type Accessor,
   type Component,
@@ -33,6 +32,7 @@ import {
   type WorkingRow,
 } from "./timeline.logic";
 import { Markdown } from "./Markdown";
+import { ownWhile } from "../lib/ownwhile";
 import { MessageSegments } from "./Attachment";
 import {
   MetaRowView,
@@ -200,6 +200,9 @@ export const MessagesTimeline: Component<{
   me?: string;
   /** the opening window has not arrived yet — this is "not yet", not "none". */
   opening?: boolean;
+  /** FALSE while this timeline belongs to a session the lobby is keeping
+   *  mounted but not showing — it then owns no window-level handles. */
+  owns?: boolean;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -480,14 +483,10 @@ export const MessagesTimeline: Component<{
     setTimeout(() => row.classList.remove("tl-row-found"), FOUND_FLASH_MS);
     return true;
   };
-  let prevScrollTo: ((id: number) => boolean) | undefined;
-  onMount(() => {
-    prevScrollTo = window.__tlScrollToEvent;
-    window.__tlScrollToEvent = scrollToEvent;
-  });
-  onCleanup(() => {
-    if (window.__tlScrollToEvent === scrollToEvent) window.__tlScrollToEvent = prevScrollTo;
-  });
+  // Jump-to-event belongs to the timeline on screen. Every session the lobby
+  // keeps mounted has one of these, so claiming it on mount would hand it to
+  // whichever session was opened last rather than to the one being read.
+  ownWhile(() => props.owns !== false, "__tlScrollToEvent", scrollToEvent);
 
   /**
    * Anything clicked in here may have changed the transcript's height — a turn

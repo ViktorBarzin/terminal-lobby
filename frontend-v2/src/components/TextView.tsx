@@ -58,6 +58,9 @@ export const TextView: Component<{
   pendingPrompts?: () => PendingPrompt[];
   /** the opening window is still arriving. */
   opening?: boolean;
+  /** FALSE while the lobby is keeping this session mounted without showing it:
+   *  a hidden view answers for nothing global. */
+  onScreen?: boolean;
   /** fetch a capped tool result in full. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
   /** load the window of turns before the oldest held. */
@@ -206,6 +209,7 @@ export const TextView: Component<{
     <div class="tl-textview">
       <MessagesTimeline
         opening={props.opening}
+        owns={props.onScreen !== false}
         events={shown()}
         onOpenPreview={props.onOpenPreview}
         onLoadFull={props.onLoadFull}
