@@ -60,7 +60,7 @@ Each of these was settled in the 2026-08-19 grilling session.
 
 | # | Decision | Why |
 |---|---|---|
-| 1 | A **Skills group inside the Settings overlay**, not a separate full-screen view | The panel already carries every other per-user setting; a group is the smallest surface that answers the ask |
+| 1 | A **Skills group inside the Settings overlay**, not a separate full-screen view | The panel already carries every other per-user setting; a group is the smallest surface that answers the ask. **Revised the same day** — see *As built*: the lists were too long for it, so the surface became its own overlay beside Settings, with a tab per list and a filter |
 | 2 | **Every user's `~/.claude/skills` is visible to every lobby user**, no publish step and no per-skill privacy flag | Matches what OS permissions already allow — `/home/wizard` is `751` with `.claude/skills` at `775`, so bob can read those files today; wizard reads bob's `700` home via the sudo he already holds |
 | 3 | **The recipient clicks Install.** Nothing is pushed into anyone's account | Skills carry executable code, so the person taking on that code is the one choosing to |
 | 4 | **Install copies a snapshot**, and the manager flags later divergence | A copy is stable and editable; a live symlink into another home would work bob→wizard but not wizard→bob (his home is `700`), so it would be asymmetric |
@@ -97,72 +97,58 @@ rules in `frontend-v2/src/app.css`, so these are the panel's own tokens rather
 than approximations.
 
 <figure style="margin:1.4rem 0">
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 674" style="max-width:420px;width:100%;height:auto;display:block" role="img" aria-label="Skills group in the lobby Settings panel">
-  <title>Skills group in the lobby Settings panel</title>
-  <rect x="1" y="1" width="418" height="672" rx="18" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-  
-  <text x="18" y="34" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="15" fill="#e6e8eb" font-weight="600">Settings</text>
-  <text x="398" y="35" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="15" fill="#7d8590" text-anchor="end">✕</text>
-  <text x="18" y="62" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" letter-spacing="0.9">THEME</text>
-  <rect x="18" y="72" width="62" height="26" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
-  <text x="49" y="89" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="middle">Carbon</text>
-  <rect x="86" y="72" width="62" height="26" rx="10" fill="#0d1117" stroke="#4493f8" stroke-width="1"/>
-  <text x="117" y="89" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#e6e8eb" text-anchor="middle">Slate</text>
-  <rect x="154" y="72" width="62" height="26" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
-  <text x="185" y="89" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="middle">Mono</text>
-  <text x="228" y="89" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#7d8590">…</text>
-  <line x1="18" y1="114" x2="402" y2="114" stroke="#1f242d" stroke-width="1"/>
-  <text x="18" y="136" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" letter-spacing="0.9">SKILLS</text>
-  <text x="402" y="136" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">⟳ refresh</text>
-  <text x="18" y="156" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" font-weight="600">Mine (38)</text>
-  <rect x="18" y="171.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
-  <path d="M21,178 l2.6,2.6 L28,174.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="40" y="182" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">grilling</text>
-  <text x="402" y="182" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">own</text>
-  <rect x="18" y="197.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
-  <path d="M21,204 l2.6,2.6 L28,200.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="40" y="208" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">publish-page</text>
-  <text x="402" y="208" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">own</text>
-  <rect x="18" y="223.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
-  <path d="M21,230 l2.6,2.6 L28,226.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="40" y="234" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">cluster-health</text>
-  <text x="402" y="234" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#4493f8" text-anchor="end">from bob · ⟳ update</text>
-  <rect x="18" y="249.5" width="13" height="13" rx="3" fill="none" stroke="#30363d" stroke-width="1"/>
-  <text x="40" y="260" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#7d8590" opacity="0.75">caveman</text>
-  <text x="402" y="260" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">from bob</text>
-  <text x="40" y="286" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">…  34 more</text>
-  <line x1="18" y1="306" x2="402" y2="306" stroke="#1f242d" stroke-width="1"/>
-  <text x="18" y="328" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" font-weight="600">Plugins (7)</text>
-  <rect x="18" y="343.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
-  <path d="M21,350 l2.6,2.6 L28,346.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="40" y="354" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">superpowers</text>
-  <text x="402" y="354" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#4493f8" text-anchor="end">5.1.0 · ⟳ 5.3.0</text>
-  <rect x="18" y="369.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
-  <path d="M21,376 l2.6,2.6 L28,372.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="40" y="380" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">context7</text>
-  <text x="402" y="380" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">61c059</text>
-  <rect x="18" y="395.5" width="13" height="13" rx="3" fill="none" stroke="#30363d" stroke-width="1"/>
-  <text x="40" y="406" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#7d8590" opacity="0.75">gopls-lsp</text>
-  <text x="402" y="406" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">1.0.0</text>
-  <text x="40" y="432" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">…  4 more</text>
-  <line x1="18" y1="452" x2="402" y2="452" stroke="#1f242d" stroke-width="1"/>
-  <text x="18" y="474" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" font-weight="600">From bob — not installed (8)</text>
-  <text x="18" y="502" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">diagnose</text>
-  <rect x="336" y="486.0" width="66" height="24" rx="10" fill="#132b4d" stroke="#4493f8" stroke-width="1"/>
-  <text x="369.0" y="502" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#cfe3ff" text-anchor="middle">Install</text>
-  <text x="18" y="532" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">write-a-skill</text>
-  <rect x="336" y="516.0" width="66" height="24" rx="10" fill="#132b4d" stroke="#4493f8" stroke-width="1"/>
-  <text x="369.0" y="532" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#cfe3ff" text-anchor="middle">Install</text>
-  <text x="18" y="562" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">tdd</text>
-  <rect x="47.9" y="551" width="51.199999999999996" height="15" rx="7" fill="#2a1f16" stroke="#f47067" stroke-width="1"/>
-  <text x="73.5" y="562" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="10" fill="#f47067" text-anchor="middle">differs</text>
-  <rect x="336" y="546.0" width="66" height="24" rx="10" fill="#132b4d" stroke="#4493f8" stroke-width="1"/>
-  <text x="369.0" y="562" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#cfe3ff" text-anchor="middle">Install</text>
-  <text x="18" y="592" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">file-issue</text>
-  <text x="402" y="592" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">= same as yours</text>
-  <text x="18" y="618" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">…  4 more</text>
-  <text x="18" y="640" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">Everyone on this box can see everyone&#x27;s skills. Installing copies</text>
-  <text x="18" y="655" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">the skill into your account; the owner&#x27;s copy is untouched.</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 419" style="max-width:560px;width:100%;height:auto;display:block" role="img" aria-label="The Skills panel: its own overlay beside Settings">
+  <title>The Skills panel: its own overlay beside Settings</title>
+  <rect x="1" y="1" width="558" height="417" rx="18" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="18" y="34" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="15" fill="#e6e8eb" font-weight="600">Skills</text>
+  <text x="514" y="35" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="14" fill="#7d8590" text-anchor="end">⟳</text>
+  <text x="538" y="35" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="15" fill="#7d8590" text-anchor="end">✕</text>
+  <rect x="18" y="56" width="76.0" height="26" rx="10" fill="#132b4d" stroke="#4493f8" stroke-width="1"/>
+  <text x="29" y="73" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb">Mine</text>
+  <text x="83.0" y="73" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#e6e8eb" text-anchor="end">38</text>
+  <rect x="99.0" y="56" width="69.0" height="26" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="110.0" y="73" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#7d8590">bob</text>
+  <text x="157.0" y="73" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">17</text>
+  <rect x="173.0" y="56" width="90.0" height="26" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="184.0" y="73" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#7d8590">Plugins</text>
+  <text x="252.0" y="73" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">7</text>
+  <rect x="268.0" y="56" width="104.0" height="26" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="279.0" y="73" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#7d8590">Sessions</text>
+  <text x="361.0" y="73" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">13</text>
+  <line x1="18" y1="90" x2="542" y2="90" stroke="#1f242d" stroke-width="1"/>
+  <rect x="18" y="102" width="524" height="30" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="29" y="122" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#7d8590">Filter by name or description</text>
+  <rect x="18" y="141.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
+  <path d="M21,148 l2.6,2.6 L28,144.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="152" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">grilling</text>
+  <text x="542" y="152" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">own</text>
+  <rect x="18" y="168.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
+  <path d="M21,175 l2.6,2.6 L28,171.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="179" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">publish-page</text>
+  <text x="542" y="179" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">own</text>
+  <rect x="18" y="195.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
+  <path d="M21,202 l2.6,2.6 L28,198.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="206" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">cluster-health</text>
+  <text x="542" y="206" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#4493f8" text-anchor="end">from bob · ⟳ update</text>
+  <rect x="18" y="222.5" width="13" height="13" rx="3" fill="none" stroke="#30363d" stroke-width="1"/>
+  <text x="40" y="233" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#7d8590" opacity="0.75">caveman</text>
+  <text x="542" y="233" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">from bob</text>
+  <rect x="18" y="249.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
+  <path d="M21,256 l2.6,2.6 L28,252.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="260" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">email</text>
+  <text x="542" y="260" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">own</text>
+  <rect x="18" y="276.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
+  <path d="M21,283 l2.6,2.6 L28,279.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="287" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">spotify</text>
+  <text x="542" y="287" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">own</text>
+  <rect x="18" y="303.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
+  <path d="M21,310 l2.6,2.6 L28,306.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="314" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">tripit-cli</text>
+  <text x="542" y="314" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">own</text>
+  <text x="40" y="341" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">…  31 more, scrolling under the tabs</text>
+  <line x1="18" y1="365" x2="542" y2="365" stroke="#1f242d" stroke-width="1"/>
+  <text x="18" y="385" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">Everyone here can see everyone&#x27;s skills. Installing copies it into</text>
+  <text x="18" y="400" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">your account; the owner&#x27;s copy is untouched.</text>
 </svg>
 <figcaption style="font-size:0.86em;line-height:1.55;opacity:0.78;margin-top:0.6rem"><strong>1 — the group in place.</strong> Every user's skills are visible with no publish step. <em>Mine</em> carries provenance and an update marker, <em>Plugins</em> brings the marketplace ones into the same inventory, and <em>From bob</em> is what is there to take — an identical skill says so and offers nothing to do.</figcaption>
 </figure>
@@ -378,13 +364,14 @@ retired.
 
 ## Frontend shape
 
-The four mockups above are the target. A single `<section class="tl-settings-group">`
-between the existing groups,
-holding three lists: **Mine** (toggle + row actions), **Plugins** (toggle +
-Update), and **From `<user>`** for each other mapped user. State lives in a new
-`store/skills.ts` over `lib/skills-api.ts`, following the `file-api.ts`
-error-handling shape. Row expansion shows the description, file count, size, and
-the action buttons; View and diff render in place.
+The four mockups above are the target. `SkillsPanel.tsx` is its own dialog —
+reusing `.tl-settings` for chrome so the two overlays cannot drift on border,
+radius or padding — holding a tab strip, a filter, and one list per tab: **Mine**
+(toggle + row actions), one tab per other account (install / replace), **Plugins**
+(toggle + Update) and **Sessions** (restart). State lives in `store/skills.ts`
+over `lib/skills-api.ts`, following the `file-api.ts` error-handling shape; the
+tab and filter state is local to the panel. Row expansion shows the description,
+file count, size and the action buttons; View and diff render in place.
 
 ## Companion change in `infra`
 
@@ -439,7 +426,18 @@ and the provisioner's vendoring step retired. 75 Go tests and 36 frontend tests,
 plus a run against the two real accounts: 38 own skills, 7 plugins, and of bob's
 21 exactly the 4 identical / 9 divergent / 8 absent the design predicted.
 
-Four things came out differently from the design above, all of them from building it:
+Five things came out differently from the design above, all of them from building or using it:
+
+- **The surface moved out of Settings.** It shipped as decision 1 described and was
+  moved within hours of being used, because the row counts do not fit that shape:
+  38 own skills, 7 plugins, 21 of one peer's and every live session, in a 420px
+  column under six other settings groups. It is now its own overlay off the shell
+  bar beside Settings, one tab per list with a count, and a filter over name and
+  description. The row behaviour did not change — the verdicts, the diff, the
+  backups and the mid-turn restart rule are the same functions in
+  `skills.logic.ts`; a new `skills.tabs.ts` owns the tab strip, the filter and
+  the empty states. Mockup 1 above shows the shipped panel; 2–4 show row-level
+  behaviour and are unchanged.
 
 - **An install is a packed hand-off, not a directory copy.** The design said copy;
   the constraint that forced the shape is that peer homes are `0700` in *both*
