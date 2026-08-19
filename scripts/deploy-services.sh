@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Deploy the two v2-ONLY backends — session-events (:7685) and file-api (:7686)
-# — plus the T3 bridge artefacts to the DevVM. Companion to scripts/deploy.sh
+# Deploy the three v2-ONLY backends — session-events (:7685), file-api (:7686)
+# and skills-api (:7688) — plus the T3 bridge artefacts to the DevVM. Companion to scripts/deploy.sh
 # (the vanilla frontend + the SHARED backends) and scripts/deploy-v2.sh (the v2
 # SPA served by ttyd :7681).
 #
@@ -13,6 +13,7 @@
 # call to these services makes automated release safe here:
 #   session-events  :7685  v2 only — the vanilla page never opens /events
 #   file-api        :7686  v2 only — the vanilla page has no file surface
+#   skills-api      :7688  v2 only — the vanilla page has no settings panel
 # so restarting either cannot disturb terminal.viktorbarzin.me or another
 # user's session. This script therefore NEVER touches ttyd, ttyd-ro, tmux-api
 # or clipboard-upload: those are shared with the stable tier and are out of
@@ -28,6 +29,10 @@
 # every text-view client's SSE stream open, and a no-op deploy must not drop
 # them.
 #
+# skills-api additionally needs a sudoers line per terminal user (it re-execs
+# itself as them); the verification step below proves each one rather than
+# leaving a missing grant to surface as an unreachable peer in the panel.
+#
 # Usage:
 #   ./scripts/deploy-services.sh                    # build + deploy
 #   DEVVM=192.0.2.10 ./scripts/deploy-services.sh   # override host
@@ -42,7 +47,7 @@ DEVVM="${DEVVM:-192.0.2.10}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-SERVICES=(session-events file-api)
+SERVICES=(session-events file-api skills-api)
 # The T3 bridge artefacts, as `<module dir>:<installed binary>`. They carry a
 # tl- prefix because they land in /usr/local/bin next to everybody's binaries,
 # where "t3-sync" would read as something belonging to T3 itself.
@@ -79,8 +84,10 @@ echo "==> Staging on $DEVVM..."
 scp -o BatchMode=yes \
   out/session-events \
   out/file-api \
+  out/skills-api \
   devvm/session-events.service \
   devvm/file-api.service \
+  devvm/skills-api.service \
   "wizard@${DEVVM}:/tmp/"
 
 echo "==> Installing on $DEVVM..."
@@ -92,7 +99,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" bash -se <<'REMOTE'
   # restart drops every open SSE stream (each text-view client reconnects and
   # re-tails its transcript). Same reasoning as deploy-v2.sh's index skip.
   restart=()
-  for svc in session-events file-api; do
+  for svc in session-events file-api skills-api; do
     changed=0
     if sudo cmp -s "/tmp/$svc" "/usr/local/bin/$svc"; then
       echo "    $svc binary unchanged — leaving it alone"
@@ -115,14 +122,15 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" bash -se <<'REMOTE'
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   # enable --now unconditionally: a unit that is stopped or was never enabled
   # must come up even on a deploy that changed nothing.
-  sudo systemctl enable --now session-events file-api
+  sudo systemctl enable --now session-events file-api skills-api
   if (( ${#restart[@]} > 0 )); then
     echo "    restarting: ${restart[*]}"
     sudo systemctl restart "${restart[@]}"
   else
     echo "    nothing changed — no restart (open SSE streams keep running)"
   fi
-  rm -f /tmp/session-events /tmp/file-api /tmp/session-events.service /tmp/file-api.service
+  rm -f /tmp/session-events /tmp/file-api /tmp/skills-api \
+        /tmp/session-events.service /tmp/file-api.service /tmp/skills-api.service
 REMOTE
 
 # --- the T3 bridge -----------------------------------------------------------
@@ -200,16 +208,35 @@ echo "==> Verifying..."
 # is up, and an unauthenticated hit on the AUTHED surface proves the auth
 # middleware is still mounted in front of it. -m bounds every request so a
 # wedged service fails the deploy instead of hanging it.
-ssh -o BatchMode=yes "wizard@${DEVVM}" '
+# A quoted heredoc rather than a single-quoted argument: the privop probe below
+# needs both quote characters, and a heredoc keeps them literal.
+ssh -o BatchMode=yes "wizard@${DEVVM}" bash -se <<'REMOTE'
   set -euo pipefail
-  systemctl is-active session-events file-api
+  systemctl is-active session-events file-api skills-api
   curl -sf -m 5 http://localhost:7685/health >/dev/null && echo "session-events OK" || { echo "session-events /health FAILED"; exit 1; }
   curl -sf -m 5 http://localhost:7686/health >/dev/null && echo "file-api OK"       || { echo "file-api /health FAILED"; exit 1; }
+  curl -sf -m 5 http://localhost:7688/health >/dev/null && echo "skills-api OK"     || { echo "skills-api /health FAILED"; exit 1; }
   code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://localhost:7685/events/_deploy_probe || echo 000)
   [ "$code" = "401" ] && echo "session-events authed surface gated OK" || { echo "session-events /events unauthenticated -> $code, want 401"; exit 1; }
   code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" "http://localhost:7686/files/list?path=/" || echo 000)
   [ "$code" = "401" ] && echo "file-api authed surface gated OK"       || { echo "file-api /files/list unauthenticated -> $code, want 401"; exit 1; }
-'
+  code=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://localhost:7688/skills || echo 000)
+  [ "$code" = "401" ] && echo "skills-api authed surface gated OK"     || { echo "skills-api /skills unauthenticated -> $code, want 401"; exit 1; }
+  # The privileged child is what makes a cross-user install possible, so the
+  # deploy proves the GRANT as well as the process: one op as each other terminal
+  # user must answer with a JSON envelope. A missing sudoers line shows up here
+  # rather than as an unreachable peer in somebody's panel.
+  for u in $(cut -d= -f2 /etc/ttyd-user-map | cut -d: -f1 | sort -u); do
+    [ "$u" = "$(id -un)" ] && continue
+    id "$u" >/dev/null 2>&1 || continue
+    if echo '{}' | sudo -n -u "$u" /usr/local/bin/skills-api -privop inventory 2>/dev/null | grep -q '"status":200'; then
+      echo "skills-api privop as $u OK"
+    else
+      echo "skills-api privop as $u FAILED - check /etc/sudoers.d/ttyd-users has its line"; exit 1
+    fi
+  done
+REMOTE
+
 if [[ -z "${SKIP_T3:-}" ]]; then
   ssh -o BatchMode=yes "wizard@${DEVVM}" '
     set -euo pipefail

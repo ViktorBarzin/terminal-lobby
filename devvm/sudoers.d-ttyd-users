@@ -33,6 +33,25 @@
 #                                      child re-validates containment itself, so
 #                                      the grant is scoped to one fixed
 #                                      behaviour and takes no path it trusts.
+#   /usr/local/bin/skills-api         skills-api re-execs ITSELF as the mapped
+#                                      user (`-privop <op>`, request on stdin) so
+#                                      each half of a skill install runs as the
+#                                      user it belongs to: peer homes are 0700,
+#                                      so the owner cannot write into the
+#                                      recipient's home and the recipient cannot
+#                                      read the owner's. The child takes ONE op
+#                                      name in argv and nothing else — no home,
+#                                      no path, no third-party user — resolves
+#                                      its own home from its uid rather than
+#                                      $HOME (sudo leaves the caller's HOME in
+#                                      place), and re-validates every skill name
+#                                      it is given. So this grant, like the two
+#                                      below, takes no path it trusts. It also
+#                                      covers `claude plugin update` for that
+#                                      user, run from the child: the child is
+#                                      already that user, so exec'ing their own
+#                                      CLI grants nothing they could not do in a
+#                                      terminal.
 #   /usr/local/bin/session-events     session-events re-execs ITSELF as the
 #                                      mapped user (`-privop`) to read that
 #                                      user's Claude transcripts, which sit
@@ -71,8 +90,8 @@
 # tmux-attach.sh sources the decision from tmux-api's /internal/attach rather
 # than from any client argument. Removing a user from /etc/ttyd-user-map is
 # still what revokes everything here.
-wizard ALL=(bob) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events
-wizard ALL=(carol) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events
+wizard ALL=(bob) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
+wizard ALL=(carol) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
 
 # Restore button (POST /restore): run the validated root wrapper. It accepts a
 # single OS-user arg and re-checks it against /etc/ttyd-user-map, so this grant
