@@ -28,6 +28,7 @@ import { createDismissableMenu } from "./menu";
 import { installViewportSync } from "../mobile/viewport";
 import { installImageClipboard } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
+import { ownWhile } from "../lib/ownwhile";
 import {
   CameraIcon,
   ClipboardIcon,
@@ -161,6 +162,16 @@ export const SessionView: Component<{
     () => props.watchLocked?.() ?? false,
   );
   const locked = () => props.watchLocked?.() ?? false;
+  /**
+   * This view is the one on screen.
+   *
+   * The lobby keeps every session you have opened mounted and CSS-hides the
+   * ones you are not looking at (store/keepalive.ts), so "mounted" stopped
+   * meaning "in front of you". Everything global — the ⌘/Ctrl-J toggle, find,
+   * paste, the terminal bridge — is claimed against this rather than against
+   * mount, or a hidden session would answer for the visible one.
+   */
+  const onScreen = () => props.visible !== false;
   /** Why the pty controls are inert, or "" when they are not. Watching at all
    *  makes them inert — a read-only tmux client drops what it is sent — so this
    *  answers for an ordinary Watch too, not only for a lens. */
@@ -258,14 +269,7 @@ export const SessionView: Component<{
     toggleMode();
     return true;
   };
-  let prevToggleView: (() => boolean) | undefined;
-  onMount(() => {
-    prevToggleView = window.__tlToggleView;
-    window.__tlToggleView = toggleView;
-  });
-  onCleanup(() => {
-    if (window.__tlToggleView === toggleView) window.__tlToggleView = prevToggleView;
-  });
+  ownWhile(onScreen, "__tlToggleView", toggleView);
 
   // Find in session. The overlay searches the whole transcript on the server;
   // opening a hit is the part that happens here, because reaching an event from
@@ -279,14 +283,7 @@ export const SessionView: Component<{
     setFinding(true);
     return true;
   };
-  let prevOpenFind: (() => boolean) | undefined;
-  onMount(() => {
-    prevOpenFind = window.__tlOpenFind;
-    window.__tlOpenFind = openFind;
-  });
-  onCleanup(() => {
-    if (window.__tlOpenFind === openFind) window.__tlOpenFind = prevOpenFind;
-  });
+  ownWhile(onScreen, "__tlOpenFind", openFind);
 
   /**
    * Scroll to an event, loading earlier turns until it is reachable.
@@ -524,14 +521,7 @@ export const SessionView: Component<{
     });
     return true;
   };
-  let prevDoPaste: (() => boolean) | undefined;
-  onMount(() => {
-    prevDoPaste = window.__tlDoPaste;
-    window.__tlDoPaste = doPaste;
-  });
-  onCleanup(() => {
-    if (window.__tlDoPaste === doPaste) window.__tlDoPaste = prevDoPaste;
-  });
+  ownWhile(onScreen, "__tlDoPaste", doPaste);
 
   // The 🖼 gallery is a lobby overlay and the tray belongs to the composer, so
   // neither has a handle on the other. Same bridge the paste routine uses.
@@ -541,16 +531,7 @@ export const SessionView: Component<{
     composer.add(items);
     return true;
   };
-  let prevAttach: typeof window.__tlAttachToComposer;
-  onMount(() => {
-    prevAttach = window.__tlAttachToComposer;
-    window.__tlAttachToComposer = attachToComposer;
-  });
-  onCleanup(() => {
-    if (window.__tlAttachToComposer === attachToComposer) {
-      window.__tlAttachToComposer = prevAttach;
-    }
-  });
+  ownWhile(onScreen, "__tlAttachToComposer", attachToComposer);
 
   // ---- terminal controls in the session bar -------------------------------
   // A−/A+ step the ROAMED font size, so the change follows the user to their
@@ -836,6 +817,7 @@ export const SessionView: Component<{
       <main class="tl-views" classList={{ "tl-kb-inline": mode() === "terminal" }}>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "text" }} aria-hidden={mode() !== "text"}>
           <TextView
+            onScreen={onScreen()}
             events={store.events}
             working={working()}
             pending={pending()}
@@ -868,7 +850,11 @@ export const SessionView: Component<{
           <TerminalView
             session={session}
             owner={props.owner}
-            active={mode() === "terminal" && props.visible !== false}
+            active={mode() === "terminal" && onScreen()}
+            // The bridges (send/paste/focus/refit) follow the session on screen
+            // even while it is showing its text view, because that is the pty
+            // the composer's "send to terminal" means.
+            ownsBridges={onScreen()}
             creating={props.creating}
             dir={props.dir}
             watch={watch()}

@@ -9,6 +9,7 @@ import {
 import { terminalUrl } from "../lib/terminal-url";
 import { isBuildStale } from "../deploy/healer.logic";
 import { track } from "../telemetry/track";
+import { ownWhile } from "../lib/ownwhile";
 
 /**
  * Terminal mode — the live ttyd attach (design pillar #2 fallback view). An
@@ -257,7 +258,6 @@ export const TerminalView: Component<{
     postToFrame({ type: "tl-command", command });
     return true;
   };
-  let prevForward: ((c: string) => boolean) | undefined;
 
   // ---- mobile soft-key / compose bridge (design pillar #2 — Mobile) --------
   // The SPA-side sender of the raw-byte bridge: the mobile soft-key toolbar and
@@ -276,7 +276,6 @@ export const TerminalView: Component<{
     postToFrame({ type: "tl-input", bytes });
     return true;
   };
-  let prevSendBytes: ((b: string) => boolean) | undefined;
   // Clipboard TEXT the lobby has already read, handed to the terminal page's
   // term.paste(). Separate from tl-input on purpose: term.paste brackets the
   // paste and normalizes \r\n, so a multiline paste cannot execute
@@ -288,13 +287,11 @@ export const TerminalView: Component<{
     postToFrame({ type: "tl-paste", text });
     return true;
   };
-  let prevPaste: ((t: string) => boolean) | undefined;
   const refitFrame = (): boolean => {
     if (!iframe?.contentWindow) return false;
     postToFrame({ type: "tl-refit" });
     return true;
   };
-  let prevRefit: (() => boolean) | undefined;
   /**
    * Tell the frame how much of the bottom the soft keyboard covers.
    *
@@ -312,7 +309,6 @@ export const TerminalView: Component<{
     postToFrame({ type: "tl-kb", px });
     return true;
   };
-  let prevKeyboard: ((px: number) => boolean) | undefined;
 
   // Live prefs bridge — store/prefs.ts calls window.__tlPrefsLive after it has
   // PERSISTED a change. The v2 rewrite carried the theme half of the bridge and
@@ -328,7 +324,6 @@ export const TerminalView: Component<{
     postToFrame({ type: "tl-font-size", size: prefs.fontSize });
     return true;
   };
-  let prevPrefsLive: ((p: { fontSize: number }) => boolean) | undefined;
 
   // Live theme bridge — theme.ts calls window.__tlThemeLive on every switch.
   const onThemeLive = (name: string): void => {
@@ -340,29 +335,22 @@ export const TerminalView: Component<{
     }, 1000);
   };
 
-  let prevThemeLive: ((t: string) => void) | undefined;
-  let prevFocus: (() => boolean) | undefined;
   onMount(() => {
     window.addEventListener("message", onMessage);
-    if (typeof window !== "undefined" && props.ownsBridges !== false) {
-      prevThemeLive = window.__tlThemeLive;
-      window.__tlThemeLive = onThemeLive;
-      prevForward = window.__tlForwardToTerminal;
-      window.__tlForwardToTerminal = forwardToFrame;
-      prevSendBytes = window.__tlSendToTerminal;
-      window.__tlSendToTerminal = sendBytesToFrame;
-      prevPaste = window.__tlPasteToTerminal;
-      window.__tlPasteToTerminal = pasteToFrame;
-      prevRefit = window.__tlRefitTerminal;
-      window.__tlRefitTerminal = refitFrame;
-      prevKeyboard = window.__tlKeyboardOffset;
-      window.__tlKeyboardOffset = keyboardToFrame;
-      prevFocus = window.__tlFocusTerminal;
-      window.__tlFocusTerminal = focusFrame;
-      prevPrefsLive = window.__tlPrefsLive;
-      window.__tlPrefsLive = onPrefsLive;
-    }
   });
+  // The bridges belong to whichever frame is on screen, not to whichever mounted
+  // last: the lobby keeps every visited session mounted, and the dock mounts a
+  // second frame of its own. `ownsBridges` is read reactively, so handing them
+  // over is a prop change rather than a remount.
+  const ownsBridges = () => props.ownsBridges !== false;
+  ownWhile(ownsBridges, "__tlThemeLive", onThemeLive);
+  ownWhile(ownsBridges, "__tlForwardToTerminal", forwardToFrame);
+  ownWhile(ownsBridges, "__tlSendToTerminal", sendBytesToFrame);
+  ownWhile(ownsBridges, "__tlPasteToTerminal", pasteToFrame);
+  ownWhile(ownsBridges, "__tlRefitTerminal", refitFrame);
+  ownWhile(ownsBridges, "__tlKeyboardOffset", keyboardToFrame);
+  ownWhile(ownsBridges, "__tlFocusTerminal", focusFrame);
+  ownWhile(ownsBridges, "__tlPrefsLive", onPrefsLive);
   onCleanup(() => {
     // Only a terminal that actually attached can detach — a lazily-mounted view
     // that never reached ttyd must not fake the other half of the
@@ -373,31 +361,6 @@ export const TerminalView: Component<{
     window.removeEventListener("message", onMessage);
     if (coverTimer) clearTimeout(coverTimer);
     if (themeAckTimer) clearTimeout(themeAckTimer);
-    if (props.ownsBridges === false) return; // never installed any of the below
-    if (typeof window !== "undefined" && window.__tlThemeLive === onThemeLive) {
-      window.__tlThemeLive = prevThemeLive;
-    }
-    if (typeof window !== "undefined" && window.__tlForwardToTerminal === forwardToFrame) {
-      window.__tlForwardToTerminal = prevForward;
-    }
-    if (typeof window !== "undefined" && window.__tlSendToTerminal === sendBytesToFrame) {
-      window.__tlSendToTerminal = prevSendBytes;
-    }
-    if (typeof window !== "undefined" && window.__tlPasteToTerminal === pasteToFrame) {
-      window.__tlPasteToTerminal = prevPaste;
-    }
-    if (typeof window !== "undefined" && window.__tlRefitTerminal === refitFrame) {
-      window.__tlRefitTerminal = prevRefit;
-    }
-    if (typeof window !== "undefined" && window.__tlKeyboardOffset === keyboardToFrame) {
-      window.__tlKeyboardOffset = prevKeyboard;
-    }
-    if (typeof window !== "undefined" && window.__tlFocusTerminal === focusFrame) {
-      window.__tlFocusTerminal = prevFocus;
-    }
-    if (typeof window !== "undefined" && window.__tlPrefsLive === onPrefsLive) {
-      window.__tlPrefsLive = prevPrefsLive;
-    }
   });
 
   return (
