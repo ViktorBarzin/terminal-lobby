@@ -185,6 +185,9 @@ _Avoid_: attachment bar, dropzone (the drop target is the whole window)
 
 ### Skills
 
+Managed from the Settings overlay's **Skills** group, backed by `skills-api`
+(`docs/adr/0011-skills-move-between-users-by-copy.md`).
+
 **Skill**:
 A directory under a user's `~/.claude/skills/` containing a `SKILL.md`, loaded
 by that user's Claude sessions at start. Belongs to exactly one OS user; a
