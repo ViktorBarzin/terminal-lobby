@@ -1,4 +1,11 @@
 /* @refresh reload */
+// FIRST, and a side-effect import so it really is first: `import` declarations
+// hoist, so a call written here would run after every module body below. On
+// Safari 15.6 (iPadOS 15.8) `AbortSignal.timeout` does not exist, and it is
+// read on the way into EVERY lobby request — without this the session list
+// never loads, the sidebar reads "Failed to load", and with nothing to select
+// there is no terminal either.
+import "./lib/baseline-polyfills";
 import { render } from "solid-js/web";
 import "./theme/theme.css";
 import "./app.css";
