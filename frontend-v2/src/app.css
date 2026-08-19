@@ -527,6 +527,14 @@ body {
 .tl-hidden {
   display: none !important;
 }
+/* One slot per session the lobby keeps mounted. `display: contents` keeps the
+   wrapper out of the layout, so the session view is still a flex child of the
+   shell body exactly as it was when only one could exist; `.tl-hidden` on the
+   slot takes the whole session off screen without unmounting it, which is what
+   makes switching back free. */
+.tl-session-slot {
+  display: contents;
+}
 
 /* ---- Text view + timeline --------------------------------------------- */
 .tl-textview {

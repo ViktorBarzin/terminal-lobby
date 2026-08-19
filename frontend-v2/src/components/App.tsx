@@ -2,6 +2,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  For,
   onCleanup,
   onMount,
   Show,
@@ -13,6 +14,14 @@ import {
   type SelectedSession,
 } from "../store/lobby";
 import { NAME_RE, sessionLabel, type Layout } from "../types/lobby";
+import {
+  EMPTY_KEEP,
+  KEEP_TTL_MS,
+  keepSelected,
+  keyOf,
+  pruneKept,
+  type Selected,
+} from "../store/keepalive";
 import { Sidebar } from "./Sidebar";
 import { SessionView } from "./SessionView";
 import { SettingsPanel } from "./SettingsPanel";
@@ -273,6 +282,44 @@ export const App: Component = () => {
     return name ? projectDirFor(store.layout(), name) : undefined;
   });
 
+  // ---- sessions kept mounted (store/keepalive.ts) --------------------------
+  // A session you have opened stays mounted and hidden, so going back to it
+  // shows what is already there instead of rebuilding an iframe, an xterm, a
+  // ttyd socket and an SSE stream — 1,797 ms of cover per switch, measured.
+  const selectedSession = createMemo<Selected | null>(() => {
+    const sel = store.selected();
+    return sel ? { name: sel.name, owner: sel.owner } : null;
+  });
+  const [kept, setKept] = createSignal(EMPTY_KEEP);
+  const selectedKey = createMemo(() => {
+    const sel = selectedSession();
+    return sel ? keyOf(sel) : null;
+  });
+  createEffect(() => {
+    const sel = selectedSession();
+    setKept((state) => keepSelected(state, sel, Date.now()));
+  });
+  /** Drop what is not worth holding: a day unvisited, or gone from the lobby. */
+  const prune = () =>
+    setKept((state) =>
+      pruneKept(
+        state,
+        selectedSession(),
+        Date.now(),
+        KEEP_TTL_MS,
+        store.loading() ? undefined : new Set(store.sessions.map((s) => s.name)),
+      ),
+    );
+  createEffect(() => {
+    // Re-run whenever the list changes, so a session killed from another device
+    // loses its mount without waiting for the timer.
+    store.sessions.length;
+    prune();
+  });
+  // The TTL only bites in a tab left open for a day, which the timer covers.
+  const pruneTimer = setInterval(prune, 5 * 60 * 1000);
+  onCleanup(() => clearInterval(pruneTimer));
+
   // The mounted session's file-preview overlay, published up by SessionView.
   // A session switch disposes that view and the unsaved draft inside it, so the
   // keyboard routes into a switch have to know about it (the mouse route
@@ -516,88 +563,99 @@ export const App: Component = () => {
         </div>
 
         <div class="tl-shell-body" ref={(el) => installSessionSwipe(el)}>
-          <Show
-            when={selectedName()}
-            keyed
-            fallback={
-              <div class="tl-shell-empty tl-muted">
-                Select a session from the sidebar, or create one to begin.
-              </div>
-            }
-          >
-            {(name) => (
-              <SessionView
-                session={name}
-                label={sessionLabel(
-                  store.sessions.find((s) => s.name === name) ?? { name },
-                )}
-                owner={store.selected()?.owner}
-                me={store.me}
-                watchLocked={watchLocked}
-                actingAs={actingAs}
-                otherSessions={() =>
-                  flatSessionOrder(store.model())
-                    .filter((o) => o.name !== name)
-                    .map((o) => ({
-                      ...o,
-                      // Titled sessions read by their title here too.
-                      label: sessionLabel(
-                        store.sessions.find((s) => s.name === o.name) ?? { name: o.name },
-                      ),
-                    }))
-                }
-                onSwitchSession={(n, owner) => store.select(n, owner)}
-                visible={!flip() || collapsed()}
-                leading={
-                  <Show when={flip()}>
-                    <button
-                      class="tl-icon-btn tl-back-btn"
-                      aria-label="Back to sessions"
-                      onClick={() => setCollapsed(false)}
-                    >
-                      ‹<span class="tl-btn-label">Sessions</span>
-                    </button>
-                  </Show>
-                }
-                menuExtra={
-                  <Show when={flip()}>
-                    <button
-                      class="tl-menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        if (!settingsOpen()) track("settings.opened");
-                        setSettingsOpen((v) => !v);
-                      }}
-                    >
-                      Settings
-                    </button>
-                  </Show>
-                }
-                driven={() =>
-                  store.sessions.some((s) => s.name === name && s.driven === true)
-                }
-                creating={selectedIsCreating()}
-                dir={selectedDir()}
-                newCommand={newCommand}
-                prefs={prefs}
-                notify={notify}
-                overlayOpen={overlayOpen}
-                // A chord pressed INSIDE the terminal iframe is matched by
-                // term.html against the TERMINAL page's own context and arrives
-                // here as a bare command name — so it has to clear the same
-                // when-clause the window keydown path clears, or an open
-                // overlay guards exactly one of the two.
-                onFrameCommand={(cmd) => {
-                  if (engine.allows(cmd)) run(cmd);
-                }}
-                onFrameAlt={(down) => engine.setFrameAlt(down)}
-                onFrameAttention={notifications.onFrameAttention}
-                onFrameBuildStale={() => healer.onBuildStale()}
-                onOpenGallery={() => void gallery.open()}
-                onPreviewState={setPreviewState}
-              />
-            )}
+          <Show when={!selectedName()}>
+            <div class="tl-shell-empty tl-muted">
+              Select a session from the sidebar, or create one to begin.
+            </div>
           </Show>
+          {/* Every session opened in this tab stays mounted, and the one being
+              read is the one not hidden. The slots are appended and never
+              reordered: moving an iframe in the DOM reloads it, which is the
+              whole cost this avoids. */}
+          <For each={kept().list}>
+            {(k) => {
+              const shown = () => k.key === selectedKey();
+              const label = () =>
+                sessionLabel(store.sessions.find((s) => s.name === k.name) ?? { name: k.name });
+              return (
+                <div class="tl-session-slot" classList={{ "tl-hidden": !shown() }}>
+                  <SessionView
+                    session={k.name}
+                    label={label()}
+                    owner={k.owner}
+                    me={store.me}
+                    watchLocked={watchLocked}
+                    actingAs={actingAs}
+                    otherSessions={() =>
+                      flatSessionOrder(store.model())
+                        .filter((o) => o.name !== k.name)
+                        .map((o) => ({
+                          ...o,
+                          // Titled sessions read by their title here too.
+                          label: sessionLabel(
+                            store.sessions.find((s) => s.name === o.name) ?? { name: o.name },
+                          ),
+                        }))
+                    }
+                    onSwitchSession={(n, owner) => store.select(n, owner)}
+                    visible={shown() && (!flip() || collapsed())}
+                    leading={
+                      <Show when={flip()}>
+                        <button
+                          class="tl-icon-btn tl-back-btn"
+                          aria-label="Back to sessions"
+                          onClick={() => setCollapsed(false)}
+                        >
+                          ‹<span class="tl-btn-label">Sessions</span>
+                        </button>
+                      </Show>
+                    }
+                    menuExtra={
+                      <Show when={flip()}>
+                        <button
+                          class="tl-menu-item"
+                          role="menuitem"
+                          onClick={() => {
+                            if (!settingsOpen()) track("settings.opened");
+                            setSettingsOpen((v) => !v);
+                          }}
+                        >
+                          Settings
+                        </button>
+                      </Show>
+                    }
+                    driven={() =>
+                      store.sessions.some((s) => s.name === k.name && s.driven === true)
+                    }
+                    creating={shown() && selectedIsCreating()}
+                    dir={shown() ? selectedDir() : undefined}
+                    newCommand={newCommand}
+                    prefs={prefs}
+                    notify={notify}
+                    overlayOpen={overlayOpen}
+                    // Everything below reaches the LOBBY, so only the session on
+                    // screen may speak: a hidden mount raising a chord, a badge or
+                    // an app reload would be a session acting from behind another.
+                    // A chord pressed INSIDE the terminal iframe is matched by
+                    // term.html against the TERMINAL page's own context and arrives
+                    // here as a bare command name — so it has to clear the same
+                    // when-clause the window keydown path clears, or an open
+                    // overlay guards exactly one of the two.
+                    onFrameCommand={(cmd) => {
+                      if (shown() && engine.allows(cmd)) run(cmd);
+                    }}
+                    onFrameAlt={(down) => shown() && engine.setFrameAlt(down)}
+                    onFrameAttention={(kind, session) => {
+                      if (shown()) notifications.onFrameAttention(kind, session);
+                    }}
+                    onFrameBuildStale={() => shown() && healer.onBuildStale()}
+                    onOpenGallery={() => void gallery.open()}
+                    onPreviewState={(st) => shown() && setPreviewState(st)}
+                  />
+                </div>
+              );
+            }}
+          </For>
           <Dock dock={dock} onFrameCommand={(cmd) => run(cmd)} />
         </div>
       </div>
