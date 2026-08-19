@@ -10783,12 +10783,14 @@ ${w.join(`
         term.focus();
 
         let booted = false;          // set at the boot-end fit (Items 3b/3c)
+        let terminalRevealCapAfterBoot;  // reveal backstop, armed at booted
         let firstFrameSeen = false;  // first WS output frame arrived (3b)
         let terminalRevealed = false;
         function revealTerminal() {
             if (terminalRevealed) return;
             terminalRevealed = true;
             clearTimeout(terminalRevealCap);
+            clearTimeout(terminalRevealCapAfterBoot);
             bootTermContainer.style.opacity = '';   // 80ms CSS fade-in
             // Tell the parent lobby the terminal has painted so it can lift its
             // session-swap cover (anti-flicker). No-op when top-level (a
@@ -10800,7 +10802,19 @@ ${w.join(`
         function maybeRevealTerminal() {
             if (booted && firstFrameSeen) revealTerminal();
         }
-        const terminalRevealCap = setTimeout(revealTerminal, 1500);
+        // The reveal waits for a painted terminal: the boot-end fit AND the
+        // first output frame. The second one is not guaranteed — a tmux attach
+        // that has nothing new to draw sends nothing, and measurement on
+        // 2026-08-19 found the reveal reaching the cap with the first frame
+        // still absent on every session switch (booted at 310-550ms, revealed
+        // at 1846-1944ms, `byCap: true`). A cap counted from the script's own
+        // start spends that budget on parsing this file before the terminal
+        // even exists, so it is counted from `booted` instead: an unpainted
+        // grid at ~1s beats a themed cover until ~1.9s, and the absolute
+        // ceiling stays as a second backstop for a boot that never finishes.
+        const REVEAL_AFTER_BOOT_MS = 600;
+        const REVEAL_CEILING_MS = 1500;
+        const terminalRevealCap = setTimeout(revealTerminal, REVEAL_CEILING_MS);
 
         // Late-arriving faces (a CDN slower than the 2s boot gate; TL Symbols
         // below): refit and rebuild the WebGL glyph atlas so rendering uses
@@ -13372,6 +13386,11 @@ ${w.join(`
         // the opacity reveal (3b; still waits on the first WS frame).
         booted = true;
         maybeRevealTerminal();
+        // From here the terminal exists; give the first frame a moment, then
+        // show what there is.
+        if (!terminalRevealCapAfterBoot) {
+            terminalRevealCapAfterBoot = setTimeout(revealTerminal, REVEAL_AFTER_BOOT_MS);
+        }
 
         // Layout-proof copy/paste chord matching. e.key follows the keyboard
         // layout — under Cyrillic, Ctrl+C reports 'с'/'ъ'/'ц', an e.key==='c'
