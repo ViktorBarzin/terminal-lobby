@@ -164,7 +164,7 @@ export const SkillsSection: Component<{
                     aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.name}`}
                     onChange={(e) => void s.setEnabled(plugin.id, e.currentTarget.checked)}
                   />
-                  <span class="tl-skill-name tl-skill-static">{plugin.name}</span>
+                  <span class="tl-skill-name tl-skill-plain">{plugin.name}</span>
                   {label(st())}
                   <Show when={plugin.stale}>
                     <button
@@ -214,7 +214,7 @@ export const SkillsSection: Component<{
             {(row) => (
               <div class="tl-skill-row">
                 <span class={`tl-skill-dot tl-skill-dot-${row.state}`} aria-hidden="true" />
-                <span class="tl-skill-name tl-skill-static">{row.name}</span>
+                <span class="tl-skill-name tl-skill-plain">{row.name}</span>
                 <Show
                   when={row.restartable}
                   fallback={<span class="tl-skill-meta tl-skill-muted">mid-turn</span>}

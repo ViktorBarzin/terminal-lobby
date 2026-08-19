@@ -45,7 +45,12 @@ BASELINE = "safari15"
 # Constructs that are a PARSE-time SyntaxError on the baseline engine, so they
 # take out the entire enclosing script rather than just their own feature.
 FATAL_SYNTAX = {
-    "class static block": re.compile(r"\bstatic\s*\{"),        # ES2022, Safari 16.4
+    # ES2022, Safari 16.4. The lookbehind is what keeps this off CSS: the bundle
+    # is one file with the stylesheet inlined, and a minified selector like
+    # `.tl-skill-static{` used to match on \b. A real static block is only ever
+    # preceded by `{`, `}`, `;` or whitespace — never by an identifier character,
+    # a dash, a dot or a hash, which is what a selector puts there.
+    "class static block": re.compile(r"(?<![\w$.#-])static\s*\{"),
     "regexp lookbehind": re.compile(r"\(\?<[=!]"),             # Safari 16.4
     # NO "regexp v flag" entry. The v flag (Safari 17) genuinely is fatal here,
     # but it cannot be spotted by regex on this input without crying wolf: telling
@@ -196,8 +201,10 @@ def spa() -> tuple[str, str]:
 # probe, which is wrapped in try/catch precisely so an engine without lookbehind
 # takes the fallback branch. Telling a literal from division, or from a string,
 # needs a parser; that is what the esbuild differential below is for. The static
-# block stays because it is the construct that has now broken this page twice
-# and `static {` does not plausibly occur in minified string data.
+# block stays because it is the construct that has now broken this page twice.
+# It is regex-checkable because a real one can only follow `{`, `}`, `;` or
+# whitespace — the lookbehind above encodes that, after a CSS class named
+# `tl-skill-static` matched the older \b form and blocked a deploy (2026-08-19).
 def test_spa_no_class_static_blocks(spa: tuple[str, str]) -> None:
     path, html = spa
     hits = FATAL_SYNTAX["class static block"].findall(html)
@@ -307,3 +314,28 @@ def test_spa_post_baseline_apis_are_all_polyfilled(spa: tuple[str, str]) -> None
             f"carry the polyfill install — baseline-polyfills.ts was dropped from the "
             f"bundle, or index.tsx stopped importing it first."
         )
+
+
+# The pattern is load-bearing in both directions: it has to keep catching the
+# construct that blanked bob's iPad, and it must not block a deploy over a CSS
+# selector that merely ends in "static" (which it did, on 2026-08-19).
+def test_class_static_block_pattern_tells_js_from_css() -> None:
+    pattern = FATAL_SYNTAX["class static block"]
+    fatal = [
+        "class A{static{x()}}",           # minified, straight after the brace
+        "class A { static { x() } }",     # spaced
+        "};static{y()}",                  # after a statement end
+        "class A{f(){};static {z()}}",
+    ]
+    for src in fatal:
+        assert pattern.search(src), f"must still catch a real static block: {src}"
+
+    benign = [
+        ".tl-skill-static{cursor:default}",       # the selector that blocked a deploy
+        ".static{color:red}",                     # a class called exactly that
+        "#static{color:red}",                     # an id
+        "a.x-static{b:1}.y{c:2}",                 # minified, no space anywhere
+        "el.classList.add('is-static');",         # a string, not a block
+    ]
+    for src in benign:
+        assert not pattern.search(src), f"must not flag CSS or strings: {src}"
