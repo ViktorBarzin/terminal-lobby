@@ -9,13 +9,22 @@
 
 Give every lobby user one place to see the skills their Claude sessions load,
 switch them on and off, and pick up a skill another user on the box already
-has. Today a skill reaches a second person only through the hourly provisioner
-(`t3-provision-users.sh`, allowlisted to `emo`, install-if-absent), which means
-skills never update after their first copy and nobody can choose for
-themselves. The manager replaces that with a per-user, self-service flow.
+has. Today a skill reaches a second person through the hourly provisioner
+(`t3-provision-users.sh`, allowlisted to `emo`, install-if-absent), which got a
+starter set onto the box reliably and reproducibly. Two things it does not do
+yet: a copy never refreshes after the first install, and the set is chosen
+centrally rather than by each user. The manager adds the per-user, self-service
+half.
 
 Scope is a **Skills** group inside the existing Settings overlay, plus a small
 backend that owns the filesystem work.
+
+```stats
+13 | skill names present in both accounts
+9 | of those whose content differs
+8 | skills only emo has today
+17 | vendored skills the retirement drops
+```
 
 ## Non-goals
 
@@ -44,6 +53,11 @@ backend that owns the filesystem work.
 
 Each of these was settled in the 2026-08-19 grilling session.
 
+> [!NOTE]
+> A dedicated skills repo for storing and distributing wizard's own skills is a
+> separate plan for later. For this feature each user simply has a set of skills
+> and their origin is not modelled.
+
 | # | Decision | Why |
 |---|---|---|
 | 1 | A **Skills group inside the Settings overlay**, not a separate full-screen view | The panel already carries every other per-user setting; a group is the smallest surface that answers the ask |
@@ -54,7 +68,7 @@ Each of these was settled in the 2026-08-19 grilling session.
 | 6 | **Name collisions block**, show a diff, and offer *Replace* with a timestamped backup; identical content is labelled "same as yours" with no action | 13 of emo's 22 skill names already exist in wizard's account and 9 of those genuinely differ, so this is the common path, not an edge case |
 | 7 | The list covers **loose skills and marketplace plugins** in one inventory | That is what a session actually loads; disabling `superpowers` from the same place is worth the one extra call |
 | 8 | After a change, the panel names the **sessions still running an older skill set** and offers Restart on those whose Claude state is `done`/`awaiting`, never mid-turn | A new skill only reaches a new session; the state dot the sidebar already shows tells busy from idle |
-| 9 | Restart respawns the pane with **`claude --continue`** | Keeps the transcript; the point is to load the skill, not to lose the thread |
+| 9 | Restart respawns the pane with **`claude --continue`** | Keeps the transcript, so loading the skill does not cost the thread |
 | 10 | A **new `skills-api` service on :7688** owns the endpoints | Deploying it can never drop an open SSE transcript stream (`session-events`) or a file preview (`file-api`), and the one privileged write op stays auditable on its own |
 | 11 | **`install_skills()`, `SKILL_USERS`, and `scripts/workstation/claude-skills/` are retired** from the infra repo | The manager becomes the only distribution path; emo's existing copies stay on disk and remain installable from him |
 | 12 | Rows offer **View, Update, Enable/Disable, Remove** (backup first); plugin rows also offer **Update** | Reading a peer's skill before installing it matters when skills ship scripts |
@@ -77,7 +91,7 @@ an explicit Update button.
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph browser["Browser — terminal.viktorbarzin.me"]
     SP["SettingsPanel<br/>Skills group"]
   end
@@ -172,6 +186,12 @@ services do.
 }
 ```
 
+> [!WARNING]
+> A skill can ship executable code — `spotify/scripts/spotify.py`,
+> `visualize/scripts/viz-publish.sh` and `diagnosing-bugs/scripts/hitl-loop.template.sh`
+> do today. Installing one means those scripts run in your sessions, which is why
+> the recipient initiates every install and View comes before Install.
+
 **Copy rules.** The source must be a directory containing `SKILL.md`. `.git`,
 `node_modules` and `__pycache__` are excluded (`claudeception/` carries a nested
 `.git` today). Symlinks pointing outside the skill directory are skipped rather
@@ -210,6 +230,10 @@ the action buttons; View and diff render in place.
   prefix strip — the same shape as the `file-api` block.
 - Update the memory entry describing the vendoring flow (id 6530) so it points
   at the manager instead.
+
+> [!IMPORTANT]
+> Retiring `install_skills()` means a brand-new user starts with no skills and
+> pulls what they want from a colleague. Existing copies on disk are untouched.
 
 `devvm/sudoers.d-ttyd-users` (in this repo, hand-maintained by decision) gains
 `/usr/local/bin/skills-api` on each per-user line, with a comment explaining the
@@ -258,5 +282,5 @@ confirm the skill appears in that session's `/` menu.
 - **`devvm/sudoers.d-ttyd-users` still carries a line for `ancamilea`**, who left
   the roster on 2026-08-17. Noted for a separate tidy, not changed here.
 - **Trust remains manual.** Nothing scans an installed skill for what its scripts
-  do; View before Install, recorded provenance, and backups on replace are the
-  whole safety story.
+  do. The safeguards are View before Install, provenance recorded in
+  `.manager.json`, and a backup taken before any replace.
