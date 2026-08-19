@@ -48,6 +48,8 @@ const (
 	opToggle    = "toggle"
 	opRemove    = "remove"
 	opPlugin    = "plugin-update"
+	opDelete    = "delete"
+	opUninstall = "plugin-uninstall"
 )
 
 // request is everything any op can be asked for. One shape keeps the child's
@@ -79,6 +81,11 @@ type result struct {
 	Backup  string             `json:"backup,omitempty"`
 	Output  string             `json:"output,omitempty"`
 	Stat    *statRow           `json:"stat,omitempty"`
+	// Deleted describes what a permanent delete actually did — whether it was a
+	// symlink, what it pointed at, how many backups went with it, bytes freed.
+	Deleted *skillscan.DeleteResult `json:"deleted,omitempty"`
+	// Freed is the plugin cache reclaimed by an uninstall.
+	Freed int64 `json:"freed,omitempty"`
 }
 
 // fileRow is one file of a skill, for the View panel.
@@ -236,6 +243,20 @@ func perform(op, home string, req request) result {
 			return notFoundOr(err)
 		}
 		return result{Status: 200, Backup: backup}
+
+	case opDelete:
+		res, err := skillscan.Delete(home, req.Name)
+		if err != nil {
+			return notFoundOr(err)
+		}
+		return result{Status: 200, Deleted: &res}
+
+	case opUninstall:
+		out, freed, err := uninstallPlugin(home, req.Plugin)
+		if err != nil {
+			return result{Status: 502, Error: err.Error(), Output: out}
+		}
+		return result{Status: 200, Output: out, Freed: freed}
 
 	case opPlugin:
 		out, err := updatePlugin(home, req.Plugin)

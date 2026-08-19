@@ -162,6 +162,27 @@ export function removeSkill(name: string): Promise<{ name: string; backup: strin
   return post(skillActionUrl("remove"), { name });
 }
 
+/** What a permanent delete did. Mirrors skillscan.DeleteResult. */
+export interface DeleteResult {
+  wasSymlink?: boolean;
+  target?: string;
+  purgedBackups: number;
+  bytes: number;
+}
+
+/** Delete a skill for good: the directory, every backup of it, its enabled state
+ *  and its provenance. Distinct from removeSkill, which keeps a backup. */
+export function deleteSkill(name: string): Promise<{ name: string; deleted: DeleteResult }> {
+  return post(skillActionUrl("delete"), { name });
+}
+
+/** Uninstall a marketplace plugin and reclaim its cache. */
+export function uninstallPlugin(
+  plugin: string,
+): Promise<{ plugin: string; freed: number; output: string }> {
+  return post(skillActionUrl("plugin-uninstall"), { plugin });
+}
+
 /** Update one marketplace plugin by running the caller's own claude CLI. */
 export function updatePlugin(plugin: string): Promise<{ plugin: string; output: string }> {
   return post(skillActionUrl("plugin-update"), { plugin });
