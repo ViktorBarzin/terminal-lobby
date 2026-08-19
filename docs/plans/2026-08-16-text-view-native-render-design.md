@@ -1,6 +1,6 @@
 # Text view — a native structured render of a Claude Code session
 
-**Status:** built and deployed · **Date:** 2026-08-16 · **Owner:** wizard
+**Status:** built and deployed · **Date:** 2026-08-16 · **Revised:** 2026-08-19 · **Owner:** wizard
 
 The text view is the lobby's structured rendering of a session: the same tmux
 Claude the terminal view attaches to, read from its transcript instead of its
@@ -84,7 +84,7 @@ append.
 | 5 | **Port T3's pure logic under MIT; rebuild the views in Solid.** | T3 Code is MIT (T3 Tools Inc, 2026), so copying is permitted with the notice retained. React-vs-Solid rules out component reuse, but the derivation rules — which is where the accumulated edge cases live — are plain TypeScript. Inventory in §8. |
 | 6 | **Liveness comes from transcript data, not a second stream.** A rich working row: in-flight tool, live elapsed timer, step count, last thinking or text block. | The `tool_use` record lands the moment Claude emits it, so the working row can be specific for free. Token-level streaming is a **non-goal on this path** — see §5. |
 | 7 | **Open on a recent window with lazy payloads.** Last ~20 turns replayed; tool results capped on the wire with fetch-on-demand for the rest; "Load earlier" walks back. | Worst case on this box is a 28.9 MB transcript: ~4,936 events and 5.5 MB of tool results, one of them 673 KB. First paint on a phone should not depend on a session's age. |
-| 8 | **Text becomes the default on phones, terminal stays the default on desktop** — flipped last, gated on verifying SSE through the prod Cloudflare ingress. | Avoiding SSE-through-Cloudflare was one of the two reasons for terminal-first (`2026-08-08-terminal-first-v1.md`); that path is unverified in prod, and the flush bug has masked it since 2026-08-14. If it proves unreliable, we do not flip and nothing else here is wasted. |
+| 8 | **Terminal is the default on every device** *(revised 2026-08-19; this row read "text becomes the default on phones" and was built that way)*. | Three days of use answered the question the original gate was about: a session is still opened to drive the terminal, and the text view is one tap away on the bar. The tap is what makes that true, which is why the switch has to stay reachable — §14. |
 | 9 | **One landing.** All of it builds in `wizard/text-view-native` and merges to master together. | Chosen over staged delivery. |
 | 10 | **Fix the mobile composer keyboard** (§7.1) and **grow the session list into a switcher** (§7.2). | Raised during design; both are in the same surface and land with this work. |
 
@@ -450,3 +450,34 @@ events still flow: `currentMode()` reads them for the chip.
   scales with row count at roughly 4ms each; no single task is long enough to
   lose a click today, and the next lever if it ever is would be holding a row's
   markdown and highlighting until it is near the viewport.
+
+---
+
+## 14. Revision — 2026-08-19: terminal is the default again
+
+Two faults reported from a phone, both fixed the same day, and one decision
+reversed with them.
+
+**The view switch was off the right edge of the bar.** On a coarse pointer the
+session name is a picker — tap it to switch session — so the flex child of
+`.tl-session-bar` is the `.tl-session-picker` wrapper, and the shrink rule that
+was written for the name (`.tl-session { flex: 1 1 auto; min-width: 0 }`) applied
+to a button *inside* a `flex: 0 0 auto` item, where it could not act. Measured at
+390px on the session named `debug-emo-blank-screen`: the bar's content ran to
+432px of a 390px box and the Terminal segment started at x=389.6, outside the
+viewport and clipped by the `overflow: hidden` guard — so the text view had no
+way back. The wrapper now carries the shrink and the name ellipsizes: at 320–500
+px, touch and mouse, the bar's overflow is 0 and both segments are in view and
+hit-testable.
+
+**Five row types sat 80px left of the column.** `.tl-row` centres a row with
+`max-width: 860px; margin: 0 auto`; `.tl-row-question`, `-thinking`, `-todo`,
+`-plan` and `-meta` each set `margin: Npx 0`, and the shorthand reset the side
+margins to 0. Measured at 1440px: the question card rendered at x=340 against
+x=420 for every tool row beside it. They now use `margin-block`, which says
+vertical only. `test/row.centering.test.ts` holds the invariant for every future
+row type.
+
+**And the default view went back to the terminal**, on every device (decision 8).
+The text view stays a tap away and keeps its own per-session memory, so a session
+read in text on a phone still opens in text next time.
