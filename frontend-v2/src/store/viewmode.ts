@@ -7,15 +7,16 @@ import { track } from "../telemetry/track";
  * same session may be terminal on a desktop and text on a phone (T3 template,
  * minus its terminalIds/groups/height).
  *
- * The DEFAULT depends on the device: text on a phone, terminal on a desktop.
- * A structured, reflowing transcript is what a handset can actually render —
- * an 80-column pty on a 390px screen is not — while a desktop keeps booting
- * into the terminal, one Cmd/Ctrl-J away from the other.
+ * The DEFAULT is the terminal, on every device (Viktor, 2026-08-19). A phone
+ * used to open in the text view, on the reasoning that a 390px screen cannot
+ * render an 80-column pty; what daily use said is that a session is still opened
+ * to drive the terminal, and the text view is a tap away on the bar.
  *
- * Storage records only a deviation from THAT device's default, so the same
- * browser can hold "text" for one session and inherit the default for the rest.
- * Pre-2026-08-16 values still read correctly: the only value ever written was
- * the non-default one, which is exactly what is written now.
+ * Storage records only a deviation from that default, so a browser holds "text"
+ * for the sessions it was chosen for and inherits the terminal for the rest. The
+ * values written before this change still read correctly — a phone that chose
+ * text kept nothing, since text WAS its default, so those sessions now open in
+ * the terminal, which is the point.
  */
 
 export type ViewMode = "text" | "terminal";
@@ -23,24 +24,15 @@ export type ViewMode = "text" | "terminal";
 const KEY_PREFIX = "tl:viewmode:v1:";
 
 /**
- * This device's default view. Coarse pointer (phone, tablet) → text.
- * PURE + parameterized so the rule is testable without a matchMedia.
+ * The default view, everywhere. Kept as a function rather than inlined so the
+ * rule has one name to change and one place to test.
  */
-export function defaultMode(coarse: boolean): ViewMode {
-  return coarse ? "text" : "terminal";
-}
-
-function deviceDefault(): ViewMode {
-  if (typeof window === "undefined" || !window.matchMedia) return "terminal";
-  try {
-    return defaultMode(window.matchMedia("(pointer: coarse)").matches);
-  } catch {
-    return "terminal";
-  }
+export function defaultMode(): ViewMode {
+  return "terminal";
 }
 
 export function loadMode(session: string): ViewMode {
-  const fallback = deviceDefault();
+  const fallback = defaultMode();
   try {
     const stored = localStorage.getItem(KEY_PREFIX + session);
     if (stored === "text" || stored === "terminal") return stored;
@@ -54,7 +46,7 @@ export function saveMode(session: string, mode: ViewMode): void {
   track("view.switched", { "tl.to": mode, "tl.session": session });
   try {
     // Prune the default so storage only records deviations (T3 partialize idea).
-    if (mode === deviceDefault()) localStorage.removeItem(KEY_PREFIX + session);
+    if (mode === defaultMode()) localStorage.removeItem(KEY_PREFIX + session);
     else localStorage.setItem(KEY_PREFIX + session, mode);
   } catch {
     /* private mode / no storage */

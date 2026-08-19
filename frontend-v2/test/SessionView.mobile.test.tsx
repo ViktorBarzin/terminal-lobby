@@ -143,6 +143,10 @@ describe("<SessionView> — the phone bar's overflow menu", () => {
 
   it("opens on tap and offers Files, Watch and the shell's own items", () => {
     stubViewport(PHONE);
+    // Find searches the transcript, so it is a TEXT-view item. Since 2026-08-19
+    // a phone opens in the terminal like everything else, so this session has to
+    // say it is being read in text — which is what a reader who tapped Text has.
+    localStorage.setItem("tl:viewmode:v1:qa-mobile", "text");
     const { container } = render(() => (
       <SessionView
         session="qa-mobile"
@@ -159,6 +163,7 @@ describe("<SessionView> — the phone bar's overflow menu", () => {
     // edge at 390px — and there is no chord to press on a phone.
     expect(items).toEqual(["Files", "Find in session", "Watch only", "Settings"]);
     expect(dots.getAttribute("aria-expanded")).toBe("true");
+    localStorage.removeItem("tl:viewmode:v1:qa-mobile");
   });
 
   it("closes when one of the shell's items is picked", () => {

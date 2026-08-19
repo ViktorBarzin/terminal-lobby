@@ -142,7 +142,9 @@ src/
   store/
     session.ts           SSE → Solid store of events + prompt/cancel control
     lobby.ts             Lobby store: poll + optimistic layout PUT + session CRUD
-    viewmode.ts          Per-session/per-device {mode} persistence
+    viewmode.ts          Per-session/per-device {mode} persistence. The default
+                         is TERMINAL on every device (2026-08-19); storage holds
+                         only the sessions that chose text
     watchmode.ts         Per-session/per-device Watch mode (attach read-only)
     dock.logic.ts        PURE Ctrl+J dock decisions (shell naming, create→hide→
                          show, sidebar hiding, split clamp)
