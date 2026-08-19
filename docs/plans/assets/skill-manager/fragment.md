@@ -64,31 +64,43 @@ than approximations.
 </figure>
 
 <figure style="margin:1.4rem 0">
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 232" style="max-width:420px;width:100%;height:auto;display:block" role="img" aria-label="An expanded skill row with its actions">
-  <title>An expanded skill row with its actions</title>
-  <rect x="1" y="1" width="418" height="230" rx="18" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-  <text x="18" y="34" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" letter-spacing="0.9">SKILLS</text>
-  <text x="402" y="34" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">⟳ refresh</text>
-  <rect x="18" y="51.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
-  <path d="M21,58 l2.6,2.6 L28,54.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="40" y="62" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">diagnose</text>
-  <text x="402" y="62" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#4493f8" text-anchor="end">from emo · ⟳ update</text>
-  <rect x="40" y="74" width="362" height="118" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
-  <text x="52" y="96" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">Diagnosis loop for hard bugs and performance</text>
-  <text x="52" y="111" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">regressions. Use when the user says &quot;diagnose&quot;.</text>
-  <text x="52" y="134" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="11" fill="#7d8590">4 files · 2 executable · 6.1 KB</text>
-  <text x="52" y="150" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="11" fill="#4493f8">emo changed SKILL.md 3 days ago</text>
-  <rect x="52" y="162.0" width="46.8" height="24" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
-  <text x="75.4" y="178" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" text-anchor="middle">View</text>
-  <rect x="105.8" y="162.0" width="60.2" height="24" rx="10" fill="#132b4d" stroke="#4493f8" stroke-width="1"/>
-  <text x="135.9" y="178" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#cfe3ff" text-anchor="middle">Update</text>
-  <rect x="173.0" y="162.0" width="66.9" height="24" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
-  <text x="206.45" y="178" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" text-anchor="middle">Disable</text>
-  <rect x="246.9" y="162.0" width="60.2" height="24" rx="10" fill="#0d1117" stroke="#f47067" stroke-width="1"/>
-  <text x="277.0" y="178" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#f47067" text-anchor="middle">Remove</text>
-  <text x="18" y="212" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">Remove backs the directory up first, it never just deletes.</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 266" style="max-width:560px;width:100%;height:auto;display:block" role="img" aria-label="A skill row: actions inline, detail on expand">
+  <title>A skill row: actions inline, detail on expand</title>
+  <rect x="1" y="1" width="558" height="264" rx="18" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="18" y="34" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" letter-spacing="0.9">MINE (38)</text>
+  <rect x="18" y="53.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
+  <path d="M21,60 l2.6,2.6 L28,56.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="64" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">grilling</text>
+  <rect x="481.8" y="48" width="60.2" height="24" rx="10" fill="#0d1117" stroke="#f47067" stroke-width="1"/>
+  <text x="511.90000000000003" y="64" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#f47067" text-anchor="middle">Delete</text>
+  <rect x="415.6" y="48" width="60.2" height="24" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="445.70000000000005" y="64" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" text-anchor="middle">Remove</text>
+  <text x="401.6" y="64" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">own</text>
+  <rect x="18" y="83.5" width="13" height="13" rx="3" fill="#4493f8" stroke="#4493f8" stroke-width="1"/>
+  <path d="M21,90 l2.6,2.6 L28,86.6" fill="none" stroke="#0d1117" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="40" y="94" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#e6e8eb">cluster-health</text>
+  <rect x="481.8" y="78" width="60.2" height="24" rx="10" fill="#0d1117" stroke="#f47067" stroke-width="1"/>
+  <text x="511.90000000000003" y="94" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#f47067" text-anchor="middle">Delete</text>
+  <rect x="415.6" y="78" width="60.2" height="24" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="445.70000000000005" y="94" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" text-anchor="middle">Remove</text>
+  <rect x="349.40000000000003" y="78" width="60.2" height="24" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="379.50000000000006" y="94" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" text-anchor="middle">Update</text>
+  <text x="335.40000000000003" y="94" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#4493f8" text-anchor="end">from emo · ⟳ update</text>
+  <rect x="40" y="108" width="502" height="74" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="52" y="130" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">Check Kubernetes cluster health and fix common issues.</text>
+  <text x="52" y="152" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="11" fill="#7d8590">3 files · 1 executable · 4 KB</text>
+  <text x="52" y="170" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#4493f8">emo has changed their copy since you installed it.</text>
+  <rect x="18" y="191.5" width="13" height="13" rx="3" fill="none" stroke="#30363d" stroke-width="1"/>
+  <text x="40" y="202" font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,monospace" font-size="13" fill="#7d8590" opacity="0.75">caveman</text>
+  <rect x="481.8" y="186" width="60.2" height="24" rx="10" fill="#0d1117" stroke="#f47067" stroke-width="1"/>
+  <text x="511.90000000000003" y="202" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#f47067" text-anchor="middle">Delete</text>
+  <rect x="415.6" y="186" width="60.2" height="24" rx="10" fill="#0d1117" stroke="#1f242d" stroke-width="1"/>
+  <text x="445.70000000000005" y="202" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="12" fill="#e6e8eb" text-anchor="middle">Remove</text>
+  <text x="401.6" y="202" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590" text-anchor="end">from emo</text>
+  <text x="18" y="232" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">Remove keeps a copy under .backup/. Delete takes the skill and</text>
+  <text x="18" y="247" font-family="'DM Sans','Inter',system-ui,-apple-system,sans-serif" font-size="11" fill="#7d8590">every backup of it, and says so before it does.</text>
 </svg>
-<figcaption style="font-size:0.86em;line-height:1.55;opacity:0.78;margin-top:0.6rem"><strong>2 — a row opened.</strong> The description, the file count, and how many of those files are executable, because installing a skill puts its scripts in your sessions. Update appears only when the owner's copy has moved on.</figcaption>
+<figcaption style="font-size:0.86em;line-height:1.55;opacity:0.78;margin-top:0.6rem"><strong>2 — a row acts, an expansion explains.</strong> Remove, Delete and (when the owner has moved on) Update sit on the row itself, the way a plugin's do. Expanding one adds what you would want before acting: the description, the file count, and how many of those files are executable — because installing a skill puts its scripts in your sessions.</figcaption>
 </figure>
 
 <figure style="margin:1.4rem 0">

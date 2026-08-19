@@ -60,10 +60,13 @@ export const SkillsPanel: Component<{
     if (!s.inventory() && !s.loading()) void s.load();
   });
 
-  const confirm = (m: string) => (props.confirm ? props.confirm(m) : window.confirm(m));
+  const confirm = (m: string) =>
+    props.confirm ? props.confirm(m) : window.confirm(m);
 
   const inv = () => s.inventory();
-  const sessionRows = createMemo(() => restartTargets(props.sessions?.() ?? []));
+  const sessionRows = createMemo(() =>
+    restartTargets(props.sessions?.() ?? []),
+  );
   const tabs = createMemo(() => tabsFor(inv(), sessionRows()));
   // The selected tab is derived, not stored: a peer who leaves the roster, or
   // plugins all uninstalled, must not leave the panel on a tab nobody can see.
@@ -109,11 +112,15 @@ export const SkillsPanel: Component<{
 
   let opener: HTMLElement | null = null;
   onMount(() => {
-    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     queueMicrotask(() => dialogEl?.focus());
   });
   onCleanup(() => {
-    if (opener && opener !== document.body && opener.isConnected) opener.focus();
+    if (opener && opener !== document.body && opener.isConnected)
+      opener.focus();
   });
 
   const meta = (st: RowStatus) => (
@@ -205,13 +212,18 @@ export const SkillsPanel: Component<{
                   const id = `${skill.name}@skills-dir`;
                   return (
                     <>
+                      {/* Actions live on the row, the way a plugin's do; the
+                          expansion is for reading — description, file counts, why
+                          an update is offered. */}
                       <div class="tl-skill-row">
                         <input
                           type="checkbox"
                           checked={skill.enabled}
                           disabled={anyBusy()}
                           aria-label={`${skill.enabled ? "Disable" : "Enable"} ${skill.name}`}
-                          onChange={(e) => void s.setEnabled(id, e.currentTarget.checked)}
+                          onChange={(e) =>
+                            void s.setEnabled(id, e.currentTarget.checked)
+                          }
                         />
                         <button
                           type="button"
@@ -222,6 +234,63 @@ export const SkillsPanel: Component<{
                           {skill.name}
                         </button>
                         {meta(st())}
+                        <span class="tl-skill-actions">
+                          <Show when={skill.updateAvailable && skill.from}>
+                            <button
+                              type="button"
+                              class="tl-settings-btn"
+                              disabled={anyBusy()}
+                              onClick={() => {
+                                if (
+                                  !skill.locallyModified ||
+                                  confirm(
+                                    `${skill.name} has local edits. Updating backs your copy up first. Continue?`,
+                                  )
+                                ) {
+                                  void s.install(skill.from!, skill.name, true);
+                                }
+                              }}
+                              title={`Take ${skill.from}'s newer copy`}
+                            >
+                              {isBusy(rowKey(skill.from!, skill.name))
+                                ? "Updating…"
+                                : "Update"}
+                            </button>
+                          </Show>
+                          <button
+                            type="button"
+                            class="tl-settings-btn"
+                            disabled={anyBusy()}
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  `Remove ${skill.name}? A backup is kept.`,
+                                )
+                              ) {
+                                void s.remove(skill.name);
+                              }
+                            }}
+                            title="Keeps a copy under .backup/"
+                          >
+                            {isBusy(skill.name) ? "Removing…" : "Remove"}
+                          </button>
+                          {/* The permanent one. Remove is recoverable, so it keeps
+                              the plain button; this asks a harder question and
+                              names what cannot come back. */}
+                          <button
+                            type="button"
+                            class="tl-settings-btn tl-settings-btn-danger"
+                            disabled={anyBusy()}
+                            onClick={() => {
+                              if (confirm(deleteWarning(skill))) {
+                                void s.deleteForever(skill.name);
+                              }
+                            }}
+                            title="Permanent: the skill and every backup of it"
+                          >
+                            {isBusy(skill.name) ? "Deleting…" : "Delete"}
+                          </button>
+                        </span>
                       </div>
                       <Show when={open()}>
                         <div class="tl-skill-detail">
@@ -232,56 +301,6 @@ export const SkillsPanel: Component<{
                           <Show when={st().detail}>
                             <div class="tl-skill-facts">{st().detail}</div>
                           </Show>
-                          <div class="tl-settings-btnrow">
-                            <Show when={skill.updateAvailable && skill.from}>
-                              <button
-                                type="button"
-                                class="tl-settings-btn"
-                                disabled={anyBusy()}
-                                onClick={() => {
-                                  if (
-                                    !skill.locallyModified ||
-                                    confirm(
-                                      `${skill.name} has local edits. Updating backs your copy up first. Continue?`,
-                                    )
-                                  ) {
-                                    void s.install(skill.from!, skill.name, true);
-                                  }
-                                }}
-                              >
-                                {isBusy(rowKey(skill.from!, skill.name)) ? "Updating…" : "Update"}
-                              </button>
-                            </Show>
-                            <button
-                              type="button"
-                              class="tl-settings-btn"
-                              disabled={anyBusy()}
-                              onClick={() => {
-                                if (confirm(`Remove ${skill.name}? A backup is kept.`)) {
-                                  void s.remove(skill.name);
-                                }
-                              }}
-                              title="Keeps a copy under .backup/"
-                            >
-                              {isBusy(skill.name) ? "Removing…" : "Remove"}
-                            </button>
-                            {/* The permanent one. Remove is recoverable, so it
-                                keeps the plain button; this asks a harder
-                                question and names what cannot come back. */}
-                            <button
-                              type="button"
-                              class="tl-settings-btn tl-settings-btn-danger"
-                              disabled={anyBusy()}
-                              onClick={() => {
-                                if (confirm(deleteWarning(skill))) {
-                                  void s.deleteForever(skill.name);
-                                }
-                              }}
-                              title="Permanent: the skill and every backup of it"
-                            >
-                              {isBusy(skill.name) ? "Deleting…" : "Delete"}
-                            </button>
-                          </div>
                         </div>
                       </Show>
                     </>
@@ -289,7 +308,11 @@ export const SkillsPanel: Component<{
                 }}
               </For>
               <Empty
-                text={emptyReason("mine", (inv()?.skills ?? []).length > 0, query())}
+                text={emptyReason(
+                  "mine",
+                  (inv()?.skills ?? []).length > 0,
+                  query(),
+                )}
                 shown={mineRows(inv(), query()).length === 0}
               />
             </Show>
@@ -329,42 +352,52 @@ export const SkillsPanel: Component<{
                       checked={plugin.enabled}
                       disabled={anyBusy()}
                       aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.name}`}
-                      onChange={(e) => void s.setEnabled(plugin.id, e.currentTarget.checked)}
+                      onChange={(e) =>
+                        void s.setEnabled(plugin.id, e.currentTarget.checked)
+                      }
                     />
-                    <span class="tl-skill-name tl-skill-plain">{plugin.name}</span>
+                    <span class="tl-skill-name tl-skill-plain">
+                      {plugin.name}
+                    </span>
                     {meta(pluginStatus(plugin))}
-                    <Show when={plugin.stale}>
+                    <span class="tl-skill-actions">
+                      <Show when={plugin.stale}>
+                        <button
+                          type="button"
+                          class="tl-settings-btn"
+                          disabled={anyBusy()}
+                          onClick={() => void s.update(plugin.id)}
+                        >
+                          {isBusy(plugin.id) ? "Updating…" : "Update"}
+                        </button>
+                      </Show>
                       <button
                         type="button"
-                        class="tl-settings-btn"
+                        class="tl-settings-btn tl-settings-btn-danger"
                         disabled={anyBusy()}
-                        onClick={() => void s.update(plugin.id)}
+                        onClick={() => {
+                          if (
+                            confirm(
+                              `Uninstall ${plugin.name}? Its files are removed. You can install it again from its marketplace.`,
+                            )
+                          ) {
+                            void s.uninstall(plugin.id);
+                          }
+                        }}
+                        title="Removes the plugin and reclaims its files"
                       >
-                        {isBusy(plugin.id) ? "Updating…" : "Update"}
+                        {isBusy(plugin.id) ? "Working…" : "Uninstall"}
                       </button>
-                    </Show>
-                    <button
-                      type="button"
-                      class="tl-settings-btn tl-settings-btn-danger"
-                      disabled={anyBusy()}
-                      onClick={() => {
-                        if (
-                          confirm(
-                            `Uninstall ${plugin.name}? Its files are removed. You can install it again from its marketplace.`,
-                          )
-                        ) {
-                          void s.uninstall(plugin.id);
-                        }
-                      }}
-                      title="Removes the plugin and reclaims its files"
-                    >
-                      {isBusy(plugin.id) ? "Working…" : "Uninstall"}
-                    </button>
+                    </span>
                   </div>
                 )}
               </For>
               <Empty
-                text={emptyReason("plugins", (inv()?.plugins ?? []).length > 0, query())}
+                text={emptyReason(
+                  "plugins",
+                  (inv()?.plugins ?? []).length > 0,
+                  query(),
+                )}
                 shown={pluginRows(inv(), query()).length === 0}
               />
             </Show>
@@ -372,16 +405,24 @@ export const SkillsPanel: Component<{
             {/* --- what can pick a change up -------------------------------- */}
             <Show when={active() === "sessions"}>
               <div class="tl-settings-hint">
-                A skill is read when a session starts, so a change reaches new ones.
+                A skill is read when a session starts, so a change reaches new
+                ones.
               </div>
               <For each={sessionRows()}>
                 {(row) => (
                   <div class="tl-skill-row">
-                    <span class={`tl-skill-dot tl-skill-dot-${row.state}`} aria-hidden="true" />
+                    <span
+                      class={`tl-skill-dot tl-skill-dot-${row.state}`}
+                      aria-hidden="true"
+                    />
                     <span class="tl-skill-name tl-skill-plain">{row.name}</span>
                     <Show
                       when={row.restartable}
-                      fallback={<span class="tl-skill-meta tl-skill-muted">mid-turn</span>}
+                      fallback={
+                        <span class="tl-skill-meta tl-skill-muted">
+                          mid-turn
+                        </span>
+                      }
                     >
                       <button
                         type="button"
@@ -390,7 +431,9 @@ export const SkillsPanel: Component<{
                         onClick={() => void s.restart(row.name)}
                         title="Respawn with claude --continue: the conversation survives"
                       >
-                        {isBusy(`session:${row.name}`) ? "Restarting…" : "Restart"}
+                        {isBusy(`session:${row.name}`)
+                          ? "Restarting…"
+                          : "Restart"}
                       </button>
                     </Show>
                   </div>
@@ -400,8 +443,8 @@ export const SkillsPanel: Component<{
           </div>
 
           <div class="tl-settings-hint">
-            Everyone here can see everyone's skills. Installing copies it into your
-            account; the owner's copy is untouched.
+            Everyone here can see everyone's skills. Installing copies it into
+            your account; the owner's copy is untouched.
           </div>
         </Show>
       </div>
@@ -435,7 +478,11 @@ const Empty: Component<{ text: string; shown: boolean }> = (props) => (
 );
 
 /** One of another user's skills: read it, take it, or see how it differs. */
-const PeerRow: Component<{ peer: string; skill: PeerSkill; store: SkillsStore }> = (props) => {
+const PeerRow: Component<{
+  peer: string;
+  skill: PeerSkill;
+  store: SkillsStore;
+}> = (props) => {
   const s = props.store;
   const skill = props.skill;
   const action = () => peerAction(skill);
@@ -457,7 +504,9 @@ const PeerRow: Component<{ peer: string; skill: PeerSkill; store: SkillsStore }>
           {skill.name}
         </button>
         <Show when={st().label}>
-          <span class={`tl-skill-meta tl-skill-${st().tone}`}>{st().label}</span>
+          <span class={`tl-skill-meta tl-skill-${st().tone}`}>
+            {st().label}
+          </span>
         </Show>
         <Show when={action() === "install"}>
           <button
