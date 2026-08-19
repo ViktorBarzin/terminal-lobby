@@ -65,7 +65,7 @@ export function createSkillsStore(): SkillsStore {
       setInventory(await fetchInventory());
       setError("");
     } catch (e) {
-      setError(message(e));
+      setError(loadMessage(e));
     } finally {
       setLoading(false);
     }
@@ -166,6 +166,22 @@ function message(e: unknown): string {
     }
   }
   return e instanceof Error ? e.message : "Something went wrong.";
+}
+
+/**
+ * loadMessage is message() with one case that has to differ: a 404.
+ *
+ * On an action, 404 means the skill went away between the list being drawn and
+ * the click. On the INVENTORY it cannot mean that — there is no skill in the
+ * request — so it means nothing is serving GET /skills, and the most likely
+ * reason is routing. Reporting it as a missing skill is what let a route that
+ * matched only /skills/* look like a data problem for hours (2026-08-19).
+ */
+function loadMessage(e: unknown): string {
+  if (e instanceof SkillsApiError && e.status === 404) {
+    return "Nothing is answering /skills — the skills service is not reachable from here.";
+  }
+  return message(e);
 }
 
 /** short trims a backup path to the part a person reads: the last two segments. */
