@@ -63,6 +63,32 @@ describe("the narrow session bar", () => {
     expect(ruleFor(narrowBlock(), ".tl-term-tools")).toMatch(/display:\s*none/);
   });
 
+  /**
+   * Reported 2026-08-19: on a phone in the TEXT view the `[Text|Terminal]`
+   * switch was off the right edge and there was no way back to the terminal.
+   * Measured at 390px on the session named `debug-bob-blank-screen`: the bar's
+   * content ran to 432px of a 390px box, and the Terminal segment started at
+   * x=389.6 — outside the viewport, clipped by the `overflow: hidden` above.
+   *
+   * The cause is that the session name is a PICKER on a coarse pointer: the
+   * flex child of the bar is the `.tl-session-picker` wrapper, so `.tl-session`'s
+   * shrink rule applies to a button INSIDE a `flex: 0 0 auto` item and never gets
+   * to act. The wrapper has to carry the shrink, and the button has to be free
+   * to ellipsize inside it.
+   */
+  it("lets the session-name picker shrink, so the switch cannot be pushed out", () => {
+    const block = narrowBlock();
+    const wrapper = ruleFor(block, ".tl-session-bar > .tl-session-picker");
+    expect(wrapper).toMatch(/flex:\s*1\s+1\s+auto/);
+    expect(wrapper).toMatch(/min-width:\s*0/);
+    // A block wrapper would size to its content; a flex one lets the button
+    // inside it take the ellipsis.
+    expect(wrapper).toMatch(/display:\s*flex/);
+    const inner = ruleFor(block, ".tl-session-picker > .tl-session");
+    expect(inner).toMatch(/max-width:\s*100%/);
+    expect(inner).toMatch(/min-width:\s*0/);
+  });
+
   // The touch block sets `.tl-session-bar > * { flex: 0 0 auto }` so a control
   // cannot shrink below its content — right for buttons, wrong for this one,
   // whose username ellipsizes. It has to be the item that gives up width first,
