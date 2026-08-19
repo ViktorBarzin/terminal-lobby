@@ -222,6 +222,8 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 | `frontend/index.html` | Not deployed | — | The original vanilla page. Kept as the rollback target (`index.html.prev` on the devvm) and as the parity reference for `scripts/test_frontend_compat.py` |
 | `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions` (incl. per-session `state` + `project`), `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore` (blanket, or a `{snapshot, sessions[]}` body from the picker), `GET /snapshots` + `GET /snapshots/<ts>` (the session-snapshot series and one snapshot resolved against what is live), `GET`/`PUT /layout` (per-user sidebar layout, stored under `/var/lib/tmux-api/layout/`) |
 | `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session attachment store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded/dropped images, and documents up to 25MB under a `file-` prefix, replying `{path, stored}` — `stored:false` means it stayed an ephemeral `/tmp/clipboard-files` transfer, which is what a document over the cap does. `POST /register` records `show-image` renders (localhost). `GET /list` serves the gallery and lists the `pasted-`/`displayed-` prefixes only, so a document is never drawn as a thumbnail; `GET /img/…` serves image bytes and refuses anything that does not sniff as an image; `GET /file/…` serves a stored document with sniffing disabled, forcing a download for anything that could execute as markup. Per-user isolation via `X-Authentik-Username` → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
+| `skills-api/` (Go) | DevVM systemd service | 7688 | **The skill manager's backend** (`docs/adr/0011-skills-move-between-users-by-copy.md`). `GET /skills` answers the whole Settings group in one round trip — this account's skills and marketplace plugins, then every other terminal account's skills with a `same`/`differs`/`absent` verdict against your own — and `/skills/view`, `/skills/diff`, `/skills/install`, `/skills/toggle`, `/skills/remove`, `/skills/plugin-update`, `/skills/restart` do the rest. Unlike its siblings one request acts as TWO users: peer homes are `0700`, so an install packs the owner's skill in one privileged child (`sudo -n -u <user> skills-api -privop pack`) and unpacks it in the recipient's. Filesystem semantics live in `skillscan/` |
+| `skillscan/` (Go) | Shared package | — | What a skill IS on disk: scan, inspect, hash, compare, diff, pack/unpack, backup, and the two bits of state the manager keeps — Claude Code's own `enabledPlugins` key in `settings.json`, and `.manager.json` beside the skills for provenance. The hash covers content, path and the executable bit only, because users here have different umasks and hashing the full mode would report every shared skill as divergent |
 | `devvm/tmux-attach.sh` | DevVM, invoked by ttyd | — | Validates `X-authentik-username`, maps to OS user via `/etc/ttyd-user-map`, `sudo -u <user> tmux new-session -A` |
 | `devvm/claude-tmux-state` | DevVM, invoked by Claude Code hooks | — | Stamps `@claude_state` (running / awaiting / done) on the enclosing tmux session; wired org-wide via `/etc/claude-code/managed-settings.json` (infra repo, `scripts/workstation/`, self-deploys hourly). No-ops outside tmux. See `docs/adr/0001-claude-state-via-hooks.md` |
 | `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`, `GET /snapshots*`) | — | The tmux-persist gateway behind the Restore picker. Validates the user against `/etc/ttyd-user-map`, then runs one of `tmux-persist restore\|snapshots\|snapshot\|restore-selection`. The bare one-argument form still means "restore now". Snapshot ids and session names are re-validated here because the sudo grant places no restriction on argv. Idempotent — live sessions are left alone. Useful after an OOM kills sessions without a reboot (the boot-only restore never fires) |
@@ -239,6 +241,7 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 3. K8s ingress (in `infra/stacks/terminal/`) routes:
    - `/api/sessions/*` → `tmux-api` (port 7684 on the DevVM)
    - `/clipboard/*` → `clipboard-upload` (port 7683)
+   - `/skills/*` → `skills-api` (port 7688)
    - everything else → `ttyd` (port 7681) which serves `index.html` + WebSocket
 4. The browser preflights `/api/sessions/whoami` to discover its OS user, then either renders the lobby or opens a session iframe with `?arg=<name>`.
 5. ttyd, on each WS connection, runs `tmux-attach.sh` with `X-authentik-username` in `$TTYD_USER`. The script `sudo`s into the mapped OS user and `exec tmux new-session -A -s <name>`. Each OS user has its own `/tmp/tmux-<uid>/default` socket — kernel-level isolation.
@@ -256,7 +259,7 @@ two of them:
 |---|---|---|---|
 | `./scripts/deploy.sh` | vanilla `index.html`, PWA assets + webfonts, `tmux-api`, `clipboard-upload`, the patched `ttyd`, the devvm helper scripts + `/etc` config | `ttyd`, `ttyd-ro`, `tmux-api`, `clipboard-upload` | **Shared** — both hosts, every user |
 | `./scripts/deploy-v2.sh` | the lobby `index.html`, `term.html` | `ttyd` only | **Shared** — every user of the lobby |
-| `./scripts/deploy-services.sh` | `session-events` (:7685), `file-api` (:7686) + their units | those two only | the Text view + file preview |
+| `./scripts/deploy-services.sh` | `session-events` (:7685), `file-api` (:7686), `skills-api` (:7688) + their units | those three only | the Text view, file preview + the Skills settings group |
 
 ```bash
 ./scripts/deploy.sh                      # full deploy
@@ -317,11 +320,12 @@ session-events / file-api + the PWA carve-out) lives in
 SKIP_BUILD=1 ./scripts/deploy-v2.sh       # reuse frontend-v2/dist/{index,term}.html
 ```
 
-### SPA-only backends (session-events + file-api)
+### SPA-only backends (session-events + file-api + skills-api)
 
 `session-events` (:7685, the Text view's SSE transcript stream + `/prompt` +
-`/cancel`) and `file-api` (:7686, the file preview/editor) back **only** the
-SPA — the vanilla page calls neither. They were installed by hand until
+`/cancel`), `file-api` (:7686, the file preview/editor) and `skills-api` (:7688,
+the Skills settings group) back **only** the SPA — the vanilla page calls none of
+them. They were installed by hand until
 `deploy-services.sh` gave them a release path:
 
 ```bash
