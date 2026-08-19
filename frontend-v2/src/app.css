@@ -3178,13 +3178,13 @@ body.tl-kb-up {
 }
 /* Names that are not a disclosure button (plugins, sessions) keep the type but
    lose the affordance. */
-.tl-skill-static {
+.tl-skill-plain {
   cursor: default;
 }
 .tl-skill-name:hover {
   color: var(--accent);
 }
-.tl-skill-static:hover {
+.tl-skill-plain:hover {
   color: var(--text-primary);
 }
 .tl-skill-meta {
