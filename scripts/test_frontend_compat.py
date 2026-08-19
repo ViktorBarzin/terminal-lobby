@@ -241,3 +241,69 @@ def test_spa_esbuild_agrees_nothing_needs_lowering(tmp_path, spa: tuple[str, str
         f"and the lobby comes up blank. Set build.target to '{BASELINE}' in "
         f"frontend-v2/vite.config.ts and rebuild."
     )
+
+
+# ---------------------------------------------------------------------------
+# Runtime APIs, which the syntax guards above cannot see.
+#
+# build.target only governs SYNTAX. A METHOD the baseline engine never shipped
+# parses fine and throws where it is called, so the failure lands wherever that
+# happens to be — which on 2026-08-19 was every lobby request: `AbortSignal.timeout`
+# (Safari 16) is read on the way into each one, so the TypeError landed before
+# fetch. No request left the iPad, none reached the ingress, and the sidebar
+# read "Failed to load" over an empty session list. With no session to select
+# there was no terminal, which is how it was reported.
+#
+# The rule is not "never mention these" — it is "if the bundle can reach one,
+# something must fill it in first". src/lib/baseline-polyfills.ts is that
+# something, and it stamps data-tl-polyfills so a device with no developer
+# tools can still answer whether it ran.
+#
+# The SPA only. frontend/term.html names AbortSignal.timeout in a COMMENT saying
+# it deliberately uses a controller and a timer instead, and a grep cannot tell
+# that apart from a call.
+# ---------------------------------------------------------------------------
+
+# Substring → the Safari version that first shipped it. Matched literally.
+POST_BASELINE_APIS = {
+    "AbortSignal.timeout": "Safari 16.0",
+    "AbortSignal.any": "Safari 17.4",
+    "URL.canParse": "Safari 17.0",
+    "Object.groupBy": "Safari 17.4",
+    "Map.groupBy": "Safari 17.4",
+    "Array.fromAsync": "Safari 16.4",
+    ".toSorted(": "Safari 16.4",
+    ".toReversed(": "Safari 16.4",
+    ".toSpliced(": "Safari 16.4",
+    ".isWellFormed(": "Safari 17.0",
+    ".checkVisibility(": "Safari 17.4",
+}
+
+# The ones baseline-polyfills.ts fills in. Anything else on the list above has
+# no safety net, so its presence fails.
+POLYFILLED = {"AbortSignal.timeout", "URL.canParse"}
+
+# The stamp installBaselinePolyfills() writes. Minifiers rename identifiers but
+# not this string, because it becomes a DOM attribute name.
+POLYFILL_MARKER = "tlPolyfills"
+
+
+def test_spa_post_baseline_apis_are_all_polyfilled(spa: tuple[str, str]) -> None:
+    path, html = spa
+    reachable = [api for api in POST_BASELINE_APIS if api in html]
+    unguarded = sorted(api for api in reachable if api not in POLYFILLED)
+    assert not unguarded, (
+        "the built SPA can reach "
+        + ", ".join(f"{api} ({POST_BASELINE_APIS[api]})" for api in unguarded)
+        + f", which {BASELINE} (iPadOS 15.8) does not have. A missing method parses "
+        f"fine and throws at the call, so this does not show up as a broken build — "
+        f"it shows up as one feature dying on one device. Either add it to "
+        f"frontend-v2/src/lib/baseline-polyfills.ts and to POLYFILLED here, or use "
+        f"something the baseline has. ({os.path.basename(path)})"
+    )
+    if reachable:
+        assert POLYFILL_MARKER in html, (
+            f"{os.path.basename(path)} reaches {', '.join(reachable)} but does not "
+            f"carry the polyfill install — baseline-polyfills.ts was dropped from the "
+            f"bundle, or index.tsx stopped importing it first."
+        )

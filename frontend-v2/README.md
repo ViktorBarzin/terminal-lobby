@@ -108,6 +108,12 @@ src/
                          builder applies — push is deliberately excluded
     lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/rename/
                          retitle/title/…)
+    baseline-polyfills.ts  AbortSignal.timeout (Safari 16) and URL.canParse
+                         (Safari 17), filled in for the oldest engine we serve.
+                         Installed from index.tsx before anything else runs,
+                         because the first is read on the way into EVERY lobby
+                         request — its absence threw before fetch, so no request
+                         left the device and the sidebar read "Failed to load"
     markdown-plugins.ts  Which remark plugins THIS ENGINE can run. remark-gfm's
                          autolink extension builds an email pattern with a
                          lookbehind on every render, and lookbehind is Safari
