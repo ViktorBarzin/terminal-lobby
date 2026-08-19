@@ -1,0 +1,26 @@
+[Unit]
+Description=skills-api (terminal-lobby skill manager backend)
+After=network.target
+
+[Service]
+# Binds :7688 on all interfaces so the K8s ingress can reach the authed surface
+# under /skills/. Auth is X-Authentik-Username → OS user via /etc/ttyd-user-map,
+# with the same ?as= admin switch as its siblings.
+#
+# Runs as wizard, sibling to tmux-api (:7684), clipboard-upload (:7683),
+# session-events (:7685) and file-api (:7686). Unlike those, one request can act
+# as TWO users — an install reads the owner's skill and writes the recipient's,
+# in homes neither user can enter — which it does by re-execing itself through
+# `sudo -n -u <user> /usr/local/bin/skills-api -privop <op>`. That grant lives in
+# /etc/sudoers.d/ttyd-users (devvm/sudoers.d-ttyd-users here), one line per
+# terminal user, and a user without a line simply cannot be reached: their skills
+# show as unreachable rather than the panel failing.
+#
+# :7687 is skipped on purpose — it belonged to the retired terminal-dev ttyd, and
+# a stale bookmark finding a new service there is worse than a gap in the range.
+ExecStart=/usr/local/bin/skills-api
+User=wizard
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
