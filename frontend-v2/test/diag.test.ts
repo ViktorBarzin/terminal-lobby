@@ -557,3 +557,76 @@ describe("api timing", () => {
     expect(s["tl.req"]).toBe("f3a91c02-17");
   });
 });
+
+/**
+ * The engine probe. It answers "what is this browser missing", which is the
+ * question that took three rounds of screenshots to answer by hand for one
+ * iPad: a blank page (class static blocks), then an empty transcript, then a
+ * session list that never loaded because AbortSignal.timeout is Safari 16.
+ *
+ * Deliberately measured rather than read off the user agent. Every browser on
+ * iPadOS runs the system WebKit, so a Chrome version string there says nothing
+ * about what the engine can do.
+ */
+describe("engine gaps", () => {
+  const probe = (scope: Record<string, unknown>) =>
+    ((globalThis as any).tlDiag.engineGaps(scope) as string).split(",").filter(Boolean);
+
+  /** A scope with everything, which each case then takes one thing away from. */
+  const complete = () => ({
+    AbortSignal: { timeout: (ms: number) => new AbortController().signal },
+    URL: { canParse: (u: string) => true },
+    RegExp,
+  });
+
+  it("reports nothing on an engine that has it all", () => {
+    expect(probe(complete())).toEqual([]);
+  });
+
+  it("names AbortSignal.timeout when it is absent", () => {
+    const scope = complete();
+    delete (scope.AbortSignal as Record<string, unknown>).timeout;
+    expect(probe(scope)).toEqual(["AbortSignal.timeout"]);
+  });
+
+  it("names URL.canParse when it is absent", () => {
+    const scope = complete();
+    delete (scope.URL as Record<string, unknown>).canParse;
+    expect(probe(scope)).toEqual(["URL.canParse"]);
+  });
+
+  // The one that cannot be answered by asking whether a property exists: the
+  // constructor is there, it just refuses the pattern.
+  it("names lookbehind on an engine whose RegExp refuses it", () => {
+    const scope = complete();
+    const Native = RegExp;
+    scope.RegExp = function (pattern: string, flags?: string) {
+      if (typeof pattern === "string" && /\(\?<[=!]/.test(pattern)) {
+        throw new SyntaxError("invalid group specifier name");
+      }
+      return new (Native as never)(pattern as never, flags as never);
+    } as unknown as RegExpConstructor;
+    expect(probe(scope)).toEqual(["RegExp lookbehind"]);
+  });
+
+  it("reports every gap at once, which is what emo's iPad looks like", () => {
+    const scope: Record<string, unknown> = { AbortSignal: {}, URL: {} };
+    scope.RegExp = function () {
+      throw new SyntaxError("invalid group specifier name");
+    } as unknown as RegExpConstructor;
+    expect(probe(scope)).toEqual([
+      "AbortSignal.timeout",
+      "URL.canParse",
+      "RegExp lookbehind",
+    ]);
+  });
+
+  // A bare scope reports the two property probes as gaps and falls back to the
+  // ambient RegExp for the third, which is why lookbehind is absent here. The
+  // fallback never applies in production, where the scope is globalThis and
+  // RegExp is always there; it exists so a probe cannot throw on a scope that
+  // is missing more than it was asked about.
+  it("counts absent globals as gaps rather than crashing", () => {
+    expect(probe({})).toEqual(["AbortSignal.timeout", "URL.canParse"]);
+  });
+});
