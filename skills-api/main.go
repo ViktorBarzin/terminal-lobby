@@ -25,6 +25,30 @@ import (
 // a worse outcome than leaving a gap.
 const listenAddr = "0.0.0.0:7688"
 
+// routes is the service's whole HTTP surface, in one place so a test cannot
+// exercise a mux that has drifted from the one main() serves — which is exactly
+// what happened when two new endpoints reached the service but not the tests.
+func routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /skills", handleInventory)
+	mux.HandleFunc("GET /skills/view", handleView)
+	mux.HandleFunc("GET /skills/diff", handleDiff)
+	mux.HandleFunc("POST /skills/install", handleInstall)
+	mux.HandleFunc("POST /skills/toggle", handleToggle)
+	mux.HandleFunc("POST /skills/remove", handleRemove)
+	mux.HandleFunc("POST /skills/delete", handleDelete)
+	mux.HandleFunc("POST /skills/plugin-uninstall", handlePluginUninstall)
+	mux.HandleFunc("POST /skills/plugin-update", handlePluginUpdate)
+	mux.HandleFunc("POST /skills/restart", handleRestart)
+	// Unauthenticated by design, like every sibling: the deploy script and the
+	// systemd health check ask this and nothing else.
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("ok"))
+	})
+
+	return mux
+}
+
 func main() {
 	// -privop marks the privileged child, re-exec'd through sudo to act as one
 	// user. Internal: set by run(), never by the systemd unit.
@@ -39,20 +63,7 @@ func main() {
 		selfUser = u.Username
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /skills", handleInventory)
-	mux.HandleFunc("GET /skills/view", handleView)
-	mux.HandleFunc("GET /skills/diff", handleDiff)
-	mux.HandleFunc("POST /skills/install", handleInstall)
-	mux.HandleFunc("POST /skills/toggle", handleToggle)
-	mux.HandleFunc("POST /skills/remove", handleRemove)
-	mux.HandleFunc("POST /skills/plugin-update", handlePluginUpdate)
-	mux.HandleFunc("POST /skills/restart", handleRestart)
-	// Unauthenticated by design, like every sibling: the deploy script and the
-	// systemd health check ask this and nothing else.
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("ok"))
-	})
+	mux := routes()
 
 	// SKILLS_API_ADDR: scratch-build override for the dev harness, since a local
 	// build cannot bind :7688 while the production service holds it. The systemd

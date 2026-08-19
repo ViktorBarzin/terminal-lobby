@@ -305,7 +305,14 @@ export function skillDiffUrl(owner: string, name: string): string {
 /** POST target for one of the manager's actions: install | toggle | remove |
  *  plugin-update | restart. */
 export function skillActionUrl(
-  action: "install" | "toggle" | "remove" | "plugin-update" | "restart",
+  action:
+    | "install"
+    | "toggle"
+    | "remove"
+    | "delete"
+    | "plugin-update"
+    | "plugin-uninstall"
+    | "restart",
 ): string {
   return withActAs(`${API_BASE}${SKILLS_API_PREFIX}/${action}`);
 }

@@ -8,7 +8,7 @@ import {
   type Accessor,
   type Component,
 } from "solid-js";
-import type { PeerSkill } from "../lib/skills-api";
+import type { PeerSkill, Skill } from "../lib/skills-api";
 import { rowKey, type SkillsStore } from "../store/skills";
 import {
   fileSummary,
@@ -254,15 +254,32 @@ export const SkillsPanel: Component<{
                             </Show>
                             <button
                               type="button"
-                              class="tl-settings-btn tl-settings-btn-danger"
+                              class="tl-settings-btn"
                               disabled={anyBusy()}
                               onClick={() => {
                                 if (confirm(`Remove ${skill.name}? A backup is kept.`)) {
                                   void s.remove(skill.name);
                                 }
                               }}
+                              title="Keeps a copy under .backup/"
                             >
                               {isBusy(skill.name) ? "Removing…" : "Remove"}
+                            </button>
+                            {/* The permanent one. Remove is recoverable, so it
+                                keeps the plain button; this asks a harder
+                                question and names what cannot come back. */}
+                            <button
+                              type="button"
+                              class="tl-settings-btn tl-settings-btn-danger"
+                              disabled={anyBusy()}
+                              onClick={() => {
+                                if (confirm(deleteWarning(skill))) {
+                                  void s.deleteForever(skill.name);
+                                }
+                              }}
+                              title="Permanent: the skill and every backup of it"
+                            >
+                              {isBusy(skill.name) ? "Deleting…" : "Delete"}
                             </button>
                           </div>
                         </div>
@@ -326,6 +343,23 @@ export const SkillsPanel: Component<{
                         {isBusy(plugin.id) ? "Updating…" : "Update"}
                       </button>
                     </Show>
+                    <button
+                      type="button"
+                      class="tl-settings-btn tl-settings-btn-danger"
+                      disabled={anyBusy()}
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Uninstall ${plugin.name}? Its files are removed. You can install it again from its marketplace.`,
+                          )
+                        ) {
+                          void s.uninstall(plugin.id);
+                        }
+                      }}
+                      title="Removes the plugin and reclaims its files"
+                    >
+                      {isBusy(plugin.id) ? "Working…" : "Uninstall"}
+                    </button>
                   </div>
                 )}
               </For>
@@ -374,6 +408,24 @@ export const SkillsPanel: Component<{
     </div>
   );
 };
+
+/**
+ * deleteWarning says what is actually at stake, which differs per row.
+ *
+ * A skill installed from someone else is one click from coming back, so its
+ * warning is mild. One this account authored has no other copy anywhere once the
+ * backups go, and a link's target is not ours to delete — saying so is the
+ * difference between an informed click and a regretted one.
+ */
+function deleteWarning(skill: Skill): string {
+  if (skill.symlink) {
+    return `Delete ${skill.name}? The link goes; whatever it points at is left alone.`;
+  }
+  if (skill.from) {
+    return `Delete ${skill.name} permanently, including any backups? You can install it again from ${skill.from}.`;
+  }
+  return `Delete ${skill.name} permanently, including any backups? Nothing else has a copy of this one.`;
+}
 
 /** Empty renders the reason a list is empty, and nothing when it is not. */
 const Empty: Component<{ text: string; shown: boolean }> = (props) => (

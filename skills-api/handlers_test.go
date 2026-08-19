@@ -120,21 +120,13 @@ func post(t *testing.T, path, authUser, body string) *httptest.ResponseRecorder 
 	return serve(t, r)
 }
 
-// serve routes through the same mux main() builds, so a test cannot pass by
-// calling a handler the service does not expose at that path.
+// serve routes through the service's own route table, so a test cannot pass by
+// calling a handler the service does not expose at that path — and cannot fail
+// because a second copy of the table was not kept in step.
 func serve(t *testing.T, r *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /skills", handleInventory)
-	mux.HandleFunc("GET /skills/view", handleView)
-	mux.HandleFunc("GET /skills/diff", handleDiff)
-	mux.HandleFunc("POST /skills/install", handleInstall)
-	mux.HandleFunc("POST /skills/toggle", handleToggle)
-	mux.HandleFunc("POST /skills/remove", handleRemove)
-	mux.HandleFunc("POST /skills/plugin-update", handlePluginUpdate)
-	mux.HandleFunc("POST /skills/restart", handleRestart)
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
+	routes().ServeHTTP(w, r)
 	return w
 }
 
@@ -575,5 +567,73 @@ func TestRemoveBacksUpAndForgets(t *testing.T) {
 	}
 	if w := post(t, "/skills/remove", "wiz", `{"name":"diagnose"}`); w.Code != http.StatusNotFound {
 		t.Errorf("removing it twice: %d, want 404", w.Code)
+	}
+}
+
+// --- delete + plugin uninstall -----------------------------------------------
+
+func TestDeleteIsPermanentWhereRemoveIsNot(t *testing.T) {
+	base := withHomeBase(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, "wiz="+me+"\n")
+	withClock(t, time.Date(2026, 8, 19, 9, 12, 0, 0, time.UTC))
+	writeSkill(t, base, me, "caveman", map[string]string{"SKILL.md": "c\n"})
+	home := filepath.Join(base, me)
+
+	// Remove first, so there is a backup for the delete to have to take.
+	writeSkill(t, base, me, "caveman2", map[string]string{"SKILL.md": "c\n"})
+	if w := post(t, "/skills/remove", "wiz", `{"name":"caveman2"}`); w.Code != http.StatusOK {
+		t.Fatalf("remove: %d", w.Code)
+	}
+	backups, _ := os.ReadDir(filepath.Join(skillscan.Root(home), ".backup"))
+	if len(backups) != 1 {
+		t.Fatalf("want the removed skill's backup to exist, got %d", len(backups))
+	}
+
+	// Now delete a skill that also has a backup of its own.
+	if _, err := skillscan.Backup(home, "caveman", time.Date(2026, 8, 19, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, base, me, "caveman", map[string]string{"SKILL.md": "c2\n"})
+
+	w := post(t, "/skills/delete", "wiz", `{"name":"caveman"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Deleted *skillscan.DeleteResult `json:"deleted"`
+	}
+	decodeInto(t, w, &got)
+	if got.Deleted == nil || got.Deleted.PurgedBackups != 1 {
+		t.Fatalf("want one purged backup reported: %+v", got.Deleted)
+	}
+	if _, err := os.Stat(filepath.Join(skillscan.Root(home), "caveman")); !os.IsNotExist(err) {
+		t.Error("the skill should be gone")
+	}
+	// The OTHER skill's backup is untouched: delete is per-skill, not a sweep.
+	left, _ := os.ReadDir(filepath.Join(skillscan.Root(home), ".backup"))
+	if len(left) != 1 || !strings.HasPrefix(left[0].Name(), "caveman2-") {
+		t.Errorf("backups left = %v, want only caveman2's", left)
+	}
+	if w := post(t, "/skills/delete", "wiz", `{"name":"caveman"}`); w.Code != http.StatusNotFound {
+		t.Errorf("deleting it twice: %d, want 404", w.Code)
+	}
+}
+
+func TestDeleteAndUninstallValidateTheirInput(t *testing.T) {
+	withHomeBase(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, "wiz="+me+"\n")
+	for _, name := range []string{"", "../etc", "a/b", "Caps"} {
+		body := fmt.Sprintf(`{"name":%q}`, name)
+		if w := post(t, "/skills/delete", "wiz", body); w.Code != http.StatusBadRequest {
+			t.Errorf("delete %q: %d, want 400", name, w.Code)
+		}
+	}
+	for _, id := range []string{"", "no-at", "a@b@c", "../x@official"} {
+		body := fmt.Sprintf(`{"plugin":%q}`, id)
+		if w := post(t, "/skills/plugin-uninstall", "wiz", body); w.Code != http.StatusBadRequest {
+			t.Errorf("uninstall %q: %d, want 400", id, w.Code)
+		}
 	}
 }
