@@ -134,7 +134,10 @@ export const TextView: Component<{
    * Derived from the transcript, which records the questions, their options and
    * their descriptions — so only the SELECTION is ever inferred, which is the
    * low-risk half of ADR-0010. The card is dismissed the moment the transcript
-   * shows a result, whether it was answered from here or from the Terminal.
+   * shows a result — whether it was answered from here or from the Terminal —
+   * and equally the moment anything else happens after the question, since
+   * Claude Code takes a dialog down when something claims the turn and leaves
+   * that call unresolved for good (timeline.logic `markSuperseded`).
    */
   const blocking = createMemo(() => pendingQuestion(deriveRows(props.events)));
   const [answering, setAnswering] = createSignal(false);
