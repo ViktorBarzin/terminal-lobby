@@ -32,6 +32,13 @@ var knownEvents = map[string]bool{
 	"session.killed":   true,
 	"session.restored": true, // tmux-persist restore (tl.count)
 
+	// -- skills & plugins (skills-api) --------------------------------------
+	"skill.installed":         true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)
+	"skill.removed":           true, // backed up and dropped one (tl.key)
+	"skill.toggled":           true, // enabledPlugins write (tl.key, tl.kind=on|off)
+	"plugin.updated":          true, // marketplace plugin updated (tl.key)
+	"session.claude_restarted": true, // respawned a pane to load a new skill set (tl.session)
+
 	// -- projects & layout --------------------------------------------------
 	"project.created":        true,
 	"project.renamed":        true,
