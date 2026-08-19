@@ -184,6 +184,10 @@ src/
                          (own / from X / update / edited), what a peer's skill
                          offers (install / replace / nothing), and which sessions
                          may be restarted
+    skills.tabs.ts       PURE Skills-panel shape: the tab strip (own, one per
+                         other account, plugins, sessions), which tab survives an
+                         inventory that no longer has it, the name/description
+                         filter, and which empty state a list has earned
     skills.ts            Skill-manager store (lazy: the group asks on first
                          render, and every action reloads rather than patching
                          the list, so the verdicts stay the server's to compute)
@@ -247,13 +251,17 @@ src/
     RestorePicker.tsx    Restore overlay: pick a session snapshot, see what it
                          would recreate, choose which rows to bring back
     SettingsPanel.tsx    Settings overlay: theme, font size, session-list
-                         last-active time, new-session command, skills, keyboard,
+                         last-active time, new-session command, keyboard,
                          notifications, and the admin act-as picker
-    SkillsSection.tsx    The Skills group of that overlay (docs/adr/0011): this
-                         account's skills and plugins, what the other people on
-                         this box have with a same/differs verdict, and the
-                         install / replace-with-backup / disable / remove / restart
-                         actions
+    SkillsPanel.tsx      The Skills overlay (docs/adr/0011), its own dialog off
+                         the shell bar beside Settings: a tab per list — this
+                         account's skills, each other account's with a
+                         same/differs verdict, the marketplace plugins, the live
+                         sessions — a name/description filter, and the install /
+                         replace-with-backup / disable / remove / update / restart
+                         actions. It started as a group INSIDE Settings and
+                         outgrew it: 38 own skills and a peer's 21 do not read as
+                         one 420px column
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     BellIcon.tsx         Header notification-bell glyph (on/off)

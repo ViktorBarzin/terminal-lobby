@@ -138,14 +138,14 @@ describe("restartTargets", () => {
       { name: "tripit", state: "awaiting" },
     ]);
     expect(rows.map((r) => r.name)).toEqual(["infra-work", "notes", "tripit"]);
-    expect(rows[0].restartable).toBe(false);
+    expect(rows[0]!.restartable).toBe(false);
     expect(rows.slice(1).every((r) => r.restartable)).toBe(true);
   });
 
   it("treats a session with no recorded state as idle", () => {
     const [row] = restartTargets([{ name: "plain" }]);
-    expect(row.state).toBe("idle");
-    expect(row.restartable).toBe(true);
+    expect(row!.state).toBe("idle");
+    expect(row!.restartable).toBe(true);
   });
 
   it("is empty when there are no sessions", () => {

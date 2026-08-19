@@ -103,6 +103,7 @@ describe("createKeybindingEngine — the forwarded-command guard", () => {
           paletteOpen: false,
           helpOpen: false,
           settingsOpen: false,
+          skillsOpen: false,
           galleryOpen: overlay,
           previewOpen: false,
           previewDirty: false,
