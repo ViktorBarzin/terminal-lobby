@@ -91,6 +91,12 @@ function stubStore(over: Partial<SkillsStore> = {}) {
     remove: vi.fn(async (name) => {
       calls.push(`remove:${name}`);
     }),
+    deleteForever: vi.fn(async (name) => {
+      calls.push(`delete:${name}`);
+    }),
+    uninstall: vi.fn(async (plugin) => {
+      calls.push(`uninstall:${plugin}`);
+    }),
     update: vi.fn(async (plugin) => {
       calls.push(`update:${plugin}`);
     }),
@@ -310,5 +316,72 @@ describe("what the panel always says", () => {
     });
     expect(getByText(/Nothing is answering/)).toBeTruthy();
     expect(queryAllByRole("tab")).toHaveLength(0);
+  });
+});
+
+describe("permanent removal", () => {
+  it("offers Remove and Delete as different things", () => {
+    const { getByText, getByTitle } = open();
+    fireEvent.click(getByText("grilling"));
+    expect(getByTitle("Keeps a copy under .backup/")).toBeTruthy();
+    expect(getByTitle("Permanent: the skill and every backup of it")).toBeTruthy();
+  });
+
+  it("warns that an authored skill has no other copy", async () => {
+    const asked: string[] = [];
+    const { getByText, calls } = open({}, { confirm: (m) => (asked.push(m), true) });
+    fireEvent.click(getByText("grilling"));
+    fireEvent.click(getByText("Delete"));
+    await waitFor(() => expect(calls).toContain("delete:grilling"));
+    expect(asked[0]).toContain("Nothing else has a copy");
+  });
+
+  it("says an installed skill can be taken again from whoever has it", async () => {
+    const asked: string[] = [];
+    const { getByText } = open({}, { confirm: (m) => (asked.push(m), false) });
+    fireEvent.click(getByText("caveman"));
+    fireEvent.click(getByText("Delete"));
+    expect(asked[0]).toContain("install it again from bob");
+  });
+
+  it("says a link's target is left alone", async () => {
+    const inv = inventory();
+    inv.skills[0]!.symlink = true;
+    const asked: string[] = [];
+    const { getByText } = open({ inventory: () => inv }, { confirm: (m) => (asked.push(m), false) });
+    fireEvent.click(getByText("grilling"));
+    fireEvent.click(getByText("Delete"));
+    expect(asked[0]).toContain("points at is left alone");
+  });
+
+  it("does nothing when the deletion is declined", async () => {
+    const { getByText, calls } = open({}, { confirm: () => false });
+    fireEvent.click(getByText("grilling"));
+    fireEvent.click(getByText("Delete"));
+    await waitFor(() => expect(calls).not.toContain("delete:grilling"));
+  });
+
+  it("uninstalls a plugin after confirming, and says it can come back", async () => {
+    const asked: string[] = [];
+    const { tab, getAllByText, calls } = open({}, { confirm: (m) => (asked.push(m), true) });
+    tab("Plugins");
+    // Two plugins, so two buttons; superpowers is the first row.
+    fireEvent.click(getAllByText("Uninstall")[0]!);
+    await waitFor(() => expect(calls).toContain("uninstall:superpowers@official"));
+    expect(asked[0]).toContain("install it again from its marketplace");
+  });
+
+  it("leaves a plugin alone when the uninstall is declined", async () => {
+    const { tab, getAllByText, calls } = open({}, { confirm: () => false });
+    tab("Plugins");
+    fireEvent.click(getAllByText("Uninstall")[0]!);
+    await waitFor(() => expect(calls).not.toContain("uninstall:superpowers@official"));
+  });
+
+  it("offers Uninstall on every plugin, not only a stale one", () => {
+    const { tab, getAllByText } = open();
+    tab("Plugins");
+    expect(getAllByText("Uninstall")).toHaveLength(2);
+    expect(getAllByText("Update")).toHaveLength(1); // only the stale one
   });
 });

@@ -308,6 +308,8 @@ services do.
 | `POST /skills/install` | `{owner, name, replace?}` — copy in; `409` when a differing skill of that name exists and `replace` is not set |
 | `POST /skills/toggle` | `{id, enabled}` — one `enabledPlugins` write; `id` is `<name>@skills-dir` or `<plugin>@<marketplace>` |
 | `POST /skills/remove` | `{name}` — back up, then delete |
+| `POST /skills/delete` | `{name}` — permanent: the skill, every backup of it, its enabled state and its provenance; answers what it reclaimed |
+| `POST /skills/plugin-uninstall` | `{plugin}` — the CLI's own uninstall, then reclaim the files it leaves marked `.orphaned_at` |
 | `POST /skills/plugin-update` | `{plugin}` — exec the caller's own `claude plugin update` |
 | `POST /skills/restart` | `{session}` — respawn that session's pane with `claude --continue`; refuses a session whose state is `running` |
 | `GET /health` | Unauthenticated, like every sibling |
@@ -458,6 +460,26 @@ Five things came out differently from the design above, all of them from buildin
 - **The session list shows every live session**, with the mid-turn ones marked,
   rather than only the ones running an older skill set. Nothing records when a
   session's Claude last read its skills, so "affected" is honestly all of them.
+
+**Removal has two forms, added 2026-08-19 on request.** `Remove` keeps a backup
+and stays the default; `Delete` is permanent — the skill, every backup of it, its
+enabled state and its provenance — and its confirmation names what cannot come
+back, which differs by row (a peer's skill returns in one click; an authored one
+does not; a symlinked entry loses only its link). Plugins gained `Uninstall`,
+which is the CLI's own. Two measurements shaped it: `claude plugin uninstall`
+clears the `enabledPlugins` key itself (no stale marker, unlike the skill path),
+but leaves the files behind under an `.orphaned_at` marker that `claude plugin
+prune` does not collect — so the manager reclaims them and reports the bytes.
+
+> [!NOTE]
+> A finding that supersedes part of the session story above: `/reload-skills` and
+> `/reload-plugins` are real built-in slash commands in Claude Code 2.1.235, and
+> the lobby's composer already ships both in its built-in list ("Pick up skills
+> added or changed on disk during this session"). So a running session does not
+> strictly need the pane respawn this design specified — sending `/reload-skills`
+> into it would pick a change up in place. The Restart button works and stays;
+> offering the lighter reload beside it is an open follow-up rather than something
+> this change touched.
 
 Two of the repo's own guards earned their keep. The docs-truth test refused the
 frontend until the new dev-proxy prefix and the four new files were in the README

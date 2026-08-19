@@ -11,6 +11,7 @@
  */
 import { createSignal, type Accessor } from "solid-js";
 import {
+  deleteSkill,
   fetchDiff,
   fetchInventory,
   installSkill,
@@ -18,6 +19,7 @@ import {
   restartSession,
   SkillsApiError,
   toggleSkill,
+  uninstallPlugin,
   updatePlugin,
   type Inventory,
   type SkillDiff,
@@ -44,7 +46,10 @@ export interface SkillsStore {
   install: (owner: string, name: string, replace?: boolean) => Promise<void>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   remove: (name: string) => Promise<void>;
+  /** Permanent: the skill, its backups, its enabled state and its provenance. */
+  deleteForever: (name: string) => Promise<void>;
   update: (plugin: string) => Promise<void>;
+  uninstall: (plugin: string) => Promise<void>;
   restart: (session: string) => Promise<void>;
 }
 
@@ -134,10 +139,31 @@ export function createSkillsStore(): SkillsStore {
         setExpanded("");
         return `Removed ${name}. A copy is in ${short(res.backup)}`;
       }),
+    deleteForever: async (name) =>
+      act(name, async () => {
+        const res = await deleteSkill(name);
+        setExpanded("");
+        const d = res.deleted;
+        if (d?.wasSymlink) {
+          return `Deleted ${name}. It was a link — ${d.target ?? "its target"} is left alone.`;
+        }
+        const backups = d?.purgedBackups
+          ? `, with ${d.purgedBackups} backup${d.purgedBackups === 1 ? "" : "s"}`
+          : "";
+        return `Deleted ${name} permanently${backups} — ${human(d?.bytes ?? 0)} freed.`;
+      }),
     update: async (plugin) =>
       act(plugin, async () => {
         await updatePlugin(plugin);
         return `${plugin.split("@")[0]} updated — restart a session to load it.`;
+      }),
+    uninstall: async (plugin) =>
+      act(plugin, async () => {
+        const res = await uninstallPlugin(plugin);
+        const name = plugin.split("@")[0];
+        return res.freed
+          ? `Uninstalled ${name} — ${human(res.freed)} freed.`
+          : `Uninstalled ${name}.`;
       }),
     restart: async (session) =>
       act(`session:${session}`, async () => {
@@ -182,6 +208,15 @@ function loadMessage(e: unknown): string {
     return "Nothing is answering /skills — the skills service is not reachable from here.";
   }
   return message(e);
+}
+
+/** human is a size for a sentence, not a table: whole units, no decimals below a
+ *  megabyte. */
+function human(bytes: number): string {
+  if (bytes <= 0) return "nothing";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** short trims a backup path to the part a person reads: the last two segments. */

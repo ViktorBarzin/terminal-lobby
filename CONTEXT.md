@@ -216,9 +216,27 @@ _Avoid_: sync, share, push
 
 **Disable** (a skill or plugin):
 Setting `enabledPlugins["<id>"] = false` in the user's `~/.claude/settings.json`
-so new sessions stop loading it, while the files stay on disk. Distinct from
-**remove**, which backs the directory up and deletes it.
+so new sessions stop loading it, while the files stay on disk.
 _Avoid_: uninstall, turn off
+
+**Remove** (a skill):
+Copying the directory to `.backup/<name>-<timestamp>/` and deleting it. The row
+goes; the bytes do not. Recoverable by hand.
+_Avoid_: delete, uninstall
+
+**Delete** (a skill):
+The permanent one: the directory, **every backup of it**, its enabled state and
+its provenance. Nothing is left to recover from. A symlinked entry loses the
+link only — what it points at belongs to whatever put it there.
+_Avoid_: remove (that one keeps a copy)
+
+**Uninstall** (a plugin):
+`claude plugin uninstall <id>` — the CLI drops the `installed_plugins.json`
+entry and the `enabledPlugins` key, then marks the cached files `.orphaned_at`
+rather than deleting them; the manager reclaims those afterwards, since `claude
+plugin prune` only covers auto-installed dependencies. Re-installable from its
+marketplace, so it is less final than a skill **delete**.
+_Avoid_: remove, delete
 
 ### The text view
 

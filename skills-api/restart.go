@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"terminal-lobby/skillscan"
 	"terminal-lobby/telemetry"
 )
 
@@ -146,6 +147,12 @@ const maxOutput = 8 << 10
 // plugins. The binary is looked up in this user's own ~/.local/bin first, which
 // is where the fleet's per-user install lives.
 func updatePlugin(home, plugin string) (string, error) {
+	return claudePlugin(home, "update", plugin)
+}
+
+// claudePlugin runs one `claude plugin <verb> <plugin>` as the user this process
+// is already running as.
+func claudePlugin(home, verb, plugin string) (string, error) {
 	if !pluginIDRe.MatchString(plugin) {
 		return "", fmt.Errorf("invalid plugin id")
 	}
@@ -159,7 +166,7 @@ func updatePlugin(home, plugin string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pluginUpdateTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "plugin", "update", plugin)
+	cmd := exec.CommandContext(ctx, bin, "plugin", verb, plugin)
 	cmd.Env = append(environWithout("HOME"), "HOME="+home)
 	out, err := cmd.CombinedOutput()
 	text := string(out)
@@ -167,9 +174,36 @@ func updatePlugin(home, plugin string) (string, error) {
 		text = text[:maxOutput] + "\n… output truncated"
 	}
 	if err != nil {
-		return text, fmt.Errorf("claude plugin update failed: %w", err)
+		return text, fmt.Errorf("claude plugin %s failed: %w", verb, err)
 	}
 	return text, nil
+}
+
+// uninstallPlugin removes a marketplace plugin and reclaims its files.
+//
+// The CLI owns this bookkeeping and does it well: it drops the installed_plugins
+// entry AND the enabledPlugins key, so no stale marker is left behind (measured
+// on 2.1.235). What it does not do is delete the files — it marks the version
+// directory .orphaned_at and leaves it, and `claude plugin prune` does not take
+// those either. So the purge afterwards is what makes the removal permanent.
+//
+// One side effect worth knowing: the CLI rewrites the whole settings.json through
+// its own serializer, which reorders top-level keys and reformats nested values.
+// Nothing is lost, and it is that file's owner — but it is why this service writes
+// enabledPlugins itself for a plain enable/disable rather than shelling out.
+func uninstallPlugin(home, plugin string) (string, int64, error) {
+	out, err := claudePlugin(home, "uninstall", plugin)
+	if err != nil {
+		return out, 0, err
+	}
+	freed, err := skillscan.PurgeOrphanedPlugin(home, plugin)
+	if err != nil {
+		// The plugin IS uninstalled; only the reclaim failed. Say so rather than
+		// reporting a failure that would send someone looking for a live plugin.
+		log.Printf("purge after uninstalling %s: %v", plugin, err)
+		return out, 0, nil
+	}
+	return out, freed, nil
 }
 
 // environWithout copies the environment minus one variable, so a replacement can
