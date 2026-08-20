@@ -133,6 +133,22 @@ describe("<SessionView> — the phone bar's overflow menu", () => {
     expect(dots!.getAttribute("aria-expanded")).toBe("false");
   });
 
+  /**
+   * Every mounted session used to render a soft-key toolbar, and each one
+   * publishes `--sk-h` from its own height — so once the lobby started keeping
+   * sessions mounted (2026-08-19), a hidden toolbar measuring 0 inside
+   * display:none took the reservation away from the visible one. There is one
+   * toolbar again: the one on screen.
+   */
+  it("gives the toolbar only to the session on screen", () => {
+    stubViewport(PHONE);
+    const shown = render(() => <SessionView session="qa-mobile" visible={true} />);
+    expect(shown.container.querySelector("#soft-keys")).not.toBeNull();
+
+    const hidden = render(() => <SessionView session="qa-kept" visible={false} />);
+    expect(hidden.container.querySelector("#soft-keys")).toBeNull();
+  });
+
   it("keeps them as buttons on a tablet, which has the room", () => {
     stubViewport(TABLET);
     const { container } = render(() => <SessionView session="qa-mobile" />);

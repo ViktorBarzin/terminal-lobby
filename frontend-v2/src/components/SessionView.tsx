@@ -871,8 +871,14 @@ export const SessionView: Component<{
           arrows, Ctrl/Alt — and text mode has a text field, not a pty: they
           took two rows above the keyboard for nothing (Viktor, 2026-08-17).
           Unmounting rather than hiding, so the toolbar's own cleanup hands
-          --sk-h back to the view and the composer sits on the keyboard. */}
-      <Show when={coarse() && mode() === "terminal"}>
+          --sk-h back to the view and the composer sits on the keyboard.
+
+          On screen only, and that clause is load-bearing since the lobby began
+          keeping sessions mounted: every mounted toolbar carries `id="soft-keys"`
+          and publishes `--sk-h` from its own height, so a hidden one — measuring
+          0 inside display:none — would take the reservation away from the
+          toolbar you are actually looking at. */}
+      <Show when={coarse() && mode() === "terminal" && onScreen()}>
         <SoftKeys
           send={sendBytesToPty}
           onCopy={() => window.__tlForwardToTerminal?.("terminal.copy")}
