@@ -21,6 +21,7 @@ import {
 } from "../store/watchmode";
 import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
 import { watchLockedFor } from "../lib/act-as";
+import { swipeDirection } from "../mobile/swipe";
 import { ACT_AS } from "../lib/config";
 
 const isCoarse = (): boolean =>
@@ -267,13 +268,75 @@ export const SessionCard: Component<{
 
   onCleanup(endHold);
 
+  /**
+   * Swipe the row left to open the session (Viktor, 2026-08-20).
+   *
+   * The second way in on a phone, where the list is the whole screen and the
+   * first way is a tap on a 40px row. Leftward is the direction the session view
+   * already uses to move forward (mobile/swipe.ts), and the same classifier
+   * decides here: too slow, too short, or more vertical than horizontal is the
+   * list scrolling rather than a swipe.
+   *
+   * A rightward drag does nothing. It is what an iOS reader reaches for to go
+   * back, and a row that opened a session on either direction would be a row you
+   * could not scroll past.
+   */
+  /** How far the row follows the finger before it stops moving. */
+  const SWIPE_TRAIL_PX = 96;
+  /** Movement past this is a drag, so the long-press must not fire behind it. */
+  const HOLD_SLOP_PX = 8;
+  const [swipeDx, setSwipeDx] = createSignal(0);
+  let swipeFrom: { x: number; y: number; at: number } | null = null;
+
+  const onPointerDown = (e: PointerEvent) => {
+    onHoldStart(e);
+    if (e.pointerType === "mouse") return;
+    swipeFrom = { x: e.clientX, y: e.clientY, at: Date.now() };
+  };
+
+  const onPointerMove = (e: PointerEvent) => {
+    if (!swipeFrom) return;
+    const dx = e.clientX - swipeFrom.x;
+    const dy = e.clientY - swipeFrom.y;
+    // A finger that has moved is not holding still, whichever way it went.
+    if (Math.abs(dx) > HOLD_SLOP_PX || Math.abs(dy) > HOLD_SLOP_PX) endHold();
+    // Follow the finger leftward only, and stop trailing well before the row
+    // leaves the screen: this shows the gesture landing, it is not a reveal.
+    setSwipeDx(dx < 0 ? Math.max(dx, -SWIPE_TRAIL_PX) : 0);
+  };
+
+  const endSwipe = (e: PointerEvent) => {
+    endHold();
+    const from = swipeFrom;
+    swipeFrom = null;
+    setSwipeDx(0);
+    if (!from) return;
+    const dir = swipeDirection({
+      dx: e.clientX - from.x,
+      dy: e.clientY - from.y,
+      ms: Date.now() - from.at,
+    });
+    // "next" is the leftward one — the same word the session view uses for it.
+    if (dir !== "next" || editing()) return;
+    menu.close();
+    props.store.select(s().name, foreign() ? s().owner : undefined);
+  };
+
+  const cancelSwipe = () => {
+    endHold();
+    swipeFrom = null;
+    setSwipeDx(0);
+  };
+
   return (
     <div
       // the ⋯ button and its popup both live in here, so the row is the menu's
       // anchor: a press anywhere else on the page dismisses it.
       ref={menu.anchor}
       class="tl-card"
+      style={swipeDx() ? { transform: `translateX(${swipeDx()}px)` } : undefined}
       classList={{
+        "tl-card-swiping": swipeDx() !== 0,
         "tl-card-active": isActive(),
         "tl-card-foreign": foreign(),
         "tl-drop-above": dropEdge() === "above",
@@ -290,10 +353,11 @@ export const SessionCard: Component<{
       onClick={activate}
       onKeyDown={onKey}
       onDblClick={beginRename}
-      onPointerDown={onHoldStart}
-      onPointerUp={endHold}
-      onPointerCancel={endHold}
-      onPointerLeave={endHold}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endSwipe}
+      onPointerCancel={cancelSwipe}
+      onPointerLeave={cancelSwipe}
       onContextMenu={(e) => {
         // A long press raises the platform context menu on top of ours.
         if (holdFired) e.preventDefault();
