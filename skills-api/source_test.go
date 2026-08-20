@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"terminal-lobby/skillscan"
 )
 
 // Installing from outside this box (docs/adr/0012). Three things are worth
@@ -496,5 +498,43 @@ func TestInspectBoundsWhatItOffers(t *testing.T) {
 	if len(info.Skills) != maxOffered || info.SkillsCut != 260-maxOffered {
 		t.Fatalf("want %d offered and %d reported as cut, got %d and %d",
 			maxOffered, 260-maxOffered, len(info.Skills), info.SkillsCut)
+	}
+}
+
+func TestInstallingRecordsWhereItCameFrom(t *testing.T) {
+	// ADR-0012 promises the row says where a skill came from rather than "own".
+	// The installer is a stub here, so the test plants what it would have written
+	// and checks the provenance around it.
+	fakeGitHub(t, []string{"skills/handoff/SKILL.md"}, nil, 200)
+	dir := t.TempDir()
+	home := t.TempDir()
+	stub := filepath.Join(dir, "installer")
+	// Stand in for what `skills add` does: a real directory under ~/.claude/skills.
+	script := "#!/bin/sh\nmkdir -p " + filepath.Join(skillscan.Root(home), "handoff") +
+		"\nprintf '%s' '---\nname: handoff\n---\nbody\n' > " +
+		filepath.Join(skillscan.Root(home), "handoff", "SKILL.md") + "\nexit 0\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := npxBinary
+	npxBinary = stub
+	defer func() { npxBinary = old }()
+
+	if _, err := installFromSource(home, "mattpocock", "skills", "skills", []string{"handoff"}); err != nil {
+		t.Fatal(err)
+	}
+	man, err := skillscan.LoadManifest(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := man.Installed["handoff"]
+	if !ok {
+		t.Fatal("nothing recorded")
+	}
+	if p.From != "mattpocock/skills" {
+		t.Errorf("From = %q, want the source repo", p.From)
+	}
+	if p.SourceHash == "" || p.InstalledAt == "" {
+		t.Errorf("provenance incomplete: %+v", p)
 	}
 }

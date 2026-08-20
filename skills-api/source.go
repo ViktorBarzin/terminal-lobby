@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -430,7 +431,38 @@ func installSkills(home, owner, repo string, names []string) (string, error) {
 		args = append(args, "-s", n)
 	}
 	args = append(args, "-a", "claude-code", "-g", "-y")
-	return runAsUser(home, npxBinary, args...)
+	out, err := runAsUser(home, npxBinary, args...)
+	if err != nil {
+		return out, err
+	}
+	recordSource(home, owner, repo, names)
+	return out, nil
+}
+
+// recordSource writes where an installed skill came from, so its row reads "from
+// mattpocock/skills" rather than "own" and a later local edit shows as a local
+// edit. The source is not a peer on this box, so it never matches one and never
+// produces a spurious "update available"; it is provenance, not a link.
+//
+// Best-effort by design: the skill is installed either way, and a missing line in
+// .manager.json is worth less than failing an install that succeeded.
+func recordSource(home, owner, repo string, names []string) {
+	man, err := skillscan.LoadManifest(home)
+	if err != nil {
+		log.Printf("provenance for %v: %v", names, err)
+		return
+	}
+	at := time.Now().UTC()
+	for _, n := range names {
+		hash, err := skillscan.Hash(filepath.Join(skillscan.Root(home), n))
+		if err != nil {
+			continue // it did not land under that name; nothing to record
+		}
+		man.Record(n, owner+"/"+repo, hash, at)
+	}
+	if err := man.Save(home); err != nil {
+		log.Printf("provenance for %v: %v", names, err)
+	}
 }
 
 // installPlugins registers the marketplace and installs the chosen plugins with
