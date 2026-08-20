@@ -3324,6 +3324,50 @@ body.tl-kb-up {
   accent-color: var(--accent);
   display: block;
 }
+/* A four-column table does not fit a phone, so below 560px each row becomes a
+   grid: name and source on one line, the actions on their own beneath. The
+   header goes, since it labels columns that no longer exist, and the actions
+   never shrink — measured at 390px, a plain table there pushed them out of the
+   dialog entirely. */
+@media (max-width: 560px) {
+  .tl-skill-table thead {
+    display: none;
+  }
+  .tl-skill-table,
+  .tl-skill-table tbody,
+  .tl-skill-table tr,
+  .tl-skill-table td {
+    display: block;
+    width: auto;
+  }
+  .tl-skill-table tbody tr {
+    display: grid;
+    grid-template-columns: 22px 1fr auto;
+    align-items: center;
+    padding: 5px 0;
+  }
+  .tl-skill-table tbody tr.tl-detail-row {
+    display: block;
+  }
+  .tl-skill-table td {
+    border-bottom: 0;
+    padding: 1px 4px;
+  }
+  .tl-skill-table .tl-col-source {
+    text-align: right;
+  }
+  /* Own line, full width, aligned under the name — so every row is the same
+     shape rather than wrapping only where a name is long enough to push it. */
+  .tl-skill-table .tl-col-actions {
+    grid-column: 2 / -1;
+    text-align: left;
+    padding-top: 3px;
+  }
+  .tl-skill-actions {
+    justify-content: flex-start;
+  }
+}
+
 .tl-skill-detail {
   padding: 8px 10px;
   margin: 0 0 6px;
