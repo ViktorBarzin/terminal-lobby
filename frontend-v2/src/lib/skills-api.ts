@@ -204,6 +204,9 @@ export interface SourceInfo {
   skills?: SourceSkill[];
   marketplace?: string;
   plugins?: SourcePlugin[];
+  /** How many were left out of the lists above, so the panel can say so. */
+  skillsCut?: number;
+  pluginsCut?: number;
   knownOwner: boolean;
 }
 

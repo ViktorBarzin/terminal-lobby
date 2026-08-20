@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -388,5 +389,112 @@ func TestInstallingAPluginUsesTheManifestsOwnMarketplaceName(t *testing.T) {
 	}
 	if !strings.Contains(argv, "plugin install demo@official -y") {
 		t.Errorf("want the manifest's own name after the @: %q", argv)
+	}
+}
+
+func TestInspectSkipsAStaleCredentialAndKeepsGoing(t *testing.T) {
+	// A real ~/.git-credentials holds several lines for one host and they are not
+	// all live: wizard's FIRST github.com entry answers 401 while the two after it
+	// work, which made every lookup fail until this fell through.
+	var tried []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		tried = append(tried, auth)
+		if auth == "Bearer dead" {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"message":"Bad credentials"}`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"sha": "s", "tree": []map[string]any{
+			{"path": "skills/a/SKILL.md", "type": "blob"}}})
+	}))
+	defer srv.Close()
+	oldAPI, oldRaw := githubAPI, githubRaw
+	githubAPI, githubRaw = srv.URL, srv.URL
+	defer func() { githubAPI, githubRaw = oldAPI, oldRaw }()
+
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".git-credentials"),
+		[]byte("https://git:dead@github.com\nhttps://ViktorBarzin:live@github.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := inspectSource(home, "o", "r")
+	if err != nil {
+		t.Fatalf("a stale first credential must not fail the lookup: %v", err)
+	}
+	if len(info.Skills) != 1 {
+		t.Errorf("skills = %+v", info.Skills)
+	}
+	if len(tried) < 2 || tried[0] != "Bearer dead" || tried[1] != "Bearer live" {
+		t.Errorf("want the dead credential tried then the live one, got %v", tried)
+	}
+}
+
+func TestInspectFallsBackToNoCredentialAtAll(t *testing.T) {
+	// Every credential stale: a public repo still reads unauthenticated, which is
+	// the last candidate.
+	var tried []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		tried = append(tried, auth)
+		if auth != "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"sha": "s", "tree": []map[string]any{
+			{"path": "SKILL.md", "type": "blob"}}})
+	}))
+	defer srv.Close()
+	oldAPI, oldRaw := githubAPI, githubRaw
+	githubAPI, githubRaw = srv.URL, srv.URL
+	defer func() { githubAPI, githubRaw = oldAPI, oldRaw }()
+
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".git-credentials"),
+		[]byte("https://a:dead1@github.com\nhttps://b:dead2@github.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inspectSource(home, "o", "r"); err != nil {
+		t.Fatalf("want the unauthenticated fallback to succeed: %v", err)
+	}
+	if tried[len(tried)-1] != "" {
+		t.Errorf("last attempt should carry no credential, got %v", tried)
+	}
+}
+
+func TestInspectSaysARepoIsTooLargeRatherThanFailingToParseIt(t *testing.T) {
+	// torvalds/linux answers 200 with a tree far past the read cap. Parsing the
+	// first 4 MB of that is not a partial answer, it is a syntax error — and
+	// "unexpected end of JSON input" tells nobody anything.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"sha":"x","tree":[`))
+		filler := strings.Repeat(`{"path":"a/very/long/path/that/goes/on/SKILL.md","type":"blob"},`, 80000)
+		w.Write([]byte(filler))
+	}))
+	defer srv.Close()
+	old := githubAPI
+	githubAPI = srv.URL
+	defer func() { githubAPI = old }()
+
+	_, err := inspectSource(t.TempDir(), "torvalds", "linux")
+	if err == nil || !strings.Contains(err.Error(), "too large to inspect") {
+		t.Fatalf("want a size error, got %v", err)
+	}
+}
+
+func TestInspectBoundsWhatItOffers(t *testing.T) {
+	// A marketplace can be huge: the official one offers 286 plugins.
+	tree := make([]string, 0, 260)
+	for i := 0; i < 260; i++ {
+		tree = append(tree, fmt.Sprintf("skills/s%03d/SKILL.md", i))
+	}
+	fakeGitHub(t, tree, nil, 200)
+	info, err := inspectSource(t.TempDir(), "someone", "many")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Skills) != maxOffered || info.SkillsCut != 260-maxOffered {
+		t.Fatalf("want %d offered and %d reported as cut, got %d and %d",
+			maxOffered, 260-maxOffered, len(info.Skills), info.SkillsCut)
 	}
 }
