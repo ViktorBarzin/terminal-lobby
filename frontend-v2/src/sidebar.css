@@ -434,6 +434,12 @@
   min-width: 0;
   position: relative;
   border: 1px solid transparent;
+  /* The row follows a leftward finger and springs back when the swipe does not
+     carry (SessionCard: swipe left to open). `pan-y` gives the browser the
+     vertical scroll and keeps the horizontal drag here, so the two gestures
+     never fight over the same finger. */
+  transition: transform 160ms ease;
+  touch-action: pan-y;
 }
 .tl-card:hover {
   background: var(--bg-card-hover);
@@ -441,6 +447,10 @@
 .tl-card:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
+}
+/* While the finger is down the transform tracks it, so no easing. */
+.tl-card-swiping {
+  transition: none;
 }
 .tl-card-active {
   background: var(--bg-card);
