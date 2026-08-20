@@ -38,6 +38,8 @@ func routes() *http.ServeMux {
 	mux.HandleFunc("POST /skills/remove", handleRemove)
 	mux.HandleFunc("POST /skills/delete", handleDelete)
 	mux.HandleFunc("POST /skills/plugin-uninstall", handlePluginUninstall)
+	mux.HandleFunc("POST /skills/source/inspect", handleSourceInspect)
+	mux.HandleFunc("POST /skills/source/install", handleSourceInstall)
 	mux.HandleFunc("POST /skills/plugin-update", handlePluginUpdate)
 	mux.HandleFunc("POST /skills/restart", handleRestart)
 	// Unauthenticated by design, like every sibling: the deploy script and the

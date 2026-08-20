@@ -312,7 +312,9 @@ export function skillActionUrl(
     | "delete"
     | "plugin-update"
     | "plugin-uninstall"
-    | "restart",
+    | "restart"
+    | "source/inspect"
+    | "source/install",
 ): string {
   return withActAs(`${API_BASE}${SKILLS_API_PREFIX}/${action}`);
 }

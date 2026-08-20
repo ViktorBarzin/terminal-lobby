@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -302,6 +303,98 @@ func handleRemove(w http.ResponseWriter, r *http.Request) {
 	log.Printf("remove: %s dropped %s (backup=%q)", me, body.Name, res.Backup)
 	writeJSON(w, map[string]any{"name": body.Name, "backup": res.Backup})
 }
+
+// --- POST /skills/source/inspect ---------------------------------------------
+
+// handleSourceInspect looks at a repo without installing anything and reports
+// what can be taken from it (docs/adr/0012). This is the step that answers "is
+// this indeed a skill" — and it decides between the two install paths, since a
+// repo can be a skills repo, a plugin marketplace, or both.
+func handleSourceInspect(w http.ResponseWriter, r *http.Request) {
+	me := resolveOSUser(w, r)
+	if me == "" {
+		return
+	}
+	var body struct {
+		Source string `json:"source"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	owner, repo, err := normalizeSource(body.Source)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Runs as the caller: the rate limit it spends, and the token it may use, are
+	// theirs.
+	res := run(me, opInspect, request{Owner: owner, Repo: repo})
+	if res.Status != 200 {
+		http.Error(w, res.Error, res.Status)
+		return
+	}
+	writeJSON(w, res.Source)
+}
+
+// --- POST /skills/source/install ---------------------------------------------
+
+// handleSourceInstall brings the chosen skills or plugins in by running the
+// ecosystem's own installer as the caller. Nothing is staged for review first —
+// the panel reports what landed, and Delete is one click (ADR-0012).
+func handleSourceInstall(w http.ResponseWriter, r *http.Request) {
+	me := resolveOSUser(w, r)
+	if me == "" {
+		return
+	}
+	var body struct {
+		Source string   `json:"source"`
+		Kind   string   `json:"kind"`
+		Names  []string `json:"names"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	owner, repo, err := normalizeSource(body.Source)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Kind != "skills" && body.Kind != "plugins" {
+		http.Error(w, "kind must be skills or plugins", http.StatusBadRequest)
+		return
+	}
+	if len(body.Names) == 0 || len(body.Names) > maxNames {
+		http.Error(w, fmt.Sprintf("choose between 1 and %d to install", maxNames), http.StatusBadRequest)
+		return
+	}
+	res := run(me, opSource, request{Owner: owner, Repo: repo, Kind: body.Kind, Names: body.Names})
+	if res.Status != 200 {
+		writeStatusJSON(w, res.Status, map[string]any{"error": res.Error, "output": res.Output})
+		return
+	}
+	event := "skill.installed"
+	if body.Kind == "plugins" {
+		event = "plugin.installed"
+	}
+	for _, n := range body.Names {
+		events.Emit(event, me, telemetry.Attrs{
+			"tl.key":  n,
+			"tl.from": owner + "/" + repo,
+			"tl.kind": "source",
+		})
+	}
+	log.Printf("source install: %s took %v (%s) from %s/%s", me, body.Names, body.Kind, owner, repo)
+	writeJSON(w, map[string]any{
+		"source": owner + "/" + repo,
+		"kind":   body.Kind,
+		"names":  body.Names,
+		"output": res.Output,
+	})
+}
+
+// maxNames bounds one install request. A repo can offer hundreds of skills; a
+// person choosing more than this in one go is more likely a mistake than intent.
+const maxNames = 25
 
 // --- POST /skills/delete -----------------------------------------------------
 

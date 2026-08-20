@@ -291,6 +291,13 @@ func inspect(dir string, lim Limits) (Stat, error) {
 	return st, nil
 }
 
+// Description reads a skill's one-line summary out of a SKILL.md body.
+//
+// Exported for the source inspector, which reads a candidate SKILL.md straight
+// off raw.githubusercontent before anything is installed and needs exactly this
+// parse — including the `|` block form most skills in this fleet use.
+func Description(body []byte) string { return description(body) }
+
 // description pulls the one-line summary out of a skill's frontmatter.
 //
 // The frontmatter is YAML but only one key is wanted, and the files in this

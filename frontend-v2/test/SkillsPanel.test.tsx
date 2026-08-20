@@ -3,7 +3,7 @@ import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { SkillsPanel } from "../src/components/SkillsPanel";
 import { rowKey, type SkillsStore } from "../src/store/skills";
-import type { Inventory, SkillDiff } from "../src/lib/skills-api";
+import type { Inventory, SkillDiff, SourceInfo } from "../src/lib/skills-api";
 
 /**
  * The Skills panel — its own overlay, beside Settings. The store is stubbed so
@@ -103,6 +103,11 @@ function stubStore(over: Partial<SkillsStore> = {}) {
     restart: vi.fn(async (session) => {
       calls.push(`restart:${session}`);
     }),
+    source: () => null,
+    inspecting: () => false,
+    inspect: vi.fn(async () => {}),
+    clearSource: () => {},
+    installSource: vi.fn(async () => {}),
     ...over,
   };
   return { store, calls };
@@ -434,5 +439,104 @@ describe("the lists are tables, so the eye can cross a row", () => {
     fireEvent.click(getByText("Replace"));
     await waitFor(() => expect(calls).not.toContain("install:bob/tdd:replace"));
     expect(asked[0]).toContain("backed up first");
+  });
+});
+
+describe("installing from a repo", () => {
+  const withSource = (over: Partial<SkillsStore> = {}) => {
+    const [src, setSrc] = createSignal<SourceInfo | null>(null);
+    const calls: string[] = [];
+    const base = stubStore({
+      source: src,
+      inspecting: () => false,
+      inspect: vi.fn(async (input: string) => {
+        calls.push(`inspect:${input}`);
+        setSrc({
+          owner: "mattpocock",
+          repo: "skills",
+          knownOwner: true,
+          skills: [
+            { name: "tdd", path: "skills/engineering/tdd/SKILL.md", description: "Test first." },
+            { name: "triage", path: "skills/engineering/triage/SKILL.md" },
+          ],
+          marketplace: "mattpocock-skills",
+          plugins: [{ name: "mattpocock-skills", description: "All of them" }],
+        });
+      }),
+      clearSource: () => setSrc(null),
+      installSource: vi.fn(async (kind: string, names: string[]) => {
+        calls.push(`install:${kind}:${names.join(",")}`);
+      }),
+      ...over,
+    });
+    const r = render(() => (
+      <SkillsPanel skills={base.store} onClose={() => {}} confirm={() => true} />
+    ));
+    return { ...r, calls, store: base.store };
+  };
+
+  it("offers the field on Mine and Plugins, but not on Sessions", () => {
+    const { getByLabelText, queryByLabelText, getByRole } = withSource();
+    expect(getByLabelText("Install from a repo")).toBeTruthy();
+    fireEvent.click(getByRole("tab", { name: /Plugins/ }));
+    expect(queryByLabelText("Install from a repo")).not.toBeNull();
+  });
+
+  it("looks at a repo before installing anything", async () => {
+    const { getByLabelText, getByText, calls } = withSource();
+    fireEvent.input(getByLabelText("Install from a repo"), { target: { value: " mattpocock/skills " } });
+    fireEvent.click(getByText("Look"));
+    await waitFor(() => expect(calls).toContain("inspect:mattpocock/skills"));
+    expect(calls.some((c) => c.startsWith("install:"))).toBe(false);
+  });
+
+  it("offers both kinds when a repo is both", async () => {
+    const { getByLabelText, getByText } = withSource();
+    fireEvent.input(getByLabelText("Install from a repo"), { target: { value: "mattpocock/skills" } });
+    fireEvent.click(getByText("Look"));
+    await waitFor(() => expect(getByText("Skills (2)")).toBeTruthy());
+    expect(getByText(/Plugins in mattpocock-skills/)).toBeTruthy();
+    expect(getByText("Test first.")).toBeTruthy();
+  });
+
+  it("installs only what was ticked, by kind", async () => {
+    const { getByLabelText, getByText, getAllByRole, getByRole, calls } = withSource();
+    fireEvent.input(getByLabelText("Install from a repo"), { target: { value: "mattpocock/skills" } });
+    fireEvent.click(getByText("Look"));
+    await waitFor(() => expect(getByText("Skills (2)")).toBeTruthy());
+    const boxes = getAllByRole("checkbox").filter((b) =>
+      (b.parentElement?.textContent ?? "").match(/^(tdd|triage|mattpocock-skills)/),
+    );
+    fireEvent.click(boxes[0]!); // tdd
+    fireEvent.click(boxes[2]!); // the plugin
+    fireEvent.click(getByRole("button", { name: /^Install/ }));
+    await waitFor(() => expect(calls).toContain("install:skills:tdd"));
+    expect(calls).toContain("install:plugins:mattpocock-skills");
+    expect(calls).not.toContain("install:skills:triage");
+  });
+
+  it("says the installer runs as you before it runs", async () => {
+    const asked: string[] = [];
+    const [src, setSrc] = createSignal<SourceInfo | null>({
+      owner: "some-stranger", repo: "skills", knownOwner: false,
+      skills: [{ name: "x", path: "skills/x/SKILL.md" }],
+    });
+    const { store } = stubStore({ source: src, inspecting: () => false, clearSource: () => setSrc(null) });
+    const { getAllByRole, getByRole } = render(() => (
+      <SkillsPanel skills={store} onClose={() => {}} confirm={(m) => (asked.push(m), false)} />
+    ));
+    fireEvent.click(getAllByRole("checkbox").find((b) => (b.parentElement?.textContent ?? "").startsWith("x"))!);
+    fireEvent.click(getByRole("button", { name: /^Install/ }));
+    expect(asked[0]).toContain("runs that project's own installer as you");
+  });
+
+  it("flags an owner this account has not installed from before", () => {
+    const [src] = createSignal<SourceInfo | null>({
+      owner: "some-stranger", repo: "skills", knownOwner: false,
+      skills: [{ name: "x", path: "skills/x/SKILL.md" }],
+    });
+    const { store } = stubStore({ source: src, inspecting: () => false });
+    const { getByText } = render(() => <SkillsPanel skills={store} onClose={() => {}} />);
+    expect(getByText(/not an owner you have installed from before/)).toBeTruthy();
   });
 });

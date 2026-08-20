@@ -137,7 +137,8 @@ src/
                          document formats anywhere — never source paths), and
                          which of the two backends serves each one
     skills-api.ts        skills-api client (inventory/view/diff/install/toggle/
-                         remove/delete/plugin-update/plugin-uninstall/restart). Maps each status the
+                         remove/delete/plugin-update/plugin-uninstall/restart,
+                         plus source inspect + install from a GitHub repo). Maps each status the
                          panel says something different about: 409 is a name
                          collision with a diff to show, 404 a list drawn before
                          someone else removed that skill
@@ -262,7 +263,11 @@ src/
                          actions, plus the two permanent ones — Delete (the
                          skill and every backup of it) and Uninstall (a plugin
                          and its files). Every action is ON the row for both
-                         lists; expanding one is for reading, not for acting. It started as a group INSIDE Settings and
+                         lists; expanding one is for reading, not for acting.
+                         Also the owner/repo field: one read-only look decides
+                         whether a repo offers skills, a plugin marketplace or
+                         both, then the ecosystem's own installer runs as you
+                         (docs/adr/0012) It started as a group INSIDE Settings and
                          outgrew it: 38 own skills and a peer's 21 do not read as
                          one 420px column
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
