@@ -29,6 +29,7 @@ import { Toaster } from "./Toaster";
 import { createPrefsStore } from "../store/prefs";
 import { createSkillsStore } from "../store/skills";
 import { SkillsPanel } from "./SkillsPanel";
+import { SkillsIcon } from "./Icons";
 import { toasts } from "../store/toast";
 import { createKeybindingEngine } from "../keybindings/engine";
 import { keyContext } from "../keybindings/bindings.logic";
@@ -524,7 +525,8 @@ export const App: Component = () => {
       aria-expanded={skillsOpen()}
       onClick={() => setSkillsOpen((v) => !v)}
     >
-      ⌘<span class="tl-btn-label">Skills</span>
+      <SkillsIcon />
+      <span class="tl-btn-label">Skills</span>
     </button>
   );
 
@@ -556,6 +558,10 @@ export const App: Component = () => {
                 }
               : undefined
           }
+          // The Skills panel needs the same phone route as Settings: its button
+          // lives on the folded-away shell bar, and the session-bar menu that
+          // also carries it is only there once a session is open.
+          onOpenSkills={flip() ? () => setSkillsOpen((v) => !v) : undefined}
           // Same reason as onOpenSettings: on a phone the shell bar that
           // carries the chip is folded away, so the list screen needs its own
           // one-tap route back to your own lobby.
