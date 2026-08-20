@@ -50,6 +50,12 @@ const skillsCLI = "skills@latest"
 // download, which is why this is minutes rather than seconds.
 const installTimeout = 5 * time.Minute
 
+// maxBodyBytes caps one response read. A tree listing is JSON, so a body that
+// reaches the cap is not a partial answer to be parsed — it is a repository too
+// large to inspect this way, and saying that beats "unexpected end of JSON input"
+// (which is what torvalds/linux produced).
+const maxBodyBytes = 4 << 20
+
 // inspectTimeout bounds the read-only look at a repo.
 const inspectTimeout = 45 * time.Second
 
@@ -58,6 +64,12 @@ const inspectTimeout = 45 * time.Second
 // with hundreds of skills would otherwise turn a click into hundreds of fetches.
 // Beyond the cap the names are still listed, without their descriptions.
 const maxDescriptions = 60
+
+// maxOffered bounds each list one inspection returns. Measured:
+// anthropics/claude-plugins-official offers 286 plugins and 31 skills, which is
+// more than a picker can present usefully — the panel filters what it is given,
+// and this keeps the response from being enormous either way.
+const maxOffered = 200
 
 // knownOwners are the GitHub owners this box already installs from. Being on this
 // list is a NOTE in the panel, never a gate — the owner of a repo is weak evidence
@@ -127,31 +139,39 @@ type sourceInfo struct {
 	Skills      []sourceSkill  `json:"skills,omitempty"`
 	Marketplace string         `json:"marketplace,omitempty"`
 	Plugins     []sourcePlugin `json:"plugins,omitempty"`
-	KnownOwner  bool           `json:"knownOwner"`
+	// SkillsCut / PluginsCut: how many were left out of the lists above, so the
+	// panel can say so rather than presenting a truncated list as the whole thing.
+	SkillsCut  int  `json:"skillsCut,omitempty"`
+	PluginsCut int  `json:"pluginsCut,omitempty"`
+	KnownOwner bool `json:"knownOwner"`
 }
 
-// githubToken reads the caller's own GitHub token out of ~/.git-credentials.
+// githubTokens reads the caller's own GitHub tokens out of ~/.git-credentials, in
+// file order, and always offers "" (unauthenticated) as the last resort.
 //
-// With it the tree API allows 5,000 requests/hour for them alone; without it the
-// limit is 60/hour PER IP, shared by everyone on this box. Absent is fine — the
-// request simply goes out unauthenticated.
-func githubToken(home string) string {
-	f, err := os.Open(filepath.Join(home, ".git-credentials"))
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		u, err := url.Parse(strings.TrimSpace(sc.Text()))
-		if err != nil || u.Host != "github.com" {
-			continue
+// A token raises the tree API from 60 requests/hour PER IP — shared by everyone on
+// this box — to 5,000/hour for that person alone. Plural because a real
+// .git-credentials holds several lines for one host and they are not all live:
+// wizard's first github.com entry answers 401 while the two after it work, so
+// taking the first match made every lookup fail. Callers try them in order.
+func githubTokens(home string) []string {
+	var out []string
+	if f, err := os.Open(filepath.Join(home, ".git-credentials")); err == nil {
+		defer f.Close()
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			u, err := url.Parse(strings.TrimSpace(sc.Text()))
+			if err != nil || u.Host != "github.com" {
+				continue
+			}
+			if pw, ok := u.User.Password(); ok && pw != "" {
+				out = append(out, pw)
+			}
 		}
-		if pw, ok := u.User.Password(); ok && pw != "" {
-			return pw
-		}
 	}
-	return ""
+	// Unauthenticated last: a public repo is readable without any of them, so a
+	// stale credential must not be the reason a lookup fails.
+	return append(out, "")
 }
 
 // inspectSource looks at a repo once, read-only, and reports what can be
@@ -162,9 +182,8 @@ func inspectSource(home, owner, repo string) (sourceInfo, error) {
 	defer cancel()
 
 	info := sourceInfo{Owner: owner, Repo: repo, KnownOwner: knownOwners[strings.ToLower(owner)]}
-	token := githubToken(home)
 
-	tree, sha, err := fetchTree(ctx, owner, repo, token)
+	tree, sha, token, err := fetchTree(ctx, owner, repo, githubTokens(home))
 	if err != nil {
 		return info, err
 	}
@@ -187,10 +206,18 @@ func inspectSource(home, owner, repo string) (sourceInfo, error) {
 		}
 	}
 	sort.Slice(info.Skills, func(i, j int) bool { return info.Skills[i].Name < info.Skills[j].Name })
+	if len(info.Skills) > maxOffered {
+		info.SkillsCut = len(info.Skills) - maxOffered
+		info.Skills = info.Skills[:maxOffered]
+	}
 
 	if hasManifest {
 		if name, plugins, err := fetchManifest(ctx, owner, repo, token); err == nil {
 			info.Marketplace, info.Plugins = name, plugins
+			if len(info.Plugins) > maxOffered {
+				info.PluginsCut = len(info.Plugins) - maxOffered
+				info.Plugins = info.Plugins[:maxOffered]
+			}
 		}
 	}
 	if len(info.Skills) == 0 && info.Marketplace == "" {
@@ -205,25 +232,48 @@ const manifestPath = ".claude-plugin/marketplace.json"
 // fetchTree lists a repo's files in one call, and separates the two failures that
 // look alike from the outside: a repo that is not there, and this box having used
 // up the shared unauthenticated quota.
-func fetchTree(ctx context.Context, owner, repo, token string) ([]string, string, error) {
+// fetchTree lists a repo's files in one call and reports which credential worked,
+// so the rest of the inspection reuses it.
+//
+// It tries each candidate in turn: a 401 means that credential is not live, which
+// is a reason to try the next one rather than to fail — the last candidate is
+// always unauthenticated, which reads any public repo. It also separates the two
+// failures that look alike from outside: a repo that is not there, and this box
+// having spent the shared quota.
+func fetchTree(ctx context.Context, owner, repo string, tokens []string) ([]string, string, string, error) {
 	u := fmt.Sprintf("%s/repos/%s/%s/git/trees/HEAD?recursive=1", githubAPI, owner, repo)
-	res, body, err := httpGet(ctx, u, token)
-	if err != nil {
-		return nil, "", fmt.Errorf("could not reach GitHub: %w", err)
+	var res *http.Response
+	var body []byte
+	var token string
+	for i, candidate := range tokens {
+		var err error
+		res, body, err = httpGet(ctx, u, candidate)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("could not reach GitHub: %w", err)
+		}
+		token = candidate
+		if res.StatusCode == http.StatusUnauthorized && i < len(tokens)-1 {
+			continue // that credential is stale; try the next
+		}
+		break
 	}
 	switch {
 	case res.StatusCode == http.StatusNotFound:
-		return nil, "", fmt.Errorf("no such repository: %s/%s", owner, repo)
+		return nil, "", "", fmt.Errorf("no such repository: %s/%s (private repositories are not supported)", owner, repo)
+	case res.StatusCode == http.StatusUnauthorized:
+		return nil, "", "", fmt.Errorf("GitHub rejected every credential in ~/.git-credentials for %s/%s", owner, repo)
 	case res.StatusCode == http.StatusForbidden || res.StatusCode == http.StatusTooManyRequests:
 		if res.Header.Get("X-RateLimit-Remaining") == "0" {
 			if token == "" {
-				return nil, "", fmt.Errorf("GitHub rate limit reached — 60 requests/hour is shared by everyone on this box; a token in ~/.git-credentials raises it")
+				return nil, "", "", fmt.Errorf("GitHub rate limit reached — 60 requests/hour is shared by everyone on this box; a token in ~/.git-credentials raises it")
 			}
-			return nil, "", fmt.Errorf("GitHub rate limit reached for your token")
+			return nil, "", "", fmt.Errorf("GitHub rate limit reached for your token")
 		}
-		return nil, "", fmt.Errorf("GitHub refused the request for %s/%s", owner, repo)
+		return nil, "", "", fmt.Errorf("GitHub refused the request for %s/%s", owner, repo)
 	case res.StatusCode != http.StatusOK:
-		return nil, "", fmt.Errorf("GitHub answered %d for %s/%s", res.StatusCode, owner, repo)
+		return nil, "", "", fmt.Errorf("GitHub answered %d for %s/%s", res.StatusCode, owner, repo)
+	case len(body) > maxBodyBytes:
+		return nil, "", "", fmt.Errorf("%s/%s is too large to inspect — its file list is over %d MB", owner, repo, maxBodyBytes>>20)
 	}
 	var doc struct {
 		Sha  string `json:"sha"`
@@ -234,13 +284,13 @@ func fetchTree(ctx context.Context, owner, repo, token string) ([]string, string
 		Truncated bool `json:"truncated"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, "", fmt.Errorf("could not read GitHub's answer: %w", err)
+		return nil, "", "", fmt.Errorf("could not read GitHub's answer: %w", err)
 	}
 	paths := make([]string, 0, len(doc.Tree))
 	for _, e := range doc.Tree {
 		paths = append(paths, e.Path)
 	}
-	return paths, doc.Sha, nil
+	return paths, doc.Sha, token, nil
 }
 
 // fetchManifest reads a marketplace manifest for its name and the plugins it
@@ -320,7 +370,7 @@ func httpGet(ctx context.Context, u, token string) (*http.Response, []byte, erro
 		return nil, nil, err
 	}
 	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxBodyBytes+1))
 	return res, body, err
 }
 

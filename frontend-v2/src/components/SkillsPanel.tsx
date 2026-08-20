@@ -21,6 +21,7 @@ import {
 } from "../store/skills.logic";
 import {
   emptyReason,
+  matches,
   mineRows,
   peerRows,
   pluginRows,
@@ -588,6 +589,13 @@ const SourceResult: Component<{
 }> = (props) => {
   const s = props.store;
   const [chosen, setChosen] = createSignal<Record<string, "skills" | "plugins">>({});
+  // A marketplace can offer hundreds — the official one has 286 plugins — so the
+  // result gets its own filter once either list is long enough to need one.
+  const [narrow, setNarrow] = createSignal("");
+  const shown = <T extends { name: string; description?: string }>(rows: T[] | undefined) =>
+    (rows ?? []).filter((r) => matches(r, narrow()));
+  const many = () =>
+    (props.info.skills ?? []).length + (props.info.plugins ?? []).length > 25;
   const pick = (name: string, kind: "skills" | "plugins", on: boolean) =>
     setChosen((c) => {
       const next = { ...c };
@@ -634,9 +642,24 @@ const SourceResult: Component<{
         </Show>
       </div>
 
+      <Show when={many()}>
+        <input
+          class="tl-skills-filter"
+          type="search"
+          placeholder="Narrow this list"
+          value={narrow()}
+          onInput={(e) => setNarrow(e.currentTarget.value)}
+          aria-label="Narrow what this repo offers"
+        />
+      </Show>
+
       <Show when={(props.info.skills ?? []).length > 0}>
-        <div class="tl-skill-head">Skills ({(props.info.skills ?? []).length})</div>
-        <For each={props.info.skills}>
+        <div class="tl-skill-head">
+          Skills ({(props.info.skills ?? []).length}
+          <Show when={props.info.skillsCut}>{` of ${(props.info.skills ?? []).length + (props.info.skillsCut ?? 0)}`}</Show>
+          )
+        </div>
+        <For each={shown(props.info.skills)}>
           {(sk) => (
             <label class="tl-source-row">
               <input
@@ -655,9 +678,11 @@ const SourceResult: Component<{
 
       <Show when={(props.info.plugins ?? []).length > 0}>
         <div class="tl-skill-head">
-          Plugins in {props.info.marketplace} ({(props.info.plugins ?? []).length})
+          Plugins in {props.info.marketplace} ({(props.info.plugins ?? []).length}
+          <Show when={props.info.pluginsCut}>{` of ${(props.info.plugins ?? []).length + (props.info.pluginsCut ?? 0)}`}</Show>
+          )
         </div>
-        <For each={props.info.plugins}>
+        <For each={shown(props.info.plugins)}>
           {(pl) => (
             <label class="tl-source-row">
               <input
