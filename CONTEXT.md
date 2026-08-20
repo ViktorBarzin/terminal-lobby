@@ -219,6 +219,13 @@ Setting `enabledPlugins["<id>"] = false` in the user's `~/.claude/settings.json`
 so new sessions stop loading it, while the files stay on disk.
 _Avoid_: uninstall, turn off
 
+**Edit** (a skill):
+Writing your own `~/.claude/skills/<name>/SKILL.md` back from the panel, in the
+row that lists it. Only ever your own: a peer's skill can be read there, and
+**install** is what makes one yours to change. New sessions read the change;
+running ones keep the text they loaded.
+_Avoid_: update (that one takes the owner's newer copy)
+
 **Remove** (a skill):
 Copying the directory to `.backup/<name>-<timestamp>/` and deleting it. The row
 goes; the bytes do not. Recoverable by hand.

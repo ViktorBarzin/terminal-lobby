@@ -637,3 +637,101 @@ func TestDeleteAndUninstallValidateTheirInput(t *testing.T) {
 		}
 	}
 }
+
+// --- POST /skills/edit -------------------------------------------------------
+
+func TestEditWritesMyOwnSkillFile(t *testing.T) {
+	base := withHomeBase(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, "wiz="+me+"\n")
+	writeSkill(t, base, me, "tidy", map[string]string{"SKILL.md": "---\nname: tidy\n---\nold\n"})
+
+	body := `{"name":"tidy","content":"---\nname: tidy\ndescription: Tidies up.\n---\nnew\n"}`
+	w := post(t, "/skills/edit", "wiz", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Name string   `json:"name"`
+		Path string   `json:"path"`
+		Hash string   `json:"hash"`
+		Stat *statRow `json:"stat"`
+	}
+	decodeInto(t, w, &got)
+	want := filepath.Join(skillscan.Root(filepath.Join(base, me)), "tidy", "SKILL.md")
+	if got.Name != "tidy" || got.Path != want {
+		t.Errorf("name/path = %q %q, want tidy and %q", got.Name, got.Path, want)
+	}
+	if got.Hash == "" || got.Stat == nil || got.Stat.Description != "Tidies up." {
+		t.Errorf("hash/stat = %q %+v, want the reread of what was just written", got.Hash, got.Stat)
+	}
+	on, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(on), "new") {
+		t.Errorf("file on disk still reads %q", on)
+	}
+}
+
+func TestEditRefusals(t *testing.T) {
+	cases := []struct {
+		what, body string
+		want       int
+	}{
+		{"a skill I do not have", `{"name":"absent","content":"hi"}`, http.StatusNotFound},
+		{"an invalid name", `{"name":"../escape","content":"hi"}`, http.StatusBadRequest},
+		{"an empty name", `{"name":"","content":"hi"}`, http.StatusBadRequest},
+		{"empty content", `{"name":"tidy","content":""}`, http.StatusBadRequest},
+		{"not json", `nope`, http.StatusBadRequest},
+		// There is no owner field: the endpoint can only ever reach the caller's
+		// own skills, and naming someone else's account is a bad request rather
+		// than something the service quietly ignores.
+		{"an owner", `{"owner":"bob","name":"tidy","content":"hi"}`, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		t.Run(c.what, func(t *testing.T) {
+			base := withHomeBase(t)
+			me, _ := twoLocalUsers(t)
+			withUserMap(t, "wiz="+me+"\n")
+			writeSkill(t, base, me, "tidy", map[string]string{"SKILL.md": "old\n"})
+
+			if w := post(t, "/skills/edit", "wiz", c.body); w.Code != c.want {
+				t.Errorf("status %d, want %d: %s", w.Code, c.want, w.Body.String())
+			}
+			on, _ := os.ReadFile(filepath.Join(skillscan.Root(filepath.Join(base, me)), "tidy", "SKILL.md"))
+			if string(on) != "old\n" {
+				t.Errorf("a refused edit changed the file to %q", on)
+			}
+		})
+	}
+}
+
+func TestEditNeedsAPost(t *testing.T) {
+	withHomeBase(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, "wiz="+me+"\n")
+	if w := get(t, "/skills/edit?name=tidy", "wiz"); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET /skills/edit = %d, want 405", w.Code)
+	}
+}
+
+func TestViewSaysWhereTheFileIs(t *testing.T) {
+	base := withHomeBase(t)
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, "wiz="+me+"\n")
+	writeSkill(t, base, me, "tidy", map[string]string{"SKILL.md": "hi\n"})
+
+	w := get(t, "/skills/view?owner="+me+"&name=tidy", "wiz")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Path string `json:"path"`
+	}
+	decodeInto(t, w, &got)
+	want := filepath.Join(skillscan.Root(filepath.Join(base, me)), "tidy", "SKILL.md")
+	if got.Path != want {
+		t.Errorf("path = %q, want %q", got.Path, want)
+	}
+}

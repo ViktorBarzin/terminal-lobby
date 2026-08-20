@@ -51,6 +51,7 @@ const (
 	opDelete    = "delete"
 	opUninstall = "plugin-uninstall"
 	opInspect   = "source-inspect"
+	opWrite     = "write"
 	opSource    = "source-install"
 )
 
@@ -70,6 +71,7 @@ type request struct {
 	Owner   string           `json:"owner,omitempty"`
 	Repo    string           `json:"repo,omitempty"`
 	Names   []string         `json:"names,omitempty"`
+	Content string           `json:"content,omitempty"`
 }
 
 // result is the child's envelope. Status carries the HTTP status the parent
@@ -83,6 +85,7 @@ type result struct {
 	Blobs   []skillscan.Blob   `json:"blobs,omitempty"`
 	Files   []fileRow          `json:"files,omitempty"`
 	SkillMd string             `json:"skillmd,omitempty"`
+	Path    string             `json:"path,omitempty"`
 	Hash    string             `json:"hash,omitempty"`
 	Backup  string             `json:"backup,omitempty"`
 	Output  string             `json:"output,omitempty"`
@@ -212,7 +215,8 @@ func perform(op, home string, req request) result {
 		if err != nil {
 			return notFoundOr(err)
 		}
-		res := result{Status: 200, Hash: st.Hash, Stat: wireStat(st)}
+		res := result{Status: 200, Hash: st.Hash, Stat: wireStat(st),
+			Path: filepath.Join(skillscan.Root(home), req.Name, "SKILL.md")}
 		for _, b := range blobs {
 			res.Files = append(res.Files, fileRow{Rel: b.Rel, Exec: b.Exec, Bytes: len(b.Body)})
 			if b.Rel == "SKILL.md" {
@@ -220,6 +224,14 @@ func perform(op, home string, req request) result {
 			}
 		}
 		return res
+
+	case opWrite:
+		st, err := skillscan.WriteSkillMd(home, req.Name, []byte(req.Content))
+		if err != nil {
+			return notFoundOr(err)
+		}
+		return result{Status: 200, Hash: st.Hash, Stat: wireStat(st),
+			Path: filepath.Join(skillscan.Root(home), req.Name, "SKILL.md")}
 
 	case opUnpack:
 		at, err := time.Parse(time.RFC3339, req.At)
