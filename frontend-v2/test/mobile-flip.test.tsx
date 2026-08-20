@@ -294,3 +294,51 @@ describe("touch ergonomics — sized for a finger, phone or tablet", () => {
     expect(block).toMatch(/font-size:\s*16px/);
   });
 });
+
+describe("Sidebar — the Skills route the phone needs", () => {
+  const mkStore = () =>
+    createLobbyStore({ initialSelected: null, notify: () => {} });
+
+  it("shows no Skills button on a desktop, where the shell bar carries one", () => {
+    stubViewport({ width: 1920, height: 1080, coarse: false });
+    const { container } = render(() => (
+      <Sidebar store={mkStore()} prefs={createPrefsStore()} />
+    ));
+    expect(container.querySelector(".tl-foot-skills")).toBeNull();
+  });
+
+  it("shows one when the shell bar is folded away, and it opens the panel", () => {
+    // The shell-bar Skills button is not rendered on a phone, and the session-bar
+    // menu that also carries it only exists once a session is open — so without
+    // this the panel is unreachable from the list screen. It was, for a few hours.
+    stubViewport({ width: 390, height: 844, coarse: true });
+    const onOpenSkills = vi.fn();
+    const { container } = render(() => (
+      <Sidebar store={mkStore()} prefs={createPrefsStore()} onOpenSkills={onOpenSkills} />
+    ));
+    const btn = container.querySelector<HTMLButtonElement>(".tl-foot-skills");
+    expect(btn).not.toBeNull();
+    expect(btn!.getAttribute("aria-label")).toBe("Skills");
+    // An SVG, not a glyph: emoji render in colour and at a different size on
+    // every OS, and the ⌘ this replaced reads as the Mac command key on iOS.
+    expect(btn!.querySelector("svg")).not.toBeNull();
+    expect(btn!.textContent).toBe("");
+    btn!.click();
+    expect(onOpenSkills).toHaveBeenCalledTimes(1);
+  });
+
+  it("sits beside the gear, so both routes are in one place", () => {
+    stubViewport({ width: 390, height: 844, coarse: true });
+    const { container } = render(() => (
+      <Sidebar
+        store={mkStore()}
+        prefs={createPrefsStore()}
+        onOpenSkills={() => {}}
+        onOpenSettings={() => {}}
+      />
+    ));
+    const foot = container.querySelector(".tl-sidebar-foot")!;
+    expect(foot.querySelector(".tl-foot-skills")).not.toBeNull();
+    expect(foot.querySelector(".tl-foot-settings")).not.toBeNull();
+  });
+});
