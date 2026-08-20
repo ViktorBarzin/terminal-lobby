@@ -34,6 +34,7 @@ func routes() *http.ServeMux {
 	mux.HandleFunc("GET /skills/view", handleView)
 	mux.HandleFunc("GET /skills/diff", handleDiff)
 	mux.HandleFunc("POST /skills/install", handleInstall)
+	mux.HandleFunc("POST /skills/edit", handleEdit)
 	mux.HandleFunc("POST /skills/toggle", handleToggle)
 	mux.HandleFunc("POST /skills/remove", handleRemove)
 	mux.HandleFunc("POST /skills/delete", handleDelete)

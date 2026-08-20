@@ -67,3 +67,79 @@ describe("the skills store's error reporting", () => {
     expect(s.error()).toContain("Not permitted");
   });
 });
+
+describe("the skills store's inline file", () => {
+  const view = {
+    owner: "wizard",
+    name: "grilling",
+    skillmd: "---\nname: grilling\n---\nbody\n",
+    path: "/home/wizard/.claude/skills/grilling/SKILL.md",
+  };
+
+  it("reads the file when a row is expanded, and forgets it when it closes", async () => {
+    stubFetch((url) => (url.includes("/view") ? json(view) : json(inventory)));
+    const s = createSkillsStore();
+    s.toggleExpanded("", "grilling");
+    await vi.waitFor(() => expect(s.view()?.name).toBe("grilling"));
+    expect(s.draft()).toBe(view.skillmd);
+    expect(s.saved()).toBe(view.skillmd);
+
+    s.toggleExpanded("", "grilling"); // same row again: closed
+    expect(s.view()).toBeNull();
+    expect(s.draft()).toBe("");
+  });
+
+  it("reports a file it could not read rather than showing an empty one", async () => {
+    stubFetch((url) =>
+      url.includes("/view") ? new Response("no such skill", { status: 404 }) : json(inventory),
+    );
+    const s = createSkillsStore();
+    s.toggleExpanded("", "gone");
+    await vi.waitFor(() => expect(s.viewError()).toContain("no longer there"));
+    expect(s.view()).toBeNull();
+  });
+
+  it("saves the draft and moves only the mark for what is on disk", async () => {
+    const seen: string[] = [];
+    stubFetch((url) => {
+      seen.push(url);
+      if (url.includes("/view")) return json(view);
+      if (url.includes("/edit")) return json({ name: "grilling", path: view.path, hash: "h2" });
+      return json(inventory);
+    });
+    const s = createSkillsStore();
+    s.toggleExpanded("", "grilling");
+    await vi.waitFor(() => expect(s.view()).toBeTruthy());
+
+    s.setDraft("sharper\n");
+    await s.save("grilling");
+    expect(seen.some((u) => u.includes("/skills/edit"))).toBe(true);
+    expect(s.saved()).toBe("sharper\n");
+    expect(s.draft()).toBe("sharper\n");
+    // Not re-read: the same view object means the editor is left alone.
+    expect(s.view()?.skillmd).toBe(view.skillmd);
+    // The inventory is re-read, because the row's hash and size just moved.
+    expect(seen.filter((u) => u.endsWith("/skills")).length).toBeGreaterThan(0);
+  });
+
+  it("throws an edit away by reading the file again", async () => {
+    stubFetch((url) => (url.includes("/view") ? json(view) : json(inventory)));
+    const s = createSkillsStore();
+    s.toggleExpanded("", "grilling");
+    await vi.waitFor(() => expect(s.view()).toBeTruthy());
+    const first = s.view();
+    s.setDraft("typed\n");
+
+    await s.reread();
+    expect(s.draft()).toBe(view.skillmd);
+    // A different object, so the editor rebuilds around the file on disk.
+    expect(s.view()).not.toBe(first);
+  });
+
+  it("has nothing to re-read when no row is open", async () => {
+    const spy = stubFetch(() => json(inventory));
+    const s = createSkillsStore();
+    await s.reread();
+    expect(spy).not.toHaveBeenCalled();
+  });
+});

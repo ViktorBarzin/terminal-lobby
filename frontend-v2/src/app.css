@@ -3356,6 +3356,20 @@ body.tl-kb-up {
   .tl-skill-table .tl-col-source {
     text-align: right;
   }
+  /* The path is longer than a phone is wide, so it goes above the buttons
+     rather than squeezing them off the edge. */
+  .tl-skill-file-foot {
+    flex-wrap: wrap;
+  }
+  .tl-skill-file-foot .tl-skill-meta {
+    flex: 1 1 100%;
+    direction: rtl; /* keeps the file's own name in view when it truncates */
+    text-align: left;
+  }
+  .tl-skill-file .tl-editor,
+  .tl-skill-md {
+    max-height: 240px;
+  }
   /* Own line, full width, aligned under the name — so every row is the same
      shape rather than wrapping only where a name is long enough to push it. */
   .tl-skill-table .tl-col-actions {
@@ -3438,6 +3452,69 @@ body.tl-kb-up {
 .tl-skill-diff .tl-skill-del {
   color: var(--danger);
 }
+/* --- a skill's file, under its row -----------------------------------------
+   Editing happens where the skill is listed, so the editor is sized to be a
+   working surface without pushing the rest of the list off screen. */
+.tl-skill-file {
+  margin-top: 8px;
+}
+/* A peer's file: the same monospace block as a diff, minus the colours, because
+   it is read-only for the same reason — it is theirs. */
+.tl-skill-md {
+  margin: 0;
+  padding: 8px;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* CodeMirror sizes to its content, which for a long SKILL.md is the whole
+   dialog; a scrolling box of its own keeps the row's buttons reachable. */
+.tl-skill-file .tl-editor {
+  /* .tl-editor is sized for the full-height file pane (min-height: 60vh); in a
+     row it grows with the file instead, up to a box that still leaves the list
+     and the row's own buttons on screen. */
+  height: auto;
+  min-height: 140px;
+  max-height: 360px;
+  overflow: auto;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+}
+.tl-skill-file-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.tl-skill-file-foot .tl-skill-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-skill-file-btns {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+/* Saving a skill is the affirmative action of this row, so it reads like one. */
+.tl-settings-btn-go:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tl-settings-btn-go:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg-page);
+}
+
 /* The session state dots reuse the sidebar's vocabulary so the same colour means
    the same thing in both places. */
 .tl-skill-dot {

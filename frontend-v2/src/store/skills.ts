@@ -12,6 +12,8 @@
 import { createSignal, type Accessor } from "solid-js";
 import {
   deleteSkill,
+  editSkill,
+  fetchView,
   inspectSource,
   installFromSource,
   fetchDiff,
@@ -25,6 +27,7 @@ import {
   updatePlugin,
   type Inventory,
   type SkillDiff,
+  type SkillView,
   type SourceInfo,
 } from "../lib/skills-api";
 import { toasts } from "./toast";
@@ -39,6 +42,24 @@ export interface SkillsStore {
   expanded: Accessor<string>;
   /** The diff being shown for a collision, if any. */
   diff: Accessor<SkillDiff | null>;
+  /** The expanded row's skill file, once it has been read. A fetch replaces this
+   *  object, which is what remounts the editor — so opening a row and throwing
+   *  an edit away both reset the text, and saving does not. */
+  view: Accessor<SkillView | null>;
+  /** That read is in flight. */
+  viewing: Accessor<boolean>;
+  /** Set when the file could not be read; the row says so instead of showing an
+   *  empty editor that would read as an empty skill. */
+  viewError: Accessor<string>;
+  /** The file as it stands on disk. An edit is unsaved while draft differs. */
+  saved: Accessor<string>;
+  /** What is in the editor. */
+  draft: Accessor<string>;
+  setDraft: (text: string) => void;
+  /** Read the expanded row's file again — how an unsaved edit is thrown away. */
+  reread: () => Promise<void>;
+  /** Write the draft back. Only ever your own skill: the endpoint has no owner. */
+  save: (name: string) => Promise<void>;
   /** An action is in flight; the group disables its buttons rather than letting
    *  two installs of the same name race. */
   busy: Accessor<string>;
@@ -76,8 +97,42 @@ export function createSkillsStore(): SkillsStore {
   const [expanded, setExpanded] = createSignal("");
   const [diff, setDiff] = createSignal<SkillDiff | null>(null);
   const [busy, setBusy] = createSignal("");
+  const [view, setView] = createSignal<SkillView | null>(null);
+  const [viewing, setViewing] = createSignal(false);
+  const [viewError, setViewError] = createSignal("");
+  const [saved, setSaved] = createSignal("");
+  const [draft, setDraft] = createSignal("");
   const [source, setSource] = createSignal<SourceInfo | null>(null);
   const [inspecting, setInspecting] = createSignal(false);
+
+  /** forget drops whatever file was on screen, so a collapsed row cannot leave
+   *  an edit behind that a later save would write to a different skill. */
+  const forget = () => {
+    setView(null);
+    setViewing(false);
+    setViewError("");
+    setSaved("");
+    setDraft("");
+  };
+
+  /** openView reads one skill's file. Called on open and on revert; a failure
+   *  leaves no view, so the row shows the reason rather than an editor. */
+  const openView = async (owner: string, name: string) => {
+    forget();
+    setViewing(true);
+    try {
+      const v = await fetchView(owner, name);
+      setSaved(v.skillmd ?? "");
+      setDraft(v.skillmd ?? "");
+      // Last: a new view object remounts the editor, which seeds itself from the
+      // draft. Setting it first would mount the editor over the previous text.
+      setView(v);
+    } catch (e) {
+      setViewError(message(e));
+    } finally {
+      setViewing(false);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -122,11 +177,34 @@ export function createSkillsStore(): SkillsStore {
     diff,
     busy,
     load,
+    view,
+    viewing,
+    viewError,
+    saved,
+    draft,
+    setDraft,
     toggleExpanded: (owner, name) => {
       const key = rowKey(owner, name);
-      setExpanded(expanded() === key ? "" : key);
+      const opening = expanded() !== key;
+      setExpanded(opening ? key : "");
       setDiff(null);
+      forget();
+      if (opening) void openView(owner, name);
     },
+    reread: async () => {
+      const key = expanded();
+      const cut = key.indexOf("/");
+      if (cut < 0) return;
+      await openView(key.slice(0, cut), key.slice(cut + 1));
+    },
+    save: async (name) =>
+      act(`edit:${name}`, async () => {
+        await editSkill(name, draft());
+        // The editor keeps its text and its cursor: only the mark for what is on
+        // disk moves, so a save does not feel like the file was reloaded.
+        setSaved(draft());
+        return `Saved ${name} — new sessions load the change.`;
+      }),
     showDiff: async (owner, name) => {
       try {
         setDiff(await fetchDiff(owner, name));

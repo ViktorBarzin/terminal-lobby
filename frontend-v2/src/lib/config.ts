@@ -313,6 +313,7 @@ export function skillActionUrl(
     | "plugin-update"
     | "plugin-uninstall"
     | "restart"
+    | "edit"
     | "source/inspect"
     | "source/install",
 ): string {
