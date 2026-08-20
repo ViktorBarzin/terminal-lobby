@@ -3357,14 +3357,16 @@ body.tl-kb-up {
     text-align: right;
   }
   /* The path is longer than a phone is wide, so it goes above the buttons
-     rather than squeezing them off the edge. */
+     rather than squeezing them off the edge, and wraps instead of truncating:
+     there is no hover on a phone, so the title attribute is not a fallback. */
   .tl-skill-file-foot {
     flex-wrap: wrap;
   }
   .tl-skill-file-foot .tl-skill-meta {
     flex: 1 1 100%;
-    direction: rtl; /* keeps the file's own name in view when it truncates */
-    text-align: left;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .tl-skill-file .tl-editor,
   .tl-skill-md {
