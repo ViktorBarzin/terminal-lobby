@@ -3368,6 +3368,40 @@ body.tl-kb-up {
   }
 }
 
+/* The install-from-a-repo field, under the filter. Same shape as the filter so
+   the two read as one control strip rather than two ideas. */
+.tl-skills-source {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.tl-skills-source-input {
+  margin-top: 0;
+  font-family: var(--font-mono);
+}
+.tl-source-result {
+  margin-top: 10px;
+}
+.tl-source-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  cursor: pointer;
+}
+.tl-source-row input[type="checkbox"] {
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+.tl-source-row .tl-skill-name {
+  flex: 0 0 auto;
+}
+.tl-source-row .tl-skill-facts {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tl-skill-detail {
   padding: 8px 10px;
   margin: 0 0 6px;
