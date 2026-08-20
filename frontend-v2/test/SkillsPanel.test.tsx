@@ -1,9 +1,23 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { SkillsPanel } from "../src/components/SkillsPanel";
 import { rowKey, type SkillsStore } from "../src/store/skills";
-import type { Inventory, SkillDiff, SourceInfo } from "../src/lib/skills-api";
+import type { Inventory, SkillDiff, SkillView, SourceInfo } from "../src/lib/skills-api";
+
+/** The lazily-imported CodeMirror host, faked so an inline skill edit is
+ *  drivable: the panel's own behaviour is what these assert, not CodeMirror's. */
+let cmChange: ((text: string) => void) | null = null;
+let cmSave: (() => void) | null = null;
+let cmDoc = "";
+vi.mock("../src/components/codemirror-view", () => ({
+  createEditorView: (o: { doc: string; onChange: (t: string) => void; onSave?: () => void }) => {
+    cmDoc = o.doc;
+    cmChange = o.onChange;
+    cmSave = o.onSave ?? null;
+    return { destroy: () => {} };
+  },
+}));
 
 /**
  * The Skills panel — its own overlay, beside Settings. The store is stubbed so
@@ -16,6 +30,12 @@ import type { Inventory, SkillDiff, SourceInfo } from "../src/lib/skills-api";
  * the surface: 38 own skills and a peer's 21 were never going to read as one
  * column inside Settings.
  */
+
+beforeEach(() => {
+  cmChange = null;
+  cmSave = null;
+  cmDoc = "";
+});
 
 const inventory = (over: Partial<Inventory> = {}): Inventory => ({
   user: "wizard",
@@ -64,7 +84,17 @@ function stubStore(over: Partial<SkillsStore> = {}) {
   const [inv] = createSignal<Inventory | null>(inventory());
   const [expanded, setExpanded] = createSignal("");
   const [diff, setDiff] = createSignal<SkillDiff | null>(null);
+  const [view, setView] = createSignal<SkillView | null>(null);
+  const [saved, setSaved] = createSignal("");
+  const [draft, setDraft] = createSignal("");
   const calls: string[] = [];
+  /** What the service would answer for one row. */
+  const fileOf = (owner: string, name: string): SkillView => ({
+    owner: owner || "wizard",
+    name,
+    skillmd: `---\nname: ${name}\n---\nbody of ${name}\n`,
+    path: `/home/${owner || "wizard"}/.claude/skills/${name}/SKILL.md`,
+  });
   const store: SkillsStore = {
     inventory: inv,
     loading: () => false,
@@ -75,8 +105,29 @@ function stubStore(over: Partial<SkillsStore> = {}) {
     load: vi.fn(async () => {}),
     toggleExpanded: (owner, name) => {
       const key = rowKey(owner, name);
-      setExpanded(expanded() === key ? "" : key);
+      const opening = expanded() !== key;
+      setExpanded(opening ? key : "");
+      // Mirrors the real store: expanding a row reads that skill's file.
+      const f = opening ? fileOf(owner, name) : null;
+      setSaved(f?.skillmd ?? "");
+      setDraft(f?.skillmd ?? "");
+      setView(f);
     },
+    view,
+    viewing: () => false,
+    viewError: () => "",
+    saved,
+    draft,
+    setDraft,
+    reread: vi.fn(async () => {
+      calls.push("reread");
+      setDraft(saved());
+      setView({ ...(view() as SkillView) }); // a fresh object: the editor rebuilds
+    }),
+    save: vi.fn(async (name) => {
+      calls.push(`save:${name}:${draft()}`);
+      setSaved(draft());
+    }),
     showDiff: vi.fn(async (owner, name) => {
       calls.push(`diff:${owner}/${name}`);
       setDiff({ owner, name, verdict: "differs", diff: " same\n-mine\n+theirs" });
@@ -574,5 +625,109 @@ describe("a source that offers a lot", () => {
     const { store } = stubStore({ source: src, inspecting: () => false });
     const { queryByLabelText } = render(() => <SkillsPanel skills={store} onClose={() => {}} />);
     expect(queryByLabelText("Narrow what this repo offers")).toBeNull();
+  });
+});
+
+describe("a skill's file, inline", () => {
+  it("shows the file and where it lives when a row is opened", async () => {
+    const { getByText, getByTitle } = open();
+    fireEvent.click(getByText("grilling"));
+    await waitFor(() => expect(cmDoc).toContain("body of grilling"));
+    expect(getByTitle("/home/wizard/.claude/skills/grilling/SKILL.md")).toBeTruthy();
+    // Nothing is saveable yet: the file and the draft are the same text.
+    expect((getByText("Saved") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("saves what was typed, for that skill", async () => {
+    const { getByText, calls } = open();
+    fireEvent.click(getByText("grilling"));
+    await waitFor(() => expect(cmChange).toBeTruthy());
+    cmChange!("---\nname: grilling\n---\nsharper\n");
+    const save = () => getByText("Save") as HTMLButtonElement;
+    await waitFor(() => expect(save().disabled).toBe(false));
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(calls).toContain("save:grilling:---\nname: grilling\n---\nsharper\n"),
+    );
+    // Saved, so there is nothing left to save.
+    await waitFor(() => expect((getByText("Saved") as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  it("saves on Ctrl-S too, and only when there is something to save", async () => {
+    const { getByText, calls } = open();
+    fireEvent.click(getByText("grilling"));
+    await waitFor(() => expect(cmSave).toBeTruthy());
+    cmSave!(); // nothing typed yet
+    expect(calls.filter((c) => c.startsWith("save:"))).toHaveLength(0);
+    cmChange!("changed\n");
+    cmSave!();
+    await waitFor(() => expect(calls).toContain("save:grilling:changed\n"));
+  });
+
+  it("asks before throwing an edit away", async () => {
+    const yes = open({}, { confirm: () => true });
+    fireEvent.click(yes.getByText("grilling"));
+    await waitFor(() => expect(cmChange).toBeTruthy());
+    cmChange!("typed\n");
+    await waitFor(() => expect((yes.getByText("Revert") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(yes.getByText("Revert"));
+    await waitFor(() => expect(yes.calls).toContain("reread"));
+
+    const no = open({}, { confirm: () => false });
+    fireEvent.click(no.getByText("grilling"));
+    await waitFor(() => expect(cmChange).toBeTruthy());
+    cmChange!("typed\n");
+    fireEvent.click(no.getByText("Revert"));
+    expect(no.calls).not.toContain("reread");
+  });
+
+  it("keeps an edit in progress across a tab switch", async () => {
+    const { getByText, tab } = open();
+    fireEvent.click(getByText("grilling"));
+    await waitFor(() => expect(cmChange).toBeTruthy());
+    cmChange!("half-written\n");
+    tab("Plugins");
+    tab("Mine");
+    // Rebuilt from the draft, not from the file: an unsaved edit that came back
+    // as the old text would be one Save away from being lost silently.
+    await waitFor(() => expect(cmDoc).toBe("half-written\n"));
+  });
+
+  it("shows a peer's file without offering to write it", async () => {
+    const { tab, getByText, queryByText } = open();
+    tab("bob");
+    fireEvent.click(getByText("diagnose"));
+    await waitFor(() => expect(getByText(/body of diagnose/)).toBeTruthy());
+    expect(queryByText("Save")).toBeNull();
+    expect(queryByText("Revert")).toBeNull();
+  });
+
+  it("says why a file could not be read, instead of showing an empty one", () => {
+    const { getByText, queryByText } = open({
+      expanded: () => rowKey("", "grilling"),
+      view: () => null,
+      viewError: () => "Could not reach the skills service.",
+    });
+    expect(getByText("Could not reach the skills service.")).toBeTruthy();
+    expect(queryByText("Save")).toBeNull();
+  });
+
+  it("shows the open row's file under that row and no other", async () => {
+    // A row can be open on a diff while a different one is expanded. The store
+    // holds one file, so the one it holds must not appear under the other row.
+    const { getByText, queryByText } = open({
+      expanded: () => rowKey("bob", "diagnose"),
+      diff: () => ({ owner: "bob", name: "tdd", verdict: "differs", diff: " same\n-mine\n+theirs" }),
+      view: () => ({
+        owner: "bob",
+        name: "diagnose",
+        skillmd: "body of diagnose\n",
+        path: "/home/bob/.claude/skills/diagnose/SKILL.md",
+      }),
+    });
+    fireEvent.click(getByText(/^bob$/));
+    await waitFor(() => expect(getByText("-mine")).toBeTruthy());
+    expect(getByText(/body of diagnose/)).toBeTruthy();
+    expect(queryByText(/body of tdd/)).toBeNull();
   });
 });

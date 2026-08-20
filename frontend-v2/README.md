@@ -263,7 +263,9 @@ src/
                          actions, plus the two permanent ones — Delete (the
                          skill and every backup of it) and Uninstall (a plugin
                          and its files). Every action is ON the row for both
-                         lists; expanding one is for reading, not for acting.
+                         lists; expanding one shows that skill's SKILL.md —
+                         your own in an editor that writes it back, a peer's
+                         read-only.
                          Also the owner/repo field: one read-only look decides
                          whether a repo offers skills, a plugin marketplace or
                          both, then the ecosystem's own installer runs as you

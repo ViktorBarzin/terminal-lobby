@@ -137,8 +137,54 @@ func handleView(w http.ResponseWriter, r *http.Request) {
 		"owner":   owner,
 		"name":    name,
 		"skillmd": res.SkillMd,
+		"path":    res.Path,
 		"files":   res.Files,
 		"stat":    res.Stat,
+	})
+}
+
+// --- POST /skills/edit -------------------------------------------------------
+
+// maxEditBody caps an edited skill file. skillscan refuses anything over its own
+// 5MB skill limit anyway; this is the earlier, cheaper no for a body that could
+// never be a skill's text.
+const maxEditBody = 1 << 20
+
+// handleEdit writes one of the caller's own skill files back after an edit.
+//
+// There is no owner field on purpose: the only account this can write to is the
+// caller's own, so a peer's skill cannot be edited through it however the
+// request is shaped. Reading a peer's skill stays available through /skills/view
+// — taking a copy first is how you change one of theirs.
+func handleEdit(w http.ResponseWriter, r *http.Request) {
+	me := resolveOSUser(w, r)
+	if me == "" {
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if !decodeUpTo(w, r, maxEditBody, &body) {
+		return
+	}
+	if err := skillscan.ValidName(body.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	res := run(me, opWrite, request{Name: body.Name, Content: body.Content})
+	if res.Status != 200 {
+		http.Error(w, res.Error, res.Status)
+		return
+	}
+	events.Emit("skill.edited", me, telemetry.Attrs{"tl.key": body.Name})
+	log.Printf("edit: %s wrote %s (%d bytes)", me, body.Name, len(body.Content))
+	writeJSON(w, map[string]any{
+		"name": body.Name,
+		"path": res.Path,
+		"hash": res.Hash,
+		"stat": res.Stat,
 	})
 }
 
@@ -517,7 +563,13 @@ func validOwner(w http.ResponseWriter, owner, me string) (string, bool) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, into any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	return decodeUpTo(w, r, maxBody, into)
+}
+
+// decodeUpTo is decode with the cap spelled out, for the one endpoint that
+// carries a file rather than a few names.
+func decodeUpTo(w http.ResponseWriter, r *http.Request, limit int64, into any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(into); err != nil {
 		http.Error(w, "bad request body", http.StatusBadRequest)
