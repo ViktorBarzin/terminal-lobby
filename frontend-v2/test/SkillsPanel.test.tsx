@@ -254,13 +254,13 @@ describe("a peer's tab", () => {
   });
 
   it("turns a collision into a diff and a replace rather than an install", async () => {
-    const { tab, getByText, calls } = open();
+    const { tab, getByText, calls } = open({}, { confirm: () => true });
     tab("bob");
     fireEvent.click(getByText("tdd"));
     fireEvent.click(getByText("View diff"));
     await waitFor(() => expect(calls).toContain("diff:bob/tdd"));
     await waitFor(() => expect(getByText("-mine")).toBeTruthy());
-    fireEvent.click(getByText("Replace (backs up mine)"));
+    fireEvent.click(getByText("Replace"));
     await waitFor(() => expect(calls).toContain("install:bob/tdd:replace"));
   });
 
@@ -300,7 +300,7 @@ describe("the Plugins and Sessions tabs", () => {
   it("offers Restart for an idle session and explains why a busy one has none", async () => {
     const { tab, getByText, getAllByText, calls } = open({}, { sessions: true });
     tab("Sessions");
-    expect(getByText("mid-turn")).toBeTruthy();
+    expect(getByText("let it finish")).toBeTruthy();
     expect(getAllByText("Restart")).toHaveLength(1);
     fireEvent.click(getByText("Restart"));
     await waitFor(() => expect(calls).toContain("restart:notes"));
@@ -394,5 +394,45 @@ describe("permanent removal", () => {
     tab("Plugins");
     expect(getAllByText("Uninstall")).toHaveLength(2);
     expect(getAllByText("Update")).toHaveLength(1); // only the stale one
+  });
+});
+
+describe("the lists are tables, so the eye can cross a row", () => {
+  it("gives each list real table semantics with column headers", () => {
+    const { getByRole, getAllByRole, tab } = open({}, { sessions: true });
+    expect(getByRole("table")).toBeTruthy();
+    expect(getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "Enabled",
+      "Skill",
+      "Source",
+      "Actions",
+    ]);
+    tab("bob");
+    expect(getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "Skill",
+      "Against yours",
+      "Actions",
+    ]);
+    tab("Plugins");
+    expect(getAllByRole("columnheader")[1]!.textContent).toBe("Plugin");
+    tab("Sessions");
+    expect(getAllByRole("columnheader")[1]!.textContent).toBe("Session");
+  });
+
+  it("puts one row per skill, with the expansion as its own row", () => {
+    const { getAllByRole, getByText } = open();
+    // 3 skills, no expansion yet
+    expect(getAllByRole("row")).toHaveLength(4); // + the header row
+    fireEvent.click(getByText("grilling"));
+    expect(getAllByRole("row")).toHaveLength(5);
+  });
+
+  it("asks before replacing, since the label no longer carries the promise", async () => {
+    const asked: string[] = [];
+    const { tab, getByText, calls } = open({}, { confirm: (m) => (asked.push(m), false) });
+    tab("bob");
+    fireEvent.click(getByText("Replace"));
+    await waitFor(() => expect(calls).not.toContain("install:bob/tdd:replace"));
+    expect(asked[0]).toContain("backed up first");
   });
 });
