@@ -3262,12 +3262,24 @@ body.tl-kb-up {
   display: flex;
   gap: 6px;
 }
+/* On a narrow screen the actions take a line of their own on EVERY row, rather
+   than wrapping only where the name is long enough to push them. Measured at
+   390px: mixed wrapping alternated row heights between 30px and 65px, which is
+   hard to scan and makes the buttons land in a different place each row.
+   flex-basis:100% forces the break so every row is the same shape. */
 @media (max-width: 560px) {
   .tl-skill-row {
     flex-wrap: wrap;
   }
   .tl-skill-actions {
+    flex-basis: 100%;
     margin-left: 22px; /* line up under the name, past the checkbox */
+    margin-top: 2px;
+  }
+  /* The meta label keeps the first line to itself, so a name never collides
+     with "from bob · ⟳ update" on a narrow row. */
+  .tl-skill-meta {
+    margin-left: auto;
   }
 }
 .tl-skill-muted {
