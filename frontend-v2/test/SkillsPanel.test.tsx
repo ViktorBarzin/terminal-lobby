@@ -540,3 +540,39 @@ describe("installing from a repo", () => {
     expect(getByText(/not an owner you have installed from before/)).toBeTruthy();
   });
 });
+
+describe("a source that offers a lot", () => {
+  const bigSource = (): SourceInfo => ({
+    owner: "anthropics",
+    repo: "claude-plugins-official",
+    knownOwner: true,
+    skills: Array.from({ length: 31 }, (_, i) => ({ name: `skill-${i}`, path: `s/${i}/SKILL.md` })),
+    marketplace: "claude-plugins-official",
+    plugins: Array.from({ length: 200 }, (_, i) => ({ name: `plugin-${i}` })),
+    pluginsCut: 86,
+  });
+
+  it("offers a filter and says how many it left out", async () => {
+    const [src] = createSignal<SourceInfo | null>(bigSource());
+    const { store } = stubStore({ source: src, inspecting: () => false });
+    const { getByLabelText, getByText, queryByText } = render(() => (
+      <SkillsPanel skills={store} onClose={() => {}} />
+    ));
+    // 200 of 286 offered, and it says so rather than presenting 200 as all of them.
+    expect(getByText(/Plugins in claude-plugins-official \(200 of 286\)/)).toBeTruthy();
+    const filter = getByLabelText("Narrow what this repo offers");
+    fireEvent.input(filter, { target: { value: "plugin-19" } });
+    await waitFor(() => expect(queryByText("plugin-1")).toBeNull());
+    expect(getByText("plugin-19")).toBeTruthy();
+  });
+
+  it("shows no filter for a short list", () => {
+    const [src] = createSignal<SourceInfo | null>({
+      owner: "o", repo: "r", knownOwner: true,
+      skills: [{ name: "one", path: "one/SKILL.md" }],
+    });
+    const { store } = stubStore({ source: src, inspecting: () => false });
+    const { queryByLabelText } = render(() => <SkillsPanel skills={store} onClose={() => {}} />);
+    expect(queryByLabelText("Narrow what this repo offers")).toBeNull();
+  });
+});
