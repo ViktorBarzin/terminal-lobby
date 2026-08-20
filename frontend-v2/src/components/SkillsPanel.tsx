@@ -205,114 +205,126 @@ export const SkillsPanel: Component<{
           <div class="tl-skills-body">
             {/* --- the caller's own ------------------------------------------ */}
             <Show when={active() === "mine"}>
-              <For each={mineRows(inv(), query())}>
-                {(skill) => {
-                  const st = () => skillStatus(skill);
-                  const open = () => s.expanded() === rowKey("", skill.name);
-                  const id = `${skill.name}@skills-dir`;
-                  return (
-                    <>
-                      {/* Actions live on the row, the way a plugin's do; the
-                          expansion is for reading — description, file counts, why
-                          an update is offered. */}
-                      <div class="tl-skill-row">
-                        <input
-                          type="checkbox"
-                          checked={skill.enabled}
-                          disabled={anyBusy()}
-                          aria-label={`${skill.enabled ? "Disable" : "Enable"} ${skill.name}`}
-                          onChange={(e) =>
-                            void s.setEnabled(id, e.currentTarget.checked)
-                          }
-                        />
-                        <button
-                          type="button"
-                          class="tl-skill-name"
-                          aria-expanded={open()}
-                          onClick={() => s.toggleExpanded("", skill.name)}
-                        >
-                          {skill.name}
-                        </button>
-                        {meta(st())}
-                        <span class="tl-skill-actions">
-                          <Show when={skill.updateAvailable && skill.from}>
-                            <button
-                              type="button"
-                              class="tl-settings-btn"
-                              disabled={anyBusy()}
-                              onClick={() => {
-                                if (
-                                  !skill.locallyModified ||
-                                  confirm(
-                                    `${skill.name} has local edits. Updating backs your copy up first. Continue?`,
-                                  )
-                                ) {
-                                  void s.install(skill.from!, skill.name, true);
-                                }
-                              }}
-                              title={`Take ${skill.from}'s newer copy`}
-                            >
-                              {isBusy(rowKey(skill.from!, skill.name))
-                                ? "Updating…"
-                                : "Update"}
-                            </button>
+              <table class="tl-skill-table">
+                <thead>
+                  <tr>
+                    <th class="tl-col-check">
+                      <span class="tl-sr-only">Enabled</span>
+                    </th>
+                    <th>Skill</th>
+                    <th class="tl-col-source">Source</th>
+                    <th class="tl-col-actions">
+                      <span class="tl-sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={mineRows(inv(), query())}>
+                    {(skill) => {
+                      const st = () => skillStatus(skill);
+                      const open = () => s.expanded() === rowKey("", skill.name);
+                      const id = `${skill.name}@skills-dir`;
+                      return (
+                        <>
+                          <tr classList={{ open: open() }}>
+                            <td class="tl-col-check">
+                              <input
+                                type="checkbox"
+                                checked={skill.enabled}
+                                disabled={anyBusy()}
+                                aria-label={`${skill.enabled ? "Disable" : "Enable"} ${skill.name}`}
+                                onChange={(e) => void s.setEnabled(id, e.currentTarget.checked)}
+                              />
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                class="tl-skill-name"
+                                aria-expanded={open()}
+                                onClick={() => s.toggleExpanded("", skill.name)}
+                              >
+                                {skill.name}
+                              </button>
+                            </td>
+                            <td class="tl-col-source">{meta(st())}</td>
+                            <td class="tl-col-actions">
+                              <span class="tl-skill-actions">
+                                <Show when={skill.updateAvailable && skill.from}>
+                                  <button
+                                    type="button"
+                                    class="tl-settings-btn"
+                                    disabled={anyBusy()}
+                                    onClick={() => {
+                                      if (
+                                        !skill.locallyModified ||
+                                        confirm(
+                                          `${skill.name} has local edits. Updating backs your copy up first. Continue?`,
+                                        )
+                                      ) {
+                                        void s.install(skill.from!, skill.name, true);
+                                      }
+                                    }}
+                                    title={`Take ${skill.from}'s newer copy`}
+                                  >
+                                    {isBusy(rowKey(skill.from!, skill.name)) ? "Updating…" : "Update"}
+                                  </button>
+                                </Show>
+                                <button
+                                  type="button"
+                                  class="tl-settings-btn"
+                                  disabled={anyBusy()}
+                                  onClick={() => {
+                                    if (confirm(`Remove ${skill.name}? A backup is kept.`)) {
+                                      void s.remove(skill.name);
+                                    }
+                                  }}
+                                  title="Keeps a copy under .backup/"
+                                >
+                                  {isBusy(skill.name) ? "Removing…" : "Remove"}
+                                </button>
+                                {/* The permanent one. Remove is recoverable, so it
+                                    keeps the plain button; this asks a harder
+                                    question and names what cannot come back. */}
+                                <button
+                                  type="button"
+                                  class="tl-settings-btn tl-settings-btn-danger"
+                                  disabled={anyBusy()}
+                                  onClick={() => {
+                                    if (confirm(deleteWarning(skill))) {
+                                      void s.deleteForever(skill.name);
+                                    }
+                                  }}
+                                  title="Permanent: the skill and every backup of it"
+                                >
+                                  {isBusy(skill.name) ? "Deleting…" : "Delete"}
+                                </button>
+                              </span>
+                            </td>
+                          </tr>
+                          <Show when={open()}>
+                            <tr class="tl-detail-row">
+                              <td />
+                              <td colspan="3">
+                                <div class="tl-skill-detail">
+                                  <Show when={skill.description}>
+                                    <div class="tl-skill-desc">{skill.description}</div>
+                                  </Show>
+                                  <div class="tl-skill-facts">{fileSummary(skill)}</div>
+                                  <Show when={st().detail}>
+                                    <div class="tl-skill-facts">{st().detail}</div>
+                                  </Show>
+                                </div>
+                              </td>
+                            </tr>
                           </Show>
-                          <button
-                            type="button"
-                            class="tl-settings-btn"
-                            disabled={anyBusy()}
-                            onClick={() => {
-                              if (
-                                confirm(
-                                  `Remove ${skill.name}? A backup is kept.`,
-                                )
-                              ) {
-                                void s.remove(skill.name);
-                              }
-                            }}
-                            title="Keeps a copy under .backup/"
-                          >
-                            {isBusy(skill.name) ? "Removing…" : "Remove"}
-                          </button>
-                          {/* The permanent one. Remove is recoverable, so it keeps
-                              the plain button; this asks a harder question and
-                              names what cannot come back. */}
-                          <button
-                            type="button"
-                            class="tl-settings-btn tl-settings-btn-danger"
-                            disabled={anyBusy()}
-                            onClick={() => {
-                              if (confirm(deleteWarning(skill))) {
-                                void s.deleteForever(skill.name);
-                              }
-                            }}
-                            title="Permanent: the skill and every backup of it"
-                          >
-                            {isBusy(skill.name) ? "Deleting…" : "Delete"}
-                          </button>
-                        </span>
-                      </div>
-                      <Show when={open()}>
-                        <div class="tl-skill-detail">
-                          <Show when={skill.description}>
-                            <div class="tl-skill-desc">{skill.description}</div>
-                          </Show>
-                          <div class="tl-skill-facts">{fileSummary(skill)}</div>
-                          <Show when={st().detail}>
-                            <div class="tl-skill-facts">{st().detail}</div>
-                          </Show>
-                        </div>
-                      </Show>
-                    </>
-                  );
-                }}
-              </For>
+                        </>
+                      );
+                    }}
+                  </For>
+                </tbody>
+              </table>
               <Empty
-                text={emptyReason(
-                  "mine",
-                  (inv()?.skills ?? []).length > 0,
-                  query(),
-                )}
+                text={emptyReason("mine", (inv()?.skills ?? []).length > 0, query())}
                 shown={mineRows(inv(), query()).length === 0}
               />
             </Show>
@@ -323,11 +335,29 @@ export const SkillsPanel: Component<{
                 const rows = () => peerRows(inv(), activePeer(), query());
                 return (
                   <>
-                    <For each={rows().skills}>
-                      {(skill) => (
-                        <PeerRow peer={activePeer()} skill={skill} store={s} />
-                      )}
-                    </For>
+                    <table class="tl-skill-table">
+                      <thead>
+                        <tr>
+                          <th>Skill</th>
+                          <th class="tl-col-source">Against yours</th>
+                          <th class="tl-col-actions">
+                            <span class="tl-sr-only">Actions</span>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <For each={rows().skills}>
+                          {(skill) => (
+                            <PeerRow
+                              peer={activePeer()}
+                              skill={skill}
+                              store={s}
+                              confirm={confirm}
+                            />
+                          )}
+                        </For>
+                      </tbody>
+                    </table>
                     <Empty
                       text={emptyReason(
                         "peer",
@@ -344,60 +374,74 @@ export const SkillsPanel: Component<{
 
             {/* --- marketplace plugins -------------------------------------- */}
             <Show when={active() === "plugins"}>
-              <For each={pluginRows(inv(), query())}>
-                {(plugin) => (
-                  <div class="tl-skill-row">
-                    <input
-                      type="checkbox"
-                      checked={plugin.enabled}
-                      disabled={anyBusy()}
-                      aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.name}`}
-                      onChange={(e) =>
-                        void s.setEnabled(plugin.id, e.currentTarget.checked)
-                      }
-                    />
-                    <span class="tl-skill-name tl-skill-plain">
-                      {plugin.name}
-                    </span>
-                    {meta(pluginStatus(plugin))}
-                    <span class="tl-skill-actions">
-                      <Show when={plugin.stale}>
-                        <button
-                          type="button"
-                          class="tl-settings-btn"
-                          disabled={anyBusy()}
-                          onClick={() => void s.update(plugin.id)}
-                        >
-                          {isBusy(plugin.id) ? "Updating…" : "Update"}
-                        </button>
-                      </Show>
-                      <button
-                        type="button"
-                        class="tl-settings-btn tl-settings-btn-danger"
-                        disabled={anyBusy()}
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Uninstall ${plugin.name}? Its files are removed. You can install it again from its marketplace.`,
-                            )
-                          ) {
-                            void s.uninstall(plugin.id);
-                          }
-                        }}
-                        title="Removes the plugin and reclaims its files"
-                      >
-                        {isBusy(plugin.id) ? "Working…" : "Uninstall"}
-                      </button>
-                    </span>
-                  </div>
-                )}
-              </For>
+              <table class="tl-skill-table">
+                <thead>
+                  <tr>
+                    <th class="tl-col-check">
+                      <span class="tl-sr-only">Enabled</span>
+                    </th>
+                    <th>Plugin</th>
+                    <th class="tl-col-source">Version</th>
+                    <th class="tl-col-actions">
+                      <span class="tl-sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={pluginRows(inv(), query())}>
+                    {(plugin) => (
+                      <tr>
+                        <td class="tl-col-check">
+                          <input
+                            type="checkbox"
+                            checked={plugin.enabled}
+                            disabled={anyBusy()}
+                            aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.name}`}
+                            onChange={(e) => void s.setEnabled(plugin.id, e.currentTarget.checked)}
+                          />
+                        </td>
+                        <td>
+                          <span class="tl-skill-name tl-skill-plain">{plugin.name}</span>
+                        </td>
+                        <td class="tl-col-source">{meta(pluginStatus(plugin))}</td>
+                        <td class="tl-col-actions">
+                          <span class="tl-skill-actions">
+                            <Show when={plugin.stale}>
+                              <button
+                                type="button"
+                                class="tl-settings-btn"
+                                disabled={anyBusy()}
+                                onClick={() => void s.update(plugin.id)}
+                              >
+                                {isBusy(plugin.id) ? "Updating…" : "Update"}
+                              </button>
+                            </Show>
+                            <button
+                              type="button"
+                              class="tl-settings-btn tl-settings-btn-danger"
+                              disabled={anyBusy()}
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    `Uninstall ${plugin.name}? Its files are removed. You can install it again from its marketplace.`,
+                                  )
+                                ) {
+                                  void s.uninstall(plugin.id);
+                                }
+                              }}
+                              title="Removes the plugin and reclaims its files"
+                            >
+                              {isBusy(plugin.id) ? "Working…" : "Uninstall"}
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
               <Empty
-                text={emptyReason(
-                  "plugins",
-                  (inv()?.plugins ?? []).length > 0,
-                  query(),
-                )}
+                text={emptyReason("plugins", (inv()?.plugins ?? []).length > 0, query())}
                 shown={pluginRows(inv(), query()).length === 0}
               />
             </Show>
@@ -405,40 +449,62 @@ export const SkillsPanel: Component<{
             {/* --- what can pick a change up -------------------------------- */}
             <Show when={active() === "sessions"}>
               <div class="tl-settings-hint">
-                A skill is read when a session starts, so a change reaches new
-                ones.
+                A skill is read when a session starts, so a change reaches new ones.
               </div>
-              <For each={sessionRows()}>
-                {(row) => (
-                  <div class="tl-skill-row">
-                    <span
-                      class={`tl-skill-dot tl-skill-dot-${row.state}`}
-                      aria-hidden="true"
-                    />
-                    <span class="tl-skill-name tl-skill-plain">{row.name}</span>
-                    <Show
-                      when={row.restartable}
-                      fallback={
-                        <span class="tl-skill-meta tl-skill-muted">
-                          mid-turn
-                        </span>
-                      }
-                    >
-                      <button
-                        type="button"
-                        class="tl-settings-btn"
-                        disabled={anyBusy()}
-                        onClick={() => void s.restart(row.name)}
-                        title="Respawn with claude --continue: the conversation survives"
-                      >
-                        {isBusy(`session:${row.name}`)
-                          ? "Restarting…"
-                          : "Restart"}
-                      </button>
-                    </Show>
-                  </div>
-                )}
-              </For>
+              <table class="tl-skill-table">
+                <thead>
+                  <tr>
+                    <th class="tl-col-check">
+                      <span class="tl-sr-only">State</span>
+                    </th>
+                    <th>Session</th>
+                    <th class="tl-col-source">Claude</th>
+                    <th class="tl-col-actions">
+                      <span class="tl-sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={sessionRows()}>
+                    {(row) => (
+                      <tr>
+                        <td class="tl-col-check">
+                          <span
+                            class={`tl-skill-dot tl-skill-dot-${row.state}`}
+                            aria-hidden="true"
+                          />
+                        </td>
+                        <td>
+                          <span class="tl-skill-name tl-skill-plain">{row.name}</span>
+                        </td>
+                        <td class="tl-col-source">
+                          <span class="tl-skill-meta tl-skill-muted">{row.state}</span>
+                        </td>
+                        <td class="tl-col-actions">
+                          <span class="tl-skill-actions">
+                            <Show
+                              when={row.restartable}
+                              fallback={
+                                <span class="tl-skill-meta tl-skill-muted">let it finish</span>
+                              }
+                            >
+                              <button
+                                type="button"
+                                class="tl-settings-btn"
+                                disabled={anyBusy()}
+                                onClick={() => void s.restart(row.name)}
+                                title="Respawn with claude --continue: the conversation survives"
+                              >
+                                {isBusy(`session:${row.name}`) ? "Restarting…" : "Restart"}
+                              </button>
+                            </Show>
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
             </Show>
           </div>
 
@@ -482,6 +548,7 @@ const PeerRow: Component<{
   peer: string;
   skill: PeerSkill;
   store: SkillsStore;
+  confirm: (message: string) => boolean;
 }> = (props) => {
   const s = props.store;
   const skill = props.skill;
@@ -494,43 +561,41 @@ const PeerRow: Component<{
 
   return (
     <>
-      <div class="tl-skill-row">
-        <button
-          type="button"
-          class="tl-skill-name tl-skill-peer"
-          aria-expanded={open()}
-          onClick={() => s.toggleExpanded(props.peer, skill.name)}
-        >
-          {skill.name}
-        </button>
-        <Show when={st().label}>
-          <span class={`tl-skill-meta tl-skill-${st().tone}`}>
-            {st().label}
-          </span>
-        </Show>
-        <Show when={action() === "install"}>
+      <tr classList={{ open: open() }}>
+        <td>
           <button
             type="button"
-            class="tl-settings-btn"
-            disabled={anyBusy()}
-            onClick={() => void s.install(props.peer, skill.name)}
+            class="tl-skill-name"
+            aria-expanded={open()}
+            onClick={() => s.toggleExpanded(props.peer, skill.name)}
           >
-            {s.busy() === key ? "Installing…" : "Install"}
+            {skill.name}
           </button>
-        </Show>
-      </div>
-      <Show when={open()}>
-        <div class="tl-skill-detail">
-          <Show when={skill.description}>
-            <div class="tl-skill-desc">{skill.description}</div>
+        </td>
+        <td class="tl-col-source">
+          <Show when={st().label}>
+            <span class={`tl-skill-meta tl-skill-${st().tone}`}>{st().label}</span>
           </Show>
-          <div class="tl-skill-facts">{fileSummary(skill)}</div>
-          <Show when={action() === "replace"}>
-            <div class="tl-settings-btnrow">
+        </td>
+        <td class="tl-col-actions">
+          <span class="tl-skill-actions">
+            <Show when={action() === "install"}>
               <button
                 type="button"
                 class="tl-settings-btn"
+                disabled={anyBusy()}
+                onClick={() => void s.install(props.peer, skill.name)}
+              >
+                {s.busy() === key ? "Installing…" : "Install"}
+              </button>
+            </Show>
+            <Show when={action() === "replace"}>
+              <button
+                type="button"
+                class="tl-settings-btn"
+                disabled={anyBusy()}
                 onClick={() => void s.showDiff(props.peer, skill.name)}
+                title="See how their copy differs from yours"
               >
                 View diff
               </button>
@@ -538,32 +603,53 @@ const PeerRow: Component<{
                 type="button"
                 class="tl-settings-btn"
                 disabled={anyBusy()}
-                onClick={() => void s.install(props.peer, skill.name, true)}
+                onClick={() => {
+                  if (
+                    props.confirm(
+                      `Replace your ${skill.name} with ${props.peer}'s? Yours is backed up first.`,
+                    )
+                  ) {
+                    void s.install(props.peer, skill.name, true);
+                  }
+                }}
+                title="Backs your copy up first"
               >
-                {s.busy() === key ? "Replacing…" : "Replace (backs up mine)"}
+                {s.busy() === key ? "Replacing…" : "Replace"}
               </button>
+            </Show>
+          </span>
+        </td>
+      </tr>
+      <Show when={open() || !!diff()}>
+        <tr class="tl-detail-row">
+          <td colspan="3">
+            <div class="tl-skill-detail">
+              <Show when={skill.description}>
+                <div class="tl-skill-desc">{skill.description}</div>
+              </Show>
+              <div class="tl-skill-facts">{fileSummary(skill)}</div>
+              <Show when={diff()}>
+                <pre class="tl-skill-diff">
+                  <For each={(diff()!.diff || "").split("\n")}>
+                    {(line) => (
+                      <div
+                        class={
+                          line.startsWith("+")
+                            ? "tl-skill-add"
+                            : line.startsWith("-")
+                              ? "tl-skill-del"
+                              : ""
+                        }
+                      >
+                        {line}
+                      </div>
+                    )}
+                  </For>
+                </pre>
+              </Show>
             </div>
-          </Show>
-          <Show when={diff()}>
-            <pre class="tl-skill-diff">
-              <For each={(diff()!.diff || "").split("\n")}>
-                {(line) => (
-                  <div
-                    class={
-                      line.startsWith("+")
-                        ? "tl-skill-add"
-                        : line.startsWith("-")
-                          ? "tl-skill-del"
-                          : ""
-                    }
-                  >
-                    {line}
-                  </div>
-                )}
-              </For>
-            </pre>
-          </Show>
-        </div>
+          </td>
+        </tr>
       </Show>
     </>
   );
