@@ -342,6 +342,11 @@ class Guard:
         """
         if method in ("GET", "HEAD", "OPTIONS"):
             return None
+        # /skills/source/inspect is a POST that installs NOTHING: it reads a repo
+        # and reports what it offers. Refusing it would make the install field
+        # untestable through the harness while protecting nothing.
+        if path == "/skills/source/inspect":
+            return None
         return (f"refusing {method} {path} — a skill mutation lands in the real "
                 f"account (no qa-* namespace exists for skills). Run it against "
                 f"127.0.0.1:7688 directly if that is what you mean.")
