@@ -37,6 +37,7 @@ var knownEvents = map[string]bool{
 	"skill.removed":           true, // backed up and dropped one (tl.key)
 	"skill.deleted":            true, // permanent: skill + its backups + its state (tl.key)
 	"plugin.uninstalled":       true, // marketplace plugin removed and its cache reclaimed (tl.key)
+	"plugin.installed":         true, // installed from a source repo (tl.key, tl.from, tl.kind=source)
 	"skill.toggled":           true, // enabledPlugins write (tl.key, tl.kind=on|off)
 	"plugin.updated":          true, // marketplace plugin updated (tl.key)
 	"session.claude_restarted": true, // respawned a pane to load a new skill set (tl.session)

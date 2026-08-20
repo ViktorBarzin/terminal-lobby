@@ -183,6 +183,46 @@ export function uninstallPlugin(
   return post(skillActionUrl("plugin-uninstall"), { plugin });
 }
 
+/** One installable skill found in a source repo. */
+export interface SourceSkill {
+  name: string;
+  path: string;
+  description?: string;
+}
+
+/** One plugin a source repo's marketplace manifest offers. */
+export interface SourcePlugin {
+  name: string;
+  description?: string;
+}
+
+/** What one read-only look at a repo concluded. A repo can be both kinds. */
+export interface SourceInfo {
+  owner: string;
+  repo: string;
+  ref?: string;
+  skills?: SourceSkill[];
+  marketplace?: string;
+  plugins?: SourcePlugin[];
+  knownOwner: boolean;
+}
+
+/** Look at a repo without installing anything: what it offers, and whether it is
+ *  a skills repo, a plugin marketplace, or both. */
+export function inspectSource(source: string): Promise<SourceInfo> {
+  return post(skillActionUrl("source/inspect"), { source });
+}
+
+/** Install the chosen names from a repo, by running the ecosystem's own
+ *  installer as you (docs/adr/0012). */
+export function installFromSource(
+  source: string,
+  kind: "skills" | "plugins",
+  names: string[],
+): Promise<{ source: string; kind: string; names: string[]; output: string }> {
+  return post(skillActionUrl("source/install"), { source, kind, names });
+}
+
 /** Update one marketplace plugin by running the caller's own claude CLI. */
 export function updatePlugin(plugin: string): Promise<{ plugin: string; output: string }> {
   return post(skillActionUrl("plugin-update"), { plugin });

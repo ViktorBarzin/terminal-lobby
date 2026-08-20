@@ -50,6 +50,8 @@ const (
 	opPlugin    = "plugin-update"
 	opDelete    = "delete"
 	opUninstall = "plugin-uninstall"
+	opInspect   = "source-inspect"
+	opSource    = "source-install"
 )
 
 // request is everything any op can be asked for. One shape keeps the child's
@@ -64,6 +66,10 @@ type request struct {
 	Replace bool             `json:"replace,omitempty"`
 	At      string           `json:"at,omitempty"` // RFC3339; the parent decides "now"
 	Blobs   []skillscan.Blob `json:"blobs,omitempty"`
+	Kind    string           `json:"kind,omitempty"`
+	Owner   string           `json:"owner,omitempty"`
+	Repo    string           `json:"repo,omitempty"`
+	Names   []string         `json:"names,omitempty"`
 }
 
 // result is the child's envelope. Status carries the HTTP status the parent
@@ -86,6 +92,8 @@ type result struct {
 	Deleted *skillscan.DeleteResult `json:"deleted,omitempty"`
 	// Freed is the plugin cache reclaimed by an uninstall.
 	Freed int64 `json:"freed,omitempty"`
+	// Source is what one read-only look at a repo concluded.
+	Source *sourceInfo `json:"source,omitempty"`
 }
 
 // fileRow is one file of a skill, for the View panel.
@@ -257,6 +265,20 @@ func perform(op, home string, req request) result {
 			return result{Status: 502, Error: err.Error(), Output: out}
 		}
 		return result{Status: 200, Output: out, Freed: freed}
+
+	case opInspect:
+		info, err := inspectSource(home, req.Owner, req.Repo)
+		if err != nil {
+			return result{Status: 400, Error: err.Error()}
+		}
+		return result{Status: 200, Source: &info}
+
+	case opSource:
+		out, err := installFromSource(home, req.Owner, req.Repo, req.Kind, req.Names)
+		if err != nil {
+			return result{Status: 502, Error: err.Error(), Output: out}
+		}
+		return result{Status: 200, Output: out}
 
 	case opPlugin:
 		out, err := updatePlugin(home, req.Plugin)

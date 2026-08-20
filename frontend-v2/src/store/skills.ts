@@ -12,6 +12,8 @@
 import { createSignal, type Accessor } from "solid-js";
 import {
   deleteSkill,
+  inspectSource,
+  installFromSource,
   fetchDiff,
   fetchInventory,
   installSkill,
@@ -23,6 +25,7 @@ import {
   updatePlugin,
   type Inventory,
   type SkillDiff,
+  type SourceInfo,
 } from "../lib/skills-api";
 import { toasts } from "./toast";
 
@@ -51,6 +54,16 @@ export interface SkillsStore {
   update: (plugin: string) => Promise<void>;
   uninstall: (plugin: string) => Promise<void>;
   restart: (session: string) => Promise<void>;
+  /** What the last look at a source repo found; null when there is none. */
+  source: Accessor<SourceInfo | null>;
+  /** A look is in flight. */
+  inspecting: Accessor<boolean>;
+  /** Look at a repo without installing anything. */
+  inspect: (source: string) => Promise<void>;
+  /** Forget the current look. */
+  clearSource: () => void;
+  /** Install the chosen names from the looked-at repo. */
+  installSource: (kind: "skills" | "plugins", names: string[]) => Promise<void>;
 }
 
 /** rowKey identifies an expanded row across both lists. */
@@ -63,6 +76,8 @@ export function createSkillsStore(): SkillsStore {
   const [expanded, setExpanded] = createSignal("");
   const [diff, setDiff] = createSignal<SkillDiff | null>(null);
   const [busy, setBusy] = createSignal("");
+  const [source, setSource] = createSignal<SourceInfo | null>(null);
+  const [inspecting, setInspecting] = createSignal(false);
 
   const load = async () => {
     setLoading(true);
@@ -165,6 +180,30 @@ export function createSkillsStore(): SkillsStore {
           ? `Uninstalled ${name} — ${human(res.freed)} freed.`
           : `Uninstalled ${name}.`;
       }),
+    source,
+    inspecting,
+    inspect: async (input) => {
+      setInspecting(true);
+      try {
+        setSource(await inspectSource(input));
+      } catch (e) {
+        setSource(null);
+        toasts.push({ kind: "error", message: message(e) });
+      } finally {
+        setInspecting(false);
+      }
+    },
+    clearSource: () => setSource(null),
+    installSource: async (kind, names) => {
+      const info = source();
+      if (!info) return;
+      await act(`source:${kind}`, async () => {
+        await installFromSource(`${info.owner}/${info.repo}`, kind, names);
+        setSource(null);
+        const what = names.length === 1 ? names[0] : `${names.length} ${kind}`;
+        return `Installed ${what} from ${info.owner}/${info.repo}. It loads in new sessions.`;
+      });
+    },
     restart: async (session) =>
       act(`session:${session}`, async () => {
         await restartSession(session);
