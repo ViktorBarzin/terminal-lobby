@@ -317,7 +317,8 @@ services do.
 | Method + path | Purpose |
 |---|---|
 | `GET /skills` | Full inventory: the caller's skills (with enabled state and provenance), their marketplace plugins, and every other mapped user's skills |
-| `GET /skills/view?owner=&name=` | `SKILL.md` body plus the file list, sizes, and which files are executable |
+| `GET /skills/view?owner=&name=` | `SKILL.md` body, where that file is on disk, plus the file list, sizes, and which files are executable |
+| `POST /skills/edit` | `{name, content}` — write your own `SKILL.md` back, through a temp file and a rename. No `owner` field: the only account it can write to is the caller's |
 | `GET /skills/diff?owner=&name=` | Unified diff of the peer's copy against the caller's same-named skill |
 | `POST /skills/install` | `{owner, name, replace?}` — copy in; `409` when a differing skill of that name exists and `replace` is not set |
 | `POST /skills/toggle` | `{id, enabled}` — one `enabledPlugins` write; `id` is `<name>@skills-dir` or `<plugin>@<marketplace>` |
@@ -491,7 +492,7 @@ and the provisioner's vendoring step retired. 75 Go tests and 36 frontend tests,
 plus a run against the two real accounts: 38 own skills, 7 plugins, and of emo's
 21 exactly the 4 identical / 9 divergent / 8 absent the design predicted.
 
-Five things came out differently from the design above, all of them from building or using it:
+Six things came out differently from the design above, all of them from building or using it:
 
 - **The surface moved out of Settings.** It shipped as decision 1 described and was
   moved within hours of being used, because the row counts do not fit that shape:
@@ -523,6 +524,17 @@ Five things came out differently from the design above, all of them from buildin
 - **The session list shows every live session**, with the mid-turn ones marked,
   rather than only the ones running an older skill set. Nothing records when a
   session's Claude last read its skills, so "affected" is honestly all of them.
+- **A skill can be read and edited in the row that lists it.** `GET /skills/view`
+  was built for reading a peer's skill before taking it; opening one of your own
+  rows now shows the same file in an editor (the CodeMirror host the file pane
+  already uses), and `POST /skills/edit` writes it back through a temp file and a
+  rename. Small wording fixes were otherwise a trip through the file browser to
+  `~/.claude/skills/<name>/SKILL.md`. The write endpoint has no `owner` field, so
+  a peer's skill stays read-only however the request is shaped — taking a copy is
+  what makes one yours to change. Saving does not re-read the file, so the cursor
+  stays where it was; the inventory is re-read, because the row's size and hash
+  just moved. A skill edited after being installed from a peer shows as locally
+  modified, which is the existing hash comparison and needed no new bookkeeping.
 
 **Row actions sit on the row.** Remove, Delete and Update act from the row
 itself, the way a plugin's Update and Uninstall always did; expanding a row is for

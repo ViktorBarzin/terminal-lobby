@@ -9,6 +9,7 @@ import {
   type Component,
 } from "solid-js";
 import type { PeerSkill, Skill, SourceInfo } from "../lib/skills-api";
+import { CodeEditor } from "./CodeEditor";
 import { rowKey, type SkillsStore } from "../store/skills";
 import {
   fileSummary,
@@ -45,6 +46,94 @@ import {
  * files are executable, because installing a peer's skill puts their scripts in
  * your sessions.
  */
+/**
+ * One skill's file, under its row.
+ *
+ * Your own is editable in place: the shortest path from "that wording is wrong"
+ * to a fixed skill, on the same file a session reads. A peer's is read-only —
+ * their home is theirs, and taking a copy is what makes a skill yours to change.
+ *
+ * The store holds one file at a time, the expanded row's, so this renders only
+ * for that row: a peer row can also be open on a diff, and it must not show the
+ * text of whichever skill was expanded.
+ */
+const SkillFile: Component<{
+  s: SkillsStore;
+  owner: string;
+  name: string;
+  /** Left out for a peer's skill: read it, do not write it. */
+  editable?: boolean;
+  confirm?: (message: string) => boolean;
+}> = (props) => {
+  const s = props.s;
+  const mine = () => s.expanded() === rowKey(props.owner, props.name);
+  const dirty = () => s.draft() !== s.saved();
+  const saving = () => s.busy() === `edit:${props.name}`;
+  const ask = props.confirm ?? ((m: string) => window.confirm(m));
+
+  return (
+    <Show when={mine()}>
+      <Show when={s.viewing()}>
+        <div class="tl-skill-facts">Reading {props.name}…</div>
+      </Show>
+      <Show when={s.viewError()}>
+        <div class="tl-skill-facts tl-skill-warn">{s.viewError()}</div>
+      </Show>
+      {/* keyed: a fetch replaces this object, which is what rebuilds the editor
+          around the file it just read. A save does not fetch, so it does not
+          disturb the cursor. */}
+      <Show when={s.view()} keyed>
+        {(v) => (
+          <div class="tl-skill-file">
+            <Show
+              when={props.editable}
+              fallback={<pre class="tl-skill-md">{v.skillmd}</pre>}
+            >
+              {/* Seeded from the draft, not the file: switching tabs unmounts
+                  this and an edit in progress has to survive coming back. */}
+              <CodeEditor
+                initialText={s.draft()}
+                language="markdown"
+                onChange={(text) => s.setDraft(text)}
+                onSave={() => {
+                  if (dirty() && !saving()) void s.save(props.name);
+                }}
+              />
+              <div class="tl-skill-file-foot">
+                <span class="tl-skill-meta" title={v.path ?? ""}>
+                  {v.path ?? `${v.owner}/${v.name}`}
+                </span>
+                <span class="tl-skill-file-btns">
+                  <button
+                    type="button"
+                    class="tl-settings-btn"
+                    disabled={!dirty() || saving()}
+                    onClick={() => {
+                      if (ask(`Throw away your changes to ${props.name}?`)) void s.reread();
+                    }}
+                    title="Read the file again, losing what you typed"
+                  >
+                    Revert
+                  </button>
+                  <button
+                    type="button"
+                    class="tl-settings-btn tl-settings-btn-go"
+                    disabled={!dirty() || saving()}
+                    onClick={() => void s.save(props.name)}
+                    title="Save (Ctrl/Cmd-S)"
+                  >
+                    {saving() ? "Saving…" : dirty() ? "Save" : "Saved"}
+                  </button>
+                </span>
+              </div>
+            </Show>
+          </div>
+        )}
+      </Show>
+    </Show>
+  );
+};
+
 export const SkillsPanel: Component<{
   skills: SkillsStore;
   onClose: () => void;
@@ -351,6 +440,13 @@ export const SkillsPanel: Component<{
                                   <Show when={st().detail}>
                                     <div class="tl-skill-facts">{st().detail}</div>
                                   </Show>
+                                  <SkillFile
+                                    s={s}
+                                    owner=""
+                                    name={skill.name}
+                                    editable
+                                    confirm={props.confirm}
+                                  />
                                 </div>
                               </td>
                             </tr>
@@ -812,6 +908,7 @@ const PeerRow: Component<{
                 <div class="tl-skill-desc">{skill.description}</div>
               </Show>
               <div class="tl-skill-facts">{fileSummary(skill)}</div>
+              <SkillFile s={s} owner={props.peer} name={skill.name} />
               <Show when={diff()}>
                 <pre class="tl-skill-diff">
                   <For each={(diff()!.diff || "").split("\n")}>

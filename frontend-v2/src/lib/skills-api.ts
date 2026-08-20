@@ -87,6 +87,9 @@ export interface SkillView {
   owner: string;
   name: string;
   skillmd: string;
+  /** Where that file is on disk, as the service resolved it. Shown under the
+   *  editor, so an edit is never ambiguous about which copy it lands on. */
+  path?: string;
   files?: SkillFile[];
   stat?: {
     files: number;
@@ -155,6 +158,21 @@ export function installSkill(
  *  skill, "<plugin>@<marketplace>" for a plugin. */
 export function toggleSkill(id: string, enabled: boolean): Promise<unknown> {
   return post(skillActionUrl("toggle"), { id, enabled });
+}
+
+/** What a saved edit left behind: the file's new hash, and the skill as it
+ *  reads afterwards. */
+export interface SkillEdit {
+  name: string;
+  path: string;
+  hash: string;
+  stat?: SkillView["stat"];
+}
+
+/** Write one of your own skill files back. There is no owner argument because
+ *  the endpoint has no owner field: it can only reach your own skills. */
+export function editSkill(name: string, content: string): Promise<SkillEdit> {
+  return post(skillActionUrl("edit"), { name, content });
 }
 
 /** Back a skill up and drop it. */
