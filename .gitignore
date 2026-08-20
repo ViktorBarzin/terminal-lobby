@@ -2,6 +2,7 @@
 tmux-api/tmux-api
 clipboard-upload/clipboard-upload
 file-api/file-api
+skills-api/skills-api
 /out/
 /tmp-build/
 
