@@ -8,7 +8,7 @@ import {
   type Accessor,
   type Component,
 } from "solid-js";
-import type { PeerSkill, Skill } from "../lib/skills-api";
+import type { PeerSkill, Skill, SourceInfo } from "../lib/skills-api";
 import { rowKey, type SkillsStore } from "../store/skills";
 import {
   fileSummary,
@@ -55,6 +55,7 @@ export const SkillsPanel: Component<{
   let dialogEl: HTMLDivElement | undefined;
   const [tab, setTab] = createSignal<TabId | "">("");
   const [query, setQuery] = createSignal("");
+  const [draft, setDraft] = createSignal("");
 
   onMount(() => {
     if (!s.inventory() && !s.loading()) void s.load();
@@ -200,6 +201,42 @@ export const SkillsPanel: Component<{
               onInput={(e) => setQuery(e.currentTarget.value)}
               aria-label="Filter skills"
             />
+          </Show>
+
+          {/* Install from a repo. One field for both kinds: a look at the repo
+              decides whether it offers skills, a plugin marketplace, or both
+              (docs/adr/0012). The look installs nothing. */}
+          <Show when={active() === "mine" || active() === "plugins"}>
+            <form
+              class="tl-skills-source"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const v = draft().trim();
+                if (v) void s.inspect(v);
+              }}
+            >
+              <input
+                class="tl-skills-filter tl-skills-source-input"
+                type="text"
+                placeholder="Install from a repo — owner/repo"
+                value={draft()}
+                onInput={(e) => setDraft(e.currentTarget.value)}
+                aria-label="Install from a repo"
+                spellcheck={false}
+                autocapitalize="off"
+              />
+              <button
+                type="submit"
+                class="tl-settings-btn"
+                disabled={s.inspecting() || !draft().trim()}
+              >
+                {s.inspecting() ? "Looking…" : "Look"}
+              </button>
+            </form>
+          </Show>
+
+          <Show when={s.source()}>
+            {(info) => <SourceResult info={info()} store={s} confirm={confirm} />}
           </Show>
 
           <div class="tl-skills-body">
@@ -535,6 +572,128 @@ function deleteWarning(skill: Skill): string {
   }
   return `Delete ${skill.name} permanently, including any backups? Nothing else has a copy of this one.`;
 }
+
+/**
+ * What a look at a repo found, and the choice it presents.
+ *
+ * A repo can be a skills repo, a plugin marketplace, or both — `mattpocock/skills`
+ * is 35 skills AND a marketplace — so both are offered rather than one being
+ * picked by a precedence rule nobody can see. Installing runs the ecosystem's own
+ * installer as you, which is why the confirmation says so plainly.
+ */
+const SourceResult: Component<{
+  info: SourceInfo;
+  store: SkillsStore;
+  confirm: (message: string) => boolean;
+}> = (props) => {
+  const s = props.store;
+  const [chosen, setChosen] = createSignal<Record<string, "skills" | "plugins">>({});
+  const pick = (name: string, kind: "skills" | "plugins", on: boolean) =>
+    setChosen((c) => {
+      const next = { ...c };
+      if (on) next[`${kind}:${name}`] = kind;
+      else delete next[`${kind}:${name}`];
+      return next;
+    });
+  const namesFor = (kind: "skills" | "plugins") =>
+    Object.entries(chosen())
+      .filter(([, k]) => k === kind)
+      .map(([key]) => key.slice(kind.length + 1));
+  const total = () => Object.keys(chosen()).length;
+  const busy = () => s.busy().startsWith("source:");
+
+  const install = () => {
+    const skills = namesFor("skills");
+    const plugins = namesFor("plugins");
+    const what = [
+      skills.length ? `${skills.length} skill${skills.length === 1 ? "" : "s"}` : "",
+      plugins.length ? `${plugins.length} plugin${plugins.length === 1 ? "" : "s"}` : "",
+    ]
+      .filter(Boolean)
+      .join(" and ");
+    if (
+      !props.confirm(
+        `Install ${what} from ${props.info.owner}/${props.info.repo}? This runs that project's own installer as you.`,
+      )
+    ) {
+      return;
+    }
+    if (skills.length) void s.installSource("skills", skills);
+    if (plugins.length) void s.installSource("plugins", plugins);
+  };
+
+  return (
+    <div class="tl-skill-detail tl-source-result">
+      <div class="tl-skill-desc">
+        {props.info.owner}/{props.info.repo}
+        <Show when={!props.info.knownOwner}>
+          <span class="tl-skill-meta tl-skill-warn">
+            {" "}
+            · not an owner you have installed from before
+          </span>
+        </Show>
+      </div>
+
+      <Show when={(props.info.skills ?? []).length > 0}>
+        <div class="tl-skill-head">Skills ({(props.info.skills ?? []).length})</div>
+        <For each={props.info.skills}>
+          {(sk) => (
+            <label class="tl-source-row">
+              <input
+                type="checkbox"
+                checked={!!chosen()[`skills:${sk.name}`]}
+                onChange={(e) => pick(sk.name, "skills", e.currentTarget.checked)}
+              />
+              <span class="tl-skill-name tl-skill-plain">{sk.name}</span>
+              <Show when={sk.description}>
+                <span class="tl-skill-facts">{sk.description}</span>
+              </Show>
+            </label>
+          )}
+        </For>
+      </Show>
+
+      <Show when={(props.info.plugins ?? []).length > 0}>
+        <div class="tl-skill-head">
+          Plugins in {props.info.marketplace} ({(props.info.plugins ?? []).length})
+        </div>
+        <For each={props.info.plugins}>
+          {(pl) => (
+            <label class="tl-source-row">
+              <input
+                type="checkbox"
+                checked={!!chosen()[`plugins:${pl.name}`]}
+                onChange={(e) => pick(pl.name, "plugins", e.currentTarget.checked)}
+              />
+              <span class="tl-skill-name tl-skill-plain">{pl.name}</span>
+              <Show when={pl.description}>
+                <span class="tl-skill-facts">{pl.description}</span>
+              </Show>
+            </label>
+          )}
+        </For>
+      </Show>
+
+      <div class="tl-settings-btnrow">
+        <button
+          type="button"
+          class="tl-settings-btn"
+          disabled={total() === 0 || busy()}
+          onClick={install}
+        >
+          {busy() ? "Installing…" : `Install ${total() || ""}`.trim()}
+        </button>
+        <button type="button" class="tl-settings-btn" onClick={() => s.clearSource()}>
+          Cancel
+        </button>
+      </div>
+      <div class="tl-skill-facts">
+        Installing runs that project's own installer as you. Nothing here reads a
+        skill for intent — check what lands.
+      </div>
+    </div>
+  );
+};
 
 /** Empty renders the reason a list is empty, and nothing when it is not. */
 const Empty: Component<{ text: string; shown: boolean }> = (props) => (
