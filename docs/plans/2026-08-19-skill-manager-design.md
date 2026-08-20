@@ -31,8 +31,10 @@ backend that owns the filesystem work.
 - No marketplace, and no registry repo. A separate skills repo is a plan for
   later; it changes nothing here. For this feature, each user simply *has* a set
   of skills and where they came from is not modelled.
-- No browsing of upstream marketplaces (`claude-plugins-official` and friends).
-  `/plugin` already does that well.
+- No browsing of upstream marketplaces. `/plugin` does that well, and the source
+  field added later (see *Installing from outside this box*) takes a repo you
+  already know rather than offering a catalogue to browse — that non-goal held for
+  browsing, not for installing.
 - No authoring surface: the manager reads skills and moves them, it does not
   edit them.
 - No changes to project-scoped skills (e.g. the ~10 under `infra/.claude/skills`),
@@ -322,9 +324,58 @@ services do.
 | `POST /skills/remove` | `{name}` — back up, then delete |
 | `POST /skills/delete` | `{name}` — permanent: the skill, every backup of it, its enabled state and its provenance; answers what it reclaimed |
 | `POST /skills/plugin-uninstall` | `{plugin}` — the CLI's own uninstall, then reclaim the files it leaves marked `.orphaned_at` |
+| `POST /skills/source/inspect` | `{source}` — normalise `owner/repo`, read the repo's tree once, and answer what is installable: its `SKILL.md` skills, a plugin marketplace, or both |
+| `POST /skills/source/install` | `{source, kind, names[]}` — `npx -y skills@latest add … -s <name> -a claude-code -g -y` for skills, `claude plugin marketplace add` + `claude plugin install` for a marketplace |
 | `POST /skills/plugin-update` | `{plugin}` — exec the caller's own `claude plugin update` |
 | `POST /skills/restart` | `{session}` — respawn that session's pane with `claude --continue`; refuses a session whose state is `running` |
 | `GET /health` | Unauthenticated, like every sibling |
+
+## Installing from outside this box
+
+The panel could move a skill between accounts and remove one, but not bring one
+in. A field on the Mine tab takes a GitHub `owner/repo` (or the https URL, which
+normalises to it), and the decisions behind it are recorded in
+`docs/adr/0012-installing-from-a-source-runs-its-installer-as-you.md`.
+
+Discovery is read-only and needs no code execution: one call to the GitHub tree
+API returns every `SKILL.md` path in the repo and whether
+`.claude-plugin/marketplace.json` exists, which is both the "is this indeed a
+skill" check and the auto-detect between the two install paths. A repo can be
+both — `mattpocock/skills` is 35 skills *and* a marketplace — so the picker offers
+both rather than applying a silent precedence rule.
+
+```mermaid
+flowchart TD
+  IN["paste owner/repo"] --> V{"shape valid?"}
+  V -- no --> R1["refused: not an owner/repo"]
+  V -- yes --> T["GET /repos/…/git/trees/HEAD<br/>one read-only call"]
+  T --> K{"what is in it?"}
+  K -- "no SKILL.md,<br/>no manifest" --> R2["refused: no skills and<br/>no plugin manifest"]
+  K -- "SKILL.md files" --> PS["pick which skills"]
+  K -- "marketplace.json" --> PP["pick which plugins"]
+  K -- "both" --> PB["offer both"]
+  PS --> NPX["npx -y skills@latest add repo<br/>-s name -a claude-code -g -y<br/>runs AS the caller"]
+  PP --> CLI["claude plugin marketplace add<br/>+ claude plugin install"]
+  PB --> NPX
+  PB --> CLI
+  NPX --> LAND["lands in ~/.claude/skills/name<br/>as a real directory"]
+  CLI --> LAND2["lands in the plugin cache<br/>+ enabledPlugins"]
+  LAND --> REPORT["panel reports: files, how many<br/>executable, every script named,<br/>unknown-owner note, provenance"]
+  LAND2 --> REPORT
+```
+
+The install itself is the ecosystem's own installer, run as the calling user
+through the same privileged child every other operation uses. Nothing is staged
+for review first: it lands, and the panel reports what arrived. That was the
+chosen trade-off — given that `npx` executes the vercel CLI with the caller's
+credentials before any check of ours could run, a staging gate would only have
+protected against the skill's *content*, which the after-report and a one-click
+Delete already address.
+
+What the checks do and do not cover is set out in ADR-0012, including what they do
+not: the installer's own code is trusted rather than inspected,
+nothing reads a `SKILL.md` for intent, and `@latest` means the code that runs as
+you is whatever the registry serves at that moment.
 
 ## On-disk contract
 
