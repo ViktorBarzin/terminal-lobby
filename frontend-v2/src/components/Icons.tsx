@@ -106,3 +106,17 @@ export const TerminalIcon: Component<{ size?: number }> = (props) => (
     <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
   </Svg>
 );
+
+/** Skills: modular pieces with room for another. Hand-drawn in the same stroked
+ *  24-box as the Lucide set rather than borrowed from it, so nothing here claims
+ *  to be a glyph it is not. Replaces a ⌘ that read as the Mac command key on
+ *  iOS. */
+export const SkillsIcon: Component<{ size?: number }> = (props) => (
+  <Svg size={props.size}>
+    <rect x="3" y="3" width="7" height="7" rx="1.5" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" />
+    <rect x="3" y="14" width="7" height="7" rx="1.5" />
+    <path d="M14 17.5h7" />
+    <path d="M17.5 14v7" />
+  </Svg>
+);
