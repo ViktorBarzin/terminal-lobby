@@ -115,6 +115,16 @@ func (in *Injector) PinGrid(osUser, session string) error {
 // server that is running it. The socket is threaded through explicitly because
 // the hook's shell cannot know which server invoked it — without -L, a test on
 // an isolated socket would reach across to the user's real one.
+//
+//  3. Everything is SILENCED, as a brace group so the redirect covers the whole
+//     pipeline rather than its last stage — a failing `list-clients` writes from
+//     the first one. `-b` does not do this for you: a backgrounded run-shell
+//     whose command writes to stdout still puts the pane into view-mode, which
+//     covers the conversation until somebody presses q. That reached production
+//     — a watched session showing lines of command text where the conversation
+//     should be, read as a session that had died while claude was alive under
+//     the overlay. A hook that fires on every attach, detach and resize has no
+//     business writing to the terminal of the person driving, so it doesn't.
 func (in *Injector) gridHook(session string) string {
 	sock := ""
 	if in.socket != "" {
@@ -132,12 +142,13 @@ func (in *Injector) gridHook(session string) string {
 	// 2..5. An unrecognised value falls back to 1, matching tmux's default,
 	// rather than reaching the arithmetic and breaking the resize entirely.
 	return fmt.Sprintf(
-		`run-shell -b 'tmux %slist-clients -t %s `+
+		`run-shell -b '{ tmux %slist-clients -t %s `+
 			`-F "##{client_flags} ##{client_width} ##{client_height}" `+
 			`| grep -v read-only | tail -1 `+
 			`| while read f w h; do `+
 			`s=$(tmux %sdisplay -p -t %s "##{status}"); `+
 			`case $s in off) n=0;; [0-9]) n=$s;; *) n=1;; esac; `+
-			`tmux %sresize-window -t %s -x $w -y $((h-n)); done'`,
+			`tmux %sresize-window -t %s -x $w -y $((h-n)); done; `+
+			`} >/dev/null 2>&1'`,
 		sock, target, sock, target, sock, target)
 }
