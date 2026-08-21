@@ -12,32 +12,38 @@
 import type { Whoami } from "../types/lobby";
 
 /**
- * Whether this tab may only WATCH the sessions it opens: it is acting as
- * someone else, so it borrows their view and never their keyboard.
+ * The user this tab is a LENS on, or "" when it is an ordinary tab.
  *
- * ONE RULE FOR EVERY ATTACH in the tab, including a session a third party
- * shared with the target read-write: that grant is theirs, not yours, so "can I
- * type here" never depends on which row was clicked.
+ * ONE ANSWER FOR THE WHOLE TAB, and two things read it. It decides that a
+ * session opens WATCHING here rather than by the automatic driven/not-driven
+ * rule — you came to look at someone else's account, so watching is the state
+ * to arrive in, on every session including one a third party shared with the
+ * target read-write. And it namespaces the stored Watch choice, so *take
+ * control* on bob's `code` is remembered against bob's `code` and never against
+ * your own session of that name (store/watchmode.ts).
  *
- * Read from the SERVER's answer, not from `?as=` — acting as YOURSELF is not a
- * switch and must stay drivable, and only the server can tell the two apart
- * (`realUser` is present only when the identity actually changed). Until that
- * answer arrives the lock HOLDS: the first attach happens early, and coming up
- * watching costs a click, while coming up driving is what this exists to
- * prevent.
+ * A DEFAULT, NOT A LOCK (2026-08-21). The control still works: taking control
+ * re-attaches read-write and the pty controls come back with it, because
+ * helping with what you are looking at should not mean leaving the lobby for
+ * `sudo -u <user> tmux attach`. The server's ceiling is unchanged — it already
+ * answered `rw` for an act-as attach that did not ask to watch — and the
+ * compensating control is the audit line, which names the mode each attach
+ * resolved to and says `DRIVING (read-write)` in words.
  *
- * Note what this is NOT: the ceiling is the server's, and it still answers `rw`
- * for an act-as attach that does not ask to watch. This is the tab declining
- * access it holds — an accident guard, not a privilege boundary. Taking control
- * means leaving the lens.
+ * Read from the SERVER's answer, not from `?as=` alone — acting as YOURSELF is
+ * not a switch, and only the server can tell the two apart (`realUser` is
+ * present only when the identity actually changed). Until that answer arrives
+ * this assumes the switch took: the first attach happens early, and a lens that
+ * comes up watching costs a click, while one that comes up driving is what the
+ * watching default exists to prevent.
  */
-export function watchLockedFor(
+export function lensTarget(
   whoami: Whoami | null | undefined,
   actAs: string,
-): boolean {
-  if (!actAs) return false;
-  if (!whoami) return true;
-  return !!whoami.realUser;
+): string {
+  if (!actAs) return "";
+  if (!whoami) return actAs;
+  return whoami.realUser ? actAs : "";
 }
 
 /**

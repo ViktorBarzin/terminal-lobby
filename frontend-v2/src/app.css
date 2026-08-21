@@ -235,14 +235,12 @@ body {
   color: var(--accent);
   border-color: var(--accent);
 }
-/* Locked on — a tab acting as another user only ever watches, so this is a
-   readout rather than a control. It keeps the accent (it IS on) and loses the
-   pointer affordance; the tooltip names the user being acted as. Full opacity
-   deliberately, unlike the disabled controls beside it: this one is stating the
-   mode, not refusing an action. */
-.tl-watch-btn.tl-watch-locked {
-  cursor: default;
-  opacity: 1;
+/* Driving in a lens — this tab is typing into another user's session. The
+   control stays a control; what changes is that it reads hot, so the state is
+   visible from the bar rather than only from the tinted frame around the app. */
+.tl-watch-btn.tl-watch-lens-drive {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 /* The pty-write controls, inert while watching: a read-only tmux client drops
    what they send, and an upload would file an image in the session's gallery
