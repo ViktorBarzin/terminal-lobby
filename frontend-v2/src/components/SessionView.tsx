@@ -109,12 +109,12 @@ export const SessionView: Component<{
    *  viewer — read ONCE when the view takes the session on, never after, since
    *  the count includes this client's own attach. */
   driven?: () => boolean;
-  /** TRUE while this tab is acting as another user, which may only WATCH: the
-   *  Watch control comes up on and stops being a toggle, and everything that
-   *  types into the pty goes with it. Absent = an ordinary tab. */
-  watchLocked?: () => boolean;
-  /** The user this tab is acting as, for the copy on the locked control. */
-  actingAs?: () => string;
+  /** The user this tab is acting as ("" = an ordinary tab). A lens comes up
+   *  WATCHING every session it opens, and the controls that type into the pty
+   *  are inert with it — until you take control, which re-attaches read-write
+   *  and is remembered under this user rather than against your own session of
+   *  the same name. */
+  lens?: () => string;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** roamed prefs — the A−/A+ buttons step fontSize, which the store persists
@@ -159,9 +159,10 @@ export const SessionView: Component<{
   const [watch, , toggleWatch] = createWatchMode(
     () => session,
     () => props.driven?.() ?? false,
-    () => props.watchLocked?.() ?? false,
+    () => props.lens?.() ?? "",
   );
-  const locked = () => props.watchLocked?.() ?? false;
+  /** The user this tab is acting as, "" in an ordinary tab. */
+  const lens = () => props.lens?.() ?? "";
   /**
    * This view is the one on screen.
    *
@@ -176,11 +177,11 @@ export const SessionView: Component<{
    *  makes them inert — a read-only tmux client drops what it is sent — so this
    *  answers for an ordinary Watch too, not only for a lens. */
   const inertReason = () =>
-    locked()
-      ? `Acting as ${props.actingAs?.() || "another user"} — this tab can only watch`
-      : watch()
-        ? "Watching: this device does not type into the session"
-        : "";
+    !watch()
+      ? ""
+      : lens()
+        ? `Watching ${lens()} — take control to type in their session`
+        : "Watching: this device does not type into the session";
   // The sidebar reads this view's resolved state for the open session; drop it
   // when the view goes so a stale decision cannot outlive the attach it
   // described.
@@ -715,21 +716,29 @@ export const SessionView: Component<{
               below keeps that property: the bar is shared by both views. */}
           <button
             class="tl-icon-btn tl-watch-btn"
-            classList={{ "tl-watch-on": watch(), "tl-watch-locked": locked() }}
+            classList={{
+              "tl-watch-on": watch(),
+              // Driving in a LENS: the one control that says "what you type
+              // lands in someone else's session". The tinted frame says whose.
+              "tl-watch-lens-drive": !!lens() && !watch(),
+            }}
             aria-label={
-              locked()
-                ? "Watching — a tab acting as another user cannot take control"
-                : watch()
-                  ? "Watching — tap to take control"
+              watch()
+                ? lens()
+                  ? `Watching ${lens()} — tap to type in their session`
+                  : "Watching — tap to take control"
+                : lens()
+                  ? `Typing in ${lens()}'s session — tap to watch only`
                   : "Watch only"
             }
             aria-pressed={watch()}
-            disabled={locked()}
             title={
-              locked()
-                ? inertReason()
-                : watch()
-                  ? "Watching: this device can't type and never resizes the session"
+              watch()
+                ? lens()
+                  ? inertReason()
+                  : "Watching: this device can't type and never resizes the session"
+                : lens()
+                  ? `Typing in ${lens()}'s session, as them. Their grid follows this window while you drive it.`
                   : "Watch only: observe without typing or resizing the session"
             }
             onClick={() => toggleWatch()}
@@ -780,8 +789,6 @@ export const SessionView: Component<{
                   class="tl-menu-item"
                   role="menuitemcheckbox"
                   aria-checked={watch()}
-                  disabled={locked()}
-                  title={locked() ? inertReason() : undefined}
                   onClick={() => {
                     barMenu.close();
                     toggleWatch();

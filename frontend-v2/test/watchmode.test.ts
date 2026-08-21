@@ -25,6 +25,28 @@ describe("watch mode — where the choice is kept", () => {
   });
 
   /**
+   * A LENS KEEPS ITS OWN KEYS. The key is otherwise the bare session name,
+   * which is shared with YOUR session of that name — so choosing to drive
+   * emo's `code` would decide how your own `code` opens, days later, from a
+   * decision you made about someone else's box.
+   */
+  it("keeps a lens's choice apart from your own session of the same name", () => {
+    saveWatch("code", true); // your own `code`: watch
+    saveWatch("code", false, "emo"); // emo's `code`, seen through a lens: drive
+    expect(loadWatch("code")).toBe(true);
+    expect(loadWatch("code", "emo")).toBe(false);
+    expect(loadWatch("code", "ancamilea")).toBeUndefined();
+  });
+
+  // No session name can reach the lens namespace: tmux-api, tmux-attach.sh and
+  // sessionio all bound a name to [a-zA-Z0-9_-]{1,32}, so the colons cannot
+  // appear in one.
+  it("puts a lens's keys under the target's own name", () => {
+    saveWatch("work", true, "emo");
+    expect(Object.keys(localStorage)).toEqual([WATCH_KEY_PREFIX + "as:emo:work"]);
+  });
+
+  /**
    * Per-device by construction: the choice lives in localStorage and is never
    * sent to the server as state. A phone watching `main` must not make the
    * desktop's `main` read-only — the server holds no watch state at all, it

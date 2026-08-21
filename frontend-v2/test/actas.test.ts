@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { appendActAs, readActAsFrom } from "../src/lib/config";
-import { actAsUrl, watchLockedFor } from "../src/lib/act-as";
+import { actAsUrl, lensTarget } from "../src/lib/act-as";
 
 describe("actAsUrl — switching is a navigation", () => {
   it("adds the target", () => {
@@ -52,32 +52,31 @@ describe("actAsUrl — switching is a navigation", () => {
  * them can carry.
  */
 
-describe("watchLockedFor — a lens watches, it does not drive", () => {
+describe("lensTarget — whose account this tab is looking at", () => {
   const me = { authentik: "vbarzin", osUser: "wizard" };
   const switched = { authentik: "vbarzin", osUser: "emo", realUser: "wizard" };
 
-  it("does not lock an ordinary tab", () => {
-    expect(watchLockedFor(me, "")).toBe(false);
-    expect(watchLockedFor(null, "")).toBe(false);
+  it("is empty for an ordinary tab", () => {
+    expect(lensTarget(me, "")).toBe("");
+    expect(lensTarget(null, "")).toBe("");
   });
 
-  it("locks a tab the server confirms is switched", () => {
-    expect(watchLockedFor(switched, "emo")).toBe(true);
+  it("names the target the server confirms the tab switched to", () => {
+    expect(lensTarget(switched, "emo")).toBe("emo");
   });
 
-  // Acting as yourself is not a switch: it is your own account, so it drives.
-  it("does not lock a tab acting as its own user", () => {
-    expect(watchLockedFor({ authentik: "emil.barzin", osUser: "emo" }, "emo")).toBe(
-      false,
-    );
+  // Acting as yourself is not a switch: it is your own account, so its sessions
+  // resolve and are remembered as your own.
+  it("is empty for a tab acting as its own user", () => {
+    expect(lensTarget({ authentik: "emil.barzin", osUser: "emo" }, "emo")).toBe("");
   });
 
-  // The lock holds until the server answers. The first attach happens early, and
-  // an unnecessary lock costs one click — coming up driving in someone else's
-  // account is the thing being prevented.
-  it("locks while ?as= is set and whoami has not landed", () => {
-    expect(watchLockedFor(null, "emo")).toBe(true);
-    expect(watchLockedFor(undefined, "emo")).toBe(true);
+  // Assume the switch took until the server says otherwise. The first attach
+  // happens early and a lens defaults to watching, so guessing wrong here costs
+  // a click; guessing the other way types into someone else's session.
+  it("assumes the switch took while ?as= is set and whoami has not landed", () => {
+    expect(lensTarget(null, "emo")).toBe("emo");
+    expect(lensTarget(undefined, "emo")).toBe("emo");
   });
 });
 

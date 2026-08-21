@@ -50,7 +50,7 @@ import { installSwipe } from "../mobile/swipe";
 import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
-import { actAsUrl, watchLockedFor } from "../lib/act-as";
+import { actAsUrl, lensTarget } from "../lib/act-as";
 import { ACT_AS } from "../lib/config";
 import { listUsers } from "../lib/lobby-api";
 
@@ -238,10 +238,11 @@ export const App: Component = () => {
     return w?.realUser ? w.osUser : "";
   });
   const isAdmin = createMemo(() => store.whoami()?.admin === true);
-  // A tab acting as someone else may only WATCH what it opens (see
-  // watchLockedFor). Same derivation the sidebar's cards make from the same
-  // /whoami, so the two surfaces cannot disagree.
-  const watchLocked = createMemo(() => watchLockedFor(store.whoami(), ACT_AS));
+  // Whose account this tab is a lens on ("" = an ordinary tab). It decides that
+  // a session here opens WATCHING, and which namespace a take-control choice is
+  // remembered under (lib/act-as.ts). Same derivation the sidebar's cards make
+  // from the same /whoami, so the two surfaces cannot disagree.
+  const lens = createMemo(() => lensTarget(store.whoami(), ACT_AS));
   const [actAsUsers, setActAsUsers] = createSignal<string[]>([]);
   createEffect(() => {
     if (!isAdmin() || actAsUsers().length > 0) return;
@@ -611,8 +612,7 @@ export const App: Component = () => {
                     label={label()}
                     owner={k.owner}
                     me={store.me}
-                    watchLocked={watchLocked}
-                    actingAs={actingAs}
+                    lens={lens}
                     otherSessions={() =>
                       flatSessionOrder(store.model())
                         .filter((o) => o.name !== k.name)

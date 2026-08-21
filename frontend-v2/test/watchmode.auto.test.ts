@@ -154,49 +154,66 @@ describe("createWatchMode — the join decision is latched", () => {
 });
 
 /**
- * The LOCK: a tab acting as someone else may only watch. The automatic rule and
- * a stored choice both stop mattering — you are looking at another account, and
- * a lens has no keyboard.
+ * A LENS: a tab acting as someone else. It comes up watching every session it
+ * opens — you went there to look — and the automatic rule does not get a say,
+ * since `driven` describes the target's own clients. Saying otherwise is one
+ * click, and it is remembered under the target rather than against your own
+ * session of that name.
  */
-describe("createWatchMode — locked to watching", () => {
+describe("createWatchMode — a lens watches until told otherwise", () => {
   beforeEach(() => localStorage.clear());
 
-  it("resolves to watching whatever the automatic rule would have said", () => {
+  it("watches by default, whatever the automatic rule would have said", () => {
     expect(resolveWatch(undefined, false, true)).toBe(true);
-    expect(resolveWatch(false, false, true)).toBe(true);
+    expect(resolveWatch(undefined, true, true)).toBe(true);
   });
 
-  it("overrides an explicit choice to drive", () => {
+  it("honours an explicit choice, in both directions", () => {
+    expect(resolveWatch(false, false, true)).toBe(false);
+    expect(resolveWatch(true, false, true)).toBe(true);
+  });
+
+  it("ignores what your OWN session of that name chose", () => {
     createRoot((dispose) => {
-      saveWatch("main", false); // this device chose to drive this session name
+      saveWatch("main", false); // your own `main`: drive
       const [driven] = createSignal(false);
-      const [watch] = createWatchMode(() => "main", driven, () => true);
-      expect(watch()).toBe(true);
+      const [watch] = createWatchMode(() => "main", driven, () => "emo");
+      expect(watch()).toBe(true); // the lens has said nothing, so it watches
       dispose();
     });
   });
 
-  // The stored choice is per session NAME, shared with your own sessions of the
-  // same name — so a locked tab must not write to it. Otherwise looking at
-  // emo's `code` session would leave YOUR `code` session in watch mode.
-  it("refuses to record a choice, so a lens cannot change your own sessions", () => {
+  it("records take-control under the target, leaving your own session alone", () => {
     createRoot((dispose) => {
       const [driven] = createSignal(false);
-      const [watch, set] = createWatchMode(() => "main", driven, () => true);
-      set(false);
+      const [watch, set] = createWatchMode(() => "main", driven, () => "emo");
       expect(watch()).toBe(true);
+      set(false); // take control of the session you are looking at
+      expect(watch()).toBe(false);
+      expect(loadWatch("main", "emo")).toBe(false);
       expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull();
       dispose();
     });
   });
 
-  it("leaves an unlocked tab exactly as it was", () => {
+  it("remembers it, so the next visit to that session drives", () => {
+    createRoot((dispose) => {
+      saveWatch("main", false, "emo");
+      const [driven] = createSignal(false);
+      const [watch] = createWatchMode(() => "main", driven, () => "emo");
+      expect(watch()).toBe(false);
+      dispose();
+    });
+  });
+
+  it("leaves an ordinary tab exactly as it was", () => {
     createRoot((dispose) => {
       const [driven] = createSignal(false);
-      const [watch, set] = createWatchMode(() => "main", driven, () => false);
+      const [watch, set] = createWatchMode(() => "main", driven, () => "");
       expect(watch()).toBe(false);
       set(true);
       expect(watch()).toBe(true);
+      expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("ro");
       dispose();
     });
   });
