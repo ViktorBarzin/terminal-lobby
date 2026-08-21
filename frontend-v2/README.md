@@ -143,7 +143,10 @@ src/
                          collision with a diff to show, 404 a list drawn before
                          someone else removed that skill
     act-as.ts            Admin act-as switch: the URL to navigate to in order
-                         to act as a user (or return) — switching is a load
+                         to act as a user (or return) — switching is a load —
+                         plus lensTarget(), the one answer for "whose account
+                         is this tab looking at": it makes a session open
+                         WATCHING and namespaces the Watch choice per target
     terminal-url.ts      ttyd `?arg=` POSITIONAL contract (incl. the foreign-
                          owner 4th arg, which the act-as target defaults into)
                          — red-line-class, unit-tested
@@ -160,7 +163,10 @@ src/
                          Appends only and hands back stable entries: moving or
                          replacing a slot reloads its iframe, which is the
                          1,797 ms cover this exists to remove
-    watchmode.ts         Per-session/per-device Watch mode (attach read-only)
+    watchmode.ts         Per-session/per-device Watch mode (attach read-only).
+                         A lens (acting as another user) defaults to watching
+                         and keeps its choices under the target's own keys, so
+                         driving THEIR `code` decides nothing about yours
     dock.logic.ts        PURE Ctrl+J dock decisions (shell naming, create→hide→
                          show, sidebar hiding, split clamp)
     dock.ts              Ctrl+J scratch-shell dock state (roamed via layout.dock)
