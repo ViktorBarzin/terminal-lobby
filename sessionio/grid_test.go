@@ -349,3 +349,59 @@ func TestPinGridDoesNotPrefixMatchAnotherSession(t *testing.T) {
 		t.Errorf("demo-2 was pinned by a call meant for demo: %s", got)
 	}
 }
+
+// paneMode reports the mode a session's pane is sitting in, "" for none.
+func paneMode(t *testing.T, sock, session string) string {
+	t.Helper()
+	out, err := exec.Command("tmux", "-L", sock, "display", "-p", "-t",
+		exactPane(session), "#{pane_mode}").Output()
+	if err != nil {
+		t.Fatalf("display pane_mode: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Baseline, and the reason the hook silences itself: `run-shell -b` does NOT
+// keep output off the screen. Measured on 3.4 — a BACKGROUNDED run-shell whose
+// command writes to stdout puts the pane into view-mode, covering whatever the
+// person was looking at until somebody presses q.
+//
+// If this test ever starts failing, tmux stopped displaying backgrounded output
+// and the redirect in gridHook is no longer load-bearing.
+func TestBackgroundedRunShellStillPaintsOverThePane(t *testing.T) {
+	_, _, sock := gridSession(t)
+
+	run(t, sock, "run-shell", "-b", "echo output-from-a-backgrounded-run-shell")
+	time.Sleep(600 * time.Millisecond)
+
+	if got := paneMode(t, sock, "demo"); got != "view-mode" {
+		t.Skipf("backgrounded run-shell no longer paints the pane (mode = %q) — "+
+			"tmux changed, so gridHook's redirect may be removable", got)
+	}
+}
+
+// A hook must never be able to obscure the session it is watching.
+//
+// This is what reached production: a watched session showed several lines of
+// command text where the conversation should have been, and read as a session
+// that had died — while claude was alive underneath the overlay the whole time,
+// waiting for someone to press q. A grid hook fires on every attach, detach and
+// resize, so anything it prints lands on the person driving.
+//
+// Whatever any single writer inside the hook does, the guarantee wanted here is
+// the blunt one: nothing it runs reaches the terminal.
+func TestGridHookKeepsItsOutputOffThePane(t *testing.T) {
+	in, _, _ := gridSession(t)
+	hook := in.gridHook("demo")
+
+	if !strings.Contains(hook, ">/dev/null 2>&1") {
+		t.Errorf("gridHook does not silence itself, so any output it produces "+
+			"covers the session in view-mode:\n%s", hook)
+	}
+	// Both streams, and the whole pipeline rather than its last stage: a failing
+	// `tmux list-clients` writes to stderr from the FIRST stage.
+	if !strings.HasSuffix(hook, `} >/dev/null 2>&1'`) {
+		t.Errorf("the redirect must close over the whole command, not one stage "+
+			"of it:\n%s", hook)
+	}
+}
