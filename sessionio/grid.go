@@ -116,15 +116,27 @@ func (in *Injector) PinGrid(osUser, session string) error {
 // the hook's shell cannot know which server invoked it — without -L, a test on
 // an isolated socket would reach across to the user's real one.
 //
-//  3. Everything is SILENCED, as a brace group so the redirect covers the whole
-//     pipeline rather than its last stage — a failing `list-clients` writes from
-//     the first one. `-b` does not do this for you: a backgrounded run-shell
-//     whose command writes to stdout still puts the pane into view-mode, which
-//     covers the conversation until somebody presses q. That reached production
-//     — a watched session showing lines of command text where the conversation
-//     should be, read as a session that had died while claude was alive under
-//     the overlay. A hook that fires on every attach, detach and resize has no
-//     business writing to the terminal of the person driving, so it doesn't.
+//  3. The hook says NOTHING and FAILS AT NOTHING, because run-shell reports
+//     either one by drawing over the pane. Measured on 3.4, and `-b` prevents
+//     neither: a backgrounded run-shell puts the pane into view-mode if its
+//     command writes to stdout OR if it merely exits non-zero — the latter
+//     with an empty overlay, which covers the conversation just as completely
+//     and explains even less. It stays up until somebody presses q.
+//
+//     This is what reached production. A watched session showed four lines of
+//     `'tmux list-clients -t =video_support: -F "` and read as dead, while
+//     claude was alive underneath the whole time. Those lines are tmux's own
+//     `'<command>' returned <status>` message, quoted and then cut off at the
+//     pane's width — the session was 42 columns wide, so that is all of it
+//     that fitted. The status being reported was `resize-window` refusing a
+//     computed height of zero or less ("height too small") for a client whose
+//     own height had not settled yet.
+//
+//     Hence the brace group (so the redirect covers the whole pipeline — a
+//     failing `list-clients` writes from the FIRST stage) and hence `|| true`.
+//     Silencing alone is not enough: the exit status alone is sufficient to
+//     paint. A hook firing on every attach, detach and resize has no business
+//     reporting anything to the person driving, so it reports nothing.
 func (in *Injector) gridHook(session string) string {
 	sock := ""
 	if in.socket != "" {
@@ -149,6 +161,6 @@ func (in *Injector) gridHook(session string) string {
 			`s=$(tmux %sdisplay -p -t %s "##{status}"); `+
 			`case $s in off) n=0;; [0-9]) n=$s;; *) n=1;; esac; `+
 			`tmux %sresize-window -t %s -x $w -y $((h-n)); done; `+
-			`} >/dev/null 2>&1'`,
+			`} >/dev/null 2>&1 || true'`,
 		sock, target, sock, target, sock, target)
 }

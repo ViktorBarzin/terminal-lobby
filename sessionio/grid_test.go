@@ -361,47 +361,78 @@ func paneMode(t *testing.T, sock, session string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// Baseline, and the reason the hook silences itself: `run-shell -b` does NOT
-// keep output off the screen. Measured on 3.4 — a BACKGROUNDED run-shell whose
-// command writes to stdout puts the pane into view-mode, covering whatever the
-// person was looking at until somebody presses q.
+// Baseline, and the reason the hook both silences itself and swallows its exit
+// status: `run-shell -b` keeps NEITHER off the screen. Measured on 3.4 — a
+// BACKGROUNDED run-shell puts the pane into view-mode if its command writes to
+// stdout, and ALSO if it merely exits non-zero, that one with an empty overlay.
+// Either way it covers what the person was looking at until they press q.
 //
-// If this test ever starts failing, tmux stopped displaying backgrounded output
-// and the redirect in gridHook is no longer load-bearing.
+// If a case here starts failing, tmux stopped painting for that reason and the
+// corresponding half of gridHook's tail is no longer load-bearing.
 func TestBackgroundedRunShellStillPaintsOverThePane(t *testing.T) {
-	_, _, sock := gridSession(t)
-
-	run(t, sock, "run-shell", "-b", "echo output-from-a-backgrounded-run-shell")
-	time.Sleep(600 * time.Millisecond)
-
-	if got := paneMode(t, sock, "demo"); got != "view-mode" {
-		t.Skipf("backgrounded run-shell no longer paints the pane (mode = %q) — "+
-			"tmux changed, so gridHook's redirect may be removable", got)
+	for _, tc := range []struct{ name, cmd string }{
+		{"stdout", "echo output-from-a-backgrounded-run-shell"},
+		{"non-zero exit alone", "exit 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, sock := gridSession(t)
+			run(t, sock, "run-shell", "-b", tc.cmd)
+			time.Sleep(600 * time.Millisecond)
+			if got := paneMode(t, sock, "demo"); got != "view-mode" {
+				t.Skipf("a backgrounded run-shell no longer paints the pane for %s "+
+					"(mode = %q) — tmux changed", tc.name, got)
+			}
+		})
 	}
 }
 
 // A hook must never be able to obscure the session it is watching.
 //
 // This is what reached production: a watched session showed several lines of
-// command text where the conversation should have been, and read as a session
-// that had died — while claude was alive underneath the overlay the whole time,
-// waiting for someone to press q. A grid hook fires on every attach, detach and
-// resize, so anything it prints lands on the person driving.
+// command text where the conversation should have been and read as a session
+// that had died, while claude was alive underneath the overlay the whole time,
+// waiting for somebody to press q. A grid hook fires on every attach, detach
+// and resize, so anything it reports lands on the person driving.
 //
-// Whatever any single writer inside the hook does, the guarantee wanted here is
-// the blunt one: nothing it runs reaches the terminal.
-func TestGridHookKeepsItsOutputOffThePane(t *testing.T) {
+// Two halves, because tmux paints for two independent reasons and the first fix
+// here shipped with only one of them: output, and a non-zero exit on its own.
+func TestGridHookNeitherSpeaksNorFails(t *testing.T) {
 	in, _, _ := gridSession(t)
 	hook := in.gridHook("demo")
 
-	if !strings.Contains(hook, ">/dev/null 2>&1") {
-		t.Errorf("gridHook does not silence itself, so any output it produces "+
-			"covers the session in view-mode:\n%s", hook)
-	}
 	// Both streams, and the whole pipeline rather than its last stage: a failing
 	// `tmux list-clients` writes to stderr from the FIRST stage.
-	if !strings.HasSuffix(hook, `} >/dev/null 2>&1'`) {
-		t.Errorf("the redirect must close over the whole command, not one stage "+
-			"of it:\n%s", hook)
+	if !strings.Contains(hook, `} >/dev/null 2>&1`) {
+		t.Errorf("gridHook does not silence its whole pipeline:\n%s", hook)
+	}
+	// Silencing is not enough — the exit status alone paints an empty overlay.
+	if !strings.HasSuffix(hook, `|| true'`) {
+		t.Errorf("gridHook can still report a failure, which paints the pane "+
+			"even with nothing to show:\n%s", hook)
+	}
+}
+
+// The property the two halves above exist for, exercised against a real tmux:
+// whatever the hook's inner commands do, running it reports success and says
+// nothing. Driven with the target session GONE, which makes every tmux call in
+// it fail — the cheapest way to make the whole pipeline go wrong at once.
+func TestGridHookStaysQuietWhenEverythingInItFails(t *testing.T) {
+	in, _, sock := gridSession(t)
+	hook := in.gridHook("demo")
+
+	// Take the shell command back out of the tmux command that wraps it.
+	cmd := strings.TrimSuffix(strings.TrimPrefix(hook, "run-shell -b '"), "'")
+	if cmd == hook {
+		t.Fatalf("could not unwrap the shell command from %q", hook)
+	}
+	run(t, sock, "new-session", "-d", "-s", "survivor", "sh")
+	run(t, sock, "kill-session", "-t", "=demo")
+
+	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+	if err != nil {
+		t.Errorf("the hook reported failure (%v), which paints the pane", err)
+	}
+	if len(out) > 0 {
+		t.Errorf("the hook wrote %q, which paints the pane", out)
 	}
 }
