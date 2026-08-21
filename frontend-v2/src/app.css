@@ -3464,6 +3464,8 @@ body.tl-kb-up {
    it is read-only for the same reason — it is theirs. */
 .tl-skill-md {
   margin: 0;
+  /* 80 characters, plus the padding below — see the editor's cap. */
+  max-width: calc(80ch + 16px);
   padding: 8px;
   max-height: 320px;
   overflow: auto;
@@ -3479,6 +3481,14 @@ body.tl-kb-up {
 /* CodeMirror sizes to its content, which for a long SKILL.md is the whole
    dialog; a scrolling box of its own keeps the row's buttons reachable. */
 .tl-skill-file .tl-editor {
+  /* Roughly 80 characters wide rather than the panel's full 776px: a SKILL.md is
+     prose, and a line that runs the whole dialog is harder to read and to edit.
+     The editor's own size is fixed at 12.5px mono (codemirror-view.ts), so
+     matching it here makes ch the same character CodeMirror lays out; the extra
+     44px covers the line-number gutter and the line padding. */
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  max-width: calc(80ch + 44px);
   /* .tl-editor is sized for the full-height file pane (min-height: 60vh); in a
      row it grows with the file instead, up to a box that still leaves the list
      and the row's own buttons on screen. */
