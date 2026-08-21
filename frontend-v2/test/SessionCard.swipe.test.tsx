@@ -1,5 +1,6 @@
 /**
- * Swipe a session row to the left to open it (Viktor, 2026-08-20).
+ * Swipe a session row: left opens it (Viktor, 2026-08-20), right kills it
+ * behind a confirm (Viktor, 2026-08-21).
  *
  * On a phone the list IS the screen, so opening a session is a tap on a 40px
  * row; a leftward swipe is the second way in, and it is the gesture the session
@@ -42,7 +43,11 @@ class FakeApi implements LobbyApi {
   async putLayout(l: Layout) {
     this.layoutVal = l;
   }
-  async killSession() {}
+  kills: string[] = [];
+  async killSession(name: string) {
+    this.kills.push(name);
+    this.sessionsVal = this.sessionsVal.filter((s) => s.name !== name);
+  }
   async renameSession() {
     throw new ApiError(404, "no");
   }
@@ -64,7 +69,7 @@ class FakeApi implements LobbyApi {
   }
 }
 
-function mount(api: LobbyApi) {
+function mount(api: LobbyApi, confirm?: (message: string) => boolean) {
   let store!: LobbyStore;
   let prefs!: PrefsStore;
   const utils = render(() => {
@@ -74,7 +79,7 @@ function mount(api: LobbyApi) {
       putDebounceMs: 10_000,
     });
     onCleanup(() => prefs.dispose());
-    return <Sidebar store={store} prefs={prefs} />;
+    return <Sidebar store={store} prefs={prefs} confirm={confirm} />;
   });
   onTestFinished(() => store.dispose());
   return { ...utils, store: store! };
@@ -140,9 +145,13 @@ describe("swiping a session row", () => {
     expect(store.selected()).toBeNull();
   });
 
-  it("does nothing on a rightward swipe", async () => {
+  it("does not OPEN a session on a rightward swipe", async () => {
     const api = await listOf(["alpha"]);
-    const { container, store } = mount(api);
+    const asked: string[] = [];
+    const { container, store } = mount(api, (m) => {
+      asked.push(m);
+      return false;
+    });
     const card = await firstCard(container, store);
 
     swipe(card, { dx: 140 });
@@ -181,5 +190,66 @@ describe("swiping a session row", () => {
     point("pointerup", 180);
 
     expect(store.selected()).toBeNull();
+  });
+});
+
+describe("swiping a session row right", () => {
+  it("asks before killing, and kills when the answer is yes", async () => {
+    const api = await listOf(["alpha", "beta"]);
+    const asked: string[] = [];
+    const { container, store } = mount(api, (m) => {
+      asked.push(m);
+      return true;
+    });
+    const card = await firstCard(container, store);
+
+    swipe(card, { dx: 150 });
+
+    await waitFor(() => expect((api as FakeApi).kills).toEqual(["alpha"]));
+    // The same question the ⋯ menu's Kill asks, so the two paths read alike.
+    expect(asked).toEqual(['Kill session "alpha"?']);
+    expect(store.selected()).toBeNull();
+  });
+
+  it("kills nothing when the answer is no", async () => {
+    const api = await listOf(["alpha"]);
+    const { container, store } = mount(api, () => false);
+    const card = await firstCard(container, store);
+
+    swipe(card, { dx: 150 });
+
+    await waitFor(() => expect(store.sessions.length).toBe(1));
+    expect((api as FakeApi).kills).toEqual([]);
+  });
+
+  it("does not offer to kill a session belonging to someone else", async () => {
+    const api = await listOf(["shared"]);
+    api.sessionsVal = [{ ...sess("shared"), owner: "bob", access: "ro" }];
+    const asked: string[] = [];
+    const { container, store } = mount(api, (m) => {
+      asked.push(m);
+      return true;
+    });
+    const card = await firstCard(container, store);
+
+    swipe(card, { dx: 150 });
+
+    expect(asked).toEqual([]);
+    expect((api as FakeApi).kills).toEqual([]);
+  });
+
+  it("does not kill on a drag too short to be deliberate", async () => {
+    const api = await listOf(["alpha"]);
+    const asked: string[] = [];
+    const { container, store } = mount(api, (m) => {
+      asked.push(m);
+      return true;
+    });
+    const card = await firstCard(container, store);
+
+    swipe(card, { dx: 40 });
+
+    expect(asked).toEqual([]);
+    expect((api as FakeApi).kills).toEqual([]);
   });
 });

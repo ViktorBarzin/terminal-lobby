@@ -452,6 +452,15 @@
 .tl-card-swiping {
   transition: none;
 }
+/* Which way the row is offering to go. The tint is the only warning a swipe
+   gives before the confirm, so the destructive direction is the one that has
+   to be unmistakable. */
+.tl-card[data-swipe="open"] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.tl-card[data-swipe="kill"] {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
 .tl-card-active {
   background: var(--bg-card);
   border-color: var(--border-strong);
