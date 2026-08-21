@@ -269,17 +269,23 @@ export const SessionCard: Component<{
   onCleanup(endHold);
 
   /**
-   * Swipe the row left to open the session (Viktor, 2026-08-20).
+   * Swipe the row to act on the session: left opens it (Viktor, 2026-08-20),
+   * right kills it behind the same confirm the ⋯ menu asks (Viktor, 2026-08-21).
    *
-   * The second way in on a phone, where the list is the whole screen and the
-   * first way is a tap on a 40px row. Leftward is the direction the session view
-   * already uses to move forward (mobile/swipe.ts), and the same classifier
-   * decides here: too slow, too short, or more vertical than horizontal is the
-   * list scrolling rather than a swipe.
+   * On a phone the list is the whole screen and the other way in is a tap on a
+   * 40px row. Leftward is the direction the session view already uses to move
+   * forward (mobile/swipe.ts), and the same classifier decides here: too slow,
+   * too short, or more vertical than horizontal is the list scrolling rather
+   * than a swipe.
    *
-   * A rightward drag does nothing. It is what an iOS reader reaches for to go
-   * back, and a row that opened a session on either direction would be a row you
-   * could not scroll past.
+   * Rightward is also the platform back gesture, so it will sometimes be eaten
+   * by the OS before the page sees it. That is a safe way to fail — nothing
+   * happens — and the confirm is what makes the other direction safe: a swipe
+   * cannot kill a session on its own, it can only ask.
+   *
+   * Someone else's session does not trail rightward at all. The whole actions
+   * menu is hidden for a shared row, so a gesture that looked like it would
+   * kill one would be promising something this row cannot do.
    */
   /** How far the row follows the finger before it stops moving. */
   const SWIPE_TRAIL_PX = 96;
@@ -300,9 +306,10 @@ export const SessionCard: Component<{
     const dy = e.clientY - swipeFrom.y;
     // A finger that has moved is not holding still, whichever way it went.
     if (Math.abs(dx) > HOLD_SLOP_PX || Math.abs(dy) > HOLD_SLOP_PX) endHold();
-    // Follow the finger leftward only, and stop trailing well before the row
-    // leaves the screen: this shows the gesture landing, it is not a reveal.
-    setSwipeDx(dx < 0 ? Math.max(dx, -SWIPE_TRAIL_PX) : 0);
+    // Follow the finger, and stop trailing well before the row leaves the
+    // screen: this shows the gesture landing, it is not a reveal.
+    if (dx < 0) setSwipeDx(Math.max(dx, -SWIPE_TRAIL_PX));
+    else setSwipeDx(foreign() ? 0 : Math.min(dx, SWIPE_TRAIL_PX));
   };
 
   const endSwipe = (e: PointerEvent) => {
@@ -316,10 +323,14 @@ export const SessionCard: Component<{
       dy: e.clientY - from.y,
       ms: Date.now() - from.at,
     });
-    // "next" is the leftward one — the same word the session view uses for it.
-    if (dir !== "next" || editing()) return;
-    menu.close();
-    props.store.select(s().name, foreign() ? s().owner : undefined);
+    if (editing()) return;
+    // "next"/"prev" are the words the session view uses for the two directions.
+    if (dir === "next") {
+      menu.close();
+      props.store.select(s().name, foreign() ? s().owner : undefined);
+    } else if (dir === "prev" && !foreign()) {
+      void kill(); // asks first, exactly as the menu's Kill does
+    }
   };
 
   const cancelSwipe = () => {
@@ -335,6 +346,9 @@ export const SessionCard: Component<{
       ref={menu.anchor}
       class="tl-card"
       style={swipeDx() ? { transform: `translateX(${swipeDx()}px)` } : undefined}
+      // What the row is offering to do while it trails, so a destructive
+      // direction looks destructive before the finger comes up.
+      data-swipe={swipeDx() === 0 ? undefined : swipeDx() > 0 ? "kill" : "open"}
       classList={{
         "tl-card-swiping": swipeDx() !== 0,
         "tl-card-active": isActive(),
