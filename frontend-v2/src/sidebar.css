@@ -434,12 +434,21 @@
   min-width: 0;
   position: relative;
   border: 1px solid transparent;
-  /* The row follows a leftward finger and springs back when the swipe does not
-     carry (SessionCard: swipe left to open). `pan-y` gives the browser the
-     vertical scroll and keeps the horizontal drag here, so the two gestures
-     never fight over the same finger. */
+  /* The row follows a sideways finger and springs back when the swipe does not
+     carry (SessionCard: left opens, right asks to kill). `pan-y` gives the
+     browser the vertical scroll and keeps the horizontal drag here; which of
+     the two a given finger gets is settled in SessionCard, on the first 10px.
+     */
   transition: transform 160ms ease;
   touch-action: pan-y;
+  /* A press-and-hold opens this row's actions menu, and that is all it does.
+     Without these the platform selects the row's text and raises its callout
+     underneath ours, leaving selection handles over the list (Viktor,
+     2026-08-22). Static, because iOS decides who owns a long press before any
+     JS runs — setting this when the press starts is already too late. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .tl-card:hover {
   background: var(--bg-card-hover);
@@ -515,6 +524,9 @@
 .tl-card-rename {
   flex: 1 1 auto;
   min-width: 0;
+  /* The row refuses selection; the box you are typing a name into cannot. */
+  -webkit-user-select: text;
+  user-select: text;
   font: inherit;
   font-size: 13px;
   color: var(--text-primary);
