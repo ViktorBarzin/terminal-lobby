@@ -1,0 +1,35 @@
+[Unit]
+# Keeps one pre-warmed Claude session ready for the directory named by the
+# instance, so creating a session in the lobby costs a ~9ms tmux rename instead
+# of a ~2.7s cold start. Claude's own boot is ~2.4s of that 2.7s and it is a
+# compiled binary we cannot tune from outside, so pre-warming is the only thing
+# that reaches it.
+#
+# The instance is the systemd-escaped absolute path, so %f is the directory:
+#   systemctl --user enable --now tl-pool-warm@$(systemd-escape --path ~/code)
+#
+# Per-user by construction. A user who has not enabled an instance simply has
+# no slot, and the claim in tmux-user-attach finds nothing and falls through to
+# the ordinary cold path — the feature costs a non-participant nothing.
+Description=Pre-warm a terminal-lobby Claude session slot for %f
+Documentation=https://forgejo.viktorbarzin.me/viktor/terminal-lobby
+# The slot lives in the user's own tmux server, so there is nothing to do until
+# that user's manager is up; and warming needs a writable home.
+After=default.target
+
+[Service]
+Type=oneshot
+Environment=TL_POOL_WARM=1
+# tmux-user-attach builds the slot with exactly the code that builds a real
+# session (the user's commands override, their login+interactive shell and its
+# rc functions), so a slot cannot drift from what an attach would have produced.
+# $1 is ignored in warm mode: the name is derived from the directory.
+ExecStart=/usr/local/bin/tmux-user-attach pool %f claude
+# Warming is best-effort. A failure here must never look like a broken login,
+# and the next claim will simply miss and take the cold path.
+SuccessExitStatus=0 64
+
+[Install]
+# Gives the boot-time initial warm for free — linger is already on for lobby
+# users, so their manager starts at boot without anyone logging in.
+WantedBy=default.target
