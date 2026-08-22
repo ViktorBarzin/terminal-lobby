@@ -217,6 +217,29 @@ describe("press, hold and drag a session row", () => {
     expect(e.defaultPrevented).toBe(true);
   });
 
+  /**
+   * The list scrolls itself as the finger nears the bottom, so the last row
+   * climbs away from the finger and the drag ends in the empty space below it.
+   * Measured on the deployed build: a drag aimed at the last row finished 2px
+   * past its bottom edge and dropped nowhere at all. The indicator is the
+   * promise — where it was last shown is where the row lands.
+   */
+  it("keeps the last place it showed when the finger runs off the end", async () => {
+    const { container, store } = await mountList(["alpha", "beta"]);
+    const cards = layOut(container);
+    document.elementFromPoint = hitTestBy(cards);
+    const [alpha] = cards;
+
+    touch(alpha!, "pointerdown", 120);
+    await held();
+    touch(alpha!, "pointermove", 175); // over beta's bottom half
+    document.elementFromPoint = () => null; // and then past the end of the list
+    touch(alpha!, "pointermove", 600);
+    touch(alpha!, "pointerup", 600);
+
+    await waitFor(() => expect(store.layout().ungrouped).toEqual(["beta", "alpha"]));
+  });
+
   it("leaves the order alone when the drag ends over nothing", async () => {
     const { container, store } = await mountList(["alpha", "beta"]);
     const cards = layOut(container);
