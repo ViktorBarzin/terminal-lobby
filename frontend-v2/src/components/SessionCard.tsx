@@ -21,7 +21,7 @@ import {
 } from "../store/watchmode";
 import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
 import { lensTarget } from "../lib/act-as";
-import { swipeDirection } from "../mobile/swipe";
+import { SWIPE_MIN_PX } from "../mobile/swipe";
 import { ACT_AS } from "../lib/config";
 
 const isCoarse = (): boolean =>
@@ -291,13 +291,19 @@ export const SessionCard: Component<{
   const SWIPE_TRAIL_PX = 96;
   /** Movement past this is a drag, so the long-press must not fire behind it. */
   const HOLD_SLOP_PX = 8;
+  /** Travel that settles which gesture this is. Small, because the browser
+   *  stops listening once it has started scrolling. */
+  const AXIS_LOCK_PX = 10;
   const [swipeDx, setSwipeDx] = createSignal(0);
-  let swipeFrom: { x: number; y: number; at: number } | null = null;
+  let swipeFrom: { x: number; y: number } | null = null;
+  /** Which way the finger claimed: "x" is this row's, "y" is the list's. */
+  let axis: "x" | "y" | null = null;
 
   const onPointerDown = (e: PointerEvent) => {
     onHoldStart(e);
     if (e.pointerType === "mouse") return;
-    swipeFrom = { x: e.clientX, y: e.clientY, at: Date.now() };
+    axis = null;
+    swipeFrom = { x: e.clientX, y: e.clientY };
   };
 
   const onPointerMove = (e: PointerEvent) => {
@@ -306,29 +312,53 @@ export const SessionCard: Component<{
     const dy = e.clientY - swipeFrom.y;
     // A finger that has moved is not holding still, whichever way it went.
     if (Math.abs(dx) > HOLD_SLOP_PX || Math.abs(dy) > HOLD_SLOP_PX) endHold();
+    if (!axis && Math.max(Math.abs(dx), Math.abs(dy)) >= AXIS_LOCK_PX) {
+      axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+      // Down the list: this row is out of it, and it must not trail a scroll.
+      if (axis === "y") cancelSwipe();
+    }
+    if (axis !== "x") return;
     // Follow the finger, and stop trailing well before the row leaves the
     // screen: this shows the gesture landing, it is not a reveal.
     if (dx < 0) setSwipeDx(Math.max(dx, -SWIPE_TRAIL_PX));
     else setSwipeDx(foreign() ? 0 : Math.min(dx, SWIPE_TRAIL_PX));
   };
 
+  /**
+   * Hold the page still for a swipe this row has claimed.
+   *
+   * A browser accepts a refusal to scroll only while it is still deciding: once
+   * it has committed, touchmove stops being cancelable and it sends
+   * `pointercancel` instead, which is exactly what a thumb that hesitated
+   * downward produced on the deployed build. `touch-action: pan-y` alone was
+   * not enough, because it leaves the vertical scroll on the table.
+   *
+   * Registered by hand rather than as JSX, because Solid delegates touch
+   * handlers to the document, where the browser makes them passive and
+   * `preventDefault()` is ignored.
+   */
+  const onTouchMove = (e: TouchEvent) => {
+    if (axis === "x" && e.cancelable) e.preventDefault();
+  };
+
   const endSwipe = (e: PointerEvent) => {
     endHold();
     const from = swipeFrom;
+    const claimed = axis === "x";
     swipeFrom = null;
+    axis = null;
     setSwipeDx(0);
-    if (!from) return;
-    const dir = swipeDirection({
-      dx: e.clientX - from.x,
-      dy: e.clientY - from.y,
-      ms: Date.now() - from.at,
-    });
-    if (editing()) return;
-    // "next"/"prev" are the words the session view uses for the two directions.
-    if (dir === "next") {
+    if (!from || !claimed || editing()) return;
+    // Distance alone, since the axis was settled at the start: the row has been
+    // following the finger the whole way, so releasing it is the decision and
+    // how long the finger took is not this gesture's business. A finger that
+    // comes back to where it started has undone it.
+    const dx = e.clientX - from.x;
+    if (Math.abs(dx) < SWIPE_MIN_PX) return;
+    if (dx < 0) {
       menu.close();
       props.store.select(s().name, foreign() ? s().owner : undefined);
-    } else if (dir === "prev" && !foreign()) {
+    } else if (!foreign()) {
       void kill(); // asks first, exactly as the menu's Kill does
     }
   };
@@ -342,8 +372,13 @@ export const SessionCard: Component<{
   return (
     <div
       // the ⋯ button and its popup both live in here, so the row is the menu's
-      // anchor: a press anywhere else on the page dismisses it.
-      ref={menu.anchor}
+      // anchor: a press anywhere else on the page dismisses it. The touchmove
+      // listener rides along, since it has to be non-passive (see onTouchMove).
+      ref={(el) => {
+        menu.anchor(el);
+        el.addEventListener("touchmove", onTouchMove, { passive: false });
+        onCleanup(() => el.removeEventListener("touchmove", onTouchMove));
+      }}
       class="tl-card"
       style={swipeDx() ? { transform: `translateX(${swipeDx()}px)` } : undefined}
       // What the row is offering to do while it trails, so a destructive
