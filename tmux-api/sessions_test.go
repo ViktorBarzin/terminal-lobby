@@ -57,6 +57,32 @@ func TestParseSessionsFields(t *testing.T) {
 			}},
 		},
 		{
+			// A pre-warmed pool slot. Its name is deliberately over the 32-char
+			// limit so no endpoint can address it; listing it would put a card
+			// in the lobby that every action refuses.
+			name: "an over-long name is not listed",
+			in: row("$7", "__terminal_lobby_prewarmed_pool_slot__home_wizard_code",
+				"0", "1", "2", "", "", "9", "claude", "", ""),
+			want: []Session{},
+		},
+		{
+			// Reachable outside this API — tmux itself accepts these, and
+			// setup scripts or a plain `tmux new -s` can create them.
+			name: "a name with characters the API rejects is not listed",
+			in:   row("$8", "has space", "0", "1", "2", "", "", "9", "zsh", "", ""),
+			want: []Session{},
+		},
+		{
+			name: "an addressable session alongside an unaddressable one still lists",
+			in: row("$9", "work", "0", "1", "2", "", "", "9", "claude", "", "") + "\n" +
+				row("$10", "__terminal_lobby_prewarmed_pool_slot__home_wizard_code",
+					"0", "1", "2", "", "", "9", "claude", "", ""),
+			want: []Session{{
+				ID: "$9", Name: "work", LastActivity: 1, Created: 2,
+				PanePID: 9, Command: "claude",
+			}},
+		},
+		{
 			name: "the pre-title 8-field row is skipped, not mis-parsed",
 			in:   row("old", "1", "1700000000", "1690000000", "running", "4242", "claude", "t"),
 			want: []Session{},
