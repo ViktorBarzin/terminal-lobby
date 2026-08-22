@@ -164,6 +164,15 @@ export const ProjectGroup: Component<{
     }
   };
   const onDragLeave = () => setDragOver(false);
+  /** A FINGER-dragged row is over this header, which means "into this group".
+   *  The mouse gets its highlight from dragover; a touch drag has no such
+   *  event, so it publishes where it is instead (store.dropSpot). */
+  const fingerOver = () => {
+    const spot = props.store.dropSpot();
+    return (
+      !!spot && !spot.anchor && spot.group === (isUngrouped() ? "" : props.group.name)
+    );
+  };
   const onDrop = async (e: DragEvent) => {
     setDragOver(false);
     // Covers the drop that lands back on the header it started from: no
@@ -186,9 +195,18 @@ export const ProjectGroup: Component<{
   };
 
   return (
-    <div class="tl-group" classList={{ "tl-group-collapsed": collapsed(), "tl-group-dragover": dragOver() }}>
+    <div
+      class="tl-group"
+      classList={{
+        "tl-group-collapsed": collapsed(),
+        "tl-group-dragover": dragOver() || fingerOver(),
+      }}
+    >
       <div
         class="tl-group-header"
+        // Read by a finger dragging a row over it: dropping here means "into
+        // this group", and "" is Ungrouped.
+        data-group={isUngrouped() ? "" : props.group.name}
         role="button"
         tabindex={0}
         aria-expanded={!collapsed()}

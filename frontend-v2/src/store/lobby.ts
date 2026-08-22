@@ -19,6 +19,7 @@ import {
   type SidebarModel,
 } from "../components/lobby.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
+import type { DropSpot } from "../mobile/reorder";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
 import {
   emptyLayout,
@@ -56,6 +57,11 @@ export interface LobbyStore {
   /** group token ("p:<name>" | "u") of the group header being dragged, or null. */
   dragGroup: Accessor<string | null>;
   setDragGroup: (token: string | null) => void;
+  /** Where a FINGER-dragged row would land, or null. The mouse has the
+   *  browser's own dragover for this; a touch drag has to publish it, because
+   *  the row that shows the indicator is never the row being dragged. */
+  dropSpot: Accessor<DropSpot | null>;
+  setDropSpot: (spot: DropSpot | null) => void;
   collapse: CollapseStore;
   /** epoch ms a session was first observed running (working-timer anchor). */
   workingSince: (name: string) => number | undefined;
@@ -173,6 +179,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   );
   const [toast, setToast] = createSignal<string | null>(null);
   const [dragName, setDragName] = createSignal<string | null>(null);
+  const [dropSpot, setDropSpot] = createSignal<DropSpot | null>(null);
   const [dragGroup, setDragGroup] = createSignal<string | null>(null);
 
   const me = () => whoami()?.osUser ?? "";
@@ -869,6 +876,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     toast,
     dragName,
     setDragName,
+    dropSpot,
+    setDropSpot,
     dragGroup,
     setDragGroup,
     collapse,
