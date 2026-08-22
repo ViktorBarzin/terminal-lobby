@@ -25,6 +25,34 @@ name="${1:-}"
 start_dir="${2:-$HOME}"
 [[ -d "$start_dir" ]] || start_dir="$HOME"
 
+# ---- pre-warmed slots ----------------------------------------------------
+# Claude's own boot is ~2.4s of a ~2.7s new-session — a 342MB compiled binary
+# we cannot tune from outside. So a slot is started ahead of time and adopted
+# on demand by RENAMING it, which measures 9ms and which the running Claude
+# never notices.
+#
+# The slot's name is deliberately longer than NAME_RE allows. Every path that
+# accepts a session name from a client — the lobby, ttyd's ?arg=, tmux-attach.sh
+# — validates against NAME_RE, so a name it rejects cannot be created, attached,
+# or claimed by anyone. The 37-character prefix alone exceeds the 32-char limit,
+# which holds the invariant no matter what directory is appended.
+#
+# The directory is part of the name rather than a configured list, because a
+# slot is only interchangeable with a session that starts in the SAME place:
+# Claude fixes its project root at launch (transcript slug, CLAUDE.md hierarchy,
+# project .mcp.json, the git status in its context) and no flag re-points a
+# running one. So the claim asks exactly one question — "is a slot warm for
+# THIS dir?" — and needs no configuration to answer it.
+POOL_PREFIX='__terminal_lobby_prewarmed_pool_slot_'
+pool_slot_name() { printf '%s%s' "$POOL_PREFIX" "$(printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_')"; }
+
+# TL_POOL_WARM=1 means "create the slot for $start_dir, detached, and exit"
+# rather than "attach a session". The name is derived, never taken from $1.
+warm="${TL_POOL_WARM:-}"
+if [[ "$warm" == 1 ]]; then
+    name="$(pool_slot_name "$start_dir")"
+fi
+
 # $3 = optional command KEY (validated upstream too; re-validated here).
 # Mapping to a real command line happens HERE, as the target user:
 #   1. ~/.config/terminal-lobby/commands — `key=command line` per line,
@@ -79,6 +107,63 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
 # attach so a connection never fails outright.
 scope_ok=no
 if systemctl --user show-environment >/dev/null 2>&1; then scope_ok=yes; fi
+
+# ---- warm: create the slot, detached, and stop ----------------------------
+# Reusing this script rather than spawning Claude directly is the point: the
+# slot is then built by exactly the code that builds a real session — the same
+# ~/.config/terminal-lobby/commands override, the same login+interactive shell,
+# so the same rc functions (wizard's claude() wrapper and its --session-id).
+# There is no second construction path that could drift from this one.
+if [[ "$warm" == 1 ]]; then
+    [[ "$cmd_key" == claude ]] || {
+        logger -t tmux-user-attach "pool: refusing to warm with cmd='${cmd_key:-<none>}' (only 'claude' is pooled)"
+        exit 64
+    }
+    # Idempotent: a slot that is already warm is left strictly alone, so a
+    # duplicated or racing trigger cannot stack two slots for one directory.
+    if tmux has-session -t "=$name" 2>/dev/null; then
+        logger -t tmux-user-attach "pool: slot for '$start_dir' already warm"
+        exit 0
+    fi
+    logger -t tmux-user-attach "pool: warming slot for '$start_dir'"
+    # Same transient scope as the attach path below, for the same reason: the
+    # tmux server must be parented to user@<uid>.service and not to this
+    # oneshot's cgroup, which systemd tears down the moment ExecStart returns.
+    if [[ "$scope_ok" == yes ]]; then
+        exec systemd-run --user --scope --quiet --collect \
+            tmux new-session -d -s "$name" -c "$start_dir" "${tmux_cmd[@]}"
+    fi
+    exec tmux new-session -d -s "$name" -c "$start_dir" "${tmux_cmd[@]}"
+fi
+
+# ---- claim a pre-warmed slot ---------------------------------------------
+# `tmux rename-session` is atomic and refuses a name already in use, which is
+# the entire concurrency story. Two attaches racing for one new session cannot
+# both win the rename; the loser falls through to `new-session -A`, which
+# attaches whatever the winner just created — the same session either way, with
+# no lock to hold and none to leak.
+#
+# Only the `claude` key is pooled, so every other command, and any directory
+# with no slot warm, fails the rename and takes the ordinary cold path with no
+# change in behaviour. `new-session -A` below then needs no special case: it
+# finds the freshly renamed session and attaches it, ignoring -c and the
+# command as it always does for a session that already exists.
+if [[ "$cmd_key" == claude ]]; then
+    slot="$(pool_slot_name "$start_dir")"
+    if [[ "$name" != "$slot" ]] && tmux rename-session -t "=$slot" "$name" 2>/dev/null; then
+        logger -t tmux-user-attach "pool: claimed slot for '$start_dir' as '$name'"
+        # Re-warm for whoever comes next. --no-block so this attach is not made
+        # to wait on a fresh ~2.7s Claude boot, and a failure here is swallowed:
+        # the unit may legitimately not be enabled for this user, and an attach
+        # that has already succeeded must not fail because of the refill.
+        if [[ "$scope_ok" == yes ]]; then
+            systemctl --user start --no-block \
+                "tl-pool-warm@$(systemd-escape --path "$start_dir").service" \
+                >/dev/null 2>&1 || true
+        fi
+    fi
+fi
+
 logger -t tmux-user-attach "user=$(id -un) name='$name' dir='$start_dir' cmd='${cmd_key:-<none>}' scope=$scope_ok"
 # Usage event (docs/adr/0006-usage-telemetry.md). EVERY session start flows
 # through this script — including plain ttyd URLs that never touch the lobby —
