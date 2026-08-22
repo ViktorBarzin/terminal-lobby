@@ -672,6 +672,14 @@ func parseSessions(out []byte) []Session {
 		if !sessionIDRe.MatchString(parts[0]) {
 			continue
 		}
+		// Only list what a client could actually address. Every endpoint that
+		// takes a session name validates it against sessionNameRe, so a name
+		// this rejects can be shown but never attached, renamed, or killed —
+		// a card that does nothing. Pre-warmed pool slots are named beyond the
+		// 32-char limit precisely so they land here and stay out of the lobby.
+		if !sessionNameRe.MatchString(parts[1]) {
+			continue
+		}
 		attached, errA := strconv.Atoi(parts[2])
 		activity, errB := strconv.ParseInt(parts[3], 10, 64)
 		created, errC := strconv.ParseInt(parts[4], 10, 64)
