@@ -22,6 +22,7 @@ import {
 import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
 import { lensTarget } from "../lib/act-as";
 import { SWIPE_MIN_PX } from "../mobile/swipe";
+import { dropSide, edgeScroll } from "../mobile/reorder";
 import { ACT_AS } from "../lib/config";
 
 const isCoarse = (): boolean =>
@@ -262,6 +263,11 @@ export const SessionCard: Component<{
     holdTimer = setTimeout(() => {
       holdFired = true;
       holdTimer = undefined;
+      // The finger has stopped being a swipe and become a hold. It may now do
+      // either of two things: come up, and leave the menu open, or move, and
+      // take the row with it (see startDrag).
+      armed = true;
+      swipeFrom = null;
       menu.toggle();
     }, HOLD_MS);
   };
@@ -296,6 +302,10 @@ export const SessionCard: Component<{
   const AXIS_LOCK_PX = 10;
   const [swipeDx, setSwipeDx] = createSignal(0);
   let swipeFrom: { x: number; y: number } | null = null;
+  /** the row itself, for the non-passive listener and the scroller lookup. */
+  let cardEl: HTMLElement | undefined;
+  /** where the finger is across the screen, for the drag's fallback aim. */
+  let lastX = 0;
   /** Which way the finger claimed: "x" is this row's, "y" is the list's. */
   let axis: "x" | "y" | null = null;
 
@@ -303,10 +313,24 @@ export const SessionCard: Component<{
     onHoldStart(e);
     if (e.pointerType === "mouse") return;
     axis = null;
+    armed = false;
+    liftFrom = e.clientY;
+    lastX = e.clientX;
     swipeFrom = { x: e.clientX, y: e.clientY };
   };
 
   const onPointerMove = (e: PointerEvent) => {
+    lastX = e.clientX;
+    if (lifted()) {
+      trackDrag(e.clientY);
+      return;
+    }
+    if (armed) {
+      // The hold has fired and the finger is moving: that is a drag, not a tap
+      // on the menu that just opened.
+      if (Math.abs(e.clientY - liftFrom) >= DRAG_START_PX) startDrag(e.clientY);
+      return;
+    }
     if (!swipeFrom) return;
     const dx = e.clientX - swipeFrom.x;
     const dy = e.clientY - swipeFrom.y;
@@ -338,10 +362,15 @@ export const SessionCard: Component<{
    * `preventDefault()` is ignored.
    */
   const onTouchMove = (e: TouchEvent) => {
-    if (axis === "x" && e.cancelable) e.preventDefault();
+    if ((axis === "x" || lifted()) && e.cancelable) e.preventDefault();
   };
 
   const endSwipe = (e: PointerEvent) => {
+    if (lifted()) {
+      void drop();
+      return;
+    }
+    armed = false;
     endHold();
     const from = swipeFrom;
     const claimed = axis === "x";
@@ -363,7 +392,134 @@ export const SessionCard: Component<{
     }
   };
 
+  /**
+   * Drag the row to reorder it, once the long press has armed one.
+   *
+   * The mouse reorders with HTML5 drag-and-drop (above), which a touch screen
+   * never fires — so before this a phone could reorder sessions only by not
+   * being a phone. Viktor asked for both from the one press (2026-08-22) and
+   * chose the order: the hold opens the menu as it always has, and moving the
+   * finger afterwards closes it and takes the row along.
+   *
+   * The lifted row publishes where it would land rather than deciding alone,
+   * because the indicator belongs to the row being dropped ON — which is a
+   * different component, and often in a different group (store.dropSpot).
+   */
+  /** Movement after the hold that means "drag", not a wobbling thumb. */
+  const DRAG_START_PX = 4;
+  const [lifted, setLifted] = createSignal(false);
+  const [liftDy, setLiftDy] = createSignal(0);
+  /** the hold fired and the finger is still down: a drag may start. */
+  let armed = false;
+  let liftFrom = 0;
+  let lastY = 0;
+  let scroller: HTMLElement | null = null;
+  let scrollRaf: number | undefined;
+
+  const startDrag = (y: number) => {
+    armed = false;
+    menu.close();
+    setLifted(true);
+    props.store.setDragName(s().name);
+    // Same hold the mouse drag takes: a poll that rebuilt the list mid-drag
+    // would move the rows out from under the finger.
+    if (!releaseHold) releaseHold = props.store.hold();
+    scroller = cardEl?.closest<HTMLElement>(".tl-sidebar-scroll") ?? null;
+    trackDrag(y);
+  };
+
+  const trackDrag = (y: number) => {
+    lastY = y;
+    setLiftDy(y - liftFrom);
+    aim(y);
+    tickScroll();
+  };
+
+  /** What the finger is over, published for whoever has to draw it. */
+  const aim = (y: number) => {
+    // Aimed down the middle of the list rather than at the finger's own x: a
+    // thumb drifts sideways as it travels, and the rows it is dragging past do
+    // not move.
+    const box = scroller?.getBoundingClientRect();
+    const x = box && box.width > 0 ? box.left + box.width / 2 : lastX;
+    const under = document.elementFromPoint?.(x, y) as HTMLElement | null;
+    const card = under?.closest?.(".tl-card") as HTMLElement | null;
+    const overName = card?.dataset.name;
+    if (overName && overName !== s().name) {
+      const r = card!.getBoundingClientRect();
+      props.store.setDropSpot({
+        group: card!.dataset.group ?? "",
+        anchor: { name: overName, side: dropSide(y, r.top, r.height) },
+      });
+      return;
+    }
+    // A group's header means "into this group", and lets the layout place it.
+    const header = under?.closest?.(".tl-group-header") as HTMLElement | null;
+    const group = header?.dataset.group;
+    if (group !== undefined) {
+      props.store.setDropSpot({ group });
+      return;
+    }
+    // Over the row being dragged, or off the list entirely: nowhere to land.
+    if (!card) props.store.setDropSpot(null);
+  };
+
+  /**
+   * Scroll the list while the finger rests near its edge, so a session can be
+   * moved past the eight or so rows a phone shows at once.
+   */
+  const tickScroll = () => {
+    if (scrollRaf !== undefined || !scroller) return;
+    const step = () => {
+      scrollRaf = undefined;
+      const box = scroller?.getBoundingClientRect();
+      if (!scroller || !lifted() || !box || box.height <= 0) return;
+      const by = edgeScroll(lastY, box.top, box.bottom);
+      if (by === 0) return;
+      scroller.scrollTop += by;
+      aim(lastY); // the rows moved under a finger that did not
+      scrollRaf = requestAnimationFrame(step);
+    };
+    scrollRaf = requestAnimationFrame(step);
+  };
+
+  const drop = async () => {
+    const spot = props.store.dropSpot();
+    endDrag();
+    if (!spot) return;
+    await props.store.move(s().name, spot.group, spot.anchor);
+  };
+
+  const endDrag = () => {
+    armed = false;
+    setLifted(false);
+    setLiftDy(0);
+    props.store.setDragName(null);
+    props.store.setDropSpot(null);
+    if (scrollRaf !== undefined) cancelAnimationFrame(scrollRaf);
+    scrollRaf = undefined;
+    releaseHold?.();
+    releaseHold = null;
+  };
+
+  // A row can be unmounted mid-drag (a rename landing, a session dying), and a
+  // held poll or a stale indicator would outlive it.
+  onCleanup(() => {
+    if (lifted() || props.store.dragName() === s().name) endDrag();
+  });
+
+  /** Where the FINGER says this row's own indicator goes, if anywhere. */
+  const dropFromTouch = () => {
+    const spot = props.store.dropSpot();
+    return spot?.anchor?.name === s().name ? spot.anchor.side : null;
+  };
+
   const cancelSwipe = () => {
+    if (lifted()) {
+      endDrag();
+      return;
+    }
+    armed = false;
     endHold();
     swipeFrom = null;
     setSwipeDx(0);
@@ -376,20 +532,32 @@ export const SessionCard: Component<{
       // listener rides along, since it has to be non-passive (see onTouchMove).
       ref={(el) => {
         menu.anchor(el);
+        cardEl = el;
         el.addEventListener("touchmove", onTouchMove, { passive: false });
         onCleanup(() => el.removeEventListener("touchmove", onTouchMove));
       }}
       class="tl-card"
-      style={swipeDx() ? { transform: `translateX(${swipeDx()}px)` } : undefined}
+      style={
+        lifted()
+          ? { transform: `translateY(${liftDy()}px)` }
+          : swipeDx()
+            ? { transform: `translateX(${swipeDx()}px)` }
+            : undefined
+      }
       // What the row is offering to do while it trails, so a destructive
       // direction looks destructive before the finger comes up.
       data-swipe={swipeDx() === 0 ? undefined : swipeDx() > 0 ? "kill" : "open"}
+      // Read by a finger dragging another row: elementFromPoint hands back a
+      // DOM node, and this is how that node says which session it is.
+      data-name={s().name}
+      data-group={props.groupName}
       classList={{
         "tl-card-swiping": swipeDx() !== 0,
+        "tl-card-lifted": lifted(),
         "tl-card-active": isActive(),
         "tl-card-foreign": foreign(),
-        "tl-drop-above": dropEdge() === "above",
-        "tl-drop-below": dropEdge() === "below",
+        "tl-drop-above": dropEdge() === "above" || dropFromTouch() === "above",
+        "tl-drop-below": dropEdge() === "below" || dropFromTouch() === "below",
       }}
       role="button"
       tabindex={0}
