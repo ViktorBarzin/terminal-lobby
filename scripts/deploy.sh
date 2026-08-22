@@ -166,6 +166,7 @@ scp -o BatchMode=yes \
   devvm/clipboard-upload.service \
   devvm/clipboard-cleanup.service \
   devvm/clipboard-cleanup.timer \
+  devvm/tl-pool-warm@.service \
   "wizard@${DEVVM}:/tmp/"
 
 echo "==> Installing on $DEVVM..."
@@ -256,6 +257,13 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
     sudo install -m 0644 /tmp/$u.service /etc/systemd/system/$u.service
   done
   sudo install -m 0644 /tmp/clipboard-cleanup.timer /etc/systemd/system/clipboard-cleanup.timer
+  # Pre-warmed session slots. A USER unit (/etc/systemd/user), because a slot
+  # lives in the user's own tmux server and must be parented to their manager —
+  # the same reason tmux-user-attach exists at all. Installing the template is
+  # inert on its own: nothing warms until a user enables an instance for a
+  # directory, and the claim in tmux-user-attach simply misses until then.
+  sudo install -d -m 0755 /etc/systemd/user
+  sudo install -m 0644 /tmp/tl-pool-warm@.service /etc/systemd/user/tl-pool-warm@.service
   # VAPID EnvironmentFile for tmux-api (Web Push, Notifications Part 2).
   # Root-owned 0600: systemd reads it before dropping to User=wizard, so the
   # private key isn't readable by the service user. Absent → the unit's
@@ -268,6 +276,12 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   # daemon-reload can transiently time out when the devvm is under heavy
   # interactive load (D-Bus slow to answer); retry once before giving up.
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
+  # User managers hold their own unit cache, so the system reload above does not
+  # reach them. Reload each running one so an enabled instance picks up a changed
+  # template without waiting for that user to log out.
+  for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+    sudo systemctl --machine="$uid@.host" --user daemon-reload 2>/dev/null || true
+  done
   sudo systemctl restart ttyd ttyd-ro tmux-api clipboard-upload
   sudo systemctl enable --now clipboard-cleanup.timer
   rm -f /tmp/ttyd /tmp/tmux-api /tmp/clipboard-upload /tmp/tmux-attach.sh /tmp/tmux-user-attach /tmp/tmux-user-dirlist /tmp/tmux-user-setfacl /tmp/tmux-restore-user /tmp/tmux-persist-forget /tmp/claude-tmux-state /tmp/claude-se-hook /tmp/show-image /tmp/clipboard-store-clean /tmp/index.html /tmp/sw.js
@@ -276,6 +290,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   rm -f /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users /tmp/vapid.env
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
   rm -f /tmp/clipboard-upload.service /tmp/clipboard-cleanup.service /tmp/clipboard-cleanup.timer
+  rm -f /tmp/tl-pool-warm@.service
 REMOTE
 
 echo "==> Verifying..."
