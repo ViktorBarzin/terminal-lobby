@@ -460,8 +460,11 @@ export const SessionCard: Component<{
       props.store.setDropSpot({ group });
       return;
     }
-    // Over the row being dragged, or off the list entirely: nowhere to land.
-    if (!card) props.store.setDropSpot(null);
+    // Over nothing: the empty space past the last row, or a gap between
+    // groups. The last place the indicator showed STAYS showing, because the
+    // list scrolls itself near its edges — the last row climbs away from the
+    // finger, and a drag aimed at it lands just below it. Measured on the
+    // deployed build: 2px past the end, and the drop went nowhere.
   };
 
   /**
