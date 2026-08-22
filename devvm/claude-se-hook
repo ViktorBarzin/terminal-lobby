@@ -4,14 +4,27 @@
 #
 #   session-start -> register (user, tmux session) -> transcript mapping so
 #                    /events/<session> can find the transcript to tail.
+#   prompt-submit -> re-register when the pair has moved since we last looked.
+#
+# Why the second event: the registry is keyed by tmux session NAME, but the name
+# is captured once at SessionStart, and a session can be renamed afterwards —
+# from the lobby's rename, or by a pre-warmed pool slot being claimed under the
+# name the user asked for. Either way the binding kept pointing at the old name
+# and /events/<new name> answered "session not registered", so the text-mode
+# view went blank for that session until the next Claude start re-registered it.
+# Re-checking as the user submits a prompt makes the binding correct by the time
+# anything could want to read it, whatever moved the name.
 #
 # Wired org-wide via /etc/claude-code/managed-settings.json (infra repo),
 # alongside claude-tmux-state. Contract with the hook runner:
 #   - MUST exit 0 — a non-zero hook exit can block the tool call.
-#   - session-start MUST stay silent — SessionStart stdout is injected into the
-#     conversation as context.
+#   - session-start and prompt-submit MUST stay silent — stdout of both is
+#     injected into the conversation as context.
 #   - No-ops outside tmux ($TMUX unset) — headless / t3 Claude run these too.
 #   - session-events unreachable -> connect-timeout fails fast -> silent no-op.
+#   - prompt-submit is on the hot path of every turn, so it does no network work
+#     unless the (name, transcript) pair actually changed. The last registered
+#     pair is remembered in a tmux pane option, which costs one show-option.
 #
 # NOTE: the permission-request path (web-mediated PreToolUse permissions) was
 # removed 2026-07-21. Routed through the session-events broker, it returned
@@ -34,16 +47,40 @@ tmux_session="$(tmux display -p '#S' 2>/dev/null || true)"
 
 input="$(cat)"
 
+# POST the (user, session_id, cwd, tmux_session) binding. Idempotent server-side
+# and safe to repeat: a name that has not moved re-registers the same mapping.
+register() {
+    jq -nc --arg u "$USER" --arg s "$1" --arg c "$2" --arg t "$tmux_session" \
+        '{user:$u, session_id:$s, cwd:$c, tmux_session:$t}' 2>/dev/null \
+      | curl -s --connect-timeout 2 --max-time 3 -X POST --data-binary @- \
+        "$SE/hooks/session-start" >/dev/null 2>&1 || true
+    # Remember what we registered so prompt-submit can tell "unchanged" from
+    # "moved" without asking the service. Pane-scoped, so it cannot leak between
+    # two Claude processes sharing a session.
+    tmux set-option -t "${TMUX_PANE:-}" @se_registered "$tmux_session:$1" \
+        >/dev/null 2>&1 || true
+}
+
 case "$event" in
 session-start)
     sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
     cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)"
     [ -n "$cwd" ] || cwd="$PWD"
     [ -n "$sid" ] || exit 0
-    jq -nc --arg u "$USER" --arg s "$sid" --arg c "$cwd" --arg t "$tmux_session" \
-        '{user:$u, session_id:$s, cwd:$c, tmux_session:$t}' 2>/dev/null \
-      | curl -s --connect-timeout 2 --max-time 3 -X POST --data-binary @- \
-        "$SE/hooks/session-start" >/dev/null 2>&1 || true
+    register "$sid" "$cwd"
+    ;;
+prompt-submit)
+    # No TMUX_PANE means no place to remember the last binding, and re-POSTing
+    # on every single turn is not worth it — SessionStart already covers the
+    # ordinary case where nothing is renamed.
+    [ -n "${TMUX_PANE:-}" ] || exit 0
+    sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
+    [ -n "$sid" ] || exit 0
+    prev="$(tmux show-option -qv -t "$TMUX_PANE" @se_registered 2>/dev/null || true)"
+    [ "$prev" = "$tmux_session:$sid" ] && exit 0
+    cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)"
+    [ -n "$cwd" ] || cwd="$PWD"
+    register "$sid" "$cwd"
     ;;
 esac
 exit 0
