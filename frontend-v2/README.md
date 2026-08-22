@@ -314,6 +314,9 @@ src/
     compose.ts           PURE bracketed-paste + trailing-submit split
     viewport.ts          visualViewport → CSS var so the keyboard can't cover
     swipe.ts             PURE swipe classification + the session-switch gesture
+    reorder.ts           PURE geometry for dragging a session row with a
+                         finger (which side of the row under it, how fast
+                         the list scrolls itself at its edges)
   clipboard/
     paste-into-terminal.ts  Clipboard -> terminal, READ IN THE LOBBY (the frame
                          has no focus, so it cannot read it) — text via tl-paste,

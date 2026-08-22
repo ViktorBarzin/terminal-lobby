@@ -461,6 +461,18 @@
 .tl-card-swiping {
   transition: none;
 }
+/* Lifted by a long press and following the finger up and down the list
+   (SessionCard: press, hold, then drag). `pointer-events: none` is what makes
+   the drag able to see where it is going: the lifted row sits directly under
+   the finger, so without it every hit-test would come back as itself. */
+.tl-card-lifted {
+  transition: none;
+  pointer-events: none;
+  position: relative;
+  z-index: 3;
+  background: var(--bg-card-hover);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.35);
+}
 /* Which way the row is offering to go. The tint is the only warning a swipe
    gives before the confirm, so the destructive direction is the one that has
    to be unmistakable. */
