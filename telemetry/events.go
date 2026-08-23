@@ -23,23 +23,26 @@ var knownEvents = map[string]bool{
 	"app.error":         true, // a surfaced failure (tl.kind); no message text
 
 	// -- session lifecycle --------------------------------------------------
-	"session.created":  true,
-	"session.selected": true, // a row was activated in the sidebar
-	"session.attached": true, // the terminal actually mounted
-	"session.detached": true,
-	"session.renamed":  true,
-	"session.moved":    true, // between projects / reordered (tl.from, tl.to)
-	"session.killed":   true,
-	"session.restored": true, // tmux-persist restore (tl.count)
+	// Emitted when a create input OPENS. Paired with session.created it gives
+	// the window a speculative pre-warm has to cover Claude's ~2.4s boot in.
+	"session.create_opened": true,
+	"session.created":       true,
+	"session.selected":      true, // a row was activated in the sidebar
+	"session.attached":      true, // the terminal actually mounted
+	"session.detached":      true,
+	"session.renamed":       true,
+	"session.moved":         true, // between projects / reordered (tl.from, tl.to)
+	"session.killed":        true,
+	"session.restored":      true, // tmux-persist restore (tl.count)
 
 	// -- skills & plugins (skills-api) --------------------------------------
-	"skill.installed":         true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)
-	"skill.removed":           true, // backed up and dropped one (tl.key)
+	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)
+	"skill.removed":            true, // backed up and dropped one (tl.key)
 	"skill.deleted":            true, // permanent: skill + its backups + its state (tl.key)
 	"plugin.uninstalled":       true, // marketplace plugin removed and its cache reclaimed (tl.key)
 	"plugin.installed":         true, // installed from a source repo (tl.key, tl.from, tl.kind=source)
-	"skill.toggled":           true, // enabledPlugins write (tl.key, tl.kind=on|off)
-	"plugin.updated":          true, // marketplace plugin updated (tl.key)
+	"skill.toggled":            true, // enabledPlugins write (tl.key, tl.kind=on|off)
+	"plugin.updated":           true, // marketplace plugin updated (tl.key)
 	"session.claude_restarted": true, // respawned a pane to load a new skill set (tl.session)
 
 	// -- projects & layout --------------------------------------------------

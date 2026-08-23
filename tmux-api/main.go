@@ -360,6 +360,9 @@ func main() {
 	}
 
 	http.HandleFunc("/sessions", handleSessions)
+	// Registered ahead of "/sessions/" so the more specific path wins: Go's mux
+	// prefers the longer pattern, but stating the order makes the intent plain.
+	http.HandleFunc("/sessions/prewarm", handlePrewarm)
 	http.HandleFunc("/sessions/", handleSessionByName)
 	http.HandleFunc("/whoami", handleWhoami)
 	http.HandleFunc("/restore", handleRestore)
@@ -386,6 +389,13 @@ func main() {
 	// VAPID config is in the environment, so a devvm without keys behaves
 	// exactly as before.
 	maybeStartPushSender()
+
+	// Collects speculative pre-warm slots the lobby never released — a closed
+	// tab cannot tell us it is done with one, and each slot is a real Claude.
+	// Started unconditionally: with nothing outstanding it costs one
+	// `tmux list-sessions` per mapped user per sweep, the same call the sessions
+	// poll already makes. Runs for the life of the process, like the sender.
+	go runPrewarmReaper(make(chan struct{}))
 
 	// TMUX_API_ADDR: scratch-build override for the dev harness
 	// (dev-harness.py --tmux-api-port documents testing a local build,
