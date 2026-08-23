@@ -39,6 +39,8 @@ const sess = (name: string): Session => ({
 });
 
 class FakeApi implements LobbyApi {
+  async prewarm(_dir: string) {}
+  async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
