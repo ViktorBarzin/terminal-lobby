@@ -67,6 +67,12 @@ if [[ "$warm" == 1 ]]; then
     name="$(pool_slot_name "$start_dir")"
 fi
 
+# TL_POOL_SPECULATIVE=1 marks a slot warmed on a guess — the lobby opened a
+# create input, so someone is probably about to make a session here, but nobody
+# has committed to one yet. The marker is what lets the reaper tell such a slot
+# from the standing pool slot, which must never be collected.
+speculative="${TL_POOL_SPECULATIVE:-}"
+
 # $3 = optional command KEY (validated upstream too; re-validated here).
 # Mapping to a real command line happens HERE, as the target user:
 #   1. ~/.config/terminal-lobby/commands — `key=command line` per line,
@@ -139,15 +145,32 @@ if [[ "$warm" == 1 ]]; then
         logger -t tmux-user-attach "pool: slot for '$start_dir' already warm"
         exit 0
     fi
-    logger -t tmux-user-attach "pool: warming slot for '$start_dir'"
+    logger -t tmux-user-attach "pool: warming slot for '$start_dir'${speculative:+ (speculative)}"
     # Same transient scope as the attach path below, for the same reason: the
     # tmux server must be parented to user@<uid>.service and not to this
     # oneshot's cgroup, which systemd tears down the moment ExecStart returns.
+    #
+    # Not exec'd, unlike the attach below, so the marker can be stamped after
+    # the session exists. `new-session -d` returns as soon as the session is
+    # created, and the server it may have spawned stays in the transient scope
+    # either way, so nothing about the parentage changes.
     if [[ "$scope_ok" == yes ]]; then
-        exec systemd-run --user --scope --quiet --collect \
-            tmux new-session -d -s "$name" -c "$start_dir" "${tmux_cmd[@]}"
+        systemd-run --user --scope --quiet --collect \
+            tmux new-session -d -s "$name" -c "$start_dir" "${tmux_cmd[@]}" || exit 1
+    else
+        tmux new-session -d -s "$name" -c "$start_dir" "${tmux_cmd[@]}" || exit 1
     fi
-    exec tmux new-session -d -s "$name" -c "$start_dir" "${tmux_cmd[@]}"
+    # Stamped AFTER creation rather than passed in, because new-session takes no
+    # user option. The value is when the guess was made, which is what the
+    # reaper compares against; a standing pool slot carries no marker at all and
+    # is therefore never collected.
+    if [[ "$speculative" == 1 ]]; then
+        # `=name:` and not `=name`: set-option rejects the bare exact form, and
+        # plain `name` would resolve by unambiguous PREFIX — which could stamp a
+        # neighbouring session instead of this one.
+        tmux set-option -t "=$name:" @tl_speculative "$(date +%s)" >/dev/null 2>&1 || true
+    fi
+    exit 0
 fi
 
 # ---- claim a pre-warmed slot ---------------------------------------------
@@ -165,12 +188,24 @@ fi
 if [[ "$cmd_key" == claude ]]; then
     slot="$(pool_slot_name "$start_dir")"
     if [[ "$name" != "$slot" ]] && tmux rename-session -t "=$slot" "$name" 2>/dev/null; then
-        logger -t tmux-user-attach "pool: claimed slot for '$start_dir' as '$name'"
-        # Re-warm for whoever comes next. --no-block so this attach is not made
-        # to wait on a fresh ~2.7s Claude boot, and a failure here is swallowed:
-        # the unit may legitimately not be enabled for this user, and an attach
-        # that has already succeeded must not fail because of the refill.
-        if [[ "$scope_ok" == yes ]]; then
+        # Read the mark BEFORE clearing it: it decides whether a refill is owed.
+        was_speculative="$(tmux display -p -t "=$name:" '#{@tl_speculative}' 2>/dev/null || true)"
+        # The claim is what turns a guess into somebody's session, so the
+        # speculative marker has to go with it. Leaving it would point the
+        # reaper at live work and have it killed two minutes later. Cleared
+        # first, ahead of the refill and the attach: everything after this is
+        # best-effort, and none of it may run before the mark is dropped.
+        tmux set-option -u -t "=$name:" @tl_speculative >/dev/null 2>&1 || true
+        logger -t tmux-user-attach "pool: claimed slot for '$start_dir' as '$name'${was_speculative:+ (was speculative)}"
+        # Re-warm for whoever comes next — but only a STANDING slot. A
+        # speculative one was a guess about a single create, and replacing it
+        # would leave a permanent slot behind for every directory anyone ever
+        # opened a create box in, which is exactly the idle cost that warming on
+        # demand exists to avoid. --no-block so this attach is not made to wait
+        # on a fresh ~2.7s Claude boot, and a failure here is swallowed: the
+        # unit may legitimately not be enabled for this user, and an attach that
+        # has already succeeded must not fail because of the refill.
+        if [[ -z "$was_speculative" && "$scope_ok" == yes ]]; then
             systemctl --user start --no-block \
                 "tl-pool-warm@$(systemd-escape --path "$start_dir").service" \
                 >/dev/null 2>&1 || true
