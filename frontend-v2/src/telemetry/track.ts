@@ -28,6 +28,12 @@ export type TlEvent =
   | "app.update_failed"
   | "app.error"
   // session lifecycle
+  // Emitted when a create input OPENS, so the gap to session.created is the
+  // window a speculative pre-warm has to work in. Without it there is no way
+  // to tell whether starting Claude at that moment covers its ~2.4s boot or
+  // only part of it, which is what decides whether the standing pool slot is
+  // still worth its ~530MB.
+  | "session.create_opened"
   | "session.created"
   | "session.selected"
   | "session.attached"

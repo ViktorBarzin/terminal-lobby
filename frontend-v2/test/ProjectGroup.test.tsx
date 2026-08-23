@@ -32,6 +32,15 @@ class FakeApi implements LobbyApi {
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
   puts: Layout[] = [];
+  /** Directories a speculative slot was asked for / handed back, in order. */
+  prewarmed: string[] = [];
+  released: string[] = [];
+  async prewarm(dir: string) {
+    this.prewarmed.push(dir);
+  }
+  async releasePrewarm(dir: string) {
+    this.released.push(dir);
+  }
   async whoami() {
     return this.whoamiVal;
   }
@@ -409,5 +418,115 @@ describe("<ProjectGroup> ⋯ move with an empty Ungrouped", () => {
     await waitFor(() => expect(titles(m.container)).toEqual(["alpha", "Ungrouped", "bravo"]));
     expect(api.puts[0]!.ungroupedIndex).toBe(1);
     m.store.dispose();
+  });
+});
+
+/**
+ * Speculative pre-warming. Opening the create box is the earliest moment a
+ * session's directory is known, and it is seconds ahead of the name being
+ * typed — long enough to cover most of Claude's ~2.4s boot, which is 89% of
+ * what creating a session used to cost.
+ *
+ * The behaviour worth pinning is not "does it call the endpoint" but WHEN it
+ * hands the slot back, because both mistakes are silent: releasing after a
+ * successful create races the attach and loses the benefit exactly when it
+ * matters, and never releasing leaves ~530MB per abandoned box.
+ */
+describe("<ProjectGroup> speculative pre-warm", () => {
+  const withDir = (api: FakeApi): void => {
+    api.sessionsVal = [];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "alpha", sessions: [], dir: "/home/wizard/code/alpha" }],
+    };
+  };
+
+  const addButton = (root: Element): HTMLElement =>
+    root.querySelector<HTMLElement>('button[aria-label="New session in project"]')!;
+
+  const addInputEl = (root: Element): HTMLInputElement =>
+    root.querySelector<HTMLInputElement>(".tl-group-add-input, .tl-new-input, input")!;
+
+  it("warms the project's dir as soon as the create box opens", async () => {
+    const api = new FakeApi();
+    withDir(api);
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(headers(container).length).toBe(1));
+
+    expect(api.prewarmed).toEqual([]);
+    addButton(container).click();
+    await waitFor(() => expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]));
+    store.dispose();
+  });
+
+  it("asks once, however many times the box is opened", async () => {
+    // beginAdd also fires on re-click while already adding; a second slot for
+    // the same dir would be refused server-side, but the request is pointless.
+    const api = new FakeApi();
+    withDir(api);
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(headers(container).length).toBe(1));
+
+    addButton(container).click();
+    addButton(container).click();
+    addButton(container).click();
+    await waitFor(() => expect(api.prewarmed.length).toBe(1));
+    store.dispose();
+  });
+
+  it("does not warm a project with no dir, since that would warm $HOME", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [];
+    api.layoutVal = { ...emptyLayout(), projects: [{ name: "alpha", sessions: [] }] };
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(headers(container).length).toBe(1));
+
+    addButton(container).click();
+    await Promise.resolve();
+    expect(api.prewarmed).toEqual([]);
+    store.dispose();
+  });
+
+  it("hands the slot back when the box closes with nothing typed", async () => {
+    const api = new FakeApi();
+    withDir(api);
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(headers(container).length).toBe(1));
+
+    addButton(container).click();
+    await waitFor(() => expect(api.prewarmed.length).toBe(1));
+
+    // Committing an empty box is the cancel path.
+    const input = addInputEl(container);
+    input.value = "";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await waitFor(() => expect(api.released).toEqual(["/home/wizard/code/alpha"]));
+    store.dispose();
+  });
+
+  it("KEEPS the slot after a successful create, for the attach to claim", async () => {
+    // The regression this guards: create() only STARTS the attach — the iframe
+    // still has to connect and reach ttyd — so releasing here reliably wins the
+    // race and the create falls back to a cold start.
+    const api = new FakeApi();
+    withDir(api);
+    const { container, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(headers(container).length).toBe(1));
+
+    addButton(container).click();
+    await waitFor(() => expect(api.prewarmed.length).toBe(1));
+
+    const input = addInputEl(container);
+    input.value = "newsession";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    await waitFor(() => expect(api.puts.length).toBeGreaterThan(0));
+    expect(api.released).toEqual([]);
+    store.dispose();
   });
 });
