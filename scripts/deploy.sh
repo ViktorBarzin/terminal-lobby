@@ -167,6 +167,7 @@ scp -o BatchMode=yes \
   devvm/clipboard-cleanup.service \
   devvm/clipboard-cleanup.timer \
   devvm/tl-pool-warm@.service \
+  devvm/tl-prewarm@.service \
   "wizard@${DEVVM}:/tmp/"
 
 echo "==> Installing on $DEVVM..."
@@ -264,6 +265,8 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   # directory, and the claim in tmux-user-attach simply misses until then.
   sudo install -d -m 0755 /etc/systemd/user
   sudo install -m 0644 /tmp/tl-pool-warm@.service /etc/systemd/user/tl-pool-warm@.service
+  # Started on demand by tmux-api, never enabled — see the unit's own note.
+  sudo install -m 0644 /tmp/tl-prewarm@.service /etc/systemd/user/tl-prewarm@.service
   # VAPID EnvironmentFile for tmux-api (Web Push, Notifications Part 2).
   # Root-owned 0600: systemd reads it before dropping to User=wizard, so the
   # private key isn't readable by the service user. Absent → the unit's
@@ -290,7 +293,7 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" "INCLUDE_TTYD=${TTYD_BIN:+1} STAGE_VAPID=
   rm -f /tmp/tmux.conf.system /tmp/sudoers.d-ttyd-users /tmp/vapid.env
   rm -f /tmp/ttyd.service /tmp/ttyd-ro.service /tmp/tmux-api.service
   rm -f /tmp/clipboard-upload.service /tmp/clipboard-cleanup.service /tmp/clipboard-cleanup.timer
-  rm -f /tmp/tl-pool-warm@.service
+  rm -f /tmp/tl-pool-warm@.service /tmp/tl-prewarm@.service
 REMOTE
 
 echo "==> Verifying..."
