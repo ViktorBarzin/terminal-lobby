@@ -43,8 +43,22 @@ start_dir="${2:-$HOME}"
 # project .mcp.json, the git status in its context) and no flag re-points a
 # running one. So the claim asks exactly one question — "is a slot warm for
 # THIS dir?" — and needs no configuration to answer it.
+# The path is RESOLVED before it is folded into a name, because the same
+# directory reaches this script spelled more than one way and each spelling
+# would otherwise get its own slot. The lobby's own project store proves it:
+# `t3-code` is stored as /home/wizard/code/terminal-lobby/ and `tripit` as
+# /home/wizard/code/tripit — one with a trailing slash, one without. Folding
+# those raw gives ..._terminal_lobby_ and ..._terminal_lobby, so a slot warmed
+# under one spelling is invisible to a claim arriving under the other, and the
+# only symptom is that pre-warming quietly stops helping. realpath also
+# collapses `..` and symlinks, and both sides derive the name here, so they
+# cannot disagree.
 POOL_PREFIX='__terminal_lobby_prewarmed_pool_slot_'
-pool_slot_name() { printf '%s%s' "$POOL_PREFIX" "$(printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_')"; }
+pool_slot_name() {
+    local d
+    d="$(realpath -m -- "$1" 2>/dev/null)" || d="$1"
+    printf '%s%s' "$POOL_PREFIX" "$(printf '%s' "${d:-$1}" | tr -c 'a-zA-Z0-9' '_')"
+}
 
 # TL_POOL_WARM=1 means "create the slot for $start_dir, detached, and exit"
 # rather than "attach a session". The name is derived, never taken from $1.
