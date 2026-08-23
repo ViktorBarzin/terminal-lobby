@@ -1,0 +1,31 @@
+[Unit]
+# Warms a Claude session slot for the directory named by the instance, on the
+# guess that one is about to be created there — the lobby starts this when a
+# create input opens, which is seconds before the name is typed and while the
+# directory is already known.
+#
+# Same script and same slot as tl-pool-warm@, with one difference: this one sets
+# TL_POOL_SPECULATIVE, so tmux-user-attach stamps @tl_speculative on the session.
+# That mark is what separates a guess from the standing pool slot — it is what
+# the reaper collects by, what the cap counts, and what a claim clears so live
+# work is never a candidate. A standing slot carries no mark and is untouchable.
+#
+# Started on demand by tmux-api (POST /sessions/prewarm), never enabled: there is
+# nothing to warm until someone opens a create box. Released explicitly when that
+# box closes, and collected after a TTL when a closed tab could not say so.
+Description=Speculatively warm a terminal-lobby Claude session slot for %f
+Documentation=https://forgejo.viktorbarzin.me/viktor/terminal-lobby
+
+[Service]
+Type=oneshot
+Environment=TL_POOL_WARM=1
+Environment=TL_POOL_SPECULATIVE=1
+# $1 is ignored in warm mode — the name is derived from the directory, so the
+# shell and tmux-api agree on it without passing it around.
+ExecStart=/usr/local/bin/tmux-user-attach prewarm %f claude
+# Warming is best-effort and must never look like a failure: 64 is the script's
+# "only the claude command is pooled" refusal.
+SuccessExitStatus=0 64
+
+# Deliberately no [Install]: unlike tl-pool-warm@, this is never enabled. It is
+# started per guess and has nothing to do at boot.
