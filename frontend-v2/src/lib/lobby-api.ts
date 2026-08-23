@@ -232,6 +232,47 @@ export async function setSessionTitle(name: string, title: string): Promise<void
   if (!res.ok) throw new ApiError(res.status, `set title HTTP ${res.status}`);
 }
 
+/**
+ * POST/DELETE /api/sessions/prewarm — ask for, or release, a Claude session
+ * started ahead of the create it is for.
+ *
+ * Claude's own boot is ~2.4s of the ~2.7s a new session used to take, and
+ * opening a create input happens seconds before the name is typed, with the
+ * directory already known. So the boot is started on the guess and the ordinary
+ * attach adopts it, which turns the wait into a ~9ms tmux rename.
+ *
+ * A HINT, never a promise: the server answers 204 whether it warmed anything or
+ * refused (unknown directory, too many outstanding guesses), and every failure
+ * here is swallowed. The create this precedes works either way — just without
+ * the head start — so nothing about it is worth interrupting the user for.
+ */
+export async function prewarm(dir: string): Promise<void> {
+  try {
+    await req("/sessions/prewarm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir }),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Release a guess that came to nothing, so its ~530MB is not held until the
+ *  server's TTL collects it. Called when the create input closes without
+ *  creating; the TTL remains the backstop for a closed tab. */
+export async function releasePrewarm(dir: string): Promise<void> {
+  try {
+    await req("/sessions/prewarm", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir }),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** POST /api/restore — recreate saved-but-dead sessions. Runs on the longer
  *  RESTORE_TIMEOUT_MS deadline: the server recreates them one tmux command at
  *  a time.
@@ -294,6 +335,8 @@ export interface LobbyApi {
   listSnapshots(): Promise<SnapshotList>;
   getSnapshot(ts: string): Promise<SnapshotRow[]>;
   listDirs(): Promise<string[]>;
+  prewarm(dir: string): Promise<void>;
+  releasePrewarm(dir: string): Promise<void>;
 }
 
 export const lobbyApi: LobbyApi = {
@@ -309,4 +352,6 @@ export const lobbyApi: LobbyApi = {
   listSnapshots,
   getSnapshot,
   listDirs,
+  prewarm,
+  releasePrewarm,
 };
