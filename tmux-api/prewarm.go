@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
@@ -332,13 +333,24 @@ func hasSession(osUser, name string) bool {
 // the same shape tmux-user-attach sets up before calling systemd-run.
 func userSystemctl(osUser string, args ...string) *exec.Cmd {
 	full := append([]string{"--user"}, args...)
-	if osUser == selfUser {
-		return exec.Command("systemctl", full...)
-	}
 	uid := uidOfUser(osUser)
+	runtime := "/run/user/" + uid
+	if osUser == selfUser {
+		c := exec.Command("systemctl", full...)
+		// Set even for ourselves. This service runs AS wizard but under the
+		// SYSTEM manager, so it inherits no XDG_RUNTIME_DIR and `systemctl
+		// --user` cannot find the bus at all — it fails with "Failed to connect
+		// to bus: No medium found". Pointing it at the user manager explicitly
+		// is what makes the self case work, and it is easy to assume a matching
+		// user needs no environment.
+		c.Env = append(os.Environ(),
+			"XDG_RUNTIME_DIR="+runtime,
+			"DBUS_SESSION_BUS_ADDRESS=unix:path="+runtime+"/bus")
+		return c
+	}
 	pre := []string{"-n", "-u", osUser,
-		"env", "XDG_RUNTIME_DIR=/run/user/" + uid,
-		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + uid + "/bus",
+		"env", "XDG_RUNTIME_DIR=" + runtime,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtime + "/bus",
 		"systemctl"}
 	return exec.Command(sudoBinary, append(pre, full...)...)
 }

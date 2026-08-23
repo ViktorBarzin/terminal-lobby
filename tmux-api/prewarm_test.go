@@ -171,3 +171,19 @@ func TestSpeculativeTTLBoundsAreSane(t *testing.T) {
 		t.Error("the cap must admit at least one slot, or pre-warming never happens")
 	}
 }
+
+// tmux-api runs as its own user but under the SYSTEM manager, so it inherits no
+// XDG_RUNTIME_DIR and a bare `systemctl --user` fails with "Failed to connect to
+// bus: No medium found". The self case is the one where it is easy to assume no
+// environment is needed, and the failure is a warm that silently never happens.
+func TestUserSystemctlAlwaysPointsAtTheUserBus(t *testing.T) {
+	for _, osUser := range []string{selfUser, "someone-else"} {
+		cmd := userSystemctl(osUser, "start", "--no-block", "unit.service")
+		joined := strings.Join(cmd.Args, " ") + "\x00" + strings.Join(cmd.Env, "\x00")
+		for _, want := range []string{"XDG_RUNTIME_DIR=", "DBUS_SESSION_BUS_ADDRESS="} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("userSystemctl(%q) carries no %s, so `systemctl --user` cannot reach the bus", osUser, want)
+			}
+		}
+	}
+}
