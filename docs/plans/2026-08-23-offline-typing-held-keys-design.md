@@ -1,7 +1,8 @@
 # Offline typing — held keys you can see
 
-**Status:** Designed 2026-08-23, not yet built. **Author:** Viktor Barzin
-(decisions), Claude (design). **Scope:** `frontend/term.html`, client-side only.
+**Status:** Shipped 2026-08-25 to prod (`terminal.viktorbarzin.me`), commit
+`6297e67`. **Author:** Viktor Barzin (decisions), Claude (design + build).
+**Scope:** `frontend/term.html` and `frontend/index.html`, client-side only.
 
 ## What we wanted
 
@@ -228,9 +229,37 @@ sequenceDiagram
 - **Mid-line editing stays out.** Append and Backspace only, matching the
   compose mirror's own V1 constraint — no cursor tracking, no arrow
   repositioning.
+- **Wide characters drift.** The overlay maps one grapheme to one cell, but CJK
+  and emoji occupy two, so a hold containing them draws narrower than the pty
+  will echo it — the caret and everything after it sit one cell left per wide
+  character. The replay itself is unaffected; only the preview misaligns.
 - **The overlay covers cells while it is up.** Inside Claude Code's box a long
   hold will sit over the right-hand border until it is replayed or discarded.
   Nothing is destroyed, but the box looks briefly clipped.
+
+## What changed on the way to shipping
+
+Three things the design did not anticipate, all found while building:
+
+- **Both pages, not one.** `frontend-v2/test/ws-parity.test.ts` requires the
+  `tl-pending-input` sentinel block and the liveness-watchdog section to be
+  identical in `term.html` and `index.html`, since `index.html` is still the
+  rollback target. `term.html`'s own header comment says the opposite ("Do NOT
+  edit index.html to match"), so the two guidances disagree; the parity test is
+  the one with teeth, and it is right — a rollback page with a stale resilience
+  kernel is a rollback you cannot take. Both files carry identical 429-line
+  patches.
+- **The phone refuses Enter rather than holding it**, diverging from decision 4.
+  Closing the hold there would leave the compose field accepting characters
+  while the hold refused them, so field and hold would drift apart. On a phone
+  the field is the buffer, so Enter is refused, the newline is stripped, and the
+  text stays visible for editing. The raw-keyboard path keeps decision 4 intact,
+  auto-Enter window included.
+- **A TDZ trap in the pill repaint.** The connection pill and its attempt
+  counter are declared with the reconnect ladder, ~1,500 lines below the hold;
+  `setComposeVisible` reaches `heldRender` during boot prefs, and touching a
+  `const` in its temporal dead zone throws rather than reading undefined. The
+  repaint now looks the element up by id and fails soft.
 
 ## Verification
 
@@ -241,6 +270,12 @@ becomes *keeps the text, drops the newline*, and *"ages from the FIRST key"*
 now governs the Enter only. New cases: control sequences refused; Backspace at
 an empty hold refused; Backspace pops exactly one held character; the hold closes
 at Enter; Esc discards; the byte cap still refuses rather than lying.
+
+Shipped and verified in prod: the held-input code is present in the served
+`/usr/local/share/ttyd/term.html`, `PENDING_INPUT_TTL_MS` is still 3000 (now the
+auto-Enter window), and there are zero occurrences of "what you typed while
+offline was discarded" — the string that prompted the build. 1,964 tests green,
+28 of them new; `tsc --noEmit` output byte-identical to master's.
 
 In prod — the deploy is its own test trigger. `./scripts/deploy-v2.sh` installs
 `term.html` through clipboard-upload with no ttyd restart, but `index.html`
