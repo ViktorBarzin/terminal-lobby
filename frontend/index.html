@@ -979,6 +979,38 @@ __TL_DIAG__
            would jump to the left edge for the duration of the animation. */
         #conn-pill.dropped { border-color: var(--danger); color: var(--danger); }
         #conn-pill.dropped { animation: conn-drop 0.7s ease-out; }
+        /* Held keys: what you typed while the socket was down, drawn over the
+           frozen screen as one xterm decoration per character. The opaque cell
+           background matters — tmux's own glyphs are still underneath, and
+           this covers them rather than replacing them. */
+        .tl-held {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            white-space: pre;
+            line-height: 1;
+            pointer-events: none;
+            color: var(--accent);
+            background: var(--terminal-bg);
+            text-decoration: underline;
+            text-decoration-thickness: 1px;
+            text-underline-offset: 2px;
+        }
+        /* The caret cell: where the next held character will land. */
+        .tl-held.caret { background: var(--accent); text-decoration: none; opacity: 0.55; }
+        /* A committed Enter, waiting for a session to run it. */
+        .tl-held.enter { text-decoration: none; opacity: 0.6; }
+        /* Replayed, waiting for the pty to echo it back. */
+        .tl-held.dim { color: var(--text-muted); text-decoration: none; }
+        /* The phone leg: the compose bar owns the input, so it owns the signal. */
+        #compose-bar.held { border-color: var(--accent); }
+        #compose-bar.held #compose-input {
+            color: var(--accent);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+        #compose-bar.held-dim #compose-input { color: var(--text-muted); opacity: 0.75; }
         @keyframes conn-drop {
             0%   { transform: translateX(-50%) scale(1.07); }
             60%  { transform: translateX(-50%) scale(1.07); }
@@ -3801,6 +3833,7 @@ ${w.join(`
             conn: [
                 ['connecting', '--state-awaiting', 'Connecting', 'attaching to the session'],
                 ['offline',    null,                'Offline',    'connection lost, retrying'],
+                ['held',       '--accent',          'Held keys',  'typed while offline — Esc discards, Enter waits for the session'],
             ],
         };
         const tlHoverCapable = window.matchMedia && matchMedia('(hover: hover)').matches;
@@ -13040,6 +13073,19 @@ ${w.join(`
                     // line), the \r as its own sendInput frame, then clear
                     // — the pty line restarts empty.
                     reconcile(v.replace(/\n/g, ''));
+                    // …unless the pty never saw any of it. Offline the text is
+                    // sitting in a hold, so clearing the field here would take
+                    // the line away from under it and leave the user with an
+                    // empty box and no way back. Strip the newline, keep the
+                    // text where they can see it, and say why.
+                    if (!ws || ws.readyState !== WebSocket.OPEN) {
+                        suppress = true;
+                        composeInput.value = lastValue;
+                        suppress = false;
+                        growAndRefit();
+                        heldSay('Held — reconnect and press Enter to run it', 'info');
+                        return;
+                    }
                     emit('\r');
                     mirrorLineReset();
                     return;
@@ -13105,12 +13151,23 @@ ${w.join(`
             // paints the invisible ghost, 'on' the full bar. (Only reached
             // on coarse pointers, where the bar DOM exists; fine pointers
             // keep the applyInputPrefs stub, so 'auto' never ghosts there.)
+            // The held-input signal belongs on whichever surface owns the
+            // input. A VISIBLE bar is what the user is looking at, so it takes
+            // the colour; a ghost bar is invisible (it only catches taps), so
+            // the terminal overlay keeps the signal there.
+            heldComposeOwns = () => composeVisible && !composeBar.classList.contains('ghost');
+            heldComposePaint = (shadow, dim) => {
+                const on = !!(shadow && (shadow.text || shadow.enter));
+                composeBar.classList.toggle('held', on && !dim);
+                composeBar.classList.toggle('held-dim', on && dim);
+            };
             function setComposeVisible(show, focus) {
                 composeVisible = show;
                 const ghost = show && getPrefs().input.bar === 'auto';
                 composeBar.classList.toggle('visible', show);
                 composeBar.classList.toggle('ghost', ghost);
                 if (show) autoGrowCompose();
+                heldRender();  // the signal follows the surface that owns input
                 refit();
                 if (show && focus) composeInput.focus();
                 if (!show && focus) term.focus();
@@ -13716,52 +13773,279 @@ ${w.join(`
         // everything else rather than guess.
         // >>> tl-pending-input
         const PENDING_INPUT_MAX_BYTES = 4096;
+        // The auto-Enter window. It used to bound the whole hold: past it,
+        // everything typed offline was thrown away ("what you typed while
+        // offline was discarded"), which is what every real drop cost — a
+        // lift, a tube stop, a corporate proxy mangling the socket. The text
+        // now survives any gap, because you can SEE it the whole time. What
+        // still expires is permission to press Enter FOR you: a command run
+        // against a prompt that has moved on is the part nobody can take back.
         const PENDING_INPUT_TTL_MS = 3000;
-        const pendingInput = {
-            frames: [], bytes: 0, since: 0,
-            // Returns whether the frame was taken, so the caller can tell the
-            // user "held" rather than "lost".
-            push(frame) {
-                if (!hasConnectedOnce) return false; // no session to replay INTO yet
-                if (batterySuspended) return false;  // deliberately down; the tab is away
-                if (this.bytes + frame.byteLength > PENDING_INPUT_MAX_BYTES) return false;
-                if (!this.frames.length) this.since = Date.now();
-                this.frames.push(frame);
-                this.bytes += frame.byteLength;
-                return true;
+        const BRACKETED_PASTE_RE = /^\x1b\[200~([\s\S]*)\x1b\[201~$/;
+        // UTF-8 length without a TextEncoder, so the kernel stays sliceable
+        // and testable outside a browser.
+        function heldByteLength(s) {
+            let n = 0;
+            for (let i = 0; i < s.length; i++) {
+                const c = s.charCodeAt(i);
+                if (c < 0x80) n += 1;
+                else if (c < 0x800) n += 2;
+                else if (c >= 0xd800 && c <= 0xdbff) { n += 4; i++; }
+                else n += 3;
+            }
+            return n;
+        }
+        // Holdable = what a pty would echo back as glyphs, and nothing else.
+        // C0/C1 controls and DEL are out: Tab, the arrows, Ctrl-R and friends
+        // are all resolved BY the session, so holding one would put something
+        // on screen that the session never produced.
+        function heldIsPrintable(s) {
+            if (!s) return false;
+            for (const ch of s) {
+                const c = ch.codePointAt(0);
+                if (c < 0x20 || c === 0x7f || (c >= 0x80 && c <= 0x9f)) return false;
+            }
+            return true;
+        }
+        // Delete a whole grapheme: chopping a code unit off an emoji leaves a
+        // lone surrogate, which is not a character anyone typed.
+        function heldPopGrapheme(s) {
+            if (!s) return '';
+            if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+                const segs = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(s)];
+                return s.slice(0, segs.length ? segs[segs.length - 1].index : 0);
+            }
+            const c = s.charCodeAt(s.length - 2);
+            return s.slice(0, s.length - (c >= 0xd800 && c <= 0xdbff ? 2 : 1));
+        }
+        const heldInput = {
+            text: '', enter: false, since: 0,
+            // Classify one pty-bound chunk. The verdict is the caller's cue for
+            // what to draw and what to say; nothing in here touches the DOM.
+            offer(data) {
+                if (!hasConnectedOnce) return 'refused:no-session'; // no session to replay INTO yet
+                if (batterySuspended) return 'refused:suspended';   // deliberately down; the tab is away
+                if (data === '\x7f' || data === '\b') {
+                    // Backspace reopens a committed line first: an Enter typed
+                    // by reflex must not be a dead end you cannot edit out of.
+                    if (this.enter) { this.enter = false; return 'reopened'; }
+                    // Nothing held means the cell to the left belongs to tmux,
+                    // and this overlay never touches those: readline would
+                    // refuse to delete past its line start anyway, so blanking
+                    // one would show a deletion that never happens.
+                    if (!this.text) return 'refused:nothing-held';
+                    this.text = heldPopGrapheme(this.text);
+                    if (!this.text) this.since = 0;
+                    return 'popped';
+                }
+                if (this.enter) return 'refused:closed';
+                if (data === '\r' || data === '\n') {
+                    if (!this.text) return 'refused:nothing-held';
+                    this.enter = true;
+                    return 'closed';
+                }
+                const paste = BRACKETED_PASTE_RE.exec(data);
+                const text = paste ? paste[1] : data;
+                if (!heldIsPrintable(text)) return 'refused:key';
+                if (heldByteLength(this.text) + heldByteLength(text) > PENDING_INPUT_MAX_BYTES) return 'refused:full';
+                if (!this.text) this.since = Date.now();
+                this.text += text;
+                return 'held';
             },
-            clear() { this.frames = []; this.bytes = 0; this.since = 0; },
-            flush(sock) {
-                if (!this.frames.length) return;
-                const frames = this.frames;
+            clear() { this.text = ''; this.enter = false; this.since = 0; },
+            // Replay. `send` puts one string on the wire. The text goes however
+            // old it is — it has been on screen the whole time. The Enter only
+            // goes inside the window where the prompt is still the one you
+            // typed at; past that it is dropped and the line waits on the
+            // prompt for a person to commit it.
+            flush(send) {
+                if (!this.text) { this.clear(); return null; }
+                const text = this.text;
+                const enter = this.enter;
                 const age = Date.now() - this.since;
                 this.clear();
-                if (age > PENDING_INPUT_TTL_MS) {
-                    console.log('pending input: dropped ' + frames.length + ' frame(s), ' + age + 'ms stale');
-                    showToast('Reconnected — what you typed while offline was discarded', 'error', 4000);
-                    return;
-                }
-                for (let i = 0; i < frames.length; i++) sock.send(frames[i]);
+                send(text);
+                if (!enter) return 'typed';
+                if (age <= PENDING_INPUT_TTL_MS) { send('\r'); return 'ran'; }
+                console.log('held input: replayed ' + text.length + ' char(s), Enter dropped after ' + age + 'ms');
+                return 'held-enter';
             }
         };
         // <<< tl-pending-input
+        // ---- the held-input overlay --------------------------------------
+        // What the kernel holds, drawn where the pty cursor is, in the theme
+        // accent and underlined. Decorations rather than term.write: a hold
+        // sits ON TOP of cells tmux drew — Claude Code's box border, most of
+        // the time — and has to leave them exactly as they were when it goes.
+        // Nothing arrives over a dead socket, so the screen underneath is
+        // frozen and the anchor stays put for as long as the hold lasts.
+        const HELD_ECHO_GRACE_MS = 1500;
+        let heldShadow = null;        // {text, enter} — what is currently drawn
+        let heldDim = false;          // replayed; waiting for the pty to answer
+        let heldAnchor = null;        // cursor cell captured when the hold began
+        let heldDecorations = [];
+        let heldMarkers = [];
+        let heldComposeOwns = () => false;  // assigned in the coarse-pointer block
+        let heldComposePaint = () => {};    // …as is this one
         let dropFlashTimer = null;
         let dropToastAt = 0;
-        function noteDroppedInput(held) {
-            if (!connPill.classList.contains('hidden')) {
-                connPill.classList.add('dropped');
-                clearTimeout(dropFlashTimer);
-                dropFlashTimer = setTimeout(() => connPill.classList.remove('dropped'), 700);
+
+        function heldDisposeOverlay() {
+            for (let i = 0; i < heldDecorations.length; i++) {
+                try { heldDecorations[i].dispose(); } catch (e) { /* already gone */ }
             }
-            // Words, but only occasionally: a burst of typing is one event to
-            // the user, not one per key.
+            for (let i = 0; i < heldMarkers.length; i++) {
+                try { heldMarkers[i].dispose(); } catch (e) { /* already gone */ }
+            }
+            heldDecorations = [];
+            heldMarkers = [];
+        }
+        function heldMarkerAt(rowOffset) {
+            // registerMarker is relative to the CURSOR line, which cannot move
+            // while the socket is down — so offset 0 is the line the hold
+            // started on and each wrap costs one more.
+            while (heldMarkers.length <= rowOffset) {
+                const marker = term.registerMarker(heldMarkers.length);
+                if (!marker) return null;
+                heldMarkers.push(marker);
+            }
+            return heldMarkers[rowOffset];
+        }
+        function heldGraphemes(text) {
+            if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+                return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)]
+                    .map((seg) => seg.segment);
+            }
+            return [...text];
+        }
+        function heldCount() {
+            return heldShadow && heldShadow.text ? heldGraphemes(heldShadow.text).length : 0;
+        }
+        function heldRender() {
+            heldDisposeOverlay();
+            const holding = !!(heldShadow && (heldShadow.text || heldShadow.enter));
+            if (!holding) {
+                heldAnchor = null;
+                heldComposePaint(null, false);
+                heldRepaintPill();
+                return;
+            }
+            // On a phone the compose bar IS the input surface the user is
+            // looking at, and with the keyboard up the pty cursor is often off
+            // screen — so the field carries the colour and this stands down.
+            if (heldComposeOwns()) {
+                heldComposePaint(heldShadow, heldDim);
+                heldRepaintPill();
+                return;
+            }
+            heldComposePaint(null, false);
+            const buffer = term.buffer.active;
+            if (!heldAnchor) heldAnchor = { x: buffer.cursorX, rows: term.rows - buffer.cursorY };
+            const cells = heldGraphemes(heldShadow.text).map((ch) => ({ ch, kind: 'char' }));
+            if (heldShadow.enter) cells.push({ ch: '⏎', kind: 'enter' });
+            else if (!heldDim) cells.push({ ch: '', kind: 'caret' });
+            for (let i = 0; i < cells.length; i++) {
+                const col = heldAnchor.x + i;
+                const rowOffset = Math.floor(col / term.cols);
+                if (rowOffset >= heldAnchor.rows) break;  // past the last row; the pill still counts them
+                const marker = heldMarkerAt(rowOffset);
+                if (!marker) break;
+                let decoration = null;
+                try {
+                    decoration = term.registerDecoration({ marker, x: col % term.cols, width: 1, height: 1 });
+                } catch (e) { break; }
+                if (!decoration) break;
+                const cell = cells[i];
+                decoration.onRender((el) => {
+                    el.className = 'tl-held'
+                        + (heldDim ? ' dim' : '')
+                        + (cell.kind === 'caret' ? ' caret' : '')
+                        + (cell.kind === 'enter' ? ' enter' : '');
+                    el.textContent = cell.ch;
+                    el.style.fontFamily = term.options.fontFamily;
+                    el.style.fontSize = term.options.fontSize + 'px';
+                });
+                heldDecorations.push(decoration);
+            }
+            heldRepaintPill();
+        }
+        function heldRepaintPill() {
+            const pill = document.getElementById('conn-pill');
+            if (!pill || pill.classList.contains('hidden')) return;
+            try { paintConnPill(connAttemptShown); } catch (e) { /* ladder not wired yet */ }
+        }
+        // Words, but only occasionally: a burst of typing is one event to the
+        // user, not one per key. The glyphs carry the rest.
+        function heldSay(message, kind) {
             if (Date.now() - dropToastAt < 5000) return;
             dropToastAt = Date.now();
-            if (held) showToast('Not connected — holding your keys until the session is back', 'info');
-            else showToast('Not connected — your input did not reach the session', 'error');
+            showToast(message, kind || 'info');
         }
-        function queueDroppedInput(frame) {
-            noteDroppedInput(pendingInput.push(frame));
+        function heldFlashPill() {
+            const pill = document.getElementById('conn-pill');
+            if (!pill || pill.classList.contains('hidden')) return;
+            pill.classList.add('dropped');
+            clearTimeout(dropFlashTimer);
+            dropFlashTimer = setTimeout(() => pill.classList.remove('dropped'), 700);
+        }
+        // The one place a kernel verdict becomes something the user can see.
+        function offerHeldInput(data) {
+            const verdict = heldInput.offer(data);
+            switch (verdict) {
+                case 'held': case 'popped': case 'closed': case 'reopened':
+                    heldShadow = { text: heldInput.text, enter: heldInput.enter };
+                    heldDim = false;
+                    heldRender();
+                    if (verdict === 'closed') {
+                        heldSay('Held — it goes in when the session is back', 'info');
+                    }
+                    break;
+                case 'refused:key':
+                    heldFlashPill();
+                    heldSay('Not connected — Tab, arrows and control keys need the session', 'info');
+                    break;
+                case 'refused:closed':
+                    heldFlashPill();
+                    heldSay('Your line is held — Backspace to edit it, Esc to discard', 'info');
+                    break;
+                case 'refused:nothing-held':
+                    heldFlashPill();
+                    heldSay('Not connected — reconnect to edit this line', 'info');
+                    break;
+                case 'refused:full':
+                    heldFlashPill();
+                    heldSay('Not connected — that is as much as this can hold', 'error');
+                    break;
+                default:  // no session yet, or the battery saver holding the socket down
+                    heldFlashPill();
+                    heldSay('Not connected — your input did not reach the session', 'error');
+            }
+            return verdict;
+        }
+        function discardHeldInput() {
+            heldInput.clear();
+            heldShadow = null;
+            heldDim = false;
+            heldRender();
+        }
+        function flushHeldInput() {
+            const outcome = heldInput.flush((data) => {
+                const payload = textEncoder.encode(data);
+                const buf = new Uint8Array(payload.length + 1);
+                buf[0] = MSG_INPUT.charCodeAt(0);
+                buf.set(payload, 1);
+                ws.send(buf.buffer);
+            });
+            if (!outcome) { discardHeldInput(); return; }
+            // Keep the run on screen, dimmed, until output proves the pty
+            // answered — at which point the text on screen is the session's,
+            // not ours, and the overlay has nothing left to say.
+            heldDim = true;
+            if (heldShadow) heldShadow = { text: heldShadow.text, enter: false };
+            heldRender();
+            if (outcome === 'held-enter') {
+                showToast('Typed what you held — press Enter to run it', 'info', 5000);
+            }
         }
 
         function sendInput(data) {
@@ -13771,15 +14055,21 @@ ${w.join(`
             // be missed by a new input path. The scattered per-path cancels
             // remain as belt-and-braces.
             cancelScrollMomentum();
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                offerHeldInput(data);
+                return;
+            }
             const payload = textEncoder.encode(data);
             const buf = new Uint8Array(payload.length + 1);
             buf[0] = MSG_INPUT.charCodeAt(0);
             buf.set(payload, 1);
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
-                queueDroppedInput(buf.buffer);
-                return;
-            }
             ws.send(buf.buffer);
+            // A keystroke that goes out and produces NOTHING is the cheapest
+            // evidence a socket is black-holed. The watchdog would reach the
+            // same verdict on its own, up to LIVENESS_STRIKES × 25s later,
+            // and every key typed into that gap is lost with the pill still
+            // reading connected.
+            armEchoWatch();
         }
 
         function sendResize() {
@@ -13834,13 +14124,18 @@ ${w.join(`
             bytes[0] = MSG_INPUT.charCodeAt(0);
             for (let i = 0; i < data.length; i++) bytes[i + 1] = data.charCodeAt(i);
             if (!ws || ws.readyState !== WebSocket.OPEN) {
-                queueDroppedInput(bytes.buffer); // same contract as sendInput
+                offerHeldInput(data); // same contract as sendInput
                 return;
             }
             ws.send(bytes.buffer);
         });
 
-        term.onResize(() => sendResize());
+        term.onResize(() => {
+            // A reflow moves the cursor, and with it the cell this hold is
+            // anchored to — re-derive the anchor rather than draw at the old one.
+            if (heldShadow) { heldAnchor = null; heldRender(); }
+            sendResize();
+        });
 
         // Refit on every viewport change. visualViewport tracks the visible
         // area below the soft keyboard on iOS Safari (and is the most
@@ -13970,6 +14265,17 @@ ${w.join(`
             if (isMacLike && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
                     && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
                 sendInput(e.key === 'ArrowLeft' ? '\x1bb' : '\x1bf');
+                e.preventDefault();
+                return false;
+            }
+            // Esc throws a hold away. Precedence over the selection branch
+            // below is deliberate: while held keys are on screen, discarding
+            // them is the live intent, and an Esc that reached the pty while
+            // offline would only earn a refusal toast anyway.
+            if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey
+                    && heldShadow && !heldDim) {
+                discardHeldInput();
+                showToast('Discarded what you typed while offline', 'info', 2500);
                 e.preventDefault();
                 return false;
             }
@@ -15070,12 +15376,17 @@ ${w.join(`
         const connPill = document.getElementById('conn-pill');
         // Hovering the pill explains the connection colors (amber pulse vs red).
         tlAttachLegend(connPill, 'conn',
-            () => connPill.classList.contains('offline') ? 'offline' : 'connecting');
+            () => heldShadow ? 'held'
+                : connPill.classList.contains('offline') ? 'offline' : 'connecting');
+        let connAttemptShown = 0;
         function paintConnPill(attempt) {
+            connAttemptShown = attempt;
+            const held = heldCount();
             connPill.textContent =
-                navigator.onLine === false ? 'You are offline'
+                (navigator.onLine === false ? 'You are offline'
                 : attempt <= 1 ? 'Connecting…'
-                : 'Reconnecting… (attempt ' + attempt + ')';
+                : 'Reconnecting… (attempt ' + attempt + ')')
+                + (held ? ' · ' + held + ' held' : '');
             connPill.classList.toggle('offline', navigator.onLine === false);
             connPill.classList.remove('hidden');
         }
@@ -15130,7 +15441,7 @@ ${w.join(`
             clearTimeout(stableTimer);
             hideConnPill();
             connPill.classList.remove('dropped');
-            pendingInput.clear(); // a suspend outlives the replay window by design
+            discardHeldInput(); // a suspend outlives the replay window by design
             // Tear down through the shared path so a half-finished attempt
             // (a /token fetch still in flight, a socket still in CONNECTING)
             // is abandoned too, not just an already-open socket.
@@ -15245,6 +15556,7 @@ ${w.join(`
             clearInterval(livenessTimer); livenessTimer = null;
             livenessStrikes = 0;
             livenessBusy = false;
+            noteEchoSeen();  // the socket it was watching for is gone
         }
         // (Re)anchor the cadence WITHOUT touching the strike count. Coming back
         // to the tab re-anchors, and that must not also absolve the socket: a
@@ -15257,6 +15569,24 @@ ${w.join(`
             livenessTimer = setInterval(runLivenessProbe, LIVENESS_PROBE_MS);
         }
         function startLivenessProbe() { stopLivenessProbe(); armLivenessProbe(); }
+        // Typing is the cheapest liveness signal there is: bytes went out, so
+        // something should come back. One watch per burst — it is re-armed by
+        // the first keystroke after each answer, and idle terminals never arm
+        // it at all, so the 25s cadence (and the battery budget behind it) is
+        // untouched.
+        let echoWatchTimer = null;
+        function armEchoWatch() {
+            if (echoWatchTimer) return;
+            echoWatchTimer = setTimeout(() => {
+                echoWatchTimer = null;
+                runLivenessProbe();
+            }, HELD_ECHO_GRACE_MS);
+        }
+        function noteEchoSeen() {
+            if (!echoWatchTimer) return;
+            clearTimeout(echoWatchTimer);
+            echoWatchTimer = null;
+        }
         function livenessFailed(reason) {
             livenessStrikes++;
             console.warn('liveness: strike ' + livenessStrikes + '/' + LIVENESS_STRIKES + ' — ' + reason);
@@ -15365,7 +15695,7 @@ ${w.join(`
                     scheduleReconnect();
                 } else {
                     hideConnPill();
-                    pendingInput.clear(); // nothing left to replay them into
+                    discardHeldInput(); // nothing left to replay them into
                     term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
                 }
             });
@@ -15501,7 +15831,7 @@ ${w.join(`
                         // resize, so they land in a terminal that is already
                         // the right shape. flush() drops them itself if the
                         // gap outlived the window where replay is safe.
-                        pendingInput.flush(ws);
+                        flushHeldInput();
                         connPill.classList.remove('dropped');
                         // From here on this socket has to prove it is alive.
                         startLivenessProbe();
@@ -15517,6 +15847,11 @@ ${w.join(`
 
                             switch (msgType) {
                                 case MSG_OUTPUT:
+                                    // The pty answered: whatever we echoed
+                                    // locally has been superseded by the real
+                                    // thing, and the socket has proved itself.
+                                    noteEchoSeen();
+                                    if (heldDim) discardHeldInput();
                                     // First server output = ttyd's process
                                     // provably exists (ttyd drops RESIZE
                                     // messages that arrive before spawn, and
