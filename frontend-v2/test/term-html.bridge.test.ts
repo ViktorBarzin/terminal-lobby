@@ -443,13 +443,13 @@ describe("term.html — the reconnect ladder is jittered, and parks while offlin
   });
 });
 
-interface PendingInput {
-  frames: ArrayBuffer[];
-  bytes: number;
+interface HeldInput {
+  text: string;
+  enter: boolean;
   since: number;
-  push(frame: ArrayBuffer): boolean;
+  offer(data: string): string;
   clear(): void;
-  flush(sock: { send(frame: ArrayBuffer): void }): void;
+  flush(send: (data: string) => void): string | null;
 }
 
 interface PendingEnv {
@@ -457,116 +457,198 @@ interface PendingEnv {
   batterySuspended: boolean;
 }
 
-/** term.html's pending-input queue, over a controllable clock. */
-function loadPendingInput(env: Partial<PendingEnv> = {}): {
-  q: PendingInput;
-  ctx: PendingEnv;
-  toasts: string[];
-  sent: ArrayBuffer[];
+/** term.html's held-input kernel, over a controllable clock. */
+function loadHeldInput(env: Partial<PendingEnv> = {}): {
+  q: HeldInput;
+  sent: string[];
   tick: (ms: number) => void;
 } {
-  const toasts: string[] = [];
-  const sent: ArrayBuffer[] = [];
+  const sent: string[] = [];
   let clock = 1_000_000;
   const ctx = {
     hasConnectedOnce: env.hasConnectedOnce ?? true,
     batterySuspended: env.batterySuspended ?? false,
-    showToast: (m: string) => void toasts.push(m),
     console: { log: () => {} },
     Date: { now: () => clock },
+    Intl,
   };
   const q = runInNewContext(
-    `${sliceKernel(html(), "tl-pending-input")}; pendingInput`,
+    `${sliceKernel(html(), "tl-pending-input")}; heldInput`,
     ctx,
-  ) as PendingInput;
-  return {
-    q,
-    ctx: ctx as unknown as PendingEnv,
-    toasts,
-    sent,
-    tick: (ms) => {
-      clock += ms;
-    },
-  };
+  ) as HeldInput;
+  return { q, sent, tick: (ms) => { clock += ms; } };
 }
 
-const frame = (bytes: number): ArrayBuffer => new ArrayBuffer(bytes);
+const DEL = "\x7f";
+const CR = "\r";
 
 /**
- * THE SWALLOWED KEYSTROKE: typing into a terminal that only LOOKS live.
+ * THE SWALLOWED KEYSTROKE, part two: the keys are held, and now they are
+ * VISIBLE — so the hold no longer has to expire to stay safe.
  *
- * A disconnected page still shows tmux's last repaint, so a key that
- * early-returned out of sendInput vanished with nothing to show for it — the
- * user finds out a whole command later. Holding the keys is the other half,
- * and it is the risky half: replayed late they run against a prompt that has
- * moved on, so the queue is small, same-session, and short-lived by design.
+ * Before this, anything past PENDING_INPUT_TTL_MS was thrown away with a toast
+ * ("what you typed while offline was discarded"), which is what a real drop —
+ * a lift, a tube stop, a corp proxy mangling the WebSocket — always cost. The
+ * text now survives any outage; only the trailing Enter is time-limited, since
+ * running a command blind against a prompt that has moved on is the part that
+ * cannot be taken back.
  */
 describe("term.html — keys typed while the socket is down", () => {
-  it("replays a short blip in order", () => {
-    const { q, sent, tick } = loadPendingInput();
-    const a = frame(1);
-    const b = frame(2);
-    expect(q.push(a)).toBe(true);
-    expect(q.push(b)).toBe(true);
-    tick(900); // a bottom-rung reconnect
-    q.flush({ send: (f) => void sent.push(f) });
-    expect(sent).toEqual([a, b]);
-    expect(q.frames).toHaveLength(0);
-    expect(q.bytes).toBe(0);
+  it("holds printable characters in order", () => {
+    const { q } = loadHeldInput();
+    for (const ch of "git commit") expect(q.offer(ch)).toBe("held");
+    expect(q.text).toBe("git commit");
   });
 
-  it("discards — and says so — once the gap outlived the replay window", () => {
-    const src = html();
-    const ttl = sliceNumberConst(src, "PENDING_INPUT_TTL_MS");
-    const { q, sent, toasts, tick } = loadPendingInput();
-    q.push(frame(1));
-    tick(ttl + 1);
-    q.flush({ send: (f) => void sent.push(f) });
-    expect(sent).toHaveLength(0);
-    expect(toasts.join(" ")).toMatch(/discarded/i);
+  it("holds a bracketed paste as the text inside the wrapper", () => {
+    const { q } = loadHeldInput();
+    expect(q.offer("\x1b[200~npm run build\x1b[201~")).toBe("held");
+    expect(q.text).toBe("npm run build");
   });
 
-  it("ages from the FIRST key, so a long burst cannot extend the window", () => {
-    const src = html();
-    const ttl = sliceNumberConst(src, "PENDING_INPUT_TTL_MS");
-    const { q, sent, tick } = loadPendingInput();
-    q.push(frame(1));
+  it("refuses a paste carrying a newline — it would run blind on replay", () => {
+    const { q } = loadHeldInput();
+    expect(q.offer("\x1b[200~one\ntwo\x1b[201~")).toBe("refused:key");
+    expect(q.text).toBe("");
+  });
+
+  it.each([
+    ["Tab", "\t"],
+    ["Ctrl-C", "\x03"],
+    ["Ctrl-R", "\x12"],
+    ["Up arrow", "\x1b[A"],
+    ["Left arrow", "\x1b[D"],
+    ["a bare Escape", "\x1b"],
+  ])("refuses %s — only the pty can resolve it", (_label, bytes) => {
+    const { q } = loadHeldInput();
+    expect(q.offer(bytes)).toBe("refused:key");
+    expect(q.text).toBe("");
+  });
+
+  it("pops exactly one held character per Backspace", () => {
+    const { q } = loadHeldInput();
+    for (const ch of "lsx") q.offer(ch);
+    expect(q.offer(DEL)).toBe("popped");
+    expect(q.text).toBe("ls");
+  });
+
+  it("pops a whole grapheme, not a code unit", () => {
+    // An emoji is two code units; deleting half of one leaves a lone surrogate.
+    const { q } = loadHeldInput();
+    q.offer("hi 👋");
+    expect(q.offer(DEL)).toBe("popped");
+    expect(q.text).toBe("hi ");
+  });
+
+  it("refuses Backspace when nothing is held — it would blank a cell tmux drew", () => {
+    const { q } = loadHeldInput();
+    expect(q.offer(DEL)).toBe("refused:nothing-held");
+  });
+
+  it("closes the hold on Enter and refuses further keys", () => {
+    const { q } = loadHeldInput();
+    for (const ch of "ls") q.offer(ch);
+    expect(q.offer(CR)).toBe("closed");
+    expect(q.offer("x")).toBe("refused:closed");
+    expect(q.text).toBe("ls");
+  });
+
+  it("reopens a closed hold on Backspace, so a reflex Enter is not a dead end", () => {
+    const { q } = loadHeldInput();
+    for (const ch of "ls") q.offer(ch);
+    q.offer(CR);
+    expect(q.offer(DEL)).toBe("reopened");
+    expect(q.offer("x")).toBe("held");
+    expect(q.text).toBe("lsx");
+  });
+
+  it("refuses Enter with nothing held", () => {
+    const { q } = loadHeldInput();
+    expect(q.offer(CR)).toBe("refused:nothing-held");
+  });
+
+  it("replays the text AND runs it when the gap was a blip", () => {
+    const ttl = sliceNumberConst(html(), "PENDING_INPUT_TTL_MS");
+    const { q, sent, tick } = loadHeldInput();
+    for (const ch of "ls") q.offer(ch);
+    q.offer(CR);
+    tick(ttl - 1);
+    expect(q.flush((d) => void sent.push(d))).toBe("ran");
+    expect(sent).toEqual(["ls", CR]);
+  });
+
+  it("KEEPS the text past the window and drops only the Enter", () => {
+    // The regression this whole change exists for: the text used to be
+    // discarded outright once the gap outlived the replay window.
+    const ttl = sliceNumberConst(html(), "PENDING_INPUT_TTL_MS");
+    const { q, sent, tick } = loadHeldInput();
+    for (const ch of "git commit") q.offer(ch);
+    q.offer(CR);
+    tick(ttl * 100); // a lift, a tube stop — minutes, not seconds
+    expect(q.flush((d) => void sent.push(d))).toBe("held-enter");
+    expect(sent).toEqual(["git commit"]);
+    expect(q.text).toBe("");
+  });
+
+  it("replays a hold with no Enter as plain typing, however old", () => {
+    const { q, sent, tick } = loadHeldInput();
+    for (const ch of "cd /tmp") q.offer(ch);
+    tick(600_000);
+    expect(q.flush((d) => void sent.push(d))).toBe("typed");
+    expect(sent).toEqual(["cd /tmp"]);
+  });
+
+  it("ages the Enter from the FIRST key, so a long burst cannot extend it", () => {
+    const ttl = sliceNumberConst(html(), "PENDING_INPUT_TTL_MS");
+    const { q, sent, tick } = loadHeldInput();
+    q.offer("l");
     tick(ttl + 1);
-    q.push(frame(1)); // still typing — but the queue is already stale
-    q.flush({ send: (f) => void sent.push(f) });
-    expect(sent).toHaveLength(0);
+    q.offer("s"); // still typing — but the window opened with the 'l'
+    q.offer(CR);
+    expect(q.flush((d) => void sent.push(d))).toBe("held-enter");
+    expect(sent).toEqual(["ls"]);
+  });
+
+  it("caps the hold in BYTES and refuses rather than truncating", () => {
+    const max = sliceNumberConst(html(), "PENDING_INPUT_MAX_BYTES");
+    const { q } = loadHeldInput();
+    expect(q.offer("a".repeat(max - 1))).toBe("held");
+    expect(q.offer("é")).toBe("refused:full"); // 2 bytes into 1 byte of room
+    expect(q.text.length).toBe(max - 1);
   });
 
   it("refuses to hold anything before a session has ever attached", () => {
     // Nothing to replay INTO: the pty does not exist yet, and the boot attach
     // is the one connect that always retries anyway.
-    const { q } = loadPendingInput({ hasConnectedOnce: false });
-    expect(q.push(frame(1))).toBe(false);
-    expect(q.frames).toHaveLength(0);
+    const { q } = loadHeldInput({ hasConnectedOnce: false });
+    expect(q.offer("a")).toBe("refused:no-session");
+    expect(q.text).toBe("");
   });
 
   it("refuses while the battery saver is holding the socket down", () => {
-    // A suspend lasts as long as the tab is away — always past the window.
-    const { q } = loadPendingInput({ batterySuspended: true });
-    expect(q.push(frame(1))).toBe(false);
+    const { q } = loadHeldInput({ batterySuspended: true });
+    expect(q.offer("a")).toBe("refused:suspended");
   });
 
-  it("caps the queue, and reports the refusal rather than lying about it", () => {
-    const max = sliceNumberConst(html(), "PENDING_INPUT_MAX_BYTES");
-    const { q } = loadPendingInput();
-    expect(q.push(frame(max - 1))).toBe(true);
-    expect(q.push(frame(64))).toBe(false); // would overflow — caller says "lost"
-    expect(q.bytes).toBe(max - 1);
+  it("clear() drops the text and the Enter together", () => {
+    const { q, sent } = loadHeldInput();
+    q.offer("a");
+    q.offer(CR);
+    q.clear();
+    expect(q.text).toBe("");
+    expect(q.enter).toBe(false);
+    expect(q.flush((d) => void sent.push(d))).toBeNull();
+    expect(sent).toEqual([]);
   });
 
-  it("routes BOTH pty-bound input paths through the queue", () => {
+  it("routes BOTH pty-bound input paths through the hold", () => {
     // sendInput and term.onBinary each had their own `if (!OPEN) return`.
     // Fixing one and leaving the other still eats paste and bracketed input.
     const src = html();
-    expect(sliceFunction(src, "sendInput")).toContain("queueDroppedInput(buf.buffer)");
+    expect(sliceFunction(src, "sendInput")).toContain("offerHeldInput(data)");
     const onBinary = src.slice(src.indexOf("term.onBinary("));
     expect(onBinary.slice(0, onBinary.indexOf("\n        });"))).toContain(
-      "queueDroppedInput(bytes.buffer)",
+      "offerHeldInput(data)",
     );
   });
 
@@ -574,20 +656,45 @@ describe("term.html — keys typed while the socket is down", () => {
     const src = html();
     const open = src.slice(src.indexOf("ws.onopen = () => {"));
     const body = open.slice(0, open.indexOf("\n                    };"));
-    expect(body.indexOf("ws.send(initMsg)")).toBeLessThan(body.indexOf("pendingInput.flush(ws)"));
-    expect(body.indexOf("sendResize();")).toBeLessThan(body.indexOf("pendingInput.flush(ws)"));
+    expect(body.indexOf("ws.send(initMsg)")).toBeLessThan(body.indexOf("flushHeldInput()"));
+    expect(body.indexOf("sendResize();")).toBeLessThan(body.indexOf("flushHeldInput()"));
   });
 
-  it("clears the queue on the two states replay can never be safe from", () => {
+  it("clears the hold on the two states replay can never be safe from", () => {
     const src = html();
     // "Session ended." — there is no pty left to replay into. (Anchored on
     // the term.write, not the phrase: the phrase also appears in prose above.)
     const ended = src.indexOf("[33mSession ended.");
     expect(ended, "the Session ended. write").toBeGreaterThan(-1);
-    expect(src.slice(ended - 400, ended)).toContain("pendingInput.clear()");
+    expect(src.slice(ended - 400, ended)).toContain("discardHeldInput()");
     // A battery suspend lasts until the tab comes back: always stale.
     const suspend = sliceFunction(src, "suspendForBattery");
-    expect(suspend).toContain("pendingInput.clear()");
+    expect(suspend).toContain("discardHeldInput()");
+  });
+
+  it("lets Esc discard the hold before the selection branch claims it", () => {
+    // Both want Esc. While keys are held, discarding is the live intent — and
+    // an Esc that reached the pty offline would only earn a refusal toast.
+    const src = html();
+    const handler = src.slice(src.indexOf("term.attachCustomKeyEventHandler("));
+    const body = handler.slice(0, handler.indexOf("\n        });"));
+    const discard = body.indexOf("discardHeldInput()");
+    const selection = body.indexOf("clearSelectionBecause('Escape')");
+    expect(discard, "the Esc discard branch").toBeGreaterThan(-1);
+    expect(selection, "the Esc selection branch").toBeGreaterThan(-1);
+    expect(discard).toBeLessThan(selection);
+  });
+
+  it("watches for an echo after every keystroke that goes out", () => {
+    // A black-holed socket stays OPEN for LIVENESS_STRIKES × LIVENESS_PROBE_MS
+    // (~75s) before the watchdog notices, and every key typed into that window
+    // is lost with the pill still reading connected. Typing is the cheapest
+    // possible trigger for the probe that already exists.
+    const src = html();
+    expect(sliceFunction(src, "sendInput")).toContain("armEchoWatch()");
+    const output = src.slice(src.indexOf("case MSG_OUTPUT:"));
+    expect(output.slice(0, output.indexOf("break;"))).toContain("noteEchoSeen()");
+    expect(sliceFunction(src, "armEchoWatch")).toContain("runLivenessProbe()");
   });
 });
 
