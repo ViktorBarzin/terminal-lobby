@@ -94,11 +94,28 @@ func TestParseArgs(t *testing.T) {
 			errStr: "--resume",
 		},
 		{
-			// Without one of the two, nothing identifies the conversation and
-			// there is no session to attach to.
-			name:   "neither --session-id nor --resume",
-			argv:   []string{"--output-format", "stream-json", "--verbose"},
-			errStr: "--resume",
+			// Without one of the two, nothing identifies a conversation — which
+			// is exactly what T3's own capability probe looks like. Erroring
+			// here used to exit the process, and T3 answers a provider that
+			// exits mid-handshake by writing to its closed stdin and dying on
+			// the unhandled EPIPE: it crash-looped wizard's instance every six
+			// seconds for eight days (2026-08-20 -> 2026-08-28).
+			name: "neither --session-id nor --resume is a probe, not an error",
+			argv: []string{"--output-format", "stream-json", "--verbose"},
+			want: Config{Probe: true},
+		},
+		{
+			name: "a probe stays a probe even with model flags along for the ride",
+			argv: []string{"--model", "opus", "--effort", "high"},
+			want: Config{Probe: true, Model: "opus", Effort: "high"},
+		},
+		{
+			// The safety property the probe mode was built for still holds: a
+			// probe must never bind a tmux session to a conversation nobody
+			// asked about.
+			name: "a session id means it is not a probe",
+			argv: []string{"--session-id", "abc"},
+			want: Config{SessionID: "abc"},
 		},
 	}
 	for _, tc := range tests {
