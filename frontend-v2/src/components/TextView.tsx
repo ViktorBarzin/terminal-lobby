@@ -1,5 +1,5 @@
 import { createMemo, createSignal, onMount, Show, type Component } from "solid-js";
-import type { Event, PermissionDecision } from "../types/events";
+import type { Event, PermissionDecision, SessionState } from "../types/events";
 import {
   currentMode,
   deriveRows,
@@ -63,9 +63,12 @@ export const TextView: Component<{
   onScreen?: boolean;
   /** fetch a capped tool result in full. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
-  /** load the window of turns before the oldest held. */
+  /** take one step further back through the transcript. */
   onLoadEarlier?: () => Promise<void>;
   hasEarlier?: boolean;
+  /** what the held window cannot carry: the mode, the newest /context reading,
+   *  the queue and the composer's history, folded over the whole session. */
+  sessionState?: SessionState | null;
   /** list a directory for `@` completion. */
   onListDir?: (dir: string) => Promise<string[]>;
   /** the session, so the composer can key its unsent draft. */
@@ -83,8 +86,8 @@ export const TextView: Component<{
   const shown = createMemo(() =>
     withPendingPrompts(props.events, props.pendingPrompts?.() ?? []),
   );
-  const queued = createMemo(() => queuedPrompts(props.events));
-  const history = createMemo(() => promptHistory(props.events));
+  const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
+  const history = createMemo(() => promptHistory(props.events, props.sessionState));
   const [modeBusy, setModeBusy] = createSignal(false);
 
   /**
@@ -103,7 +106,7 @@ export const TextView: Component<{
    * A pane reading holds until the transcript reports a mode of its own, at
    * which point the transcript is the fresher of the two and takes over.
    */
-  const transcriptMode = createMemo(() => currentMode(props.events));
+  const transcriptMode = createMemo(() => currentMode(props.events, props.sessionState));
   // A pane reading, plus the transcript value it was taken against. It stops
   // counting the moment the transcript moves, with no bookkeeping: the reading
   // simply no longer matches what it was taken against.
@@ -187,7 +190,7 @@ export const TextView: Component<{
   // one is in the transcript, because somebody ran the command. Nothing injects
   // it and nothing here computes a context size: the ceiling is not on the wire
   // and is not a constant.
-  const context = createMemo(() => contextState(props.events));
+  const context = createMemo(() => contextState(props.events, props.sessionState));
 
   // The catalogue is files on disk; one read when the view opens is enough.
   const [commands, setCommands] = createSignal<SlashCommand[]>([]);
