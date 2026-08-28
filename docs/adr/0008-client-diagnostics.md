@@ -239,11 +239,12 @@ reverse. Expected steady-state volume is roughly 2 records/min per active tab.
 
 ## Counting bytes
 
-Added after the fact, for the *Data used* readout in the v2 settings panel: how
+Added for the *Data used* readout in the v2 settings panel: how
 many bytes Terminal Lobby cost this device today, this month and last month,
 broken into five feature buckets.
 
-`tl.ws.in_b` had been here since this ADR shipped, and it is not that number.
+`tl.ws.in_b` has been recorded since this ADR shipped, and it measures something
+different.
 ttyd negotiates `permessage-deflate` with context takeover in both directions —
 verified live against ttyd 1.7.7-40e79c7, whose upgrade response carries a bare
 `Sec-WebSocket-Extensions: permessage-deflate` with no `no_context_takeover`
@@ -253,6 +254,38 @@ Measured against real pane content shaped as a stream, the wire carries about
 
 So one rule decides how each bucket is counted: **anything the server
 compresses is modelled; everything else is read from `transferSize`.**
+
+```stats
+13.6x | terminal output compresses on the wire
+~4% | modelled vs measured, end to end
+5 | feature buckets
+48 | attribute cap, raised from 24
+31 + 12 | daily buckets, monthly totals
+16 ms | mirror CPU per busy minute
+```
+
+```mermaid
+flowchart TD
+    B["bytes arrive"] --> Q{"does the server<br/>compress this?"}
+
+    Q -->|"no — document, fetch,<br/>image, API"| TS["read transferSize<br/><i>already post-compression</i>"]
+    Q -->|"yes — ttyd WebSocket,<br/>session-events SSE"| MI["deflate mirror<br/><i>compress the same bytes<br/>the same way</i>"]
+
+    MI --> PM["+ per-message flush cost<br/>16 B ws · 24 B sse"]
+
+    TS --> BK["bucket by path"]
+    PM --> BK
+
+    BK --> W["60 s window"]
+
+    W --> R["perf.rollup<br/>tl.net.*_b → Loki"]
+    W --> S["device store<br/>31 days + 12 months"]
+
+    S --> P["Settings → Data used"]
+
+    R -.->|"visible tabs only"| R
+    S -.->|"hidden tabs too —<br/>the bytes were still spent"| S
+```
 
 | Bucket | Attribute | Source | Kind |
 |---|---|---|---|
@@ -269,7 +302,7 @@ refused frames under backpressure, so a figure that is low because the mirror
 gave up does not look like one that is low because the link was quiet.
 `tl.ws.in_b` keeps its existing meaning, so panels built on it are unaffected.
 
-### The attribute cap had to move
+### The attribute cap
 
 `perf.rollup` is the record that carries the most, and adding seven fields put a
 busy one over `MaxAttrs`. `bound()` truncates by **sorted key**, so an overflow
@@ -278,9 +311,9 @@ does not lose an arbitrary field — `tl.net.*` sorts ahead of `tl.role`,
 correlation attributes and the byte counts.
 
 Measured over 24 hours of live diagnostics before changing anything: 400
-records, median 15 attributes, **maximum exactly 24 — the cap — with 4.5%
-sitting on it**. Records were already being truncated in production, before this
-change and unrelated to it. `MaxAttrs` is therefore 48, which fits the full
+records, median 15 attributes, maximum exactly 24 — the cap — with 4.5%
+sitting on it. Records were therefore already being truncated in
+production, independently of this change. `MaxAttrs` is therefore 48, which fits the full
 vocabulary (8 correlation + 2 window + 20 metric + 3 counters + 4 WebSocket + 7
 `tl.net.*` = 44) with headroom, and a Go test now asserts a complete
 `perf.rollup` survives `bound()` intact.
@@ -291,7 +324,8 @@ Each compressed stream is fed into a `CompressionStream("deflate-raw")` in
 parallel with the application, reproducing the server's own compression
 including the shared sliding window that makes a redrawn screen collapse.
 
-It has to be rotated. A `CompressionStream` emits nothing until `close()` —
+It is rotated at each window boundary. A `CompressionStream` emits nothing until
+`close()` —
 measured, 435,600 bytes of input produced zero readable output across 200 writes
 — so one mirror per connection would read zero for the life of a socket that
 never closes. It is therefore closed and restarted at each window boundary, and
@@ -305,18 +339,17 @@ over the same 3,000-frame stream:
 | Continuous context (the server) | 268,833 | 13.6x |
 | Rotated per window (the mirror) | 273,591 | 13.3x |
 
-**+1.8%**, against the 13.6x being estimated. Cost is 23 MB/s of decompressed
++1.8%, against the 13.6x being estimated. Cost is 23 MB/s of decompressed
 input — about 16 ms of CPU per minute for a busy window, taken from a live
 `perf.rollup`.
 
 ### The per-message correction
 
-Rotation is not the only place the mirror and the server differ, and the other
-one is larger. `permessage-deflate` ends a deflate block per message with a sync
+The mirror and the server differ in a second, larger way. `permessage-deflate` ends a deflate block per message with a sync
 flush; `CompressionStream` has no flush API, so the mirror compresses a whole
 window as one continuous block and never pays that cost. Over the same 3,000
 frames: 273,591 bytes with a per-message flush against 208,671 without — the
-mirror would under-report by **23.7%**, or 21.6 bytes a message.
+mirror would under-report by 23.7%, or 21.6 bytes a message.
 
 The cost grows with message size, because ending a larger block early wastes
 more:
@@ -327,7 +360,7 @@ more:
 
 Terminal messages measured live average about 780 B (377,080 B over 486 frames;
 318,710 over 400), which puts the flush cost near 18 B. The mirror therefore
-adds **16 bytes per message**: that 18, less the four-byte tail
+adds 16 bytes per message: that 18, less the four-byte tail
 `permessage-deflate` strips, plus a two-byte WebSocket frame header at these
 payload sizes.
 
@@ -360,16 +393,16 @@ payload. The mirror is fed the line form reconstructed from the event's own
 a WebSocket: no frame header, and no four-byte tail stripped. Measured over 300
 events at gzip 6 — 9.5 bytes missing per 200 B event, 14.5 at 1 kB, 26.4 at 5 kB,
 25.8 at 20 kB — plus roughly 9 bytes of HTTP chunk or HTTP/2 DATA framing per
-flush. The SSE mirror uses **24**. It is the least precise number here, and on
+flush. The SSE mirror uses 24. It is the least precise number here, and on
 the multi-kilobyte turns this stream mostly carries it is under 1% of an event.
 
-A closed `EventSource` **does** produce a Resource Timing entry, and the client
+A closed `EventSource` does produce a Resource Timing entry, and the client
 closes and reconnects itself on every error (`sse/client.ts:164`), so one arrives
 per reconnect. `/events/` is therefore excluded from the `transferSize` path;
 counting both would charge that stream twice. `/earlier/` is an ordinary fetch
 and is measured normally.
 
-### Two failure modes the mirror has to avoid
+### Two failure modes the mirror avoids
 
 **Rotation must not drop frames.** A mirror with no writer discards everything
 written to it, so a rotation hands the replacement over *before* closing the
@@ -380,13 +413,13 @@ one's pump keeps running while it drains.
 nothing still emits two bytes. Counted as output that would mark traffic on every
 rotation — and the lobby surface has no terminal socket at all, so its terminal
 mirror rotates empty every minute. A visible but idle tab would have emitted
-`perf.rollup` for ever, `app.alive` would never have fired again, and the panel
+`perf.rollup` indefinitely, `app.alive` would never have fired again, and the panel
 would have shown Terminal bytes on a device that never opened one. A mirror with
 no messages therefore does not rotate at all.
 
 ### Two deliberate divergences
 
-The device counter is **not** gated on visibility, unlike the rollup. A hidden
+The device counter is not gated on visibility, unlike the rollup. A hidden
 tab that downloaded four megabytes really did spend four megabytes, whatever its
 throttled timers were doing to the latency numbers. The `tl.net.*` attributes
 still ride `perf.rollup` and so are only recorded when a rollup is emitted —
