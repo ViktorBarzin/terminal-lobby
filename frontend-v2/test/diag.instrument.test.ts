@@ -26,11 +26,15 @@ function collector() {
   return { d, events };
 }
 
+/** Comfortably past cfg.slowApiMs, which sits above a healthy 300 ms round trip
+ *  precisely so the reporting channel stops reporting on itself. */
+const SLOW_MS = 4000;
+
 describe("fetch instrumentation", () => {
   it("times a call, stamps a request id, and returns the real response", async () => {
     const { d, events } = collector();
     const native = vi.fn(async (_i: unknown, _init?: RequestInit) => new Response("hi", { status: 200 }));
-    const wrapped = (globalThis as any).tlDiag.instrumentFetch(native as any, d, () => 700);
+    const wrapped = (globalThis as any).tlDiag.instrumentFetch(native as any, d, () => SLOW_MS);
 
     const res = await wrapped("/api/sessions/layout", {});
     expect(await res.text()).toBe("hi");
@@ -42,7 +46,7 @@ describe("fetch instrumentation", () => {
     d.flush();
     const slow = events.find((e) => e.name === "api.slow")!;
     expect(slow).toBeDefined();
-    expect(slow.attrs["tl.ms"]).toBe(700);
+    expect(slow.attrs["tl.ms"]).toBe(SLOW_MS);
     expect(slow.attrs["tl.req"]).toBe(headers.get("X-TL-Req"));
   });
 
@@ -51,7 +55,7 @@ describe("fetch instrumentation", () => {
     const native = vi.fn(async () => {
       throw new TypeError("Failed to fetch");
     });
-    const wrapped = (globalThis as any).tlDiag.instrumentFetch(native as any, d, () => 700);
+    const wrapped = (globalThis as any).tlDiag.instrumentFetch(native as any, d, () => SLOW_MS);
 
     await expect(wrapped("/api/sessions/layout", {})).rejects.toThrow("Failed to fetch");
     d.flush();
@@ -59,10 +63,21 @@ describe("fetch instrumentation", () => {
     expect(slow.attrs["tl.status"]).toBe(0); // a network failure, not an HTTP status
   });
 
+  it("never reports on the reporting channel", async () => {
+    // 28,379 of 32,619 api.slow records were for /telemetry itself: a slow POST
+    // produced a record, which was POSTed to /telemetry, which was slow...
+    const { d, events } = collector();
+    const native = vi.fn(async () => new Response(null, { status: 204 }));
+    const wrapped = (globalThis as any).tlDiag.instrumentFetch(native as any, d, () => SLOW_MS);
+    await wrapped("/api/sessions/telemetry", { method: "POST" });
+    d.flush();
+    expect(events.find((e) => e.name === "api.slow")).toBeUndefined();
+  });
+
   it("does not instrument cross-origin calls", async () => {
     const { d, events } = collector();
     const native = vi.fn(async (_i: unknown, _init?: RequestInit) => new Response("x"));
-    const wrapped = (globalThis as any).tlDiag.instrumentFetch(native as any, d, () => 700);
+    const wrapped = (globalThis as any).tlDiag.instrumentFetch(native as any, d, () => SLOW_MS);
 
     await wrapped("https://example.com/thing", {});
     d.flush();
@@ -190,3 +205,4 @@ describe("WebSocket instrumentation", () => {
     expect((ws as any).sent).toEqual(["x"]);
   });
 });
+

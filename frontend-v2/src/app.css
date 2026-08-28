@@ -1205,6 +1205,50 @@ body {
   z-index: 1;
 }
 
+/* The terminal document did not arrive. A truncated term.html renders a page
+   that never fires `load` and reports nothing, so without this a half-arrived
+   terminal is indistinguishable from a slow one, forever. Shown only after a
+   silent retry has already been spent. */
+.tl-frame-failed {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  background: var(--terminal-bg);
+  color: var(--text-primary);
+}
+.tl-frame-failed-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.tl-frame-failed-body {
+  margin: 0;
+  max-width: 42ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.tl-frame-retry {
+  padding: 8px 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tl-frame-retry:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 /* ---- Command palette + shortcuts help (pillar #2 keybindings) ---------- */
 .tl-cmdpalette-backdrop {
   position: fixed;

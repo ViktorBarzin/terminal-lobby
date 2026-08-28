@@ -1,4 +1,5 @@
 import {
+  Show,
   createEffect,
   createSignal,
   onCleanup,
@@ -98,6 +99,13 @@ export const TerminalView: Component<{
   let coverTimer: ReturnType<typeof setTimeout> | undefined;
   let themeAckTimer: ReturnType<typeof setTimeout> | undefined;
   let currentUrl = "";
+  /** How long a terminal document may take to arrive before we assume it will
+   *  not. A legitimate 464 KB load is ~9.3 s at 400 kbps, so this leaves room for
+   *  a stall on top rather than racing an honest slow link. */
+  const LOAD_WATCHDOG_MS = 20_000;
+  let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+  let retriedOnce = false;
+  const [loadFailed, setLoadFailed] = createSignal(false);
   /** The attach args currently on the frame. The URL no longer distinguishes
    *  one session from another, so this is what a re-attach compares. */
   let currentArgs = "";
@@ -129,8 +137,34 @@ export const TerminalView: Component<{
     }
   };
 
+  /** Arm the load watchdog. A truncated term.html renders a page that never
+   *  fires `load` and reports nothing — measured: headers, then a reset at ~40%,
+   *  leaving a document titled "Terminal" holding 393,029 of 1,790,811
+   *  characters — so the only trustworthy signal is the page saying it painted.
+   *  A first miss retries silently, because a stalled document is usually a
+   *  one-off and a retry that works is the best outcome. The second says so. */
+  const armWatchdog = (): void => {
+    if (watchdogTimer) clearTimeout(watchdogTimer);
+    watchdogTimer = setTimeout(() => {
+      watchdogTimer = undefined;
+      if (!retriedOnce) {
+        retriedOnce = true;
+        navigate(currentUrl || TERMINAL_BASE);
+        return;
+      }
+      setLoadFailed(true);
+    }, LOAD_WATCHDOG_MS);
+  };
+  const disarmWatchdog = (): void => {
+    if (watchdogTimer) clearTimeout(watchdogTimer);
+    watchdogTimer = undefined;
+    retriedOnce = false;
+    setLoadFailed(false);
+  };
+
   const navigate = (url: string): void => {
     currentUrl = url;
+    if (url && url !== "about:blank") armWatchdog();
     // Same URL as last time is the normal case now (only the args changed), and
     // location.replace to an identical URL reloads the document — which is what
     // a re-attach needs. Only a fragment-only difference would short-circuit,
@@ -250,6 +284,7 @@ export const TerminalView: Component<{
       | null;
     if (!d || typeof d !== "object") return;
     if (d.type === "tl-terminal-ready") {
+      disarmWatchdog(); // the page painted, so it arrived whole
       hideCover();
       postViewState(); // the fresh document assumes it is visible
     } else if (d.type === "tl-theme-ack") {
@@ -382,6 +417,7 @@ export const TerminalView: Component<{
       track("session.detached", { "tl.session": untrack(() => props.session) });
     }
     window.removeEventListener("message", onMessage);
+    if (watchdogTimer) clearTimeout(watchdogTimer);
     if (coverTimer) clearTimeout(coverTimer);
     if (themeAckTimer) clearTimeout(themeAckTimer);
   });
@@ -397,6 +433,26 @@ export const TerminalView: Component<{
         onLoad={() => props.onFrameAlt?.(false)}
       />
       <div ref={cover} class="tl-frame-cover" aria-hidden="true" />
+      <Show when={loadFailed()}>
+        <div class="tl-frame-failed" role="alert">
+          <p class="tl-frame-failed-title">The terminal did not finish loading</p>
+          <p class="tl-frame-failed-body">
+            It is a 464 KB page and the connection did not deliver all of it. The
+            session itself is untouched and still running.
+          </p>
+          <button
+            type="button"
+            class="tl-frame-retry"
+            onClick={() => {
+              setLoadFailed(false);
+              retriedOnce = false;
+              navigate(currentUrl || TERMINAL_BASE);
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      </Show>
     </div>
   );
 };
