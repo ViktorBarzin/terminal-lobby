@@ -10849,10 +10849,22 @@ ${w.join(`
         })();
 
         // Skipped on a slow link (tl-conn-tier): the canvas renderer draws the
-        // same output, and this costs a GPU context plus ~69 KB of parse. It is
-        // also the addon currently throwing "WebGL2 not supported" 6 times per
-        // open on at least one real device.
-        if (TL_TIER !== 'slow') {
+        // same output, and this costs a GPU context plus ~69 KB of parse.
+        //
+        // Also skipped where WebGL2 does not exist. The addon's constructor
+        // throws "WebGL2 not supported" there, and it was doing so six times per
+        // terminal open on a real device — the try/catch below kept the terminal
+        // working but every one of those still landed in diagnostics as an
+        // uncaught-class error, which is noise in the one place that is supposed
+        // to be signal. Asking the platform first is cheaper than throwing.
+        const hasWebGL2 = (() => {
+            try {
+                return !!document.createElement('canvas').getContext('webgl2');
+            } catch (e) {
+                return false;
+            }
+        })();
+        if (TL_TIER !== 'slow' && hasWebGL2) {
             try {
                 const webglAddon = new WebglAddon.WebglAddon();
                 webglAddon.onContextLoss(() => { webglAddon.dispose(); });
@@ -10861,7 +10873,9 @@ ${w.join(`
                 console.warn('WebGL addon failed:', e);
             }
         } else {
-            console.log('slow link: WebGL renderer skipped, canvas will draw');
+            console.log(TL_TIER === 'slow'
+                ? 'slow link: WebGL renderer skipped, canvas will draw'
+                : 'no WebGL2 on this engine: canvas will draw');
         }
 
         // OSC 52 clipboard: lets tmux's own copy (with `set-clipboard on`) and
