@@ -232,3 +232,55 @@ func TestTranscriptCWDReadsTheOpeningRecords(t *testing.T) {
 		t.Fatalf("TranscriptCWD = %q", got)
 	}
 }
+
+// The harness NAMES the transcript it is writing, and that name is the only
+// reliable one: Claude Code files a session under the directory it STARTED in,
+// while the hook reports the cwd of the moment. An agent that cds into a
+// worktree — which the house workflow asks for on every task — then re-registers
+// against a path that does not exist, and the Text view tails nothing. Measured
+// 2026-08-28: 2 of 16 live sessions on this box were stamped with a file that
+// was never written, both of them cds away from where Claude was launched.
+func TestSessionMapPrefersTheTranscriptTheHarnessNamed(t *testing.T) {
+	const root = "/home/wizard/.claude/projects"
+	opts := siotest.NewFakeOptions("wizard/demo")
+	sm := NewSessionMap("wizard", root, opts)
+
+	// Launched in ~/code, now working in a worktree under it.
+	if err := sm.Put(SessionInfo{
+		TmuxSession: "demo",
+		CWD:         "/home/wizard/code/tripit/.worktrees/viewer",
+		ClaudeID:    "s1",
+		Transcript:  root + "/-home-wizard-code-tripit/s1.jsonl",
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	info, ok := sm.Get("demo")
+	if !ok {
+		t.Fatal("session 'demo' does not resolve after put")
+	}
+	if info.Transcript != root+"/-home-wizard-code-tripit/s1.jsonl" {
+		t.Fatalf("stamped the cwd-derived path instead of the harness's: %+v", info)
+	}
+}
+
+// A supplied path is as untrusted as one read back: the hook runs as the
+// session's own user and posts to a loopback endpoint anything on the box could
+// reach.
+func TestSessionMapRefusesASuppliedTranscriptOutsideTheProjectsRoot(t *testing.T) {
+	const root = "/home/emo/.claude/projects"
+	opts := siotest.NewFakeOptions("emo/demo")
+	sm := NewSessionMap("emo", root, opts)
+
+	for _, bad := range []string{
+		"/home/wizard/.claude/projects/-x/s1.jsonl",
+		root + "/../../../wizard/.claude/projects/-x/s1.jsonl",
+		root + "/-x/s1.txt",
+	} {
+		err := sm.Put(SessionInfo{
+			TmuxSession: "demo", CWD: "/home/emo/x", ClaudeID: "s1", Transcript: bad,
+		})
+		if err == nil {
+			t.Fatalf("supplied transcript %q was accepted", bad)
+		}
+	}
+}
