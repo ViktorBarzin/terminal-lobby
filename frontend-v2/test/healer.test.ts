@@ -6,6 +6,8 @@ import {
   STORM_WINDOW_MS,
 } from "../src/deploy/healer.logic";
 import {
+  SELF_CHECK_MS,
+  STAMP_PATH,
   STORM_KEY,
   UPDATE_KEY,
   createDeployHealer,
@@ -14,7 +16,11 @@ import {
 } from "../src/deploy/healer";
 
 function resp(ok: boolean, body: string): Response {
-  return { ok, text: async () => body } as unknown as Response;
+  return { ok, status: ok ? 200 : 500, text: async () => body } as unknown as Response;
+}
+/** A stamp-endpoint answer: `/build-id` serves the fingerprint and nothing else. */
+function stampResp(status: number, text: string): Response {
+  return { ok: status >= 200 && status < 300, status, text: async () => text } as unknown as Response;
 }
 /** A served page: `asset` is the update identity, `build` the provenance SHA. */
 const page = (asset: string, build = "aaaaaaa"): string =>
@@ -33,6 +39,8 @@ interface Harness {
   store: Map<string, string>;
   setBody: (body: string) => void;
   setOk: (ok: boolean) => void;
+  /** false = this origin predates the stamp endpoint (it 404s). */
+  setStampServed: (v: boolean) => void;
   setAttached: (v: boolean) => void;
   setHidden: (v: boolean) => void;
   setFocused: (v: boolean) => void;
@@ -48,11 +56,23 @@ function harness(over: Partial<DeployHealerDeps> = {}): Harness {
   let nowVal = 1_000_000;
   let body = page(ASSET_A);
   let ok = true;
+  let stampServed = true;
   const store = new Map<string, string>();
   const listeners = new Map<string, (e: Event) => void>();
   const reload = vi.fn();
   const emit = vi.fn();
-  const fetchImpl = vi.fn(async () => resp(ok, body));
+  // URL-aware: the healer asks /build-id for a ~12-byte fingerprint and only
+  // falls back to fetching the whole page when that endpoint is absent. The
+  // stamp is DERIVED from the served body so every existing test — which sets a
+  // body to express "what is being served" — keeps expressing exactly that.
+  const servedStamp = (): string => body.match(/content="([0-9a-f]{12})"/)?.[1] ?? "";
+  const fetchImpl = vi.fn(async (url: string) => {
+    if (String(url) === "/build-id") {
+      if (!stampServed) return stampResp(404, "not found");
+      return stampResp(ok ? 200 : 500, servedStamp());
+    }
+    return resp(ok, body);
+  });
   const target = {
     addEventListener: (t: string, cb: EventListenerOrEventListenerObject) =>
       listeners.set(t, cb as (e: Event) => void),
@@ -97,6 +117,9 @@ function harness(over: Partial<DeployHealerDeps> = {}): Harness {
     },
     setOk: (v) => {
       ok = v;
+    },
+    setStampServed: (v) => {
+      stampServed = v;
     },
     setAttached: (v) => {
       attached = v;
@@ -379,3 +402,94 @@ describe("logBuildId", () => {
     expect(el.dataset.tlBuild).toBe("cafef00d");
   });
 });
+
+/**
+ * THE SELF-DOWNLOAD: the check that cost more than everything else combined.
+ *
+ * Reading the build stamp used to mean fetching the whole lobby — 1.43 MB — with
+ * the design leaning on a 304 to make that cheap. Measurement disagreed: on one
+ * iPhone over 24h the URL answered 1,279 full bodies against 2 revalidations —
+ * 1.83 GB/day, 17.16 of the 17.18 MB/min this client spent at idle, 5.7x the
+ * whole downlink of a 400kbps link. The stamp is now its own ~12-byte endpoint,
+ * so the cheapness no longer depends on anyone's cache behaving.
+ */
+describe("createDeployHealer — the stamp endpoint", () => {
+  it("reads the stamp, never the page", async () => {
+    const h = harness();
+    h.setBody(page(ASSET_B));
+    await h.healer.checkNow();
+    const urls = h.fetchImpl.mock.calls.map((c) => String(c[0]));
+    expect(urls).toContain(STAMP_PATH);
+    expect(urls).not.toContain("/");
+    expect(h.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls five minutes apart, not five seconds", () => {
+    // The cadence IS the fix; a regression here is a regression to 1.83 GB/day.
+    expect(SELF_CHECK_MS).toBe(300_000);
+  });
+
+  it("falls back to the page when the origin has no stamp endpoint", async () => {
+    // An older deploy must not lose self-update altogether — it just pays the
+    // old price, at the new interval.
+    const h = harness();
+    h.setStampServed(false);
+    h.setBody(page(ASSET_B));
+    await h.healer.checkNow();
+    const urls = h.fetchImpl.mock.calls.map((c) => String(c[0]));
+    expect(urls).toContain(STAMP_PATH);
+    expect(urls).toContain("/");
+    expect(h.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops asking for a stamp it already knows is absent", async () => {
+    const h = harness();
+    h.setStampServed(false);
+    await h.healer.checkNow();
+    h.fetchImpl.mockClear();
+    await h.healer.checkNow();
+    const urls = h.fetchImpl.mock.calls.map((c) => String(c[0]));
+    expect(urls).not.toContain(STAMP_PATH);
+    expect(urls).toContain("/");
+  });
+
+  it("keeps at most one check in flight, and coalesces the rest", async () => {
+    // Three were observed in flight at once on the old 5s timer. Dropping the
+    // second outright is wrong too: the checks that matter are event-driven, so
+    // one arriving mid-flight has to run AFTER, not vanish.
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let inFlight = 0;
+    let peak = 0;
+    let calls = 0;
+    const h = harness({
+      fetchImpl: (async () => {
+        calls += 1;
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await gate;
+        inFlight -= 1;
+        return { ok: true, status: 200, text: async () => ASSET_A } as unknown as Response;
+      }) as unknown as typeof fetch,
+    });
+    const first = h.healer.checkNow();
+    const second = h.healer.checkNow();
+    expect(calls).toBe(1); // the second did not start a fetch of its own
+    release?.();
+    await Promise.all([first, second]);
+    expect(peak).toBe(1); // never two at once
+    expect(calls).toBe(2); // …but the coalesced one did eventually run
+  });
+
+  it("treats a non-fingerprint answer as no information", async () => {
+    // An auth interstitial or an error page on the stamp path must never read as
+    // "a different build" — that would reload-loop the app.
+    const h = harness();
+    h.setBody(AUTH_WALL);
+    await h.healer.checkNow();
+    expect(h.reload).not.toHaveBeenCalled();
+  });
+});
+

@@ -144,6 +144,42 @@ func TestPublicAssetMaskableIconPreShipped(t *testing.T) {
 	}
 }
 
+// /build-id is the lobby's build stamp on its own path. The healer used to read
+// that fingerprint out of a full GET of "/" every 5 seconds: 1.43 MB a time, and
+// on iOS Safari 1,279 full bodies to 2 revalidations in 24h — 1.83 GB/day from
+// one phone. Serving ~12 bytes instead is the whole point, so this pins that the
+// path is whitelisted, answers the file's exact bytes, and is small.
+func TestBuildIDStampIsServed(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLIPBOARD_UPLOAD_ASSET_DIR", dir)
+
+	rec := assetServe(t, http.MethodGet, "/build-id")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /build-id before deploy-v2.sh installs it: got %d, want 404", rec.Code)
+	}
+
+	const stamp = "4a01bfff1d16"
+	if err := os.WriteFile(filepath.Join(dir, "build-id"), []byte(stamp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = assetServe(t, http.MethodGet, "/build-id")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /build-id: got %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != stamp {
+		t.Fatalf("body = %q, want %q", got, stamp)
+	}
+	if got := len(rec.Body.Bytes()); got > 64 {
+		t.Fatalf("stamp is %d bytes; the point is that it is tiny", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Fatalf("Cache-Control = %q, want no-cache (it must revalidate)", cc)
+	}
+}
+
 // /term.html is the terminal-mode page the v2 SPA frames
 // (config.TERMINAL_BASE). It reached this service before it was in the table —
 // both hosts route Path(`/term.html`) here — and fell through to the mux as a
