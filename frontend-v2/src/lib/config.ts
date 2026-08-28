@@ -382,5 +382,39 @@ function readTerminalBase(): string {
 
 export const TERMINAL_BASE = readTerminalBase();
 
+/**
+ * The terminal page's URL, preferring the immutable content-hashed copy.
+ *
+ * `/term.html` is served `no-cache`, so every attach costs at least a
+ * conditional round trip and a whole 474 KB after each deploy — measured on
+ * Viktor's own device via term.ready: 17 of 25 attaches pulled the full body.
+ * `/assets/term-<asset>.html` is the same bytes under a name that changes when
+ * the content does, answered `immutable`, so an attach costs nothing at all.
+ *
+ * The fingerprint arrives in this page's own <head>, stamped by the deploy that
+ * shipped both files, so there is no request to discover it and no window where
+ * the two disagree. Anything unexpected — no tag, an unsubstituted placeholder,
+ * a canary pointing TERMINAL_BASE at another origin — falls back to the path
+ * that always works.
+ */
+function readTerminalPageUrl(): string {
+  if (TERMINAL_BASE !== TERMINAL_BASE_DEFAULT) return TERMINAL_BASE;
+  try {
+    if (typeof document === "undefined") return TERMINAL_BASE;
+    const asset = document
+      .querySelector('meta[name="tl-term-asset"]')
+      ?.getAttribute("content")
+      ?.trim();
+    if (!asset || !/^[0-9a-f]{12}$/.test(asset)) return TERMINAL_BASE;
+    return `/assets/term-${asset}.html`;
+  } catch {
+    return TERMINAL_BASE;
+  }
+}
+
+/** Where terminal iframes are pointed. Constant for every session — the attach
+ *  args ride the frame, not the URL (see terminal-url.ts). */
+export const TERMINAL_PAGE_URL = readTerminalPageUrl();
+
 export const BUILD_ID: string =
   typeof __TL_BUILD__ !== "undefined" ? __TL_BUILD__ : "dev";
