@@ -12,6 +12,7 @@ import {
   terminalFrameArgs,
 } from "../lib/terminal-url";
 import { TERMINAL_BASE } from "../lib/config";
+import { effectiveTier } from "../diagnostics/connection";
 import { isBuildStale } from "../deploy/healer.logic";
 import { track } from "../telemetry/track";
 import { ownWhile } from "../lib/ownwhile";
@@ -224,6 +225,9 @@ export const TerminalView: Component<{
       if (iframe) {
         iframe.name = TERMINAL_FRAME_PREFIX + args;
         iframe.dataset.tlArgs = args;
+        // The verdict travels with the attach: the framed page cannot measure
+        // the link for itself before it has already paid for its own document.
+        iframe.dataset.tlTier = effectiveTier();
       }
       navigate(TERMINAL_BASE);
     }
