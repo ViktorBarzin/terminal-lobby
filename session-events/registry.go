@@ -100,8 +100,7 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 		// took its name). Anything still tailing the old transcript is reading
 		// a dead session's file — stop it rather than leak the goroutine.
 		if ls, cached := us.srcs[session]; cached {
-			ls.stop()
-			delete(us.srcs, session)
+			us.retire(session, ls)
 		}
 		return nil, false
 	}
@@ -109,12 +108,80 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 		if ls.fs.Path() == info.Transcript {
 			return ls.fs, true
 		}
-		ls.stop()
-		delete(us.srcs, session)
+		us.retire(session, ls)
 	}
 	ls := rg.start(session, info.Transcript, us.reader)
 	us.srcs[session] = ls
 	return ls.fs, true
+}
+
+// retire drops a source: the tail goroutine is stopped, the cache entry goes,
+// and every stream reading it is ENDED. Caller holds us.mu.
+//
+// Closing the subscriptions is the part that matters to a reader. A retired
+// source is one whose tmux name now points at a different transcript, and a
+// browser left subscribed to it simply stops receiving: the transcript freezes
+// mid-conversation, and a question that was on screen at that moment keeps its
+// answer card docked over a dialog that no longer exists. Ending the stream
+// makes the browser reconnect onto the live source, which is the whole recovery.
+func (us *userState) retire(session string, ls *liveSource) {
+	ls.stop()
+	ls.fs.Close()
+	delete(us.srcs, session)
+}
+
+// SweepInterval is how often live sources are re-checked against the session
+// map. Fast enough that a reader watching a session that gets replaced — a new
+// Claude in the same tmux window — reconnects within a few seconds, slow enough
+// that the tmux round trip it costs per WATCHED session is nothing.
+const SweepInterval = 5 * time.Second
+
+// sweep retires every source whose tmux session has moved on since it was
+// built, without waiting for a request to ask for it.
+//
+// Only sources somebody is READING are checked. That is the case where staying
+// stale is visible — a request would notice the swap for any other source — and
+// it bounds the cost to the sessions actually being watched, which on this box
+// is one or two. Each check is a tmux option read, a subprocess for any user
+// but the service's own.
+func (rg *registry) sweep() {
+	rg.mu.Lock()
+	users := make([]*userState, 0, len(rg.users))
+	for _, us := range rg.users {
+		users = append(users, us)
+	}
+	rg.mu.Unlock()
+
+	for _, us := range users {
+		us.mu.Lock()
+		for name, ls := range us.srcs {
+			if ls.fs.Subscribers() == 0 {
+				continue
+			}
+			info, ok := us.sm.Get(name)
+			if ok && info.Transcript == ls.fs.Path() {
+				continue
+			}
+			log.Printf("sweep %s/%s: transcript moved to %q, ending %d stream(s)",
+				us.osUser, name, info.Transcript, ls.fs.Subscribers())
+			us.retire(name, ls)
+		}
+		us.mu.Unlock()
+	}
+}
+
+// sweepEvery runs sweep on a ticker until ctx is done.
+func (rg *registry) sweepEvery(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			rg.sweep()
+		}
+	}
 }
 
 // start builds a FileSource and runs its tail under a context of its own, so
@@ -144,11 +211,16 @@ func (rg *registry) start(session, transcript string, reader sessionio.Reader) *
 }
 
 // sessionStartBody is the SessionStart hook's payload.
+//
+// TranscriptPath is what the harness says it is writing, and it is the field
+// that locates the file. CWD is kept because a hook older than the field sends
+// only that, and because it is what the fallback derivation needs.
 type sessionStartBody struct {
-	User        string `json:"user"`
-	SessionID   string `json:"session_id"`
-	CWD         string `json:"cwd"`
-	TmuxSession string `json:"tmux_session"`
+	User           string `json:"user"`
+	SessionID      string `json:"session_id"`
+	CWD            string `json:"cwd"`
+	TmuxSession    string `json:"tmux_session"`
+	TranscriptPath string `json:"transcript_path"`
 }
 
 // handleSessionStart records the (user, tmux session) → transcript mapping from
@@ -162,6 +234,7 @@ func (rg *registry) handleSessionStart() http.HandlerFunc {
 		}
 		if err := rg.user(b.User).sm.Put(sessionio.SessionInfo{
 			TmuxSession: b.TmuxSession, CWD: b.CWD, ClaudeID: b.SessionID,
+			Transcript: b.TranscriptPath,
 		}); err != nil {
 			log.Printf("session-start %s/%s: %v", b.User, b.TmuxSession, err)
 			http.Error(w, "cannot record session", http.StatusInternalServerError)

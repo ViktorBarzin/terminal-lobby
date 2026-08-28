@@ -336,3 +336,149 @@ func TestRegistryReadsAForeignUserThroughAChildAndItsOwnUserDirectly(t *testing.
 		t.Fatal("the foreign user's source must read through that same child")
 	}
 }
+
+// The hook reports BOTH where the session is working and which file the harness
+// is writing. Only the second one locates the transcript: Claude Code files a
+// session under the directory it was STARTED in, so a session that cds — into a
+// worktree, into a sub-project — and re-registers used to be stamped with a path
+// that does not exist, and its Text view tailed an empty file for good.
+func TestRegistryUsesTheTranscriptPathTheHookReports(t *testing.T) {
+	const (
+		osUser  = "wizard"
+		started = "/home/wizard/code" // where claude was launched
+		working = "/home/wizard/code/.worktrees/topic"
+		tmux    = "qa-cd-away"
+	)
+	homeBase := t.TempDir()
+	path := writeTranscript(t, homeBase, osUser, started, "aaaa-1111", "MARKER-WHERE-IT-STARTED")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+
+	w := httptest.NewRecorder()
+	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
+		strings.NewReader(`{"user":"`+osUser+`","session_id":"aaaa-1111","cwd":"`+working+
+			`","tmux_session":"`+tmux+`","transcript_path":"`+path+`"}`)))
+	if w.Code != 204 {
+		t.Fatalf("session-start: want 204, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve after SessionStart")
+	}
+	if fs.Path() != path {
+		t.Fatalf("tailing %q, but the harness is writing %q", fs.Path(), path)
+	}
+	waitForMarker(t, fs, "MARKER-WHERE-IT-STARTED")
+}
+
+// A path the hook supplies is untrusted input like any other — the endpoint is
+// loopback, but everything on the box can reach loopback.
+func TestRegistryRefusesATranscriptPathOutsideTheUsersProjects(t *testing.T) {
+	const (
+		osUser = "wizard"
+		tmux   = "qa-escape"
+	)
+	homeBase := t.TempDir()
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+
+	w := httptest.NewRecorder()
+	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
+		strings.NewReader(`{"user":"`+osUser+`","session_id":"aaaa-1111","cwd":"/home/wizard/x",`+
+			`"tmux_session":"`+tmux+`","transcript_path":"/etc/shadow.jsonl"}`)))
+	if w.Code != 500 {
+		t.Fatalf("a transcript outside the projects root was accepted: %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// A source is retired when the tmux name it is keyed by starts pointing
+// somewhere else, and until 2026-08-28 that only ever happened because some
+// OTHER request asked for the session. A browser sitting on an open stream
+// makes no such request: it kept its subscription to the retired source and
+// received nothing more, so the transcript froze at the moment of the swap.
+// With a question dialog on screen at that moment, the answer card stayed
+// docked over a dialog that had been answered in the terminal minutes earlier.
+func TestRegistrySweepEndsStreamsOnASourceThatMoved(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-sweep"
+	)
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-A")
+	pathB := writeTranscript(t, homeBase, osUser, cwd, "bbbb-2222", "MARKER-B")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve after SessionStart")
+	}
+	ch, release := fs.Subscribe() // a browser watching the Text view
+	defer release()
+	waitForMarker(t, fs, "MARKER-A")
+
+	// A new Claude claims the same tmux window. Nothing asks the registry for
+	// this session — the only reader is the stream already open.
+	if err := opts.SetOption(osUser, tmux, sessionio.OptionTranscript, pathB); err != nil {
+		t.Fatal(err)
+	}
+	rg.sweep()
+
+	select {
+	case _, open := <-ch:
+		if open {
+			t.Fatal("the retired source is still delivering its own events")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the stream stayed open on a source that moved — the reader freezes for good")
+	}
+
+	next, ok := rg.source(osUser, tmux)
+	if !ok || next.Path() != pathB {
+		t.Fatalf("after the sweep the session resolves to %v/%q, want %q", ok, next.Path(), pathB)
+	}
+}
+
+// The sweep is a background job on a shared box, so it only looks at sources
+// somebody is actually reading. One with no subscribers can wait for the next
+// request to notice it moved, and checking it costs a tmux round trip per
+// session per tick for nobody's benefit.
+func TestRegistrySweepLeavesUnwatchedSourcesAlone(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-sweep-idle"
+	)
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-A")
+	pathB := writeTranscript(t, homeBase, osUser, cwd, "bbbb-2222", "MARKER-B")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+	if _, ok := rg.source(osUser, tmux); !ok {
+		t.Fatal("session does not resolve after SessionStart")
+	}
+	if err := opts.SetOption(osUser, tmux, sessionio.OptionTranscript, pathB); err != nil {
+		t.Fatal(err)
+	}
+
+	before := opts.Reads()
+	rg.sweep()
+	if got := opts.Reads() - before; got != 0 {
+		t.Fatalf("the sweep read the session map %d times for a source nobody is watching", got)
+	}
+}
