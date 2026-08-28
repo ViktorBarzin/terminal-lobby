@@ -198,3 +198,50 @@ func TestDiagCatalogCoversTheADRVocabulary(t *testing.T) {
 		}
 	}
 }
+
+// The record that carries the most attributes has to survive bound() whole.
+// bound() truncates by SORTED key, so an overflowing perf.rollup does not lose
+// an arbitrary field — it loses the ones sorting last, which are exactly the
+// correlation attributes (tl.tab, tl.session, tl.role) and the WebSocket byte
+// counts. Measured over 24h of live diagnostics before MaxAttrs was raised: the
+// maximum observed was exactly 24, the cap, and 4.5% of records sat on it.
+func TestFullPerfRollupSurvivesTheAttributeCap(t *testing.T) {
+	attrs := Attrs{}
+	// correlation, stamped on every diagnostics record
+	for _, k := range []string{
+		"tl.tab", "tl.device", "tl.parent", "tl.session", "tl.role", "tl.client", "tl.build",
+	} {
+		attrs[k] = "x"
+	}
+	attrs["tl.conn"] = 1.0
+	attrs["tl.win_s"] = 60.0
+	attrs["tl.partial"] = true
+	// five metrics, four fields each
+	for _, m := range []string{"input", "echo", "render", "api", "longtask"} {
+		for _, f := range []string{"n", "p50", "p95", "max"} {
+			attrs["tl."+m+"."+f] = 1.0
+		}
+	}
+	for _, k := range []string{
+		"tl.echo.unmatched", "tl.jank.n", "tl.api.err",
+		"tl.ws.in_b", "tl.ws.out_b", "tl.ws.in_n", "tl.ws.out_n",
+		// Data used: five buckets plus the decompressed input behind the two
+		// modelled ones, so the mirror's ratio is derivable from one record.
+		"tl.net.term_b", "tl.net.app_b", "tl.net.text_b", "tl.net.files_b", "tl.net.api_b",
+		"tl.net.term_in_b", "tl.net.text_in_b",
+	} {
+		attrs[k] = 1.0
+	}
+
+	e := New("tmux-api", "v1", &capture{})
+	out := e.bound(attrs)
+	if len(out) != len(attrs) {
+		t.Fatalf("a full perf.rollup lost %d of %d attributes to the cap", len(attrs)-len(out), len(attrs))
+	}
+	// The ones that would go first, and that everything else is joined by.
+	for _, k := range []string{"tl.tab", "tl.session", "tl.win_s", "tl.ws.in_b", "tl.net.term_in_b"} {
+		if _, ok := out[k]; !ok {
+			t.Errorf("%s was dropped — correlation and the mirror's ratio check depend on it", k)
+		}
+	}
+}

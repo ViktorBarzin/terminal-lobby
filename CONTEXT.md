@@ -325,3 +325,37 @@ other surface: killing in the lobby archives the Thread, deleting the
 Thread kills the Session. A process merely *exiting* — OOM, a reboot, a
 reaped Bridge — is not a kill and crosses nothing.
 _Avoid_: stop, end, close
+
+**Data used**:
+What Terminal Lobby cost a **device** in **wire bytes** over a period — today,
+the last 7 days, this calendar month, last calendar month — split into five
+feature **buckets**. Per browser profile, never per account: every tab on a
+device, and the terminal iframe inside them, add into one figure. Read in
+Settings; the counter runs whether or not diagnostics are being sent, because
+it never leaves the browser.
+_Avoid_: bandwidth, traffic, network usage (each ambiguous between what
+travelled and what the app received)
+
+**Wire bytes**:
+Bytes that actually crossed the link, after compression. Distinct from what the
+browser hands the application, which for the two compressed streams — the
+terminal WebSocket and the Text view's SSE — is the inflated form and can be
+more than an order of magnitude larger. A **measured** figure comes from
+`transferSize`; a **modelled** one comes from the mirror and is marked as such
+wherever it is shown.
+_Avoid_: raw bytes, actual bytes
+
+**Bucket**:
+One of the five parts Data used is split into — Terminal, App code, Text view,
+Files & images, API. Named after a feature someone could change rather than
+after an endpoint, because the breakdown exists to be acted on. Every request
+lands in exactly one, decided from its path.
+_Avoid_: category, class
+
+**Mirror**:
+The estimator behind a **modelled** figure: the same bytes fed through the same
+compression the server used, in parallel with the application, so a stream the
+browser inflates before anything can measure it still has a **wire bytes**
+number. An estimate by construction — it reproduces the server's algorithm, not
+its exact state.
+_Avoid_: shadow, proxy

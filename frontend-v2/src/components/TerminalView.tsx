@@ -13,6 +13,7 @@ import {
 } from "../lib/terminal-url";
 import { TERMINAL_BASE } from "../lib/config";
 import { effectiveTier } from "../diagnostics/connection";
+import { commitWindow, type WindowBytes } from "../diagnostics/usage";
 import { isBuildStale } from "../deploy/healer.logic";
 import { track } from "../telemetry/track";
 import { ownWhile } from "../lib/ownwhile";
@@ -284,10 +285,23 @@ export const TerminalView: Component<{
     if (origin() && e.origin !== origin()) return;
     if (!iframe || e.source !== iframe.contentWindow) return;
     const d = e.data as
-      | { type?: string; command?: unknown; alt?: unknown; kind?: unknown; session?: unknown }
+      | {
+          type?: string;
+          command?: unknown;
+          alt?: unknown;
+          kind?: unknown;
+          session?: unknown;
+          totals?: unknown;
+        }
       | null;
     if (!d || typeof d !== "object") return;
-    if (d.type === "tl-terminal-ready") {
+    if (d.type === "tl-net-window") {
+      // The terminal frame owns the WebSocket, so its bytes are only reachable
+      // here. Fold them into the same device store the lobby writes to.
+      if (d.totals && typeof d.totals === "object") {
+        void commitWindow(d.totals as WindowBytes);
+      }
+    } else if (d.type === "tl-terminal-ready") {
       disarmWatchdog(); // the page painted, so it arrived whole
       hideCover();
       postViewState(); // the fresh document assumes it is visible

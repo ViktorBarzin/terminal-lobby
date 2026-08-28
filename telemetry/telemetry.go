@@ -38,7 +38,16 @@ const Marker = "TLEVENT"
 // Bounds on a single event. Generous for real call sites, small enough that a
 // buggy one cannot flood a shared 30-day log store.
 const (
-	MaxAttrs    = 24
+	// 24 was too small for the record that carries the most: a fully active
+	// perf.rollup can hold 8 correlation attributes, 2 window attributes, 5
+	// metrics at 4 fields each, 3 counters, 4 WebSocket byte/frame counts and 7
+	// tl.net.* wire-byte fields — 44. Measured against 24 hours of live
+	// diagnostics before raising it: the maximum observed was exactly 24 and
+	// 4.5% of records sat on the cap, so records WERE being truncated in
+	// production, and bound() truncates by sorted key — which drops tl.tab,
+	// tl.session, tl.win_s and tl.ws.* while keeping tl.api.*. Correlation was
+	// being lost from precisely the busiest records.
+	MaxAttrs    = 48
 	MaxValueLen = 512
 )
 

@@ -14,6 +14,7 @@
  */
 
 import { BUILD_ID } from "../lib/config";
+import { commitWindow, type WindowBytes } from "../diagnostics/usage";
 
 /** The subset of the core's surface this app calls directly. */
 export interface Diagnostics {
@@ -73,7 +74,12 @@ export function startDiagnostics(): Diagnostics {
       client: "lobby-v2",
       role: "lobby",
       build: BUILD_ID,
+      // Counting is not consent to send. The toggle governs the intake; the
+      // device counter keeps running either way, because "is this app eating
+      // my allowance" is the question someone who just opted out is most
+      // likely to want answered.
       enabled: diagnosticsWanted(),
+      onWindow: (w: WindowBytes) => void commitWindow(w),
     });
   } catch {
     handle = inert;

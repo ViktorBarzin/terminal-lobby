@@ -209,6 +209,95 @@ body {
   margin-top: 6px;
 }
 
+/* Data used — the byte readout. Tabular figures throughout: these numbers are
+   read as a column and compared to each other, so they have to line up. */
+.tl-netusage-totals {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+.tl-netusage-totals > div {
+  display: contents;
+}
+.tl-netusage-totals dt {
+  color: var(--text-muted);
+}
+.tl-netusage-totals dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tl-netusage-month {
+  color: var(--text-muted);
+}
+
+.tl-netusage-breakdown {
+  display: grid;
+  grid-template-columns: auto auto minmax(48px, 1fr);
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+.tl-netusage-row {
+  display: contents;
+}
+.tl-netusage-name {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.tl-netusage-bytes {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The estimate marker sits with the number it qualifies, muted so it reads as
+   an annotation rather than as part of the figure. */
+.tl-netusage-approx {
+  color: var(--text-muted);
+}
+.tl-netusage-bar {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-page);
+  overflow: hidden;
+}
+.tl-netusage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  /* A bucket with bytes in it stays visible even when the largest dwarfs it. */
+  min-width: 1px;
+}
+
+.tl-netusage-tier {
+  border: 0;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+}
+.tl-netusage-tier legend {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 0;
+  margin-bottom: 6px;
+}
+.tl-netusage-tier label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 /* Header notification bell — accent color when notifications are enabled. */
 .tl-icon-btn.on {
   color: var(--accent);
