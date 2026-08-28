@@ -32,7 +32,30 @@ import {
   setFlowControlEnabled,
 } from "../store/device-prefs";
 import { diagnosticsWanted, setDiagnosticsEnabled } from "../telemetry/diag";
+import {
+  readTierPreference,
+  writeTierPreference,
+  type TierPreference,
+} from "../diagnostics/connection";
+import {
+  aggregate,
+  formatBytes,
+  readStore,
+  resetStore,
+  type Bucket,
+  type UsageAggregate,
+} from "../diagnostics/usage";
 import type { NotificationSystem } from "../notify/notifications";
+
+/** What each bucket is called on screen. Feature names rather than endpoints,
+ *  because the breakdown exists to be acted on. */
+const BUCKET_LABEL: Record<Bucket, string> = {
+  term: "Terminal",
+  app: "App code",
+  text: "Text view",
+  files: "Files & images",
+  api: "API",
+};
 
 /** What Settings needs to render the act-as picker. Absent for a non-admin. */
 export interface ActAsControl {
@@ -145,6 +168,15 @@ export const SettingsPanel: Component<{
   const [diagOn, setDiagOn] = createSignal(diagnosticsWanted());
   const [alsoRoamed, setAlsoRoamed] = createSignal(false);
   const [clearing, setClearing] = createSignal(false);
+
+  // Data used. Read once on open rather than tracked live: the counters move on
+  // a 60s window, and a panel that reflowed while being read would be worse
+  // than one that is a minute stale.
+  const [usage, setUsage] = createSignal<UsageAggregate>(aggregate(readStore(), new Date()));
+  const [tier, setTier] = createSignal<TierPreference>(readTierPreference());
+  const refreshUsage = () => setUsage(aggregate(readStore(), new Date()));
+  const widest = () => Math.max(...usage().buckets.map((b) => b.bytes), 0);
+  const barWidth = (bytes: number) => (widest() > 0 ? `${(bytes / widest()) * 100}%` : "0%");
 
   const confirmFn = () => props.confirm ?? ((m: string) => window.confirm(m));
 
@@ -598,6 +630,103 @@ export const SettingsPanel: Component<{
           <div class="tl-settings-hint">
             Lobby timings, failures and device info. Never terminal contents,
             keystrokes or session names.
+          </div>
+        </section>
+
+        {/* Data used — wire bytes for THIS browser profile. The terminal runs in
+            an iframe with its own socket, so its share arrives by postMessage
+            and is folded into the same store this reads. */}
+        <section class="tl-settings-group tl-netusage">
+          <div class="tl-settings-label">Data used</div>
+          <dl class="tl-netusage-totals">
+            <div>
+              <dt>Today</dt>
+              <dd>{formatBytes(usage().today)}</dd>
+            </div>
+            <div>
+              <dt>Last 7 days</dt>
+              <dd>{formatBytes(usage().last7)}</dd>
+            </div>
+            <div>
+              <dt>This month</dt>
+              <dd>{formatBytes(usage().thisMonth)}</dd>
+            </div>
+            <div>
+              <dt>Last month</dt>
+              <dd>
+                {formatBytes(usage().lastMonth)}{" "}
+                <span class="tl-netusage-month">({usage().lastMonthLabel})</span>
+              </dd>
+            </div>
+          </dl>
+
+          <div class="tl-netusage-breakdown">
+            <For each={usage().buckets}>
+              {(b) => (
+                <div class="tl-netusage-row">
+                  <span class="tl-netusage-name">{BUCKET_LABEL[b.key]}</span>
+                  <span class="tl-netusage-bytes">
+                    <Show when={b.modelled}>
+                      <span class="tl-netusage-approx" aria-label="estimated">
+                        ≈
+                      </span>{" "}
+                    </Show>
+                    {formatBytes(b.bytes)}
+                  </span>
+                  <span class="tl-netusage-bar" aria-hidden="true">
+                    <span style={{ width: barWidth(b.bytes) }} />
+                  </span>
+                </div>
+              )}
+            </For>
+          </div>
+
+          <div class="tl-settings-hint">
+            ≈ Compressed streams. The browser cannot measure these directly, so
+            they are modelled by compressing the same data the same way.
+          </div>
+
+          <fieldset class="tl-netusage-tier">
+            <legend>Experience on this device</legend>
+            <For each={["auto", "full", "slow"] as const}>
+              {(value) => (
+                <label>
+                  <input
+                    type="radio"
+                    name="tl-conn-tier"
+                    value={value}
+                    checked={tier() === value}
+                    onChange={() => {
+                      writeTierPreference(value);
+                      setTier(value);
+                    }}
+                  />
+                  <span>{value === "auto" ? "Auto" : value === "full" ? "Full" : "Light"}</span>
+                </label>
+              )}
+            </For>
+          </fieldset>
+          <div class="tl-settings-hint">
+            Light trims what a session opens with. Auto measures this link on
+            every load and applies the verdict to the next one.
+          </div>
+
+          <div class="tl-settings-btnrow">
+            <button
+              type="button"
+              class="tl-settings-btn"
+              onClick={() => {
+                resetStore();
+                refreshUsage();
+              }}
+            >
+              Reset counters
+            </button>
+          </div>
+          <div class="tl-settings-hint">
+            {diagOn()
+              ? "Counted on this device. Bytes that crossed the link, after compression."
+              : "Counted on this device only. Nothing is sent while diagnostics are off."}
           </div>
         </section>
 

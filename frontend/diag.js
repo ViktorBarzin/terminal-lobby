@@ -152,6 +152,272 @@ globalThis.tlDiag = (function () {
     };
   }
 
+  // ---- byte accounting ---------------------------------------------------
+  /**
+   * The five feature buckets "Data used" reports, in the order the panel
+   * prefers when totals tie. Named after things that could be changed rather
+   * than after endpoints, because the number exists to be acted on.
+   */
+  var NET_BUCKETS = ["term", "app", "text", "files", "api"];
+
+
+  /**
+   * What each message costs on the wire beyond its compressed payload, and
+   * which a CompressionStream cannot reproduce.
+   *
+   * permessage-deflate ends a deflate block per message with a sync flush.
+   * CompressionStream has no flush API, so the mirror compresses the window as
+   * one continuous block and misses that cost entirely. Measured on real pane
+   * content over 3,000 frames: 273,591 bytes with a per-message flush against
+   * 208,671 without — a 23.7% under-report, or 21.6 bytes per message.
+   *
+   * The cost is not a constant; it grows with message size, because ending a
+   * larger block early wastes more. Measured per message:
+   *
+   *     40 B -> 11.3    600 B -> 17.5    4 kB -> 28.2
+   *    200 B -> 12.5   1200 B -> 20.7   16 kB -> 29.6
+   *
+   * Terminal messages measured live average ~780 B (377,080 B over 486 frames;
+   * 318,710 over 400), which puts the flush cost near 18 B. From that: less the
+   * four-byte tail permessage-deflate strips, plus a two-byte WebSocket frame
+   * header at these payload sizes.
+   *
+   * It is a calibrated estimate, not a measurement. `tl.ws.in_n` carries the
+   * message count on the same record, so the correction can be backed out.
+   */
+  var PER_MESSAGE_WIRE_BYTES = 16;
+
+  /**
+   * The same correction for the Text view's stream, which is a different
+   * transport and needs its own number.
+   *
+   * session-events gzips with a per-event sync flush (session-events/sse.go).
+   * Measured over 300 events, gzip level 6: 9.5 bytes missing per 200 B event,
+   * 14.5 at 1 kB, 26.4 at 5 kB, 25.8 at 20 kB. On top of that each flush is its
+   * own HTTP chunk or HTTP/2 DATA frame, roughly 9 bytes, and nothing is
+   * stripped the way permessage-deflate strips its tail.
+   *
+   * 24 sits mid-range for the multi-kilobyte turns this stream mostly carries,
+   * where the term is under 1% of the event either way. It is the least precise
+   * number in this file, and the one that matters least.
+   */
+  var SSE_PER_MESSAGE_WIRE_BYTES = 24;
+
+  /**
+   * Which bucket a request belongs to, from its path alone.
+   *
+   * Query strings are stripped deliberately: term.html carries the session name
+   * in its query, which is what makes every session a fresh cache entry, and
+   * that cost belongs to `app` however many distinct URLs it wears.
+   */
+  function bucketFor(url) {
+    var p = String(url || "");
+    try {
+      // Accepts an absolute URL or a bare path; the base is never used.
+      p = new URL(p, "http://x").pathname;
+    } catch (e) {
+      var q = p.indexOf("?");
+      if (q !== -1) p = p.slice(0, q);
+    }
+    // Prefixes are the ones frontend-v2/src/lib/config.ts exports. They are
+    // repeated here rather than imported because this file is shared verbatim
+    // with the two vanilla surfaces and has no module system; the test asserts
+    // the two agree, so a prefix that moves fails there rather than silently
+    // routing a bucket's traffic somewhere else.
+    if (p.indexOf("/events/") === 0 || p.indexOf("/earlier/") === 0) return "text";
+    if (p.indexOf("/files/") === 0) return "files";
+    // Gallery images and pasted uploads are what people actually see as files;
+    // the rest of clipboard-upload's surface is ordinary API chatter.
+    if (p.indexOf("/clipboard/img/") === 0 || p.indexOf("/clipboard/upload") === 0) return "files";
+    if (p.indexOf("/clipboard/") === 0) return "api";
+    if (p.indexOf("/skills") === 0) return "api";
+    if (p.indexOf("/api/") === 0) return "api";
+    // The app itself: the two documents, their fingerprints, and the assets
+    // served alongside them. Everything the page IS, rather than what it asks
+    // for once it is running.
+    if (
+      p === "/" ||
+      p.indexOf("/fonts/") === 0 ||
+      /\.(html|js|css|woff2?|png|svg|webmanifest)$/.test(p) ||
+      p === "/build-id" ||
+      p === "/term-build-id"
+    ) {
+      return "app";
+    }
+    return "api";
+  }
+
+  /**
+   * Is this URL a stream the mirror already accounts for, event by event?
+   *
+   * Only the SSE stream itself. `/earlier/` is an ordinary fetch whose
+   * transferSize is a real measurement and belongs in the same bucket.
+   */
+  function isMirroredStream(url) {
+    var p = String(url || "");
+    try {
+      p = new URL(p, "http://x").pathname;
+    } catch (e) {
+      var q = p.indexOf("?");
+      if (q !== -1) p = p.slice(0, q);
+    }
+    return p.indexOf("/events/") === 0;
+  }
+
+  /**
+   * A deflate mirror: an estimate of what a compressed stream actually cost on
+   * the wire.
+   *
+   * WHY THIS IS MODELLED AND NOT MEASURED. ttyd negotiates permessage-deflate
+   * with context takeover in both directions, and session-events gzips its SSE
+   * with a per-event sync flush. The browser inflates both before any API can
+   * see them, and no API reports WebSocket wire bytes at all. Feeding the same
+   * bytes through the same algorithm reproduces the server's work closely,
+   * including the shared sliding window that makes a redrawn terminal screen
+   * collapse so hard. Measured on real pane content shaped as a stream: 13.6x.
+   *
+   * WHY IT ROTATES. A CompressionStream emits nothing until close() — measured,
+   * 435,600 bytes of input produced zero readable output across 200 writes. One
+   * mirror per connection would therefore read zero for the life of a socket
+   * that never closes. So it is closed and restarted every window, and the
+   * result is attributed to whichever window is open when it resolves. Nothing
+   * is lost; a window's worth of bytes can land up to a minute late, and at a
+   * local midnight at most one window falls on the wrong day.
+   *
+   * The reset costs accuracy, because the server never resets its context.
+   * Measured against a continuous context over the same 3,000-frame stream:
+   * 273,591 bytes against 268,833, so rotation overstates by 1.8% — small
+   * against the 13.6x it is estimating.
+   */
+  function mirror(perMessageBytes) {
+    /**
+     * One compressor's state. A rotation hands a REPLACEMENT over before the
+     * outgoing one has finished flushing, and its pump keeps writing while it
+     * drains — so each stream owns its counters. A shared counter would have
+     * the old pump adding into the new stream's total.
+     */
+    function open() {
+      try {
+        if (typeof CompressionStream !== "function") return null;
+        var cs = new CompressionStream("deflate-raw");
+        var st = { writer: cs.writable.getWriter(), out: 0, in: 0, msgs: 0, dropped: 0 };
+        var reader = cs.readable.getReader();
+        st.reading = (function pump() {
+          return reader.read().then(function (r) {
+            if (r.done) return;
+            st.out += r.value ? r.value.length : 0;
+            return pump();
+          });
+        })();
+        return st;
+      } catch (e) {
+        return null; // no CompressionStream: the modelled buckets stay at zero
+      }
+    }
+
+    function bytesOf(data) {
+      if (typeof data === "string") return new TextEncoder().encode(data);
+      if (data instanceof Uint8Array) return data;
+      if (data && typeof data.byteLength === "number" && data.byteLength >= 0) {
+        try {
+          return new Uint8Array(data);
+        } catch (e) {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    var cur = open();
+
+    return {
+      /** Feed the mirror one message, as it was on the wire. A caller that
+       *  knows the browser stripped framing passes it back in — the server
+       *  compressed it with the payload, so the mirror has to see it too. */
+      write: function write(data) {
+        if (!cur || !cur.writer) return;
+        // A socket left on the default binaryType delivers Blobs, which cannot
+        // be read synchronously. sizeOf already counts them, so without this a
+        // correct tl.ws.in_b would sit beside a modelled zero — which reads as
+        // "the terminal cost nothing" rather than as a gap. Re-entering lands
+        // the message in whichever compressor is current, at most one rotation
+        // later than its own.
+        if (typeof Blob !== "undefined" && data instanceof Blob) {
+          try {
+            data.arrayBuffer().then(function (buf) {
+              write(buf);
+            }, function () {});
+          } catch (e) {
+            /* nothing more to try */
+          }
+          return;
+        }
+        var b = bytesOf(data);
+        if (!b || !b.length) return;
+        // An unawaited write queues the UNCOMPRESSED chunk, so a starved
+        // compressor would grow the writable queue without a ceiling. Drop the
+        // frame instead: a diagnostic that understates is better than a leak.
+        if (typeof cur.writer.desiredSize === "number" && cur.writer.desiredSize <= 0) {
+          cur.dropped += 1;
+          return;
+        }
+        cur.in += b.length;
+        cur.msgs += 1;
+        try {
+          // Deliberately not awaited: a diagnostic must never delay the frame
+          // the terminal is about to render.
+          cur.writer.write(b).catch(function () {});
+        } catch (e) {
+          /* an un-writable mirror is simply one that stops counting */
+        }
+      },
+
+      /** Frames dropped to backpressure since the last rotation, so a mirror
+       *  that gave up is visible rather than merely low. */
+      dropped: function () {
+        return cur ? cur.dropped : 0;
+      },
+
+      /**
+       * Close this compressor, hand a fresh one over, and resolve with what the
+       * closed one cost: `out` modelled wire bytes, `in` the decompressed bytes
+       * that produced them. The pair is what makes the estimate checkable.
+       */
+      rotate: function () {
+        if (!cur) {
+          cur = open();
+          return Promise.resolve({ out: 0, in: 0 });
+        }
+        // Nothing was written, so there is no context worth preserving and
+        // nothing to flush. Closing an empty stream still emits two bytes,
+        // which would read as traffic on a tab that saw none.
+        if (!cur.msgs) return Promise.resolve({ out: 0, in: 0 });
+
+        var old = cur;
+        cur = open(); // hand over FIRST: a mirror with no writer drops frames
+        var done;
+        try {
+          done = old.writer.close();
+        } catch (e) {
+          done = Promise.resolve();
+        }
+        return Promise.resolve(done)
+          .then(function () {
+            return old.reading;
+          })
+          .then(
+            function () {
+              // Plus the per-message flush cost a CompressionStream cannot emit.
+              return { out: old.out + old.msgs * perMessageBytes, in: old.in };
+            },
+            function () {
+              return { out: 0, in: 0 };
+            },
+          );
+      },
+    };
+  }
+
   function create(opts) {
     opts = opts || {};
     var cfg = {};
@@ -213,6 +479,13 @@ globalThis.tlDiag = (function () {
     var ring = [];
     var seenErrors = {}; // dedupe key -> {n, attrs}
 
+    // One mirror per compressed stream. They rotate together at each window
+    // boundary; `pending` is what lets a test — and a pagehide — wait for the
+    // rotation that is in flight.
+    var termMirror = mirror(PER_MESSAGE_WIRE_BYTES);
+    var textMirror = mirror(SSE_PER_MESSAGE_WIRE_BYTES);
+    var pending = Promise.resolve();
+
     var m = {};
     function freshWindow(t) {
       m = {
@@ -229,6 +502,10 @@ globalThis.tlDiag = (function () {
       m.wsOut = 0;
       m.framesIn = 0;
       m.framesOut = 0;
+      // Wire bytes per bucket. Kept separate from wsIn, which stays the
+      // decompressed figure it has always been so existing panels keep working.
+      m.net = { term: 0, app: 0, text: 0, files: 0, api: 0 };
+      m.netIn = { term: 0, text: 0 };
       winStart = t;
       winTraffic = false;
       winVisible = visible;
@@ -316,7 +593,41 @@ globalThis.tlDiag = (function () {
         if (m.wsOut) a["tl.ws.out_b"] = m.wsOut;
         if (m.framesIn) a["tl.ws.in_n"] = m.framesIn;
         if (m.framesOut) a["tl.ws.out_n"] = m.framesOut;
+        for (var i = 0; i < NET_BUCKETS.length; i++) {
+          var b = NET_BUCKETS[i];
+          if (m.net[b]) a["tl.net." + b + "_b"] = Math.round(m.net[b]);
+        }
+        // The decompressed input each estimate came from, so the compression
+        // ratio the mirror believes is derivable from one record.
+        if (m.netIn.term) a["tl.net.term_in_b"] = Math.round(m.netIn.term);
+        if (m.netIn.text) a["tl.net.text_in_b"] = Math.round(m.netIn.text);
+        // Frames a mirror refused under backpressure. Reported rather than
+        // swallowed: a modelled figure that is low because it gave up should
+        // not look the same as one that is low because the link was quiet.
+        var termDrop = termMirror.dropped();
+        var textDrop = textMirror.dropped();
+        if (termDrop) a["tl.net.term_drop"] = termDrop;
+        if (textDrop) a["tl.net.text_drop"] = textDrop;
         emit("perf.rollup", a);
+      }
+
+      // The device counter is deliberately NOT gated on visibility. A hidden
+      // tab that downloaded four megabytes really did spend four megabytes,
+      // whatever its throttled timers were doing to the latency numbers.
+      var moved = false;
+      for (var j = 0; j < NET_BUCKETS.length; j++) {
+        if (m.net[NET_BUCKETS[j]] > 0) moved = true;
+      }
+      if (moved && opts.onWindow) {
+        var totals = {};
+        for (var k2 = 0; k2 < NET_BUCKETS.length; k2++) {
+          totals[NET_BUCKETS[k2]] = Math.round(m.net[NET_BUCKETS[k2]]);
+        }
+        try {
+          opts.onWindow(totals);
+        } catch (e) {
+          /* a failing store must not cost the rest of the window */
+        }
       }
       // Errors seen this window go out as one record each, carrying how many
       // times they fired — a looping error is one line with n=400.
@@ -326,6 +637,28 @@ globalThis.tlDiag = (function () {
         emit("app.exception", rec.attrs);
       }
       freshWindow(t);
+      rotateMirrors();
+    }
+
+    /**
+     * Close both mirrors and fold what they cost into the window that is open
+     * when they resolve. The lag is bounded by one window and nothing is lost;
+     * see mirror() for why a rotation is needed at all.
+     */
+    function rotateMirrors() {
+      pending = Promise.all([termMirror.rotate(), textMirror.rotate()]).then(function (r) {
+        if (r[0].out) {
+          m.net.term += r[0].out;
+          m.netIn.term += r[0].in;
+          traffic(); // these bytes are this window's business now
+        }
+        if (r[1].out) {
+          m.net.text += r[1].out;
+          m.netIn.text += r[1].in;
+          traffic();
+        }
+      }, function () {});
+      return pending;
     }
 
     /** Called on an interval. Closes due windows, heartbeats, spots stalls. */
@@ -412,10 +745,11 @@ globalThis.tlDiag = (function () {
       traffic();
     }
 
-    function onWsRecv(bytes) {
+    function onWsRecv(bytes, data) {
       var t = now();
       m.wsIn += finite(bytes) ? bytes : 0;
       m.framesIn += 1;
+      if (data !== undefined) termMirror.write(data);
       if (echoAt >= 0) {
         if (echoAmbiguous || t - echoAt > cfg.matchMs) m.echoUnmatched += 1;
         else m.echo.add(t - echoAt);
@@ -423,6 +757,42 @@ globalThis.tlDiag = (function () {
         echoAmbiguous = false;
       }
       lastRecvAt = t;
+      traffic();
+    }
+
+    /**
+     * One resource the browser finished fetching. `bytes` is transferSize:
+     * already post-compression, already including response headers. Zero is a
+     * cache hit and counts as nothing, which is correct — no bytes moved.
+     */
+    function onResource(url, bytes) {
+      if (!finite(bytes) || bytes <= 0) return;
+      // The Text view's stream is mirrored event by event, and a closed
+      // EventSource DOES produce a resource entry — the client closes and
+      // reconnects itself on every error, so one arrives per reconnect.
+      // Counting both would charge that stream twice.
+      if (isMirroredStream(url)) return;
+      var b = bucketFor(url);
+      m.net[b] += bytes;
+      traffic();
+    }
+
+    /**
+     * One SSE event. The browser strips the framing before handing it over, but
+     * the server compressed the framing with the payload — so the mirror is fed
+     * the line form session-events actually wrote (sse.go), reconstructed from
+     * the event's own id and type.
+     */
+    function onSseMessage(e) {
+      if (!e) return;
+      var ev = typeof e === "string" ? { data: e } : e;
+      if (ev.data === undefined || ev.data === null) return;
+      var wire = "";
+      if (ev.lastEventId) wire += "id: " + ev.lastEventId + "\n";
+      // Unnamed events go out with no `event:` line at all.
+      if (ev.type && ev.type !== "message") wire += "event: " + ev.type + "\n";
+      wire += "data: " + ev.data + "\n\n";
+      textMirror.write(wire);
       traffic();
     }
 
@@ -618,6 +988,13 @@ globalThis.tlDiag = (function () {
       onRender: onRender,
       onWsSend: onWsSend,
       onWsRecv: onWsRecv,
+      onResource: onResource,
+      onSseMessage: onSseMessage,
+      /** Resolves once the in-flight mirror rotation has been accounted for.
+       *  Tests await it; pagehide gives it what time the browser allows. */
+      settled: function () {
+        return pending;
+      },
       onLongTask: onLongTask,
       onJank: onJank,
       onApi: onApi,
@@ -732,7 +1109,10 @@ globalThis.tlDiag = (function () {
         });
         ws.addEventListener("message", function (e) {
           try {
-            d.onWsRecv(sizeOf(e && e.data));
+            // The payload goes through as well as its size: ttyd compresses
+            // this stream, so what it cost on the wire has to be modelled from
+            // the bytes rather than read off a counter.
+            d.onWsRecv(sizeOf(e && e.data), e && e.data);
           } catch (err) {}
         });
         ws.addEventListener("close", function (e) {
@@ -765,6 +1145,60 @@ globalThis.tlDiag = (function () {
   }
 
   /**
+   * Wrap EventSource so the Text view's stream is counted.
+   *
+   * A long-lived SSE stream produces its Resource Timing entry only when it
+   * ends, and the Text view's stream is meant to stay open — so the opening
+   * replay, the largest single transfer that view makes, would go uncounted
+   * for as long as the session was being read. Counting each event as it
+   * arrives is what makes the number live; the mirror is what makes it a wire
+   * figure rather than a decompressed one, since session-events gzips.
+   */
+  function instrumentEventSource(Native, d) {
+    function Wrapped(url, init) {
+      var es = init === undefined ? new Native(url) : new Native(url, init);
+      try {
+        var add = es.addEventListener.bind(es);
+        var counted = {};
+        // `message` fires only for UNNAMED events, and session-events names
+        // almost everything it sends: `event: state` for the opening snapshot,
+        // `event: back` for the backfill, `event: ready`. Subscribing only to
+        // `message` would miss the largest transfer the Text view makes.
+        // Rather than hard-code the protocol's names here, mirror whatever the
+        // page itself subscribes to.
+        var count = function (type) {
+          if (counted[type] || type === "open" || type === "error") return;
+          counted[type] = true;
+          add(type, function (e) {
+            try {
+              d.onSseMessage(e);
+            } catch (err) {}
+          });
+        };
+        count("message");
+        es.addEventListener = function (type, fn, opts) {
+          try {
+            count(type);
+          } catch (e) {}
+          return add(type, fn, opts);
+        };
+      } catch (e) {
+        /* an un-instrumentable stream is still a working stream */
+      }
+      return es;
+    }
+    try {
+      Wrapped.prototype = Native.prototype;
+      Wrapped.CONNECTING = Native.CONNECTING;
+      Wrapped.OPEN = Native.OPEN;
+      Wrapped.CLOSED = Native.CLOSED;
+    } catch (e) {
+      return Native;
+    }
+    return Wrapped;
+  }
+
+  /**
    * Wire a real browser up to a diagnostics instance: the intake transport,
    * localStorage, the visibility and lifecycle edges, global error handlers,
    * long-task observation and the tick interval.
@@ -782,6 +1216,10 @@ globalThis.tlDiag = (function () {
       parent: o.parent,
       build: o.build,
       enabled: o.enabled !== false,
+      // Where a closed window's bytes go. The surface decides: the SPA folds
+      // them into this device's store, the terminal iframe relays them to its
+      // parent to be folded there.
+      onWindow: o.onWindow,
       now: function () {
         return performance.now();
       },
@@ -858,6 +1296,13 @@ globalThis.tlDiag = (function () {
       } catch (e) {
         /* same: the terminal matters more than the metric */
       }
+      try {
+        if (typeof window.EventSource === "function") {
+          window.EventSource = instrumentEventSource(window.EventSource, d);
+        }
+      } catch (e) {
+        /* the Text view matters more than its byte count */
+      }
     }
 
     // Frame jank: a gap far past a frame budget while the tab is visible means
@@ -884,6 +1329,51 @@ globalThis.tlDiag = (function () {
       }
     } catch (e) {
       /* longtask is not observable everywhere (notably Safari) */
+    }
+
+    // Every resource the page fetched, for the measured half of "Data used".
+    // transferSize is already post-compression and already counts response
+    // headers, so it needs no modelling — unlike the two streams that do.
+    //
+    // buffered:true matters: the document's own subresources are fetched before
+    // this observer is installed, and without it the app's own weight — the
+    // largest measured bucket — would be missing from every page life.
+    try {
+      if (typeof PerformanceObserver === "function") {
+        new PerformanceObserver(function (list) {
+          var entries = list.getEntries();
+          for (var i = 0; i < entries.length; i++) {
+            var e2 = entries[i];
+            d.onResource(e2.name, e2.transferSize);
+          }
+        }).observe({ type: "resource", buffered: true });
+      }
+    } catch (e) {
+      /* without resource timing the measured buckets stay empty */
+    }
+
+    // The navigation itself is not a resource entry, and it is the single
+    // biggest item in the app bucket: 1.2-1.4 MB on the wire for the SPA and
+    // 1.7 MB for term.html.
+    //
+    // It has to be read AFTER parsing. term.html calls bind() from a
+    // parse-blocking inline script, and at that point the navigation entry
+    // reports only what has arrived — measured at 300 bytes, headers alone.
+    // The SPA is a deferred module and would be correct either way; reading on
+    // `load` is right for both.
+    try {
+      var readNav = function () {
+        try {
+          var navEntry = performance.getEntriesByType("navigation")[0];
+          if (navEntry) d.onResource(location.pathname, navEntry.transferSize);
+        } catch (e) {
+          /* no navigation timing — the document's own cost goes uncounted */
+        }
+      };
+      if (document.readyState === "complete") readNav();
+      else window.addEventListener("load", readNav, { once: true });
+    } catch (e) {
+      /* without a load event the document's own cost goes uncounted */
     }
 
     // Boot context: how long the page took to load, and what it is running on.
@@ -962,9 +1452,12 @@ globalThis.tlDiag = (function () {
   return {
     create: create,
     bind: bind,
+    bucketFor: bucketFor,
+    NET_BUCKETS: NET_BUCKETS,
     engineGaps: engineGaps,
     instrumentFetch: instrumentFetch,
     instrumentWebSocket: instrumentWebSocket,
+    instrumentEventSource: instrumentEventSource,
     DEFAULTS: DEFAULTS,
   };
 })();

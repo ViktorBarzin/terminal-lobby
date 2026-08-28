@@ -3008,6 +3008,19 @@ ${w.join(`
                 })(),
                 build: TL_BUILD,
                 enabled: diagnosticsWanted(),
+                // The terminal WebSocket is the one stream this frame owns, and
+                // it is the largest single item in "Data used". The frame has no
+                // panel of its own, so each closed window's bucket totals go up
+                // to the lobby, which folds them into this device's store.
+                onWindow: function (totals) {
+                    try {
+                        if (window.parent === window) return;
+                        window.parent.postMessage(
+                            { type: 'tl-net-window', totals: totals },
+                            location.origin
+                        );
+                    } catch (e) { /* an unreachable parent costs a window, nothing more */ }
+                },
             });
             window.tlDiagnostics = tlDiagnostics;
         } catch (e) { /* diagnostics must never cost the page its boot */ }
