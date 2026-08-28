@@ -11663,6 +11663,15 @@ ${w.join(`
             };
         })();
 
+        // Held-input hooks the mobile compose bar takes over (see the held-key
+        // overlay below). Declared HERE, above the coarse-pointer block, because
+        // that block ASSIGNS them: a `let` declared after its assignment is in the
+        // temporal dead zone, and the ReferenceError rejects this whole async IIFE
+        // — taking the /token fetch and the WebSocket attach with it, so the
+        // terminal never connects on a touch device while a desktop is unaffected.
+        let heldComposeOwns = () => false;  // assigned in the coarse-pointer block
+        let heldComposePaint = () => {};    // …as is this one
+
         if (isCoarsePointer) {
             // Touch behaviour on the terminal canvas:
             //   tap  → focus helper textarea → soft keyboard appears
@@ -13284,8 +13293,6 @@ ${w.join(`
         let heldAnchor = null;        // cursor cell captured when the hold began
         let heldDecorations = [];
         let heldMarkers = [];
-        let heldComposeOwns = () => false;  // assigned in the coarse-pointer block
-        let heldComposePaint = () => {};    // …as is this one
         let dropFlashTimer = null;
         let dropToastAt = 0;
 
