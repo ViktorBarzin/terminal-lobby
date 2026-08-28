@@ -832,8 +832,18 @@ export function pendingQuestion(rows: TimelineRow[]): QuestionRow | null {
  */
 export function askingFromPane(events: Event[]): PaneAsking | null {
   let latest = "";
+  // Only while nothing has happened since — the same rule the transcript's own
+  // questions follow (see pendingQuestion). The server withdraws a reading when
+  // the dialog goes, but a client that reconnects mid-flight, or a server a tick
+  // behind, must not dock a card over a question the session has moved past.
+  // Meta events are exempt: the mode markers and the watcher's own bookkeeping
+  // say nothing about whether the question is still on screen.
   for (const e of events) {
-    if (e.kind === "meta" && e.meta === "asking") latest = e.body ?? "";
+    if (e.kind === "meta") {
+      if (e.meta === "asking") latest = e.body ?? "";
+      continue;
+    }
+    latest = "";
   }
   if (!latest) return null;
   const raw = parseJSON(latest) as

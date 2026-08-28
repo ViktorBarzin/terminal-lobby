@@ -592,3 +592,60 @@ func TestRegistryWatchesThePaneOfAWatchedSessionMidTurn(t *testing.T) {
 		t.Fatalf("the dialog going away left %q behind", last)
 	}
 }
+
+// Answering in the terminal ENDS the turn, and a watcher that only looks at
+// working sessions would stop looking at exactly that moment — leaving the last
+// reading, the one with the dialog in it, standing for good. Measured in the
+// browser on 2026-08-28: the question was answered in the terminal, the
+// transcript caught up, and the card stayed docked over nothing.
+func TestRegistryClearsTheDialogWhenASessionStopsWorking(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-asking-done"
+	)
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-ASKING-DONE")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+	pane := &fakePane{text: paneWithQuestion}
+	rg.panes = pane
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve")
+	}
+	waitForMarker(t, fs, "MARKER-ASKING-DONE")
+	ch, release := fs.Subscribe()
+	defer release()
+	go func() {
+		for range ch {
+		}
+	}()
+	rg.watchPanes()
+
+	// The answer goes in at the terminal: the turn settles, and the pane no
+	// longer shows a dialog.
+	fs.Append(sessionio.Event{Kind: sessionio.KindTurnEnd})
+	pane.set("❯ \n")
+	rg.watchPanes()
+
+	last := "«none»"
+	for _, e := range fs.Replay(0) {
+		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
+			last = e.Body
+		}
+	}
+	if last != "" {
+		t.Fatalf("a settled session still reports a dialog: %q", last)
+	}
+	// …and it costs no pane read to say so.
+	before := pane.count()
+	rg.watchPanes()
+	if pane.count() != before {
+		t.Fatalf("a settled session is still being polled (%d reads)", pane.count()-before)
+	}
+}

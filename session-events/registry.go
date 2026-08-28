@@ -237,7 +237,14 @@ func (rg *registry) watchPanes() {
 		for name, ls := range us.srcs {
 			if ls.fs.WorthWatching() {
 				want = append(want, target{us.osUser, name, ls.fs})
+				continue
 			}
+			// Not worth reading — but if the last reading said a dialog was up,
+			// that has to be withdrawn. Answering in the TERMINAL is what settles
+			// the turn, so a session stops being worth watching at the very
+			// moment its dialog goes away, and leaving the reading standing docks
+			// the answer card over a question that has been answered.
+			ls.fs.SetAsking("")
 		}
 		us.mu.Unlock()
 	}
