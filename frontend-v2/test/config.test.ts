@@ -38,7 +38,8 @@ describe("config — tmux-api prefix (PROD ingress: PathPrefix /api/sessions/ ->
   it("session-events control channel stays at the ROOT (NOT under /api/sessions)", () => {
     // These hit session-events, which the ingress maps at the root — moving them
     // under the prefix would break them, so the fix must leave them alone.
-    expect(eventsUrl("s", 0)).toBe("/events/s");
+    // `rev=1` asks for the reverse open; the route is still at the root.
+    expect(eventsUrl("s", 0)).toBe("/events/s?rev=1");
     expect(promptUrl("s")).toBe("/prompt/s");
     expect(cancelUrl("s")).toBe("/cancel/s");
     expect(permissionUrl("r")).toBe("/permission/r");

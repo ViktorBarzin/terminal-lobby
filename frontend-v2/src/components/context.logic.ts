@@ -1,4 +1,4 @@
-import type { ContextReading, Event } from "../types/events";
+import type { ContextReading, Event, SessionState } from "../types/events";
 
 /**
  * The context meter's data.
@@ -24,9 +24,15 @@ export interface ContextState {
 }
 
 /** The newest reading in the log, with its age in settled turns. */
-export function contextState(events: Event[]): ContextState | null {
+export function contextState(
+  events: Event[],
+  seed?: SessionState | null,
+): ContextState | null {
+  // A reading the state frame does not account for is the fresher one.
+  const at = seed?.at ?? -1;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]!;
+    if (e.id <= at) break;
     if (e.kind !== "meta" || e.meta !== "context" || !e.context) continue;
     let turnsAgo = 0;
     for (let j = i + 1; j < events.length; j++) {
@@ -34,7 +40,14 @@ export function contextState(events: Event[]): ContextState | null {
     }
     return { reading: e.context, turnsAgo };
   }
-  return null;
+  // Otherwise the frame's, aged by the turns that have settled since — the
+  // reading itself is usually far outside a bounded backfill.
+  if (!seed?.context) return null;
+  let turnsAgo = seed.contextTurnsAgo ?? 0;
+  for (const e of events) {
+    if (e.id > at && e.kind === "turn_end") turnsAgo++;
+  }
+  return { reading: seed.context, turnsAgo };
 }
 
 /** `65.2k`, the way the CLI writes it — so the chip and the pane agree. */
