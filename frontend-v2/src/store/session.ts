@@ -8,6 +8,12 @@ import {
 } from "../sse/client";
 import { track } from "../telemetry/track";
 import {
+  createTranscriptCache,
+  indexedDbBackend,
+  resumeCursor,
+  type TranscriptCache,
+} from "./transcript-cache";
+import {
   cancelUrl,
   earlierUrl,
   eventsUrl,
@@ -133,6 +139,8 @@ export interface SessionStoreOptions {
    *  the store is no longer evidence that anyone wants the stream. Same shape as
    *  the lobby store's `autoStart`. */
   autoStart?: boolean;
+  /** injected in tests; defaults to the tab's shared IndexedDB-backed cache. */
+  cache?: TranscriptCache;
 }
 
 /**
@@ -147,6 +155,13 @@ export interface SessionStoreOptions {
  * built with `autoStart: false` — one connect either way, never a reconnect on
  * top of a live one, and `close()` is final.
  */
+let sharedCache: TranscriptCache | null = null;
+/** The tab's transcript cache. One IndexedDB handle for every session store. */
+function defaultTranscriptCache(): TranscriptCache {
+  if (!sharedCache) sharedCache = createTranscriptCache(indexedDbBackend());
+  return sharedCache;
+}
+
 export function createSessionStore(
   session: string,
   opts: SessionStoreOptions = {},
@@ -166,6 +181,10 @@ export function createSessionStore(
    * starts — paging from it would skip everything in between, permanently.
    */
   let cursor = 0;
+  /** Which log the held ids belong to (the server's ready.epoch), and the cache
+   *  that stores the transcript against it. */
+  let cachedEpoch = "";
+  const cache = opts.cache ?? defaultTranscriptCache();
   /** How far up the step ladder a run of paging has climbed. */
   let step = 0;
   /** Every id held, so a repeat costs a lookup rather than a scan. */
@@ -271,6 +290,30 @@ export function createSessionStore(
   const [pendingPrompts, setPendingPrompts] = createSignal<PendingPrompt[]>([]);
   let pendingSeq = 0;
 
+  /**
+   * Persist the transcript, off the render path.
+   *
+   * requestIdleCallback for the same reason the progressive mount uses it: the
+   * opening burst is hundreds of events and the derivation behind it is the
+   * expensive part of this view (measured 10 ms per derivation, 2,644 ms when
+   * run per event). A cache write that competed with that would trade a fetch
+   * the user cannot see for jank they can. Coalesced, so a burst writes once.
+   */
+  let cacheWriteHandle: ReturnType<typeof setTimeout> | number = 0;
+  const scheduleCacheWrite = (): void => {
+    if (cacheWriteHandle || closed) return;
+    const run = (): void => {
+      cacheWriteHandle = 0;
+      if (closed || !cachedEpoch) return;
+      void cache.save(session, cachedEpoch, events);
+    };
+    const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: object) => number })
+      .requestIdleCallback;
+    cacheWriteHandle = idle
+      ? idle(run, { timeout: 2_000 })
+      : setTimeout(run, 500);
+  };
+
   const flush = (): void => {
     flushHandle = 0;
     // History first, and never behind the hold: this batch is what ends it.
@@ -287,6 +330,7 @@ export function createSessionStore(
     const arrived = takeFresh(pending);
     pending = [];
     if (arrived.length === 0) return;
+    scheduleCacheWrite();
     // batch() so the derivation runs once for the whole group rather than once
     // per index write.
     batch(() => {
@@ -353,6 +397,11 @@ export function createSessionStore(
    * the way it waits for the first one rather than flashing an empty transcript.
    */
   const reset = (): void => {
+    // The server named a different log, or its head is behind our cursor: what
+    // is stored describes a transcript that no longer exists, so it goes too.
+    // Keeping it would mean seeding the same wrong ids on the next open.
+    cachedEpoch = "";
+    void cache.drop(session);
     pending = [];
     backfill = [];
     seen.clear();
@@ -395,13 +444,44 @@ export function createSessionStore(
         cursor = r.cursor;
         setHasEarlier(r.cursor > 0);
       }
+      // Which log the ids in this stream belong to. Stored beside the events so
+      // a later open can tell whether what it holds still describes this
+      // transcript; without it the events are unusable and are not written.
+      if (r.epoch) cachedEpoch = r.epoch;
       release();
+      scheduleCacheWrite();
     },
   });
 
   /** has the stream been opened, and has it been closed for good? */
   let started = false;
   let closed = false;
+
+  /**
+   * Open the stream, resuming from what this device already holds.
+   *
+   * The cache read is awaited rather than raced: seeding after the window has
+   * begun arriving would mean paying for the window anyway, which is the cost
+   * this exists to remove. It is one IndexedDB read of one record, and it fails
+   * soft — no cache, or a slow one, and this is exactly the open it always was.
+   */
+  const startWithCache = async (): Promise<void> => {
+    const cached = await cache.read(session);
+    if (closed) return;
+    if (cached && cached.events.length > 0) {
+      cachedEpoch = cached.epoch;
+      const fresh = takeFresh([...cached.events]);
+      if (fresh.length > 0) {
+        batch(() => {
+          setEvents(fresh);
+          setOpening(false);
+        });
+        holding = false;
+      }
+      client.resumeFrom(resumeCursor(cached.events), cached.epoch);
+    }
+    client.start();
+  };
 
   const start = (): void => {
     // Idempotent because the caller drives this from a Solid effect, which
@@ -411,7 +491,13 @@ export function createSessionStore(
     // re-open a stream the view that owned it no longer exists to read.
     if (started || closed) return;
     started = true;
-    client.start();
+    // With nothing stored there is nothing to wait for, and the stream opens
+    // exactly as it always did — synchronously, in this tick.
+    if (!cache.enabled) {
+      client.start();
+      return;
+    }
+    void startWithCache();
   };
 
   const close = (): void => {
