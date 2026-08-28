@@ -916,3 +916,70 @@ describe("term.html — the tl-kb bridge", () => {
     expect(branch).toContain("e.source === window.parent");
   });
 });
+
+/**
+ * WHERE THE FRAMED PAGE GETS ITS ARGS.
+ *
+ * Not from its own URL: that URL is a cache key, and with the session name in it
+ * every session was a separate entry for a 1.8 MB document. The lobby navigates
+ * every frame to the same URL and passes the args on the frame instead. Three
+ * sources, in order, and the order matters — a direct ?arg= bookmark must still
+ * work, and a framed attach must never fall through to it and end up in the
+ * page's lobby branch inside the iframe.
+ */
+describe("term.html — the attach args come off the frame", () => {
+  const loadArgs = (
+    frameName: string | null,
+    dataset: Record<string, string> | null,
+    search: string,
+  ): URLSearchParams => {
+    const ctx = {
+      window: {
+        name: frameName ?? "",
+        frameElement: dataset === null ? null : { dataset },
+      },
+      location: { search },
+      URLSearchParams,
+    };
+    (ctx.window as { window?: unknown }).window = ctx.window;
+    return runInNewContext(
+      `${sliceKernel(html(), "tl-frame-args")}; params`,
+      ctx,
+    ) as URLSearchParams;
+  };
+
+  it("prefers the frame name", () => {
+    const p = loadArgs("tl1:arg=from-name", { tlArgs: "arg=from-dataset" }, "?arg=from-url");
+    expect(p.get("arg")).toBe("from-name");
+  });
+
+  it("falls back to the frame's dataset when the name did not arrive", () => {
+    // Two independent carriers on purpose: if the browsing-context name ever
+    // fails to propagate to the new document, the attach must not silently
+    // become "no session", which renders the LOBBY inside the terminal frame.
+    const p = loadArgs(null, { tlArgs: "arg=from-dataset" }, "?arg=from-url");
+    expect(p.get("arg")).toBe("from-dataset");
+  });
+
+  it("falls back to the URL for a direct link", () => {
+    const p = loadArgs(null, null, "?arg=from-url&arg=claude");
+    expect(p.getAll("arg")).toEqual(["from-url", "claude"]);
+  });
+
+  it("ignores a frame name set by anything other than an attach", () => {
+    const p = loadArgs("some-other-name", null, "?arg=from-url");
+    expect(p.get("arg")).toBe("from-url");
+  });
+
+  it("keeps all five positional slots intact through the frame", () => {
+    // arg4 (owner) and arg5 (ro) dying at the iframe boundary is a silent
+    // downgrade to read-write on somebody else's session — memory #9926.
+    const p = loadArgs(
+      "tl1:arg=main&arg=default&arg=%2Ftmp&arg=bob&arg=ro",
+      null,
+      "",
+    );
+    expect(p.getAll("arg")).toEqual(["main", "default", "/tmp", "bob", "ro"]);
+  });
+});
+

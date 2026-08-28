@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { SessionView } from "../src/components/SessionView";
 import { WATCH_KEY_PREFIX } from "../src/store/watchmode";
-import { terminalUrl } from "../src/lib/terminal-url";
+import { terminalFrameArgs } from "../src/lib/terminal-url";
 
 // Spy on the URL builder so the toggle→attach wiring can be asserted directly.
 // jsdom does not navigate an iframe, so the built URL is otherwise unobservable.
 vi.mock("../src/lib/terminal-url", async (orig) => {
   const real = await orig<typeof import("../src/lib/terminal-url")>();
-  return { ...real, terminalUrl: vi.fn(real.terminalUrl) };
+  return { ...real, terminalFrameArgs: vi.fn(real.terminalFrameArgs) };
 });
 
 /**
@@ -38,7 +38,7 @@ beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]"))));
-  vi.mocked(terminalUrl).mockClear();
+  vi.mocked(terminalFrameArgs).mockClear();
 });
 
 const watchButton = (c: HTMLElement) =>
@@ -138,23 +138,23 @@ describe("<SessionView> — the Watch toggle", () => {
 
     // jsdom never navigates contentWindow.location.replace, so asserting on the
     // iframe's src would pass vacuously. Assert the seam instead: what the view
-    // asked the URL builder for. buildTerminalUrl's own output — that this lands
+    // asked the URL builder for. buildTerminalArgs's own output — that this lands
     // on arg5 with every earlier slot filled — is pinned in terminal-url.test.ts
     // and executed against the shipped term.html in test_watch_mode_e2e.py.
-    await waitFor(() => expect(terminalUrl).toHaveBeenCalled());
-    const calls = vi.mocked(terminalUrl).mock.calls;
+    await waitFor(() => expect(terminalFrameArgs).toHaveBeenCalled());
+    const calls = vi.mocked(terminalFrameArgs).mock.calls;
     const withWatch = calls.filter(([, opts]) => opts?.watch === true);
     expect(
       withWatch.length,
-      `terminalUrl never asked for watch; calls: ${JSON.stringify(calls)}`,
+      `terminalFrameArgs never asked for watch; calls: ${JSON.stringify(calls)}`,
     ).toBeGreaterThan(0);
     expect(withWatch[0]![0]).toBe("main");
   });
 
   it("a session that is NOT watched asks for no such thing", async () => {
     render(() => <SessionView session="main" />);
-    await waitFor(() => expect(terminalUrl).toHaveBeenCalled());
-    for (const [, opts] of vi.mocked(terminalUrl).mock.calls) {
+    await waitFor(() => expect(terminalFrameArgs).toHaveBeenCalled());
+    for (const [, opts] of vi.mocked(terminalFrameArgs).mock.calls) {
       expect(opts?.watch).toBeFalsy();
     }
   });
@@ -181,9 +181,9 @@ describe("<SessionView> — acting as another user", () => {
 
   it("attaches read-only, and names the user it is watching", async () => {
     const { container } = lensView();
-    await waitFor(() => expect(terminalUrl).toHaveBeenCalled());
+    await waitFor(() => expect(terminalFrameArgs).toHaveBeenCalled());
     const withWatch = vi
-      .mocked(terminalUrl)
+      .mocked(terminalFrameArgs)
       .mock.calls.filter(([, opts]) => opts?.watch === true);
     expect(withWatch.length).toBeGreaterThan(0);
     expect(watchButton(container).title).toContain("bob");
@@ -191,14 +191,14 @@ describe("<SessionView> — acting as another user", () => {
 
   it("takes control on a click, and re-attaches read-write", async () => {
     const { container } = lensView();
-    await waitFor(() => expect(terminalUrl).toHaveBeenCalled());
+    await waitFor(() => expect(terminalFrameArgs).toHaveBeenCalled());
     const btn = watchButton(container);
     expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
     expect(watchButton(container).getAttribute("aria-pressed")).toBe("false");
     await waitFor(() =>
       expect(
-        vi.mocked(terminalUrl).mock.calls.some(([, opts]) => !opts?.watch),
+        vi.mocked(terminalFrameArgs).mock.calls.some(([, opts]) => !opts?.watch),
       ).toBe(true),
     );
     expect(watchButton(container).title).toContain("bob");
