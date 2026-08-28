@@ -21,7 +21,16 @@ var knownDiagEvents = map[string]bool{
 	// Emitted only while a tab is visible AND saw traffic in the window.
 	// Latency fields are absent from windows where nobody typed.
 	"perf.rollup": true, // tl.win_s, tl.input.*, tl.echo.* (+tl.echo.unmatched),
-	// tl.render.*, tl.jank.n, tl.longtask.*, tl.ws.*, tl.api.*
+	// tl.render.*, tl.jank.n, tl.longtask.*, tl.ws.*, tl.api.*,
+	// tl.net.{term,app,text,files,api}_b — wire bytes per feature bucket, the
+	// Data used feature. tl.net.term_b and tl.net.text_b are MODELLED: those two
+	// streams are compressed by the server (ttyd permessage-deflate, SSE gzip)
+	// and inflated by the browser before anything can measure them, so the
+	// client compresses the same bytes the same way and reports that. The other
+	// three come from transferSize and are exact. tl.net.{term,text}_in_b carry
+	// the decompressed input each estimate came from, so the ratio is checkable
+	// from one record, and tl.net.{term,text}_drop appear when a mirror refused
+	// frames under backpressure. tl.ws.in_b is unchanged and remains DECOMPRESSED.
 
 	// -- liveness and death --------------------------------------------------
 	"app.alive": true, // idle or hidden heartbeat: ids + tl.alive_s + tl.state
