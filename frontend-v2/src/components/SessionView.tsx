@@ -9,7 +9,7 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
-import { createSessionStore, type NotifyKind } from "../store/session";
+import { createSessionStore, JUMP_STEP_BYTES, type NotifyKind } from "../store/session";
 import type { SseStatus } from "../sse/client";
 import { createViewMode } from "../store/viewmode";
 import { createWatchMode, clearResolvedWatch } from "../store/watchmode";
@@ -301,7 +301,10 @@ export const SessionView: Component<{
       if (window.__tlScrollToEvent?.(id)) return;
       if (!isLoaded(store.events, id)) {
         if (!store.hasEarlier()) break;
-        if ((await store.loadEarlier()) === 0) break;
+        // A jump names its own step: it already knows it is reaching far, and
+        // it must not leave the reader's next glance upward expensive by
+        // climbing the ladder a scroll would have climbed.
+        if ((await store.loadEarlier(JUMP_STEP_BYTES)) === 0) break;
         continue;
       }
       // Loaded but not mounted yet — the fill adds rows a chunk per frame.
@@ -845,6 +848,7 @@ export const SessionView: Component<{
               await store.loadEarlier();
             }}
             hasEarlier={store.hasEarlier()}
+            sessionState={store.state()}
             onListDir={listDir}
             session={session}
             me={props.me?.() ?? ""}

@@ -124,6 +124,16 @@ const StatusRowView: Component<{ row: StatusRow }> = (props) => (
 /** How far off the bottom still counts as "reading the live end". */
 const PIN_SLACK_PX = 40;
 
+/**
+ * How close to the top of what is held counts as reaching for history.
+ *
+ * A multiple of the viewport rather than a fixed distance: the point is to have
+ * the next step already arriving by the time the reader gets there, and how far
+ * that is depends on how much of the transcript a screen shows. One screen is
+ * the whole visible run-up.
+ */
+const REACH_SCREENS = 1;
+
 /** How long a jumped-to row stays highlighted — long enough to find with the
  *  eye after the scroll, short enough not to become part of the layout. */
 const FOUND_FLASH_MS = 1600;
@@ -461,7 +471,30 @@ export const MessagesTimeline: Component<{
     const el = scroller;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX;
   };
-  const onScroll = () => setPinned(atBottom());
+
+  /**
+   * Reaching the top asks for the next step back.
+   *
+   * Re-armed by SCROLLING, not by the step landing. A step that arrives without
+   * filling the run-up would otherwise ask for another immediately, and a
+   * session of small steps would page itself back to its own beginning with
+   * nobody touching it — which is the opposite of loading history on demand.
+   * The row at the top stays tappable for a reader who wants the next step
+   * without scrolling for it.
+   */
+  let armed = true;
+  const onScroll = () => {
+    setPinned(atBottom());
+    const el = scroller;
+    if (!el) return;
+    if (el.scrollTop > el.clientHeight * REACH_SCREENS) {
+      armed = true;
+      return;
+    }
+    if (!armed) return;
+    armed = false;
+    void loadEarlier();
+  };
 
   /**
    * Scroll to one event and flash its row — how a search hit is opened.
@@ -522,7 +555,7 @@ export const MessagesTimeline: Component<{
 
   const [loadingEarlier, setLoadingEarlier] = createSignal(false);
   const loadEarlier = async () => {
-    if (!props.onLoadEarlier || loadingEarlier()) return;
+    if (!props.onLoadEarlier || loadingEarlier() || !props.hasEarlier) return;
     setLoadingEarlier(true);
     const el = scroller;
     const anchor = el?.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling)");
@@ -545,13 +578,6 @@ export const MessagesTimeline: Component<{
       onScroll={onScroll}
       onClick={onClick}
     >
-      <Show when={props.hasEarlier}>
-        <div class="tl-row tl-row-earlier">
-          <button type="button" class="tl-linkbtn" onClick={loadEarlier} disabled={loadingEarlier()}>
-            {loadingEarlier() ? "Loading…" : "Load earlier turns"}
-          </button>
-        </div>
-      </Show>
       <Show
         when={allKeys().length > 0}
         fallback={
@@ -560,6 +586,21 @@ export const MessagesTimeline: Component<{
           </div>
         }
       >
+        {/* The top of what is held, and its own status line. Scrolling into it
+            asks for the next step; the button is the same request for a reader
+            who would rather tap than scroll, and the retry when one fails.
+            Inside the Show, so a session with nothing in it does not announce
+            the start of a conversation that has not happened. */}
+        <div class="tl-row tl-row-earlier">
+          <Show
+            when={props.hasEarlier}
+            fallback={<span class="tl-status-text">Start of session</span>}
+          >
+            <button type="button" class="tl-linkbtn" onClick={loadEarlier} disabled={loadingEarlier()}>
+              {loadingEarlier() ? "Loading earlier…" : "Load earlier turns"}
+            </button>
+          </Show>
+        </div>
         <Show when={filling()}>
           <div class="tl-row tl-row-filling" aria-live="polite">
             <span class="tl-working-dot" />

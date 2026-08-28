@@ -169,3 +169,32 @@ export function parseEvent(data: string): Event | null {
   }
   return ev;
 }
+
+/**
+ * The session state a bounded backfill cannot carry.
+ *
+ * The permission mode, the newest `/context` reading and the prompt queue are
+ * folded from the whole conversation rather than read off a row, so a client
+ * holding the last 100 KB cannot derive them — and the queue is the one that
+ * goes WRONG rather than merely short, because a `dequeued` whose `queued` fell
+ * outside the window takes the head off a queue that never held it.
+ *
+ * session-events computes all of it over its in-memory log and sends it once,
+ * ahead of the backfill. `at` is the newest event id it accounts for: a reader
+ * seeds from this and folds only what is newer, so nothing inside the window is
+ * applied twice. Mirrors sessionio.SessionState.
+ */
+export interface SessionState {
+  at: number;
+  mode?: string;
+  context?: ContextReading;
+  contextTurnsAgo?: number;
+  queue: string[];
+  prompts: string[];
+}
+
+/** The end of the opening exchange. `cursor` is where the next step back
+ *  begins, and is absent on a resume — there the client's own is correct. */
+export interface ReadyFrame {
+  cursor?: number;
+}
