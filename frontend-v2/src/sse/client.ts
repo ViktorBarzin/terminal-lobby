@@ -431,6 +431,23 @@ export class SseClient {
     this.connect();
   }
 
+  /**
+   * Resume from events a previous life already collected.
+   *
+   * The cursor alone would not be safe — ids only mean something within one log
+   * — so the epoch comes with it, and `foreignLog` then does exactly what it
+   * does for any other stale cursor: if the server names a different log, or its
+   * head is behind us, everything held is dropped and the session opens from the
+   * start. Ignored once a stream has delivered anything, so a reconnect cannot
+   * be talked backwards.
+   */
+  resumeFrom(lastEventId: number, epoch: string): void {
+    if (this.lastEventId !== 0) return;
+    if (!Number.isFinite(lastEventId) || lastEventId <= 0 || !epoch) return;
+    this.lastEventId = lastEventId;
+    this.epoch = epoch;
+  }
+
   /** Attach visibility/online instant-retry listeners. No-op off-browser. */
   start(): void {
     this.stopped = false;
