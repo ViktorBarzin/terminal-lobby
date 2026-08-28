@@ -147,6 +147,18 @@ rm -f out/index.pre
 # The meta tag is the one leg that depends on the build tool: if vite ever stops
 # copying the head through verbatim, fail the deploy rather than ship a page
 # that can never self-update.
+mkdir -p out/assets
+# The lobby's hashed chunks, emitted by vite under dist/assets. These are what
+# replaced the single 4.7 MB document: index.html is ~3 KB gzipped now and the
+# heavy libraries (mermaid, CodeMirror, highlight.js) are separate chunks fetched
+# only by the features that use them.
+if compgen -G "frontend-v2/dist/assets/*" > /dev/null; then
+  cp frontend-v2/dist/assets/* out/assets/
+else
+  echo "deploy-v2.sh: frontend-v2/dist/assets is empty — the SPA build emitted no chunks" >&2
+  exit 1
+fi
+
 # Every /assets/ reference in the page must exist in what we are about to ship.
 # A missing entry chunk is a blank lobby, and the browser reports it only in a
 # console nobody is watching.
@@ -226,17 +238,6 @@ fi
 # The immutable copy, under the content-hashed name the lobby asks for. Same
 # bytes as term.html; the NAME is what changes per deploy, which is what lets it
 # be cached forever instead of revalidated on every attach.
-mkdir -p out/assets
-# The lobby's hashed chunks, emitted by vite under dist/assets. These are what
-# replaced the single 4.7 MB document: index.html is ~3 KB gzipped now and the
-# heavy libraries (mermaid, CodeMirror, highlight.js) are separate chunks fetched
-# only by the features that use them.
-if compgen -G "frontend-v2/dist/assets/*" > /dev/null; then
-  cp frontend-v2/dist/assets/* out/assets/
-else
-  echo "deploy-v2.sh: frontend-v2/dist/assets is empty — the SPA build emitted no chunks" >&2
-  exit 1
-fi
 cp out/term.html "out/assets/term-${TERM_ASSET}.html"
 printf %s "${TERM_ASSET}" > out/term-build-id
 echo "    term.html asset=${TERM_ASSET}"
