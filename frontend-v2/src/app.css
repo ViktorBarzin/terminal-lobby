@@ -2662,10 +2662,16 @@ body.tl-kb-up {
 }
 
 /* Scroll affordances. */
+/* The top of the transcript. Reaching it loads the next window, so this is a
+   label rather than a control: quiet when idle, and it says what it is doing
+   while a window is on its way. */
 .tl-row-earlier {
   display: flex;
   justify-content: center;
-  padding: 4px 0 8px;
+  padding: 10px 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
 }
 .tl-scroll-end {
   position: sticky;
