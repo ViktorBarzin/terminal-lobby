@@ -89,6 +89,33 @@ export async function fetchSelf(
   return text.includes(BUILD_SUBSTRING) ? text : null;
 }
 
+/** The stamp endpoint's shape: the same 12-hex fingerprint the meta tag carries,
+ *  and nothing else. Anything longer, shorter or non-hex is "no information". */
+const STAMP_RE = /^[0-9a-f]{12}$/;
+
+/**
+ * Read the build stamp from the dedicated endpoint. Returns the id, or null for
+ * every unusable answer — a 404 (an origin that predates the endpoint), an auth
+ * interstitial, a placeholder, anything that is not exactly a fingerprint.
+ *
+ * This replaces reading the id out of a full copy of the page. Measured on the
+ * old path: 1,430,075-1,430,242 B per poll every 5s, and on iOS Safari 1,279
+ * full bodies against 2 revalidations in 24h — 1.83 GB/day from one phone, or
+ * 5.7x the entire downlink of a 400kbps link, permanently. The stamp is ~12
+ * bytes, so the cheapness no longer depends on a 304 arriving.
+ */
+export async function fetchStamp(
+  fetchImpl: typeof fetch,
+  url: string,
+  cacheMode: RequestCache,
+): Promise<{ id: string | null; missing: boolean }> {
+  const r = await fetchImpl(url, { cache: cacheMode, credentials: "same-origin" });
+  if (r.status === 404) return { id: null, missing: true };
+  if (!r.ok) return { id: null, missing: false };
+  const text = (await r.text()).trim();
+  return { id: STAMP_RE.test(text) ? text : null, missing: false };
+}
+
 /**
  * AUTO-reload storm throttle — pure decision. Returns whether an automatic
  * reload is allowed right now (the caller records `now` as the new

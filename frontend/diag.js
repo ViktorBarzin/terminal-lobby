@@ -35,7 +35,11 @@ globalThis.tlDiag = (function () {
     quietMs: 300, // output silence required before an echo sample
     matchMs: 2000, // how long an echo may take before it is unmatched
     stallMs: 3000, // input with no output for this long is a stall
-    slowApiMs: 500, // an API call this slow is reported on its own
+    // An API call this slow is reported on its own. 500 ms sat BELOW a healthy
+    // round trip on a 300 ms link, which is why 28,379 of 32,619 api.slow
+    // records were for /telemetry itself — the reporting channel reporting on
+    // its own latency, and each report generating the next.
+    slowApiMs: 1500,
     ringMax: 30, // flight-recorder depth (the intake caps at 30 too)
     sampleMax: 512, // retained samples per metric per window
     bufferMax: 200, // queued records before the oldest are dropped
@@ -436,7 +440,10 @@ globalThis.tlDiag = (function () {
       m.api.add(ms);
       if (typeof status === "number" && status >= 400) m.apiErr += 1;
       traffic();
-      if (finite(ms) && ms >= cfg.slowApiMs) {
+      // Never report on the reporting channel: a slow /telemetry POST produced
+      // an api.slow record, which was itself POSTed to /telemetry.
+      var isSelf = String(endpoint || "").indexOf("/telemetry") !== -1;
+      if (!isSelf && finite(ms) && ms >= cfg.slowApiMs) {
         var a = { "tl.ep": String(endpoint || ""), "tl.ms": Math.round(ms) };
         if (typeof status === "number") a["tl.status"] = status;
         if (reqId) a["tl.req"] = String(reqId);
@@ -445,6 +452,26 @@ globalThis.tlDiag = (function () {
     }
 
     // ---- connections ----------------------------------------------------
+    /**
+     * The terminal document's own boot, leg by leg. `term.ready` has been in the
+     * event catalog all along with no caller, so the exact path this work is
+     * about — open a session, get a terminal — had no timing at all: 0 records
+     * in 14 days. Legs, not a total, because they fail differently: navigation
+     * is the 464 KB document, token is one round trip, paint is xterm.
+     */
+    function onTermReady(d) {
+      d = d || {};
+      var a = {};
+      if (finite(d.navMs)) a["tl.nav_ms"] = Math.round(d.navMs);
+      if (finite(d.ttfbMs)) a["tl.ttfb_ms"] = Math.round(d.ttfbMs);
+      if (finite(d.tokenMs)) a["tl.token_ms"] = Math.round(d.tokenMs);
+      if (finite(d.paintMs)) a["tl.paint_ms"] = Math.round(d.paintMs);
+      if (finite(d.bytes)) a["tl.nav.bytes"] = Math.round(d.bytes);
+      if (d.cached === true || d.cached === false) a["tl.nav.cached"] = d.cached;
+      if (d.retried === true) a["tl.retried"] = true;
+      emit("term.ready", a, true);
+    }
+
     function onConnOpen(d) {
       d = d || {};
       connSeq += 1;
@@ -509,6 +536,14 @@ globalThis.tlDiag = (function () {
       } catch (e) {
         /* the recorder must never be the thing that breaks */
       }
+    }
+
+    /** Emit one more app.context record — used when a value the boot record
+     *  wanted only exists later (nav.load fires after boot, by definition).
+     *  Deliberately not `boot()`: that also runs the page-life sentinel and
+     *  would report a second life for the same page. */
+    function navContext(attrs) {
+      if (attrs && typeof attrs === "object") emit("app.context", attrs, true);
     }
 
     function incident(kind, attrs) {
@@ -587,6 +622,8 @@ globalThis.tlDiag = (function () {
       onJank: onJank,
       onApi: onApi,
       onConnOpen: onConnOpen,
+      onTermReady: onTermReady,
+      navContext: navContext,
       onConnDrop: onConnDrop,
       onException: onException,
       ring: pushRing,
@@ -858,8 +895,36 @@ globalThis.tlDiag = (function () {
       var nav = performance.getEntriesByType("navigation")[0];
       if (nav) {
         context["tl.nav.ttfb"] = Math.round(nav.responseStart);
+        // These two are read at boot, which is BEFORE the events they name have
+        // fired — so they were 0 in every record ever collected. Keep reading
+        // them (a bfcache restore or a late boot does have them), and re-emit
+        // the context once `load` lands so there is one record per page life
+        // that carries a real download duration. That number is the only free
+        // throughput estimate available on iOS, where navigator.connection does
+        // not exist at all.
         context["tl.nav.dom"] = Math.round(nav.domContentLoadedEventEnd);
         context["tl.nav.load"] = Math.round(nav.loadEventEnd || nav.duration);
+        if (!nav.loadEventEnd && typeof window.addEventListener === "function") {
+          window.addEventListener(
+            "load",
+            function () {
+              try {
+                var late = performance.getEntriesByType("navigation")[0];
+                if (!late || !late.loadEventEnd) return;
+                d.navContext({
+                  "tl.nav.ttfb": Math.round(late.responseStart),
+                  "tl.nav.dom": Math.round(late.domContentLoadedEventEnd),
+                  "tl.nav.load": Math.round(late.loadEventEnd),
+                  "tl.nav.bytes": late.transferSize || 0,
+                  "tl.nav.cached": late.transferSize === 0,
+                });
+              } catch (e) {
+                /* one missing context record must never break a page */
+              }
+            },
+            { once: true },
+          );
+        }
         context["tl.nav.bytes"] = nav.transferSize || 0;
         context["tl.nav.cached"] = nav.transferSize === 0;
       }

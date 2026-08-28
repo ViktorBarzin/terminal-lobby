@@ -14,6 +14,7 @@ import { App } from "./components/App";
 import { installSlowRequestTracking } from "./store/toast";
 import { logBuildId } from "./deploy/healer";
 import { startDiagnostics } from "./telemetry/diag";
+import { recordMeasurement } from "./diagnostics/connection";
 
 // Build-id marker (inventory Cat.10): logs `terminal-lobby build: <id>` and
 // stamps documentElement.dataset.tlBuild. Emitting the marker literal is what
@@ -28,6 +29,24 @@ startDiagnostics();
 
 // Auto-track same-origin lobby/session requests for the slow-request toast.
 installSlowRequestTracking();
+
+// Connection diagnostics: measure THIS load and record the verdict for the next
+// one. It has to run after `load`, because the numbers it reads (how many bytes
+// the document cost and how long they took) do not exist until then — which is
+// also why the verdict is applied to the NEXT load rather than this one. Costs
+// no extra request: it reads Navigation Timing, which every browser including
+// iOS Safari has, unlike navigator.connection.
+if (typeof window !== "undefined") {
+  const measure = (): void => {
+    try {
+      recordMeasurement();
+    } catch {
+      /* a missing verdict costs the next load its head start, nothing more */
+    }
+  };
+  if (document.readyState === "complete") measure();
+  else window.addEventListener("load", measure, { once: true });
+}
 
 const root = document.getElementById("root");
 if (root) {

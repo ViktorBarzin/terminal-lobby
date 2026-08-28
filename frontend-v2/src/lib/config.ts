@@ -15,6 +15,8 @@
  * `?api=<base>` overrides the origin for BOTH surfaces so a laptop can point at a
  * remote devvm; default is "" (same-origin).
  */
+
+import { effectiveTier, openWindowTurns } from "../diagnostics/connection";
 function readApiBase(): string {
   if (typeof window === "undefined") return "";
   try {
@@ -101,8 +103,17 @@ export function eventsUrl(session: string, lastEventId: number): string {
   // — the deploy window, when session-events restarts and every client
   // reconnects on whatever bundle it still holds — keep the older contract
   // between them instead of showing an empty transcript.
-  const q = lastEventId > 0 ? `?lastEventId=${lastEventId}&rev=1` : "?rev=1";
-  return withActAs(u + q);
+  //
+  // `turns=` rides along for the same reason, in the other direction: a server
+  // that does not know `rev` ignores it and serves the older turn-counted
+  // window, and this is where a slow tier still asks for a smaller one. A
+  // server that DOES know `rev` bounds the open in bytes and has no use for it.
+  const params: string[] = [];
+  if (lastEventId > 0) params.push(`lastEventId=${lastEventId}`);
+  params.push("rev=1");
+  const turns = openWindowTurns(effectiveTier());
+  if (turns !== 20) params.push(`turns=${turns}`);
+  return withActAs(`${u}?${params.join("&")}`);
 }
 
 /**

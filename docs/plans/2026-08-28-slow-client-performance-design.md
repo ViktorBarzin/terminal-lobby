@@ -1,6 +1,9 @@
 # Slow clients — the lobby stops downloading itself
 
-**Status:** Designed 2026-08-28, not yet built. **Author:** Viktor Barzin
+**Status:** Nine of eleven decisions shipped to prod 2026-08-28 (commits
+`de03257`, `a269127`, `b613e1a`, `c9296a8`, `809fd84`); decision 2 (the chunk
+split) is blocked on an ingress route and decision 10's dead-code removal is
+outstanding — see "What shipped, and what did not". **Author:** Viktor Barzin
 (decisions), Claude (research + design). **Scope:** `frontend-v2/`,
 `frontend/term.html`, `session-events/`, plus one Traefik middleware change in
 `infra`.
@@ -287,6 +290,32 @@ flowchart TD
 - **Tier thresholds are guesses** until measured on the target device.
 - **`WebGL2 not supported` throws 6 uncaught errors** during terminal open,
   unrelated to this work and worth its own fix.
+
+## What shipped, and what did not
+
+Measured on the deployed services, not in a harness.
+
+| Decision | Result |
+|---|---|
+| 1 · stamp endpoint | **Shipped.** `/build-id` and `/term-build-id` serve **12 bytes** each; the poll is 5 min. That path went from 1,430,075 B every 5 s to 12 B every 5 min |
+| 3 · one cached term.html | **Shipped.** Three different sessions opened in a real browser cost **300 B / 6-8 ms each**, against 1,796,377 B and 8.4-10.3 s for a name never seen before |
+| 4 · `no-cache` reconnect | **Shipped**, and superseded by its own stamp: the reconnect check reads 12 bytes instead of re-fetching the page |
+| 5 · SSE compressed + windowed | **Shipped, differently** — see below. Measured live: 1,232,896 B → **233,472 B** gzipped (5.28x), and the slow tier's 4-turn window is **24,576 B**, 50x smaller than today's open |
+| 6 · diagnostics module | **Shipped.** Measures Navigation Timing, classifies, persists per device, applies to the next load, pinnable in the settings panel |
+| 7 · three levers | **Shipped**, with one correction: skipping the webgl/sixel/unicode11 addons saves the parse and the GPU context (~96 ms), **not** the 113 KB — that code is vendored inline in the document, so the bytes need decision 2 |
+| 8 · load watchdog | **Shipped.** Arms on navigate, waits for the page's own `tl-terminal-ready`, retries once silently, then says so with a retry control |
+| 9 · instrumentation | **Shipped.** `term.ready` fires with legs, `nav.load` is re-emitted once it exists, `api.slow` no longer reports on `/telemetry` |
+| 11 · one landing | **Not achieved** — decision 2 is not in it |
+| 2 · chunk split | **Not shipped.** Blocked: chunks must be served from somewhere, and clipboard-upload's whitelist is an EXACT-PATH table while chunk names are content-hashed. Serving them needs a prefix handler AND an ingress route in `infra/stacks/terminal` — without that route landing first, `/assets/*` 404s in production and the lobby is dead. That is a cross-repo change with a real failure mode, so it wants its own landing rather than riding along |
+| 10 · cleanups | **Partly.** The duplicate `/whoami` per attach is gone (first connect only). `/pane` + `/commands` still load in terminal mode, and `listDirs` is still dead code — it has no call site, so it costs nothing at runtime, which makes it hygiene rather than performance |
+
+**The deviation worth naming:** decision 5 said add `text/event-stream` to Traefik's
+compress middleware. On reading it, that exclusion is deliberate and documented
+("not compressed (safe for streaming)"), and the middleware is attached to the
+**websecure entrypoint** — every SSE consumer in the cluster. Opting SSE in there
+would risk all of them to fix one page. session-events now compresses its own
+stream instead, flushing gzip per event so it stays readable as it arrives. Same
+measured win, blast radius of one service.
 
 ## Verification
 
