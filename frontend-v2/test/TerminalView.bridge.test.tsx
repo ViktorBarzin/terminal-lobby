@@ -433,3 +433,62 @@ describe("<TerminalView> — the attach URL is the same for every session", () =
   });
 });
 
+/**
+ * THE SILENT FAILURE.
+ *
+ * A truncated term.html renders a page that IS titled "Terminal", holds 393,029
+ * of 1,790,811 characters, never fires `load`, and reports nothing — measured by
+ * cutting the response at ~40%. The iframe had only onLoad, no onerror and no
+ * watchdog, and the cover lifted on a blind 1800 ms timer, so that state was
+ * indistinguishable from a slow load and stayed that way forever.
+ */
+describe("<TerminalView> — the load watchdog", () => {
+  let frames: ReturnType<typeof withFakeFrames>;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    frames = withFakeFrames();
+  });
+  afterEach(() => {
+    frames.restore();
+    vi.useRealTimers();
+  });
+
+  /** The frame saying it painted. onMessage requires e.source to BE the frame's
+   *  contentWindow — a message from anywhere else is not the terminal talking —
+   *  so the fake window has to be the source. */
+  const ready = (container: HTMLElement): void => {
+    const frame = container.querySelector("iframe") as HTMLIFrameElement;
+    const ev = new MessageEvent("message", {
+      data: { type: "tl-terminal-ready" },
+      origin: window.location.origin,
+    });
+    Object.defineProperty(ev, "source", { value: frame.contentWindow });
+    window.dispatchEvent(ev);
+  };
+
+  it("retries once, silently, when the page never reports it painted", () => {
+    render(() => <TerminalView session="qa-wd" active={true} />);
+    expect(frames.nav.length).toBe(1);
+    vi.advanceTimersByTime(21_000);
+    expect(frames.nav.length).toBe(2); // the silent retry
+    expect(document.querySelector(".tl-frame-failed")).toBeNull();
+  });
+
+  it("says so on the second miss, rather than waiting forever", () => {
+    render(() => <TerminalView session="qa-wd2" active={true} />);
+    vi.advanceTimersByTime(21_000); // miss 1 -> retry
+    vi.advanceTimersByTime(21_000); // miss 2 -> surface
+    expect(frames.nav.length).toBe(2);
+    expect(document.querySelector(".tl-frame-failed")).not.toBeNull();
+    expect(document.querySelector(".tl-frame-retry")).not.toBeNull();
+  });
+
+  it("stands down the moment the page reports it painted", () => {
+    const { container } = render(() => <TerminalView session="qa-wd3" active={true} />);
+    ready(container);
+    vi.advanceTimersByTime(60_000);
+    expect(frames.nav.length).toBe(1);
+    expect(document.querySelector(".tl-frame-failed")).toBeNull();
+  });
+});
+

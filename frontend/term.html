@@ -3009,6 +3009,44 @@ ${w.join(`
             window.tlDiagnostics = tlDiagnostics;
         } catch (e) { /* diagnostics must never cost the page its boot */ }
 
+        // >>> tl-term-ready
+        // THE TERMINAL'S OWN BOOT, leg by leg. `term.ready` has been in the
+        // event catalog since ADR-0008 with no caller, so the exact path this
+        // page exists for — open a session, get a terminal — had no timing at
+        // all: 0 records in 14 days. Legs rather than a total, because they fail
+        // differently and only one of them is large: the document is 464 KB on
+        // the wire with connect() at 99.2% of the file, the token is one round
+        // trip, the paint is xterm's.
+        //
+        // The lobby's proof of life is the EXISTING tl-terminal-ready message,
+        // posted from revealTerminal below: a truncated document renders a page
+        // that never fires `load` and reports nothing, so the frame's onLoad
+        // cannot be the signal, and the lobby arms its watchdog against that
+        // message instead. This records what the same moment COST.
+        let tlTokenMs = null;         // set when /token settles
+        let tlReadySent = false;
+        function tlNavLegs() {
+            try {
+                const nav = performance.getEntriesByType('navigation')[0];
+                if (!nav) return {};
+                return {
+                    navMs: nav.responseEnd || nav.duration || 0,
+                    ttfbMs: nav.responseStart || 0,
+                    bytes: nav.transferSize || 0,
+                    cached: nav.transferSize === 0,
+                };
+            } catch (e) { return {}; }
+        }
+        function tlTermReady() {
+            if (tlReadySent) return;
+            tlReadySent = true;
+            const legs = tlNavLegs();
+            legs.paintMs = Math.round(performance.now());
+            if (tlTokenMs !== null) legs.tokenMs = tlTokenMs;
+            try { if (window.tlDiagnostics) window.tlDiagnostics.onTermReady(legs); } catch (e) {}
+        }
+        // <<< tl-term-ready
+
         // --- usage events -----------------------------------------------------
         // tlConfirmBoot below reports whether a self-update landed (ADR-0007).
         // Those call sites predate this definition and threw a ReferenceError
@@ -10895,6 +10933,8 @@ ${w.join(`
             if (window.parent !== window) {
                 try { window.parent.postMessage({ type: 'tl-terminal-ready' }, location.origin); } catch (e) {}
             }
+            // Same moment, with the legs: what this attach cost, end to end.
+            tlTermReady();
         }
         function maybeRevealTerminal() {
             if (booted && firstFrameSeen) revealTerminal();
@@ -15410,10 +15450,12 @@ ${w.join(`
                 try { ctrl.abort(); } catch (e) { /* already settled */ }
             }, TOKEN_TIMEOUT_MS);
 
+            const tokenStartedAt = Date.now();
             fetch(tokenUrl, { credentials: 'same-origin', signal: ctrl.signal })
                 .then(r => r.json())
                 .then(tokenData => {
                     clearTimeout(tokenTimer);
+                    if (tlTokenMs === null) tlTokenMs = Date.now() - tokenStartedAt;
                     if (gen !== connGen) return; // superseded — a newer attempt owns the page
                     connAbort = null;
                     // Tab went hidden while the token was in flight — don't open
