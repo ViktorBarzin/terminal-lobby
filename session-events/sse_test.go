@@ -18,6 +18,11 @@ type fakeSource struct {
 	live        chan sessionio.Event
 	windowTurns int
 	windowFrom  int64
+
+	backfillBudget int
+	backfillBefore int64
+	statePrompts   int
+	cursor         int64
 }
 
 // windowTurns records what writeSSE asked for, so a test can prove a fresh open
@@ -38,6 +43,24 @@ func (f *fakeSource) Replay(from int64) []sessionio.Event {
 	return out
 }
 func (f *fakeSource) Subscribe() (<-chan sessionio.Event, func()) { return f.live, func() {} }
+
+// backfillBudget records what writeSSE asked for, so a test can prove a fresh
+// open is bounded in bytes and a resume is not backfilled at all.
+func (f *fakeSource) Backfill(before int64, budget int) sessionio.Backfill {
+	f.backfillBudget, f.backfillBefore = budget, before
+	var out []sessionio.Event
+	for _, e := range f.all {
+		if before == 0 || e.ID < before {
+			out = append(out, e)
+		}
+	}
+	return sessionio.Backfill{Events: out, Cursor: f.cursor}
+}
+
+func (f *fakeSource) State(maxPrompts int) sessionio.SessionState {
+	f.statePrompts = maxPrompts
+	return sessionio.SessionState{At: 42, Mode: "bypassPermissions", Queue: []string{"waiting"}, Prompts: []string{"hello"}}
+}
 
 func TestWriteSSEReplaysFromCursorHeartbeatsAndTailsLive(t *testing.T) {
 	src := &fakeSource{
@@ -150,5 +173,160 @@ func TestWriteSSEMarksTheEndOfTheOpeningWindow(t *testing.T) {
 	// It has to come AFTER the window it is marking the end of.
 	if strings.Index(body, "event: ready") < strings.LastIndex(body, `"id":2`) {
 		t.Errorf("the marker precedes the window it closes:\n%s", body)
+	}
+}
+
+// ---- the reverse open (2026-08-28) -----------------------------------------
+
+// read drives writeSSE to completion against a request whose context is already
+// cancelled, so the whole opening exchange is in the recorder and nothing tails.
+func read(t *testing.T, src Source, target string) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", target, nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	writeSSE(rec, req.WithContext(ctx), src, time.Hour)
+	return rec.Body.String()
+}
+
+// The point of the whole change: the newest event is the first thing on the
+// wire, so first paint stops depending on how much history follows it.
+func TestSSEReverseOpenSendsStateThenNewestFirst(t *testing.T) {
+	src := &fakeSource{all: []sessionio.Event{
+		{ID: 1, Kind: sessionio.KindUser, Body: "one"},
+		{ID: 2, Kind: sessionio.KindText, Body: "two"},
+		{ID: 3, Kind: sessionio.KindText, Body: "three"},
+	}, cursor: 0}
+	body := read(t, src, "/events/demo?rev=1")
+
+	if src.backfillBudget != OpenBackfillBytes || src.backfillBefore != 0 {
+		t.Fatalf("fresh open asked for budget=%d before=%d", src.backfillBudget, src.backfillBefore)
+	}
+	if src.statePrompts != StatePrompts {
+		t.Fatalf("state asked for %d prompts", src.statePrompts)
+	}
+	// The state frame leads: the composer is usable before any row exists.
+	if !strings.HasPrefix(body, "event: state\n") {
+		t.Fatalf("state frame does not lead:\n%s", body)
+	}
+	if !strings.Contains(body, `"mode":"bypassPermissions"`) {
+		t.Fatalf("state frame lost its payload:\n%s", body)
+	}
+	// Backfill frames, newest first.
+	three, two, one := strings.Index(body, `"body":"three"`), strings.Index(body, `"body":"two"`), strings.Index(body, `"body":"one"`)
+	if three < 0 || two < 0 || one < 0 {
+		t.Fatalf("not every event arrived:\n%s", body)
+	}
+	if !(three < two && two < one) {
+		t.Fatalf("backfill is not newest-first (three=%d two=%d one=%d):\n%s", three, two, one, body)
+	}
+	if n := strings.Count(body, "event: back\n"); n != 3 {
+		t.Fatalf("want 3 backfill frames, got %d:\n%s", n, body)
+	}
+	// ready closes the backfill and carries the cursor for the next step back.
+	ready := strings.Index(body, "event: ready")
+	if ready < one {
+		t.Fatalf("ready precedes the backfill it closes:\n%s", body)
+	}
+	if !strings.Contains(body[ready:], `"cursor":0`) {
+		t.Fatalf("ready did not carry a cursor:\n%s", body[ready:])
+	}
+}
+
+// Backfill frames must not set the SSE id: field. The browser would take the
+// OLDEST of them as Last-Event-ID and a reconnect would resume from history the
+// client already holds, replaying the whole session forward.
+func TestSSEBackfillFramesCarryNoEventID(t *testing.T) {
+	src := &fakeSource{all: []sessionio.Event{
+		{ID: 1, Kind: sessionio.KindText, Body: "one"},
+		{ID: 2, Kind: sessionio.KindText, Body: "two"},
+	}}
+	body := read(t, src, "/events/demo?rev=1")
+	if i := strings.Index(body, "\nid: "); i >= 0 {
+		t.Fatalf("a backfill frame set an SSE id:\n%s", body)
+	}
+	if strings.HasPrefix(body, "id: ") {
+		t.Fatalf("a backfill frame set an SSE id:\n%s", body)
+	}
+}
+
+// A reconnecting client holds its history and is asking for the gap. Handing it
+// a reverse backfill instead would drop everything it reconnected to collect.
+func TestSSEResumeIsNeverBackfilled(t *testing.T) {
+	src := &fakeSource{all: []sessionio.Event{
+		{ID: 1, Kind: sessionio.KindText, Body: "old"},
+		{ID: 9, Kind: sessionio.KindText, Body: "gap"},
+	}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/events/demo?rev=1", nil)
+	req.Header.Set("Last-Event-ID", "5")
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	writeSSE(rec, req.WithContext(ctx), src, time.Hour)
+	body := rec.Body.String()
+
+	if strings.Contains(body, "event: back") {
+		t.Fatalf("a resume was backfilled:\n%s", body)
+	}
+	if !strings.Contains(body, "id: 9") || !strings.Contains(body, `"body":"gap"`) {
+		t.Fatalf("the gap was not replayed:\n%s", body)
+	}
+	if strings.Contains(body, `"body":"old"`) {
+		t.Fatalf("the resume replayed below its cursor:\n%s", body)
+	}
+	// The state frame still rides along: a client that was disconnected may have
+	// missed a mode change or a queue operation entirely.
+	if !strings.HasPrefix(body, "event: state\n") {
+		t.Fatalf("a resume got no state frame:\n%s", body)
+	}
+	// ready must NOT claim a backfill cursor here — the client's own is correct.
+	ready := strings.Index(body, "event: ready")
+	if ready < 0 || strings.Contains(body[ready:], `"cursor"`) {
+		t.Fatalf("a resume's ready carried a cursor:\n%s", body[ready:])
+	}
+}
+
+// A client on the previously-deployed bundle keeps the contract it was built
+// against for as long as it is in the wild.
+func TestSSELegacyOpenIsUnchangedWithoutTheFlag(t *testing.T) {
+	src := &fakeSource{all: []sessionio.Event{
+		{ID: 1, Kind: sessionio.KindUser, Body: "one"},
+		{ID: 2, Kind: sessionio.KindText, Body: "two"},
+	}}
+	body := read(t, src, "/events/demo")
+	if strings.Contains(body, "event: back") || strings.Contains(body, "event: state") {
+		t.Fatalf("a legacy client was given the new frames:\n%s", body)
+	}
+	if src.windowTurns != OpenWindowTurns {
+		t.Fatalf("legacy open asked for turns=%d", src.windowTurns)
+	}
+	if one, two := strings.Index(body, `"body":"one"`), strings.Index(body, `"body":"two"`); one > two {
+		t.Fatalf("legacy replay is not ascending:\n%s", body)
+	}
+	if !strings.Contains(body, "event: ready\ndata: 2\n\n") {
+		t.Fatalf("legacy ready marker changed shape:\n%s", body)
+	}
+}
+
+// The live channel is subscribed before the backfill, so an event that landed
+// in between must not be delivered twice.
+func TestSSEReverseOpenDedupsAgainstTheLiveChannel(t *testing.T) {
+	live := make(chan sessionio.Event, 2)
+	live <- sessionio.Event{ID: 2, Kind: sessionio.KindText, Body: "two"}
+	live <- sessionio.Event{ID: 3, Kind: sessionio.KindText, Body: "three"}
+	close(live)
+	src := &fakeSource{all: []sessionio.Event{
+		{ID: 1, Kind: sessionio.KindText, Body: "one"},
+		{ID: 2, Kind: sessionio.KindText, Body: "two"},
+	}, live: live}
+	rec := httptest.NewRecorder()
+	writeSSE(rec, httptest.NewRequest("GET", "/events/demo?rev=1", nil), src, time.Hour)
+	body := rec.Body.String()
+	if n := strings.Count(body, `"body":"two"`); n != 1 {
+		t.Fatalf("event 2 delivered %d times:\n%s", n, body)
+	}
+	if !strings.Contains(body, "id: 3") {
+		t.Fatalf("the live event after the backfill was dropped:\n%s", body)
 	}
 }

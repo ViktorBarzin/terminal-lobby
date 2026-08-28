@@ -55,10 +55,15 @@ func main() {
 			return
 		}
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
-		events.Emit("events.stream_opened", osUser, telemetry.Attrs{
-			"tl.session": session, "tl.client": "api",
+		// The opening cost, recorded where it is actually known. Nothing
+		// measured this before: the reverse open exists to shrink it, and a
+		// change nobody can see the size of is a change nobody can verify.
+		writeSSE(w, r, fs, *hb, func(bytes, count int) {
+			events.Emit("events.stream_opened", osUser, telemetry.Attrs{
+				"tl.session": session, "tl.client": "api",
+				"tl.bytes": bytes, "tl.count": count,
+			})
 		})
-		writeSSE(w, r, fs, *hb)
 		events.Emit("events.stream_closed", osUser, telemetry.Attrs{
 			"tl.session": session, "tl.client": "api",
 		})
@@ -89,20 +94,15 @@ func main() {
 		})
 		w.WriteHeader(http.StatusNoContent)
 	})
-	// Older turns, one window at a time — the "Load earlier" step above a view
-	// that opened on the recent window (see OpenWindowTurns).
+	// One step further back — what a reader reaching the top of the transcript
+	// asks for (see OpenBackfillBytes).
 	web.HandleFunc("GET /earlier/{session}", func(w http.ResponseWriter, r *http.Request) {
 		fs, ok := rg.source(osUserFrom(r.Context()), r.PathValue("session"))
 		if !ok {
 			http.Error(w, "session not registered", http.StatusNotFound)
 			return
 		}
-		before, err := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-		if err != nil || before <= 0 {
-			http.Error(w, "bad before (need the id of the oldest event held)", http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, fs.Earlier(before, OpenWindowTurns))
+		writeEarlier(w, r, fs)
 	})
 	// One tool result in full, after MaxInlineResult capped it on the wire.
 	web.HandleFunc("GET /result/{session}/{toolId}", func(w http.ResponseWriter, r *http.Request) {

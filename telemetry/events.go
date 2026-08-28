@@ -125,8 +125,11 @@ var knownEvents = map[string]bool{
 	"claude.prompt_sent":   true,
 	"claude.cancelled":     true,
 	"claude.state_changed": true, // running/awaiting/done transition (tl.to)
-	"events.stream_opened": true, // SSE attach
+	"events.stream_opened": true, // SSE attach (tl.bytes, tl.count = the opening backfill)
 	"events.stream_closed": true,
+	// Text-view load, from the reverse-open design (2026-08-28).
+	"text.first_paint": true, // stream open -> first row on screen (tl.ms, tl.count)
+	"text.window_grew": true, // a step back through history (tl.bytes, tl.count, tl.reason)
 
 	// -- server-side health -------------------------------------------------
 	"api.error":    true, // an unexpected server failure (tl.kind)
