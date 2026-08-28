@@ -19,6 +19,12 @@
          copies the head through verbatim, so the placeholder survives the build
          and the deploy script substitutes it. -->
     <meta name="tl-asset" content="__TL_ASSET__" />
+    <!-- The TERMINAL page's fingerprint, stamped by deploy-v2.sh alongside this
+         page's own. It lets the terminal iframe go straight to the immutable
+         copy (/assets/term-<asset>.html, cached forever) with no request to
+         discover the name: both files ship in the same deploy, so the stamp is
+         correct by construction. Absent or unsubstituted -> /term.html. -->
+    <meta name="tl-term-asset" content="__TL_TERM_ASSET__" />
     <!-- Client diagnostics (docs/adr/0008-client-diagnostics.md). The same
          frontend/diag.js the two vanilla surfaces inline, substituted by
          deploy-v2.sh into the built page — one measurement core across all
@@ -77,6 +83,40 @@
           "--app-vh", window.innerHeight + "px");
       } catch (e) { /* pre-paint seed is best-effort */ }
     </script>
+    <style>
+      /* The shell paints before any chunk arrives, so its CSS is inline. Values
+         come from the same theme variables the pre-paint script sets, with hard
+         fallbacks for the first frame of a first-ever visit. */
+      #tl-shell {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        background: var(--bg-page, #0d1117);
+        pointer-events: none;
+      }
+      #tl-shell .tl-shell-sidebar {
+        width: 260px;
+        max-width: 38vw;
+        padding: 14px 10px;
+        border-right: 1px solid var(--border, #21262d);
+        background: var(--bg-sidebar, #131a22);
+      }
+      #tl-shell .tl-shell-main { flex: 1; padding: 14px 16px; }
+      #tl-shell .tl-shell-head,
+      #tl-shell .tl-shell-row,
+      #tl-shell .tl-shell-bar {
+        border-radius: 8px;
+        background: var(--bg-card, #1b2430);
+        opacity: 0.55;
+      }
+      #tl-shell .tl-shell-head { height: 26px; margin-bottom: 16px; }
+      #tl-shell .tl-shell-row { height: 40px; margin-bottom: 10px; }
+      #tl-shell .tl-shell-bar { height: 34px; }
+      @media (max-width: 640px) {
+        #tl-shell .tl-shell-sidebar { width: 100%; max-width: none; }
+        #tl-shell .tl-shell-main { display: none; }
+      }
+    </style>
   </head>
   <body>
     <script>
@@ -136,6 +176,27 @@
         }
       })();
     </script>
+    <!-- FIRST PAINT, before a byte of application code.
+         The app used to be one 4.7 MB document whose only mount point sat at
+         byte 4,740,657 — 99.92% in — so first paint landed 0.07 s AFTER the last
+         byte: 24.5 s of blank page under throttling. The bundle is split now, but
+         a shell still matters, because first paint should cost one packet rather
+         than one 158 KB chunk. The skeleton mirrors the real chrome (sidebar
+         frame, header bar) so the app replacing it is a fill-in rather than a
+         jump, and it is REMOVED by the app on mount, not merely covered. Themed
+         via the same body.theme-* variables the script above just applied, so it
+         is never the wrong palette. -->
+    <div id="tl-shell" aria-hidden="true">
+      <div class="tl-shell-sidebar">
+        <div class="tl-shell-head"></div>
+        <div class="tl-shell-row"></div>
+        <div class="tl-shell-row"></div>
+        <div class="tl-shell-row"></div>
+      </div>
+      <div class="tl-shell-main">
+        <div class="tl-shell-bar"></div>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/index.tsx"></script>
   </body>
