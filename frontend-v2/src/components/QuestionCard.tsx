@@ -32,6 +32,20 @@ export const QuestionCard: Component<{
   onChat: () => void;
   /** True while the keys are going in. */
   busy?: boolean;
+  /**
+   * The call cannot be answered from here: it is being read off the PANE, which
+   * shows one question of several at a time. What is being asked is worth
+   * saying — the reader is otherwise left with "Working…" while the terminal
+   * sits blocked — but answering half a call is how a wrong answer gets
+   * submitted, so the card reports and points at the Terminal instead.
+   */
+  partial?: boolean;
+  /** Every question's header, for a partial call. */
+  headers?: string[];
+  /** How many questions the call carries. */
+  count?: number;
+  /** Show the Terminal view. */
+  onTerminal?: () => void;
 }> = (props) => {
   const [at, setAt] = createSignal(0);
   const [drafts, setDrafts] = createSignal<DraftAnswer[]>([]);
@@ -75,6 +89,8 @@ export const QuestionCard: Component<{
     return true;
   };
   const ready = createMemo(() => complete(props.questions, drafts()));
+
+  if (props.partial) return <PartialCard {...props} />;
 
   return (
     <div class="tl-qcard" role="dialog" aria-label="Claude needs an answer">
@@ -178,6 +194,50 @@ export const QuestionCard: Component<{
             onClick={() => void props.onSend(drafts())}
           >
             {props.busy ? "Answering…" : "Send answers"}
+          </button>
+        </Show>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * What is being asked, when the pane is all there is to go on and it can only
+ * show part of the call.
+ *
+ * The transcript carries every question of a multi-question call; the pane
+ * carries the one on screen. So this says what the session is waiting for and
+ * hands over to the Terminal, and gives way to the full walk the moment the
+ * record lands.
+ */
+const PartialCard: Component<{
+  questions: Question[];
+  headers?: string[];
+  count?: number;
+  onTerminal?: () => void;
+  onChat: () => void;
+}> = (props) => {
+  const names = () =>
+    (props.headers ?? []).filter(Boolean).length > 0
+      ? props.headers!.filter(Boolean)
+      : props.questions.map((q) => q.header || q.question);
+  return (
+    <div class="tl-qcard" role="dialog" aria-label="Claude needs an answer">
+      <div class="tl-qcard-head">
+        <span class="tl-qcard-title">Claude needs answers</span>
+        <span class="tl-qcard-step">{props.count ?? names().length} questions</span>
+      </div>
+      <div class="tl-qcard-body">
+        <div class="tl-qcard-question">{props.questions[0]?.question}</div>
+        <div class="tl-qcard-hint">
+          The session is waiting on {names().join(", ")}. Only the question on
+          screen has reached here — answer them in the Terminal.
+        </div>
+      </div>
+      <div class="tl-qcard-actions">
+        <Show when={props.onTerminal}>
+          <button type="button" class="tl-qcard-send" onClick={() => props.onTerminal?.()}>
+            Open Terminal
           </button>
         </Show>
       </div>

@@ -1,6 +1,5 @@
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 import solid from "vite-plugin-solid";
-import { viteSingleFile } from "vite-plugin-singlefile";
 import type { ClientRequest } from "node:http";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -16,7 +15,7 @@ const BUILD_ID = process.env.TL_BUILD || "__TL_BUILD__";
 
 // term.html — the ttyd terminal-mode page the SPA's iframe attaches against
 // (config.TERMINAL_BASE = "/term.html"). It is deliberately NOT part of the
-// Solid bundle: viteSingleFile inlines ONLY the SPA entry (index.html), and the
+// Solid bundle: the SPA entry (index.html) emits hashed chunks under assets/, and the
 // terminal page pulls xterm from a CDN + speaks the ttyd binary WS protocol —
 // wholly outside this app. term.html ships as its OWN static dist asset (like
 // public/sw.js) so the iframe never recursively loads the SPA. Its canonical
@@ -168,14 +167,21 @@ const proxy: Record<string, ProxyOptions> = {
 export default defineConfig({
   plugins: [
     solid(),
-    // Inlines ALL JS + CSS into one dist/index.html. `useRecommendedBuildConfig`
-    // (default true) sets assetsInlineLimit=∞, cssCodeSplit=false and
-    // inlineDynamicImports=true, and `deleteInlinedFiles` (default) removes the
-    // emitted chunk/css files — so the build emits exactly ONE file.
-    // `removeViteModuleLoader` strips the now-unused Vite preloader.
-    viteSingleFile({ removeViteModuleLoader: true }),
-    // Emit dist/term.html (the terminal iframe page) as a separate static asset,
-    // after viteSingleFile has finished with the SPA entry.
+    // NO viteSingleFile. It inlined every chunk into one dist/index.html, which
+    // is how the lobby became a 4,744,477-byte document whose mount point sits
+    // at byte 4,740,657 — 99.92% in, so first paint landed 0.07 s AFTER the last
+    // byte (measured under throttling: 24.5 s). It also silently defeated the
+    // lazy loading this app already had: mermaid (3,565,102 B of source),
+    // CodeMirror with nine language packs and highlight.js are all behind
+    // `await import(...)` at their use sites, and inlineDynamicImports pulled
+    // every one of them into the initial payload anyway.
+    //
+    // Hashed chunks under /assets/ instead, served `immutable` by
+    // clipboard-upload (the terminal stack routes that path), so a repeat visit
+    // revalidates nothing and the heavy libraries are fetched only by the
+    // features that use them.
+    //
+    // Emit dist/term.html (the terminal iframe page) as a separate static asset.
     copyTermHtml(),
   ],
   define: {
@@ -184,7 +190,7 @@ export default defineConfig({
   // Several CJS transitive deps of the markdown/mermaid chain (debug, extend,
   // …) trip Vite's dev ESM interop ("no default export") unless pre-bundled.
   // Force esbuild to optimize them so `npm run dev` renders. Dev-only; the
-  // production single-file build already interops them correctly via Rollup.
+  // production build interops them correctly via Rollup.
   optimizeDeps: {
     include: ["debug", "extend"],
   },
@@ -209,6 +215,15 @@ export default defineConfig({
     // fails the build loud if a future xterm import tries to land in the bundle.
     rollupOptions: {
       external: [/^@xterm\//, /^xterm(\/|$)/],
+      output: {
+        // One flat directory of content-hashed names: that is exactly what
+        // clipboard-upload's /assets/ handler accepts (a single segment, no
+        // separators, so there is nothing to traverse with) and what lets every
+        // name be answered `immutable`.
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash].[ext]",
+      },
     },
   },
 });

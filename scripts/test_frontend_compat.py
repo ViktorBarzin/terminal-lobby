@@ -14,6 +14,7 @@ the other path in: a hand-edit, or a vendor bump done without the script.
 """
 from __future__ import annotations
 
+import glob
 import os
 import re
 import shutil
@@ -182,11 +183,43 @@ def _spa_candidates() -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def spa() -> tuple[str, str]:
+def spa() -> tuple[str, list[tuple[str, str]]]:
+    """The shipped SPA: its page AND the chunks the page loads.
+
+    The bundle stopped being inline on 2026-08-28, when viteSingleFile was
+    dropped so first paint no longer waits for 1.2 MB. That moved the shipped
+    JavaScript out of index.html and into assets/*.js — out from under this
+    guard, which is precisely how the check went blind the LAST time the lobby
+    moved (see the comment above). So the fixture follows the bytes: the page
+    plus every chunk beside it, concatenated, because what matters is whether a
+    fatal construct ships at all rather than which file carries it.
+    """
     for path in _spa_candidates():
-        if os.path.isfile(path):
-            with open(path, encoding="utf-8") as f:
-                return path, f.read()
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        # Every piece of JavaScript that ships, each kept SEPARATE: this page's
+        # inline scripts, then every chunk beside it. Not concatenated — the
+        # chunks are ES modules, and joining them into one script is invalid by
+        # construction (top-level imports, repeated declarations), which reads as
+        # a parse failure that has nothing to do with the baseline engine. They
+        # also load independently in the browser, so auditing them independently
+        # is the honest shape.
+        pieces: list[tuple[str, str]] = [
+            (f"{os.path.basename(path)} inline #{i}", code)
+            for i, code in enumerate(re.findall(r"<script[^>]*>(.*?)</script>", html, re.S))
+            if code.strip()
+        ]
+        for chunk in sorted(glob.glob(os.path.join(os.path.dirname(path), "assets", "*.js"))):
+            with open(chunk, encoding="utf-8") as f:
+                pieces.append((os.path.basename(chunk), f.read()))
+        if not pieces:
+            pytest.fail(
+                f"{path} carries no inline script and no assets/*.js beside it — "
+                "nothing was audited, which is how this check went blind before"
+            )
+        return path, pieces
     pytest.skip(
         "no built SPA found — run `npm run build` in frontend-v2, or point "
         "TL_SPA at the page to audit"
@@ -205,19 +238,25 @@ def spa() -> tuple[str, str]:
 # It is regex-checkable because a real one can only follow `{`, `}`, `;` or
 # whitespace — the lookbehind above encodes that, after a CSS class named
 # `tl-skill-static` matched the older \b form and blocked a deploy (2026-08-19).
-def test_spa_no_class_static_blocks(spa: tuple[str, str]) -> None:
-    path, html = spa
-    hits = FATAL_SYNTAX["class static block"].findall(html)
+def test_spa_no_class_static_blocks(spa: tuple[str, list[tuple[str, str]]]) -> None:
+    path, pieces = spa
+    hits = [
+        (label, len(FATAL_SYNTAX["class static block"].findall(code)))
+        for label, code in pieces
+        if FATAL_SYNTAX["class static block"].search(code)
+    ]
     assert not hits, (
-        f"the built SPA ({os.path.basename(path)}) contains {len(hits)} class static "
-        f"block(s), a parse-time SyntaxError on {BASELINE} (iPadOS 15.8). "
-        f"viteSingleFile ships the bundle as ONE script, so the whole lobby fails to "
-        f"start there — a blank page, not a degraded one. Set build.target to "
+        f"the built SPA ({os.path.basename(path)}) ships class static blocks in "
+        f"{hits} — a parse-time SyntaxError on {BASELINE} (iPadOS 15.8). The entry "
+        f"chunk failing to parse is a blank page rather than a degraded one; a lazy "
+        f"chunk failing takes the feature that imports it. Set build.target to "
         f"'{BASELINE}' in frontend-v2/vite.config.ts."
     )
 
 
-def test_spa_esbuild_agrees_nothing_needs_lowering(tmp_path, spa: tuple[str, str]) -> None:
+def test_spa_esbuild_agrees_nothing_needs_lowering(
+    tmp_path, spa: tuple[str, list[tuple[str, str]]]
+) -> None:
     """The authoritative check: a real parser, not the regexes above.
 
     Same differential the vendored block gets — `--target=safari15` on its own
@@ -228,25 +267,32 @@ def test_spa_esbuild_agrees_nothing_needs_lowering(tmp_path, spa: tuple[str, str
     if not esb:
         pytest.skip("esbuild not available (frontend-v2/node_modules or PATH)")
 
-    path, html = spa
-    code = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", html, re.S))
-    assert code.strip(), f"no inline script found in {path}"
+    path, pieces = spa
+    assert pieces, f"nothing to audit in {path}"
 
-    src = tmp_path / "spa.js"
-    src.write_text(code, encoding="utf-8")
-    outs = {}
-    for target in (BASELINE, "esnext"):
-        r = subprocess.run(
-            esb + [str(src), f"--target={target}", "--log-level=silent"],
-            capture_output=True, check=True,
-        )
-        outs[target] = r.stdout
+    # One piece at a time: each chunk is its own ES module and loads on its own,
+    # so each is parsed on its own. A lowering difference names the file, which is
+    # what makes the failure actionable.
+    lowered = []
+    for label, code in pieces:
+        src = tmp_path / "piece.js"
+        src.write_text(code, encoding="utf-8")
+        outs = {}
+        for target in (BASELINE, "esnext"):
+            r = subprocess.run(
+                esb + [str(src), f"--target={target}", "--log-level=silent"],
+                capture_output=True, check=True,
+            )
+            outs[target] = r.stdout
+        if outs[BASELINE] != outs["esnext"]:
+            lowered.append(label)
 
-    assert outs[BASELINE] == outs["esnext"], (
-        f"the built SPA contains syntax newer than {BASELINE}, so esbuild had to "
-        f"lower it — meaning the real engine on emo's iPad cannot parse the bundle "
-        f"and the lobby comes up blank. Set build.target to '{BASELINE}' in "
-        f"frontend-v2/vite.config.ts and rebuild."
+    assert not lowered, (
+        f"the built SPA ships syntax newer than {BASELINE} in {lowered}, so esbuild "
+        f"had to lower it — meaning the real engine on emo's iPad cannot parse those "
+        f"files. The entry chunk is a blank lobby; a lazy chunk is the feature that "
+        f"imports it. Set build.target to '{BASELINE}' in frontend-v2/vite.config.ts "
+        f"and rebuild."
     )
 
 

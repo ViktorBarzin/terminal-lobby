@@ -484,6 +484,11 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           // prompt left the queue tells the reader nothing the queue itself
           // does not already say by shrinking.
           if (meta === "unqueued" || meta === "dequeued" || meta === "queue-cleared") break;
+          // What the PANE says about a blocking question is state too, and the
+          // answer card is where it shows (askingFromPane). It is also the one
+          // reading that repeats: a dialog sits on screen for as long as nobody
+          // answers it, and a row per reading would bury the conversation.
+          if (meta === "asking") break;
           add({
             kind: "meta",
             key: `meta-${e.id}`,
@@ -808,6 +813,67 @@ function newestSubstantive(rows: TimelineRow[]): TimelineRow | null {
 export function pendingQuestion(rows: TimelineRow[]): QuestionRow | null {
   const newest = newestSubstantive(rows);
   return newest && newest.kind === "question" && newest.pending ? newest : null;
+}
+
+/**
+ * The blocking question the PANE is showing, if any — the newest `asking`
+ * reading the server took (session-events registry.watchPanes).
+ *
+ * This is a FALLBACK, and only for the window where Claude Code has not written
+ * the AskUserQuestion record yet. Measured 2026-08-28 over five consecutive
+ * calls in one session: two records landed within 3-8 s of the dialog appearing
+ * and two were not written until the question was ANSWERED, 112 s later in one
+ * case. Through that window the transcript says nothing while the terminal sits
+ * blocked, and the reader is left watching "Working…".
+ *
+ * The transcript still wins wherever it has the call: it carries every question
+ * of a multi-question call, the descriptions, and the multi-select flags exactly
+ * as the tool was called, while the pane can only show what is drawn on it.
+ */
+export function askingFromPane(events: Event[]): PaneAsking | null {
+  let latest = "";
+  // Only while nothing has happened since — the same rule the transcript's own
+  // questions follow (see pendingQuestion). The server withdraws a reading when
+  // the dialog goes, but a client that reconnects mid-flight, or a server a tick
+  // behind, must not dock a card over a question the session has moved past.
+  // Meta events are exempt: the mode markers and the watcher's own bookkeeping
+  // say nothing about whether the question is still on screen.
+  for (const e of events) {
+    if (e.kind === "meta") {
+      if (e.meta === "asking") latest = e.body ?? "";
+      continue;
+    }
+    latest = "";
+  }
+  if (!latest) return null;
+  const raw = parseJSON(latest) as
+    | {
+        questions?: unknown;
+        headers?: unknown;
+        count?: unknown;
+        partial?: unknown;
+      }
+    | null;
+  const qs = questions(raw);
+  if (qs.length === 0) return null;
+  return {
+    questions: qs,
+    headers: Array.isArray(raw?.headers) ? (raw!.headers as string[]) : [],
+    count: typeof raw?.count === "number" ? raw.count : qs.length,
+    partial: raw?.partial === true,
+  };
+}
+
+/** A blocking question as the pane shows it (see askingFromPane). */
+export interface PaneAsking {
+  questions: Question[];
+  /** Every question's header, when the call has more than one. */
+  headers: string[];
+  /** How many questions the call carries. */
+  count: number;
+  /** The pane cannot show them all — a multi-question call shows one at a
+   *  time, so it is reported rather than made answerable from here. */
+  partial: boolean;
 }
 
 /** The mode in force, from the most recent mode marker. */
