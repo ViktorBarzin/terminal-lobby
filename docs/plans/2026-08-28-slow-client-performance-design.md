@@ -141,10 +141,16 @@ preflight is unbounded, and **the document download has no watchdog at all**.
 4. **`no-store` becomes `no-cache`** on the reconnect self-check — same
    information, 1,676× fewer bytes.
 
-5. **SSE gets compressed and windowed.** `text/event-stream` joins the Traefik
-   compress middleware (a Terraform change in `infra`, auto-applied on push), and
-   `/events` accepts a `?turns=` parameter so a slow client opens with fewer
-   turns and pages back through the existing `/earlier`.
+5. **SSE gets compressed, and the transcript loads backwards.**
+   `text/event-stream` joins the Traefik compress middleware (a Terraform change
+   in `infra`, auto-applied on push). The windowing half grew into its own
+   design — [Text mode loads the transcript
+   backwards](2026-08-28-text-reverse-transcript-load-design.md) — which replaces
+   the `?turns=` parameter sketched here: the replay runs from the newest event
+   towards the oldest, bytes rather than turns bound it, and first paint stops
+   depending on window size. Measured while designing it: 93.6% of a 20-turn
+   opening window is tool payload that folds away unseen, and one turn can be
+   377 KB, so a turn was never a unit of size.
 
 6. **A diagnostics module measures, decides, and shows its work.**
    `navigator.connection` does not exist on iOS — 200 of 200 iPhone records lack
@@ -287,7 +293,7 @@ flowchart TD
 Each decision has a number to beat, measured the same way it was measured here:
 idle bytes/min from Loki (17.18 → target under 0.1); first paint under CDP
 throttling (24.5 s → target under 2 s); per-session terminal cost (502,420 B →
-300 B for sessions 2..N); SSE open (2.1 MB → ~400 KB); reconnect refetch
+300 B for sessions 2..N); SSE open (2.1 MB → ~100 KB); reconnect refetch
 (502,720 B → 300 B). Then the same five on the actual iPhone, because the
 research's one real-device number contradicted its CDP equivalent — and with
 `term.ready` finally emitting, that comparison becomes possible for the first
@@ -303,6 +309,6 @@ time.
 | `frontend/term.html` | `no-cache` refetch, font race, whoami abort, `term.ready` legs |
 | `frontend-v2/src/.../TerminalView.tsx` | Load watchdog, retry, surfaced reason |
 | `frontend-v2/src/diagnostics` (new) | Measure, classify, persist, apply, show |
-| `session-events/sse.go`, `main.go` | `?turns=` window |
+| `session-events/sse.go`, `main.go`, `sessionio/filesource.go` | Reverse, byte-bounded backfill + `state` frame (see the [linked design](2026-08-28-text-reverse-transcript-load-design.md)) |
 | `infra/stacks/…` (Traefik compress) | `text/event-stream` in `includedContentTypes` |
 | `scripts/deploy-v2.sh`, ADR-0007 | Multi-artefact fingerprint and rollback |

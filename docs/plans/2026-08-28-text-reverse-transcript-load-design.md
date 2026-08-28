@@ -1,0 +1,296 @@
+# Text mode loads the transcript backwards
+
+**Status:** Designed 2026-08-28, not yet built. **Author:** Viktor Barzin
+(decisions), Claude (research + design). **Scope:** `session-events/`,
+`sessionio/`, `frontend-v2/src/store/session.ts`,
+`frontend-v2/src/components/MessagesTimeline.tsx`. **Ships as decision 5 of**
+[the slow-client design](2026-08-28-slow-client-performance-design.md) — one
+landing, together with the bundle split and the SSE compression that multiplies
+this win.
+
+## What we set out to fix
+
+Opening a session in Text mode should put the last thing that happened on screen
+straight away. Today it puts the last *twenty turns* on the wire first, and shows
+nothing until all of them have landed.
+
+The design started from a belief worth checking: that the whole transcript
+replayed from the oldest message. The code already windows it — `sse.go:30` sets
+`OpenWindowTurns = 20` and `FileSource.ReplayWindow` clips a fresh open to the
+last twenty turns at a turn boundary, with `GET /earlier?before=<id>` paging back
+behind a button. The window has been there since 2026-08-16. What makes it feel
+like a load from the beginning is that the window is large, arrives as one
+burst, and gates the first paint (`store/session.ts:130`, released by
+`event: ready` or a 2,500 ms fallback).
+
+## What the measurements say
+
+Three real transcripts, normalized through `sessionio` — the same bytes the
+browser would receive:
+
+```stats
+3,164 KB | 20-turn open, session A
+96.3% | of those bytes fold away
+377 KB | one turn, session B
+930.7 KB | whole-session spine, session C
+```
+
+| | events | wire | turns | 1 turn | 3 turns | 20 turns |
+|---|---|---|---|---|---|---|
+| A `d061c5a8` (18.5 MB raw) | 4,314 | 4.78 MB | 23 | 72 KB | 304 KB | **3,164 KB** |
+| B `047b47c2` (9.8 MB raw) | 1,764 | 2.46 MB | 14 | 377 KB | 982 KB | **2,401 KB** |
+| C `8791a4d9` (25.5 MB raw) | 3,633 | 4.75 MB | 208 | 28 KB | 65 KB | **555 KB** |
+
+Three facts came out of this that shaped every decision below.
+
+**A turn is not a unit of size.** Per-turn cost across session A's 23 turns runs
+0, 2, 57, 70, 72, 74, … 410, 484, 1,092 KB. Three orders of magnitude, in one
+session. Any window measured in turns inherits that variance.
+
+**Most of what a window carries is never displayed.** In the 20-turn opening
+window, `tool_use` + `tool_result` are 93.6% / 96.3% / 83.6% of the bytes — and a
+settled turn renders as at most three rows (`timeline.logic.ts:564`): the
+prompt, the last assistant message, and one `Worked for Ns` fold holding
+everything else. Session A's window carries 1,164 tool calls, and twenty
+one-line summaries are what they render as.
+
+**The transcript's own "spine" is not a cheap substitute.** Replaying every
+`meta` / `user` / `turn_end` event from the start — the events three client-side
+derivations depend on — costs 86.4 KB (A, 1.85%), 58.4 KB (B, 2.43%), 69.3 KB
+(D, 2.33%) and **930.7 KB (C, 20.08%)**. Queued-prompt meta carries the prompt
+text in full, so the sessions with the most turns have the most expensive spine.
+
+Two more measurements worth carrying into the design. `/earlier` returns JSON
+and the Traefik `compress` middleware (`infra/stacks/terminal/main.tf:93`, empty
+spec = defaults) already gzips it; `/events` is `text/event-stream`, which it
+does not, so the opening window is the one path paying full price today. And
+sessions stay mounted for 24 h once visited (`store/keepalive.ts:44`, in-memory,
+so a reload clears them), each holding its own open stream — five sessions in a
+page's life is five opening windows.
+
+## The invariant
+
+> **The transcript loads from its newest end, and nothing is fetched before
+> something is on screen.**
+
+## Decisions
+
+1. **The replay runs backwards.** On a fresh open `/events` walks the log from
+   the newest event towards the oldest, so the first frames the client receives
+   are the last thing that happened. First paint stops depending on how much
+   follows it — roughly one round trip and the first few rows, whatever the
+   budget.
+
+2. **Bytes are the wire unit; a turn is a rendering concern.** `turns=` never
+   appears. A backfill stops on a byte budget wherever it happens to be, and a
+   turn may be split across two responses — which is what makes a snappy open
+   possible at all, since nothing bounds a single turn (377 KB measured, and no
+   ceiling). When a walk stops mid-turn it emits that turn's `user` event as
+   well, so a reader never sees an answer with no question above it.
+
+3. **Reverse arrival suits the fold model better than forward arrival.**
+   `turn_end` is a turn's last event, so walking backwards delivers it first: the
+   turn is known settled on arrival and folds immediately. Forward arrival does
+   the opposite — every work row renders while the turn looks unsettled, then
+   collapses when `turn_end` finally lands. That collapse is the flicker the
+   paint-hold was built to hide (measured 2026-08-18: row count flat at 14, content
+   2,194px → 594px → 851px, four changes to what sat mid-screen inside a second).
+   Reversing removes its cause rather than hiding it.
+
+4. **The opening backfill budget is 100 KB, and it no longer gates the paint.**
+   It buys roughly 1 turn of free scrollback on the heavy sessions and 4 on the
+   light one. Everything past it waits until somebody scrolls, because that is
+   the common case: most opens are read at the live end and closed.
+
+5. **A single response is capped at 400 KB.** `/earlier` fills to the caller's
+   budget or 400 KB, whichever comes first. The cap applies to every caller
+   including a cached older bundle, so no request can return an unbounded body.
+
+6. **Scrolling up pages automatically, in growing steps.** A step fires when the
+   scroll comes within about a screen of the top: 40 KB, then 80, 160, 400 KB,
+   resetting when scrolling stops. The existing top row becomes its status line —
+   `Loading earlier…`, a tappable retry if a fetch fails, `Start of session` when
+   the log is exhausted. Search-jump asks for 400 KB from its first step, since
+   it already knows it is reaching far, and `MAX_JUMP_STEPS` rises 40 → 200 now
+   that a step is bounded.
+
+7. **A computed `state` frame leads the stream.** Three client derivations read
+   whatever the held window happens to contain: `contextState`
+   (`context.logic.ts:27`), `queuedPrompts` (`timeline.logic.ts:843`) and
+   `promptHistory` (`timeline.logic.ts:876`). At 100 KB of backfill the context
+   meter would empty, the composer's ↑ history would hold two prompts, and a
+   `dequeued` event whose `queued` fell outside the window would `shift()` the
+   wrong head. So session-events computes them from the whole log it already
+   holds in memory and sends one named frame ahead of the backfill: permission
+   mode, the newest `/context` reading with its turns-ago, the live queue, the
+   last 20 prompts, and the event id it was computed at. Roughly 8 KB, flat in
+   session length. The client seeds from it and folds only events with a greater
+   id, which makes the queue correct rather than merely unbroken: computing it
+   from a window's midpoint depends on that window happening to contain the
+   matching `queued` event.
+
+8. **A turn arrives whole in fidelity, if not in one response.** No summary
+   stubs: when a turn's events are on the client they are the real events, so a
+   fold opens with no spinner and no new per-turn endpoint. Splitting a turn
+   across responses (decision 2) is about *when* bytes arrive, not *which*.
+
+9. **The chunked row mount stays exactly as it is.** It completes in two frames
+   at the new sizes, and it is still load-bearing for the one case that stays
+   large: unfolding a 467-step turn inserts 467 rows in a single task, which is
+   the 485 ms of main-thread blocking (worst task 336 ms) it was built for.
+
+10. **Instrumentation ships with it**, per decision 9 of the slow-client design.
+    `events.stream_opened` gains `tl.bytes` and `tl.turns`; a new
+    `text.window_grew` records bytes, turns and reason (`scroll` | `search`); and
+    a `text.first_paint` records the gap between stream open and the first row on
+    screen, which is the number this whole design exists to move and which
+    nothing measures today.
+
+11. **One landing**, inside the slow-client landing.
+
+## How it fits together
+
+The open, frame by frame:
+
+```mermaid
+sequenceDiagram
+    participant C as browser
+    participant S as session-events
+    participant L as FileSource.logbuf
+
+    C->>S: GET /events/{session}
+    S->>L: compute state over the WHOLE log
+    S-->>C: event: state  (mode, /context, queue, last 20 prompts, at id)
+    Note over C: composer + meter usable already
+
+    loop backwards from the newest event, until 100 KB
+        S-->>C: event: back  (one event, descending)
+    end
+    Note over C: first flush paints - bottom-anchored,<br/>newest rows land and never move
+
+    S-->>C: event: back  (split turn's user event, if the walk stopped mid-turn)
+    S-->>C: event: ready  (newest id, whether the log start was reached)
+
+    loop live
+        S-->>C: id: N / data: {...}   (ascending, sets Last-Event-ID)
+    end
+```
+
+What the reader experiences, before and after:
+
+```mermaid
+flowchart TD
+    subgraph TODAY
+        A1[open Text] --> A2[20-turn window<br/>0.5-3.2 MB, uncompressed SSE]
+        A2 --> A3[nothing on screen<br/>until 'ready' or 2500 ms]
+        A3 --> A4[paint the whole window]
+        A4 --> A5[scroll up: tap the button<br/>one 20-turn page, up to 2.4 MB]
+    end
+```
+
+```mermaid
+flowchart TD
+    subgraph AFTER
+        B1[open Text] --> B2[state frame ~8 KB]
+        B2 --> B3[newest events first]
+        B3 --> B4[paint on the first flush<br/>~1 RTT]
+        B4 --> B5[rest of 100 KB fills in above<br/>same connection, nothing moves]
+        B5 --> B6[go live]
+        B4 -.->|scroll near the top| B7[40 -> 80 -> 160 -> 400 KB<br/>automatic, growing]
+        B7 -.->|log exhausted| B8[Start of session]
+    end
+```
+
+Where the bytes go, at the same depth:
+
+```mermaid
+flowchart LR
+    W["20-turn window<br/>3,164 KB"] --> T["tool_use + tool_result<br/>2,960 KB - 93.6%"]
+    W --> V["prompt, answer, meta<br/>204 KB - 6.4%"]
+    T --> F["folded behind<br/>'Worked for Ns'"]
+    V --> R["what the reader sees"]
+```
+
+## What we deliberately did not build
+
+- **Fold summary stubs.** The server could send a settled turn as prompt +
+  answer + a fold stub and fetch its work on expansion, which is where the 93.6%
+  lives. Declined (decision 8): a fold that opens with a spinner is a worse
+  transcript, and reverse loading plus a byte budget reaches a snappy open
+  without it.
+- **A viewport-measured turn count.** Considered and dropped once the stream was
+  reversed: with the paint no longer waiting for the window, there is nothing
+  left for the measurement to decide.
+- **A top-up round trip after first paint.** Superseded by decision 1 — the
+  backfill and the paint share one connection, so filling the screen costs no
+  extra request.
+- **Replaying the whole spine.** Priced at 930.7 KB on the 208-turn session,
+  which is worse than the window it would be replacing.
+- **Background backfill of the whole session.** Contradicts the rule the design
+  is built on; scrolling up is cheap and interruptible instead.
+
+## Known limits and open questions
+
+> [!IMPORTANT]
+> **Four things now write `scrollTop`** — the bottom pin, `growMounted`'s
+> prepend compensation, `loadEarlier`'s anchor arithmetic, and the new
+> auto-page. Three of them fighting is what produced the measured lurch of
+> 2026-08-18 (scrollTop 307 → 1850 → 250 → 547 px, with what sat mid-screen
+> changing four times in the first second), fixed by computing the anchor
+> arithmetic around its own setter. Adding a fourth writer is the main hazard in
+> this change and wants a test that opens a session and asserts no visible row
+> moves during the backfill.
+
+- **A split turn renders with a partial fold.** Its count and duration grow as
+  the rest arrives. The row is keyed by turn, so it updates in place rather than
+  remounting, and the growth happens above the reader — but this has not been
+  seen on a real session yet.
+- **Backfill frames carry no SSE `id:`**, so `Last-Event-ID` is never set from
+  them and a resume stays forward-only. A connection dropped mid-backfill
+  therefore loses the un-received part, recovered through the same `/earlier`
+  path as a scroll-up. The client does hold the newest id from the very first
+  frame, which is a property forward replay never had.
+- **iOS momentum scrolling plus prepending** is the classic way an auto-paging
+  timeline fights its reader. `overflow-anchor: none` is already set
+  (`app.css:561`) and the compensation is anchor-based, but this has only been
+  measured on desktop.
+- **No real-device measurement.** This inherits the slow-client design's caveat:
+  every throttled figure is desktop Chromium under CDP, and the one
+  iPhone-derived number in that research contradicted its CDP equivalent.
+- **The 100 KB and 400 KB budgets are chosen, not derived.** They are priced
+  against 400 kbps / 300 ms RTT and should be revisited once `text.first_paint`
+  is emitting from real devices.
+- **`FileSource.logbuf` holds the whole session in memory**, which is what makes
+  the `state` frame cheap to compute. That was already true; this design leans on
+  it, so it is worth stating.
+
+## Verification
+
+| number | today | target |
+|---|---|---|
+| bytes before the first row is on screen | 0.5–3.2 MB | < 40 KB |
+| `text.first_paint`, slow link | not measured | < 1.5 s |
+| opening stream total | 766,661–2,098,703 B | ≤ 100 KB + ~8 KB |
+| one step back | up to 2.4 MB | ≤ 400 KB |
+| context meter present after open | window-dependent | always, when a reading exists |
+| ↑ history depth after open | ~20 prompts, window-dependent | 20, always |
+
+Measured the way the research measured: Loki for the wire sizes, CDP throttling
+at 400 kbps / 300 ms for the timings, then repeated on the actual iPhone — which
+`text.first_paint` makes possible for the first time.
+
+## Files
+
+| File | Change |
+|---|---|
+| `sessionio/filesource.go` | Backward byte-bounded walk replaces `window()`; split-turn `user` event; `state` computation over `logbuf` |
+| `sessionio/filesource_test.go` | Budget boundaries, split-turn prompt, state correctness against a mid-queue window |
+| `session-events/sse.go` | `event: state`, reversed `event: back` backfill, `ready` payload, no `id:` on backfill |
+| `session-events/main.go` | `/earlier` takes `?bytes=`, drops `?turns=`; `OpenWindowTurns` retired |
+| `frontend-v2/src/store/session.ts` | Prepend lane for backfill, seed from `state`, paint on first flush |
+| `frontend-v2/src/sse/client.ts` | Route `state` / `back` / `ready` / live |
+| `frontend-v2/src/components/MessagesTimeline.tsx` | Auto-page near the top, growing step, status row |
+| `frontend-v2/src/components/{context,timeline}.logic.ts` | Derivations seed from the state frame |
+| `frontend-v2/src/components/find.logic.ts` | `MAX_JUMP_STEPS` 40 → 200, 400 KB steps |
+| `frontend-v2/src/lib/config.ts` | `earlierUrl` takes a byte budget |
+| `telemetry` catalog | `text.first_paint`, `text.window_grew`, `tl.bytes` / `tl.turns` |
