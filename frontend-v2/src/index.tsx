@@ -51,4 +51,13 @@ if (typeof window !== "undefined") {
 const root = document.getElementById("root");
 if (root) {
   render(() => <App />, root);
+  // The pre-paint shell has done its job the moment the real chrome exists.
+  // REMOVED rather than hidden: it is position:fixed over the whole viewport, and
+  // a covered-but-present overlay would keep swallowing nothing while occupying
+  // the compositor. Deferred one frame so the app's first paint replaces it
+  // directly instead of flashing the page background in between.
+  const shell = document.getElementById("tl-shell");
+  if (shell) {
+    requestAnimationFrame(() => shell.remove());
+  }
 }

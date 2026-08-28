@@ -210,6 +210,10 @@ func assetDir() string {
 func withPublicAssets(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
+		if strings.HasPrefix(p, hashedAssetPrefix) {
+			handleHashedAsset(w, r)
+			return
+		}
 		if _, listed := publicAssets[p]; listed ||
 			strings.HasPrefix(p, "/fonts/") ||
 			strings.HasPrefix(p, "/icon-") ||
@@ -219,6 +223,75 @@ func withPublicAssets(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hashedAssetPrefix is where the lobby's content-hashed build output lives:
+// the SPA's JS/CSS chunks and an immutable copy of the terminal page. Routed
+// here by the terminal stack's IngressRoute.
+const hashedAssetPrefix = "/assets/"
+
+// hashedAssetName is what a name under /assets/ may look like: ONE flat segment
+// of the characters a bundler emits. No separators and no dots-only names, so
+// there is nothing to traverse with -- the whole point of validating rather
+// than cleaning is that a rejected name never reaches the filesystem.
+var hashedAssetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+// hashedAssetTypes maps the extensions a build emits to their content type.
+// Fixed table rather than mime.TypeByExtension: sniffing an attacker-chosen
+// name into an active type is the one thing this must not do.
+var hashedAssetTypes = map[string]string{
+	".js":    "application/javascript; charset=utf-8",
+	".mjs":   "application/javascript; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".html":  "text/html; charset=utf-8",
+	".json":  "application/json",
+	".woff2": "font/woff2",
+	".svg":   "image/svg+xml",
+	".png":   "image/png",
+	".wasm":  "application/wasm",
+}
+
+// handleHashedAsset serves one file out of assetDir()/assets.
+//
+// Every name here is content-hashed by the build, which is what lets the answer
+// be `immutable`: the bytes for a given name never change, so a client never
+// revalidates and a deploy changes the NAME instead of invalidating a path. That
+// is the difference between the terminal page costing a conditional round trip
+// per attach (and ~474 KB after every deploy, measured on a real device) and
+// costing nothing at all.
+func handleHashedAsset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, hashedAssetPrefix)
+	if !hashedAssetName.MatchString(name) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	ctype, ok := hashedAssetTypes[strings.ToLower(filepath.Ext(name))]
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	f, err := os.Open(filepath.Join(assetDir(), "assets", name))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("hashed asset open %s failed: %v", name, err)
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	http.ServeContent(w, r, "", info.ModTime(), f)
 }
 
 // handleAsset serves one whitelisted public file. GET/HEAD only (the infra
