@@ -83,8 +83,8 @@ page's life is five opening windows.
 
 2. **Bytes are the wire unit; a turn is a rendering concern.** `turns=` never
    appears. A backfill stops on a byte budget wherever it happens to be, and a
-   turn may be split across two responses — which is what makes a snappy open
-   possible at all, since nothing bounds a single turn (377 KB measured, and no
+   turn may be split across two responses — which is what allows a bounded
+   open, since nothing bounds a single turn (377 KB measured, with no
    ceiling). When a walk stops mid-turn it emits that turn's `user` event as
    well, so a reader never sees an answer with no question above it.
 
@@ -95,7 +95,7 @@ page's life is five opening windows.
    collapses when `turn_end` finally lands. That collapse is the flicker the
    paint-hold was built to hide (measured 2026-08-18: row count flat at 14, content
    2,194px → 594px → 851px, four changes to what sat mid-screen inside a second).
-   Reversing removes its cause rather than hiding it.
+   Reversing removes the condition that produces it.
 
 4. **The opening backfill budget is 100 KB, and it no longer gates the paint.**
    It buys roughly 1 turn of free scrollback on the heavy sessions and 4 on the
@@ -204,10 +204,11 @@ flowchart TD
 Where the bytes go, at the same depth:
 
 ```mermaid
-flowchart LR
-    W["20-turn window<br/>3,164 KB"] --> T["tool_use + tool_result<br/>2,960 KB - 93.6%"]
-    W --> V["prompt, answer, meta<br/>204 KB - 6.4%"]
-    T --> F["folded behind<br/>'Worked for Ns'"]
+flowchart TD
+    W["20-turn window<br/>3,164 KB"]
+    W --> T["tool_use + tool_result<br/>2,960 KB &middot; 93.6%"]
+    W --> V["prompt, answer, meta<br/>204 KB &middot; 6.4%"]
+    T --> F["folded behind one<br/>'Worked for Ns' row"]
     V --> R["what the reader sees"]
 ```
 
@@ -215,9 +216,9 @@ flowchart LR
 
 - **Fold summary stubs.** The server could send a settled turn as prompt +
   answer + a fold stub and fetch its work on expansion, which is where the 93.6%
-  lives. Declined (decision 8): a fold that opens with a spinner is a worse
-  transcript, and reverse loading plus a byte budget reaches a snappy open
-  without it.
+  lives. Declined (decision 8): that trades a visible wait when a fold
+  opens for the bytes saved, and reverse loading plus a byte budget reaches a
+  snappy open without making that trade.
 - **A viewport-measured turn count.** Considered and dropped once the stream was
   reversed: with the paint no longer waiting for the window, there is nothing
   left for the measurement to decide.
@@ -225,7 +226,7 @@ flowchart LR
   backfill and the paint share one connection, so filling the screen costs no
   extra request.
 - **Replaying the whole spine.** Priced at 930.7 KB on the 208-turn session,
-  which is worse than the window it would be replacing.
+  against the 555 KB window it would have replaced.
 - **Background backfill of the whole session.** Contradicts the rule the design
   is built on; scrolling up is cheap and interruptible instead.
 
@@ -234,7 +235,7 @@ flowchart LR
 > [!IMPORTANT]
 > **Four things now write `scrollTop`** — the bottom pin, `growMounted`'s
 > prepend compensation, `loadEarlier`'s anchor arithmetic, and the new
-> auto-page. Three of them fighting is what produced the measured lurch of
+> auto-page. Three of them writing against each other produced the measured lurch of
 > 2026-08-18 (scrollTop 307 → 1850 → 250 → 547 px, with what sat mid-screen
 > changing four times in the first second), fixed by computing the anchor
 > arithmetic around its own setter. Adding a fourth writer is the main hazard in
@@ -249,9 +250,10 @@ flowchart LR
   them and a resume stays forward-only. A connection dropped mid-backfill
   therefore loses the un-received part, recovered through the same `/earlier`
   path as a scroll-up. The client does hold the newest id from the very first
-  frame, which is a property forward replay never had.
-- **iOS momentum scrolling plus prepending** is the classic way an auto-paging
-  timeline fights its reader. `overflow-anchor: none` is already set
+  frame; under forward replay the newest id arrives last.
+- **iOS momentum scrolling plus prepending** is a known failure mode for an
+  auto-paging timeline: content inserted during a momentum scroll can move under
+  the reader. `overflow-anchor: none` is already set
   (`app.css:561`) and the compensation is anchor-based, but this has only been
   measured on desktop.
 - **No real-device measurement.** This inherits the slow-client design's caveat:
