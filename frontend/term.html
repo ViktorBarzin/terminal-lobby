@@ -52,8 +52,11 @@ __TL_DIAG__
          (404s harmlessly until the asset route lands; @font-face falls through
          to jsdelivr). crossorigin is mandatory even same-origin: font fetches
          are always CORS-anonymous, and a mismatch double-downloads. -->
-    <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/JetBrainsMono-Regular.woff2">
-    <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/JetBrainsMono-Bold.woff2">
+    <!-- The preloads are INJECTED (see tl-conn-tier below) rather than static.
+         They are 186,752 B, which is 3.7 s at 400 kbps, and the 2 s race below
+         therefore ALWAYS loses on a slow link: the bytes were paid and the
+         fallback metrics were used anyway. On a link already judged slow the
+         terminal renders in the system mono instead and neither cost is paid. -->
     <!-- SRI (Task 1.13): published non-.min paths ONLY — jsdelivr-generated
          .min variants are re-minified over time and explicitly SRI-unsafe;
          the npm-published files are immutable for a pinned version. Hashes
@@ -8897,6 +8900,54 @@ ${w.join(`
                 });
                 flowRow.appendChild(flow);
 
+                // The connection verdict, and the override for it. The lobby
+                // measures the link on each load (Navigation Timing: bytes and
+                // how long they took — navigator.connection does not exist on
+                // iOS) and applies the answer to the NEXT load, because the
+                // numbers only exist once the bytes are spent. "Auto" follows
+                // that; the other two pin it. Pinning slow gives up the webfont
+                // (186,752 B), the WebGL renderer, sixel images and the wide
+                // unicode tables, and opens the text view on fewer turns.
+                const tierRow = row('Connection');
+                const tierSeg = document.createElement('div');
+                tierSeg.className = 'sp-seg';
+                tierSeg.id = 'sp-conn-tier';
+                const TIER_PREF_KEY = 'tl:conn-tier-pref:v1';
+                const readTierPref = () => {
+                    try {
+                        const v = localStorage.getItem(TIER_PREF_KEY);
+                        return (v === 'full' || v === 'slow') ? v : 'auto';
+                    } catch (e) { return 'auto'; }
+                };
+                const paintTierSeg = () => {
+                    const cur = readTierPref();
+                    tierSeg.querySelectorAll('button').forEach((b) => {
+                        b.classList.toggle('on', b.dataset.val === cur);
+                    });
+                };
+                [['auto', 'Auto'], ['full', 'Full'], ['slow', 'Light']].forEach(([val, label]) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.dataset.val = val;
+                    b.textContent = label;
+                    b.title = val === 'auto'
+                        ? 'Measure the link and choose (default). The verdict applies from the next load.'
+                        : val === 'full'
+                            ? 'Always the full experience: webfont, WebGL renderer, inline images.'
+                            : 'Always the light experience: system font, canvas renderer, no inline images, shorter text-view history.';
+                    b.addEventListener('click', () => {
+                        try {
+                            if (val === 'auto') localStorage.removeItem(TIER_PREF_KEY);
+                            else localStorage.setItem(TIER_PREF_KEY, val);
+                        } catch (e) {}
+                        paintTierSeg();
+                        showToast('Applies to this device from the next load', 'info', 2500);
+                    });
+                    tierSeg.appendChild(b);
+                });
+                tierRow.appendChild(tierSeg);
+                paintTierSeg();
+
                 // Client diagnostics (ADR-0008) — same posture as the
                 // flow-control switch: a plain per-browser key, never roamed.
                 // The toggle IS the disclosure: diagnostics are on by default
@@ -10317,17 +10368,52 @@ ${w.join(`
         const textEncoder = new TextEncoder();
         const textDecoder = new TextDecoder();
 
+        // >>> tl-conn-tier
+        // WHICH EXPERIENCE THIS PAGE GIVES. The lobby measures the link (it has
+        // Navigation Timing; navigator.connection does not exist on iOS) and
+        // hands the verdict over on the frame, next to the attach args. A
+        // direct, unframed open has no lobby to ask and gets the full
+        // experience, which is the right default: an unmeasured link must never
+        // be assumed bad.
+        function readConnTier() {
+            try {
+                const el = window.frameElement;
+                if (el && el.dataset && el.dataset.tlTier === 'slow') return 'slow';
+            } catch (e) { /* cross-origin framing: no verdict available */ }
+            return 'full';
+        }
+        const TL_TIER = readConnTier();
+        const TL_WEBFONT = TL_TIER !== 'slow';
+        const TL_MONO_STACK = TL_WEBFONT
+            ? "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace"
+            : "ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Mono', 'Courier New', monospace";
+        if (TL_WEBFONT) {
+            // Same effect as the two static <link rel=preload> tags, one tick
+            // later — and skippable, which a parsed tag is not.
+            try {
+                ['/fonts/JetBrainsMono-Regular.woff2', '/fonts/JetBrainsMono-Bold.woff2'].forEach((href) => {
+                    const l = document.createElement('link');
+                    l.rel = 'preload'; l.as = 'font'; l.type = 'font/woff2';
+                    l.crossOrigin = 'anonymous'; l.href = href;
+                    document.head.appendChild(l);
+                });
+            } catch (e) { /* the @font-face rules still fetch it on first use */ }
+        }
+        // <<< tl-conn-tier
+
         // Fonts-ready boot gate: give the JetBrains Mono webfont up to 2s to
         // arrive before xterm measures cell metrics — measuring an OS fallback
         // first bakes wrong glyph metrics into the renderer until a refit.
         // Race-capped so a dead CDN can never hold the terminal hostage; the
         // loadingdone listener below repairs the late-arrival case.
-        try {
-            await Promise.race([
-                document.fonts.load('15px "JetBrains Mono"'),
-                new Promise(r => setTimeout(r, 2000))
-            ]);
-        } catch (e) { /* face unavailable → OS mono fallback, still functional */ }
+        if (TL_WEBFONT) {
+            try {
+                await Promise.race([
+                    document.fonts.load('15px "JetBrains Mono"'),
+                    new Promise(r => setTimeout(r, 2000))
+                ]);
+            } catch (e) { /* face unavailable → OS mono fallback, still functional */ }
+        }
 
         // Boot values for the user-tunable options (Task 2.6): validated
         // tl:prefs:v1 (roamed via /prefs), every field defaulting to the
@@ -10337,7 +10423,7 @@ ${w.join(`
         const term = new Terminal({
             cursorBlink: bootPrefs.cursorBlink,
             cursorStyle: bootPrefs.cursorStyle,
-            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
+            fontFamily: TL_MONO_STACK,
             // User-steppable via A−/A+ (Task 1.8): persisted in
             // tl-font-size, clamped 10-22, default 15 (the historical
             // hardcoded value).
@@ -10762,12 +10848,20 @@ ${w.join(`
             return { show: show, scheduleHide: scheduleHide, hideNow: hideNow };
         })();
 
-        try {
-            const webglAddon = new WebglAddon.WebglAddon();
-            webglAddon.onContextLoss(() => { webglAddon.dispose(); });
-            term.loadAddon(webglAddon);
-        } catch (e) {
-            console.warn('WebGL addon failed:', e);
+        // Skipped on a slow link (tl-conn-tier): the canvas renderer draws the
+        // same output, and this costs a GPU context plus ~69 KB of parse. It is
+        // also the addon currently throwing "WebGL2 not supported" 6 times per
+        // open on at least one real device.
+        if (TL_TIER !== 'slow') {
+            try {
+                const webglAddon = new WebglAddon.WebglAddon();
+                webglAddon.onContextLoss(() => { webglAddon.dispose(); });
+                term.loadAddon(webglAddon);
+            } catch (e) {
+                console.warn('WebGL addon failed:', e);
+            }
+        } else {
+            console.log('slow link: WebGL renderer skipped, canvas will draw');
         }
 
         // OSC 52 clipboard: lets tmux's own copy (with `set-clipboard on`) and
@@ -10818,9 +10912,15 @@ ${w.join(`
         // both `ImageAddon` and `ImageAddon.ImageAddon`; wrapped so a
         // load hiccup can't break the terminal.
         try {
-            const ImgAddon = (typeof ImageAddon !== 'undefined')
+            const ImgAddon = (TL_TIER !== 'slow') && (typeof ImageAddon !== 'undefined')
                 && (ImageAddon.ImageAddon || ImageAddon);
-            if (ImgAddon) {
+            if (TL_TIER === 'slow') {
+                // Sixel is the most expensive thing this terminal can be asked
+                // to render, and on a slow link the images themselves are the
+                // last thing worth the bytes: tmux draws its text placeholder
+                // instead (ADR-0004's fallback path, unchanged).
+                console.log('slow link: sixel image addon skipped');
+            } else if (ImgAddon) {
                 term.loadAddon(new ImgAddon());
                 console.log('image addon (sixel) loaded');
             } else {
@@ -10840,9 +10940,11 @@ ${w.join(`
         // `Unicode11Addon.Unicode11Addon`; wrapped so a load hiccup can't
         // break the terminal (falls back to the built-in version 6).
         try {
-            const U11Addon = (typeof Unicode11Addon !== 'undefined')
+            const U11Addon = (TL_TIER !== 'slow') && (typeof Unicode11Addon !== 'undefined')
                 && (Unicode11Addon.Unicode11Addon || Unicode11Addon);
-            if (U11Addon) {
+            if (TL_TIER === 'slow') {
+                console.log('slow link: unicode11 width tables skipped (built-in v6 stands in)');
+            } else if (U11Addon) {
                 term.loadAddon(new U11Addon());
                 term.unicode.activeVersion = '11';
                 console.log('unicode11 addon loaded (active version ' + term.unicode.activeVersion + ')');
