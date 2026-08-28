@@ -49,6 +49,11 @@ func main() {
 	// in the same tmux window — has to be noticed without waiting for a request
 	// that may never come while a browser sits on an open stream.
 	go rg.sweepEvery(ctx, SweepInterval)
+	// A blocking question is not always in the transcript while its dialog is up
+	// (see registry.watchPanes), so the pane of a watched, working session is
+	// read for one.
+	rg.panes = injector
+	go rg.watchPanesEvery(ctx, PaneWatchInterval)
 
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()

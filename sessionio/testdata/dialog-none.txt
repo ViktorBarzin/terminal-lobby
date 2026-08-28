@@ -1,0 +1,68 @@
+
+● Scope noted — all of it, and the ingress route first since the chunk split can't land safely without it.
+  Starting there, because CI needs time to apply it:
+
+  Ran 2 shell commands
+
+● One route can cover both if I put the immutable term page under /assets/ too — then there's a single prefix,
+  one handler, and no special-casing in Go. Writing the infra change first so CI can apply while I build the
+  rest:
+
+  Ran 1 shell command
+
+● git pull aborted — checking the infra repo's state before I touch anything further:
+
+  Ran 1 shell command
+
+● A shared clone with another session's uncommitted work across many stacks — I won't commit into that. Moving
+  my change to a worktree off origin/master:
+
+  Ran 4 shell commands
+
+● Patch applied and formatted (the git-crypt noise is an unrelated encrypted file). Committing just my file,
+  with the filter flags:
+
+  Pushed to master, ran 2 shell commands
+
+● Infra route pushed — CI will apply it. While that runs, the clipboard-upload handler that serves /assets/:
+
+  Ran 3 shell commands
+
+● Go side done, including traversal and extension rejection. Now the immutable terminal page — and rather than
+  a runtime fetch for the hash, the deploy stamps it into the lobby so the client reads it synchronously:
+
+  Searched for 1 pattern, ran 3 shell commands
+
+● Now the client side — read the stamp, use the immutable URL:
+
+  Ran 3 shell commands
+
+● Before deploying any client that requests /assets/, the route must be live — otherwise every attach 404s.
+  Checking CI:
+
+  Ran 1 shell command
+
+● Route is live (applied 2 min ago). Adding a runtime fallback so a broken /assets/ route degrades to one slow
+  attach rather than a dead terminal:
+
+● Adding the runtime fallback
+  ⎿  $ python3 - <<'PY'
+     import pathlib
+     p = pathlib.Path("frontend-v2/src/components/TerminalView.tsx")
+     s = p.read_text()
+     def sub(old, new, label):
+     global s
+     assert s.count(old) == 1, f"{label}: {s.count(old)}"
+     s = s.replace(old, new, 1)
+     sub('import { TERMINAL_PAGE_URL } from "../lib/config";',
+     'import { …
+
+✢ Ruminating… (10m 33s · ↓ 35.7k tokens)
+  ⎿  Tip: For a fast, cheap code review, try /code-review low. It runs the built-in skill at its lightest
+     effort level.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  /home/wizard/code/terminal-lobby/.worktrees/sesscache/frontend-v2 | 🤖 opus-5 | 🧠 74% | 💰 $216.11
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

@@ -98,3 +98,104 @@ describe("the docked answer card", () => {
     await waitFor(() => expect(v.card()).toBeNull());
   });
 });
+
+/**
+ * The pane fallback, for the window where Claude Code has not written the
+ * AskUserQuestion record yet (measured: 2 of 5 consecutive calls waited for the
+ * ANSWER to be written, 112 s in one case). Without it the reader watches
+ * "Working…" while the terminal sits on a dialog.
+ */
+describe("a question the transcript has not caught up with", () => {
+  const asking = (body: unknown): Event =>
+    ({
+      id: nextId++,
+      kind: "meta",
+      meta: "asking",
+      session: "qa",
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    }) as unknown as Event;
+
+  const paneDialog = {
+    questions: [
+      {
+        question: "Which way for Pane?",
+        header: "Pane",
+        multiSelect: false,
+        options: [{ label: "This one", description: "" }, { label: "That one", description: "" }],
+      },
+    ],
+    count: 1,
+  };
+
+  it("docks the card from the pane", async () => {
+    const v = mount([ask("tool-a", [question("Answered")]), answered("tool-a", ["This one"])]);
+    expect(v.card()).toBeNull();
+
+    v.setEvents((cur) => [...cur, asking(paneDialog)]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.container.textContent).toContain("Which way for Pane?");
+    expect(v.step()).toBe("question 1 of 1");
+  });
+
+  it("lets go when the pane stops showing it", async () => {
+    const v = mount([asking(paneDialog)]);
+    expect(v.card()).not.toBeNull();
+    v.setEvents((cur) => [...cur, asking("")]);
+    await waitFor(() => expect(v.card()).toBeNull());
+  });
+
+  it("prefers the transcript, which carries what the pane cannot show", async () => {
+    const v = mount([asking(paneDialog), ask("tool-b", [question("Recorded")])]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.container.textContent).toContain("Which way for Recorded?");
+    expect(v.container.textContent).not.toContain("Which way for Pane?");
+  });
+
+  it("keeps the walk when the transcript catches up with the same question", async () => {
+    const same = {
+      questions: [
+        {
+          question: "Which way for Handover?",
+          header: "Handover",
+          multiSelect: false,
+          options: [{ label: "This one", description: "" }, { label: "That one", description: "" }],
+        },
+      ],
+      count: 1,
+    };
+    const v = mount([asking(same)]);
+    v.optionByLabel("This one")!.click();
+    v.click(".tl-qcard-next");
+    expect(v.step()).toBe("review");
+
+    // The record lands. Same question, so the walk must survive it.
+    v.setEvents((cur) => [...cur, ask("tool-c", [{ ...same.questions[0] }])]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.step()).toBe("review");
+  });
+
+  it("reports a multi-question call rather than half-answering it", async () => {
+    const v = mount([
+      asking({
+        questions: [
+          {
+            question: "Pick fruits",
+            header: "",
+            multiSelect: true,
+            options: [{ label: "Apple", description: "" }],
+          },
+        ],
+        headers: ["Fruit", "Drink"],
+        count: 2,
+        partial: true,
+      }),
+    ]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.container.textContent).toContain("Fruit");
+    expect(v.container.textContent).toContain("Drink");
+    // No walk, no Send: the pane shows one question of two, and answering from
+    // half a call is how a wrong answer gets submitted.
+    expect(v.container.querySelector(".tl-qcard-send")).toBeNull();
+    expect(v.container.querySelector(".tl-qcard-next")).toBeNull();
+  });
+});
