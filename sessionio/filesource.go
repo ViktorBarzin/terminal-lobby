@@ -284,7 +284,17 @@ func (f *FileSource) WorthWatching() bool {
 	if len(f.subs) == 0 || len(f.logbuf) == 0 {
 		return false
 	}
-	return f.logbuf[len(f.logbuf)-1].Kind != KindTurnEnd
+	// Past the watcher's OWN events: withdrawing a reading appends one, and
+	// counting that as "something happened" would make every settled session
+	// look like it was working again — and be polled for the rest of its life.
+	for i := len(f.logbuf) - 1; i >= 0; i-- {
+		e := f.logbuf[i]
+		if e.Kind == KindMeta && e.Meta == MetaAsking {
+			continue
+		}
+		return e.Kind != KindTurnEnd
+	}
+	return false
 }
 
 // TailOnce consumes whatever the transcript has gained since the last read.
