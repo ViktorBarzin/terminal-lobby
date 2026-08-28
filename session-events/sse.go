@@ -1,11 +1,14 @@
 package main
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"terminal-lobby/sessionio"
@@ -29,6 +32,29 @@ type Source interface {
 // Older turns come from GET /earlier.
 const OpenWindowTurns = 20
 
+// MinOpenWindowTurns is the smallest window a client may ask for. Twenty turns
+// measured 766,661-2,098,703 bytes per open, 99.93% of it arriving inside 0.1s
+// as one backlog dump -- 42 seconds on a 400kbps link for the view that is
+// supposed to be the one that still works. A client that knows its link is slow
+// asks for fewer and pages back through /earlier; one turn is the floor, because
+// zero would open on nothing at all.
+const MinOpenWindowTurns = 1
+
+// parseOpenWindow reads ?turns= -- how many turns this client wants on open.
+// Absent, unparseable, or out of range means the default: a client never gets
+// MORE than OpenWindowTurns this way, only less.
+func parseOpenWindow(r *http.Request) int {
+	q := r.URL.Query().Get("turns")
+	if q == "" {
+		return OpenWindowTurns
+	}
+	n, err := strconv.Atoi(q)
+	if err != nil || n < MinOpenWindowTurns || n > OpenWindowTurns {
+		return OpenWindowTurns
+	}
+	return n
+}
+
 // parseLastEventID reads the resume cursor from the standard SSE `Last-Event-ID`
 // header, falling back to a `?lastEventId=` query param. 0 when absent/invalid.
 func parseLastEventID(r *http.Request) int64 {
@@ -49,6 +75,53 @@ func parseLastEventID(r *http.Request) int64 {
 // the resume cursor, then tails live, emitting a heartbeat comment every hb to
 // keep NAT/proxy timeouts from silently dropping the connection. Returns when the
 // request context is cancelled or the live channel closes.
+// sseSink writes SSE frames, optionally gzipped, and flushes both layers
+// together so a compressed stream still arrives event by event.
+//
+// The opening window is the whole reason this exists: it measured 766,661 to
+// 2,098,703 bytes per open, and gzip -6 over that same content gives 4.8-5.4x
+// (1,754,321 -> 366,490). The edge does not do it -- Traefik's compress
+// middleware deliberately leaves text/event-stream out of includedContentTypes,
+// and it is an ENTRYPOINT middleware, so opting SSE in there would change
+// streaming for every consumer in the cluster to fix one page. Doing it here
+// keeps the blast radius at this service, and puts the per-event flush under the
+// control of the code that knows where an event ends.
+type sseSink struct {
+	w  io.Writer
+	gz *gzip.Writer
+	fl http.Flusher
+}
+
+func (s *sseSink) printf(format string, a ...any) { fmt.Fprintf(s.w, format, a...) }
+func (s *sseSink) print(v string)                 { fmt.Fprint(s.w, v) }
+
+// flush pushes one event all the way out. gzip.Flush emits a sync marker, which
+// is what makes a compressed event stream readable as it arrives rather than at
+// the end; without it the browser would see nothing until the buffer filled.
+func (s *sseSink) flush() {
+	if s.gz != nil {
+		_ = s.gz.Flush()
+	}
+	s.fl.Flush()
+}
+
+func (s *sseSink) close() {
+	if s.gz != nil {
+		_ = s.gz.Close()
+	}
+}
+
+// acceptsGzip reports whether the client offered gzip. Identity is always
+// acceptable, so a client that did not ask simply gets the uncompressed stream.
+func acceptsGzip(r *http.Request) bool {
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		if strings.EqualFold(strings.TrimSpace(strings.SplitN(part, ";", 2)[0]), "gzip") {
+			return true
+		}
+	}
+	return false
+}
+
 func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Duration) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
@@ -58,6 +131,18 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
+	sink := &sseSink{w: w, fl: fl}
+	if acceptsGzip(r) {
+		// Vary matters: a cache must not hand a gzipped stream to a client that
+		// did not ask for one.
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+		gz := gzip.NewWriter(w)
+		sink.gz = gz
+		sink.w = gz
+		defer sink.close()
+	}
 	w.WriteHeader(http.StatusOK)
 
 	// Subscribe BEFORE replaying so no event appended in between is lost; then
@@ -66,8 +151,8 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 	defer cancel()
 
 	var lastID int64
-	for _, e := range src.ReplayWindow(parseLastEventID(r), OpenWindowTurns) {
-		fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, e.JSON())
+	for _, e := range src.ReplayWindow(parseLastEventID(r), parseOpenWindow(r)) {
+		sink.printf("id: %d\ndata: %s\n\n", e.ID, e.JSON())
 		lastID = e.ID
 	}
 	// The opening window is complete. A client cannot tell that from the events
@@ -75,8 +160,8 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 	// transcript and rebuilds it as the rest lands, or waits on a guess. This
 	// says so once, as a NAMED event, so it reaches a listener rather than the
 	// event array: nothing downstream has to learn to ignore it.
-	fmt.Fprintf(w, "event: ready\ndata: %d\n\n", lastID)
-	fl.Flush()
+	sink.printf("event: ready\ndata: %d\n\n", lastID)
+	sink.flush()
 
 	ticker := time.NewTicker(hb)
 	defer ticker.Stop()
@@ -91,12 +176,12 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 			if e.ID <= lastID {
 				continue // already delivered via replay
 			}
-			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, e.JSON())
+			sink.printf("id: %d\ndata: %s\n\n", e.ID, e.JSON())
 			lastID = e.ID
-			fl.Flush()
+			sink.flush()
 		case <-ticker.C:
-			fmt.Fprint(w, ": hb\n\n")
-			fl.Flush()
+			sink.print(": hb\n\n")
+			sink.flush()
 		}
 	}
 }

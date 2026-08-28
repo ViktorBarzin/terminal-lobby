@@ -15,6 +15,8 @@
  * `?api=<base>` overrides the origin for BOTH surfaces so a laptop can point at a
  * remote devvm; default is "" (same-origin).
  */
+
+import { effectiveTier, openWindowTurns } from "../diagnostics/connection";
 function readApiBase(): string {
   if (typeof window === "undefined") return "";
   try {
@@ -94,7 +96,16 @@ export function eventsUrl(session: string, lastEventId: number): string {
   // EventSource's native header only survives within one instance; because we
   // recreate the source on every manual reconnect, we carry the cursor in the
   // query so a resumed connection replays only events with id > lastEventId.
-  return withActAs(lastEventId > 0 ? `${u}?lastEventId=${lastEventId}` : u);
+  // ?turns= caps the OPENING window (a resume ignores it and asks for
+  // everything after its cursor). Twenty turns measured 766,661-2,098,703 bytes
+  // arriving as one backlog dump, up to 42 s at 400 kbps before the first useful
+  // row — on a link already judged slow, open on fewer and page back through
+  // /earlier, which already exists.
+  const params: string[] = [];
+  if (lastEventId > 0) params.push(`lastEventId=${lastEventId}`);
+  const turns = openWindowTurns(effectiveTier());
+  if (turns !== 20) params.push(`turns=${turns}`);
+  return withActAs(params.length > 0 ? `${u}?${params.join("&")}` : u);
 }
 
 /**
