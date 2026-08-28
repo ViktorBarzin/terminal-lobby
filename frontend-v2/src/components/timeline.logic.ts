@@ -44,7 +44,6 @@ export interface MessageRow {
   id: number;
   body: string;
   turnKey: string;
-  streaming: boolean;
   at?: number;
 }
 /** Claude's reasoning. Folded by default, kept in full on expand. */
@@ -321,7 +320,6 @@ export function deriveRows(events: Event[]): TimelineRow[] {
               id: e.id,
               body: e.body ?? "",
               turnKey: turn.key,
-              streaming: false,
               ...(e.at !== undefined ? { at: e.at } : {}),
             },
             e.sidechain,
@@ -608,14 +606,17 @@ export function deriveRows(events: Event[]): TimelineRow[] {
     }
 
     if (!settled) {
-      // Mark the last assistant message as streaming and append a working row.
-      for (let i = work.length - 1; i >= 0; i--) {
-        const r = work[i]!;
-        if (r.kind === "message") {
-          r.streaming = true;
-          break;
-        }
-      }
+      // A running turn gets ONE progress indicator: the working row below.
+      //
+      // The last message used to be marked `streaming` as well, which drew a
+      // blinking cursor after it. That cursor said something untrue — Claude
+      // Code writes one transcript record per COMPLETED block, so a message
+      // that has arrived is finished and will never grow — and it said it
+      // directly above the tool rows the message had just announced, blinking
+      // there for the rest of the turn. The working row already reports the
+      // turn honestly: the tool actually running, its elapsed time, the step
+      // count (Viktor, 2026-08-28).
+      //
       // What is happening RIGHT NOW: the newest tool call that has not come
       // back yet. The transcript records a tool_use the moment Claude emits it,
       // so this is specific without any second source (design decision 6).
