@@ -167,7 +167,11 @@ while read -r ref; do
     echo "deploy-v2.sh: index.html references assets/${ref}, which the build did not emit" >&2
     exit 1
   }
-done < <(grep -o 'assets/[A-Za-z0-9._-]\+' out/index.html | sed 's|^assets/||' | sort -u)
+# Only real references: src=/href= attributes. A looser match reads the prose
+# too — the comment beside the tl-term-asset meta mentions the shape of the
+# immutable terminal URL, and that is not a file anyone has to ship.
+done < <(grep -oE '(src|href)="/assets/[A-Za-z0-9._-]+"' out/index.html \
+           | sed -E 's|.*"/assets/([^"]+)"|\1|' | sort -u)
 grep -q '<meta name="tl-asset" content="'"${ASSET}"'"' out/index.html || {
   echo "deploy-v2.sh: tl-asset meta missing from the built SPA — vite dropped it" >&2
   exit 1
