@@ -106,7 +106,8 @@ export type MetaKind =
   | "skill"
   | "compact"
   | "hook-error"
-  | "context";
+  | "context"
+  | "asking";
 
 export interface TokenUsage {
   input_tokens?: number;

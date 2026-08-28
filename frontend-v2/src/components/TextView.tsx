@@ -1,6 +1,7 @@
-import { createMemo, createSignal, onMount, Show, type Component } from "solid-js";
+import { createEffect, createMemo, createSignal, Show, type Component } from "solid-js";
 import type { Event, PermissionDecision, SessionState } from "../types/events";
 import {
+  askingFromPane,
   currentMode,
   deriveRows,
   pendingQuestion,
@@ -81,6 +82,9 @@ export const TextView: Component<{
   inertReason?: string;
   /** receive the composer's sinks, for gestures that land outside it. */
   register?: (api: ComposerSinks) => void;
+  /** show the Terminal view — where a question the pane can only half show has
+   *  to be answered until the transcript catches up. */
+  onOpenTerminal?: () => void;
 }> = (props) => {
   // What the transcript says, plus what it has not caught up with.
   const shown = createMemo(() =>
@@ -132,7 +136,25 @@ export const TextView: Component<{
       if (seen !== was) return;
     }
   };
-  onMount(() => void readMode(""));
+  /**
+   * Mount-time work waits until this view is actually looked at.
+   *
+   * Both views stay mounted — the swap must not drop the terminal's WebSocket or
+   * this transcript's scroll position — so `onMount` fires even when the
+   * TERMINAL is what is on screen. Two round trips (/pane, and /commands below)
+   * were therefore spent on every terminal open by a view nobody was reading,
+   * which on a 300 ms link is most of a second before the terminal's own
+   * requests get a turn. A one-way latch: once shown, it never withholds again,
+   * so switching back and forth costs nothing extra.
+   */
+  const [everShown, setEverShown] = createSignal(false);
+  createEffect(() => {
+    if (props.onScreen !== false) setEverShown(true);
+  });
+  createEffect(() => {
+    if (!everShown()) return;
+    void readMode("");
+  });
 
   /**
    * The question the session is blocked on, if any.
@@ -145,15 +167,42 @@ export const TextView: Component<{
    * Claude Code takes a dialog down when something claims the turn and leaves
    * that call unresolved for good (timeline.logic `markSuperseded`).
    */
-  const blocking = createMemo(() => pendingQuestion(deriveRows(props.events)));
+  const recorded = createMemo(() => pendingQuestion(deriveRows(props.events)));
   /**
-   * WHICH question is being asked — the transcript's tool id, stable for as long
-   * as one call is on screen. deriveRows allocates fresh rows on every event, so
-   * this is what tells "the same question, re-derived" from "a different
-   * question", and it is what the card is keyed on below.
+   * What the PANE says, for the window where the record has not been written.
+   *
+   * Claude Code writes the AskUserQuestion record when it gets round to it:
+   * measured 2026-08-28 over five consecutive calls in one session, two landed
+   * within 3-8 s of the dialog appearing and two were not written until the
+   * question was ANSWERED — 112 s later in one case. Through that window the
+   * transcript says only "working" while the terminal sits blocked, so the
+   * server reads the pane and reports what it finds (session-events
+   * registry.watchPanes).
    */
-  const asking = createMemo(() => blocking()?.key ?? "");
+  const fromPane = createMemo(() => askingFromPane(props.events));
+  /** The transcript wins wherever it has the call: it carries every question of
+   *  a multi-question call, the descriptions and the multi-select flags exactly
+   *  as the tool was called, and the pane only what is drawn on it. */
+  const blocking = createMemo(() => recorded() ?? fromPane());
+  /** A call the pane can only show part of — reported, not answered from here. */
+  const partial = createMemo(() => !recorded() && (fromPane()?.partial ?? false));
   const asked = createMemo(() => blocking()?.questions ?? []);
+  /**
+   * WHICH question is being asked, keyed by its CONTENT rather than by the
+   * transcript's tool id.
+   *
+   * The card walks — question, then review — and that walk is state it holds, so
+   * a new question has to build a new card (a fresh single question opening on
+   * the review step of the previous one would show answers chosen for something
+   * nobody is being asked). Content is what makes that survive the HANDOVER: the
+   * same question arrives first from the pane and then from the transcript, and
+   * keying on the tool id would throw away a half-finished walk at that moment.
+   */
+  const asking = createMemo(() =>
+    asked()
+      .map((q) => `${q.header}|${q.question}|${q.options.map((o) => o.label).join(",")}`)
+      .join("~"),
+  );
   const [answering, setAnswering] = createSignal(false);
 
   // The composer's own handle, so "Chat about this" can hand the reader the
@@ -172,7 +221,7 @@ export const TextView: Component<{
    */
   const sendAnswers = async (answers: DraftAnswer[]): Promise<void> => {
     const q = blocking();
-    if (!q || !props.onKeys || answering()) return;
+    if (!q || partial() || !props.onKeys || answering()) return;
     const steps = planAnswer(q.questions, answers);
     if (steps.length === 0) return;
     setAnswering(true);
@@ -202,7 +251,10 @@ export const TextView: Component<{
 
   // The catalogue is files on disk; one read when the view opens is enough.
   const [commands, setCommands] = createSignal<SlashCommand[]>([]);
-  onMount(() => void props.onCommands?.().then(setCommands));
+  createEffect(() => {
+    if (!everShown()) return;
+    void props.onCommands?.().then(setCommands);
+  });
 
   const cycleMode = () => {
     // Shift+Tab in the CLI cycles the permission mode. One press, then the pane
@@ -249,6 +301,10 @@ export const TextView: Component<{
             onSend={sendAnswers}
             onChat={focusComposer}
             busy={answering()}
+            partial={partial()}
+            headers={fromPane()?.headers ?? []}
+            count={fromPane()?.count ?? asked().length}
+            onTerminal={props.onOpenTerminal}
           />
         )}
       </Show>
