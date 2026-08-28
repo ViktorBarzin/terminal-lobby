@@ -41,6 +41,12 @@ type liveSource struct {
 	done <-chan struct{}
 }
 
+// paneReader reads what a session's pane is showing. An interface so the pane
+// watcher is tested without tmux; production passes the Injector.
+type paneReader interface {
+	CapturePane(osUser, session string) (string, error)
+}
+
 // registry lazily manages per-user state and per-session sources.
 type registry struct {
 	mu       sync.Mutex
@@ -50,6 +56,9 @@ type registry struct {
 	homeBase string // "/home" (overridable for tests)
 	opts     sessionio.Options
 	self     string // the OS user this process runs as
+	// How the pane watcher reads a pane. nil disables it, which is what a test
+	// that does not care about panes gets.
+	panes paneReader
 }
 
 func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts sessionio.Options, self string) *registry {
@@ -184,7 +193,92 @@ func (rg *registry) sweepEvery(ctx context.Context, every time.Duration) {
 	}
 }
 
-// start builds a FileSource and runs its tail under a context of its own, so
+// PaneWatchInterval is how often a watched session's pane is read for a
+// blocking question the transcript has not caught up with.
+//
+// The window it covers is measured in minutes, so this could be slower; two
+// seconds keeps the card's arrival close enough to the dialog's that the two
+// views feel like one session.
+const PaneWatchInterval = 2 * time.Second
+
+// watchPanes reads the pane of every session worth watching and records what it
+// says about a blocking question.
+//
+// It exists because Claude Code does not always write the AskUserQuestion record
+// while its dialog is up: measured 2026-08-28, two of five consecutive calls in
+// one session were written only when the question was ANSWERED, one of them 112
+// seconds later. Through that window the Text view has nothing to render and the
+// reader sees "Working…" while the terminal sits on a dialog.
+//
+// FileSource.WorthWatching bounds the cost to sessions somebody has open and
+// whose turn is still running — a tmux subprocess per session per tick, and a
+// sudo one for another user's session, is not something to spend on a session
+// nobody is reading.
+func (rg *registry) watchPanes() {
+	if rg.panes == nil {
+		return
+	}
+	type target struct {
+		osUser  string
+		session string
+		fs      *sessionio.FileSource
+	}
+	var want []target
+
+	rg.mu.Lock()
+	users := make([]*userState, 0, len(rg.users))
+	for _, us := range rg.users {
+		users = append(users, us)
+	}
+	rg.mu.Unlock()
+
+	for _, us := range users {
+		us.mu.Lock()
+		for name, ls := range us.srcs {
+			if ls.fs.WorthWatching() {
+				want = append(want, target{us.osUser, name, ls.fs})
+				continue
+			}
+			// Not worth reading — but if the last reading said a dialog was up,
+			// that has to be withdrawn. Answering in the TERMINAL is what settles
+			// the turn, so a session stops being worth watching at the very
+			// moment its dialog goes away, and leaving the reading standing docks
+			// the answer card over a question that has been answered.
+			ls.fs.SetAsking("")
+		}
+		us.mu.Unlock()
+	}
+
+	for _, t := range want {
+		text, err := rg.panes.CapturePane(t.osUser, t.session)
+		if err != nil {
+			continue // the session may have gone; the sweep deals with that
+		}
+		body := ""
+		if d := sessionio.ParseDialog(text); d != nil {
+			if b, err := json.Marshal(d); err == nil {
+				body = string(b)
+			}
+		}
+		t.fs.SetAsking(body)
+	}
+}
+
+// watchPanesEvery runs watchPanes on a ticker until ctx is done.
+func (rg *registry) watchPanesEvery(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			rg.watchPanes()
+		}
+	}
+}
+
+// start builds a FileSource and runs its tail under a context of its own, so// start builds a FileSource and runs its tail under a context of its own, so
 // this one source can be stopped without taking down the rest of the process.
 //
 // The FIRST read of the transcript happens here, synchronously, before the
