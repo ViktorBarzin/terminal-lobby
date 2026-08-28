@@ -55,15 +55,21 @@ export function isLoaded(events: Event[], id: number): boolean {
 }
 
 /**
- * How many "Load earlier" steps to allow when reaching back to a hit.
+ * How many steps back to allow when reaching for a hit.
  *
- * A hit can sit thousands of events behind the window, and each step is a round
- * trip plus a render. The cap keeps a jump bounded; when it runs out the caller
- * says so rather than leaving the reader looking at the wrong place, because a
- * jump that silently lands somewhere else is worse than one that admits it
- * could not get there.
+ * A hit can sit thousands of events behind what the client holds, and each step
+ * is a round trip plus a render. The cap keeps a jump bounded; when it runs out
+ * the caller says so rather than leaving the reader looking at the wrong place,
+ * because a jump that silently lands somewhere else is worse than one that
+ * admits it could not get there.
+ *
+ * It was 40 while a step was a 20-turn window. Steps are now bounded in bytes
+ * (session-events MaxResponseBytes, 400 KB) so each one covers less of a heavy
+ * session — measured, a 20-turn page on the heaviest session here was 2.4 MB,
+ * or six such steps. Raising the cap keeps the reach a jump had while leaving
+ * every individual step bounded, which is the trade the byte cap was for.
  */
-export const MAX_JUMP_STEPS = 40;
+export const MAX_JUMP_STEPS = 200;
 
 /** What a jump attempt ended up doing, so the caller can say so plainly. */
 export type JumpOutcome = "found" | "exhausted" | "no-more-history";

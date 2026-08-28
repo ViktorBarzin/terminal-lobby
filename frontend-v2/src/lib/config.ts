@@ -94,7 +94,15 @@ export function eventsUrl(session: string, lastEventId: number): string {
   // EventSource's native header only survives within one instance; because we
   // recreate the source on every manual reconnect, we carry the cursor in the
   // query so a resumed connection replays only events with id > lastEventId.
-  return withActAs(lastEventId > 0 ? `${u}?lastEventId=${lastEventId}` : u);
+  //
+  // `rev=1` asks for the reverse open (2026-08-28): a state frame, then history
+  // from the newest event backwards, bounded in bytes. It is explicit rather
+  // than the default so that a server which has it and a browser which does not
+  // — the deploy window, when session-events restarts and every client
+  // reconnects on whatever bundle it still holds — keep the older contract
+  // between them instead of showing an empty transcript.
+  const q = lastEventId > 0 ? `?lastEventId=${lastEventId}&rev=1` : "?rev=1";
+  return withActAs(u + q);
 }
 
 /**
@@ -133,10 +141,22 @@ export function keysUrl(session: string): string {
   return withActAs(`${API_BASE}/keys/${encodeURIComponent(session)}`);
 }
 
-/** GET target for the window of turns before event `before` (session-events). */
-export function earlierUrl(session: string, before: number): string {
+/**
+ * GET target for one step further back through the transcript.
+ *
+ * `before` is the CURSOR the server handed back, not the oldest event held: a
+ * split turn's prompt rides along from below the cursor, so paging from the
+ * oldest event would skip everything between the two for good. `bytes` bounds
+ * the step — the server clamps it, and a request without it gets the
+ * pre-2026-08-28 turn-counted response.
+ */
+export function earlierUrl(
+  session: string,
+  before: number,
+  bytes: number,
+): string {
   return withActAs(
-    `${API_BASE}/earlier/${encodeURIComponent(session)}?before=${before}`,
+    `${API_BASE}/earlier/${encodeURIComponent(session)}?before=${before}&bytes=${bytes}`,
   );
 }
 
