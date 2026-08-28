@@ -15623,7 +15623,15 @@ ${w.join(`
                         // session was spawned — so the lobby may have re-cached an
                         // empty list. Invalidate again now that it's live so the
                         // parent lobby's next poll surfaces it promptly.
-                        fetch(WHOAMI_API, { credentials: 'same-origin' }).catch(() => {});
+                        //
+                        // FIRST connect only. On a RECONNECT the session
+                        // demonstrably already existed (reconnectAfterDrop
+                        // checked, and the lobby has been listing it all along),
+                        // so this was a second round trip per attach for nothing
+                        // — and a phone reconnects every ~175 s median.
+                        if (!isReconnect) {
+                            fetch(WHOAMI_API, { credentials: 'same-origin' }).catch(() => {});
+                        }
                         // Arm the one-shot pixel-size kick for THIS connection
                         // (fires on the first OUTPUT message — the only proof
                         // ttyd's process exists; earlier RESIZEs are dropped).
