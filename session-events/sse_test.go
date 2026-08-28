@@ -26,7 +26,11 @@ type fakeSource struct {
 	backfillBefore int64
 	statePrompts   int
 	cursor         int64
+	head           int64
+	epoch          string
 }
+
+func (f *fakeSource) Head() (int64, string) { return f.head, f.epoch }
 
 // windowTurns records what writeSSE asked for, so a test can prove a fresh open
 // is windowed and a resume is not.
@@ -416,5 +420,55 @@ func TestSSECompressesWhenTheClientOffersIt(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "event: ready") {
 		t.Fatalf("the ready marker did not survive compression")
+	}
+}
+
+// A resumed stream has to say WHICH log it is resuming.
+//
+// Ids are per-source and start again at 1 for a new transcript, so a client
+// holding id 5,000 that reconnects onto a rebuilt log asks for the gap above
+// 5,000 and is answered with nothing — which is exactly what "you are up to
+// date" looks like. It then shows the previous conversation for as long as the
+// tab stays open. The epoch names the log and the head id says how far it goes,
+// so the client can tell the two apart and resync instead of freezing.
+func TestResumeReadyNamesTheLogItIsResuming(t *testing.T) {
+	src := &fakeSource{
+		all:   []sessionio.Event{{ID: 1, Kind: sessionio.KindText, Body: "a"}},
+		live:  make(chan sessionio.Event),
+		head:  1,
+		epoch: "cafebabe",
+	}
+	body := read(t, src, "/events/demo?rev=1&lastEventId=5000")
+
+	at := strings.Index(body, "event: ready")
+	if at < 0 {
+		t.Fatalf("no ready frame:\n%s", body)
+	}
+	if !strings.Contains(body[at:], `"epoch":"cafebabe"`) {
+		t.Fatalf("a resume's ready did not name its log:\n%s", body[at:])
+	}
+	if !strings.Contains(body[at:], `"head":1`) {
+		t.Fatalf("a resume's ready did not carry the head id:\n%s", body[at:])
+	}
+	// The client's own cursor stays authoritative on a resume.
+	if strings.Contains(body[at:], `"cursor"`) {
+		t.Fatalf("a resume's ready carried a backfill cursor:\n%s", body[at:])
+	}
+}
+
+// The fresh open carries it too, so the client records which log its history
+// belongs to before anything can move underneath it.
+func TestFreshOpenReadyNamesTheLog(t *testing.T) {
+	src := &fakeSource{
+		all:   []sessionio.Event{{ID: 1, Kind: sessionio.KindText, Body: "a"}},
+		live:  make(chan sessionio.Event),
+		head:  1,
+		epoch: "cafebabe",
+	}
+	body := read(t, src, "/events/demo?rev=1")
+
+	at := strings.Index(body, "event: ready")
+	if at < 0 || !strings.Contains(body[at:], `"epoch":"cafebabe"`) {
+		t.Fatalf("the opening ready did not name its log:\n%s", body)
 	}
 }

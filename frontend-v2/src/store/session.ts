@@ -336,9 +336,47 @@ export function createSessionStore(
         : (setTimeout(flush, 0) as unknown as number);
   };
 
+  /**
+   * Let go of the transcript held: it belongs to a log this session is no
+   * longer reading.
+   *
+   * The client calls this when a stream comes back on a DIFFERENT log — a new
+   * Claude in the same tmux window writes a new transcript, and its ids start
+   * again at 1 (see SseClient.foreignLog). What is held is then a finished
+   * conversation while the events about to arrive belong to another one, and
+   * keeping both would interleave two sessions in one timeline. Keeping the
+   * old one alone is what this defect looked like from the outside: a
+   * transcript frozen mid-conversation, with an answer card still docked over a
+   * question that had been answered in the terminal minutes before.
+   *
+   * The opening hold is re-armed with it, so the view waits for the new window
+   * the way it waits for the first one rather than flashing an empty transcript.
+   */
+  const reset = (): void => {
+    pending = [];
+    backfill = [];
+    seen.clear();
+    cursor = 0;
+    step = 0;
+    batch(() => {
+      setEvents([]);
+      setPendingPrompts([]);
+      setSessionState(null);
+      setHasEarlier(true);
+    });
+    holding = true;
+    setOpening(true);
+    if (holdTimer) clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      holdTimer = undefined;
+      release();
+    }, OPEN_WINDOW_TIMEOUT_MS);
+  };
+
   const client = new SseClient({
     session,
     url: eventsUrl,
+    onReset: reset,
     onEvent: (e: Event) => {
       pending.push(e);
       scheduleFlush();

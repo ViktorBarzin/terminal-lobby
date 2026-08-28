@@ -45,6 +45,10 @@ func main() {
 
 	injector := sessionio.NewInjector(self.Username)
 	rg := newRegistry(ctx, *poll, *homeBase, injector, self.Username)
+	// A watched session whose transcript is swapped underneath it — a new Claude
+	// in the same tmux window — has to be noticed without waiting for a request
+	// that may never come while a browser sits on an open stream.
+	go rg.sweepEvery(ctx, SweepInterval)
 
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()

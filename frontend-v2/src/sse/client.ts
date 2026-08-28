@@ -119,6 +119,15 @@ export interface SseClientOptions {
   onBackfill?: (e: Event) => void;
   /** The session state frame, computed over the whole log (see SessionState). */
   onState?: (s: SessionState) => void;
+  /**
+   * The history held is not this session's any more — drop it.
+   *
+   * Called when the stream comes back on a log that is not the one this client
+   * was reading (see `ready`), just before it re-opens from the start. Without
+   * it the store would keep the previous conversation and paint the new one
+   * underneath it.
+   */
+  onReset?: () => void;
   onStatus?: (s: SseStatus) => void;
   /**
    * The opening window is complete — everything the server had when the stream
@@ -169,17 +178,19 @@ export class SseClient {
   private readonly o: Required<
     Omit<
       SseClientOptions,
-      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState"
+      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState" | "onReset"
     >
   > &
     Pick<
       SseClientOptions,
-      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState"
+      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState" | "onReset"
     >;
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private lastEventId = 0;
+  /** Which log the held ids belong to — the server's `ready.epoch`. */
+  private epoch = "";
   /** when the live source last proved itself; only read while one exists. */
   private lastActivityAt = 0;
   private stopped = false;
@@ -200,6 +211,7 @@ export class SseClient {
       onReady: opts.onReady,
       onBackfill: opts.onBackfill,
       onState: opts.onState,
+      onReset: opts.onReset,
       createSource: opts.createSource,
       probeStatus: opts.probeStatus ?? probeViaFetch,
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -277,13 +289,57 @@ export class SseClient {
       // A server on the older contract sends the last replayed id here, which
       // parses as a number rather than an object; either way the frame only
       // has to mean "the opening exchange is over".
-      this.o.onReady?.(parseJSON<ReadyFrame>(ev.data) ?? {});
+      const frame = parseJSON<ReadyFrame>(ev.data) ?? {};
+      if (this.foreignLog(frame)) {
+        this.resync();
+        return;
+      }
+      if (frame.epoch) this.epoch = frame.epoch;
+      this.o.onReady?.(frame);
     });
     es.onerror = () => this.onError();
   }
 
   private markAlive(): void {
     this.lastActivityAt = this.o.now();
+  }
+
+  /**
+   * Is the log that just opened a different one from the ids we hold?
+   *
+   * Ids are per-source. The same transcript replayed by a new process assigns
+   * the same ids, which is why a deploy costs a reader nothing — but a NEW
+   * transcript under the same session name (a new Claude in that tmux window, a
+   * stamp corrected after the fact) starts again at 1. A client holding id
+   * 5,000 then asks for the gap above 5,000 and is answered with nothing, which
+   * on the wire is indistinguishable from being up to date. It sat there
+   * showing the previous conversation for as long as the tab stayed open, and a
+   * question card docked at that moment stayed docked over a dialog that had
+   * been answered in the terminal minutes before.
+   *
+   * Two signals, and either is enough. The epoch names the transcript. The head
+   * id covers the narrower case where the same log comes back SHORTER than the
+   * cursor we hold — a restart does not replay the permission events that were
+   * injected into the id space, so the ids can move down under us.
+   *
+   * A server that sends neither is one from before this contract: nothing is
+   * claimed, and the client behaves exactly as it did.
+   */
+  private foreignLog(frame: ReadyFrame): boolean {
+    if (this.lastEventId === 0) return false; // nothing held, nothing to lose
+    if (frame.epoch && this.epoch && frame.epoch !== this.epoch) return true;
+    return typeof frame.head === "number" && frame.head > 0 && frame.head < this.lastEventId;
+  }
+
+  /** Drop everything held and open the session again from the start. */
+  private resync(): void {
+    this.epoch = "";
+    this.lastEventId = 0;
+    this.closeSource();
+    this.o.onReset?.();
+    this.attempt = 0;
+    this.clearTimer();
+    this.connect();
   }
 
   private onError(): void {
