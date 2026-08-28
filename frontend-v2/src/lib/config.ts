@@ -96,16 +96,24 @@ export function eventsUrl(session: string, lastEventId: number): string {
   // EventSource's native header only survives within one instance; because we
   // recreate the source on every manual reconnect, we carry the cursor in the
   // query so a resumed connection replays only events with id > lastEventId.
-  // ?turns= caps the OPENING window (a resume ignores it and asks for
-  // everything after its cursor). Twenty turns measured 766,661-2,098,703 bytes
-  // arriving as one backlog dump, up to 42 s at 400 kbps before the first useful
-  // row — on a link already judged slow, open on fewer and page back through
-  // /earlier, which already exists.
+  //
+  // `rev=1` asks for the reverse open (2026-08-28): a state frame, then history
+  // from the newest event backwards, bounded in bytes. It is explicit rather
+  // than the default so that a server which has it and a browser which does not
+  // — the deploy window, when session-events restarts and every client
+  // reconnects on whatever bundle it still holds — keep the older contract
+  // between them instead of showing an empty transcript.
+  //
+  // `turns=` rides along for the same reason, in the other direction: a server
+  // that does not know `rev` ignores it and serves the older turn-counted
+  // window, and this is where a slow tier still asks for a smaller one. A
+  // server that DOES know `rev` bounds the open in bytes and has no use for it.
   const params: string[] = [];
   if (lastEventId > 0) params.push(`lastEventId=${lastEventId}`);
+  params.push("rev=1");
   const turns = openWindowTurns(effectiveTier());
   if (turns !== 20) params.push(`turns=${turns}`);
-  return withActAs(params.length > 0 ? `${u}?${params.join("&")}` : u);
+  return withActAs(`${u}?${params.join("&")}`);
 }
 
 /**
@@ -144,10 +152,22 @@ export function keysUrl(session: string): string {
   return withActAs(`${API_BASE}/keys/${encodeURIComponent(session)}`);
 }
 
-/** GET target for the window of turns before event `before` (session-events). */
-export function earlierUrl(session: string, before: number): string {
+/**
+ * GET target for one step further back through the transcript.
+ *
+ * `before` is the CURSOR the server handed back, not the oldest event held: a
+ * split turn's prompt rides along from below the cursor, so paging from the
+ * oldest event would skip everything between the two for good. `bytes` bounds
+ * the step — the server clamps it, and a request without it gets the
+ * pre-2026-08-28 turn-counted response.
+ */
+export function earlierUrl(
+  session: string,
+  before: number,
+  bytes: number,
+): string {
   return withActAs(
-    `${API_BASE}/earlier/${encodeURIComponent(session)}?before=${before}`,
+    `${API_BASE}/earlier/${encodeURIComponent(session)}?before=${before}&bytes=${bytes}`,
   );
 }
 
