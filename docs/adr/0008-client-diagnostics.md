@@ -402,6 +402,27 @@ per reconnect. `/events/` is therefore excluded from the `transferSize` path;
 counting both would charge that stream twice. `/earlier/` is an ordinary fetch
 and is measured normally.
 
+### The mirror only applies where compression happened
+
+`terminal.viktorbarzin.me` is Cloudflare-proxied, and Cloudflare appears to
+strip `permessage-deflate`: CF-fronted `gateway.discord.gg` and `ws.ifelse.io`
+both answer 101 with no `Sec-WebSocket-Extensions` header, while non-CF
+`stream.binance.com` returns one to the same probe. A client on the LAN resolves
+past Cloudflare by split-horizon DNS and keeps compression; a client on mobile
+data may not.
+
+That is the wrong way round for this feature, which exists for the metered
+connection. Modelling compression that did not happen would under-report the
+terminal bucket by more than a factor of ten, on exactly the link the number
+is meant to describe.
+
+So the client reads `WebSocket.extensions` at open and decides from it. Where
+`permessage-deflate` was negotiated the mirror runs; where it was not, the bytes
+the browser received are the bytes that crossed the link and are counted
+directly. `tl.net.term_deflate` records which, per device — which also answers
+end-to-end, from the authed production path, the question the original probe
+could only answer by inference.
+
 ### Two failure modes the mirror avoids
 
 **Rotation must not drop frames.** A mirror with no writer discards everything
