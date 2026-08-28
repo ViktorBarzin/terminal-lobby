@@ -461,7 +461,10 @@ export const MessagesTimeline: Component<{
     const el = scroller;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX;
   };
-  const onScroll = () => setPinned(atBottom());
+  const onScroll = () => {
+    setPinned(atBottom());
+    maybeLoadEarlier();
+  };
 
   /**
    * Scroll to one event and flash its row — how a search hit is opened.
@@ -527,14 +530,82 @@ export const MessagesTimeline: Component<{
     const el = scroller;
     const anchor = el?.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling)");
     const before = anchor?.offsetTop ?? 0;
-    await props.onLoadEarlier();
-    // Keep the reader where they were — the same anchor-based compensation the
-    // background mount uses, for the same reason.
-    if (el && anchor) {
-      el.scrollTop = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
+    try {
+      await props.onLoadEarlier();
+    } finally {
+      // Keep the reader where they were — the same anchor-based compensation the
+      // background mount uses, for the same reason. It runs even on a failed
+      // load: a rejected fetch that left this flag set would disable reaching
+      // back for the rest of the session.
+      if (el && anchor) {
+        const compensated = scrollTopAfterPrepend(el.scrollTop, before, anchor.offsetTop);
+        // Writing scrollTop fires a scroll event of its own. Left unmarked, that
+        // event asks for another window, and if the one that just arrived is
+        // shorter than the trigger zone it asks again, and again — pulling the
+        // whole session while the reader sits still. Only a scroll the READER
+        // caused is a request for more.
+        //
+        // Marked only when the write actually MOVES anything: nothing was
+        // inserted above (a failed load, an empty window) means no event of ours
+        // is coming, and claiming one would swallow the reader's next scroll.
+        if (compensated !== el.scrollTop) {
+          selfScrollTop = compensated;
+          el.scrollTop = compensated;
+        }
+      }
+      setLoadingEarlier(false);
     }
-    setLoadingEarlier(false);
   };
+
+  /**
+   * Reaching the top IS the request for more. No button: scrolling up to read
+   * back through a conversation is one continuous gesture, and interrupting it
+   * to aim at a link is the part that felt wrong.
+   *
+   * Fires a window early (EARLIER_TRIGGER_PX) so the rows are usually already
+   * there by the time the reader arrives at them. It cannot run away, and that
+   * is the anchor compensation's doing rather than a guard here: the reader is
+   * pushed down by exactly the height that was inserted above, so the top of the
+   * transcript ends up a whole window further away and the trigger zone is left
+   * behind. One load at a time via loadingEarlier; nothing at all once the
+   * server says there is no more (hasEarlier).
+   */
+  const EARLIER_TRIGGER_PX = 400;
+  /** The scrollTop this component wrote itself, so the resulting scroll event is
+   *  not mistaken for the reader asking for more. */
+  let selfScrollTop: number | null = null;
+  const maybeLoadEarlier = (): void => {
+    const el = scroller;
+    if (!el) return;
+    if (selfScrollTop !== null && el.scrollTop === selfScrollTop) {
+      selfScrollTop = null; // our own compensation, not a gesture
+      return;
+    }
+    selfScrollTop = null;
+    if (!props.hasEarlier || loadingEarlier()) return;
+    if (el.scrollTop > EARLIER_TRIGGER_PX) return;
+    void loadEarlier();
+  };
+
+  /**
+   * A transcript that does not fill its own viewport has no scrollbar, so no
+   * scroll event will ever ask for the rest of it. Fill it until it either
+   * scrolls or runs out — otherwise a short window of short turns would strand
+   * the reader with no way back and nothing to drag.
+   */
+  createEffect(() => {
+    derived();
+    props.hasEarlier;
+    if (!props.hasEarlier || loadingEarlier() || filling()) return;
+    const el = scroller;
+    if (!el) return;
+    // An UNMEASURED container reads 0/0, which is not the same as "too short to
+    // scroll" — mistaking one for the other fires a load on every open, before
+    // the reader has done anything at all.
+    if (el.clientHeight <= 0) return;
+    if (el.scrollHeight > el.clientHeight + 8) return; // scrollable: the gesture takes over
+    void loadEarlier();
+  });
 
   return (
     <div
@@ -546,10 +617,11 @@ export const MessagesTimeline: Component<{
       onClick={onClick}
     >
       <Show when={props.hasEarlier}>
-        <div class="tl-row tl-row-earlier">
-          <button type="button" class="tl-linkbtn" onClick={loadEarlier} disabled={loadingEarlier()}>
-            {loadingEarlier() ? "Loading…" : "Load earlier turns"}
-          </button>
+        {/* Not a control: reaching it is what loads the next window. It keeps a
+            height so there is something to scroll INTO above the oldest row,
+            and so the reader can tell the transcript continues upward. */}
+        <div class="tl-row tl-row-earlier" aria-live="polite">
+          {loadingEarlier() ? "Loading earlier turns…" : "Scroll up for earlier turns"}
         </div>
       </Show>
       <Show
