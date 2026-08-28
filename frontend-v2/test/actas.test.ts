@@ -171,8 +171,8 @@ describe("config wiring under ?as=bob", () => {
     // session-events refuses ?as= with a 501 rather than serving the caller's
     // own transcripts — but it must still be ASKED, so the refusal is what the
     // Text view surfaces instead of silently wrong data.
-    expect(c.eventsUrl("main", 0)).toBe("/events/main?as=bob");
-    expect(c.eventsUrl("main", 7)).toBe("/events/main?lastEventId=7&as=bob");
+    expect(c.eventsUrl("main", 0)).toBe("/events/main?rev=1&as=bob");
+    expect(c.eventsUrl("main", 7)).toBe("/events/main?lastEventId=7&rev=1&as=bob");
     expect(c.promptUrl("main")).toBe("/prompt/main?as=bob");
     expect(c.cancelUrl("main")).toBe("/cancel/main?as=bob");
   });
@@ -182,7 +182,7 @@ describe("config wiring under ?as=bob", () => {
     expect(c.ACT_AS).toBe("");
     expect(c.apiUrl("/sessions")).toBe("/api/sessions/sessions");
     expect(c.fileReadUrl("/home/x/f")).toBe("/files/read?path=%2Fhome%2Fx%2Ff");
-    expect(c.eventsUrl("main", 0)).toBe("/events/main");
+    expect(c.eventsUrl("main", 0)).toBe("/events/main?rev=1");
     expect(c.clipboardListUrl("main")).toBe("/clipboard/list?session=main");
   });
 
