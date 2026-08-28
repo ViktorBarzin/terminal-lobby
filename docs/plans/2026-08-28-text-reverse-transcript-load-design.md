@@ -1,6 +1,6 @@
 # Text mode loads the transcript backwards
 
-**Status:** Designed 2026-08-28, not yet built. **Author:** Viktor Barzin
+**Status:** Shipped 2026-08-28 (`15e054f`), deployed and measured on live. **Author:** Viktor Barzin
 (decisions), Claude (research + design). **Scope:** `session-events/`,
 `sessionio/`, `frontend-v2/src/store/session.ts`,
 `frontend-v2/src/components/MessagesTimeline.tsx`. **Ships as decision 5 of**
@@ -63,7 +63,12 @@ text in full, so the sessions with the most turns have the most expensive spine.
 Two more measurements worth carrying into the design. `/earlier` returns JSON
 and the Traefik `compress` middleware (`infra/stacks/terminal/main.tf:93`, empty
 spec = defaults) already gzips it; `/events` is `text/event-stream`, which it
-does not, so the opening window is the one path paying full price today. And
+does not, so the opening window was the one path paying full price. That half
+was solved differently and better while this was being built — session-events
+now gzips SSE **itself**, because Traefik's compress is an entrypoint middleware
+and opting `text/event-stream` in there would change streaming for every
+consumer in the cluster to fix one page. The reverse backfill gets it for free.
+And
 sessions stay mounted for 24 h once visited (`store/keepalive.ts:44`, in-memory,
 so a reload clears them), each holding its own open stream — five sessions in a
 page's life is five opening windows.
@@ -266,20 +271,48 @@ flowchart TD
   the `state` frame cheap to compute. That was already true; this design leans on
   it, so it is worth stating.
 
-## Verification
+## Verification — what it actually did
 
-| number | today | target |
-|---|---|---|
-| bytes before the first row is on screen | 0.5–3.2 MB | < 40 KB |
-| `text.first_paint`, slow link | not measured | < 1.5 s |
-| opening stream total | 766,661–2,098,703 B | ≤ 100 KB + ~8 KB |
-| one step back | up to 2.4 MB | ≤ 400 KB |
-| context meter present after open | window-dependent | always, when a reading exists |
-| ↑ history depth after open | ~20 prompts, window-dependent | 20, always |
+Measured on the deployed services against two live sessions, `design-t3`
+(1,342 events) and `performance`:
 
-Measured the way the research measured: Loki for the wire sizes, CDP throttling
-at 400 kbps / 300 ms for the timings, then repeated on the actual iPhone — which
-`text.first_paint` makes possible for the first time.
+| | before | after | after, gzipped |
+|---|---|---|---|
+| `design-t3` open | 1,865,660 B | 107,274 B | **22,136 B** |
+| `performance` open | 1,802,897 B | 106,545 B | **18,474 B** |
+
+That is **17× fewer bytes on the wire uncompressed, 84–98× with the in-service
+gzip** that landed alongside this. A short session (`health`, 560 B) grows
+slightly — 650 B raw — because the state frame is a fixed cost; gzipped it is
+426 B, still smaller.
+
+In a real browser against the deployed build, on `design-t3`:
+
+```stats
+39.4 ms | to the first frame
+121.3 ms | to the first row on screen
+1 | state frame, 160 B
+160 | history frames, 102,557 B
+```
+
+Contract checks, all on live:
+
+- Frames arrive `state` → 160 × `back` → `ready`, with **0** `id:` lines before
+  `ready`, so `Last-Event-ID` is never set from the backfill.
+- The backfill is strictly descending: 0 out-of-order across 159 comparisons.
+- Paging walked the whole 1,183-event session back in **39 steps with zero
+  gaps** — every id delivered exactly once, ending at `cursor: 0`.
+- A split turn's prompt rode along as designed: a step with `cursor: 1146`
+  carried event 387, `kind: user`, from below it.
+- The step ladder climbed as designed under a reader's scroll:
+  `bytes=40000 → 80000 → 160000 → 400000 → 400000`, cursor walking
+  `1067 → 1036 → 976 → 850 → 595`.
+- The mode chip read `bypass` from the state frame although no mode-carrying
+  event was inside the window.
+- `Start of session` replaced the control once the cursor reached 0.
+
+Still to measure: `text.first_paint` on the actual iPhone, over the real link.
+The numbers above are a desktop browser on the LAN, which is the easy case.
 
 ## Files
 
@@ -292,7 +325,25 @@ at 400 kbps / 300 ms for the timings, then repeated on the actual iPhone — whi
 | `frontend-v2/src/store/session.ts` | Prepend lane for backfill, seed from `state`, paint on first flush |
 | `frontend-v2/src/sse/client.ts` | Route `state` / `back` / `ready` / live |
 | `frontend-v2/src/components/MessagesTimeline.tsx` | Auto-page near the top, growing step, status row |
+| `scripts/qa-harness.py` | Route the session-events paths production routes |
 | `frontend-v2/src/components/{context,timeline}.logic.ts` | Derivations seed from the state frame |
 | `frontend-v2/src/components/find.logic.ts` | `MAX_JUMP_STEPS` 40 → 200, 400 KB steps |
 | `frontend-v2/src/lib/config.ts` | `earlierUrl` takes a byte budget |
 | `telemetry` catalog | `text.first_paint`, `text.window_grew`, `tl.bytes` / `tl.turns` |
+
+## What changed between the design and the build
+
+Two things, both found while building.
+
+**The auto-page trigger came from elsewhere.** A parallel piece of work landed
+its own version of "reaching the top loads more" while this was being verified,
+and its trigger is the better of the two: it marks the compensation's own
+`scrollTop` write so a self-caused scroll event can be told from a reader's
+gesture. This branch had used a re-arm flag instead, which stalls permanently if
+a window happens to insert less than one viewport of height. Its version was
+kept whole; the row kept the control this design specified — a retry when a
+fetch fails, and `Start of session` when the history runs out.
+
+**SSE compression moved from the edge into the service**, for the reason given
+above. The design assumed a Traefik middleware change; the landed answer needs
+no infra change at all and has a smaller blast radius.
