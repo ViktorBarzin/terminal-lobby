@@ -1,9 +1,10 @@
 # Slow clients — the lobby stops downloading itself
 
-**Status:** Nine of eleven decisions shipped to prod 2026-08-28 (commits
-`de03257`, `a269127`, `b613e1a`, `c9296a8`, `809fd84`); decision 2 (the chunk
-split) is blocked on an ingress route and decision 10's dead-code removal is
-outstanding — see "What shipped, and what did not". **Author:** Viktor Barzin
+**Status:** All eleven decisions shipped to prod 2026-08-28, plus two the
+measurements added afterwards (an immutable terminal page and a client-side
+transcript cache). Commits `de03257`, `a269127`, `b613e1a`, `c9296a8`, `809fd84`,
+`486b11a`, `5f370fc`, `b1df746`, `0b8dc0e`, and infra `e0a41df5`. See "What
+shipped, and what did not". **Author:** Viktor Barzin
 (decisions), Claude (research + design). **Scope:** `frontend-v2/`,
 `frontend/term.html`, `session-events/`, plus one Traefik middleware change in
 `infra`.
@@ -306,8 +307,10 @@ Measured on the deployed services, not in a harness.
 | 8 · load watchdog | **Shipped.** Arms on navigate, waits for the page's own `tl-terminal-ready`, retries once silently, then says so with a retry control |
 | 9 · instrumentation | **Shipped.** `term.ready` fires with legs, `nav.load` is re-emitted once it exists, `api.slow` no longer reports on `/telemetry` |
 | 11 · one landing | **Not achieved** — decision 2 is not in it |
-| 2 · chunk split | **Not shipped.** Blocked: chunks must be served from somewhere, and clipboard-upload's whitelist is an EXACT-PATH table while chunk names are content-hashed. Serving them needs a prefix handler AND an ingress route in `infra/stacks/terminal` — without that route landing first, `/assets/*` 404s in production and the lobby is dead. That is a cross-repo change with a real failure mode, so it wants its own landing rather than riding along |
-| 10 · cleanups | **Partly.** The duplicate `/whoami` per attach is gone (first connect only). `/pane` + `/commands` still load in terminal mode, and `listDirs` is still dead code — it has no call site, so it costs nothing at runtime, which makes it hygiene rather than performance |
+| 2 · chunk split | **Shipped.** The blocker was real and was unblocked first: `/assets/` now routes to clipboard-upload (infra `e0a41df5`), which serves content-hashed names `immutable` after validating each as one flat segment. Then viteSingleFile went — and with it the reason the app's *existing* lazy loading did nothing, since `inlineDynamicImports` had been pulling mermaid, CodeMirror and highlight.js into the initial payload. **index.html is 14,928 B gzipped against 1,366,000 — 91×** — with 86 further chunks fetched only by the features that use them, and a static shell painting before any of them |
+| 10 · cleanups | **Shipped**, except one. The duplicate `/whoami` is gone; `/pane` + `/commands` are latched on the text view's first show, so a terminal open no longer spends two round trips on a view nobody is reading; the WebGL addon asks for a webgl2 context instead of throwing six times per open. `listDirs` remains — it has no call site, so it costs nothing at runtime, which makes it hygiene rather than performance |
+| *(added)* immutable terminal page | **Shipped.** term.ready measured 17 of 25 attaches pulling ~474 KB with `tl.nav.cached false`, because `no-cache` costs a conditional round trip at best and a full refetch after every deploy. The same bytes now live at `/assets/term-<asset>.html`, `max-age=31536000, immutable`, with the fingerprint stamped into the lobby's own head so no request is needed to find it |
+| *(added)* transcript cache | **Shipped.** Every text-mode open replayed the window (766,661–2,098,703 B, 233,472 gzipped) because nothing was kept between opens. Events now go to IndexedDB and the stream resumes from the highest id held. Safe because the protocol already names the log: the epoch is stored beside the events, and a rewritten transcript takes the resync path that already existed |
 
 **The deviation worth naming:** decision 5 said add `text/event-stream` to Traefik's
 compress middleware. On reading it, that exclusion is deliberate and documented
@@ -316,6 +319,23 @@ compress middleware. On reading it, that exclusion is deliberate and documented
 would risk all of them to fix one page. session-events now compresses its own
 stream instead, flushing gzip per event so it stays readable as it arrives. Same
 measured win, blast radius of one service.
+
+## What the concurrent deploys taught us
+
+Three times during this work a deploy from another agent session replaced the
+lobby with its own older build, and once a concurrent `deploy-v2.sh` in the same
+checkout emptied `frontend-v2/dist` mid-run, which failed as
+`sed: can't read frontend-v2/dist/term.html`. Nothing was lost — every change is
+on master, so the next deploy from an up-to-date worktree carries it — but prod
+flip-flopped between a 14,928 B page and a 4.7 MB one until the claim was held
+for the whole sequence.
+
+`scripts/presence claim service:ttyd` is the mechanism for this and it works when
+it is used; the sessions doing the clobbering were not claiming. Two things would
+make it structural rather than a convention: deploy-v2.sh could refuse to run
+while another session holds the claim, and it could refuse to install an
+`index.html` built from a commit older than the one already installed. Neither is
+built yet.
 
 ## Verification
 
