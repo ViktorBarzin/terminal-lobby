@@ -179,6 +179,10 @@ var publicAssets = map[string]publicAsset{
 	// iOS Safari 1,279 full bodies to 2 revalidations in 24h = 1.83 GB/day
 	// from one phone, which is 5.7x the whole downlink of a 400kbps link.
 	"/build-id": {"build-id", "text/plain; charset=utf-8", "no-cache"},
+	// term.html's own stamp. Same reasoning, different fingerprint: the framed
+	// page checks itself on every reconnect, which measured 502,720 B against
+	// 300 B for the same 12 hex characters.
+	"/term-build-id": {"term-build-id", "text/plain; charset=utf-8", "no-cache"},
 
 	"/fonts/JetBrainsMono-Regular.woff2":     {"fonts/JetBrainsMono-Regular.woff2", "font/woff2", "public,max-age=604800"},
 	"/fonts/JetBrainsMono-Bold.woff2":        {"fonts/JetBrainsMono-Bold.woff2", "font/woff2", "public,max-age=604800"},
