@@ -157,7 +157,11 @@ src/
                          verdict per device for the NEXT load, and answers what
                          each lever should do. A pin always wins
   sse/client.ts          Resumable SSE client (Last-Event-ID, backoff+jitter,
-                         instant-retry on visible/online) — DOM-free, testable
+                         instant-retry on visible/online) — DOM-free, testable.
+                         Resyncs when `ready` names a log it was not reading:
+                         ids are per-transcript, so a session whose transcript
+                         was replaced would otherwise resume above the new log
+                         and freeze on the old conversation
   store/
     session.ts           SSE → Solid store of events + prompt/cancel control
     lobby.ts             Lobby store: poll + optimistic layout PUT + session CRUD
