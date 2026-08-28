@@ -695,17 +695,6 @@ body {
 .tl-row-message {
   color: var(--text-primary);
 }
-.tl-streaming::after {
-  content: "▋";
-  color: var(--accent);
-  animation: tl-blink 1s steps(2, start) infinite;
-}
-@keyframes tl-blink {
-  50% {
-    opacity: 0;
-  }
-}
-
 /* tool row */
 .tl-row-tool {
   border: 1px solid var(--border);
