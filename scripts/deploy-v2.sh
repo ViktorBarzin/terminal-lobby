@@ -146,6 +146,9 @@ if grep -q '__TL_[A-Z]*__' out/index.html; then
   echo "deploy-v2.sh: unsubstituted __TL_*__ placeholder in out/index.html" >&2
   exit 1
 fi
+# The stamp file the healer polls (decision 1). Same fingerprint as the meta
+# tag above, so a client comparing the two is comparing like with like.
+printf %s "${ASSET}" > out/build-id
 echo "    build=${REV} asset=${ASSET}"
 
 # The baseline-engine gate, run on the EXACT bytes about to ship (out/index.html,
@@ -196,6 +199,7 @@ if grep -q '__TL_[A-Z]*__' out/term.html; then
   echo "deploy-v2.sh: unsubstituted __TL_*__ placeholder in out/term.html" >&2
   exit 1
 fi
+printf %s "${TERM_ASSET}" > out/term-build-id
 echo "    term.html asset=${TERM_ASSET}"
 
 echo "==> Staging on $DEVVM..."
@@ -203,6 +207,8 @@ echo "==> Staging on $DEVVM..."
 # else's file waiting to happen.
 scp -o BatchMode=yes out/index.html "wizard@${DEVVM}:/tmp/tl-deploy-index.html"
 scp -o BatchMode=yes out/term.html  "wizard@${DEVVM}:/tmp/tl-deploy-term.html"
+scp -o BatchMode=yes out/build-id   "wizard@${DEVVM}:/tmp/tl-deploy-build-id"
+scp -o BatchMode=yes out/term-build-id "wizard@${DEVVM}:/tmp/tl-deploy-term-build-id"
 
 echo "==> Installing on $DEVVM (${REMOTE_UNIT} :${REMOTE_PORT})..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" \
@@ -239,6 +245,12 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   else
     echo "    term.html unchanged — leaving it alone"
   fi
+  # build-id — the stamp the lobby polls instead of re-fetching itself. Served
+  # by clipboard-upload out of the same whitelist, so no restart either. It must
+  # land AFTER index.html: a client that reads a new stamp and then fetches an
+  # old page would reload in a loop until the page caught up.
+  sudo install -m 0644 /tmp/tl-deploy-build-id /usr/local/share/ttyd/build-id
+  sudo install -m 0644 /tmp/tl-deploy-term-build-id /usr/local/share/ttyd/term-build-id
   # daemon-reload can transiently time out under heavy devvm load; retry once.
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   # enable --now regardless — a stopped or never-enabled unit must come up even
@@ -249,7 +261,8 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   else
     echo "    nothing ${REMOTE_UNIT} serves changed — skipping restart (attached terminals keep their WebSocket)"
   fi
-  rm -f /tmp/tl-deploy-index.html /tmp/tl-deploy-term.html
+  rm -f /tmp/tl-deploy-index.html /tmp/tl-deploy-term.html /tmp/tl-deploy-build-id \
+        /tmp/tl-deploy-term-build-id
 REMOTE
 
 echo "==> Verifying..."
@@ -272,6 +285,8 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   done
   [ "$ok" = "1" ] && echo "${REMOTE_UNIT} serving the lobby SPA OK" || { echo "${REMOTE_UNIT} NOT serving after 15s"; exit 1; }
   test -f /usr/local/share/ttyd/term.html || { echo "term.html NOT installed"; exit 1; }
+  test -s /usr/local/share/ttyd/build-id || { echo "build-id NOT installed"; exit 1; }
+  test -s /usr/local/share/ttyd/term-build-id || { echo "term-build-id NOT installed"; exit 1; }
   # Installing term.html is what this script does; SERVING it is clipboard-upload
   # (:7683), whose exact-path whitelist must carry a /term.html entry. That
   # service is shared with the stable tier and is released by deploy.sh, not

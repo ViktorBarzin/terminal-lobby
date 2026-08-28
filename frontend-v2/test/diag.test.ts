@@ -549,11 +549,13 @@ describe("api timing", () => {
     const h = harness();
     h.d.boot();
     h.d.setVisible(true);
-    h.d.onApi("/layout", 812, 200, "f3a91c02-17");
+    // Past cfg.slowApiMs, which now sits above a healthy 300 ms round trip so
+    // the reporting channel stops reporting on its own latency.
+    h.d.onApi("/layout", 3812, 200, "f3a91c02-17");
 
     const s = h.last("api.slow")!;
     expect(s["tl.ep"]).toBe("/layout");
-    expect(s["tl.ms"]).toBe(812);
+    expect(s["tl.ms"]).toBe(3812);
     expect(s["tl.req"]).toBe("f3a91c02-17");
   });
 });

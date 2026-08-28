@@ -2,7 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -328,5 +331,90 @@ func TestSSEReverseOpenDedupsAgainstTheLiveChannel(t *testing.T) {
 	}
 	if !strings.Contains(body, "id: 3") {
 		t.Fatalf("the live event after the backfill was dropped:\n%s", body)
+	}
+}
+
+// A slow client asks for a smaller opening window. Twenty turns measured
+// 766,661-2,098,703 bytes per open, 99.93% of it arriving inside 0.1s as one
+// backlog dump: 42 seconds at 400kbps for the view that is meant to be the one
+// that still works on a bad link.
+func TestSSEOpenWindowIsClientCappable(t *testing.T) {
+	openWith := func(query string) int {
+		src := &fakeSource{all: []sessionio.Event{{ID: 1, Kind: sessionio.KindText}}, live: make(chan sessionio.Event)}
+		close(src.live)
+		r := httptest.NewRequest("GET", "/events/demo"+query, nil)
+		writeSSE(httptest.NewRecorder(), r, src, time.Hour)
+		return src.windowTurns
+	}
+
+	if got := openWith("?turns=3"); got != 3 {
+		t.Fatalf("?turns=3 gave a window of %d", got)
+	}
+	if got := openWith("?turns=1"); got != MinOpenWindowTurns {
+		t.Fatalf("the floor is %d, got %d", MinOpenWindowTurns, got)
+	}
+	// A client can only ask for LESS. More would let one client make the server
+	// parse and ship an entire months-old transcript.
+	for _, q := range []string{"?turns=9999", "?turns=0", "?turns=-4", "?turns=abc", ""} {
+		if got := openWith(q); got != OpenWindowTurns {
+			t.Fatalf("%q should fall back to the default %d, got %d", q, OpenWindowTurns, got)
+		}
+	}
+}
+
+// The opening window arrives compressed when the client offers gzip. Measured
+// uncompressed opens ran 766,661-2,098,703 bytes with 99.93% of it inside 0.1s;
+// gzip -6 over the same content gives 4.8-5.4x. The edge will not do it: the
+// Traefik compress middleware leaves text/event-stream out on purpose, and it is
+// an entrypoint middleware shared by the whole cluster.
+func TestSSECompressesWhenTheClientOffersIt(t *testing.T) {
+	events := make([]sessionio.Event, 0, 40)
+	for i := 1; i <= 40; i++ {
+		events = append(events, sessionio.Event{ID: int64(i), Kind: sessionio.KindText})
+	}
+	open := func(acceptEncoding string) *httptest.ResponseRecorder {
+		src := &fakeSource{all: events, live: make(chan sessionio.Event)}
+		close(src.live)
+		r := httptest.NewRequest("GET", "/events/demo", nil)
+		if acceptEncoding != "" {
+			r.Header.Set("Accept-Encoding", acceptEncoding)
+		}
+		w := httptest.NewRecorder()
+		writeSSE(w, r, src, time.Hour)
+		return w
+	}
+
+	plain := open("")
+	if enc := plain.Header().Get("Content-Encoding"); enc != "" {
+		t.Fatalf("a client that did not ask for gzip got Content-Encoding %q", enc)
+	}
+
+	gzipped := open("gzip, deflate, br")
+	if enc := gzipped.Header().Get("Content-Encoding"); enc != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", enc)
+	}
+	if vary := gzipped.Header().Get("Vary"); !strings.Contains(vary, "Accept-Encoding") {
+		t.Fatalf("Vary = %q; a cache must not hand this stream to a client that did not ask", vary)
+	}
+	if gzipped.Body.Len() >= plain.Body.Len() {
+		t.Fatalf("gzipped body %d bytes >= plain %d", gzipped.Body.Len(), plain.Body.Len())
+	}
+
+	// It has to be READABLE as it arrives, not only at the end: gzip.Flush emits
+	// a sync marker per event, and without it a browser sees nothing until the
+	// compressor's buffer fills.
+	zr, err := gzip.NewReader(bytes.NewReader(gzipped.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	got, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != plain.Body.String() {
+		t.Fatalf("decompressed stream differs from the plain one")
+	}
+	if !strings.Contains(string(got), "event: ready") {
+		t.Fatalf("the ready marker did not survive compression")
 	}
 }
