@@ -10,6 +10,13 @@ Viktor. **Author:** Claude (diagnosis + fix). **Scope:** `devvm/claude-se-hook`,
 > the question tool in text mode often gets stuck on old prompts. even if I have
 > answered them in terminal mode it gets stuck in text mode.
 
+```stats
+2 of 16 | live sessions stamped with a file that was never written
+883 | AskUserQuestion calls examined across this box
+3 s | for a moved session's stream to end — it used to stay open
+0 | events a frozen reader received, however long it waited
+```
+
 ## What was already handled, and what that ruled out
 
 A question card docked over a dialog that is gone was fixed on 2026-08-19
@@ -47,8 +54,8 @@ the directory the session was *started* in, so the two agree only until the
 session changes directory — which the house workflow asks for on every task, one
 worktree per change.
 
-Measured on this box on 2026-08-28, over the 16 live tmux sessions: **2 were
-stamped with a file that does not exist.**
+Measured on this box on 2026-08-28, over the 16 live tmux sessions: 2 were
+stamped with a file that does not exist.
 
 | session | stamped | actually written to |
 |---|---|---|
@@ -66,7 +73,7 @@ derivation stays as the fallback for an older hook. The binding the hook
 remembers includes the transcript, so a session registered by the previous hook
 re-registers on its next prompt rather than staying wrong until Claude restarts.
 
-## Fault 2 — a replaced log looked exactly like silence
+## Fault 2 — a replaced log was indistinguishable from silence
 
 Event ids belong to one log. `FileSource` assigns them by replaying a transcript
 from the start, which is deterministic — the same file re-read by a new process
@@ -125,14 +132,14 @@ On the deployed services, 2026-08-28:
   not exist.
 - The two mis-stamped sessions were re-stamped by hand and went from `ready: 0`
   to 783 and 2,048 events.
-- A stream open on a session whose stamp was then moved **ended 3 seconds
-  later**, and the reconnect reported a different epoch — the signal the client
+- A stream open on a session whose stamp was then moved ended 3 seconds later,
+  and the reconnect reported a different epoch — the signal the client
   resyncs on. Before this change that stream stayed open and silent.
 
 ## What this does not change
 
 `runAnswer` still types the first keystroke before it verifies anything; the
-checks come between steps. That was tolerable when the card could be trusted to
-be current and is worth revisiting on its own terms, but the fix for "the card
-points at a dialog that is gone" is not to make Send safer — it is to not show
-the card, which is what these three changes do.
+checks come between steps. That design assumed a card that could be trusted to be
+current, and it is an open item worth taking on its own terms. It is not the fix
+for "the card points at a dialog that is gone" — that fix is to not show the
+card, which is what these three changes do.
