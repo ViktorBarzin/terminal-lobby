@@ -1,6 +1,12 @@
 import { batch, createSignal, onCleanup, type Accessor } from "solid-js";
 import { createStore } from "solid-js/store";
-import { SseClient, type SseStatus } from "../sse/client";
+import {
+  SseClient,
+  type ReadyFrame,
+  type SessionState,
+  type SseStatus,
+} from "../sse/client";
+import { track } from "../telemetry/track";
 import {
   cancelUrl,
   earlierUrl,
@@ -61,12 +67,56 @@ export interface SessionStore {
   opening: () => boolean;
   /** One tool result in full, after the wire capped it. */
   fullResult: (toolId: string) => Promise<string | null>;
-  /** Prepend the window of turns before the oldest event held. Returns how
-   *  many arrived — 0 means the start of the session has been reached. */
-  loadEarlier: () => Promise<number>;
-  /** False once loadEarlier has reached the start of the session. */
+  /** Take one step further back through the transcript. Returns how many
+   *  events arrived — 0 means the start of the session has been reached. */
+  loadEarlier: (bytes?: number) => Promise<number>;
+  /** False once paging has reached the start of the session. */
   hasEarlier: Accessor<boolean>;
+  /** The session state frame: what a small backfill cannot carry (mode, the
+   *  newest /context reading, the queue, prompt history). Null until it lands. */
+  state: Accessor<SessionState | null>;
   close: () => void;
+}
+
+/**
+ * How big a step back is, in bytes, as a reader keeps going.
+ *
+ * One glance upward is cheap; somebody genuinely reading backwards stops paying
+ * a round trip per screen. The ladder resets when they stop, so the cost of
+ * looking is always the first rung. The server clamps the top of it
+ * independently (session-events MaxResponseBytes).
+ */
+export const EARLIER_STEPS_BYTES = [40_000, 80_000, 160_000, 400_000];
+
+/** What a jump to a search hit asks for: it already knows it is reaching far. */
+export const JUMP_STEP_BYTES = 400_000;
+
+/**
+ * Merge two id-ordered event lists into one, dropping ids already present.
+ *
+ * Backfill arrives newest-first and below what is held; live events arrive
+ * above it; a split turn's prompt arrives from below the cursor and can repeat
+ * on the next step. One ordered merge covers all three without the caller
+ * having to know which case it is in.
+ */
+export function mergeById(held: Event[], arrived: Event[]): Event[] {
+  if (arrived.length === 0) return held;
+  const out: Event[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < held.length || j < arrived.length) {
+    const a = held[i];
+    const b = arrived[j];
+    if (a && (!b || a.id <= b.id)) {
+      if (b && b.id === a.id) j++; // already held
+      out.push(a);
+      i++;
+    } else if (b) {
+      out.push(b);
+      j++;
+    }
+  }
+  return out;
 }
 
 /** Toast severity forwarded to the app (subset of the toast ToastKind). */
@@ -103,10 +153,34 @@ export function createSessionStore(
 ): SessionStore {
   const [events, setEvents] = createStore<Event[]>([]);
   const [status, setStatus] = createSignal<SseStatus>("connecting");
-  // A fresh open replays a WINDOW of recent turns (session-events
-  // OpenWindowTurns), so there is usually history behind the oldest event held.
-  // Assumed present until a load comes back empty.
+  // A fresh open backfills a bounded number of BYTES (session-events
+  // OpenBackfillBytes), so there is usually history behind it. Assumed present
+  // until the server's cursor says otherwise.
   const [hasEarlier, setHasEarlier] = createSignal(true);
+  const [sessionState, setSessionState] = createSignal<SessionState | null>(null);
+  /**
+   * Where the next step back begins.
+   *
+   * The server's, not `events[0].id`. A split turn's prompt rides along from
+   * BELOW the cursor, so the oldest event held is not where the next step
+   * starts — paging from it would skip everything in between, permanently.
+   */
+  let cursor = 0;
+  /** How far up the step ladder a run of paging has climbed. */
+  let step = 0;
+  /** Every id held, so a repeat costs a lookup rather than a scan. */
+  const seen = new Set<number>();
+  /** The events in `list` not already held, claiming them as it goes — so a
+   *  repeat WITHIN one batch is caught too, not just one across batches. */
+  const takeFresh = (list: Event[]): Event[] => {
+    const out: Event[] = [];
+    for (const e of list) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      out.push(e);
+    }
+    return out;
+  };
 
   /**
    * Arriving events are COALESCED into one store write per frame.
@@ -124,25 +198,29 @@ export function createSessionStore(
    * transcript that is already a tail of a file being polled every 200 ms.
    */
   let pending: Event[] = [];
+  /** History, arriving newest-first. Its own lane: it does NOT wait behind the
+   *  opening hold, because painting it is what ends that hold. */
+  let backfill: Event[] = [];
   let flushHandle = 0;
+  const openedAt = Date.now();
 
   /**
-   * Hold the first paint until the opening window has all arrived.
+   * When the first rows go on screen.
    *
-   * The server sends the window it had when the stream opened, then goes live.
-   * Painting as it arrives means deriving turns and folds from a PARTIAL
-   * transcript and then re-deriving them: rows that were already on screen
-   * change identity and are rebuilt under the reader. Measured opening a real
-   * session (2026-08-18): with the row count flat at 14, the content went
-   * 2194px -> 594px -> 851px as the markdown and code blocks in those rows were
-   * torn down and built again, and what sat at the middle of the screen changed
-   * four times inside a second.
+   * Against a server that backfills in reverse this is the first frame that
+   * arrives: history comes newest-first, so the first batch IS the last thing
+   * that happened, and it lands at the bottom where it belongs and stays there.
+   * Nothing is gained by waiting for the rest, and the wait is the whole
+   * complaint.
    *
-   * One paint, from a complete window, lands the newest messages where they
-   * belong and leaves them there. `ready` is a named SSE event, so a stream
-   * that never sends it — an older server, a proxy that drops named events —
-   * falls back to the timeout and behaves as before rather than showing
-   * nothing.
+   * The hold survives for the other case — an older server, or a proxy that
+   * drops named events — where the opening window arrives ASCENDING on the live
+   * lane. Painting that as it arrives means deriving turns and folds from a
+   * partial transcript and re-deriving them: measured opening a real session
+   * (2026-08-18), with the row count flat at 14, the content went 2194px ->
+   * 594px -> 851px as rows were torn down and rebuilt, and what sat mid-screen
+   * changed four times inside a second. There, `ready` (or the timeout) is
+   * still what releases it.
    */
   const [opening, setOpening] = createSignal(true);
   let holding = true;
@@ -152,7 +230,8 @@ export function createSessionStore(
     release();
   }, OPEN_WINDOW_TIMEOUT_MS);
 
-  const release = (): void => {
+  /** Flip to painted, without driving a flush (the flush may be the caller). */
+  const paint = (): void => {
     if (!holding) return;
     holding = false;
     setOpening(false);
@@ -160,6 +239,18 @@ export function createSessionStore(
       clearTimeout(holdTimer);
       holdTimer = undefined;
     }
+    // The number this whole design exists to move, and one nothing recorded
+    // before: stream open to first row on screen.
+    track("text.first_paint", {
+      "tl.session": session,
+      "tl.ms": Date.now() - openedAt,
+      "tl.count": events.length,
+    });
+  };
+
+  const release = (): void => {
+    if (!holding) return;
+    paint();
     flush();
   };
 
@@ -182,15 +273,31 @@ export function createSessionStore(
 
   const flush = (): void => {
     flushHandle = 0;
-    // Still waiting on the rest of the opening window: keep buffering.
+    // History first, and never behind the hold: this batch is what ends it.
+    if (backfill.length > 0) {
+      const older = backfill.reverse(); // arrived newest-first
+      backfill = [];
+      const fresh = takeFresh(older);
+      if (fresh.length > 0) setEvents((prev) => mergeById(prev, fresh));
+      paint();
+    }
+    // Still waiting on the rest of an ASCENDING opening window: keep buffering.
     if (holding) return;
     if (pending.length === 0) return;
-    const arrived = pending;
+    const arrived = takeFresh(pending);
     pending = [];
+    if (arrived.length === 0) return;
     // batch() so the derivation runs once for the whole group rather than once
     // per index write.
     batch(() => {
-      for (const e of arrived) setEvents(events.length, e);
+      // Ordered merge rather than a bare append: with a reverse backfill in
+      // flight, a live event and a history frame can land in the same batch.
+      const newest = events.length > 0 ? events[events.length - 1]!.id : 0;
+      if (arrived.every((e) => e.id > newest)) {
+        for (const e of arrived) setEvents(events.length, e);
+      } else {
+        setEvents((prev) => mergeById(prev, [...arrived].sort((a, b) => a.id - b.id)));
+      }
       // The transcript caught up with something we were standing in for.
       // One record accounts for ONE prompt, oldest first: sending two in
       // quick succession queues them, and the first record must not clear the
@@ -236,9 +343,22 @@ export function createSessionStore(
       pending.push(e);
       scheduleFlush();
     },
+    onBackfill: (e: Event) => {
+      backfill.push(e);
+      scheduleFlush();
+    },
+    onState: (st: SessionState) => setSessionState(st),
     onStatus: setStatus,
-    // The opening window is complete: paint it, once.
-    onReady: release,
+    onReady: (r: ReadyFrame) => {
+      // A reverse open names where the next step back begins; a resume does
+      // not, because the client's own cursor is the correct one and clobbering
+      // it with a backfill cursor would strand the history already held.
+      if (typeof r.cursor === "number") {
+        cursor = r.cursor;
+        setHasEarlier(r.cursor > 0);
+      }
+      release();
+    },
   });
 
   /** has the stream been opened, and has it been closed for good? */
@@ -436,24 +556,43 @@ export function createSessionStore(
     }
   };
 
-  const loadEarlier = async (): Promise<number> => {
-    const oldest = events[0]?.id ?? 0;
-    if (oldest <= 1) {
+  const loadEarlier = async (bytes?: number): Promise<number> => {
+    // Before the first `ready`, fall back to the oldest event held. It is the
+    // right answer while nothing has split — and the only one available against
+    // a server that does not send a cursor at all.
+    const before = cursor > 0 ? cursor : (events[0]?.id ?? 0);
+    if (before <= 1) {
       setHasEarlier(false);
       return 0;
     }
+    const ask =
+      bytes ??
+      EARLIER_STEPS_BYTES[Math.min(step, EARLIER_STEPS_BYTES.length - 1)]!;
     try {
-      const res = await fetch(earlierUrl(session, oldest), {
+      const res = await fetch(earlierUrl(session, before, ask), {
         credentials: "same-origin",
       });
       if (!res.ok) return 0;
-      const older = ((await res.json()) as Event[] | null) ?? [];
-      if (older.length === 0) {
-        setHasEarlier(false);
-        return 0;
-      }
-      setEvents((prev) => [...older, ...prev]);
-      return older.length;
+      const body = (await res.json()) as {
+        events?: Event[];
+        cursor?: number;
+      } | null;
+      const older = body?.events ?? [];
+      if (typeof body?.cursor === "number") cursor = body.cursor;
+      if (older.length === 0 || (body && body.cursor === 0)) setHasEarlier(false);
+      if (older.length === 0) return 0;
+      const fresh = takeFresh(older);
+      if (fresh.length > 0) setEvents((prev) => mergeById(prev, fresh));
+      // Only a step the reader drove climbs the ladder; a jump names its own
+      // size and should not make the next glance upward expensive.
+      if (bytes === undefined) step++;
+      track("text.window_grew", {
+        "tl.session": session,
+        "tl.count": fresh.length,
+        "tl.bytes": ask,
+        "tl.reason": bytes === undefined ? "scroll" : "jump",
+      });
+      return fresh.length;
     } catch {
       opts.notify?.("Couldn't load earlier turns", "error");
       return 0;
@@ -477,6 +616,7 @@ export function createSessionStore(
     fullResult,
     loadEarlier,
     hasEarlier,
+    state: sessionState,
     close,
   };
 }

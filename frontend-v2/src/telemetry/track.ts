@@ -62,6 +62,13 @@ export type TlEvent =
   // record — these two are the CLIENT's view of when the switch was asked for.
   | "admin.actas"
   | "admin.actas.exit"
+  // Text view load (the reverse-open design, 2026-08-28). first_paint is stream
+  // open -> first row on screen, which nothing measured before: the change
+  // exists to move it, and a number nobody can see is a change nobody can
+  // verify. window_grew is one step back through history (tl.reason: scroll |
+  // jump).
+  | "text.first_paint"
+  | "text.window_grew"
   // navigation & keyboard
   | "palette.opened"
   | "palette.action"
