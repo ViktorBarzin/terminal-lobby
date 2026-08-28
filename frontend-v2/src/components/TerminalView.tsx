@@ -11,7 +11,7 @@ import {
   TERMINAL_FRAME_PREFIX,
   terminalFrameArgs,
 } from "../lib/terminal-url";
-import { TERMINAL_BASE } from "../lib/config";
+import { TERMINAL_BASE, TERMINAL_PAGE_URL } from "../lib/config";
 import { effectiveTier } from "../diagnostics/connection";
 import { commitWindow, type WindowBytes } from "../diagnostics/usage";
 import { isBuildStale } from "../deploy/healer.logic";
@@ -57,6 +57,10 @@ import { ownWhile } from "../lib/ownwhile";
  *    `{type:'tl-focus'}` so a closing lobby overlay returns the keyboard to the
  *    pty. Declines while the text view is active.
  */
+/** Set once an attach against the immutable page URL fails to report ready.
+ *  Deliberately module-scope: every terminal in this tab shares one verdict. */
+let preferFallbackPage = false;
+
 export const TerminalView: Component<{
   session: string;
   owner?: string;
@@ -105,6 +109,11 @@ export const TerminalView: Component<{
    *  not. A legitimate 464 KB load is ~9.3 s at 400 kbps, so this leaves room for
    *  a stall on top rather than racing an honest slow link. */
   const LOAD_WATCHDOG_MS = 20_000;
+  /** Which page URL to attach against. Starts at the immutable copy and drops to
+   *  the always-served path for the rest of the tab's life if that ever fails to
+   *  report ready — so a mis-routed /assets/ costs one slow attach rather than
+   *  every terminal in the app. */
+  const pageUrl = (): string => (preferFallbackPage ? TERMINAL_BASE : TERMINAL_PAGE_URL);
   let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
   let retriedOnce = false;
   const [loadFailed, setLoadFailed] = createSignal(false);
@@ -151,7 +160,15 @@ export const TerminalView: Component<{
       watchdogTimer = undefined;
       if (!retriedOnce) {
         retriedOnce = true;
-        navigate(currentUrl || TERMINAL_BASE);
+        // If the immutable copy is what did not arrive, do not retry it: the
+        // likeliest cause is that /assets/ is not reachable, and the plain path
+        // is served by a route that has been there for months.
+        if (currentUrl !== TERMINAL_BASE && TERMINAL_PAGE_URL !== TERMINAL_BASE) {
+          preferFallbackPage = true;
+          navigate(TERMINAL_BASE);
+          return;
+        }
+        navigate(currentUrl || pageUrl());
         return;
       }
       setLoadFailed(true);
@@ -230,7 +247,7 @@ export const TerminalView: Component<{
         // the link for itself before it has already paid for its own document.
         iframe.dataset.tlTier = effectiveTier();
       }
-      navigate(TERMINAL_BASE);
+      navigate(pageUrl());
     }
   });
 
@@ -464,7 +481,7 @@ export const TerminalView: Component<{
             onClick={() => {
               setLoadFailed(false);
               retriedOnce = false;
-              navigate(currentUrl || TERMINAL_BASE);
+              navigate(currentUrl || pageUrl());
             }}
           >
             Try again

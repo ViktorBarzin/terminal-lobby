@@ -132,12 +132,46 @@ if grep -q '__TL_DIAG__' out/index.pre; then
 fi
 assert_diag_executable out/index.pre
 ASSET=$(sha256sum out/index.pre | cut -c1-12)
+# The terminal page's fingerprint has to be known BEFORE the lobby is stamped
+# with it, and it is a pure function of frontend/term.html + the diag script the
+# term build splices in — so derive it here from the same inputs the term build
+# uses below, then assert the two agree.
+TERM_PRE=$(mktemp)
+sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' frontend/term.html > "$TERM_PRE"
+TERM_ASSET_EARLY=$(sha256sum "$TERM_PRE" | cut -c1-12)
+rm -f "$TERM_PRE"
 sed -e "s/__TL_BUILD__/${REV}/g" -e "s/__TL_ASSET__/${ASSET}/g" \
+    -e "s/__TL_TERM_ASSET__/${TERM_ASSET_EARLY}/g" \
     out/index.pre > out/index.html
 rm -f out/index.pre
 # The meta tag is the one leg that depends on the build tool: if vite ever stops
 # copying the head through verbatim, fail the deploy rather than ship a page
 # that can never self-update.
+mkdir -p out/assets
+# The lobby's hashed chunks, emitted by vite under dist/assets. These are what
+# replaced the single 4.7 MB document: index.html is ~3 KB gzipped now and the
+# heavy libraries (mermaid, CodeMirror, highlight.js) are separate chunks fetched
+# only by the features that use them.
+if compgen -G "frontend-v2/dist/assets/*" > /dev/null; then
+  cp frontend-v2/dist/assets/* out/assets/
+else
+  echo "deploy-v2.sh: frontend-v2/dist/assets is empty — the SPA build emitted no chunks" >&2
+  exit 1
+fi
+
+# Every /assets/ reference in the page must exist in what we are about to ship.
+# A missing entry chunk is a blank lobby, and the browser reports it only in a
+# console nobody is watching.
+while read -r ref; do
+  test -f "out/assets/${ref}" || {
+    echo "deploy-v2.sh: index.html references assets/${ref}, which the build did not emit" >&2
+    exit 1
+  }
+# Only real references: src=/href= attributes. A looser match reads the prose
+# too — the comment beside the tl-term-asset meta mentions the shape of the
+# immutable terminal URL, and that is not a file anyone has to ship.
+done < <(grep -oE '(src|href)="/assets/[A-Za-z0-9._-]+"' out/index.html \
+           | sed -E 's|.*"/assets/([^"]+)"|\1|' | sort -u)
 grep -q '<meta name="tl-asset" content="'"${ASSET}"'"' out/index.html || {
   echo "deploy-v2.sh: tl-asset meta missing from the built SPA — vite dropped it" >&2
   exit 1
@@ -199,6 +233,16 @@ if grep -q '__TL_[A-Z]*__' out/term.html; then
   echo "deploy-v2.sh: unsubstituted __TL_*__ placeholder in out/term.html" >&2
   exit 1
 fi
+# The two fingerprints MUST agree: the lobby sends the terminal iframe to
+# /assets/term-${TERM_ASSET_EARLY}.html, and a mismatch would 404 every attach.
+if [[ "$TERM_ASSET" != "$TERM_ASSET_EARLY" ]]; then
+  echo "deploy-v2.sh: term fingerprint mismatch (early=${TERM_ASSET_EARLY} final=${TERM_ASSET})" >&2
+  exit 1
+fi
+# The immutable copy, under the content-hashed name the lobby asks for. Same
+# bytes as term.html; the NAME is what changes per deploy, which is what lets it
+# be cached forever instead of revalidated on every attach.
+cp out/term.html "out/assets/term-${TERM_ASSET}.html"
 printf %s "${TERM_ASSET}" > out/term-build-id
 echo "    term.html asset=${TERM_ASSET}"
 
@@ -209,6 +253,11 @@ scp -o BatchMode=yes out/index.html "wizard@${DEVVM}:/tmp/tl-deploy-index.html"
 scp -o BatchMode=yes out/term.html  "wizard@${DEVVM}:/tmp/tl-deploy-term.html"
 scp -o BatchMode=yes out/build-id   "wizard@${DEVVM}:/tmp/tl-deploy-build-id"
 scp -o BatchMode=yes out/term-build-id "wizard@${DEVVM}:/tmp/tl-deploy-term-build-id"
+# The content-hashed output: the immutable terminal page, and (once the lobby is
+# split) its JS/CSS chunks. Staged as a directory so one scp carries whatever the
+# build produced.
+ssh -o BatchMode=yes "wizard@${DEVVM}" "rm -rf /tmp/tl-deploy-assets && mkdir -p /tmp/tl-deploy-assets"
+scp -o BatchMode=yes -r out/assets/. "wizard@${DEVVM}:/tmp/tl-deploy-assets/"
 
 echo "==> Installing on $DEVVM (${REMOTE_UNIT} :${REMOTE_PORT})..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" \
@@ -251,6 +300,13 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   # old page would reload in a loop until the page caught up.
   sudo install -m 0644 /tmp/tl-deploy-build-id /usr/local/share/ttyd/build-id
   sudo install -m 0644 /tmp/tl-deploy-term-build-id /usr/local/share/ttyd/term-build-id
+  # Hashed output. ADDITIVE on purpose: every name is content-addressed, so old
+  # names stay valid for tabs still running the previous build AND for a rollback
+  # to index.html.prev, which references the chunks it was built against. Pruned
+  # by age rather than by count so a rollback window survives a busy deploy day.
+  sudo mkdir -p /usr/local/share/ttyd/assets
+  sudo install -m 0644 -t /usr/local/share/ttyd/assets /tmp/tl-deploy-assets/* 2>/dev/null || true
+  sudo find /usr/local/share/ttyd/assets -type f -mtime +14 -delete
   # daemon-reload can transiently time out under heavy devvm load; retry once.
   sudo systemctl daemon-reload || { sleep 3; sudo systemctl daemon-reload; }
   # enable --now regardless — a stopped or never-enabled unit must come up even
@@ -261,8 +317,8 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   else
     echo "    nothing ${REMOTE_UNIT} serves changed — skipping restart (attached terminals keep their WebSocket)"
   fi
-  rm -f /tmp/tl-deploy-index.html /tmp/tl-deploy-term.html /tmp/tl-deploy-build-id \
-        /tmp/tl-deploy-term-build-id
+  rm -rf /tmp/tl-deploy-index.html /tmp/tl-deploy-term.html /tmp/tl-deploy-build-id \
+        /tmp/tl-deploy-term-build-id /tmp/tl-deploy-assets
 REMOTE
 
 echo "==> Verifying..."
@@ -287,6 +343,10 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   test -f /usr/local/share/ttyd/term.html || { echo "term.html NOT installed"; exit 1; }
   test -s /usr/local/share/ttyd/build-id || { echo "build-id NOT installed"; exit 1; }
   test -s /usr/local/share/ttyd/term-build-id || { echo "term-build-id NOT installed"; exit 1; }
+  # The immutable terminal page must exist under the exact name the lobby was
+  # stamped with, or every attach 404s and falls back to the revalidating path.
+  want="/usr/local/share/ttyd/assets/term-$(cat /usr/local/share/ttyd/term-build-id).html"
+  test -s "$want" || { echo "immutable terminal page missing: $want"; exit 1; }
   # Installing term.html is what this script does; SERVING it is clipboard-upload
   # (:7683), whose exact-path whitelist must carry a /term.html entry. That
   # service is shared with the stable tier and is released by deploy.sh, not
