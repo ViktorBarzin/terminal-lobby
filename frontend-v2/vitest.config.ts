@@ -7,6 +7,10 @@ import solid from "vite-plugin-solid";
 export default defineConfig({
   plugins: [solid()],
   resolve: { conditions: ["development", "browser"] },
+  // frontend/term.html lives one level up, outside this package. Tests that
+  // assert against the shipped page import it with `?raw`, and Vite refuses to
+  // read outside the project root unless the sibling is allowed here.
+  server: { fs: { allow: [".."] } },
   define: { __TL_BUILD__: JSON.stringify("test") },
   test: {
     environment: "jsdom",
