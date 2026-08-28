@@ -848,6 +848,7 @@ export const SessionView: Component<{
               await store.loadEarlier();
             }}
             hasEarlier={store.hasEarlier()}
+            onOpenTerminal={() => setMode("terminal")}
             sessionState={store.state()}
             onListDir={listDir}
             session={session}

@@ -392,6 +392,9 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   skill: "skill",
   compact: "context compacted",
   "hook-error": "hook failed",
+  // Dropped by deriveRows as well: what the pane says about a blocking question
+  // is state, and the answer card is where it shows.
+  asking: "waiting for an answer",
   // Dropped by deriveRows too — the reading belongs to the meter beside the
   // composer, and one row per settled turn would divide the whole transcript.
   context: "context",
