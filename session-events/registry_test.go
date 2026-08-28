@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -480,5 +481,114 @@ func TestRegistrySweepLeavesUnwatchedSourcesAlone(t *testing.T) {
 	rg.sweep()
 	if got := opts.Reads() - before; got != 0 {
 		t.Fatalf("the sweep read the session map %d times for a source nobody is watching", got)
+	}
+}
+
+// fakePane stands in for the tmux pane read.
+type fakePane struct {
+	mu    sync.Mutex
+	text  string
+	reads int
+}
+
+func (f *fakePane) CapturePane(osUser, session string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	return f.text, nil
+}
+func (f *fakePane) set(text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.text = text
+}
+func (f *fakePane) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads
+}
+
+const paneWithQuestion = `
+ ☐ Colour
+Which colour should the badge be?
+❯ 1. Red
+     Make it red.
+  2. Blue
+     Make it blue.
+  3. Type something.
+  4. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
+`
+
+// Claude Code does not always write the AskUserQuestion record while its dialog
+// is up — measured 2026-08-28, two of five consecutive calls in one session were
+// written only when the question was ANSWERED, 112 seconds later in one case.
+// For that window the transcript says "working" and the Text view has nothing to
+// show, while the terminal sits on a dialog. The pane is the only other place
+// the question exists, so it is read while a watched session is mid-turn.
+func TestRegistryWatchesThePaneOfAWatchedSessionMidTurn(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-asking"
+	)
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-ASKING")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+	pane := &fakePane{}
+	rg.panes = pane
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve")
+	}
+	waitForMarker(t, fs, "MARKER-ASKING")
+
+	// Nobody is reading it yet: no pane round trip.
+	rg.watchPanes()
+	if pane.count() != 0 {
+		t.Fatalf("the pane of an unwatched session was read %d times", pane.count())
+	}
+
+	ch, release := fs.Subscribe()
+	defer release()
+	go func() {
+		for range ch {
+		}
+	}()
+	pane.set(paneWithQuestion)
+	rg.watchPanes()
+
+	var asking *sessionio.Event
+	for _, e := range fs.Replay(0) {
+		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
+			ev := e
+			asking = &ev
+		}
+	}
+	if asking == nil {
+		t.Fatalf("the dialog on the pane was not reported; events = %+v", fs.Replay(0))
+	}
+	if !strings.Contains(asking.Body, "Which colour should the badge be?") {
+		t.Fatalf("asking event = %q", asking.Body)
+	}
+
+	// The dialog goes away — answered in the terminal — and that is reported too,
+	// or the card would stay docked over nothing.
+	pane.set("❯ \n")
+	rg.watchPanes()
+	last := ""
+	for _, e := range fs.Replay(0) {
+		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
+			last = e.Body
+		}
+	}
+	if last != "" {
+		t.Fatalf("the dialog going away left %q behind", last)
 	}
 }
