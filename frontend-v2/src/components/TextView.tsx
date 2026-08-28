@@ -146,6 +146,14 @@ export const TextView: Component<{
    * that call unresolved for good (timeline.logic `markSuperseded`).
    */
   const blocking = createMemo(() => pendingQuestion(deriveRows(props.events)));
+  /**
+   * WHICH question is being asked — the transcript's tool id, stable for as long
+   * as one call is on screen. deriveRows allocates fresh rows on every event, so
+   * this is what tells "the same question, re-derived" from "a different
+   * question", and it is what the card is keyed on below.
+   */
+  const asking = createMemo(() => blocking()?.key ?? "");
+  const asked = createMemo(() => blocking()?.questions ?? []);
   const [answering, setAnswering] = createSignal(false);
 
   // The composer's own handle, so "Chat about this" can hand the reader the
@@ -224,13 +232,25 @@ export const TextView: Component<{
           covers it, and a walk that slides out from under a thumb mid-answer is
           worse than no walk. The permanent record is the inline row, which
           appears the moment the transcript carries the result. */}
-      <Show when={blocking() && props.onKeys}>
-        <QuestionCard
-          questions={blocking()!.questions}
-          onSend={sendAnswers}
-          onChat={focusComposer}
-          busy={answering()}
-        />
+      {/* KEYED on the question. The card walks — one question at a time, then a
+          review — and that walk is state it holds. Reusing the card across two
+          calls carried the walk over: a fresh single question opened on the
+          REVIEW step of the previous one, showing answers chosen for something
+          nobody was being asked any more, and Send would have typed them into
+          the live dialog. A new question builds a new card.
+
+          The child MUST take an argument: Solid only calls a `keyed` child as a
+          factory when its arity is above zero, and a zero-arg one is cached as a
+          static child — which is the reuse this exists to prevent. */}
+      <Show when={props.onKeys ? asking() : ""} keyed>
+        {(_asking) => (
+          <QuestionCard
+            questions={asked()}
+            onSend={sendAnswers}
+            onChat={focusComposer}
+            busy={answering()}
+          />
+        )}
       </Show>
       <Composer
         working={props.working}
