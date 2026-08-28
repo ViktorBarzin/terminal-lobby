@@ -136,6 +136,63 @@ On the deployed services, 2026-08-28:
   and the reconnect reported a different epoch — the signal the client
   resyncs on. Before this change that stream stayed open and silent.
 
+## Verified in a browser, on real sessions (2026-08-28)
+
+Two throwaway Claude sessions, driven through the QA harness against the
+deployed services and the deployed page. Nine AskUserQuestion calls, every shape
+the tool has:
+
+| Case | Result |
+|---|---|
+| single question, answered from Text | the CLI recorded the answer and moved on |
+| single question, answered in the Terminal | the card cleared in Text within a second |
+| two questions, answered from Text | both answers recorded ("You picked L1 and R2") |
+| two questions, answered in the Terminal | the card cleared |
+| the CLI's own `/model` picker open | no card — it is not a question |
+
+Which turned up a fault that has nothing to do with the stuck card, and is the
+larger of the two.
+
+## The blind window: a dialog the transcript has not heard of
+
+Claude Code writes the AskUserQuestion record when it gets round to it. Measured
+across five consecutive calls in one session:
+
+```stats
+2 of 5 | calls whose record was written while the dialog was up
+112 s | longest wait — the record landed only when the question was ANSWERED
+3-8 s | how long the other three took
+0 | other places the question exists (nothing else under ~/.claude changed)
+```
+
+Through that window the Text view has nothing to render: the reader watches
+"Working…" while the terminal sits on a dialog. A tmux resize does not flush it,
+and no hook fires that would.
+
+The pane is the only other place the question exists, so session-events reads it
+— for sessions somebody has open, whose turn is still running — and reports what
+it finds as a `meta: "asking"` event. The transcript still wins wherever it has
+the call: it carries every question of a multi-question call with descriptions
+and multi-select flags exactly as the tool was called, and the pane only what is
+drawn on it.
+
+The parser is strict. Every CLI picker draws with the same select widget and the
+same footer, and only an AskUserQuestion carries the two options the CLI adds to
+every one of them ("Type something", "Chat about this"); requiring one of those
+is what keeps a menu the operator opened from being mirrored as a question Claude
+asked. Verified live with `/model` open: no card.
+
+A multi-question call shows one question at a time, so the pane cannot carry the
+whole call. Those are reported — what is being asked, and a button to the
+Terminal — rather than half-answered: 88% of the 900 calls on this box are single
+questions, and answering half a call unseen is how a wrong answer gets submitted.
+The full walk takes over the moment the record lands, and the card is keyed by the
+question's CONTENT so the handover does not throw away a walk in progress.
+
+Shipped as `ed38038`, `984de49` and `b250de6`, and verified on the deployed
+services: a question that was never in the transcript was answered from Text mode,
+and the CLI took it.
+
 ## What this does not change
 
 `runAnswer` still types the first keystroke before it verifies anything; the
