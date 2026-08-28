@@ -4,7 +4,7 @@
 #
 #   session-start -> register (user, tmux session) -> transcript mapping so
 #                    /events/<session> can find the transcript to tail.
-#   prompt-submit -> re-register when the pair has moved since we last looked.
+#   prompt-submit -> re-register when the binding has moved since we last looked.
 #
 # Why the second event: the registry is keyed by tmux session NAME, but the name
 # is captured once at SessionStart, and a session can be renamed afterwards —
@@ -47,17 +47,30 @@ tmux_session="$(tmux display -p '#S' 2>/dev/null || true)"
 
 input="$(cat)"
 
-# POST the (user, session_id, cwd, tmux_session) binding. Idempotent server-side
-# and safe to repeat: a name that has not moved re-registers the same mapping.
+# POST the (user, session_id, cwd, transcript, tmux_session) binding. Idempotent
+# server-side and safe to repeat: a binding that has not moved re-registers the
+# same mapping.
+#
+# transcript_path is the field that LOCATES the file. The service used to derive
+# it from cwd, which assumes Claude Code files a session under the directory it
+# is working in; it files it under the directory it was STARTED in. So a session
+# that cds — into a worktree, into a sub-project — and re-registers was stamped
+# with a path that does not exist, and its Text view tailed nothing for the rest
+# of its life (2 of 16 live sessions on this box, measured 2026-08-28). The
+# harness names the real file in every hook payload; pass it on and stop
+# guessing. cwd still rides along for a service older than the field.
 register() {
-    jq -nc --arg u "$USER" --arg s "$1" --arg c "$2" --arg t "$tmux_session" \
-        '{user:$u, session_id:$s, cwd:$c, tmux_session:$t}' 2>/dev/null \
+    jq -nc --arg u "$USER" --arg s "$1" --arg c "$2" --arg p "$3" --arg t "$tmux_session" \
+        '{user:$u, session_id:$s, cwd:$c, transcript_path:$p, tmux_session:$t}' 2>/dev/null \
       | curl -s --connect-timeout 2 --max-time 3 -X POST --data-binary @- \
         "$SE/hooks/session-start" >/dev/null 2>&1 || true
     # Remember what we registered so prompt-submit can tell "unchanged" from
     # "moved" without asking the service. Pane-scoped, so it cannot leak between
-    # two Claude processes sharing a session.
-    tmux set-option -t "${TMUX_PANE:-}" @se_registered "$tmux_session:$1" \
+    # two Claude processes sharing a session. The TRANSCRIPT is part of the key:
+    # a session whose file moved — or one registered by an older hook that never
+    # sent the path — re-registers on its next prompt instead of staying wrong
+    # until Claude is restarted.
+    tmux set-option -t "${TMUX_PANE:-}" @se_registered "$tmux_session:$1:$3" \
         >/dev/null 2>&1 || true
 }
 
@@ -65,9 +78,10 @@ case "$event" in
 session-start)
     sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
     cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)"
+    tp="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || true)"
     [ -n "$cwd" ] || cwd="$PWD"
     [ -n "$sid" ] || exit 0
-    register "$sid" "$cwd"
+    register "$sid" "$cwd" "$tp"
     ;;
 prompt-submit)
     # No TMUX_PANE means no place to remember the last binding, and re-POSTing
@@ -76,11 +90,12 @@ prompt-submit)
     [ -n "${TMUX_PANE:-}" ] || exit 0
     sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
     [ -n "$sid" ] || exit 0
+    tp="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || true)"
     prev="$(tmux show-option -qv -t "$TMUX_PANE" @se_registered 2>/dev/null || true)"
-    [ "$prev" = "$tmux_session:$sid" ] && exit 0
+    [ "$prev" = "$tmux_session:$sid:$tp" ] && exit 0
     cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)"
     [ -n "$cwd" ] || cwd="$PWD"
-    register "$sid" "$cwd"
+    register "$sid" "$cwd" "$tp"
     ;;
 esac
 exit 0

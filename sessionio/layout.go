@@ -231,8 +231,21 @@ func (s *SessionMap) Root() string { return s.projectsRoot }
 // Put records the mapping by stamping the tmux session. It fails when the
 // session cannot be stamped — the caller must not report success then, or the
 // hook believes the session is watchable when nothing can resolve it.
+//
+// info.Transcript is the path the HARNESS reports it is writing, and it wins
+// when it is there. Deriving the path from the cwd instead assumes Claude Code
+// files a session under the directory it is working in; it files it under the
+// directory it was STARTED in. An agent that cds — into a worktree, into a
+// sub-project — and then re-registers therefore stamped a file that was never
+// written, and the Text view tailed nothing for the rest of that session.
+// Measured 2026-08-28: 2 of 16 live sessions on this box were in that state.
+//
+// The cwd derivation stays as the fallback, for a hook older than the field.
 func (s *SessionMap) Put(info SessionInfo) error {
-	path := TranscriptPath(s.projectsRoot, info.CWD, info.ClaudeID)
+	path := info.Transcript
+	if path == "" {
+		path = TranscriptPath(s.projectsRoot, info.CWD, info.ClaudeID)
+	}
 	if !WithinProjects(s.projectsRoot, path) {
 		return fmt.Errorf("transcript %q escapes %s", path, s.projectsRoot)
 	}
