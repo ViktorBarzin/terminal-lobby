@@ -88,7 +88,7 @@ const UserRowView: Component<{
 };
 
 const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
-  <div class="tl-row tl-row-message" data-eid={props.row.id} classList={{ "tl-streaming": props.row.streaming }}>
+  <div class="tl-row tl-row-message" data-eid={props.row.id}>
     <Show when={props.row.body.trim()} fallback={<span class="tl-empty">(empty response)</span>}>
       {/* `me` turns bare absolute paths in Claude's prose into attachments too
           (design 2026-08-17 decision 8), skipping code — see Markdown.tsx. */}
