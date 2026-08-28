@@ -165,6 +165,13 @@ src/
   store/
     session.ts           SSE → Solid store of events + prompt/cancel control
     lobby.ts             Lobby store: poll + optimistic layout PUT + session CRUD
+    transcript-cache.ts  Client-side transcript store (IndexedDB): seeds the
+                         timeline from what this device already holds and resumes
+                         the stream from that cursor, so re-opening a session you
+                         have read costs the difference rather than the whole
+                         window. Keyed on the server's ready.epoch, so a rewritten
+                         log takes the existing resync path. Policy is pure and
+                         tested; the backend is injected
     viewmode.ts          Per-session/per-device {mode} persistence. The default
                          is TERMINAL on every device (2026-08-19); storage holds
                          only the sessions that chose text
