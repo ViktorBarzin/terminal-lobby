@@ -279,7 +279,9 @@ func protoClaudeArgs(cfg Config) []string {
 // the argv T3 uses — which is the thing being tested.
 const ProbeEnv = "TL_T3_BRIDGE_PROBE"
 
-// probing reports whether this is a handshake probe.
+// probing reports whether the ENVIRONMENT asked for a handshake probe. A
+// session-less argv also means probe; that is carried on Config.Probe, because
+// it is a property of the invocation rather than of the environment.
 func probing() bool { return os.Getenv(ProbeEnv) != "" }
 
 // run wires the bridge together and serves T3 until the pipe closes.
@@ -306,7 +308,7 @@ func run(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	if probing() {
+	if cfg.Probe || probing() {
 		// The caller has what it came for. Anything past this point would bind a
 		// real tmux session to a conversation nobody asked about.
 		log.Printf("handshake probe: answered initialize and system/init; not attaching")
@@ -592,6 +594,11 @@ type Config struct {
 	// uuid the transcript is written under.
 	Resume string
 
+	// Probe is set when the argv identifies no conversation at all. That is what
+	// T3's own capability probe looks like, so it is answered as a handshake and
+	// nothing is attached — see ProbeEnv for why the mode exists.
+	Probe bool
+
 	Model                  string // --model
 	Effort                 string // --effort
 	PermissionMode         string // --permission-mode
@@ -704,7 +711,14 @@ func ParseArgs(argv []string) (Config, error) {
 	}
 
 	if cfg.SessionID == "" && cfg.Resume == "" {
-		return Config{}, fmt.Errorf("no --session-id and no --resume: nothing identifies the conversation (argv %q)", argv)
+		// Nothing identifies a conversation. This USED to be fatal, and being
+		// fatal is what crash-looped T3: it spawns a provider session-lessly to
+		// read its capabilities, and a provider that exits mid-handshake leaves
+		// T3 writing to a closed stdin, where the unhandled EPIPE takes the
+		// whole server down (wizard's instance, every six seconds, 2026-08-20
+		// to 2026-08-28). Answering the handshake is both what T3 wants and
+		// safer than exiting.
+		cfg.Probe = true
 	}
 	if cfg.SessionID != "" && cfg.Resume != "" {
 		log.Printf("both --session-id %s and --resume %s; treating this as a resume", cfg.SessionID, cfg.Resume)
