@@ -105,10 +105,12 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 	}
 }
 
-// The end of a multi-question walk is a review screen. It is not a question, and
-// mirroring its "Submit answers / Cancel" as one would offer an answer nobody
-// asked for.
-func TestParseDialogIgnoresTheReviewScreen(t *testing.T) {
+// The end of a multi-question walk is a review screen. Its "Submit answers /
+// Cancel" is not a question and must not be mirrored as one — but the session IS
+// still blocked, and saying nothing would leave the Text view on "Working…"
+// while the terminal waits for a keystroke. So it reports, like any call the
+// pane can only partly show.
+func TestParseDialogReportsTheReviewScreenWithoutOfferingItAsAQuestion(t *testing.T) {
 	review := `
 ←  ☒ Fruit  ☒ Drink  ✔ Submit  →
 Review your answers
@@ -118,8 +120,18 @@ Ready to submit your answers?
 ❯ 1. Submit answers
   2. Cancel
 `
-	if d := ParseDialog(review); d != nil {
-		t.Fatalf("the review screen parsed as a question: %+v", d)
+	d := ParseDialog(review)
+	if d == nil {
+		t.Fatal("the review screen left the session looking idle")
+	}
+	if !d.Partial {
+		t.Fatalf("the review screen was offered as an answerable question: %+v", d)
+	}
+	if len(d.Headers) != 2 || d.Headers[0] != "Fruit" {
+		t.Fatalf("headers = %v", d.Headers)
+	}
+	if len(d.Questions) != 1 || len(d.Questions[0].Options) != 0 {
+		t.Fatalf("the review screen carried options: %+v", d.Questions)
 	}
 }
 

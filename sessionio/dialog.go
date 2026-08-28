@@ -80,6 +80,9 @@ var (
 // options the CLI adds to every AskUserQuestion.
 func ParseDialog(pane string) *Dialog {
 	lines := strings.Split(pane, "\n")
+	if d := reviewScreen(lines); d != nil {
+		return d
+	}
 
 	// Work from the footer up: it is the bottom of the dialog, and anything
 	// below it belongs to the composer.
@@ -232,6 +235,37 @@ func ParseDialog(pane string) *Dialog {
 	}
 	d.Questions = []DialogQuestion{q}
 	return d
+}
+
+// reviewScreen recognises the last step of a multi-question walk: every question
+// answered, waiting for a Submit.
+//
+// It is not a question — mirroring its "Submit answers / Cancel" as one would
+// offer an answer nobody asked for — but the session IS blocked on it, and
+// reporting nothing would leave the Text view on "Working…" while the terminal
+// waits for a keystroke. So it comes back partial, with the headers, and the
+// card says where to finish it.
+func reviewScreen(lines []string) *Dialog {
+	asks, tabs := false, ""
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "Ready to submit your answers?" || t == "Review your answers" {
+			asks = true
+		}
+		if reTabBar.MatchString(line) {
+			tabs = line
+		}
+	}
+	if !asks || tabs == "" {
+		return nil
+	}
+	headers := tabHeaders(tabs)
+	return &Dialog{
+		Questions: []DialogQuestion{{Question: "Ready to submit your answers?"}},
+		Headers:   headers,
+		Count:     len(headers),
+		Partial:   true,
+	}
 }
 
 // numbered reports whether the line is a description belonging to an option —
