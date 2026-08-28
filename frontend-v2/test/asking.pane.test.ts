@@ -72,3 +72,33 @@ describe("askingFromPane", () => {
     expect(pendingQuestion(rows)).toBeNull();
   });
 });
+
+/**
+ * A reading is only good while nothing has happened since.
+ *
+ * Same rule the transcript's own questions follow: a question is being asked
+ * only while it is the last thing that happened. The server withdraws a reading
+ * when the dialog goes, but a client that reconnects mid-flight, or a server a
+ * tick behind, must not dock a card over a question the session has moved past.
+ */
+describe("a reading the session has moved past", () => {
+  const after = (kind: string): Event =>
+    ({ id: ++id, kind, session: "qa", body: "" }) as unknown as Event;
+
+  it("is dropped once the transcript shows the session moved on", () => {
+    for (const kind of ["tool_result", "text", "turn_end", "user"]) {
+      expect(askingFromPane([asking(dialog), after(kind)])).toBeNull();
+    }
+  });
+
+  it("survives a mode marker, which says nothing about the question", () => {
+    const mode = {
+      id: ++id,
+      kind: "meta",
+      meta: "permission-mode",
+      body: "bypassPermissions",
+      session: "qa",
+    } as unknown as Event;
+    expect(askingFromPane([asking(dialog), mode])?.questions[0]?.header).toBe("Colour");
+  });
+});
