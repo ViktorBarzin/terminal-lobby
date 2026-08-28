@@ -188,9 +188,12 @@ describe("<TerminalView> — window.__tlPrefsLive (live font size / prefs)", () 
  *  (jsdom refuses real frame navigation) and record the URLs each one gets. */
 function withFakeFrames(): {
   nav: string[];
+  /** the URLs actually navigated to — constant now, args ride the frame. */
+  navUrl: string[];
   restore: () => void;
 } {
   const nav: string[] = [];
+  const navUrl: string[] = [];
   const desc = Object.getOwnPropertyDescriptor(
     HTMLIFrameElement.prototype,
     "contentWindow",
@@ -199,10 +202,21 @@ function withFakeFrames(): {
   Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
     configurable: true,
     get(this: HTMLIFrameElement) {
+      const el = this;
       let f = fakes.get(this);
       if (!f) {
         f = {
-          location: { replace: (u: string) => void nav.push(u) },
+          // The attach args ride the frame (dataset/name) now that the URL is
+          // constant for every session — one cache entry for a 1.8 MB document
+          // instead of one per session name. Rebuild the equivalent URL so the
+          // assertions below still read as "this session, these args".
+          location: {
+            replace: (u: string) => {
+              const args = el.dataset.tlArgs;
+              void nav.push(args ? u + "?" + args : u);
+              void navUrl.push(u);
+            },
+          },
           postMessage: () => {},
           focus: () => {},
         };
@@ -213,6 +227,7 @@ function withFakeFrames(): {
   });
   return {
     nav,
+    navUrl,
     restore: () => {
       if (desc) Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", desc);
     },
@@ -370,3 +385,51 @@ describe("<TerminalView> — only the primary frame owns the window bridges", ()
     expect(window.__tlForwardToTerminal).toBeUndefined();
   });
 });
+
+/**
+ * ONE CACHE ENTRY FOR EVERY SESSION.
+ *
+ * term.html is 1.8 MB of document whose connect() sits at 99.2% of the file. With
+ * the session name in the query string every session was its own cache entry:
+ * measured 1,796,377 B for a name never seen before against 300 B for an exact
+ * repeat, so opening a session cost 8.4-10.3 s on a 400kbps link EVERY time, and
+ * a truncated download produced a page that renders, never fires load, and
+ * reports nothing. The URL is now identical for every attach; the args ride the
+ * frame, which no cache key can see.
+ */
+describe("<TerminalView> — the attach URL is the same for every session", () => {
+  let frames: ReturnType<typeof withFakeFrames>;
+  beforeEach(() => {
+    frames = withFakeFrames();
+  });
+  afterEach(() => frames.restore());
+
+  it("navigates to the bare page, whatever the session is called", () => {
+    const [session, setSession] = createSignal("qa-one");
+    render(() => <TerminalView session={session()} active={true} />);
+    setSession("qa-two");
+    setSession("qa-three-with-a-much-longer-name");
+    expect(frames.navUrl.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(frames.navUrl)).toEqual(new Set(["/term.html"]));
+  });
+
+  it("carries the args on the frame, prefixed so nothing else is mistaken for them", () => {
+    const { container } = render(() => <TerminalView session="qa-frame" active={true} />);
+    const frame = container.querySelector("iframe") as HTMLIFrameElement;
+    expect(frame.dataset.tlArgs).toBe("arg=qa-frame");
+    expect(frame.name).toBe("tl1:arg=qa-frame");
+  });
+
+  it("still re-attaches when only the args change", () => {
+    // The URL can no longer tell one attach from the next, so the args are what
+    // the effect compares. A stale comparison here means switching sessions
+    // silently keeps showing the previous one.
+    const [session, setSession] = createSignal("qa-a");
+    render(() => <TerminalView session={session()} active={true} />);
+    const first = frames.nav.length;
+    setSession("qa-b");
+    expect(frames.nav.length).toBe(first + 1);
+    expect(frames.nav.at(-1)).toBe("/term.html?arg=qa-b");
+  });
+});
+
