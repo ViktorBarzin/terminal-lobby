@@ -27,8 +27,24 @@ describe("deriveRows", () => {
     expect(rows.map((r) => r.kind)).toEqual(["user", "message", "working"]);
     const msg = rows[1] as MessageRow;
     expect(msg.body).toBe("hello");
-    // last message of an unsettled turn is marked streaming
-    expect(msg.streaming).toBe(true);
+  });
+
+  // A running turn reports itself in ONE place. The message used to carry a
+  // blinking cursor of its own, which claimed the text was still arriving —
+  // untrue, since Claude Code writes one record per completed block — and
+  // blinked directly above the tool rows that message had announced.
+  it("gives a running turn exactly one progress indicator, and it is the working row", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      ev({ id: 2, kind: "text", body: "let me check the logs" }),
+      ev({ id: 3, kind: "tool_use", tool: "Bash", toolId: "t1", body: '{"command":"ls"}' }),
+    ]);
+    expect(rows.filter((r) => r.kind === "working")).toHaveLength(1);
+    // The working row is LAST — below the commands, not over them.
+    expect(rows.at(-1)!.kind).toBe("working");
+    for (const r of rows.filter((r) => r.kind === "message")) {
+      expect(r).not.toHaveProperty("streaming");
+    }
   });
 
   it("pairs tool_use with tool_result by toolId into one row", () => {
