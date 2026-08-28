@@ -167,6 +167,19 @@ const sameKeys = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((k, i) => k === b[i]);
 
 /**
+ * The oldest CONTENT row — the anchor both scroll compensations measure.
+ *
+ * It has to exclude the timeline's own chrome. `.tl-row-earlier` and
+ * `.tl-row-filling` both carry `.tl-row` and both render ABOVE the content, so a
+ * selector that accepts them resolves to a row pinned at the top whose offsetTop
+ * never changes — which reads as "nothing was inserted above you" every time and
+ * silently turns both compensations into no-ops. The reader then gets yanked on
+ * every window, and the self-scroll guard never arms, so one load can chain into
+ * the next.
+ */
+const ANCHOR_ROW_SELECTOR = ".tl-row:not(.tl-row-filling):not(.tl-row-earlier)";
+
+/**
  * Structured text-mode renderer. Derives folded rows from the raw event stream
  * (pure logic in timeline.logic) and maps each row kind to a view. Turn-fold
  * rows expand and re-fold in place; tool rows expand to their real payload —
@@ -288,7 +301,7 @@ export const MessagesTimeline: Component<{
     // the reader. scrollHeight would also count rows BELOW getting taller as
     // their markdown and highlighting resolve, and compensating for that drags
     // the reader down (measured: 5,780px, ending back at the live end).
-    const anchor = el?.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling)");
+    const anchor = el?.querySelector<HTMLElement>(ANCHOR_ROW_SELECTOR);
     const before = anchor?.offsetTop ?? 0;
     setMounted((m) => Math.min(total, m + MOUNT_CHUNK_ROWS));
     if (!el) return;
@@ -529,7 +542,7 @@ export const MessagesTimeline: Component<{
     if (!props.onLoadEarlier || loadingEarlier() || !props.hasEarlier) return;
     setLoadingEarlier(true);
     const el = scroller;
-    const anchor = el?.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling)");
+    const anchor = el?.querySelector<HTMLElement>(ANCHOR_ROW_SELECTOR);
     const before = anchor?.offsetTop ?? 0;
     try {
       await props.onLoadEarlier();
@@ -617,21 +630,6 @@ export const MessagesTimeline: Component<{
       onScroll={onScroll}
       onClick={onClick}
     >
-        {/* The top of what is held, and its own status line. Reaching it is
-            what loads the next window — the button is the same request for a
-            reader who would rather tap than scroll, and the retry when a fetch
-            fails or the link is down. It keeps a height either way, so there is
-            something to scroll INTO above the oldest row. */}
-        <div class="tl-row tl-row-earlier" aria-live="polite">
-          <Show
-            when={props.hasEarlier}
-            fallback={<span class="tl-status-text">Start of session</span>}
-          >
-            <button type="button" class="tl-linkbtn" onClick={loadEarlier} disabled={loadingEarlier()}>
-              {loadingEarlier() ? "Loading earlier…" : "Load earlier turns"}
-            </button>
-          </Show>
-        </div>
       <Show
         when={allKeys().length > 0}
         fallback={
