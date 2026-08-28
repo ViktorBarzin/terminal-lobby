@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onMount, Show, type Component } from "solid-js";
+import { createEffect, createMemo, createSignal, Show, type Component } from "solid-js";
 import type { Event, PermissionDecision, SessionState } from "../types/events";
 import {
   askingFromPane,
@@ -136,7 +136,25 @@ export const TextView: Component<{
       if (seen !== was) return;
     }
   };
-  onMount(() => void readMode(""));
+  /**
+   * Mount-time work waits until this view is actually looked at.
+   *
+   * Both views stay mounted — the swap must not drop the terminal's WebSocket or
+   * this transcript's scroll position — so `onMount` fires even when the
+   * TERMINAL is what is on screen. Two round trips (/pane, and /commands below)
+   * were therefore spent on every terminal open by a view nobody was reading,
+   * which on a 300 ms link is most of a second before the terminal's own
+   * requests get a turn. A one-way latch: once shown, it never withholds again,
+   * so switching back and forth costs nothing extra.
+   */
+  const [everShown, setEverShown] = createSignal(false);
+  createEffect(() => {
+    if (props.onScreen !== false) setEverShown(true);
+  });
+  createEffect(() => {
+    if (!everShown()) return;
+    void readMode("");
+  });
 
   /**
    * The question the session is blocked on, if any.
@@ -233,7 +251,10 @@ export const TextView: Component<{
 
   // The catalogue is files on disk; one read when the view opens is enough.
   const [commands, setCommands] = createSignal<SlashCommand[]>([]);
-  onMount(() => void props.onCommands?.().then(setCommands));
+  createEffect(() => {
+    if (!everShown()) return;
+    void props.onCommands?.().then(setCommands);
+  });
 
   const cycleMode = () => {
     // Shift+Tab in the CLI cycles the permission mode. One press, then the pane
