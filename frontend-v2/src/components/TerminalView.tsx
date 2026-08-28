@@ -6,7 +6,11 @@ import {
   untrack,
   type Component,
 } from "solid-js";
-import { terminalUrl } from "../lib/terminal-url";
+import {
+  TERMINAL_FRAME_PREFIX,
+  terminalFrameArgs,
+} from "../lib/terminal-url";
+import { TERMINAL_BASE } from "../lib/config";
 import { isBuildStale } from "../deploy/healer.logic";
 import { track } from "../telemetry/track";
 import { ownWhile } from "../lib/ownwhile";
@@ -94,6 +98,9 @@ export const TerminalView: Component<{
   let coverTimer: ReturnType<typeof setTimeout> | undefined;
   let themeAckTimer: ReturnType<typeof setTimeout> | undefined;
   let currentUrl = "";
+  /** The attach args currently on the frame. The URL no longer distinguishes
+   *  one session from another, so this is what a re-attach compares. */
+  let currentArgs = "";
 
   const origin = () =>
     typeof location !== "undefined" ? location.origin : "";
@@ -124,6 +131,10 @@ export const TerminalView: Component<{
 
   const navigate = (url: string): void => {
     currentUrl = url;
+    // Same URL as last time is the normal case now (only the args changed), and
+    // location.replace to an identical URL reloads the document — which is what
+    // a re-attach needs. Only a fragment-only difference would short-circuit,
+    // and this URL never carries one.
     if (url && url !== "about:blank") showCover();
     else hideCover();
     try {
@@ -157,8 +168,8 @@ export const TerminalView: Component<{
     const owner = props.owner;
     const watch = props.watch;
     if (!attachAllowed()) return;
-    const url = untrack(() =>
-      terminalUrl(session, {
+    const args = untrack(() =>
+      terminalFrameArgs(session, {
         // arg2 (command) is a CREATE-only concern. On a RE-attach it must be the
         // inert placeholder: an existing session you `exit` is resurrected by
         // ttyd's `new-session -A` reconnect, and carrying the live create-dropdown
@@ -169,7 +180,19 @@ export const TerminalView: Component<{
         watch,
       }),
     );
-    if (url !== currentUrl) navigate(url);
+    // The URL is the SAME for every session on purpose — one cache entry for a
+    // 1.8 MB document instead of one per session name — so the args, not the
+    // URL, are what changed. They reach the framed page synchronously through
+    // the frame name (and its dataset, belt and braces), neither of which is
+    // part of a cache key.
+    if (args !== currentArgs) {
+      currentArgs = args;
+      if (iframe) {
+        iframe.name = TERMINAL_FRAME_PREFIX + args;
+        iframe.dataset.tlArgs = args;
+      }
+      navigate(TERMINAL_BASE);
+    }
   });
 
   // Tell the terminal page whether its view is on screen. Both views stay

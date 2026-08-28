@@ -248,6 +248,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   it("does not attach the terminal while it is the hidden view, only when opened", () => {
     localStorage.setItem("tl:viewmode:v1:qa-vs", "text"); // start with the terminal hidden
     const nav: string[] = [];
+  const navUrl: string[] = [];
     const desc = Object.getOwnPropertyDescriptor(
       HTMLIFrameElement.prototype,
       "contentWindow",
@@ -256,10 +257,21 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
       configurable: true,
       get(this: HTMLIFrameElement) {
+        const el = this;
         let f = fakes.get(this);
         if (!f) {
           f = {
-            location: { replace: (u: string) => void nav.push(u) },
+            // The attach args ride the frame (dataset/name) now that the URL is
+            // constant for every session — one cache entry for a 1.8 MB document
+            // instead of one per session name. Rebuild the equivalent URL so the
+            // assertions below still read as "this session, these args".
+            location: {
+              replace: (u: string) => {
+                const args = el.dataset.tlArgs;
+                void nav.push(args ? u + "?" + args : u);
+                void navUrl.push(u);
+              },
+            },
             postMessage: () => {},
             focus: () => {},
           };
