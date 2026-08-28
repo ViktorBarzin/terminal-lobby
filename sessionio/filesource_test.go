@@ -295,3 +295,63 @@ func TestFileSourceHeadReportsTheNewestIDAndAStableEpoch(t *testing.T) {
 		t.Fatalf("two transcripts share epoch %q", e3)
 	}
 }
+
+// The pane watcher appends at most one event per CHANGE: a dialog that sits on
+// screen for two minutes must not put a hundred events in the log.
+func TestFileSourceAskingAppendsOnlyOnChange(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	os.WriteFile(p, []byte(""), 0o644)
+	fs := NewFileSource("demo", p, time.Millisecond)
+
+	if !fs.SetAsking(`{"count":1}`) {
+		t.Fatal("the first reading was not recorded")
+	}
+	if fs.SetAsking(`{"count":1}`) {
+		t.Fatal("an unchanged reading was recorded again")
+	}
+	if !fs.SetAsking("") {
+		t.Fatal("the dialog going away was not recorded")
+	}
+	if fs.SetAsking("") {
+		t.Fatal("still-no-dialog was recorded")
+	}
+
+	got := fs.Replay(0)
+	if len(got) != 2 {
+		t.Fatalf("events = %+v, want one per change", got)
+	}
+	for _, e := range got {
+		if e.Kind != KindMeta || e.Meta != MetaAsking {
+			t.Fatalf("event = %+v", e)
+		}
+	}
+	if got[0].Body != `{"count":1}` || got[1].Body != "" {
+		t.Fatalf("bodies = %q, %q", got[0].Body, got[1].Body)
+	}
+}
+
+// A source with no reader attached is not worth a tmux round trip, and one
+// whose turn has settled cannot be sitting on a dialog.
+func TestFileSourceWorthWatchingOnlyWhileReadAndWorking(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	os.WriteFile(p, []byte(""), 0o644)
+	fs := NewFileSource("demo", p, time.Millisecond)
+
+	fs.Append(Event{Kind: KindUser, Body: "go"})
+	if fs.WorthWatching() {
+		t.Fatal("a source nobody is reading is being polled")
+	}
+	ch, cancel := fs.Subscribe()
+	defer cancel()
+	go func() {
+		for range ch {
+		}
+	}()
+	if !fs.WorthWatching() {
+		t.Fatal("a watched session mid-turn is not being polled")
+	}
+	fs.Append(Event{Kind: KindTurnEnd})
+	if fs.WorthWatching() {
+		t.Fatal("a settled turn is still being polled")
+	}
+}

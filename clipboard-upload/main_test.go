@@ -144,6 +144,72 @@ func TestPublicAssetMaskableIconPreShipped(t *testing.T) {
 	}
 }
 
+// /assets/ is where the lobby's content-hashed output lives: the SPA's chunks
+// and an immutable copy of the terminal page. Two things matter here — that the
+// answer is unconditionally cacheable (a name's bytes never change, so a client
+// must never have to revalidate), and that a name is VALIDATED rather than
+// cleaned, so nothing outside that one flat directory is reachable.
+func TestHashedAssetsAreImmutableAndConfined(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLIPBOARD_UPLOAD_ASSET_DIR", dir)
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const body = "console.log(1)"
+	if err := os.WriteFile(filepath.Join(dir, "assets", "index-abc123.js"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A secret one directory up: a traversal that resolved would read this.
+	if err := os.WriteFile(filepath.Join(dir, "term.html"), []byte("SHOULD NOT LEAK"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := assetServe(t, http.MethodGet, "/assets/index-abc123.js")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /assets/index-abc123.js: got %d, want 200", rec.Code)
+	}
+	if rec.Body.String() != body {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Fatalf("Cache-Control = %q — a hashed name must never need revalidating", cc)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/javascript; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+
+	// An immutable copy of the terminal page rides the same path.
+	if err := os.WriteFile(filepath.Join(dir, "assets", "term-b40edcd054b4.html"), []byte("<!doctype html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec = assetServe(t, http.MethodGet, "/assets/term-b40edcd054b4.html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET the hashed terminal page: got %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+
+	for _, bad := range []string{
+		"/assets/../term.html",
+		"/assets/..%2Fterm.html",
+		"/assets/sub/dir.js",
+		"/assets/",
+		"/assets/.env",
+		"/assets/index-abc123.sh",   // extension not in the table
+		"/assets/index-abc123.js.x", // nor this one
+		"/assets/missing-000000.js",
+	} {
+		rec := assetServe(t, http.MethodGet, bad)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s: got %d, want 404", bad, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "SHOULD NOT LEAK") {
+			t.Fatalf("GET %s reached outside the assets directory", bad)
+		}
+	}
+}
+
 // /build-id is the lobby's build stamp on its own path. The healer used to read
 // that fingerprint out of a full GET of "/" every 5 seconds: 1.43 MB a time, and
 // on iOS Safari 1,279 full bodies to 2 revalidations in 24h — 1.83 GB/day from
