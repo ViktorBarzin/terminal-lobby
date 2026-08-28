@@ -49,7 +49,22 @@ export function buildTerminalUrl(
   name: string,
   opts: TerminalUrlOpts = {},
 ): string {
-  let u = base + "?arg=" + encodeURIComponent(name);
+  return base + "?" + buildTerminalArgs(name, opts);
+}
+
+/**
+ * The positional `arg=` list on its own, without a page URL in front of it.
+ *
+ * The framed attach passes these OUT OF BAND (see `TERMINAL_FRAME_PREFIX`)
+ * because the page URL is a cache key: with the session name in the query, every
+ * session was a separate entry for a 1.8 MB document — measured 1,796,377 B for
+ * a name never seen before against 300 B for an exact repeat, so opening a new
+ * session cost 8.4-10.3 s on a 400kbps link every single time. ttyd never reads
+ * the page URL anyway: `connect()` re-emits these args on /token and /ws, which
+ * is where `ttyd -a` maps them to $1..$5.
+ */
+export function buildTerminalArgs(name: string, opts: TerminalUrlOpts = {}): string {
+  let u = "arg=" + encodeURIComponent(name);
   const cmd = opts.cmd && opts.cmd.length > 0 ? opts.cmd : "default";
   const owner = opts.owner ?? "";
   const dir = opts.dir ?? "";
@@ -85,6 +100,10 @@ export function buildTerminalUrl(
   return u;
 }
 
+/** Marks a frame-name that carries an attach's args, so a name set by anything
+ *  else is never mistaken for one. Bump the digit if the encoding changes. */
+export const TERMINAL_FRAME_PREFIX = "tl1:";
+
 /** Config-bound builder: `buildTerminalUrl` against TERMINAL_BASE (the
  *  same-origin /term.html page by default; `?terminal=` overrides it). */
 export function terminalUrl(name: string, opts?: TerminalUrlOpts): string {
@@ -100,4 +119,12 @@ export function terminalUrl(name: string, opts?: TerminalUrlOpts): string {
   // target there would attach the wrong account.
   const owner = opts?.owner || ACT_AS || undefined;
   return buildTerminalUrl(TERMINAL_BASE, name, { ...opts, owner });
+}
+
+/** Config-bound arg list for a FRAMED attach, with the same act-as owner
+ *  defaulting as {@link terminalUrl}. The frame's URL stays constant so all
+ *  sessions share one cache entry; these ride the frame instead. */
+export function terminalFrameArgs(name: string, opts?: TerminalUrlOpts): string {
+  const owner = opts?.owner || ACT_AS || undefined;
+  return buildTerminalArgs(name, { ...opts, owner });
 }
