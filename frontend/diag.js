@@ -482,6 +482,11 @@ globalThis.tlDiag = (function () {
     // One mirror per compressed stream. They rotate together at each window
     // boundary; `pending` is what lets a test — and a pagehide — wait for the
     // rotation that is in flight.
+    // Whether the terminal socket actually negotiated compression. null until a
+    // socket opens. The mirror only makes sense when the server compressed;
+    // where it did not, the bytes the browser received ARE the wire bytes.
+    var wsDeflate = null;
+
     var termMirror = mirror(PER_MESSAGE_WIRE_BYTES);
     var textMirror = mirror(SSE_PER_MESSAGE_WIRE_BYTES);
     var pending = Promise.resolve();
@@ -604,6 +609,9 @@ globalThis.tlDiag = (function () {
         // Frames a mirror refused under backpressure. Reported rather than
         // swallowed: a modelled figure that is low because it gave up should
         // not look the same as one that is low because the link was quiet.
+        // Records whether the estimate is a model or a measurement, and answers
+        // per device whether the edge is stripping compression.
+        if (wsDeflate !== null) a["tl.net.term_deflate"] = wsDeflate;
         var termDrop = termMirror.dropped();
         var textDrop = textMirror.dropped();
         if (termDrop) a["tl.net.term_drop"] = termDrop;
@@ -745,11 +753,32 @@ globalThis.tlDiag = (function () {
       traffic();
     }
 
+    /**
+     * What the socket actually negotiated, read at open.
+     *
+     * This is not a formality. terminal.viktorbarzin.me is Cloudflare-proxied,
+     * and Cloudflare appears to strip permessage-deflate — so a client on
+     * mobile data may reach a socket with no compression at all, while one on
+     * the LAN resolves past Cloudflare by split-horizon DNS and gets it. That
+     * is exactly backwards from where the estimate matters: modelling
+     * compression that did not happen would under-report a metered connection
+     * by more than a factor of ten.
+     */
+    function onWsExtensions(ext) {
+      wsDeflate = /permessage-deflate/i.test(String(ext || ""));
+    }
+
     function onWsRecv(bytes, data) {
       var t = now();
       m.wsIn += finite(bytes) ? bytes : 0;
       m.framesIn += 1;
-      if (data !== undefined) termMirror.write(data);
+      if (wsDeflate === false) {
+        // Nothing compressed these, so what arrived is what crossed the link.
+        // Plus the frame header, which is on the wire either way.
+        if (finite(bytes)) m.net.term += bytes + PER_MESSAGE_WIRE_BYTES;
+      } else if (data !== undefined) {
+        termMirror.write(data);
+      }
       if (echoAt >= 0) {
         if (echoAmbiguous || t - echoAt > cfg.matchMs) m.echoUnmatched += 1;
         else m.echo.add(t - echoAt);
@@ -988,6 +1017,7 @@ globalThis.tlDiag = (function () {
       onRender: onRender,
       onWsSend: onWsSend,
       onWsRecv: onWsRecv,
+      onWsExtensions: onWsExtensions,
       onResource: onResource,
       onSseMessage: onSseMessage,
       /** Resolves once the in-flight mirror rotation has been accounted for.
@@ -1105,6 +1135,11 @@ globalThis.tlDiag = (function () {
         ws.addEventListener("open", function () {
           try {
             d.onConnOpen({ handshakeMs: Date.now() - openedAt });
+          } catch (e) {}
+          try {
+            // Empty when the edge stripped compression; the modelling decision
+            // turns on this.
+            d.onWsExtensions(ws.extensions);
           } catch (e) {}
         });
         ws.addEventListener("message", function (e) {
