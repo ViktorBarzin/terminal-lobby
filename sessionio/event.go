@@ -45,6 +45,13 @@ const (
 	// context.go). Like the mode, it is session STATE rather than something
 	// said, so the reader shows it in a chip rather than as a row.
 	MetaContext Meta = "context"
+	// MetaAsking carries a blocking AskUserQuestion read off the PANE, as JSON
+	// in Body — or an empty Body when the dialog is gone. Session state like
+	// the mode: the newest one wins and it renders as the answer card, never as
+	// a row. It exists because the transcript is not always written while the
+	// dialog is up (see dialog.go); the transcript's own record still wins
+	// whenever it has one.
+	MetaAsking Meta = "asking"
 )
 
 // Event is the renderer's contract. Field order is fixed by the struct so the
