@@ -16,6 +16,8 @@ terminal.viktorbarzin.me serves.
       ├─ /clipboard/*            → :7683 clipboard-upload, prefix stripped, authed
       ├─ /events/*               → :7685 session-events, no strip, authed, STREAMED
       ├─ /prompt/*  /cancel/*    → :7685 session-events, no strip, authed
+      ├─ /earlier/* /result/*    → :7685 session-events, no strip, authed
+      │  /pane/*    /keys/*         (the rest of the production ingress rule)
       ├─ /permission/*           → :7681 ttyd catch-all, as in production (†)
       ├─ /files/*                → :7686 file-api, no strip, authed
       ├─ /skills, /skills/*      → :7688 skills-api, no strip, authed; READS are
@@ -24,7 +26,8 @@ terminal.viktorbarzin.me serves.
 
 (†) /permission has no working destination anywhere, and this proxy cannot
 invent one. The production ingress does not route it — the session-events rule
-matches only /events/, /prompt/, /cancel/ — and session-events has no
+matches /events/, /prompt/, /cancel/, /earlier/, /result/, /pane/ and /keys/,
+and nothing else — and session-events has no
 /permission handler either: its whole route table is GET /events/{session},
 POST /prompt/{session}, POST /cancel/{session}, GET /health and a
 localhost-only POST /hooks/session-start. Measured 2026-08-06: POST
@@ -50,7 +53,8 @@ Blocked (403):
   3. any mutation of /shares, /shares/* (grants other OS users real access)
   4. POST /projects with a non-qa name; PUT/DELETE of a project this run
      did not create
-  5. POST /prompt/<s>, /cancel/<s>      unless s is qa-*
+  5. POST /prompt/<s>, /cancel/<s>,
+     /keys/<s>, /answer-text/<s>        unless s is qa-*
   6. POST /files/write                  unless the NORMALISED path is under
                                         --scratch (see THE SCRATCH below)
   7. WS upgrade whose first ?arg= is not qa-*   (a ttyd attach is WRITABLE:
@@ -305,7 +309,7 @@ class Guard:
         return None
 
     def check_events(self, method: str, path: str) -> Optional[str]:
-        m = re.match(r"^/(prompt|cancel)/([^/]+)", path)
+        m = re.match(r"^/(prompt|cancel|keys|answer-text)/([^/]+)", path)
         if m and method == "POST":
             verb, session = m.group(1), unquote(m.group(2))
             if not is_qa(session):
@@ -696,7 +700,14 @@ def build_app(args: argparse.Namespace) -> web.Application:
     app.router.add_route("*", "/api/sessions/{tail:.*}", api_proxy)
     app.router.add_route("*", "/clipboard/{tail:.*}", clipboard_proxy)
     app.router.add_route("*", "/events/{tail:.*}", events_proxy)
-    for prefix in ("prompt", "cancel", "permission"):
+    # Everything the PRODUCTION ingress routes to session-events, verbatim:
+    # infra/stacks/terminal/main.tf matches (/events/ || /prompt/ || /cancel/ ||
+    # /earlier/ || /result/ || /pane/ || /keys/). The last four arrived after
+    # this table was written, so a fleet reaching for history, a full tool
+    # result, the pane, or an answer got the SPA's HTML 404 and no way to tell
+    # that apart from a real one. /permission keeps its own handling below —
+    # production has no rule for it, and reproducing that is the point.
+    for prefix in ("prompt", "cancel", "earlier", "result", "pane", "keys", "permission"):
         app.router.add_route("*", f"/{prefix}/{{tail:.*}}", control_proxy)
     app.router.add_route("*", "/files/{tail:.*}", files_proxy)
     # Both forms: the inventory is GET /skills exactly, the rest are /skills/<verb>.

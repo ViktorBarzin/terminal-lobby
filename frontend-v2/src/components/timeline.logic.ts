@@ -1,4 +1,4 @@
-import type { Event, MetaKind, PermissionDecision, TokenUsage } from "../types/events";
+import type { Event, MetaKind, PermissionDecision, TokenUsage, SessionState } from "../types/events";
 import type { PendingPrompt } from "./compose.logic";
 import {
   describe as describeTool,
@@ -811,12 +811,27 @@ export function pendingQuestion(rows: TimelineRow[]): QuestionRow | null {
 }
 
 /** The mode in force, from the most recent mode marker. */
-export function currentMode(events: Event[]): string {
-  let mode = "";
-  for (const e of events) {
+export function currentMode(events: Event[], seed?: SessionState | null): string {
+  let mode = seed?.mode ?? "";
+  for (const e of after(events, seed)) {
     if (e.kind === "meta" && e.meta === "permission-mode" && e.body) mode = e.body;
   }
   return mode;
+}
+
+/**
+ * The events a seeded fold may apply: those the state frame does not already
+ * account for.
+ *
+ * The frame is computed over the whole log, and the window a client holds sits
+ * BELOW its `at` — so folding the window on top would apply the same queue
+ * operations, prompts and mode changes twice. Without a frame this is the whole
+ * list, which is what these folds did before there was one.
+ */
+function after(events: Event[], seed?: SessionState | null): Event[] {
+  if (!seed) return events;
+  const at = seed.at;
+  return events.filter((e) => e.id > at);
 }
 
 /** How many queued prompts the composer shows before summarising the rest. */
@@ -841,9 +856,9 @@ export const MAX_QUEUED_SHOWN = 3;
  * background job finished, not something a person is waiting on, and they
  * render as a wall of XML.
  */
-export function queuedPrompts(events: Event[]): string[] {
-  let queue: string[] = [];
-  for (const e of events) {
+export function queuedPrompts(events: Event[], seed?: SessionState | null): string[] {
+  let queue: string[] = [...(seed?.queue ?? [])];
+  for (const e of after(events, seed)) {
     if (e.kind !== "meta") continue;
     const text = (e.body ?? "").trim();
     switch (e.meta) {
@@ -874,9 +889,9 @@ function isHarnessNotice(text: string): boolean {
 }
 
 /** Every prompt this session has sent, oldest first — the composer's history. */
-export function promptHistory(events: Event[]): string[] {
-  const out: string[] = [];
-  for (const e of events) {
+export function promptHistory(events: Event[], seed?: SessionState | null): string[] {
+  const out: string[] = [...(seed?.prompts ?? [])];
+  for (const e of after(events, seed)) {
     const text = (e.body ?? "").trim();
     if (e.kind === "user" && text && out[out.length - 1] !== text) out.push(text);
   }

@@ -81,7 +81,7 @@ describe("SseClient", () => {
     const h = harness();
     h.client.connect();
     expect(h.sources).toHaveLength(1);
-    expect(h.sources[0]!.url).toBe("/events/sess"); // no cursor on first connect
+    expect(h.sources[0]!.url).toBe("/events/sess?rev=1"); // no cursor on first connect
 
     h.sources[0]!.onopen?.(null);
     h.sources[0]!.onmessage?.({ data: line({ id: 1, kind: "text", body: "a" }) });
@@ -126,7 +126,7 @@ describe("SseClient", () => {
     // fire the timer → new source, URL carries the resume cursor
     h.timers[0]!.fn();
     expect(h.sources).toHaveLength(2);
-    expect(h.sources[1]!.url).toBe("/events/sess?lastEventId=7");
+    expect(h.sources[1]!.url).toBe("/events/sess?lastEventId=7&rev=1");
   });
 
   it("instantRetry reconnects immediately and does not double-open", async () => {
@@ -339,7 +339,7 @@ describe("SseClient", () => {
 
       expect(h.sources[0]!.closed).toBe(true);
       expect(h.sources).toHaveLength(2);
-      expect(h.sources[1]!.url).toBe("/events/sess?lastEventId=4");
+      expect(h.sources[1]!.url).toBe("/events/sess?lastEventId=4&rev=1");
     });
 
     it("counts any inbound frame as proof of life, even one it discards", () => {

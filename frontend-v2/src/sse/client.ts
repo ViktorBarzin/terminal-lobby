@@ -1,4 +1,11 @@
-import { parseEvent, type Event } from "../types/events";
+import {
+  parseEvent,
+  type Event,
+  type ReadyFrame,
+  type SessionState,
+} from "../types/events";
+
+export type { ReadyFrame, SessionState };
 
 /**
  * Connection status.
@@ -16,6 +23,16 @@ export type SseStatus =
   | "reconnecting"
   | "no-transcript"
   | "closed";
+
+/** A named frame's JSON payload, or null when it is not an object at all. */
+function parseJSON<T>(data: string): T | null {
+  try {
+    const v: unknown = JSON.parse(data);
+    return v && typeof v === "object" ? (v as T) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The status session-events returns when a session has no event stream. */
 const NO_STREAM_STATUS = 404;
@@ -91,6 +108,17 @@ export interface SseClientOptions {
   /** builds the stream URL, carrying the resume cursor (see lib/config). */
   url: (session: string, lastEventId: number) => string;
   onEvent: (e: Event) => void;
+  /**
+   * One frame of the opening backfill — history, newest first.
+   *
+   * A separate lane from `onEvent` because the two arrive in opposite
+   * directions. The live lane dedups with `id <= cursor`, which is correct
+   * while ids only ever rise; applied to a DESCENDING backfill it would drop
+   * every frame after the first.
+   */
+  onBackfill?: (e: Event) => void;
+  /** The session state frame, computed over the whole log (see SessionState). */
+  onState?: (s: SessionState) => void;
   onStatus?: (s: SseStatus) => void;
   /**
    * The opening window is complete — everything the server had when the stream
@@ -100,7 +128,7 @@ export interface SseClientOptions {
    * moment. Without it the transcript paints a partial window and rebuilds it
    * as the rest lands (see store/session.ts).
    */
-  onReady?: () => void;
+  onReady?: (r: ReadyFrame) => void;
   /** injectable for tests; defaults to the browser EventSource. */
   createSource?: (url: string) => EventSourceLike;
   /** reads the stream URL's HTTP status (null = unreachable). Injectable so
@@ -139,9 +167,15 @@ export interface SseClientOptions {
  */
 export class SseClient {
   private readonly o: Required<
-    Omit<SseClientOptions, "onStatus" | "createSource" | "onReady">
+    Omit<
+      SseClientOptions,
+      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState"
+    >
   > &
-    Pick<SseClientOptions, "onStatus" | "createSource" | "onReady">;
+    Pick<
+      SseClientOptions,
+      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState"
+    >;
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
@@ -164,6 +198,8 @@ export class SseClient {
       onEvent: opts.onEvent,
       onStatus: opts.onStatus,
       onReady: opts.onReady,
+      onBackfill: opts.onBackfill,
+      onState: opts.onState,
       createSource: opts.createSource,
       probeStatus: opts.probeStatus ?? probeViaFetch,
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -220,9 +256,28 @@ export class SseClient {
       this.lastEventId = e.id;
       this.o.onEvent(e);
     };
-    es.addEventListener?.("ready", () => {
+    // History, newest first. No `id:` on these frames — the browser would take
+    // the OLDEST as Last-Event-ID — so the cursor is read off the payload, and
+    // only ever raised: a reconnect must ask for the gap above the newest event
+    // held, never replay from the bottom of the backfill.
+    es.addEventListener?.("back", (ev) => {
       this.markAlive();
-      this.o.onReady?.();
+      const e = parseEvent(ev.data);
+      if (!e) return;
+      if (e.id > this.lastEventId) this.lastEventId = e.id;
+      this.o.onBackfill?.(e);
+    });
+    es.addEventListener?.("state", (ev) => {
+      this.markAlive();
+      const s = parseJSON<SessionState>(ev.data);
+      if (s) this.o.onState?.(s);
+    });
+    es.addEventListener?.("ready", (ev) => {
+      this.markAlive();
+      // A server on the older contract sends the last replayed id here, which
+      // parses as a number rather than an object; either way the frame only
+      // has to mean "the opening exchange is over".
+      this.o.onReady?.(parseJSON<ReadyFrame>(ev.data) ?? {});
     });
     es.onerror = () => this.onError();
   }
