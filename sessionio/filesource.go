@@ -35,6 +35,9 @@ type FileSource struct {
 	logbuf  []Event
 	subs    map[int]chan Event
 	nextSub int
+	// The last pane reading of a blocking question, so only CHANGES are
+	// recorded (see SetAsking).
+	asking string
 
 	// norm is written by the tail AND by Interrupt (an HTTP handler), so it has
 	// its own lock. Order is always normMu -> mu, never the reverse.
@@ -245,6 +248,43 @@ func (f *FileSource) Head() (int64, string) {
 func logEpoch(path string) string {
 	sum := sha256.Sum256([]byte(path))
 	return hex.EncodeToString(sum[:8])
+}
+
+// SetAsking records what the PANE shows about a blocking question — the JSON of
+// a Dialog, or "" when there is none — and returns whether that CHANGED.
+//
+// A change appends one meta event, which is how the reading reaches a client:
+// the newest one wins, exactly as the mode and the /context reading do. A
+// dialog can sit on screen for minutes, so recording only changes is what keeps
+// a watcher off the log.
+func (f *FileSource) SetAsking(body string) bool {
+	f.mu.Lock()
+	if body == f.asking {
+		f.mu.Unlock()
+		return false
+	}
+	f.asking = body
+	f.mu.Unlock()
+
+	e := Event{Kind: KindMeta, Meta: MetaAsking, Body: body, At: time.Now().UnixMilli()}
+	f.Append(e)
+	return true
+}
+
+// WorthWatching reports whether reading this session's pane could tell anyone
+// anything: somebody is reading the stream, and the last turn has not settled.
+//
+// Both halves bound a cost that is otherwise paid per session per tick — a tmux
+// subprocess, and for another user's session a sudo one. A session nobody has
+// open needs no pane reading, and a settled turn cannot be sitting on a dialog:
+// the question is asked mid-turn, and answering it is what lets the turn end.
+func (f *FileSource) WorthWatching() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.subs) == 0 || len(f.logbuf) == 0 {
+		return false
+	}
+	return f.logbuf[len(f.logbuf)-1].Kind != KindTurnEnd
 }
 
 // TailOnce consumes whatever the transcript has gained since the last read.
