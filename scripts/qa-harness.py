@@ -10,7 +10,8 @@ terminal.viktorbarzin.me serves.
 
     browser ── http://127.0.0.1:7998 (this script)
       ├─ 10 exact PWA paths      → :7683 clipboard-upload, UNSTRIPPED, NO auth
-      │                            (mirrors the public auth="none" carve-out)
+      │  + /assets/*               (mirrors the public auth="none" carve-out;
+      │                            /assets/ is the split bundle's hashed chunks)
       ├─ /term.html              → :7683 clipboard-upload, UNSTRIPPED, authed
       ├─ /api/sessions/*         → :7684 tmux-api, prefix STRIPPED, authed
       ├─ /clipboard/*            → :7683 clipboard-upload, prefix stripped, authed
@@ -696,6 +697,12 @@ def build_app(args: argparse.Namespace) -> web.Application:
     # Order matters: aiohttp matches resources in registration order.
     for path in ASSET_PATHS:
         app.router.add_route("*", path, asset_proxy)
+    # The bundle is no longer one file: 5f370fc splits it into hashed chunks
+    # under /assets/, served by clipboard-upload the way the PWA assets are
+    # (immutable, no auth). Without this route the harness answered every chunk
+    # with the SPA's own HTML 404 and the page rendered blank — the fleet could
+    # not open the lobby at all.
+    app.router.add_route("*", "/assets/{tail:.*}", asset_proxy)
     app.router.add_route("*", "/term.html", term_html_proxy)
     app.router.add_route("*", "/api/sessions/{tail:.*}", api_proxy)
     app.router.add_route("*", "/clipboard/{tail:.*}", clipboard_proxy)
