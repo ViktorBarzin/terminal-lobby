@@ -20,6 +20,7 @@ import (
 type FakeOptions struct {
 	mu       sync.Mutex
 	sessions map[string]map[string]string // "<osUser>/<session>" -> option -> value
+	reads    int
 }
 
 // NewFakeOptions creates the store with the given sessions already live, each
@@ -37,6 +38,7 @@ func NewFakeOptions(live ...string) *FakeOptions {
 func (f *FakeOptions) Option(osUser, session, name string) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reads++
 	opts, ok := f.sessions[osUser+"/"+session]
 	if !ok {
 		return "", false // no such tmux session
@@ -55,6 +57,16 @@ func (f *FakeOptions) SetOption(osUser, session, name, value string) error {
 	}
 	opts[name] = value
 	return nil
+}
+
+// Reads is how many times an option has been read. Real tmux answers a read
+// with a subprocess — `sudo -u <user> tmux show-option` for anyone but the
+// service's own user — so a caller that polls has to be able to prove it does
+// not poll more than it said it would.
+func (f *FakeOptions) Reads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads
 }
 
 // Kill models `tmux kill-session`: the session and every option on it go away.

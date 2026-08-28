@@ -3,9 +3,9 @@ package sessionio
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
-	"strings"
 )
 
 func TestFileSourceTailsTranscriptAndAssignsMonotonicIDs(t *testing.T) {
@@ -227,5 +227,71 @@ func TestFullResultReadsThePayloadBackOffDisk(t *testing.T) {
 	}
 	if _, _, err := f.FullResult("tu_missing"); err == nil {
 		t.Fatal("an unknown tool id must be an error, not an empty success")
+	}
+}
+
+// Retiring a source has to END the streams reading it. A source is retired when
+// the tmux name it is keyed by starts pointing at a different transcript — a new
+// Claude in the same window, or a stamp corrected after the fact — and a reader
+// that stays subscribed to the retired one simply stops receiving anything: the
+// transcript it holds freezes at whatever was on screen, including a dialog that
+// has since been answered. Closing the channel ends the SSE response, which is
+// what makes the browser reconnect and land on the live source.
+func TestFileSourceCloseEndsLiveSubscriptions(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	os.WriteFile(p, []byte(""), 0o644)
+	fs := NewFileSource("demo", p, time.Millisecond)
+
+	ch, cancel := fs.Subscribe()
+	defer cancel() // must stay safe after Close — no double close
+	if n := fs.Subscribers(); n != 1 {
+		t.Fatalf("subscribers = %d, want 1", n)
+	}
+	fs.Close()
+
+	select {
+	case _, open := <-ch:
+		if open {
+			t.Fatal("subscription delivered an event instead of closing")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close left the subscription open — the reader freezes on a retired source")
+	}
+	if n := fs.Subscribers(); n != 0 {
+		t.Fatalf("subscribers after close = %d, want 0", n)
+	}
+}
+
+// Head is what lets a client tell "nothing new" from "not the log you were
+// reading". Ids are per-source and start again at 1 for a new transcript, so a
+// client holding id 5,000 asks for the gap above it and a rebuilt log — which
+// tops out at, say, 340 — has nothing to answer with. Silence and "you are up to
+// date" look identical on the wire; the epoch and the head id are what separate
+// them.
+func TestFileSourceHeadReportsTheNewestIDAndAStableEpoch(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s.jsonl")
+	os.WriteFile(p, []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"one"}]}}`+"\n"), 0o644)
+
+	fs := NewFileSource("demo", p, time.Millisecond)
+	id, epoch := fs.Head()
+	if id != 0 || epoch == "" {
+		t.Fatalf("empty log: head = (%d, %q), want (0, non-empty)", id, epoch)
+	}
+	fs.TailOnce()
+	if id, _ := fs.Head(); id != 1 {
+		t.Fatalf("head after one event = %d, want 1", id)
+	}
+
+	// The same transcript read by a NEW source — every deploy does this — keeps
+	// the epoch, so a restart costs no client a resync.
+	again := NewFileSource("demo", p, time.Millisecond)
+	if _, e2 := again.Head(); e2 != epoch {
+		t.Fatalf("epoch moved across a restart: %q -> %q", epoch, e2)
+	}
+	// A different transcript is a different log, and says so.
+	other := NewFileSource("demo", filepath.Join(dir, "t.jsonl"), time.Millisecond)
+	if _, e3 := other.Head(); e3 == epoch {
+		t.Fatalf("two transcripts share epoch %q", e3)
 	}
 }

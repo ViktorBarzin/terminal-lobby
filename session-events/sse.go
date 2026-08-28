@@ -29,7 +29,28 @@ type Source interface {
 	Backfill(before int64, budget int) sessionio.Backfill
 	// State is the session-level truth a small backfill no longer carries.
 	State(maxPrompts int) sessionio.SessionState
+	// Head is the newest id in the log and the identity of the log itself —
+	// what a client needs to tell "nothing new" from "not the log you were
+	// reading" (see readyFrame).
+	Head() (int64, string)
 	Subscribe() (<-chan sessionio.Event, func())
+}
+
+// readyFrame closes the opening exchange. Beyond "the opening is over" it names
+// the LOG: ids are per-source and start again at 1 for a new transcript, so a
+// client holding id 5,000 that reconnects onto a rebuilt log asks for the gap
+// above 5,000 and is answered with nothing — indistinguishable, on the wire,
+// from being up to date. It then shows the previous conversation for as long as
+// the tab stays open, answer card and all. Epoch names the transcript and Head
+// says how far the log goes; between them a client can tell it is holding
+// history that no longer belongs to this session, and resync.
+//
+// Cursor keeps its own meaning — the `before` for the next step back — and is
+// sent only on a fresh open, where it is the client's to adopt.
+type readyFrame struct {
+	Cursor *int64 `json:"cursor,omitempty"`
+	Head   int64  `json:"head"`
+	Epoch  string `json:"epoch,omitempty"`
 }
 
 // OpenWindowTurns is how many turns a client sees when it opens a session
@@ -221,7 +242,10 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 		}
 		// No cursor: the client's own is the correct one, and overwriting it
 		// with a backfill cursor it never asked for would strand its history.
-		sink.print("event: ready\ndata: {}\n\n")
+		// The log's own identity still rides along — that is what tells a client
+		// resuming onto a REBUILT log that its history is not this session's.
+		head, epoch := src.Head()
+		sinkFrame(sink, "ready", readyFrame{Head: head, Epoch: epoch})
 
 	default:
 		// The reverse open. The session's own state first — it is ~8 KB and the
@@ -249,9 +273,8 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 				sink.flush()
 			}
 		}
-		sinkFrame(sink, "ready", struct {
-			Cursor int64 `json:"cursor"`
-		}{b.Cursor})
+		head, epoch := src.Head()
+		sinkFrame(sink, "ready", readyFrame{Cursor: &b.Cursor, Head: head, Epoch: epoch})
 		openCount = len(b.Events)
 	}
 	sink.flush()

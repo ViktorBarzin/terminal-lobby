@@ -197,4 +197,8 @@ export interface SessionState {
  *  begins, and is absent on a resume — there the client's own is correct. */
 export interface ReadyFrame {
   cursor?: number;
+  /** The newest id in the server's log for this session. */
+  head?: number;
+  /** Which log those ids belong to — a new transcript is a new epoch. */
+  epoch?: string;
 }

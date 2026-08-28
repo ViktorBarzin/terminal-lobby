@@ -13,7 +13,15 @@ class FakeSource implements EventSourceLike {
   onerror: ((ev: unknown) => void) | null = null;
   onmessage: ((ev: { data: string; lastEventId?: string }) => void) | null = null;
   closed = false;
+  private readonly listeners: Record<string, ((ev: { data: string }) => void)[]> = {};
   constructor(public url: string) {}
+  addEventListener(type: string, fn: (ev: { data: string }) => void) {
+    (this.listeners[type] ??= []).push(fn);
+  }
+  /** Deliver a named frame (`ready`, `back`, `state`) the way the server does. */
+  emit(type: string, data: unknown) {
+    for (const fn of this.listeners[type] ?? []) fn({ data: JSON.stringify(data) });
+  }
   close() {
     this.closed = true;
   }
@@ -387,5 +395,92 @@ describe("SseClient", () => {
       expect(h.sources).toHaveLength(1);
       expect(h.statuses[h.statuses.length - 1]).toBe("closed");
     });
+  });
+});
+
+/**
+ * Ids are per-source: a new transcript under the same session name starts again
+ * at 1. A client holding id 5,000 then asks for the gap above 5,000, is answered
+ * with nothing — which is exactly what "you are up to date" looks like — and
+ * shows the previous conversation for as long as the tab stays open. That is
+ * how an answer card stayed docked over a dialog answered in the terminal
+ * minutes earlier: the transcript behind it had stopped arriving.
+ */
+describe("SseClient resync", () => {
+  const ready = (over: Record<string, unknown> = {}) => ({ head: 9, epoch: "aaaa", ...over });
+
+  it("starts over when the log it resumes onto is not the one it holds", async () => {
+    const resets: number[] = [];
+    const h = harness(() => 200, { onReset: () => resets.push(1) });
+    h.client.connect();
+    h.sources[0]!.emit("ready", ready());
+    h.sources[0]!.onmessage?.({ data: line({ id: 5000, kind: "text", body: "old" }) });
+    expect(h.client.cursor).toBe(5000);
+
+    h.sources[0]!.onerror?.(null);
+    await flush();
+    h.timers[0]!.fn();
+    expect(h.sources[1]!.url).toBe("/events/sess?lastEventId=5000&rev=1");
+
+    // A different transcript answers: same session name, a log of its own.
+    h.sources[1]!.emit("ready", ready({ head: 3, epoch: "bbbb" }));
+
+    expect(resets).toHaveLength(1);
+    expect(h.sources[1]!.closed).toBe(true);
+    expect(h.client.cursor).toBe(0);
+    expect(h.sources[2]!.url).toBe("/events/sess?rev=1"); // the whole window again
+  });
+
+  it("starts over when the log comes back shorter than the cursor it holds", async () => {
+    const resets: number[] = [];
+    const h = harness(() => 200, { onReset: () => resets.push(1) });
+    h.client.connect();
+    h.sources[0]!.emit("ready", ready());
+    h.sources[0]!.onmessage?.({ data: line({ id: 5000, kind: "text", body: "old" }) });
+
+    h.sources[0]!.onerror?.(null);
+    await flush();
+    h.timers[0]!.fn();
+    h.sources[1]!.emit("ready", ready({ head: 340 })); // same epoch, rebuilt log
+
+    expect(resets).toHaveLength(1);
+    expect(h.client.cursor).toBe(0);
+  });
+
+  it("keeps its history across an ordinary reconnect", async () => {
+    const resets: number[] = [];
+    const readies: unknown[] = [];
+    const h = harness(() => 200, {
+      onReset: () => resets.push(1),
+      onReady: (r) => readies.push(r),
+    });
+    h.client.connect();
+    h.sources[0]!.emit("ready", ready({ head: 5000 }));
+    h.sources[0]!.onmessage?.({ data: line({ id: 5000, kind: "text", body: "held" }) });
+
+    h.sources[0]!.onerror?.(null);
+    await flush();
+    h.timers[0]!.fn();
+    h.sources[1]!.emit("ready", ready({ head: 5001 }));
+
+    expect(resets).toHaveLength(0);
+    expect(h.client.cursor).toBe(5000);
+    expect(readies).toHaveLength(2); // both openings were reported as finished
+  });
+
+  it("leaves a server that names no log alone", async () => {
+    const resets: number[] = [];
+    const h = harness(() => 200, { onReset: () => resets.push(1) });
+    h.client.connect();
+    h.sources[0]!.emit("ready", {}); // the older contract, mid-deploy
+    h.sources[0]!.onmessage?.({ data: line({ id: 5000, kind: "text", body: "held" }) });
+
+    h.sources[0]!.onerror?.(null);
+    await flush();
+    h.timers[0]!.fn();
+    h.sources[1]!.emit("ready", {});
+
+    expect(resets).toHaveLength(0);
+    expect(h.client.cursor).toBe(5000);
   });
 });

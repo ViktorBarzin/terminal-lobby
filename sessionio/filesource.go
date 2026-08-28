@@ -2,6 +2,8 @@ package sessionio
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -184,6 +186,65 @@ func (f *FileSource) Subscribe() (<-chan Event, func()) {
 		}
 		f.mu.Unlock()
 	}
+}
+
+// Subscribers is how many readers are attached right now. The registry uses it
+// to decide which sources are worth re-checking against the session map: a
+// source nobody is reading can wait for the next request to notice it is stale.
+func (f *FileSource) Subscribers() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.subs)
+}
+
+// Close retires the source: every live subscription ends, and Subscribe hands
+// out no more.
+//
+// It is what a reader needs to hear when the tmux name it is watching starts
+// pointing at a different transcript. Left subscribed to the retired source, a
+// browser receives nothing further and shows the conversation frozen at the
+// moment of the swap — including a question whose dialog is long gone, since
+// the answer was written to the file nobody is tailing any more. Ending the
+// stream makes the browser reconnect, which is the whole recovery.
+//
+// Idempotent, and safe alongside the cancel Subscribe returned: the entry is
+// gone by then, so nothing is closed twice. It does NOT stop the tail — the
+// registry owns that context — so a source closed by mistake keeps its log
+// correct for whoever opens it next.
+func (f *FileSource) Close() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, ch := range f.subs {
+		delete(f.subs, id)
+		close(ch)
+	}
+}
+
+// Head is the newest id in the log and the identity of the LOG ITSELF.
+//
+// Ids are per-source and deterministic: the same transcript replayed by a new
+// process assigns the same ids, which is why a restart costs a reader nothing.
+// A DIFFERENT transcript under the same tmux name starts again at 1, and then
+// a client holding id 5,000 asks for the gap above it, receives nothing, and
+// keeps showing the previous conversation for as long as the tab stays open.
+// The epoch is the transcript's identity, so the two cases are distinguishable
+// on the wire; the id is there for the narrower case where the same log comes
+// back SHORTER (injected permission events are not replayed after a restart).
+func (f *FileSource) Head() (int64, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var newest int64
+	if n := len(f.logbuf); n > 0 {
+		newest = f.logbuf[n-1].ID
+	}
+	return newest, logEpoch(f.path)
+}
+
+// logEpoch names a log by the transcript behind it. Hashed rather than sent as
+// a path: it travels to the browser, and the identity is all the browser needs.
+func logEpoch(path string) string {
+	sum := sha256.Sum256([]byte(path))
+	return hex.EncodeToString(sum[:8])
 }
 
 // TailOnce consumes whatever the transcript has gained since the last read.
