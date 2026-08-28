@@ -159,7 +159,12 @@ describe("loading earlier turns by reaching the top", () => {
     ));
     const el = container.querySelector<HTMLElement>(".tl-timeline")!;
     const geom = stubScroller(el, 4000, 400);
-    const anchor = el.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling)");
+    // The anchor is the oldest CONTENT row: the timeline's own chrome rows
+    // (.tl-row-earlier, .tl-row-filling) sit above the content and never move,
+    // so measuring one of those reports "nothing inserted" forever.
+    const anchor = el.querySelector<HTMLElement>(
+      ".tl-row:not(.tl-row-filling):not(.tl-row-earlier)",
+    );
     if (anchor) {
       Object.defineProperty(anchor, "offsetTop", { configurable: true, get: () => anchorTop });
     }
@@ -230,3 +235,40 @@ describe("loading earlier turns by reaching the top", () => {
     expect(row.textContent).toMatch(/start of session/i);
   });
 });
+
+/**
+ * A merge shipped the earlier-row twice — one copy outside the events Show and
+ * an identical one inside it — so every reader saw two "Load earlier turns" and
+ * two "Loading earlier…" annotations at the top of the transcript. Every test
+ * here used querySelector, which returns the FIRST match, so 2,037 of them
+ * passed while the duplication was on screen.
+ */
+describe("the top-of-transcript row exists exactly once", () => {
+  it("renders one earlier-row with history left", () => {
+    const { container } = render(() => (
+      <MessagesTimeline events={TURN} hasEarlier={true} onLoadEarlier={async () => {}} />
+    ));
+    expect(container.querySelectorAll(".tl-row-earlier")).toHaveLength(1);
+    expect(container.querySelectorAll("button").length).toBe(1);
+  });
+
+  it("renders one earlier-row when the history has run out", () => {
+    const { container } = render(() => (
+      <MessagesTimeline events={TURN} hasEarlier={false} onLoadEarlier={async () => {}} />
+    ));
+    const rows = container.querySelectorAll(".tl-row-earlier");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.textContent).toMatch(/start of session/i);
+  });
+
+  it("says nothing at all about history in an empty session", () => {
+    // The reason the surviving copy is the one INSIDE the events Show: a session
+    // with nothing in it must not announce the start of a conversation that has
+    // not happened.
+    const { container } = render(() => (
+      <MessagesTimeline events={[]} hasEarlier={false} onLoadEarlier={async () => {}} />
+    ));
+    expect(container.querySelectorAll(".tl-row-earlier")).toHaveLength(0);
+  });
+});
+
