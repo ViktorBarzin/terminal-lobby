@@ -569,3 +569,82 @@ describe("the bucket vocabulary is shared", () => {
     expect([...(globalThis as any).tlDiag.NET_BUCKETS].sort()).toEqual([...BUCKETS].sort());
   });
 });
+
+describe("when the edge strips compression", () => {
+  /**
+   * terminal.viktorbarzin.me is Cloudflare-proxied and Cloudflare appears to
+   * strip permessage-deflate, while a LAN client resolves past it by
+   * split-horizon DNS and keeps compression. So the client on mobile data —
+   * the one this whole feature exists for — may be the one running
+   * uncompressed. Modelling compression that did not happen would under-report
+   * it by more than a factor of ten.
+   */
+  it("counts what arrived, because that is what crossed the link", async () => {
+    const h = harness();
+    active(h);
+    h.d.onWsExtensions(""); // no extension negotiated
+    const data = repetitive(400);
+    h.d.onWsRecv(data.byteLength, data);
+    h.at(60_000);
+    await h.d.settled();
+
+    const r = h.last("perf.rollup")!;
+    expect(r["tl.net.term_deflate"]).toBe(false);
+    // Not the ~14x smaller figure a mirror would have produced.
+    expect(r["tl.net.term_b"]).toBeGreaterThanOrEqual(data.byteLength);
+  });
+
+  it("models it when compression WAS negotiated", async () => {
+    const h = harness();
+    active(h);
+    h.d.onWsExtensions("permessage-deflate");
+    const data = repetitive(400);
+    h.d.onWsRecv(data.byteLength, data);
+    h.at(60_000);
+    await h.d.settled();
+    h.at(120_000);
+    await h.d.settled();
+
+    const r = h.last("perf.rollup")!;
+    expect(r["tl.net.term_deflate"]).toBe(true);
+    expect(r["tl.net.term_b"]).toBeLessThan(data.byteLength / 5);
+  });
+
+  it("says nothing about deflate before a socket has opened", async () => {
+    const h = harness();
+    active(h);
+    h.d.onResource("/term.html", 500);
+    h.at(60_000);
+    await h.d.settled();
+
+    expect(h.last("perf.rollup")!["tl.net.term_deflate"]).toBeUndefined();
+  });
+
+  it("reads the negotiated extensions off the socket at open", () => {
+    const seen: string[] = [];
+    class FakeWS {
+      static OPEN = 1;
+      extensions = "permessage-deflate; client_max_window_bits=15";
+      listeners: Record<string, ((e: unknown) => void)[]> = {};
+      constructor(public url: string) {}
+      addEventListener(t: string, fn: (e: unknown) => void) {
+        (this.listeners[t] ??= []).push(fn);
+      }
+      send() {}
+      fire(t: string) {
+        for (const fn of this.listeners[t] ?? []) fn({});
+      }
+    }
+    const Wrapped = (globalThis as any).tlDiag.instrumentWebSocket(FakeWS, {
+      onConnOpen: () => {},
+      onWsExtensions: (e: string) => seen.push(e),
+      onWsRecv: () => {},
+      onWsSend: () => {},
+      onConnDrop: () => {},
+    });
+    const ws = new Wrapped("wss://x/ws") as unknown as FakeWS;
+    ws.fire("open");
+
+    expect(seen).toEqual(["permessage-deflate; client_max_window_bits=15"]);
+  });
+});
