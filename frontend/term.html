@@ -52,8 +52,11 @@ __TL_DIAG__
          (404s harmlessly until the asset route lands; @font-face falls through
          to jsdelivr). crossorigin is mandatory even same-origin: font fetches
          are always CORS-anonymous, and a mismatch double-downloads. -->
-    <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/JetBrainsMono-Regular.woff2">
-    <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/JetBrainsMono-Bold.woff2">
+    <!-- The preloads are INJECTED (see tl-conn-tier below) rather than static.
+         They are 186,752 B, which is 3.7 s at 400 kbps, and the 2 s race below
+         therefore ALWAYS loses on a slow link: the bytes were paid and the
+         fallback metrics were used anyway. On a link already judged slow the
+         terminal renders in the system mono instead and neither cost is paid. -->
     <!-- SRI (Task 1.13): published non-.min paths ONLY — jsdelivr-generated
          .min variants are re-minified over time and explicitly SRI-unsafe;
          the npm-published files are immutable for a pinned version. Hashes
@@ -3009,6 +3012,44 @@ ${w.join(`
             window.tlDiagnostics = tlDiagnostics;
         } catch (e) { /* diagnostics must never cost the page its boot */ }
 
+        // >>> tl-term-ready
+        // THE TERMINAL'S OWN BOOT, leg by leg. `term.ready` has been in the
+        // event catalog since ADR-0008 with no caller, so the exact path this
+        // page exists for — open a session, get a terminal — had no timing at
+        // all: 0 records in 14 days. Legs rather than a total, because they fail
+        // differently and only one of them is large: the document is 464 KB on
+        // the wire with connect() at 99.2% of the file, the token is one round
+        // trip, the paint is xterm's.
+        //
+        // The lobby's proof of life is the EXISTING tl-terminal-ready message,
+        // posted from revealTerminal below: a truncated document renders a page
+        // that never fires `load` and reports nothing, so the frame's onLoad
+        // cannot be the signal, and the lobby arms its watchdog against that
+        // message instead. This records what the same moment COST.
+        let tlTokenMs = null;         // set when /token settles
+        let tlReadySent = false;
+        function tlNavLegs() {
+            try {
+                const nav = performance.getEntriesByType('navigation')[0];
+                if (!nav) return {};
+                return {
+                    navMs: nav.responseEnd || nav.duration || 0,
+                    ttfbMs: nav.responseStart || 0,
+                    bytes: nav.transferSize || 0,
+                    cached: nav.transferSize === 0,
+                };
+            } catch (e) { return {}; }
+        }
+        function tlTermReady() {
+            if (tlReadySent) return;
+            tlReadySent = true;
+            const legs = tlNavLegs();
+            legs.paintMs = Math.round(performance.now());
+            if (tlTokenMs !== null) legs.tokenMs = tlTokenMs;
+            try { if (window.tlDiagnostics) window.tlDiagnostics.onTermReady(legs); } catch (e) {}
+        }
+        // <<< tl-term-ready
+
         // --- usage events -----------------------------------------------------
         // tlConfirmBoot below reports whether a self-update landed (ADR-0007).
         // Those call sites predate this definition and threw a ReferenceError
@@ -3073,7 +3114,37 @@ ${w.join(`
         const PUSH_SUBS_API    = '/api/sessions/push-subscriptions';
         const VAPID_PUBLIC_API = '/api/sessions/push/vapid-public';
         const PUSH_TEST_API    = '/api/sessions/push/test';
-        const params = new URLSearchParams(location.search);
+        // >>> tl-frame-args
+        // WHERE THE ATTACH ARGS COME FROM. Not the page URL: the URL is a cache
+        // key, and with the session name in the query every session was its own
+        // entry for this 1.8 MB document — measured 1,796,377 B for a name never
+        // seen before against 300 B for an exact repeat, so every new session
+        // paid 8.4-10.3 s on a 400kbps link. The lobby therefore navigates every
+        // frame to the SAME URL and hands the args over out of band:
+        //   1. window.name — set on the iframe before the navigation, exposed to
+        //      the new document synchronously, never part of a cache key;
+        //   2. frameElement.dataset.tlArgs — same-origin, also synchronous, and
+        //      independent of how the browsing context name propagates;
+        //   3. location.search — a direct link or a bookmark (?arg=NAME), which
+        //      is still a supported way to open a session on its own.
+        // ttyd never read the page URL anyway: connect() re-emits these on
+        // /token and /ws, which is where `ttyd -a` maps them to $1..$5.
+        const TERMINAL_FRAME_PREFIX = 'tl1:';
+        function readFrameArgs() {
+            try {
+                if (window.name && window.name.indexOf(TERMINAL_FRAME_PREFIX) === 0) {
+                    return window.name.slice(TERMINAL_FRAME_PREFIX.length);
+                }
+            } catch (e) { /* name is readable everywhere, but never boot-block on it */ }
+            try {
+                const el = window.frameElement;
+                if (el && el.dataset && el.dataset.tlArgs) return el.dataset.tlArgs;
+            } catch (e) { /* cross-origin framing: fall through to the URL */ }
+            return null;
+        }
+        const frameArgs = readFrameArgs();
+        const params = new URLSearchParams(frameArgs !== null ? frameArgs : location.search);
+        // <<< tl-frame-args
         const rawArg = params.get('arg');
         // Second ?arg= = the new-session command KEY (lobby dropdown).
         // Whitelist-validated here AND in tmux-attach.sh; anything else
@@ -5317,9 +5388,17 @@ ${w.join(`
             return 'reload';
         }
 
+        // HOW THE SERVED IDENTITY IS READ. The default is the original: fetch
+        // this page and parse its meta tag. It is also the expensive one — a
+        // measured 502,720 B to learn 12 hex characters — so a page that has a
+        // dedicated stamp endpoint reassigns this seam just after the kernel.
+        // Kept here, with this default, so both pages carry an identical kernel.
+        let tlReadServedAsset = (cacheMode) =>
+            fetchSelf(cacheMode).then(t => (t ? parseAssetId(t) : null));
+
         function fetchSelf(cacheMode) {
             return fetch(location.pathname + location.search,
-                         { cache: cacheMode || 'no-store', credentials: 'same-origin' })
+                         { cache: cacheMode || 'no-cache', credentials: 'same-origin' })
                 // Validate it is OUR page — an auth interstitial must never be
                 // read as an identity (it would blind the detector).
                 .then(r => r.ok ? r.text() : null)
@@ -5343,8 +5422,7 @@ ${w.join(`
         function checkForUpdate(cacheMode, opts) {
             if (document.hidden) return;   // never fetch or navigate for a backgrounded page
             const justResumed = !!(opts && opts.justResumed);
-            return fetchSelf(cacheMode).then(t => {
-                const served = t ? parseAssetId(t) : null;
+            return tlReadServedAsset(cacheMode).then(served => {
                 if (!served || served === TL_ASSET) return;
                 if (window.parent !== window) {
                     // Framed terminal: hand the decision UP, never decide here.
@@ -5411,6 +5489,33 @@ ${w.join(`
             if (e.persisted) { tlAwaySince = null; checkForUpdate('no-cache', { justResumed: true }); }
         });
         // <<< tl-update-kernel
+
+        // term.html's build stamp on its own path (decision 4). TL_ASSET here is
+        // THIS page's fingerprint, not the lobby's, so it has its own endpoint.
+        // The framed page re-checks itself on every reconnect and an iPhone
+        // reconnects every ~175 s median, which measured 502,720 B / 10,293 ms
+        // each time against 300 B / 256 ms for the same 12 characters.
+        const TL_STAMP_URL = '/term-build-id';
+        const TL_STAMP_RE = /^[0-9a-f]{12}$/;
+        let tlStampMissing = false;   // this origin predates the endpoint
+        function fetchStamp(cacheMode) {
+            return fetch(TL_STAMP_URL, { cache: cacheMode || 'no-cache', credentials: 'same-origin' })
+                .then(r => {
+                    if (r.status === 404) { tlStampMissing = true; return null; }
+                    if (!r.ok) return null;
+                    return r.text().then(t => {
+                        t = (t || '').trim();
+                        return TL_STAMP_RE.test(t) ? t : null;
+                    });
+                });
+        }
+        tlReadServedAsset = (cacheMode) => {
+            if (tlStampMissing) return fetchSelf(cacheMode).then(t => (t ? parseAssetId(t) : null));
+            return fetchStamp(cacheMode).then(id => (
+                tlStampMissing
+                    ? fetchSelf(cacheMode).then(t => (t ? parseAssetId(t) : null))
+                    : id));
+        };
 
         // Preflight: ask tmux-api who we are. 403 = unmapped Authentik user → deny.
         let whoami = null;
@@ -8795,6 +8900,54 @@ ${w.join(`
                 });
                 flowRow.appendChild(flow);
 
+                // The connection verdict, and the override for it. The lobby
+                // measures the link on each load (Navigation Timing: bytes and
+                // how long they took — navigator.connection does not exist on
+                // iOS) and applies the answer to the NEXT load, because the
+                // numbers only exist once the bytes are spent. "Auto" follows
+                // that; the other two pin it. Pinning slow gives up the webfont
+                // (186,752 B), the WebGL renderer, sixel images and the wide
+                // unicode tables, and opens the text view on fewer turns.
+                const tierRow = row('Connection');
+                const tierSeg = document.createElement('div');
+                tierSeg.className = 'sp-seg';
+                tierSeg.id = 'sp-conn-tier';
+                const TIER_PREF_KEY = 'tl:conn-tier-pref:v1';
+                const readTierPref = () => {
+                    try {
+                        const v = localStorage.getItem(TIER_PREF_KEY);
+                        return (v === 'full' || v === 'slow') ? v : 'auto';
+                    } catch (e) { return 'auto'; }
+                };
+                const paintTierSeg = () => {
+                    const cur = readTierPref();
+                    tierSeg.querySelectorAll('button').forEach((b) => {
+                        b.classList.toggle('on', b.dataset.val === cur);
+                    });
+                };
+                [['auto', 'Auto'], ['full', 'Full'], ['slow', 'Light']].forEach(([val, label]) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.dataset.val = val;
+                    b.textContent = label;
+                    b.title = val === 'auto'
+                        ? 'Measure the link and choose (default). The verdict applies from the next load.'
+                        : val === 'full'
+                            ? 'Always the full experience: webfont, WebGL renderer, inline images.'
+                            : 'Always the light experience: system font, canvas renderer, no inline images, shorter text-view history.';
+                    b.addEventListener('click', () => {
+                        try {
+                            if (val === 'auto') localStorage.removeItem(TIER_PREF_KEY);
+                            else localStorage.setItem(TIER_PREF_KEY, val);
+                        } catch (e) {}
+                        paintTierSeg();
+                        showToast('Applies to this device from the next load', 'info', 2500);
+                    });
+                    tierSeg.appendChild(b);
+                });
+                tierRow.appendChild(tierSeg);
+                paintTierSeg();
+
                 // Client diagnostics (ADR-0008) — same posture as the
                 // flow-control switch: a plain per-browser key, never roamed.
                 // The toggle IS the disclosure: diagnostics are on by default
@@ -10215,17 +10368,52 @@ ${w.join(`
         const textEncoder = new TextEncoder();
         const textDecoder = new TextDecoder();
 
+        // >>> tl-conn-tier
+        // WHICH EXPERIENCE THIS PAGE GIVES. The lobby measures the link (it has
+        // Navigation Timing; navigator.connection does not exist on iOS) and
+        // hands the verdict over on the frame, next to the attach args. A
+        // direct, unframed open has no lobby to ask and gets the full
+        // experience, which is the right default: an unmeasured link must never
+        // be assumed bad.
+        function readConnTier() {
+            try {
+                const el = window.frameElement;
+                if (el && el.dataset && el.dataset.tlTier === 'slow') return 'slow';
+            } catch (e) { /* cross-origin framing: no verdict available */ }
+            return 'full';
+        }
+        const TL_TIER = readConnTier();
+        const TL_WEBFONT = TL_TIER !== 'slow';
+        const TL_MONO_STACK = TL_WEBFONT
+            ? "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace"
+            : "ui-monospace, SFMono-Regular, Menlo, Monaco, 'Cascadia Mono', 'Courier New', monospace";
+        if (TL_WEBFONT) {
+            // Same effect as the two static <link rel=preload> tags, one tick
+            // later — and skippable, which a parsed tag is not.
+            try {
+                ['/fonts/JetBrainsMono-Regular.woff2', '/fonts/JetBrainsMono-Bold.woff2'].forEach((href) => {
+                    const l = document.createElement('link');
+                    l.rel = 'preload'; l.as = 'font'; l.type = 'font/woff2';
+                    l.crossOrigin = 'anonymous'; l.href = href;
+                    document.head.appendChild(l);
+                });
+            } catch (e) { /* the @font-face rules still fetch it on first use */ }
+        }
+        // <<< tl-conn-tier
+
         // Fonts-ready boot gate: give the JetBrains Mono webfont up to 2s to
         // arrive before xterm measures cell metrics — measuring an OS fallback
         // first bakes wrong glyph metrics into the renderer until a refit.
         // Race-capped so a dead CDN can never hold the terminal hostage; the
         // loadingdone listener below repairs the late-arrival case.
-        try {
-            await Promise.race([
-                document.fonts.load('15px "JetBrains Mono"'),
-                new Promise(r => setTimeout(r, 2000))
-            ]);
-        } catch (e) { /* face unavailable → OS mono fallback, still functional */ }
+        if (TL_WEBFONT) {
+            try {
+                await Promise.race([
+                    document.fonts.load('15px "JetBrains Mono"'),
+                    new Promise(r => setTimeout(r, 2000))
+                ]);
+            } catch (e) { /* face unavailable → OS mono fallback, still functional */ }
+        }
 
         // Boot values for the user-tunable options (Task 2.6): validated
         // tl:prefs:v1 (roamed via /prefs), every field defaulting to the
@@ -10235,7 +10423,7 @@ ${w.join(`
         const term = new Terminal({
             cursorBlink: bootPrefs.cursorBlink,
             cursorStyle: bootPrefs.cursorStyle,
-            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
+            fontFamily: TL_MONO_STACK,
             // User-steppable via A−/A+ (Task 1.8): persisted in
             // tl-font-size, clamped 10-22, default 15 (the historical
             // hardcoded value).
@@ -10660,12 +10848,20 @@ ${w.join(`
             return { show: show, scheduleHide: scheduleHide, hideNow: hideNow };
         })();
 
-        try {
-            const webglAddon = new WebglAddon.WebglAddon();
-            webglAddon.onContextLoss(() => { webglAddon.dispose(); });
-            term.loadAddon(webglAddon);
-        } catch (e) {
-            console.warn('WebGL addon failed:', e);
+        // Skipped on a slow link (tl-conn-tier): the canvas renderer draws the
+        // same output, and this costs a GPU context plus ~69 KB of parse. It is
+        // also the addon currently throwing "WebGL2 not supported" 6 times per
+        // open on at least one real device.
+        if (TL_TIER !== 'slow') {
+            try {
+                const webglAddon = new WebglAddon.WebglAddon();
+                webglAddon.onContextLoss(() => { webglAddon.dispose(); });
+                term.loadAddon(webglAddon);
+            } catch (e) {
+                console.warn('WebGL addon failed:', e);
+            }
+        } else {
+            console.log('slow link: WebGL renderer skipped, canvas will draw');
         }
 
         // OSC 52 clipboard: lets tmux's own copy (with `set-clipboard on`) and
@@ -10716,9 +10912,15 @@ ${w.join(`
         // both `ImageAddon` and `ImageAddon.ImageAddon`; wrapped so a
         // load hiccup can't break the terminal.
         try {
-            const ImgAddon = (typeof ImageAddon !== 'undefined')
+            const ImgAddon = (TL_TIER !== 'slow') && (typeof ImageAddon !== 'undefined')
                 && (ImageAddon.ImageAddon || ImageAddon);
-            if (ImgAddon) {
+            if (TL_TIER === 'slow') {
+                // Sixel is the most expensive thing this terminal can be asked
+                // to render, and on a slow link the images themselves are the
+                // last thing worth the bytes: tmux draws its text placeholder
+                // instead (ADR-0004's fallback path, unchanged).
+                console.log('slow link: sixel image addon skipped');
+            } else if (ImgAddon) {
                 term.loadAddon(new ImgAddon());
                 console.log('image addon (sixel) loaded');
             } else {
@@ -10738,9 +10940,11 @@ ${w.join(`
         // `Unicode11Addon.Unicode11Addon`; wrapped so a load hiccup can't
         // break the terminal (falls back to the built-in version 6).
         try {
-            const U11Addon = (typeof Unicode11Addon !== 'undefined')
+            const U11Addon = (TL_TIER !== 'slow') && (typeof Unicode11Addon !== 'undefined')
                 && (Unicode11Addon.Unicode11Addon || Unicode11Addon);
-            if (U11Addon) {
+            if (TL_TIER === 'slow') {
+                console.log('slow link: unicode11 width tables skipped (built-in v6 stands in)');
+            } else if (U11Addon) {
                 term.loadAddon(new U11Addon());
                 term.unicode.activeVersion = '11';
                 console.log('unicode11 addon loaded (active version ' + term.unicode.activeVersion + ')');
@@ -10831,6 +11035,8 @@ ${w.join(`
             if (window.parent !== window) {
                 try { window.parent.postMessage({ type: 'tl-terminal-ready' }, location.origin); } catch (e) {}
             }
+            // Same moment, with the legs: what this attach cost, end to end.
+            tlTermReady();
         }
         function maybeRevealTerminal() {
             if (booted && firstFrameSeen) revealTerminal();
@@ -15346,10 +15552,12 @@ ${w.join(`
                 try { ctrl.abort(); } catch (e) { /* already settled */ }
             }, TOKEN_TIMEOUT_MS);
 
+            const tokenStartedAt = Date.now();
             fetch(tokenUrl, { credentials: 'same-origin', signal: ctrl.signal })
                 .then(r => r.json())
                 .then(tokenData => {
                     clearTimeout(tokenTimer);
+                    if (tlTokenMs === null) tlTokenMs = Date.now() - tokenStartedAt;
                     if (gen !== connGen) return; // superseded — a newer attempt owns the page
                     connAbort = null;
                     // Tab went hidden while the token was in flight — don't open
@@ -15402,7 +15610,7 @@ ${w.join(`
                         hasConnectedOnce = true;
                         // A reconnect usually means ttyd restarted — i.e. a
                         // deploy. Check whether this page is now stale.
-                        if (isReconnect) checkForUpdate('no-store');
+                        if (isReconnect) checkForUpdate('no-cache');
                         const initMsg = JSON.stringify({
                             AuthToken: token,
                             columns: term.cols,
@@ -15415,7 +15623,15 @@ ${w.join(`
                         // session was spawned — so the lobby may have re-cached an
                         // empty list. Invalidate again now that it's live so the
                         // parent lobby's next poll surfaces it promptly.
-                        fetch(WHOAMI_API, { credentials: 'same-origin' }).catch(() => {});
+                        //
+                        // FIRST connect only. On a RECONNECT the session
+                        // demonstrably already existed (reconnectAfterDrop
+                        // checked, and the lobby has been listing it all along),
+                        // so this was a second round trip per attach for nothing
+                        // — and a phone reconnects every ~175 s median.
+                        if (!isReconnect) {
+                            fetch(WHOAMI_API, { credentials: 'same-origin' }).catch(() => {});
+                        }
                         // Arm the one-shot pixel-size kick for THIS connection
                         // (fires on the first OUTPUT message — the only proof
                         // ttyd's process exists; earlier RESIZEs are dropped).

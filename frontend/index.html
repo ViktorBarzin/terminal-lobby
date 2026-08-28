@@ -5449,9 +5449,17 @@ ${w.join(`
             return 'reload';
         }
 
+        // HOW THE SERVED IDENTITY IS READ. The default is the original: fetch
+        // this page and parse its meta tag. It is also the expensive one — a
+        // measured 502,720 B to learn 12 hex characters — so a page that has a
+        // dedicated stamp endpoint reassigns this seam just after the kernel.
+        // Kept here, with this default, so both pages carry an identical kernel.
+        let tlReadServedAsset = (cacheMode) =>
+            fetchSelf(cacheMode).then(t => (t ? parseAssetId(t) : null));
+
         function fetchSelf(cacheMode) {
             return fetch(location.pathname + location.search,
-                         { cache: cacheMode || 'no-store', credentials: 'same-origin' })
+                         { cache: cacheMode || 'no-cache', credentials: 'same-origin' })
                 // Validate it is OUR page — an auth interstitial must never be
                 // read as an identity (it would blind the detector).
                 .then(r => r.ok ? r.text() : null)
@@ -5475,8 +5483,7 @@ ${w.join(`
         function checkForUpdate(cacheMode, opts) {
             if (document.hidden) return;   // never fetch or navigate for a backgrounded page
             const justResumed = !!(opts && opts.justResumed);
-            return fetchSelf(cacheMode).then(t => {
-                const served = t ? parseAssetId(t) : null;
+            return tlReadServedAsset(cacheMode).then(served => {
                 if (!served || served === TL_ASSET) return;
                 if (window.parent !== window) {
                     // Framed terminal: hand the decision UP, never decide here.

@@ -173,6 +173,16 @@ var publicAssets = map[string]publicAsset{
 	"/icon-512-maskable.png": {"icon-512-maskable.png", "image/png", "public,max-age=3600"},
 	"/sw.js":                 {"sw.js", "application/javascript", "no-cache"},
 	"/term.html":             {"term.html", "text/html; charset=utf-8", "no-cache"},
+	// The lobby's build stamp, on its own so the self-update check costs ~12
+	// bytes instead of the whole page. It used to read the stamp out of a full
+	// GET of "/" every 5s: measured 1,430,075-1,430,242 B per fetch, and on
+	// iOS Safari 1,279 full bodies to 2 revalidations in 24h = 1.83 GB/day
+	// from one phone, which is 5.7x the whole downlink of a 400kbps link.
+	"/build-id": {"build-id", "text/plain; charset=utf-8", "no-cache"},
+	// term.html's own stamp. Same reasoning, different fingerprint: the framed
+	// page checks itself on every reconnect, which measured 502,720 B against
+	// 300 B for the same 12 hex characters.
+	"/term-build-id": {"term-build-id", "text/plain; charset=utf-8", "no-cache"},
 
 	"/fonts/JetBrainsMono-Regular.woff2":     {"fonts/JetBrainsMono-Regular.woff2", "font/woff2", "public,max-age=604800"},
 	"/fonts/JetBrainsMono-Bold.woff2":        {"fonts/JetBrainsMono-Bold.woff2", "font/woff2", "public,max-age=604800"},

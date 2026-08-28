@@ -33,6 +33,7 @@ import {
   RESUME_AWAY_MS,
   STORM_WINDOW_MS,
   fetchSelf,
+  fetchStamp,
   parseAssetId,
   planUpdate,
 } from "./healer.logic";
@@ -42,9 +43,22 @@ import { track, type TlAttrs } from "../telemetry/track";
 export const STORM_KEY = "tl-stale-reload";
 /** sessionStorage key for the in-flight update record (the confirmation). */
 export const UPDATE_KEY = "tl-update";
-/** Lobby self-check cadence. Short (the only deploy channel); the 304 keeps it
- *  cheap under `no-cache` against ttyd's strong ETag. */
-export const SELF_CHECK_MS = 5000;
+/** Lobby self-check cadence.
+ *
+ * This was 5s, on the reasoning that `no-cache` against ttyd's strong ETag makes
+ * each check a cheap 304. Measurement disagreed: over 24h on one iPhone the
+ * lobby URL answered 1,279 full bodies (1.43 MB each) and exactly 2 not-modified
+ * — 1.83 GB/day, 17.16 of the 17.18 MB/min this client spent at idle. Why iOS
+ * does not revalidate is still unexplained (desktop Chrome does, and ttyd
+ * answers If-None-Match correctly), so the check no longer depends on the answer
+ * being cheap: it reads a ~12-byte stamp instead of the page, and it reads it far
+ * less often. The boundaries that actually matter — a resume, a refocus, a
+ * bfcache restore — are event-driven and unchanged. */
+export const SELF_CHECK_MS = 300_000;
+
+/** Where the stamp lives. Served from the shared asset whitelist beside
+ *  term.html, so it needs no service of its own and no restart to update. */
+export const STAMP_PATH = "/build-id";
 
 /** What the healer wrote before it navigated, read back at the next boot. */
 interface UpdateRecord {
@@ -74,8 +88,11 @@ export interface DeployHealerDeps {
   isFocused?: () => boolean;
   /** default: bound `window.fetch`. */
   fetchImpl?: typeof fetch;
-  /** the URL to self-fetch; default `location.pathname + location.search`. */
+  /** the URL to self-fetch; default `location.pathname + location.search`.
+   *  Only used on the legacy fallback path (an origin with no stamp endpoint). */
   selfUrl?: () => string;
+  /** the stamp endpoint; default {@link STAMP_PATH}. */
+  stampUrl?: () => string;
   /** default: `() => location.reload()`. */
   reload?: () => void;
   /** default: `Date.now`. */
@@ -173,6 +190,7 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
   const win = deps.win === undefined ? (typeof window !== "undefined" ? window : null) : deps.win;
   const doc =
     deps.doc === undefined ? (typeof document !== "undefined" ? document : null) : deps.doc;
+  const stampUrl = deps.stampUrl ?? (() => STAMP_PATH);
   const intervalMs = deps.intervalMs ?? SELF_CHECK_MS;
   const stormWindowMs = deps.stormWindowMs ?? STORM_WINDOW_MS;
   const resumeAwayMs = deps.resumeAwayMs ?? RESUME_AWAY_MS;
@@ -187,6 +205,18 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
   /** when the document went away (hidden or blurred); null while it is here. */
   let awaySince: number | null = null;
   let timer: ReturnType<typeof setInterval> | undefined;
+  /** One check at a time. The old poll was fire-and-forget on a 5s timer, so on a
+   *  slow link the fetches stacked — three were observed in flight at once, each
+   *  pulling the whole page. A request arriving during one is COALESCED, not
+   *  dropped: the checks that matter are event-driven (a resume, a refocus, a
+   *  bfcache restore), and swallowing one because a poll happened to be in flight
+   *  would defer a real update to the next tick — now five minutes away. */
+  let checking = false;
+  let queued: { justResumed: boolean; why: string } | null = null;
+  /** Set once the stamp endpoint answers 404: this origin predates it, so fall
+   *  back to reading the id out of the page (at the new, long interval) rather
+   *  than losing self-update entirely on an older deploy. */
+  let stampMissing = false;
 
   function lastReloadAt(): number | null {
     if (!storage) return null;
@@ -243,14 +273,40 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
     reload();
   }
 
-  /** One evaluation of the whole policy against the currently served page. */
+  /** One evaluation of the whole policy, with at most one fetch in flight. */
   async function evaluate(justResumed: boolean, why: string): Promise<void> {
+    if (checking) {
+      queued = { justResumed, why };
+      return;
+    }
+    checking = true;
+    try {
+      await evaluateOnce(justResumed, why);
+    } finally {
+      checking = false;
+    }
+    if (queued) {
+      const next = queued;
+      queued = null;
+      await evaluate(next.justResumed, next.why);
+    }
+  }
+
+  /** The policy itself, against the currently served stamp. */
+  async function evaluateOnce(justResumed: boolean, why: string): Promise<void> {
     if (!fetchImpl) return;
     if (isHidden()) return; // never fetch (or navigate) for a backgrounded page
     let served: string | null = null;
     try {
-      const text = await fetchSelf(fetchImpl, selfUrl(), cacheMode);
-      served = text ? parseAssetId(text) : null;
+      if (!stampMissing) {
+        const stamp = await fetchStamp(fetchImpl, stampUrl(), cacheMode);
+        if (stamp.missing) stampMissing = true;
+        else served = stamp.id;
+      }
+      if (stampMissing) {
+        const text = await fetchSelf(fetchImpl, selfUrl(), cacheMode);
+        served = text ? parseAssetId(text) : null;
+      }
     } catch {
       return; // transient fetch error — try again on the next check
     }

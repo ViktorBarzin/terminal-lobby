@@ -150,6 +150,12 @@ src/
     terminal-url.ts      ttyd `?arg=` POSITIONAL contract (incl. the foreign-
                          owner 4th arg, which the act-as target defaults into)
                          — red-line-class, unit-tested
+  diagnostics/
+    connection.ts        Measures the link (Navigation Timing bytes/time + an
+                         optional tiny RTT probe — navigator.connection does not
+                         exist on iOS), classifies full/slow, remembers the
+                         verdict per device for the NEXT load, and answers what
+                         each lever should do. A pin always wins
   sse/client.ts          Resumable SSE client (Last-Event-ID, backoff+jitter,
                          instant-retry on visible/online) — DOM-free, testable
   store/
