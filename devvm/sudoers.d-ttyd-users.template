@@ -1,4 +1,14 @@
-# Install at /etc/sudoers.d/ttyd-users (mode 0440, owner root:root).
+# TEMPLATE — NOT INSTALLED BY THE PACKAGE.
+#
+# This file is a reference for /etc/sudoers.d/ttyd-users (mode 0440, owner
+# root:root). The package deliberately does not ship it, for the same reason
+# devvm/ttyd-user-map was removed on 2026-08-17: it is per-box IDENTITY data,
+# the roster owns it, and a copy in the repository drifts. A drifted copy here
+# does not merely go stale — installing it REVOKES the grants of every user it
+# has forgotten, and their terminals stop attaching.
+#
+# The names below are placeholders. Edit the real file on the box, or let the
+# roster reconcile write it.
 #
 # wizard (the user running ttyd.service + tmux-api.service) needs to run
 # tmux as the OS user that backs each Authentik identity. Keep the grant
@@ -96,8 +106,8 @@
 # tmux-attach.sh sources the decision from tmux-api's /internal/attach rather
 # than from any client argument. Removing a user from /etc/ttyd-user-map is
 # still what revokes everything here.
-wizard ALL=(bob) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
-wizard ALL=(carol) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
+wizard ALL=(<os_user>) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
+wizard ALL=(<os_user>) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
 
 # Restore button (POST /restore): run the validated root wrapper. It accepts a
 # single OS-user arg and re-checks it against /etc/ttyd-user-map, so this grant

@@ -46,7 +46,7 @@ set -as terminal-features 'xterm*:hyperlinks'
 # SCOPED TO wizard (Viktor's decision, 2026-07-14): this file is loaded by
 # EVERY user's tmux server (it is the box-wide /etc/tmux.conf), and a bare
 # rebind here would change copy-mode wheel scroll for EVERY tmux user incl.
-# their direct SSH/console — bob and anyone else — silently. Viktor asked to
+# their direct SSH/console — another user and anyone else — silently. Viktor asked to
 # keep the finer 1-line scroll to his own account only. The if-shell test
 # runs at each server's start; `id -un` is that server's OS user (the web
 # terminal and SSH share the SAME per-user tmux server), so wizard's server

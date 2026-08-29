@@ -109,3 +109,19 @@ middlewares) lives in the `infra` repo at `infra/stacks/terminal/`.
 The DNS record, TLS secret, and Authentik forward-auth integration
 all come from there — this repo only owns the application code and
 the DevVM-side artefacts that the application binds to.
+
+## Why the package does not ship the sudo grant
+
+`/etc/sudoers.d/ttyd-users` is per-box identity data: it names the accounts the
+service may become. The roster owns that, the same way it owns
+`/etc/ttyd-user-map`, which stopped shipping on 2026-08-17 for drifting.
+
+A drifted copy of a sudo grant fails worse than a stale map. Installing one does
+not merely miss a new user, it **revokes** every user the copy has forgotten, and
+their terminals stop attaching. That nearly shipped on 2026-08-29: a history
+scrub replaced the real accounts with placeholder names while the package was
+still installing the file.
+
+`devvm/sudoers.d-ttyd-users.template` is the reference. `postinst` still runs
+`visudo -cf` against the live file and refuses the install if it is malformed, so
+the safety check survives on a file the package no longer writes.

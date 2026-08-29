@@ -49,21 +49,28 @@ func TestTheGeneratedIdentityFilesAreNotShipped(t *testing.T) {
 	}
 }
 
-func TestTheSudoersGrantIsShippedAndValidated(t *testing.T) {
-	var found *File
-	for i, f := range Package.Files {
+// The sudo grant is NOT shipped, and this test used to assert the opposite.
+//
+// The reasoning changed on 2026-08-29. Shipping it treats a repository copy as
+// the truth about who may attach, and the roster is the truth. A copy that has
+// drifted does not fail quietly: installing it REVOKES the grants of every user
+// it has forgotten, and their terminals stop attaching. That very nearly
+// happened — a history scrub replaced the real accounts with fictional ones
+// while the manifest was still installing the file.
+//
+// The safety property the old test cared about is kept, in postinst: the LIVE
+// file is validated with visudo before the install counts as done, and a
+// malformed one refuses the package. What changed is that we validate a file we
+// no longer author. devvm/sudoers.d-ttyd-users.template is the reference copy.
+func TestTheSudoGrantIsNotShipped(t *testing.T) {
+	for _, f := range Package.Files {
 		if f.Dest == "/etc/sudoers.d/ttyd-users" {
-			found = &Package.Files[i]
+			t.Fatalf("the package installs the sudo grant (from %s); a drifted copy "+
+				"revokes real users' terminals", f.Src)
 		}
 	}
-	if found == nil {
-		t.Fatal("the sudo grant every attach depends on must ship with the application")
-	}
-	if found.Mode != 0o440 {
-		t.Errorf("sudoers grant mode is %o, want 440", found.Mode)
-	}
-	if !found.Validate {
-		t.Error("a malformed sudoers grant locks everyone out; it must be validated before install")
+	if !strings.Contains(PostinstScript, "visudo -cf /etc/sudoers.d/ttyd-users") {
+		t.Error("postinst no longer validates the live sudo grant; a malformed one would lock everyone out")
 	}
 }
 
