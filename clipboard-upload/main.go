@@ -24,8 +24,14 @@ import (
 	"terminal-lobby/telemetry"
 )
 
+// fileDir is where an over-cap document stays as a 7-day ephemeral transfer.
+// A var, not a const, for the same reason storeRoot is one: a test that writes
+// here must be able to point it at its own directory. Left as a const, the
+// suite passed only because the running service had already created the real
+// path, so it failed on any machine where the service had never run.
+var fileDir = "/tmp/clipboard-files"
+
 const (
-	fileDir   = "/tmp/clipboard-files"
 	maxUpload = 100 << 20 // 100MB
 	// maxRegister bounds files accepted via /register — big enough for any
 	// real screenshot or photo, small enough that a stray path can't
