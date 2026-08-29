@@ -330,6 +330,10 @@ src/
     softmods.ts          PURE one-shot/latched soft Ctrl+Alt machine
     compose.ts           PURE bracketed-paste + trailing-submit split
     viewport.ts          visualViewport → CSS var so the keyboard can't cover
+    reveal.ts            Re-scrolls the focused field into view once the
+                         keyboard STOPS moving. The browser's own attempt runs
+                         against the geometry from before it opened, which is
+                         how a project's new-session box ended up under it
     swipe.ts             PURE swipe classification + the session-switch gesture
     reorder.ts           PURE geometry for dragging a session row with a
                          finger (which side of the row under it, how fast

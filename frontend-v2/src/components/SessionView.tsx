@@ -4,7 +4,6 @@ import {
   createSignal,
   For,
   onCleanup,
-  onMount,
   Show,
   type Component,
   type JSX,
@@ -25,7 +24,6 @@ import { createPreviewStore } from "../store/preview";
 import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
 import { createDismissableMenu } from "./menu";
-import { installViewportSync } from "../mobile/viewport";
 import { installImageClipboard } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
 import { ownWhile } from "../lib/ownwhile";
@@ -437,17 +435,14 @@ export const SessionView: Component<{
       document.body.classList.remove("has-soft-keys");
     }
   });
-  // Keyboard-offset plumbing: publish --kb-offset / --sk-h and ask the terminal
-  // iframe to re-fit after the keyboard settles.
-  onMount(() => {
-    const dispose = installViewportSync({
-      onRefit: () => window.__tlRefitTerminal?.(),
-      // The terminal frame reserves the keyboard's space itself — see
-      // .tl-kb-inline in app.css and keyboardReserve in term.html.
-      onKeyboard: (px) => window.__tlKeyboardOffset?.(px),
-    });
-    onCleanup(dispose);
-  });
+  // Keyboard-offset plumbing (--kb-offset / --sk-h / --app-vh) lives in App,
+  // not here. It used to be installed by this component, which meant it ran
+  // once PER KEPT SESSION — every session opened in the tab stays mounted, so
+  // five sessions meant five syncs writing the same three custom properties and
+  // five copies of every viewport diagnostic — and, more to the point, it did
+  // not run at all on the list screen, where nothing but the seeded --app-vh
+  // was ever published. The sidebar's own keyboard reservation needs the live
+  // value with no session open, so the sync moved up to the shell.
 
   /** The composer's sinks, handed over when the Text view mounts. Every gesture
    *  that lands OUTSIDE the composer arrives through these: a window drop, the
