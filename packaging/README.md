@@ -102,6 +102,18 @@ design. Building locally is for inspecting what CI would produce:
 dpkg-deb -c out/terminal-lobby_0.0.0-dev_amd64.deb
 ```
 
+## Re-running a release
+
+`ttyd-devvm` and `viu` derive their versions from their inputs, so re-running
+either on an unchanged commit re-uploads an identical artefact and the registry
+answers 409. Both treat that as "already published"; any other status still
+fails the job.
+
+The main release is different, and deliberately not made idempotent: re-running
+it on a commit that already released will fail at the tag push, because the tag
+exists. That is the honest outcome — a released version is a released version.
+To ship again, merge a commit and let `svu` cut the next one.
+
 ## Checking the port against what it replaced
 
 `tl-stamp` reproduces the deploy scripts' sed pipeline exactly. Worth re-running

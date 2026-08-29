@@ -73,6 +73,15 @@ jobs:
         env:
           FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
         run: |
-          curl -sSf --user "viktor:${FORGEJO_GIT_TOKEN}" \
+          # A version here is derived from its inputs (upstream tag + commit, or
+          # the crate version), so re-running on an unchanged commit re-uploads
+          # an identical artefact and the registry answers 409. That is "already
+          # published", not a failure. Any OTHER status still fails the job.
+          code=$(curl -s -o /dev/null -w '%{http_code}' --user "viktor:${FORGEJO_GIT_TOKEN}" \
             --upload-file "out/ttyd-devvm_${VERSION}_amd64.deb" \
-            "https://forgejo.viktorbarzin.me/api/packages/viktor/debian/pool/noble/main/upload"
+            "https://forgejo.viktorbarzin.me/api/packages/viktor/debian/pool/noble/main/upload")
+          case "$code" in
+            2*)  echo "published ($code)" ;;
+            409) echo "already published at this version ($code)" ;;
+            *)   echo "upload failed with $code" >&2; exit 1 ;;
+          esac
