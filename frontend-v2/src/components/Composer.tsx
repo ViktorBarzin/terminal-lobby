@@ -28,9 +28,11 @@ import { ContextMeter } from "./ContextMeter";
 import type { ContextState } from "./context.logic";
 
 /**
- * Prompt composer with the permission panel docked above it. Send↔Stop morphs
- * on `working` (design: Stop = inject ESC/Ctrl-C into the pty). Enter sends,
- * Shift+Enter inserts a newline. When a permission is pending and the input is
+ * Prompt composer with the permission panel docked above it. Send is always
+ * offered; Stop joins it while a turn is in flight (Stop = inject ESC/Ctrl-C
+ * into the pty). Sending mid-turn QUEUES the prompt — Claude Code queues typed
+ * input itself, and the queued chips above the field are its own records of
+ * having done so. Enter sends, Shift+Enter inserts a newline. When a permission is pending and the input is
  * empty, 1 approves / 2 denies (T3 number-key affordance).
  *
  * Sending goes through ONE route on every device: `onSend` (the session control
@@ -52,10 +54,18 @@ export interface ComposerSinks {
 }
 
 export const Composer: Component<{
+  /** A turn is in flight, so there is something to Stop. NOT a reason to
+   *  withhold Send: it is derived from the transcript and lags the pane, and a
+   *  mid-turn send queues rather than failing. */
   working: boolean;
+  /** Claude is asking a blocking question right now. Sending a prompt takes the
+   *  dialog down and Claude re-asks, so Send says so — it does not refuse.
+   *  ADR-0010: whoever answers first wins; the pane and this view are two
+   *  windows onto one process. */
+  asking?: boolean;
   pending: PendingPermission[];
-  /** resolves false when the session refused the prompt (409 mid-turn, 5xx,
-   *  unreachable), which puts the typed text back in the field. */
+  /** resolves false when the session refused the prompt (5xx, unreachable),
+   *  which puts the typed text back in the field. */
   onSend: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
@@ -299,7 +309,7 @@ export const Composer: Component<{
    * the same path the desktop has always used, and reports whether it landed.
    *
    * The field is cleared optimistically because it has to feel instant, and the
-   * text is put BACK if the send did not land — so a refusal (a 409, a 5xx, an
+   * text is put BACK if the send did not land — so a failure (a 5xx, an
    * unreachable box) can never destroy what was typed. Only a field the user has
    * not since typed into is restored.
    */
@@ -618,14 +628,31 @@ export const Composer: Component<{
             {modeLabel(props.mode ?? "")}
           </button>
         </Show>
-        <Show
-          when={props.working}
-          fallback={
-            <button type="button" class="tl-send" onClick={submit}>
-              Send
-            </button>
+        {/* Send is always here; Stop JOINS it while there is a turn to stop.
+            Stop used to REPLACE it, which is the browser half of a turn gate
+            the server gave up on 2026-08-15 — mid-turn sends queue in Claude,
+            and Enter has been doing exactly that all along. What the swap cost
+            was the phone, where there is no Enter key to fall back on.
+
+            Rendering Send unconditionally also fixes a second, worse case.
+            `working` comes from the transcript, which lags the pane: measured
+            live, a session whose real state was `done` showed Stop in 98 of 100
+            samples over 300s (and kept doing so after a reload), and 17-22% of
+            sessions disagreed with their state at any moment. A finished
+            session could therefore offer no way to send at all. */}
+        <button
+          type="button"
+          class="tl-send"
+          onClick={submit}
+          title={
+            props.asking
+              ? "Send — this will dismiss the question Claude is asking, and it will ask again"
+              : undefined
           }
         >
+          Send
+        </button>
+        <Show when={props.working}>
           <button type="button" class="tl-stop" onClick={() => props.onStop()}>
             Stop
           </button>
