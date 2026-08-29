@@ -92,8 +92,10 @@ func TestEveryServiceUnitHasAtLeastOneCheck(t *testing.T) {
 		checked[c.Unit] = true
 	}
 	for _, u := range Package.Units {
-		// The templated syncer may have no enabled instance to probe.
-		if u.Template {
+		// A timer has no endpoint to probe -- what matters for it is that it is
+		// enabled, which TestTheUnitsToEnableAreNamed covers. The templated
+		// syncer may have no enabled instance at all.
+		if u.Template || strings.HasSuffix(u.Name, ".timer") {
 			continue
 		}
 		if !checked[u.Name] {
@@ -113,5 +115,95 @@ func TestTheAuthedSurfacesAreProbedUnauthenticated(t *testing.T) {
 	}
 	if refusals == 0 {
 		t.Fatal("no check asserts that an authed surface refuses an unauthenticated request")
+	}
+}
+
+// The healer polls these two endpoints to learn a new version shipped. They are
+// generated at stamp time, so it is easy to generate them and then not ship
+// them -- at which point no open tab ever self-updates again (ADR-0007).
+func TestTheStampEndpointsAreShipped(t *testing.T) {
+	owned := map[string]bool{}
+	for _, f := range Package.Files {
+		owned[f.Dest] = true
+	}
+	for _, dest := range []string{
+		"/usr/local/share/ttyd/build-id",
+		"/usr/local/share/ttyd/term-build-id",
+	} {
+		if !owned[dest] {
+			t.Errorf("%s is not shipped; the self-update healer would poll a 404 forever", dest)
+		}
+	}
+}
+
+// The lobby resolves the terminal page by its content hash and only falls back
+// to /term.html when the meta tag is absent -- and it is never absent, because
+// stamping always writes one. So the hashed copy has to exist or every attach
+// loads a 404 into the terminal iframe.
+func TestTheHashedTerminalPageIsGenerated(t *testing.T) {
+	if !Package.HashedTermPage {
+		t.Fatal("the content-hashed terminal page must be generated into the asset payload")
+	}
+}
+
+// clipboard-upload serves the PWA surface from an exact-path whitelist. A file
+// missing here is a 404 the client cannot route around.
+func TestThePWASurfaceIsShipped(t *testing.T) {
+	owned := map[string]bool{}
+	for _, f := range Package.Files {
+		owned[f.Dest] = true
+	}
+	for _, name := range []string{
+		"sw.js", "manifest.webmanifest",
+		"icon-192.png", "icon-512.png", "icon-512-maskable.png",
+	} {
+		if !owned["/usr/local/share/ttyd/"+name] {
+			t.Errorf("PWA asset %s is not shipped", name)
+		}
+	}
+	var fonts int
+	for _, f := range Package.Files {
+		if strings.HasPrefix(f.Dest, "/usr/local/share/ttyd/fonts/") {
+			fonts++
+		}
+	}
+	if fonts < 6 {
+		t.Errorf("want the six webfonts shipped, got %d", fonts)
+	}
+}
+
+// A unit that ships but is watched by nothing is never restarted and never
+// enabled, so a change to it silently does not take effect.
+func TestEveryShippedUnitIsWatchedOrDeliberatelyUnwatched(t *testing.T) {
+	watched := map[string]bool{}
+	for _, u := range Package.Units {
+		for _, f := range u.Files {
+			watched[f] = true
+		}
+	}
+	for _, f := range Package.Files {
+		if !strings.HasPrefix(f.Dest, "/etc/systemd/system/") || f.Unmanaged {
+			continue
+		}
+		if !watched[f.Dest] {
+			t.Errorf("%s ships but no unit watches it", f.Dest)
+		}
+	}
+}
+
+// Enabling is what makes the box come back after a reboot. Restarting a unit
+// that was never enabled starts it exactly once.
+func TestTheUnitsToEnableAreNamed(t *testing.T) {
+	if len(Package.Enable) == 0 {
+		t.Fatal("no units are enabled; the box would not come up after a reboot")
+	}
+	var timer bool
+	for _, u := range Package.Enable {
+		if u == "clipboard-cleanup.timer" {
+			timer = true
+		}
+	}
+	if !timer {
+		t.Error("clipboard-cleanup.timer is not enabled; the store is never pruned")
 	}
 }

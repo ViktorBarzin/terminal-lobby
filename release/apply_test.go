@@ -246,3 +246,31 @@ func TestReinstallingTheSameBytesChangesNothing(t *testing.T) {
 		t.Fatalf("reinstalling identical bytes must restart nothing, got %v", changed)
 	}
 }
+
+// systemd marks a FAILED unit with a bullet, not an asterisk. Reading only the
+// asterisk form silently skips a failed instance -- which is exactly the one a
+// release most needs to restart.
+func TestEnabledInstancesReadsBothMarkers(t *testing.T) {
+	out := `  tl-t3-sync@wizard.service    loaded active   running Terminal Lobby T3 syncer
+` + "●" + ` tl-t3-sync@emo.service       loaded failed   failed  Terminal Lobby T3 syncer
+* tl-t3-sync@anca.service      loaded active   running Terminal Lobby T3 syncer
+`
+	got := ParseUnitInstances("tl-t3-sync@", out)
+	want := []string{"tl-t3-sync@anca", "tl-t3-sync@emo", "tl-t3-sync@wizard"}
+	if !equal(got, want) {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+}
+
+func TestUnrelatedUnitsAreNotCollected(t *testing.T) {
+	out := "  tmux-api.service   loaded active running tmux API\n"
+	if got := ParseUnitInstances("tl-t3-sync@", out); len(got) != 0 {
+		t.Fatalf("want nothing, got %v", got)
+	}
+}
+
+func TestEmptyListUnitsOutputYieldsNoInstances(t *testing.T) {
+	if got := ParseUnitInstances("tl-t3-sync@", ""); len(got) != 0 {
+		t.Fatalf("want nothing, got %v", got)
+	}
+}

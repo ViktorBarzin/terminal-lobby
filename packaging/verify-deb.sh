@@ -21,8 +21,10 @@ echo "verifying $DEB"
 # dpkg removes files a new version stops shipping. The lobby's chunks are
 # content-hashed and a tab on the previous build still requests the old names,
 # as does a rollback -- so the served directory must not be package-owned.
+# The trailing $ here used to anchor after a single character class, so this
+# matched only one-character filenames and could never see a real chunk name.
 check "no dpkg-owned files in the served asset dir" \
-  "$(printf '%s' "$contents" | grep -c 'usr/local/share/ttyd/assets/[^ ]$' || true)" 0
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/local/share/ttyd/assets/.' || true)" 0
 
 # A real build carries dozens of chunks, so this asserts "at least one file",
 # not an exact count -- and counts files rather than the directory entry.
@@ -42,6 +44,23 @@ check "preinst is present (without it, every release restarts everything)" \
   "$(printf '%s' "$ctrl" | grep -c '^./preinst$' || true)" 1
 check "postinst is present" \
   "$(printf '%s' "$ctrl" | grep -c '^./postinst$' || true)" 1
+
+check "the stamp endpoints ship (the healer polls them)" \
+  "$(printf '%s' "$contents" | grep -cE 'usr/local/share/ttyd/(build-id|term-build-id)$' || true)" 2
+
+check "the PWA surface ships" \
+  "$(printf '%s' "$contents" | grep -cE 'usr/local/share/ttyd/(sw\.js|manifest\.webmanifest|icon-192\.png|icon-512\.png|icon-512-maskable\.png)$' || true)" 5
+
+check "the six webfonts ship" \
+  "$(printf '%s' "$contents" | grep -c 'usr/local/share/ttyd/fonts/.*\.woff2$' || true)" 6
+
+# The lobby resolves the terminal page by content hash; a missing hashed copy
+# 404s every attach.
+check "the content-hashed terminal page is in the payload" \
+  "$(printf '%s' "$contents" | grep -cE 'usr/share/terminal-lobby/assets/term-[0-9a-f]{12}\.html$' || true)" 1
+
+check "the revert unit ships (the brake runs outside the dpkg transaction)" \
+  "$(printf '%s' "$contents" | grep -c 'terminal-lobby-revert.service' || true)" 1
 
 for dep in ttyd-devvm viu tmux acl; do
   check "declares a dependency on $dep" \
