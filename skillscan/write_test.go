@@ -16,7 +16,15 @@ func skillAt(t *testing.T, name, body string) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o664); err != nil {
+	skillMd := filepath.Join(dir, "SKILL.md")
+	if err := os.WriteFile(skillMd, []byte(body), 0o664); err != nil {
+		t.Fatal(err)
+	}
+	// WriteFile respects the umask, so the mode it lands with depends on who is
+	// running the test: 0664 under the devvm's 002, 0644 on a CI runner's 022.
+	// Chmod establishes the precondition explicitly, so a test about PRESERVING
+	// a mode is not silently handed a different one to preserve.
+	if err := os.Chmod(skillMd, 0o664); err != nil {
 		t.Fatal(err)
 	}
 	return home
