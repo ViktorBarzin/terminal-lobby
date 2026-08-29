@@ -41,9 +41,14 @@ merge to master
 ## Versions
 
 `svu` computes the next semver from conventional commit messages. Versions must
-be monotonic because the box tracks latest with no pin. The repository's one
-pre-existing tag is not semver, so `svu` does not see it and the first release
-is `v0.1.0`.
+be monotonic because the box tracks latest with no pin.
+
+Two things about the bootstrap, both learned by running it rather than by
+reading: `svu` does **not** skip a non-semver tag — given this repo's
+`v-vanilla-final` it stops with "invalid semantic version" — so the workflow
+passes `--tag.pattern 'v[0-9]*'`. With that pattern and no semver tags yet it
+has no baseline to count from, so the workflow names the first release `v0.1.0`
+explicitly and lets `svu` take over from the second.
 
 ## What "deployed version" means
 
