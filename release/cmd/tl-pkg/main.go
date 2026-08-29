@@ -60,6 +60,12 @@ func main() {
 	post := strings.Replace(release.PostinstScript, "UNITS_TO_ENABLE", strings.Join(release.Package.Enable, " "), 1)
 	post = strings.Replace(post, "MIGRATE_CONFIG", release.MigrateConfigSnippet, 1)
 	check(os.WriteFile(filepath.Join(*out, "DEBIAN/postinst"), []byte(post), 0o755))
+
+	// Without this dpkg treats every shipped file as replaceable, and an
+	// operator's edit to /etc/terminal-lobby.conf is lost on the next upgrade.
+	if c := release.ConffilesContent(); c != "" {
+		check(os.WriteFile(filepath.Join(*out, "DEBIAN/conffiles"), []byte(c), 0o644))
+	}
 	check(os.WriteFile(filepath.Join(*out, "/etc/systemd/system/terminal-lobby-revert.service"), []byte(revertUnit), 0o644))
 	fmt.Printf("tl-pkg: staged %d files at version %s\n", len(release.Package.Files), *version)
 }
