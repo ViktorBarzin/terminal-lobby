@@ -1,0 +1,20 @@
+
+✻ Brewed for 5s · done 6:38 PM
+
+❯ Call AskUserQuestion with ONE question about the deployment shape
+─────────────────────────────────────────
+ ☐ Push path
+│
+│ Push, then — which mechanism delivers "a package was published, go get it"?
+│ (In all four, apt still fetches the bytes; what is being pushed is the
+│ trigger.)
+│
+❯ 1. GHA → Woodpecker API → SSH forced-command (recommended)
+     A runner reaches the box directly.
+  2. Runner joins the tailnet, SSHes directly
+     No inbound hole.
+  3. Type something.
+─────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
