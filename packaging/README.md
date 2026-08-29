@@ -89,6 +89,20 @@ design. Building locally is for inspecting what CI would produce:
 dpkg-deb -c out/terminal-lobby_0.0.0-dev_amd64.deb
 ```
 
+## Checking the port against what it replaced
+
+`tl-stamp` reproduces the deploy scripts' sed pipeline exactly. Worth re-running
+if either side changes, because a divergence would silently invalidate every
+open tab at the cutover:
+
+```sh
+sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' frontend/term.html | sha256sum | cut -c1-12
+sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' frontend-v2/index.html | sha256sum | cut -c1-12
+```
+
+must equal the `term_asset` and `lobby_asset` in `tl-stamp`'s `stamps.json`.
+Verified identical on 2026-08-29 against the real 58 KB `diag.js`.
+
 ## Before the trigger can be switched on
 
 Three things need confirming, and none of them are confirmed yet:
