@@ -4,8 +4,8 @@ Viktor, 2026-08-29: *"right now it's outside of the cluster and terraform and I
 feel the builds are not reproducible and the env is only one time setup."*
 
 Terminal Lobby reaches the devvm by three hand-run scripts — `deploy.sh`,
-`deploy-v2.sh`, `deploy-services.sh`. Each cross-builds on whichever machine you
-happen to be sitting at, `scp`s to `/tmp`, `sudo install`s, reloads systemd and
+`deploy-v2.sh`, `deploy-services.sh`. Each cross-builds on whichever machine the
+operator runs them on, `scp`s to `/tmp`, `sudo install`s, reloads systemd and
 smoke-tests. They are careful scripts: they install only changed bytes, restart
 only what moved, keep `.prev` copies for rollback, and `deploy.sh` refuses to
 write `index.html` because doing so *"would silently undo that promotion on the
@@ -70,8 +70,8 @@ keep telling the truth about what is installed.
 - **An OCI artifact on ghcr, extracted on the box.** A stronger provenance story —
   immutable digests, and it survives homelab loss. Rejected because it keeps the
   bespoke install logic that the `.deb` replaces, and declares no dependencies:
-  `viu`, `libwebsockets` and the patched `ttyd` would stay somebody's memory of a
-  `cargo install`.
+  `viu`, `libwebsockets` and the patched `ttyd` would remain a hand-run
+  `cargo install` — documented in README, installed by nothing.
 - **Bit-identical reproducible builds.** Viktor's call: install dependencies at
   latest in a clean CI environment, no pin machinery. It holds because artifacts
   are versioned and immutable — you never rebuild `1.4.2`. `ttyd` keeps its
