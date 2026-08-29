@@ -1021,6 +1021,28 @@
   }
   .tl-sidebar {
     width: 100%; /* the 260px is a desktop column width, not a phone's */
+    /* Give the soft keyboard its strip back. Three of this screen's boxes are
+       typed into — the new-session row, a project's "new session" box, a card's
+       rename box — and two of those are created at the bottom of a list that
+       already runs past the fold. Without this the scroller's box carries on
+       underneath the keyboard, so the browser can bring the focused field
+       "into view" and still leave it off screen: measured at 390x844 with a
+       project below the fold, the box landed at y=543 while an iPhone keyboard
+       covers everything below y=508.
+
+       --kb-offset is what iOS Safari needs (it shrinks only the VISUAL
+       viewport, so the layout is unchanged and the covered height is the only
+       signal). Where the platform shrinks the layout viewport instead
+       (Chromium's interactive-widget=resizes-content, and the iOS standalone
+       PWA once settled) it reads 0 and --app-vh above has already shortened
+       the shell — the two compose rather than double-count. App publishes it
+       for this screen; it used to be published only while a session was open.
+
+       The reveal itself is mobile/reveal.ts: the field has to be re-scrolled
+       once the keyboard STOPS moving, because the browser's own single attempt
+       runs against the geometry from before it opened. */
+    box-sizing: border-box;
+    padding-bottom: var(--kb-offset, 0px);
   }
   /* The list screen's bottom row: clear of the home indicator. */
   .tl-sidebar-foot {
