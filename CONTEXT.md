@@ -359,3 +359,64 @@ browser inflates before anything can measure it still has a **wire bytes**
 number. An estimate by construction — it reproduces the server's algorithm, not
 its exact state.
 _Avoid_: shadow, proxy
+
+### Release
+
+How a commit becomes the code running on the devvm
+(`docs/adr/0013-the-box-installs-the-lobby-nobody-ships-it.md`, design in
+`docs/plans/2026-08-29-iac-native-deployment-design.md`). Designed 2026-08-29;
+the vocabulary below describes the target, and the three deploy scripts hold the
+ground until it lands.
+
+**Package**:
+The unit of release: a Debian package built by GitHub Actions and installed by
+`apt` on the devvm. `terminal-lobby` carries the whole application — the Go
+services, the SPA, `term.html`, the helper scripts, the units, the sudoers
+grant — at one **version**, which is what makes frontend/backend skew
+unreachable. `ttyd-devvm` and `viu` are separate packages because they are slow
+to build and rarely change.
+_Avoid_: build, artefact, release bundle
+
+**Version**:
+The semver a release is known by, cut automatically by `svu` from conventional
+commits and pushed back to Forgejo as a `vX.Y.Z` tag. Monotonic by construction,
+which is what lets the box track latest with no pin. Distinct from a **stamp**,
+which identifies an artefact's content rather than a release.
+_Avoid_: build id (that is `__TL_BUILD__`), tag (ambiguous against a push tag)
+
+**Stamp**:
+An artefact's own identity, independent of its **version**: `__TL_BUILD__` (the
+git SHA, provenance) and `__TL_ASSET__` (a fingerprint of the artefact's
+unstamped content plus `frontend/diag.js`, which decides whether an open tab
+self-updates — ADR-0007, ADR-0008). One per surface. Computed at build time
+rather than deploy time.
+_Avoid_: hash, fingerprint on its own (say which one)
+
+**Trigger**:
+The push that tells the box a new **version** exists — GitHub Actions to the
+Woodpecker API to one SSH forced command. It carries no bytes; the package
+itself still arrives over `apt`. A dropped trigger leaves the box stale, which
+is what the divergence alert watches for.
+_Avoid_: deploy, webhook
+
+**Reconcile**:
+What the box does when triggered: install changed files, restart only the units
+whose bytes actually moved, then verify. The only writer of application state on
+the box, which is what serialises releases without anyone coordinating.
+_Avoid_: deploy, sync
+
+**Verify**:
+The smoke tests `postinst` runs after installing — `/health` per service, an
+unauthenticated request to each authed surface that must answer `401`,
+`/whoami`, the public assets. Its result is exported to Prometheus. A failure
+triggers the **hold**.
+_Avoid_: healthcheck (that is the per-service endpoint), test
+
+**Hold**:
+The automatic brake: on a failed **verify**, the box reinstalls the previous
+package from apt's cache and marks it held, so the next **trigger** cannot
+re-break it. An emergency mechanism, not a workflow — the normal way back is
+fix-forward, because the box tracks latest and a hand-run downgrade is undone by
+the next push.
+_Avoid_: rollback (that names the outcome, and the normal rollback is a new
+version), pin
