@@ -560,6 +560,11 @@ export const Composer: Component<{
           </For>
         </div>
       </Show>
+      {/* Field and controls in ONE surface. They were two: a bordered field
+          with an unbordered bar loose underneath it, which read as an input
+          that had lost its buttons. The border and the fill live here now and
+          the field goes transparent, so the whole thing is one control. */}
+      <div class="tl-composer-box">
       <div class="tl-composer-row">
         <textarea
           ref={ta}
@@ -673,6 +678,7 @@ export const Composer: Component<{
             Send
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

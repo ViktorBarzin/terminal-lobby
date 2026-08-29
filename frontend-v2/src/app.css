@@ -1171,6 +1171,25 @@ body {
   background: var(--bg-sidebar);
   padding: 10px clamp(12px, 6vw, 80px);
 }
+/* One surface. The field used to carry the border and the control bar carried
+   none, so the composer read as a boxed input with its buttons floating loose
+   beneath it. The box holds the border and the fill; the field goes transparent
+   inside it. */
+.tl-composer-box {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+/* The box owns the column now, so these two stop centring themselves. */
+.tl-composer-box .tl-composer-row,
+.tl-composer-box .tl-composer-bar {
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
 .tl-composer-row {
   display: flex;
   gap: 8px;
@@ -1295,9 +1314,14 @@ body {
   padding: 9px;
   color: var(--text-muted);
   background: none;
-  border: 1px solid var(--border-strong);
+  /* The only icon control in the app that wore a box, which made it read as an
+     empty input rather than a button. The header's icon buttons carry none. */
+  border: 0;
   border-radius: var(--radius);
   cursor: pointer;
+}
+.tl-attach-btn:hover:not(:disabled) {
+  color: var(--text-primary);
 }
 .tl-attach-btn:hover:not(:disabled) {
   color: var(--text-primary);
@@ -1309,6 +1333,9 @@ body {
 }
 .tl-composer-input {
   flex: 1 1 auto;
+  /* The surface around it carries both now. */
+  border: 0;
+  background: transparent;
   /* Sole flex child now, so a long unbroken token in the draft would otherwise
      set a min-content floor and push the field past the row. */
   min-width: 0;
@@ -2832,7 +2859,7 @@ body.tl-kb-up {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 5px; /* matches .tl-qcard-key and .tl-inline-code */
   background: var(--bg-page);
   border: 1px solid var(--border);
   font-size: 11px;
@@ -3196,7 +3223,7 @@ body.tl-kb-up {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 5px; /* matches .tl-option-key and .tl-inline-code */
   border: 1px solid var(--border);
   background: var(--bg-page);
   color: var(--text-muted);
@@ -3323,15 +3350,23 @@ body.tl-kb-up {
 .tl-qcard-send {
   padding: 6px 14px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  /* Was 7px, a value nothing else in the app uses. */
+  border-radius: var(--radius);
   background: transparent;
   color: inherit;
   font: inherit;
   font-size: 13px;
   cursor: pointer;
 }
-.tl-qcard-next,
+/* Next and Back move through the walk; only Submit commits, and it commits the
+   same kind of thing the composer's Send does, ~100px below it. One act, one
+   grammar: filled. Submit was a ghost outline against a solid Send. */
 .tl-qcard-send {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.tl-qcard-next {
   border-color: var(--accent);
   color: var(--accent);
 }
