@@ -1,0 +1,55 @@
+# Build viu as its own package.
+#
+# viu renders images inline in a session (sixel). It was installed once by hand
+# with `cargo install`, which is the kind of knowledge this pipeline is meant to
+# stop keeping in someone's memory. The sixel feature is not on by default.
+name: viu
+
+on:
+  workflow_dispatch:
+    inputs:
+      crate_version:
+        description: 'viu crate version to build'
+        required: true
+        default: '1.5.1'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: build
+        run: |
+          set -euo pipefail
+          cargo install viu --version "${{ inputs.crate_version }}" --features icy_sixel --root "$PWD/viu-root" --locked
+
+      - name: package
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.crate_version }}"
+          TREE=out/viu-pkg
+          mkdir -p "$TREE/usr/local/bin" "$TREE/DEBIAN"
+          install -m 0755 viu-root/bin/viu "$TREE/usr/local/bin/viu"
+          cat > "$TREE/DEBIAN/control" <<CTL
+          Package: viu
+          Version: $VERSION
+          Architecture: amd64
+          Maintainer: Viktor Barzin <me@viktorbarzin.me>
+          Description: Terminal image viewer with sixel support
+           Built with the icy_sixel feature, which is off by default upstream and
+           is what makes images render inline in a session.
+          CTL
+          dpkg-deb --root-owner-group --build "$TREE" "out/viu_${VERSION}_amd64.deb"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: publish
+        env:
+          FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+        run: |
+          curl -sSf --user "viktor:${FORGEJO_GIT_TOKEN}" \
+            --upload-file "out/viu_${VERSION}_amd64.deb" \
+            "https://forgejo.viktorbarzin.me/api/packages/viktor/debian/pool/noble/main/upload"

@@ -1,0 +1,5 @@
+# Deployed to /etc/apt/auth.conf.d/terminal-lobby.conf, mode 0600 root:root.
+# <TOKEN> is a READ-ONLY Forgejo token, written by the deploy pipeline from Vault.
+machine forgejo.viktorbarzin.me
+login viktor
+password <TOKEN>
