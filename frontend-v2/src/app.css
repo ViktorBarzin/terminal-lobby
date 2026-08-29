@@ -211,105 +211,61 @@ body {
 
 /* Data used — the byte readout. Tabular figures throughout: these numbers are
    read as a column and compared to each other, so they have to line up. */
-.tl-netusage-totals {
-  width: 100%;
-  border-collapse: collapse;
+/* Periods: selectable rows, one of which scopes everything below. Buttons
+   rather than radios because the whole row is the target on a phone. */
+.tl-netusage-periods {
+  display: grid;
+  gap: 2px;
   margin: 0 0 12px;
-  font-size: calc(12px * var(--tl-text-scale, 1));
 }
-.tl-netusage-totals th,
-.tl-netusage-totals td {
-  padding: 2px 0;
-  font-weight: inherit;
-}
-/* The period names a row, so it is a row header rather than a cell — and the
-   only left-aligned column in the table. */
-.tl-netusage-totals th[scope="row"] {
-  text-align: left;
-  color: var(--text-muted);
-  /* The one column allowed to wrap: on a narrow phone the four figures keep
-     their width and the period name takes two lines instead. */
-  white-space: normal;
-}
-.tl-netusage-totals th[scope="col"] {
-  text-align: right;
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  padding-bottom: 4px;
-}
-.tl-netusage-totals td {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  /* Figures compared against each other need room between them; on a 390px
-     phone this is what keeps three numbers from reading as one. */
-  padding-left: 10px;
-  white-space: nowrap;
-}
-/* The total is the anchor the other two are read against, so it is the one
-   figure at full strength. */
-.tl-netusage-totals td:first-of-type {
-  color: var(--text-primary);
-}
-.tl-netusage-totals td {
-  color: var(--text-muted);
-}
-
-/* The breakdown filter. Same shape as the tier control below it, because they
-   are the same kind of choice and sit two rows apart. */
-.tl-netusage-filter {
-  border: 0;
-  margin: 0 0 10px;
-  padding: 0;
+.tl-netusage-period {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  align-items: center;
-}
-.tl-netusage-filter legend {
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  padding: 0;
-  margin-bottom: 6px;
-}
-.tl-netusage-filter label {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  cursor: pointer;
-}
-
-/* Which network you are on, and the control that corrects it. */
-.tl-netusage-current {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 6px 10px;
-  margin-top: 14px;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-}
-.tl-netusage-netname {
-  color: var(--text-primary);
-  /* An operator name can be long and a phone is narrow; the select keeps its
-     width and the name takes what is left. */
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tl-netusage-current select {
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
   font: inherit;
   font-size: calc(12px * var(--tl-text-scale, 1));
-  color: var(--text-primary);
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+}
+.tl-netusage-period:hover {
   background: var(--bg-page);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 6px;
+}
+/* The selected period is the one thing on this panel that has to be obvious at
+   a glance: everything under it is scoped by it. */
+.tl-netusage-period.is-on {
+  color: var(--text-primary);
+  border-color: var(--border);
+  background: var(--bg-page);
+}
+.tl-netusage-period .tl-netusage-bytes {
+  font-variant-numeric: tabular-nums;
+}
+.tl-netusage-sincerow {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* "Where" / "What" — two sub-headings inside one settings group. */
+.tl-netusage-sub {
+  margin-top: 12px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+}
+.tl-netusage-scope {
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.tl-netusage-stalemark {
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
 }
 
 .tl-netusage-breakdown {
@@ -321,6 +277,16 @@ body {
 }
 .tl-netusage-row {
   display: contents;
+}
+/* A network row is tappable and narrows the bars below it; a bucket row is
+   not. The cursor is the only affordance a 12px row has space for. */
+.tl-netusage-row.is-tappable > * {
+  cursor: pointer;
+}
+.tl-netusage-row.is-on > .tl-netusage-name,
+.tl-netusage-row.is-on > .tl-netusage-bytes {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 .tl-netusage-name {
   color: var(--text-muted);

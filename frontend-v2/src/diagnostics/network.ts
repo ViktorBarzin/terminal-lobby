@@ -1,107 +1,86 @@
 /**
- * Which network this device is on, so "Data used" can say how much of a month
- * went over cellular — the figure that matters while roaming.
+ * Which network this device is on, so "Data used" can say where a month went.
  *
  * WHY THE SERVER IS ASKED. The browser cannot answer. Safari has never shipped
  * the Network Information API, so on the iPhone this feature exists for there
  * is nothing to read; where the API does exist it answers a different question
- * badly, reporting effectiveType "4g" on a wired desktop. The server sees the
- * address the request arrived from, which is the one signal every device has,
- * so `/netinfo` returns what it makes of it (tmux-api/netinfo.go).
+ * badly, reporting effectiveType "4g" on a wired desktop. WebRTC would once
+ * have leaked the local address, but host candidates are mDNS-obfuscated in
+ * every browser now, and an HTTPS page cannot reach a private address to look
+ * around the LAN either. The address a request arrived over is the only signal
+ * left, and only the server can see it (tmux-api/netinfo.go).
  *
- * WHY THE GUESS IS OVERRIDABLE. Most operators sell fixed and mobile access
- * under one name, so the server only claims `cell` on an unambiguous tell and
- * says `unknown` otherwise. A person settles a network in one tap and the
- * correction is kept in their roamed prefs, keyed by network — so it holds
- * across sessions, devices, and the operator's next address change.
+ * HOW THE ANSWER ARRIVES, TWICE OVER.
+ *  - `X-TL-Net` on responses the app already asks for. The lobby polls
+ *    /sessions every five seconds, so while anyone is looking at the tab the
+ *    answer costs no request of its own and is never more than five seconds
+ *    old. That is the hot path.
+ *  - `/netinfo`, for a cold tab that has not polled yet and to put a NAME to an
+ *    id the header alone does not carry.
  *
- * WHAT THIS MODULE OWNS. The current network and the effective kind, as module
- * state rather than a store: the fold path that consumes it runs inside a
- * diagnostics callback and inside the terminal iframe's message handler, and
- * neither is a component with access to a context. Everything decided here is a
- * pure function taking its inputs, so the state is a cache in front of the
- * logic rather than the logic itself.
+ * WHY STALENESS IS A VERDICT. lobby.ts parks the poll entirely while a tab is
+ * hidden, and the byte counter deliberately does not pause — a hidden tab that
+ * downloaded four megabytes really did spend four megabytes. So a backgrounded
+ * phone keeps counting while the answer ages, which is exactly the moment
+ * someone walks out of the house onto cellular. Past NETWORK_STALE_MS the
+ * network reads as `unknown` rather than as the network last seen: an
+ * unattributed row is honest, and one that is quietly wrong is not.
+ *
+ * WHAT THIS MODULE OWNS. The current network, as module state rather than a
+ * store: the fold path that consumes it runs inside a diagnostics callback and
+ * inside the terminal iframe's message handler, and neither is a component with
+ * access to a context. Every decision here is a pure function over its inputs,
+ * so the state is a cache in front of the logic rather than the logic itself.
  */
 
 import { apiUrl } from "../lib/config";
-import { KINDS, type NetKind } from "./usage";
+import { NET_UNKNOWN, commitNetName } from "./usage";
 
 /** What the server reports about the network a request came from. */
 export interface NetworkInfo {
-  /** Stable name for the network: "lan", "as64501", or an opaque digest. The
-   *  key a person's override is stored against. */
+  /** Stable id: `lan`, `as8374`, or an opaque digest for an address that could
+   *  not be resolved. What bytes are stored under. */
   net: string;
-  /** The server's guess. Overridden by the person's own answer. */
-  kind: NetKind;
-  /** The operator, when it is known — "Example Telecom Ltd", "Home network". */
+  /** The operator, when it is known. Empty until /netinfo has been asked. */
   label: string;
-  /** Two-letter country the network is registered in, which is how a person
-   *  spots at a glance that they are abroad. */
+  /** Two-letter country the operator is REGISTERED in — not where the device
+   *  is. It is how a person spots at a glance that they are somewhere else. */
   cc: string;
-  /** Which of the server's three answers this is: a private address (certain),
-   *  a resolved operator, or no answer at all. */
+  /** Which of the server's answers this is: a forwarded private address
+   *  (certain), a resolved operator, or no answer at all. */
   source: "lan" | "asn" | "none";
 }
-
-/** A person's own answer for a network. `unknown` is not offered: it is what
- *  the absence of an answer already means, so clearing a correction removes the
- *  entry rather than storing a third value. */
-export type NetOverride = "wifi" | "cell";
-
-/** Per-network corrections, keyed by `NetworkInfo.net`. */
-export type NetOverrides = Record<string, NetOverride>;
 
 export const NETWORK_STORAGE_KEY = "tl:net-id:v1";
 
 /**
- * How stale the answer may get while a tab is in use. A network changes when
- * someone walks out of the house, which no event reliably announces on iOS, so
- * this is the ceiling on how many bytes can land in the wrong column — at most
- * two minutes of them. The reply is about 120 bytes, so the poll itself costs
- * roughly 12 kB an hour against the gigabytes it is labelling, and it is
- * counted in the `api` bucket like every other request.
+ * How old an answer may be before a window folds as `unknown`.
+ *
+ * While a tab is visible the header refreshes every five seconds, so anything
+ * older than about half a minute means the tab was backgrounded and the poll
+ * was parked. 90 s leaves room for a slow poll or a backoff without letting a
+ * whole backgrounded stretch pass as attributed. A starting value, not a
+ * measurement: what it should be depends on how much lands in `unknown`.
  */
-export const NETWORK_MAX_AGE_MS = 120_000;
+export const NETWORK_STALE_MS = 90_000;
 
-const isKind = (v: unknown): v is NetKind => (KINDS as readonly unknown[]).includes(v);
-const isOverride = (v: unknown): v is NetOverride => v === "wifi" || v === "cell";
+/** Ids the server can send. Anything else is treated as no answer at all. */
+const isNetId = (v: unknown): v is string =>
+  typeof v === "string" && /^[a-z0-9-]{1,40}$/.test(v);
 
 /** Validate-or-drop a `/netinfo` reply. A malformed answer leaves the previous
  *  network in place rather than relabelling traffic from nothing. */
 export function parseNetworkInfo(raw: unknown): NetworkInfo | null {
   if (typeof raw !== "object" || raw === null) return null;
   const o = raw as Record<string, unknown>;
-  if (typeof o.net !== "string" || o.net === "") return null;
+  if (!isNetId(o.net)) return null;
   const source = o.source;
   return {
     net: o.net,
-    kind: isKind(o.kind) ? o.kind : "unknown",
     label: typeof o.label === "string" ? o.label : "",
     cc: typeof o.cc === "string" ? o.cc : "",
     source: source === "lan" || source === "asn" ? source : "none",
   };
-}
-
-/** The kind to attribute bytes to: the person's own answer for this network if
- *  they gave one, else what the server made of it. */
-export function effectiveKindOf(
-  info: NetworkInfo | null,
-  overrides: NetOverrides,
-): NetKind {
-  if (!info) return "unknown";
-  const own = overrides[info.net];
-  return isOverride(own) ? own : info.kind;
-}
-
-/** Keep only well-formed entries, so a hand-edited prefs doc cannot put a
- *  nonsense kind into the store where it would never aggregate. */
-export function coerceOverrides(raw: unknown): NetOverrides {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
-  const out: NetOverrides = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (k !== "" && isOverride(v)) out[k] = v;
-  }
-  return out;
 }
 
 type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -114,9 +93,8 @@ function storage(): MinStorage | null {
   }
 }
 
-/** The last network this device saw. Persisted so a fresh tab attributes its
- *  first window to the network it was almost certainly still on, rather than
- *  banking it as unknown while the first request is in flight. */
+/** The last network this device saw. Persisted so a fresh tab has a name to
+ *  show immediately, before its first poll answers. */
 export function readStoredNetwork(store: MinStorage | null = storage()): NetworkInfo | null {
   try {
     const raw = store?.getItem(NETWORK_STORAGE_KEY);
@@ -140,41 +118,44 @@ export function writeStoredNetwork(
 // ---- module state ----------------------------------------------------------
 
 let current: NetworkInfo | null = null;
-let overrides: NetOverrides = {};
-let lastFetchAt = 0;
+/** When the id was last confirmed by the server. 0 = never. */
+let confirmedAt = 0;
+let seeded = false;
 let inFlight: Promise<NetworkInfo | null> | null = null;
-/** Issue number of the newest request, so a slow earlier answer cannot land on
- *  top of a newer one and relabel traffic with the network you just left. */
 let issued = 0;
 const listeners = new Set<(info: NetworkInfo | null) => void>();
 
 /** Seed from storage on first read rather than at import: a module imported by
- *  a test that never touches storage should not have gone looking for it. */
-function seeded(): NetworkInfo | null {
-  if (current === null) current = readStoredNetwork();
+ *  a test that never touches storage should not have gone looking for it. The
+ *  stored network carries NO confirmation time — it names what to display, and
+ *  attribution still waits for a live answer. */
+function seed(): NetworkInfo | null {
+  if (!seeded) {
+    seeded = true;
+    current = readStoredNetwork();
+  }
   return current;
 }
 
+/** The network to display: the last one seen, however old. */
 export function currentNetwork(): NetworkInfo | null {
-  return seeded();
+  return seed();
 }
 
-/** The kind every fold is attributed to right now. */
-export function currentKind(): NetKind {
-  return effectiveKindOf(seeded(), overrides);
+/** Whether the displayed network is still being confirmed by the server. */
+export function networkIsStale(now: number = Date.now()): boolean {
+  return now - confirmedAt > NETWORK_STALE_MS;
 }
 
-/** Push the person's corrections in from the prefs store, which owns them. */
-export function setNetworkOverrides(raw: unknown): void {
-  overrides = coerceOverrides(raw);
-  emit();
+/** The id a window folds under right now. `unknown` whenever the answer has
+ *  gone stale — see the staleness note at the top of this file. */
+export function currentNetworkId(now: number = Date.now()): string {
+  const info = seed();
+  if (!info || networkIsStale(now)) return NET_UNKNOWN;
+  return info.net;
 }
 
-export function networkOverrides(): NetOverrides {
-  return { ...overrides };
-}
-
-/** Subscribe to network or override changes; returns the unsubscribe. */
+/** Subscribe to network changes; returns the unsubscribe. */
 export function onNetworkChange(fn: (info: NetworkInfo | null) => void): () => void {
   listeners.add(fn);
   return () => void listeners.delete(fn);
@@ -191,50 +172,62 @@ function emit(): void {
 }
 
 /**
- * Ask the server which network this is.
+ * Record the id stamped on a response the app was making anyway. This is the
+ * hot path: cheap, synchronous, and the thing that keeps attribution fresh.
  *
- * An ordinary call is cheap to make often: it does nothing while the last
- * answer is still fresh, and joins a request already in flight rather than
- * starting a second one. That is the path the visibility trigger takes, and it
- * fires in bursts.
- *
- * A FORCED call always goes to the server, even while another is in flight.
- * Force means something happened that changes the answer — the device came back
- * online, or a person opened Settings to look — and an answer already in flight
- * was asked over the link they have just left. Overlapping requests cannot
- * relabel traffic out of order: only the newest issue is allowed to land.
+ * A header naming an id we have no name for triggers one /netinfo call to learn
+ * it — once per network, not once per poll.
  */
-export async function refreshNetwork(opts: { force?: boolean; now?: number } = {}): Promise<
-  NetworkInfo | null
-> {
+export function noteNetworkId(id: string | null | undefined, now: number = Date.now()): void {
+  if (!isNetId(id)) return; // no header on this response: keep what we have
+  const known = seed();
+  confirmedAt = now;
+  if (known?.net === id) return;
+  // A new id: keep it usable immediately, and fill the name in behind.
+  current = { net: id, label: known?.net === id ? known.label : "", cc: "", source: "none" };
+  writeStoredNetwork(current);
+  emit();
+  if (id !== NET_UNKNOWN) void refreshNetwork({ force: true, now });
+}
+
+/**
+ * Ask the server directly. Used by a cold tab before its first poll, to put a
+ * name to an id, and whenever something says the network has certainly changed.
+ *
+ * A forced call always goes to the server, even while another is in flight:
+ * force means the answer already in flight was asked over a link the device has
+ * left. Overlapping requests cannot land out of order — only the newest issue
+ * is allowed to write.
+ */
+export async function refreshNetwork(
+  opts: { force?: boolean; now?: number } = {},
+): Promise<NetworkInfo | null> {
   const now = opts.now ?? Date.now();
-  if (!opts.force) {
-    if (lastFetchAt > 0 && now - lastFetchAt < NETWORK_MAX_AGE_MS) return seeded();
-    if (inFlight) return inFlight;
-  }
-  lastFetchAt = now;
+  if (!opts.force && inFlight) return inFlight;
   const mine = ++issued;
   const run = (async () => {
     try {
       const res = await fetch(apiUrl("/netinfo"), { credentials: "same-origin" });
-      if (!res.ok) return seeded();
+      if (!res.ok) return seed();
       const info = parseNetworkInfo(await res.json());
       // A malformed reply leaves the previous network in place rather than
       // relabelling traffic from nothing; an overtaken one is simply dropped.
-      if (!info || mine !== issued) return seeded();
-      const changed = current?.net !== info.net || current?.kind !== info.kind;
+      if (!info || mine !== issued) return seed();
+      const changed = current?.net !== info.net || current?.label !== info.label;
       current = info;
+      confirmedAt = now;
+      seeded = true;
       writeStoredNetwork(info);
+      // The name has to outlive being on the network: a row for last month's
+      // trip is read from somewhere else entirely.
+      if (info.label) void commitNetName(info.net, { label: info.label, cc: info.cc });
       if (changed) emit();
       return info;
     } catch {
       // Offline, or the endpoint is not deployed yet. The last known network
-      // stays in force: it is a better guess than unknown, and the bytes that
-      // failed to reach the server did not cross a different link.
-      return seeded();
+      // stays on screen; attribution is governed by staleness, not by this.
+      return seed();
     } finally {
-      // Only the request that is still the current one clears the slot; an
-      // overtaken one leaving would drop a live request from it.
       if (mine === issued) inFlight = null;
     }
   })();
@@ -243,10 +236,11 @@ export async function refreshNetwork(opts: { force?: boolean; now?: number } = {
 }
 
 /**
- * Watch for the moments a network can have changed. There is no event for
- * "you left the house", so this listens to the ones that correlate: coming back
+ * Watch for the moments a network can have changed. There is no event for "you
+ * left the house", so this listens to the ones that correlate: coming back
  * online, and a tab becoming visible again after the phone was in a pocket.
- * Both are throttled by refreshNetwork's freshness window.
+ * Both matter because the /sessions poll — the hot path — is parked while the
+ * tab is hidden, so the first answer after a wake should not wait for it.
  *
  * Returns the teardown.
  */
@@ -257,10 +251,9 @@ export function startNetworkWatch(
     typeof document === "undefined" ? undefined : document,
 ): () => void {
   void refreshNetwork({ force: true });
-  // Coming back online is the one moment the network has certainly changed.
   const onOnline = () => void refreshNetwork({ force: true });
   const onVisible = () => {
-    if (doc?.visibilityState === "visible") void refreshNetwork();
+    if (doc?.visibilityState === "visible") void refreshNetwork({ force: true });
   };
   target?.addEventListener("online", onOnline);
   doc?.addEventListener("visibilitychange", onVisible);
@@ -273,8 +266,8 @@ export function startNetworkWatch(
 /** Test seam: forget everything this module has cached. */
 export function resetNetworkState(): void {
   current = null;
-  overrides = {};
-  lastFetchAt = 0;
+  confirmedAt = 0;
+  seeded = false;
   inFlight = null;
   issued = 0;
   listeners.clear();

@@ -502,6 +502,12 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 	// (already-invalidated) cache.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
+	// The network this caller is on, stamped on the poll they already make so
+	// "Data used" can attribute a window without a request of its own. Set
+	// BEFORE the cache lookup and never stored with it: the body cache is
+	// shared across one user's devices, and two devices on different networks
+	// must not read each other's answer (netinfo.go).
+	setNetworkHeader(w, r)
 
 	if body, ok := sessionsCacheInstance.get(osUser); ok {
 		w.Write(body)

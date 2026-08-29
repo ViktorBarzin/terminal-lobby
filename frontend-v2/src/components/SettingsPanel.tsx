@@ -40,34 +40,22 @@ import {
 } from "../diagnostics/connection";
 import {
   aggregate,
+  commitResetSince,
   formatBytes,
   readStore,
   resetStore,
   type Bucket,
-  type NetKind,
-  type PeriodTotals,
+  type PeriodKey,
   type UsageAggregate,
-  type UsageFilter,
 } from "../diagnostics/usage";
 import {
   currentNetwork,
-  networkOverrides,
+  networkIsStale,
   onNetworkChange,
   refreshNetwork,
-  type NetOverride,
   type NetworkInfo,
 } from "../diagnostics/network";
 import type { NotificationSystem } from "../notify/notifications";
-
-/** The filter over the breakdown, in the order the control offers it. */
-const USAGE_FILTERS: readonly UsageFilter[] = ["all", "wifi", "cell"];
-
-const FILTER_LABEL: Record<UsageFilter, string> = {
-  all: "All",
-  wifi: "WiFi",
-  cell: "Cellular",
-  unknown: "Unattributed",
-};
 
 /** What each bucket is called on screen. Feature names rather than endpoints,
  *  because the breakdown exists to be acted on. */
@@ -194,64 +182,62 @@ export const SettingsPanel: Component<{
   // Data used. Read once on open rather than tracked live: the counters move on
   // a 60s window, and a panel that reflowed while being read would be worse
   // than one that is a minute stale.
-  const [filter, setFilter] = createSignal<UsageFilter>("all");
+  // Which period the breakdown is scoped to, and which network narrows it
+  // further. One selection drives the whole section: there is no control fixed
+  // to a period nobody picked.
+  const [period, setPeriod] = createSignal<PeriodKey>("thisMonth");
+  const [net, setNet] = createSignal<string | null>(null);
   const [usage, setUsage] = createSignal<UsageAggregate>(
-    aggregate(readStore(), new Date(), "all"),
+    aggregate(readStore(), new Date(), "thisMonth", null),
   );
   // The network is live, unlike the counters: it is the one thing on this panel
   // a person opens Settings to check after landing somewhere, and it changes
   // under them rather than on their input.
   const [network, setNetwork] = createSignal<NetworkInfo | null>(currentNetwork());
-  const [overrides, setOverrides] = createSignal(networkOverrides());
   const [tier, setTier] = createSignal<TierPreference>(readTierPreference());
   // What the link actually measured last time, which is a different question
   // from what the pin asks for — and the only thing on screen that answers
   // "why am I in light mode?". connection.ts persists the verdict, not the
   // sample behind it, so the throughput and round trip are not available here.
   const measured = readStoredTier();
-  const refreshUsage = () => setUsage(aggregate(readStore(), new Date(), filter()));
-  const pickFilter = (f: UsageFilter) => {
-    setFilter(f);
+
+  const refreshUsage = () => setUsage(aggregate(readStore(), new Date(), period(), net()));
+  const pickPeriod = (p: PeriodKey) => {
+    setPeriod(p);
+    // A network selected in one period may carry nothing in another, and a
+    // breakdown of nothing reads as a bug. Start each period at all networks.
+    setNet(null);
+    refreshUsage();
+  };
+  const pickNet = (id: string) => {
+    setNet(net() === id ? null : id); // tapping the selected row clears it
     refreshUsage();
   };
   const widest = () => Math.max(...usage().buckets.map((b) => b.bytes), 0);
-  /** Every period, in the order they are shown, so the table is one loop. Last
-   *  month is named rather than called "last month": with four columns there is
-   *  no room for both, and a month name is how a bill is labelled anyway. */
-  const periods = (): { label: string; totals: PeriodTotals }[] => [
-    { label: "Today", totals: usage().today },
-    { label: "Last 7 days", totals: usage().last7 },
-    { label: "This month", totals: usage().thisMonth },
-    { label: usage().lastMonthLabel, totals: usage().lastMonth },
-  ];
-  /** Bytes nobody could attribute — everything counted before this feature
-   *  existed, plus any window whose network the server could not name. Shown
-   *  only when there are some, and never folded into WiFi or cellular. */
-  const unattributed = () =>
-    usage().today.unknown + usage().thisMonth.unknown + usage().lastMonth.unknown;
+  const widestNet = () => Math.max(...usage().networks.map((n) => n.bytes), 0);
+  const netBarWidth = (bytes: number) =>
+    widestNet() > 0 ? `${(bytes / widestNet()) * 100}%` : "0%";
+  /** What the bucket bars are showing, spelled out rather than left implied. */
+  const scopeLabel = (): string => {
+    const p = usage().periods.find((r) => r.key === usage().period);
+    const chosen = usage().networks.find((n) => n.id === usage().net);
+    return `${p?.label ?? ""} · ${chosen ? chosen.label : "all networks"}`;
+  };
 
   /** How the current network reads on screen: the operator and, when it is
-   *  known, the country — which is what tells someone they are roaming. */
+   *  known, the country — which is what tells someone they are somewhere
+   *  else. */
   const networkName = (): string => {
     const n = network();
     if (!n) return "Checking this network…";
+    if (n.net === "lan") return "Home network";
     const label = n.label || (n.net.startsWith("as") ? n.net.toUpperCase() : "This network");
     return n.cc ? `${label} (${n.cc})` : label;
   };
-  /** The kind in force for the current network: the person's own answer if they
-   *  gave one, else the server's. */
-  const networkKind = (): NetKind => {
-    const n = network();
-    if (!n) return "unknown";
-    return overrides()[n.net] ?? n.kind;
-  };
-  /** Record what this network really is. Kept per network in the roamed prefs,
-   *  so it holds on every device and outlives the address. */
-  const correctNetwork = (kind: NetOverride): void => {
-    const n = network();
-    if (!n) return;
-    props.prefs.setPref({ netKinds: { ...overrides(), [n.net]: kind } });
-    setOverrides(networkOverrides());
+
+  const doResetSince = async (): Promise<void> => {
+    await commitResetSince();
+    refreshUsage();
   };
 
   // Opening Settings is a moment worth re-asking the server: it is the one
@@ -722,65 +708,68 @@ export const SettingsPanel: Component<{
             and is folded into the same store this reads. */}
         <section class="tl-settings-group tl-netusage">
           <div class="tl-settings-label">Data used</div>
-          {/* One row per period, one column per network kind, with the total
-              kept first — it is the figure this panel already answered, and the
-              anchor the other two are read against. A table because the
-              question this feature exists for, "how much of that was
-              cellular", is a comparison, and a comparison wants its numbers
-              side by side. */}
-          <table class="tl-netusage-totals">
-            <thead>
-              <tr>
-                <th scope="col">
-                  <span class="tl-sr-only">Period</span>
-                </th>
-                <th scope="col">Total</th>
-                <th scope="col">WiFi</th>
-                <th scope="col">Cellular</th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={periods()}>
-                {(p) => (
-                  <tr>
-                    <th scope="row">{p.label}</th>
-                    <td>{formatBytes(p.totals.all)}</td>
-                    <td>{formatBytes(p.totals.wifi)}</td>
-                    <td>{formatBytes(p.totals.cell)}</td>
-                  </tr>
+          {/* Periods first, one selectable row each. The selection scopes
+              everything below it, so "what did July cost me, where, and on
+              what" is one tap and no second control. */}
+          <div class="tl-netusage-periods" role="radiogroup" aria-label="Period">
+            <For each={usage().periods}>
+              {(p) => (
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={usage().period === p.key}
+                  class="tl-netusage-period"
+                  classList={{ "is-on": usage().period === p.key }}
+                  onClick={() => pickPeriod(p.key)}
+                >
+                  <span class="tl-netusage-name">{p.label}</span>
+                  <span class="tl-netusage-bytes">{formatBytes(p.bytes)}</span>
+                </button>
+              )}
+            </For>
+            <div class="tl-netusage-sincerow">
+              <button
+                type="button"
+                class="tl-settings-btn"
+                onClick={() => void doResetSince()}
+              >
+                Reset this period
+              </button>
+            </div>
+          </div>
+
+          {/* Where the bytes went. Networks are NAMED, never categorised: the
+              server identifies the operator exactly and the reader knows which
+              row is their SIM, which no heuristic on an operator's name does. */}
+          <div class="tl-settings-label tl-netusage-sub">Where</div>
+          <Show
+            when={usage().networks.length > 0}
+            fallback={<div class="tl-settings-hint">Nothing counted in this period yet.</div>}
+          >
+            <div class="tl-netusage-breakdown">
+              <For each={usage().networks}>
+                {(n) => (
+                  <div
+                    class="tl-netusage-row"
+                    classList={{
+                      "is-on": usage().net === n.id,
+                      "is-tappable": n.selectable,
+                    }}
+                    onClick={() => n.selectable && pickNet(n.id)}
+                  >
+                    <span class="tl-netusage-name">{n.label}</span>
+                    <span class="tl-netusage-bytes">{formatBytes(n.bytes)}</span>
+                    <span class="tl-netusage-bar" aria-hidden="true">
+                      <span style={{ width: netBarWidth(n.bytes) }} />
+                    </span>
+                  </div>
                 )}
               </For>
-            </tbody>
-          </table>
-
-          <Show when={unattributed() > 0}>
-            <div class="tl-settings-hint">
-              Bytes counted before this device could tell the two apart are in
-              the total but in neither column.
             </div>
           </Show>
 
-          {/* The filter narrows the BREAKDOWN only. The four totals above keep
-              showing both columns, so switching it never makes a figure a
-              person just read appear to move. */}
-          <fieldset class="tl-netusage-filter">
-            <legend>Breakdown</legend>
-            <For each={USAGE_FILTERS}>
-              {(value) => (
-                <label>
-                  <input
-                    type="radio"
-                    name="tl-usage-filter"
-                    value={value}
-                    checked={filter() === value}
-                    onChange={() => pickFilter(value)}
-                  />
-                  <span>{FILTER_LABEL[value]}</span>
-                </label>
-              )}
-            </For>
-          </fieldset>
-
+          <div class="tl-settings-label tl-netusage-sub">What</div>
+          <div class="tl-netusage-scope">{scopeLabel()}</div>
           <div class="tl-netusage-breakdown">
             <For each={usage().buckets}>
               {(b) => (
@@ -807,31 +796,18 @@ export const SettingsPanel: Component<{
             they are modelled by compressing the same data the same way.
           </div>
 
-          {/* Which network you are on right now, and where you correct it. The
-              server names the network from the address a request arrives from;
-              whether that operator's network is WiFi or cellular is frequently
-              not knowable from the name, so this is where you say. */}
+          {/* Which network you are on right now — what you glance at after
+              landing somewhere. Read-only: nothing here needs correcting. */}
           <div class="tl-netusage-current">
             <span class="tl-netusage-netname">{networkName()}</span>
-            <label>
-              <span class="tl-sr-only">This network is</span>
-              <select
-                value={networkKind()}
-                disabled={!network()}
-                onChange={(e) => correctNetwork(e.currentTarget.value as NetOverride)}
-              >
-                <Show when={networkKind() === "unknown"}>
-                  <option value="unknown">Not set</option>
-                </Show>
-                <option value="wifi">WiFi</option>
-                <option value="cell">Cellular</option>
-              </select>
-            </label>
+            <Show when={network() && networkIsStale()}>
+              <span class="tl-netusage-stalemark">not confirmed</span>
+            </Show>
           </div>
           <div class="tl-settings-hint">
             {network()?.source === "lan"
-              ? "On this house's network, so this one is certain."
-              : "Set once per network and it is remembered on all your devices."}
+              ? "This device is on the house's own network."
+              : "Named from the address your requests arrive from. Traffic counted while that is unconfirmed is listed as Unknown network."}
           </div>
 
           <fieldset class="tl-netusage-tier">

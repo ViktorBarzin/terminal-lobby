@@ -1,45 +1,35 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
-  NETWORK_MAX_AGE_MS,
+  NETWORK_STALE_MS,
   NETWORK_STORAGE_KEY,
-  coerceOverrides,
-  currentKind,
   currentNetwork,
-  effectiveKindOf,
+  currentNetworkId,
+  networkIsStale,
+  noteNetworkId,
   onNetworkChange,
   parseNetworkInfo,
   readStoredNetwork,
   refreshNetwork,
   resetNetworkState,
-  setNetworkOverrides,
   startNetworkWatch,
   writeStoredNetwork,
   type NetworkInfo,
 } from "../src/diagnostics/network";
+import { NET_UNKNOWN, USAGE_STORAGE_KEY, readStore } from "../src/diagnostics/usage";
 
 /**
- * Which network this device is on. The browser cannot answer it — Safari ships
- * no Network Information API, and where the API exists it calls a wired desktop
- * "4g" — so the answer comes from the server, and everything here is about the
- * client not making the answer worse: not relabelling traffic from a malformed
- * reply, not asking again while it already knows, and letting a person's own
- * correction win.
+ * Which network this device is on. The browser cannot say — Safari ships no
+ * Network Information API, where the API exists it calls a wired desktop "4g",
+ * and WebRTC host candidates are mDNS-obfuscated — so the answer comes from the
+ * server, stamped on responses the app was making anyway.
+ *
+ * Everything here is about the client not making that answer worse: not
+ * attributing bytes to a network it can no longer vouch for, not relabelling
+ * from a malformed reply, and not asking again for something it already knows.
  */
 
-const lan: NetworkInfo = {
-  net: "lan",
-  kind: "wifi",
-  label: "Home network",
-  cc: "",
-  source: "lan",
-};
-const a1: NetworkInfo = {
-  net: "as64501",
-  kind: "unknown",
-  label: "Example Telecom Ltd",
-  cc: "BG",
-  source: "asn",
-};
+const lan: NetworkInfo = { net: "lan", label: "Home network", cc: "", source: "lan" };
+const pl: NetworkInfo = { net: "as8374", label: "Polkomtel", cc: "PL", source: "asn" };
 
 function memStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
   const m = new Map<string, string>();
@@ -71,54 +61,118 @@ afterEach(() => {
 
 describe("reading the server's answer", () => {
   it("accepts a well-formed reply", () => {
-    expect(parseNetworkInfo({ ...a1 })).toEqual(a1);
+    expect(parseNetworkInfo({ ...pl })).toEqual(pl);
   });
 
-  it("rejects a reply with no network name, so nothing is relabelled from it", () => {
-    expect(parseNetworkInfo({ kind: "cell" })).toBeNull();
-    expect(parseNetworkInfo({ net: "", kind: "cell" })).toBeNull();
+  it("rejects a reply with no usable id, so nothing is relabelled from it", () => {
+    expect(parseNetworkInfo({ label: "Polkomtel" })).toBeNull();
+    expect(parseNetworkInfo({ net: "" })).toBeNull();
+    expect(parseNetworkInfo({ net: "Not A Net" })).toBeNull();
     expect(parseNetworkInfo(null)).toBeNull();
-    expect(parseNetworkInfo("as64501")).toBeNull();
-  });
-
-  it("falls back to unknown for a kind it does not recognise", () => {
-    expect(parseNetworkInfo({ net: "as1", kind: "satellite" })?.kind).toBe("unknown");
-    expect(parseNetworkInfo({ net: "as1" })?.kind).toBe("unknown");
+    expect(parseNetworkInfo("as8374")).toBeNull();
   });
 
   it("treats an unrecognised source as no answer at all", () => {
     expect(parseNetworkInfo({ net: "as1", source: "guesswork" })?.source).toBe("none");
   });
+
+  it("carries no category, because there is no longer one to carry", () => {
+    const parsed = parseNetworkInfo({ ...pl, kind: "cell" }) as unknown as Record<string, unknown>;
+    expect(parsed.kind).toBeUndefined();
+  });
 });
 
-describe("a person's own correction", () => {
-  it("wins over the server's guess", () => {
-    expect(effectiveKindOf(a1, {})).toBe("unknown");
-    expect(effectiveKindOf(a1, { as64501: "cell" })).toBe("cell");
+describe("the id stamped on a response", () => {
+  it("is what a window folds under", () => {
+    noteNetworkId("as8374");
+    expect(currentNetworkId()).toBe("as8374");
+    expect(currentNetwork()?.net).toBe("as8374");
   });
 
-  it("is keyed by network, so it does not follow you onto another one", () => {
-    expect(effectiveKindOf(lan, { as64501: "cell" })).toBe("wifi");
+  it("ignores a response that carries no stamp, keeping what it has", () => {
+    noteNetworkId("as8374");
+    noteNetworkId(null);
+    noteNetworkId(undefined);
+    noteNetworkId("");
+    expect(currentNetworkId()).toBe("as8374");
   });
 
-  it("is unknown when there is no network yet", () => {
-    expect(effectiveKindOf(null, { as64501: "cell" })).toBe("unknown");
+  it("ignores a malformed stamp rather than minting a row from it", () => {
+    noteNetworkId("as8374");
+    noteNetworkId("../../etc");
+    expect(currentNetworkId()).toBe("as8374");
   });
 
-  it("drops entries a hand-edited prefs doc could carry", () => {
-    expect(
-      coerceOverrides({ as1: "cell", as2: "satellite", as3: 7, "": "wifi", as4: "unknown" }),
-    ).toEqual({ as1: "cell" });
-    expect(coerceOverrides(null)).toEqual({});
-    expect(coerceOverrides(["cell"])).toEqual({});
+  it("takes the server's explicit unknown, rather than keeping the old network", () => {
+    // A request that reached the server without a forwarding header is a
+    // definite answer: whatever we were attributing to no longer applies.
+    noteNetworkId("as8374");
+    noteNetworkId(NET_UNKNOWN);
+    expect(currentNetworkId()).toBe(NET_UNKNOWN);
+  });
+
+  it("asks for a name the first time it sees a network, and not again", async () => {
+    const { fn } = fakeFetch({ ...pl });
+    vi.stubGlobal("fetch", fn);
+    noteNetworkId("as8374");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    noteNetworkId("as8374");
+    noteNetworkId("as8374");
+    await Promise.resolve();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not go asking for a name for unknown", async () => {
+    const { fn } = fakeFetch({ ...pl });
+    vi.stubGlobal("fetch", fn);
+    noteNetworkId(NET_UNKNOWN);
+    await Promise.resolve();
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe("an answer that has gone stale", () => {
+  /**
+   * lobby.ts parks the /sessions poll while a tab is hidden, and the byte
+   * counter deliberately keeps running. So a backgrounded phone counts bytes
+   * while the answer ages — exactly when someone walks out of the house onto
+   * cellular. An unattributed row is honest; a quietly wrong one is not.
+   */
+  it("folds under unknown rather than under the network last seen", () => {
+    const t = 1_000_000;
+    noteNetworkId("as8374", t);
+    expect(currentNetworkId(t + NETWORK_STALE_MS - 1)).toBe("as8374");
+    expect(currentNetworkId(t + NETWORK_STALE_MS + 1)).toBe(NET_UNKNOWN);
+  });
+
+  it("still names the network on screen, because that is a different question", () => {
+    const t = 1_000_000;
+    noteNetworkId("as8374", t);
+    expect(currentNetwork()?.net).toBe("as8374");
+    expect(networkIsStale(t + NETWORK_STALE_MS + 1)).toBe(true);
+  });
+
+  it("is stale before any answer at all", () => {
+    expect(currentNetworkId()).toBe(NET_UNKNOWN);
+    expect(networkIsStale()).toBe(true);
+  });
+
+  it("a fresh stamp un-stales it", () => {
+    const t = 1_000_000;
+    noteNetworkId("as8374", t);
+    noteNetworkId("as8374", t + NETWORK_STALE_MS + 1_000);
+    expect(currentNetworkId(t + NETWORK_STALE_MS + 1_100)).toBe("as8374");
   });
 });
 
 describe("remembering the network across tabs", () => {
   it("round-trips through storage", () => {
     const s = memStorage();
-    writeStoredNetwork(a1, s);
-    expect(readStoredNetwork(s)).toEqual(a1);
+    writeStoredNetwork(pl, s);
+    expect(readStoredNetwork(s)).toEqual(pl);
   });
 
   it("returns nothing rather than raising on a corrupt entry", () => {
@@ -127,67 +181,48 @@ describe("remembering the network across tabs", () => {
     expect(readStoredNetwork(s)).toBeNull();
   });
 
-  it("seeds a fresh tab from what this device last saw", () => {
-    localStorage.setItem(NETWORK_STORAGE_KEY, JSON.stringify(a1));
+  it("names the network for a fresh tab, but does not attribute to it yet", () => {
+    localStorage.setItem(NETWORK_STORAGE_KEY, JSON.stringify(pl));
     resetNetworkState();
-    // A tab that has not asked the server yet still attributes its first window
-    // to the network it was almost certainly still on.
-    expect(currentNetwork()?.net).toBe("as64501");
-    setNetworkOverrides({ as64501: "cell" });
-    expect(currentKind()).toBe("cell");
-  });
-
-  it("attributes to unknown when nothing is known yet", () => {
-    expect(currentKind()).toBe("unknown");
+    // A stored network says what to DISPLAY. Attribution waits for a live
+    // answer, because the tab may have been closed on another continent.
+    expect(currentNetwork()?.net).toBe("as8374");
+    expect(currentNetworkId()).toBe(NET_UNKNOWN);
   });
 });
 
-describe("asking the server", () => {
-  it("stores the answer and reports it as the current kind", async () => {
-    const { fn, calls } = fakeFetch({ ...a1, kind: "cell" });
+describe("asking the server directly", () => {
+  it("stores the answer and starts attributing to it", async () => {
+    const { fn, calls } = fakeFetch({ ...pl });
     vi.stubGlobal("fetch", fn);
     await refreshNetwork({ force: true });
     expect(calls[0]).toContain("/netinfo");
-    expect(currentNetwork()?.label).toBe("Example Telecom Ltd");
-    expect(currentKind()).toBe("cell");
-    expect(readStoredNetwork()?.net).toBe("as64501");
+    expect(currentNetworkId()).toBe("as8374");
+    expect(readStoredNetwork()?.label).toBe("Polkomtel");
   });
 
-  it("does not ask again while the answer is still fresh", async () => {
-    const { fn } = fakeFetch({ ...a1 });
-    vi.stubGlobal("fetch", fn);
-    const t = 1_000_000;
-    await refreshNetwork({ now: t });
-    await refreshNetwork({ now: t + NETWORK_MAX_AGE_MS - 1 });
-    expect(fn).toHaveBeenCalledTimes(1);
-    await refreshNetwork({ now: t + NETWORK_MAX_AGE_MS + 1 });
-    expect(fn).toHaveBeenCalledTimes(2);
-  });
-
-  it("asks anyway when forced, because coming back online means it changed", async () => {
-    const { fn } = fakeFetch({ ...a1 });
-    vi.stubGlobal("fetch", fn);
-    const t = 1_000_000;
-    await refreshNetwork({ now: t });
-    await refreshNetwork({ now: t + 1, force: true });
-    expect(fn).toHaveBeenCalledTimes(2);
+  it("records the name where a later month can still read it", async () => {
+    vi.stubGlobal("fetch", fakeFetch({ ...pl }).fn);
+    await refreshNetwork({ force: true });
+    await Promise.resolve();
+    // The directory has to outlive being on the network: a trip is read from
+    // somewhere else entirely.
+    await vi.waitFor(() => expect(readStore().nets["as8374"]?.label).toBe("Polkomtel"));
+    expect(readStore().nets["as8374"]?.cc).toBe("PL");
+    expect(localStorage.getItem(USAGE_STORAGE_KEY)).toContain("Polkomtel");
   });
 
   it("joins an ordinary call to a request already in flight", async () => {
-    const { fn } = fakeFetch({ ...a1 });
+    const { fn } = fakeFetch({ ...pl });
     vi.stubGlobal("fetch", fn);
-    await Promise.all([
-      refreshNetwork({ force: true }),
-      refreshNetwork(),
-      refreshNetwork(),
-    ]);
+    await Promise.all([refreshNetwork({ force: true }), refreshNetwork(), refreshNetwork()]);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it("lets the newest overlapping answer win, whatever order they arrive in", async () => {
     // The slow first request went over the link the device has just left, so
     // its answer must not land on top of the newer one.
-    const replies: NetworkInfo[] = [a1, lan];
+    const replies: NetworkInfo[] = [pl, lan];
     let n = 0;
     const resolvers: (() => void)[] = [];
     vi.stubGlobal(
@@ -200,120 +235,79 @@ describe("asking the server", () => {
     );
     const first = refreshNetwork({ force: true });
     const second = refreshNetwork({ force: true });
-    // Answer the SECOND request first, then the stale one.
     resolvers[1]?.();
     resolvers[0]?.();
     await Promise.all([first, second]);
     expect(currentNetwork()?.net).toBe("lan");
   });
 
-  it("keeps the last known network when the request fails", async () => {
-    const { fn } = fakeFetch({ ...a1 });
-    vi.stubGlobal("fetch", fn);
+  it.each([
+    ["the request fails", () => vi.fn(async () => { throw new Error("offline"); })],
+    ["the server errors", () => fakeFetch({}, false).fn],
+    ["the reply is malformed", () => fakeFetch({ nonsense: true }).fn],
+  ])("keeps the last known network when %s", async (_name, broken) => {
+    vi.stubGlobal("fetch", fakeFetch({ ...pl }).fn);
     await refreshNetwork({ force: true });
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new Error("offline");
-      }),
-    );
-    // The bytes that failed to reach the server did not cross a different link,
-    // so the previous answer is a better attribution than unknown.
+    vi.stubGlobal("fetch", broken());
     await refreshNetwork({ force: true });
-    expect(currentNetwork()?.net).toBe("as64501");
-  });
-
-  it("keeps the last known network when the server errors", async () => {
-    const { fn } = fakeFetch({ ...a1 });
-    vi.stubGlobal("fetch", fn);
-    await refreshNetwork({ force: true });
-    vi.stubGlobal("fetch", fakeFetch({}, false).fn);
-    await refreshNetwork({ force: true });
-    expect(currentNetwork()?.net).toBe("as64501");
-  });
-
-  it("keeps the last known network when the reply is malformed", async () => {
-    const { fn } = fakeFetch({ ...a1 });
-    vi.stubGlobal("fetch", fn);
-    await refreshNetwork({ force: true });
-    vi.stubGlobal("fetch", fakeFetch({ nonsense: true }).fn);
-    await refreshNetwork({ force: true });
-    expect(currentNetwork()?.net).toBe("as64501");
+    expect(currentNetwork()?.net).toBe("as8374");
   });
 
   it("tells subscribers when the network changes, and not when it repeats", async () => {
     const seen: (string | undefined)[] = [];
     onNetworkChange((info) => seen.push(info?.net));
-    vi.stubGlobal("fetch", fakeFetch({ ...a1 }).fn);
+    vi.stubGlobal("fetch", fakeFetch({ ...pl }).fn);
     await refreshNetwork({ force: true });
     await refreshNetwork({ force: true });
-    expect(seen).toEqual(["as64501"]);
+    expect(seen).toEqual(["as8374"]);
 
     vi.stubGlobal("fetch", fakeFetch({ ...lan }).fn);
     await refreshNetwork({ force: true });
-    expect(seen).toEqual(["as64501", "lan"]);
-  });
-
-  it("tells subscribers when a correction changes the kind", () => {
-    const seen: string[] = [];
-    onNetworkChange(() => seen.push(currentKind()));
-    setNetworkOverrides({ as64501: "cell" });
-    expect(seen).toEqual(["unknown"]); // no network known yet, but they heard
+    expect(seen).toEqual(["as8374", "lan"]);
   });
 });
 
 describe("watching for a network change", () => {
-  it("asks once at start and again on the events that correlate with a move", async () => {
-    const { fn } = fakeFetch({ ...a1 });
-    vi.stubGlobal("fetch", fn);
-    const handlers: Record<string, () => void> = {};
-    const target = {
-      addEventListener: (k: string, h: () => void) => void (handlers[k] = h),
-      removeEventListener: (k: string) => void delete handlers[k],
-    };
-    const doc = {
-      addEventListener: (k: string, h: () => void) => void (handlers[k] = h),
-      removeEventListener: (k: string) => void delete handlers[k],
-      visibilityState: "visible" as DocumentVisibilityState,
-    };
+  function handlers() {
+    const h: Record<string, () => void> = {};
+    const on = (k: string, fn: () => void) => void (h[k] = fn);
+    const off = (k: string) => void delete h[k];
+    return { h, target: { addEventListener: on, removeEventListener: off } };
+  }
 
-    const stop = startNetworkWatch(
-      target as unknown as Window,
-      doc as unknown as Document,
-    );
+  it("asks at start and on the events that correlate with a move", async () => {
+    const { fn } = fakeFetch({ ...pl });
+    vi.stubGlobal("fetch", fn);
+    const { h, target } = handlers();
+    const doc = { ...target, visibilityState: "visible" as DocumentVisibilityState };
+
+    const stop = startNetworkWatch(target as unknown as Window, doc as unknown as Document);
     await Promise.resolve();
     expect(fn).toHaveBeenCalledTimes(1);
 
-    // Coming back online is the one moment the network has certainly changed,
-    // so it bypasses the freshness window.
-    handlers.online?.();
+    // Both matter because the hot path — the /sessions poll — is parked while
+    // the tab is hidden, so the first answer after a wake must not wait for it.
+    h.online?.();
     await Promise.resolve();
     expect(fn).toHaveBeenCalledTimes(2);
 
-    // A tab coming back from a pocket is a hint, not a certainty, so it is
-    // throttled — nothing here has aged past the freshness window.
-    handlers.visibilitychange?.();
+    h.visibilitychange?.();
     await Promise.resolve();
-    expect(fn).toHaveBeenCalledTimes(2);
+    expect(fn).toHaveBeenCalledTimes(3);
 
     stop();
-    expect(Object.keys(handlers)).toHaveLength(0);
+    expect(Object.keys(h)).toHaveLength(0);
   });
 
   it("ignores a visibility change to hidden", async () => {
-    const { fn } = fakeFetch({ ...a1 });
+    const { fn } = fakeFetch({ ...pl });
     vi.stubGlobal("fetch", fn);
-    const handlers: Record<string, () => void> = {};
-    const doc = {
-      addEventListener: (k: string, h: () => void) => void (handlers[k] = h),
-      removeEventListener: () => {},
-      visibilityState: "hidden" as DocumentVisibilityState,
-    };
+    const { h, target } = handlers();
+    const doc = { ...target, visibilityState: "hidden" as DocumentVisibilityState };
     startNetworkWatch(undefined, doc as unknown as Document);
     await Promise.resolve();
     const before = fn.mock.calls.length;
-    handlers.visibilitychange?.();
+    h.visibilitychange?.();
     await Promise.resolve();
     expect(fn.mock.calls.length).toBe(before);
   });

@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,11 +44,18 @@ import (
 // their roamed prefs, and one tap settles a network for good.
 
 const (
-	kindWiFi    = "wifi"
-	kindCell    = "cell"
-	kindUnknown = "unknown"
+	// netHeader carries the network id on responses the client already asks
+	// for, so attribution costs no request of its own. Id only: it is ASCII by
+	// construction, where an operator's name is not, and the client asks
+	// /netinfo once for a name it has not seen.
+	netHeader = "X-TL-Net"
 
-	sourceLAN  = "lan"  // a private address; certain
+	// netLAN is the house's own network; netUnknown is "no answer", which is a
+	// verdict in its own right rather than a missing one.
+	netLAN     = "lan"
+	netUnknown = "unknown"
+
+	sourceLAN  = "lan"  // a forwarded private address; certain
 	sourceASN  = "asn"  // resolved to an operator
 	sourceNone = "none" // no answer; the client may still separate networks
 
@@ -74,8 +80,6 @@ type netInfo struct {
 	// "ip-<digest>". Stable across reconnects, which is what lets a person's
 	// correction stick to a network rather than to a session.
 	Net string `json:"net"`
-	// Kind is the guess: wifi, cell, or unknown. The client overrides it.
-	Kind string `json:"kind"`
 	// Label is the operator, for the "you are on X" line. May be empty.
 	Label string `json:"label,omitempty"`
 	// CC is the two-letter country the network is registered in, which is how
@@ -271,29 +275,24 @@ func splitCymru(txt string) []string {
 	return f
 }
 
-// mobileTell matches only names that are about mobile access whatever operator
-// carries them. Brand names are excluded on purpose — see the file comment.
-var mobileTell = regexp.MustCompile(`(?i)(^|[^a-z])(mobile|mobil|cellular|gsm|umts|lte|nr|[2345]g)([^a-z]|$)`)
-
-// guessKind is the starting position, not the answer: cell on an unambiguous
-// tell, unknown otherwise. A person's own correction always wins over this.
-func guessKind(asName string) string {
-	if mobileTell.MatchString(asName) {
-		return kindCell
-	}
-	return kindUnknown
-}
-
-// classifyIP is the whole decision, cache included.
-func classifyIP(ctx context.Context, addr string, res txtResolver, cache *netCache) netInfo {
+// classifyIP is the whole decision, cache included. `forwarded` says whether the
+// address came from a forwarding header rather than from the peer; see the file
+// comment for why an unforwarded address is never the house.
+func classifyIP(
+	ctx context.Context,
+	addr string,
+	forwarded bool,
+	res txtResolver,
+	cache *netCache,
+) netInfo {
 	ip := net.ParseIP(addr)
-	if ip == nil {
-		return netInfo{Net: "unknown", Kind: kindUnknown, Source: sourceNone}
+	if ip == nil || !forwarded {
+		return netInfo{Net: netUnknown, Source: sourceNone}
 	}
 	if isLocalAddr(ip) {
 		// Not cached: it costs nothing to decide, and caching it would hold a
 		// LAN address in memory for no gain.
-		return netInfo{Net: "lan", Kind: kindWiFi, Label: "Home network", Source: sourceLAN}
+		return netInfo{Net: netLAN, Label: "Home network", Source: sourceLAN}
 	}
 	if hit, ok := cache.get(ip.String()); ok {
 		return hit
@@ -306,7 +305,7 @@ func classifyIP(ctx context.Context, addr string, res txtResolver, cache *netCac
 // resolveNetwork asks Cymru which network announces this address, then what
 // that network is called. Either lookup failing leaves a usable answer.
 func resolveNetwork(ctx context.Context, ip net.IP, res txtResolver) netInfo {
-	unresolved := netInfo{Net: digestNet(ip), Kind: kindUnknown, Source: sourceNone}
+	unresolved := netInfo{Net: digestNet(ip), Source: sourceNone}
 
 	rev, ok := reverseIPv4(ip)
 	if !ok {
@@ -326,13 +325,12 @@ func resolveNetwork(ctx context.Context, ip net.IP, res txtResolver) netInfo {
 	if !ok {
 		return unresolved
 	}
-	info := netInfo{Net: "as" + asn, Kind: kindUnknown, CC: cc, Source: sourceASN}
+	info := netInfo{Net: "as" + asn, CC: cc, Source: sourceASN}
 
-	// The name is a nicety: without it the network is still named and still
-	// correctable, it just reads as "AS64501" on screen.
+	// The name is a nicety: without it the network is still distinct and still
+	// separates one trip from another, it just reads as "AS64501" on screen.
 	if names, err := res.LookupTXT(ctx, "AS"+asn+".asn.cymru.com"); err == nil {
 		info.Label = parseASName(names)
-		info.Kind = guessKind(info.Label)
 	}
 	return info
 }
@@ -343,6 +341,62 @@ func resolveNetwork(ctx context.Context, ip net.IP, res txtResolver) netInfo {
 func digestNet(ip net.IP) string {
 	sum := sha256.Sum256([]byte(netDigestSalt + "|" + ip.String()))
 	return "ip-" + hex.EncodeToString(sum[:4])
+}
+
+// networkFor is the one place a request becomes a network. Blocking: a cache
+// miss resolves before it answers, which is right for /netinfo (a cold tab asks
+// it once and wants a real answer) and wrong for a poll, which uses
+// setNetworkHeader instead.
+func networkFor(ctx context.Context, r *http.Request) netInfo {
+	addr, via := clientAddr(r)
+	return classifyIP(ctx, addr, isForwarded(via), netinfoResolver, netinfoCache)
+}
+
+// isForwarded says whether clientAddr read the address from a header an
+// intermediary set, rather than from the connection's own peer.
+func isForwarded(via string) bool { return via != "peer" && via != "none" }
+
+// warming dedupes background resolves so a burst of polls from a new network
+// starts one lookup rather than one per request.
+var warming sync.Map
+
+/**
+setNetworkHeader stamps the caller's network on a response they were already
+going to receive, which is what makes attribution cost no request of its own.
+
+NEVER BLOCKS. A poll runs every five seconds and must not wait on DNS, so this
+answers from the cache alone. A miss sets no header — the client keeps the
+answer it has, under its own staleness rule — and starts a background resolve so
+the next poll a few seconds later can answer. The only path that waits is
+/netinfo, which a cold tab calls once.
+*/
+func setNetworkHeader(w http.ResponseWriter, r *http.Request) {
+	addr, via := clientAddr(r)
+	ip := net.ParseIP(addr)
+	if ip == nil || !isForwarded(via) {
+		// A definite answer, not a missing one: say so rather than leaving the
+		// client to keep a value that no longer applies.
+		w.Header().Set(netHeader, netUnknown)
+		return
+	}
+	if isLocalAddr(ip) {
+		w.Header().Set(netHeader, netLAN)
+		return
+	}
+	key := ip.String()
+	if hit, ok := netinfoCache.get(key); ok {
+		w.Header().Set(netHeader, hit.Net)
+		return
+	}
+	if _, busy := warming.LoadOrStore(key, true); busy {
+		return
+	}
+	go func() {
+		defer warming.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), netLookupTimeout)
+		defer cancel()
+		netinfoCache.put(key, resolveNetwork(ctx, ip, netinfoResolver))
+	}()
 }
 
 func handleNetinfo(w http.ResponseWriter, r *http.Request) {
@@ -358,12 +412,12 @@ func handleNetinfo(w http.ResponseWriter, r *http.Request) {
 	}
 	addr, via := clientAddr(r)
 	_, cached := netinfoCache.get(addr)
-	info := classifyIP(r.Context(), addr, netinfoResolver, netinfoCache)
+	info := networkFor(r.Context(), r)
 	// One line the first time a network is seen, and never the address itself
 	// — Traefik's access log already holds those, and this only has to answer
 	// "which header did the verdict come from, and what did it decide".
 	if !cached {
-		log.Printf("netinfo: via %s -> %s (%s)", via, info.Net, info.Kind)
+		log.Printf("netinfo: via %s -> %s", via, info.Net)
 	}
 	// The verdict changes the moment the person moves between networks, which
 	// is exactly when a cached response would be wrong.

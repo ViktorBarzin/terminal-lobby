@@ -14,7 +14,7 @@
  */
 
 import { BUILD_ID } from "../lib/config";
-import { currentKind } from "../diagnostics/network";
+import { currentNetworkId } from "../diagnostics/network";
 import { commitWindow, type WindowBytes } from "../diagnostics/usage";
 
 /** The subset of the core's surface this app calls directly. */
@@ -80,10 +80,10 @@ export function startDiagnostics(): Diagnostics {
       // my allowance" is the question someone who just opted out is most
       // likely to want answered.
       enabled: diagnosticsWanted(),
-      // The kind is read at fold time rather than at window start: a window
-      // that straddles a network change is attributed to where it ended, which
-      // is where most of its bytes were.
-      onWindow: (w: WindowBytes) => void commitWindow(w, currentKind()),
+      // Read at fold time rather than at window start: a window that straddles
+      // a network change is attributed to where it ended, and one folded while
+      // the answer has gone stale is attributed to nothing.
+      onWindow: (w: WindowBytes) => void commitWindow(w, currentNetworkId()),
     });
   } catch {
     handle = inert;

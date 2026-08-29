@@ -13,7 +13,7 @@ import {
 } from "../lib/terminal-url";
 import { TERMINAL_BASE, TERMINAL_PAGE_URL } from "../lib/config";
 import { effectiveTier } from "../diagnostics/connection";
-import { currentKind } from "../diagnostics/network";
+import { currentNetworkId } from "../diagnostics/network";
 import { commitWindow, type WindowBytes } from "../diagnostics/usage";
 import { isBuildStale } from "../deploy/healer.logic";
 import { track } from "../telemetry/track";
@@ -317,7 +317,7 @@ export const TerminalView: Component<{
       // The terminal frame owns the WebSocket, so its bytes are only reachable
       // here. Fold them into the same device store the lobby writes to.
       if (d.totals && typeof d.totals === "object") {
-        void commitWindow(d.totals as WindowBytes, currentKind());
+        void commitWindow(d.totals as WindowBytes, currentNetworkId());
       }
     } else if (d.type === "tl-terminal-ready") {
       disarmWatchdog(); // the page painted, so it arrived whole
