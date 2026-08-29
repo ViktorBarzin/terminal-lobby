@@ -1,0 +1,61 @@
+#!/bin/sh
+# tl-reconcile — install the latest published terminal-lobby package.
+#
+# This is the ONLY thing the deploy SSH key may run. It takes no arguments and
+# reads nothing from the caller, so the key's authority is "ask this box to
+# update itself" and nothing else. Install it as a forced command:
+#
+#   command="/usr/local/bin/tl-reconcile",no-agent-forwarding,no-port-forwarding,\
+#   no-pty,no-user-rc,restrict ssh-ed25519 AAAA... woodpecker-deploy
+#
+# in root's authorized_keys. SSH_ORIGINAL_COMMAND is deliberately ignored: a
+# forced command still receives whatever the client asked for, and acting on it
+# would hand the key back the freedom the forced command exists to remove.
+#
+# The version is not a parameter either. The box tracks whatever the registry
+# publishes as latest, so a rollback is a fix-forward — publish a higher version
+# — rather than a downgrade this script could be talked into.
+set -eu
+
+log() { echo "tl-reconcile: $*"; }
+
+# One writer at a time. The trigger fires per push, and two pushes close
+# together would otherwise interleave inside dpkg.
+LOCK=/run/lock/tl-reconcile.lock
+mkdir -p "$(dirname "$LOCK")"
+exec 9>"$LOCK"
+if ! flock -w 600 9; then
+  log "another reconcile held the lock for 10 minutes; giving up"
+  exit 1
+fi
+
+BEFORE=$(dpkg-query -W -f='${Version}' terminal-lobby 2>/dev/null || echo none)
+log "installed before: $BEFORE"
+
+# Only our origin is refreshed. A full `apt-get update` here would pull every
+# configured source on a box whose other updates are unattended-upgrades' job.
+if ! apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/terminal-lobby.list \
+                    -o Dir::Etc::sourceparts=- \
+                    -o APT::Get::List-Cleanup=0 >/dev/null; then
+  log "could not refresh the terminal-lobby source"
+  exit 1
+fi
+
+# --only-upgrade would refuse a first install; install is correct for both, and
+# is a no-op when the box already has the published version.
+DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades terminal-lobby
+
+AFTER=$(dpkg-query -W -f='${Version}' terminal-lobby 2>/dev/null || echo none)
+if [ "$BEFORE" = "$AFTER" ]; then
+  log "already at $AFTER; nothing to do"
+else
+  log "installed $BEFORE -> $AFTER"
+fi
+
+# postinst has already restarted what changed and run tl-apply's verification;
+# a non-zero exit above would have failed this script. Report the unit states so
+# the trigger's caller sees them without a second connection.
+for unit in ttyd tmux-api file-api session-events skills-api clipboard-upload; do
+  systemctl is-active --quiet "$unit" 2>/dev/null && s=active || s=INACTIVE
+  log "$unit: $s"
+done

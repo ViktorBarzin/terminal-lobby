@@ -3,7 +3,7 @@
 # the terminal-dev canary was retired 2026-08-16 and there is one tier now.
 #
 # The QA→fix loop runs lanes in parallel worktrees but releases per lane, so
-# without a mutex two lanes would merge, push and run deploy-v2.sh over each
+# without a mutex two lanes would merge and push over each
 # other's build. Every lane calls this; flock makes them queue.
 #
 # It also enforces the release scope the plan fixed
@@ -117,28 +117,17 @@ if [[ -n "$SHARED_HITS" ]]; then
   exit 0
 fi
 
-DEPLOYED=""
-if touches '^(frontend-v2|frontend)/'; then
-  log "deploying the SPA (deploy-v2.sh)"
-  ./scripts/deploy-v2.sh || die "deploy-v2.sh"
-  DEPLOYED="spa"
-fi
-if touches '^(session-events|file-api)/'; then
-  if [[ -x scripts/deploy-services.sh ]]; then
-    log "deploying session-events / file-api"
-    ./scripts/deploy-services.sh || die "deploy-services.sh"
-    DEPLOYED="${DEPLOYED:+$DEPLOYED+}services"
-  else
-    die "lane changes a v2-only service but scripts/deploy-services.sh is missing"
-  fi
-fi
-
-if [[ -z "$DEPLOYED" ]]; then
-  log "nothing deployable changed (docs/tests/harness only) — landed, no release"
+# Deployment is no longer this script's job. A push to master builds the
+# package and the box installs it (docs/adr/0013), so landing IS releasing and
+# a second path here would race the first — which is the collision the mutex
+# above was added for.
+#
+# What is still worth saying is whether this lane changed anything the box will
+# actually ship, so the operator knows whether to expect a release.
+if touches '^(frontend-v2|frontend|session-events|file-api|skills-api|tmux-api|clipboard-upload|devvm|packaging|release)/'; then
+  log "landed; the package pipeline will build and the box will install it"
+  log "watch: gh run list --repo ViktorBarzin/terminal-lobby --workflow=release --limit 1"
 else
-  log "released: ${DEPLOYED}"
-  ASSET=$(curl -s -H "X-authentik-username: alice" http://127.0.0.1:7681/ \
-          | grep -o 'tl-asset" content="[a-f0-9]*"' | head -1 || true)
-  log "prod now serving ${ASSET:-<asset id unreadable>}"
+  log "nothing deployable changed (docs/tests/harness only) — landed, no release"
 fi
 log "done"
