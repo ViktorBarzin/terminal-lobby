@@ -9,10 +9,24 @@ name: release
 on:
   push:
     branches: [master]
+    # svu only bumps on commits that warrant it, so a docs-only merge resolves to
+    # a tag that already exists and the tag push fails -- after building. Skipping
+    # paths that cannot change the artefact avoids a red build for a typo fix.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/workflows/ttyd.yml'
+      - '.github/workflows/viu.yml'
   workflow_dispatch: {}
 
 permissions:
   contents: write
+
+# Two merges landing close together otherwise resolve the SAME next version,
+# both build, and the loser fails at the tag push having consumed a build.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -30,8 +44,10 @@ jobs:
         with: { node-version: lts/* }
 
       # The tests that exist today start gating releases. They have never run in
-      # CI, because there has never been CI.
-      - name: test
+      # CI, because there has never been CI. All of them, not only the Go ones:
+      # the frontend is where a regression is most likely and least visible, and
+      # the backend HTTP probes on the box cannot see it.
+      - name: test (go)
         run: |
           set -euo pipefail
           for mod in release telemetry skillscan authuser sessionio slug \
@@ -41,6 +57,20 @@ jobs:
             echo "==> $mod"
             (cd "$mod" && go vet ./... && go test ./...)
           done
+
+      - name: test (frontend)
+        run: |
+          set -euo pipefail
+          cd frontend-v2
+          npm ci --include=dev --no-audit --no-fund
+          npm run typecheck
+          npm run test
+
+      - name: test (python)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pytest
+          python3 -m pytest scripts/test_qa_harness.py -q
 
       - name: version
         id: version
