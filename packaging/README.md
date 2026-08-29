@@ -45,6 +45,14 @@ be monotonic because the box tracks latest with no pin. The repository's one
 pre-existing tag is not semver, so `svu` does not see it and the first release
 is `v0.1.0`.
 
+## What "deployed version" means
+
+The box tracks latest with no pin, so a trigger means "go and see what the
+source offers". The `VERSION` the pipeline passes through is a label for the
+audit log, not an instruction: if two releases land close together, one trigger
+can install the newer and the next finds nothing to do. `dpkg-query -W
+terminal-lobby` on the box is the authority on what is actually installed.
+
 ## Rolling back
 
 **The normal way back is forward.** Revert the commit and let the next release
