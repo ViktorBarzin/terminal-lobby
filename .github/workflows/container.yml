@@ -1,0 +1,78 @@
+name: container
+
+# The single-user image, for anyone running terminal-lobby who is not this
+# homelab. The .deb is the path for a real machine; this is the path for
+# "let me see what it does".
+#
+# Built here rather than in-cluster: CI compute is external by ADR-0002, and
+# Woodpecker is deploy-only.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "Dockerfile"
+      - "docker/**"
+      - "frontend/**"
+      - "frontend-v2/**"
+      - "tmux-api/**"
+      - "file-api/**"
+      - "session-events/**"
+      - "skills-api/**"
+      - "clipboard-upload/**"
+      - "authuser/**"
+      - "sessionio/**"
+      - "telemetry/**"
+      - "devvm/tmux-attach.sh"
+      - "devvm/tmux-user-attach"
+      - ".github/workflows/container.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The smoke test runs against the image BEFORE it is pushed, so a broken
+      # one is never published. It is the only automated check on the container,
+      # and it exists for the tmux systemd-scope fallback in particular.
+      - name: build for testing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: terminal-lobby:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: smoke test
+        run: IMAGE=terminal-lobby:ci ./docker/smoke.sh --no-build
+
+      - name: log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tagged with the commit as well as latest, so a report of "the container
+      # is broken" can name a build.
+      - name: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/terminal-lobby:latest
+            ghcr.io/${{ github.repository_owner }}/terminal-lobby:${{ github.sha }}
+          cache-from: type=gha
