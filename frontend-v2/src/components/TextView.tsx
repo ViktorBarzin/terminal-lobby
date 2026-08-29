@@ -204,6 +204,10 @@ export const TextView: Component<{
       .join("~"),
   );
   const [answering, setAnswering] = createSignal(false);
+  /** A send stopped partway, leaving the dialog half-answered — see the card's
+   *  `stopped` prop. Keyed to the question it happened on, so the NEXT question
+   *  starts clean rather than inheriting the last one's failure. */
+  const [stoppedOn, setStoppedOn] = createSignal<string | null>(null);
 
   // The composer's own handle, so "Chat about this" can hand the reader the
   // message field rather than an answer they did not want to give.
@@ -232,6 +236,10 @@ export const TextView: Component<{
     });
     setAnswering(false);
     if (!res.ok) {
+      // Latch. Some keys landed and the pane has moved on, so the plan this card
+      // is holding no longer describes what is on screen — pressing Send again
+      // would answer question 1 into question 2.
+      setStoppedOn(asking());
       props.notify?.(
         res.reason === "refused"
           ? `The session refused the answer while ${res.what}.`
@@ -301,6 +309,7 @@ export const TextView: Component<{
             onSend={sendAnswers}
             onChat={focusComposer}
             busy={answering()}
+            stopped={stoppedOn() !== null && stoppedOn() === asking()}
             partial={partial()}
             headers={fromPane()?.headers ?? []}
             count={fromPane()?.count ?? asked().length}

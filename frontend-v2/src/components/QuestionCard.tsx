@@ -33,6 +33,17 @@ export const QuestionCard: Component<{
   /** True while the keys are going in. */
   busy?: boolean;
   /**
+   * A send STOPPED partway: some answers went in, the pane no longer shows what
+   * the next step expected, and the dialog is sitting half-answered.
+   *
+   * The walk is over at that point and must not offer itself again. Send replays
+   * the plan FROM STEP 0, and runAnswer types each step's keys BEFORE it checks
+   * the pane — so a second press answers question 1 into whatever question the
+   * dialog has moved on to, and only then notices. The chunk-by-chunk
+   * verification guards a sequence in flight; nothing guarded starting one over.
+   */
+  stopped?: boolean;
+  /**
    * The call cannot be answered from here: it is being read off the PANE, which
    * shows one question of several at a time. What is being asked is worth
    * saying — the reader is otherwise left with "Working…" while the terminal
@@ -164,7 +175,7 @@ export const QuestionCard: Component<{
       </Show>
 
       <div class="tl-qcard-actions">
-        <Show when={at() > 0}>
+        <Show when={at() > 0 && !props.stopped}>
           <button
             type="button"
             class="tl-qcard-back"
@@ -174,17 +185,37 @@ export const QuestionCard: Component<{
             Back
           </button>
         </Show>
-        <Show
-          when={reviewing()}
-          fallback={
+        <Show when={props.stopped}>
+          {/* Not a retry. What is on the pane is half an answer, and only the
+              Terminal shows which half. */}
+          <span class="tl-qcard-stopped">
+            Part of the answer went in before the session's screen changed.
+            Finish it in the Terminal — sending again would answer the wrong
+            question.
+          </span>
+          <Show when={props.onTerminal}>
             <button
               type="button"
-              class="tl-qcard-next"
-              disabled={!canAdvance() || props.busy}
-              onClick={() => setAt(at() + 1)}
+              class="tl-qcard-terminal"
+              onClick={() => props.onTerminal?.()}
             >
-              {at() + 1 === total() ? "Review" : "Next"}
+              Open Terminal
             </button>
+          </Show>
+        </Show>
+        <Show
+          when={reviewing() && !props.stopped}
+          fallback={
+            <Show when={!props.stopped}>
+              <button
+                type="button"
+                class="tl-qcard-next"
+                disabled={!canAdvance() || props.busy}
+                onClick={() => setAt(at() + 1)}
+              >
+                {at() + 1 === total() ? "Review" : "Next"}
+              </button>
+            </Show>
           }
         >
           <button
