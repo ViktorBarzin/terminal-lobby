@@ -3,15 +3,17 @@
 Web tmux sessions, gated by Authentik, isolated per OS user. Lives at
 `https://terminal.viktorbarzin.me/`.
 
-The lobby is the SolidJS SPA in `frontend-v2/`, built to a single
-`index.html` and served by ttyd. The original vanilla page (`frontend/index.html`)
-is kept in the tree as the rollback target and as the parity reference the
-sentinel tests compare against; it is no longer deployed. The host is gated to
-the Home Server Admins group.
+The lobby is the SolidJS SPA in `frontend-v2/`, built to hashed chunks under
+`/assets/` behind an `index.html` served by ttyd. The host is gated to the Home
+Server Admins group.
 
-There used to be a second host, `terminal-dev.viktorbarzin.me`, running the SPA
-as a canary beside the vanilla page. It was retired on 2026-08-16 once the SPA
-became the daily driver — everything ships straight to prod now.
+Two things that used to be here are not any more. `terminal-dev.viktorbarzin.me`
+ran the SPA as a canary beside the original vanilla page; it was retired on
+2026-08-16 once the SPA became the daily driver. The vanilla page itself
+(`frontend/index.html`) and the read-only tier (`terminal-ro.viktorbarzin.me`,
+`ttyd-ro` :7682) were removed on 2026-08-29 — the SPA had been the only thing
+deployed for a fortnight, and the read-only host had served no request in the
+week before it went. Both are in git history if they are ever wanted back.
 
 A sidebar lists the current user's tmux sessions — grouped into
 collapsible **projects**, each session carrying a **Claude state dot**
@@ -219,7 +221,6 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 | Piece | Where it runs | Port | Purpose |
 |---|---|---|---|
 | `frontend-v2/` (SolidJS + Vite) | Built to a single `index.html`, served by ttyd on the DevVM | 7681 | **The lobby.** Terminal is an iframe of `/term.html`; backends are tmux-api / clipboard / session-events / file-api. Build: `npm run build` (vite-plugin-singlefile → one inlined file) |
-| `frontend/index.html` | Not deployed | — | The original vanilla page. Kept as the rollback target (`index.html.prev` on the devvm) and as the parity reference for `scripts/test_frontend_compat.py` |
 | `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions` (incl. per-session `state` + `project`), `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore` (blanket, or a `{snapshot, sessions[]}` body from the picker), `GET /snapshots` + `GET /snapshots/<ts>` (the session-snapshot series and one snapshot resolved against what is live), `GET`/`PUT /layout` (per-user sidebar layout, stored under `/var/lib/tmux-api/layout/`) |
 | `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session attachment store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded/dropped images, and documents up to 25MB under a `file-` prefix, replying `{path, stored}` — `stored:false` means it stayed an ephemeral `/tmp/clipboard-files` transfer, which is what a document over the cap does. `POST /register` records `show-image` renders (localhost). `GET /list` serves the gallery and lists the `pasted-`/`displayed-` prefixes only, so a document is never drawn as a thumbnail; `GET /img/…` serves image bytes and refuses anything that does not sniff as an image; `GET /file/…` serves a stored document with sniffing disabled, forcing a download for anything that could execute as markup. Per-user isolation via `X-Authentik-Username` → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
 | `skills-api/` (Go) | DevVM systemd service | 7688 | **The skill manager's backend** — reached from the **Skills** overlay on the shell bar, beside Settings (`docs/adr/0011-skills-move-between-users-by-copy.md`). `GET /skills` answers the whole Settings group in one round trip — this account's skills and marketplace plugins, then every other terminal account's skills with a `same`/`differs`/`absent` verdict against your own — and `/skills/view` (a skill's `SKILL.md`, its file list and where it lives on disk), `/skills/edit` (write one of your OWN skill files back — no `owner` field, so a peer's skill cannot be written through it), `/skills/diff`, `/skills/install`, `/skills/toggle`, `/skills/remove` (keeps a backup), `/skills/delete` (permanent — the skill, its backups, its enabled state and its provenance), `/skills/plugin-update`, `/skills/plugin-uninstall`, `/skills/restart`, and `/skills/source/inspect` + `/skills/source/install` (bring a skill or plugin in from a GitHub repo — one read-only look, then that project's own installer run as the caller; `docs/adr/0012-installing-from-a-source-runs-its-installer-as-you.md`) do the rest. Unlike its siblings one request acts as TWO users: peer homes are `0700`, so an install packs the owner's skill in one privileged child (`sudo -n -u <user> skills-api -privop pack`) and unpacks it in the recipient's. Filesystem semantics live in `skillscan/` |
@@ -228,7 +229,7 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 | `devvm/claude-tmux-state` | DevVM, invoked by Claude Code hooks | — | Stamps `@claude_state` (running / awaiting / done) on the enclosing tmux session; wired org-wide via `/etc/claude-code/managed-settings.json` (infra repo, `scripts/workstation/`, self-deploys hourly). No-ops outside tmux. See `docs/adr/0001-claude-state-via-hooks.md` |
 | `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`, `GET /snapshots*`) | — | The tmux-persist gateway behind the Restore picker. Validates the user against `/etc/ttyd-user-map`, then runs one of `tmux-persist restore\|snapshots\|snapshot\|restore-selection`. The bare one-argument form still means "restore now". Snapshot ids and session names are re-validated here because the sudo grant places no restriction on argv. Idempotent — live sessions are left alone. Useful after an OOM kills sessions without a reboot (the boot-only restore never fires) |
 | `devvm/show-image` | DevVM, `/usr/local/bin/show-image`, run inside sessions | — | Shows an image at the terminal. Inside tmux: temporary split pane running `viu` (sixel; Enter closes) — the reliable path for Claude/agents, whose captured stdout breaks bare `viu` — then fire-and-forgets a localhost `/register` so the image joins the session gallery. Outside tmux: plain `viu`. See "Showing images in sessions" |
-| `devvm/ttyd.service`, `ttyd-ro.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units. `ttyd` :7681 serves the lobby; `ttyd-ro` :7682 is the read-only view. (`ttyd-v2` :7687 served the retired terminal-dev canary and was removed 2026-08-16.) |
+| `devvm/ttyd.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units. `ttyd` :7681 serves the lobby. (`ttyd-v2` :7687 served the retired terminal-dev canary, removed 2026-08-16; `ttyd-ro` :7682 served the read-only host, removed 2026-08-29.) |
 | `devvm/clipboard-cleanup.service` + `.timer` + `clipboard-store-clean` | DevVM | — | Daily retention sweep: store dirs live while their session does (live tmux or saved layout) + 30-day `.deleted-at` grace; `_unsorted` 90 d; `/tmp/clipboard-files` 7 d |
 | `devvm/sudoers.d-ttyd-users` | `/etc/sudoers.d/ttyd-users` on DevVM | — | The per-user sudo grant every attach depends on. Hand-maintained here; validated with `visudo -cf` on install |
 | *(not in this repo)* `/etc/ttyd-user-map`, `/etc/ttyd-admins` | `/etc/` on DevVM | — | The Authentik → OS-user mapping and the admin list, **generated** from `infra/scripts/workstation/roster.yaml` by the hourly `t3-provision-users` reconcile. Read by every service here; written by nothing here (see "Per-user setup") |
@@ -257,7 +258,7 @@ two of them:
 
 | Script | Ships | Restarts | Blast radius |
 |---|---|---|---|
-| `./scripts/deploy.sh` | vanilla `index.html`, PWA assets + webfonts, `tmux-api`, `clipboard-upload`, the patched `ttyd`, the devvm helper scripts + `/etc` config | `ttyd`, `ttyd-ro`, `tmux-api`, `clipboard-upload` | **Shared** — both hosts, every user |
+| `./scripts/deploy.sh` | PWA assets + webfonts, `tmux-api`, `clipboard-upload`, the patched `ttyd`, the devvm helper scripts + `/etc` config | `ttyd`, `tmux-api`, `clipboard-upload` | **Shared** — every user |
 | `./scripts/deploy-v2.sh` | the lobby `index.html`, `term.html` | `ttyd` only | **Shared** — every user of the lobby |
 | `./scripts/deploy-services.sh` | `session-events` (:7685), `file-api` (:7686), `skills-api` (:7688) + their units | those three only | the Text view, file preview + the Skills settings group |
 
@@ -294,8 +295,8 @@ and smoke-tests `/whoami` + `/health` + the public assets.
 > older copy of this script and has neither check** — which is why pulling first
 > is the actual protection.
 
-`deploy-v2.sh` builds `frontend-v2` (vite single-file) into `index.html` and
-**restarts only ttyd** — never `ttyd-ro`, never a shared backend. It installs no
+`deploy-v2.sh` builds `frontend-v2` into `index.html` plus its hashed chunks and
+**restarts only ttyd** — never a shared backend. It installs no
 systemd unit: `ttyd.service` belongs to `deploy.sh` and its `ExecStart` already
 points at `index.html`, so shipping the lobby swaps the *file*, not the unit.
 That is what keeps the rollback a single `install` of `index.html.prev` plus a
@@ -321,8 +322,8 @@ when the installed artefacts were byte-identical — an unnecessary restart drop
 every attached terminal's WebSocket. `enable --now` still runs either way, so a
 stopped unit comes back up.
 
-`ttyd` and `ttyd-ro` attach the SAME per-uid tmux server, so sessions,
-clipboard and prefs are shared. Opening one session from two clients at once
+Every client attaches the SAME per-uid tmux server, so sessions, clipboard and
+prefs are shared across them. Opening one session from two clients at once
 makes tmux clamp to the smaller client's viewport (use different sessions, or
 one client at a time).
 
@@ -340,8 +341,7 @@ SKIP_BUILD=1 ./scripts/deploy-v2.sh       # reuse frontend-v2/dist/{index,term}.
 
 `session-events` (:7685, the Text view's SSE transcript stream + `/prompt` +
 `/cancel`), `file-api` (:7686, the file preview/editor) and `skills-api` (:7688,
-the Skills settings group) back **only** the SPA — the vanilla page calls none of
-them. They were installed by hand until
+the Skills settings group) back the SPA. They were installed by hand until
 `deploy-services.sh` gave them a release path:
 
 ```bash
@@ -355,9 +355,8 @@ service only if something about it changed** — a needless `session-events`
 restart drops every text-view client's open SSE stream. Verification is
 `systemctl is-active` plus, per service, `/health` (unauthenticated by design)
 and an unauthenticated hit on the authed surface that must answer `401`. It
-deliberately does **not** touch `ttyd`, `ttyd-ro`, `tmux-api` or
-`clipboard-upload`: those are shared with the stable tier and are `deploy.sh`'s
-to release.
+deliberately does **not** touch `ttyd`, `tmux-api` or `clipboard-upload`: those
+are shared by every user and are `deploy.sh`'s to release.
 
 Hook wiring and the ingress routes for session-events are gated separately —
 see `session-events/DEPLOY.md`.
@@ -384,7 +383,7 @@ binary needs (re)building — it pins upstream tag 1.7.7, applies
 `devvm/ttyd-local.patch`, and drops the binary at `out/ttyd`;
 `deploy.sh` ships it only if it exists and says so either way (and keeps
 the previously installed binary at `/usr/local/bin/ttyd.prev` as the
-fastest rollback). The binary backs both :7681 and the read-only :7682.
+fastest rollback).
 
 ### viu
 
@@ -481,16 +480,11 @@ document over the 25MB cap still lands in `/tmp/clipboard-files`. Locally it nee
 `/var/lib/clipboard-store` (`sudo install -d -o $USER
 /var/lib/clipboard-store`) — without it only the store routes 500.
 
-For the frontend, there's no build step. The whole UI is a single
-`index.html` with inline CSS + a single `<script>` IIFE. ttyd serves
-it verbatim with `-I`.
-
 For end-to-end frontend work there's a loopback harness:
-`python3 scripts/dev-harness.py` reproduces the production routing
-(auth header injection, prefix-stripped API routes, WS passthrough)
-against an isolated scratch tmux server — see `scripts/dev-harness.md`.
-UI changes are verified against the regression battery in
-`scripts/devserve/BATTERY.md` (red-line checks + per-feature acceptance).
+`python3 scripts/qa-harness.py` puts the production routing (auth header
+injection, prefix-stripped API routes, WS passthrough, the split bundle's
+`/assets/` chunks) in front of the DEPLOYED page and the REAL backends, with a
+mutation guard that confines writes to `qa-*` sessions.
 
 ## Theme
 
