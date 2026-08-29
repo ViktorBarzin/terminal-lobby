@@ -582,81 +582,97 @@ export const Composer: Component<{
           onPointerDown={onPointerDown}
           onClick={sync}
         />
-        <Show when={props.onAttach}>
-          {/* Present on EVERY device, which is the point: the soft-key row
-              carries Copy and Paste only, so a phone had no file picker in either
-              view — and the text view is the default view on a coarse pointer.
-              `capture` is deliberately absent so iOS offers Photo Library / Take
-              Photo / Choose File rather than jumping straight to the camera. */}
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            hidden
-            aria-hidden="true"
-            onChange={(e) => {
-              const el = e.currentTarget;
-              const files = [...(el.files ?? [])];
-              el.value = ""; // let the same file be picked again
-              void attach(files);
-            }}
-          />
-          <button
-            type="button"
-            class="tl-attach-btn"
-            aria-label="Attach a file"
-            title={props.inertReason || "Attach a file"}
-            disabled={!!props.inertReason || attaching()}
-            onClick={() => fileInput?.click()}
-          >
-            <PaperclipIcon />
-          </button>
-        </Show>
-        <Show when={props.context}>
-          {(ctx) => <ContextMeter state={ctx()} />}
-        </Show>
-        <Show when={props.mode && props.onCycleMode}>
-          <button
-            type="button"
-            class="tl-mode-chip"
-            // The mode is the chip's whole meaning, so it drives the colour
-            // from CSS rather than a second mapping in here.
-            data-mode={props.mode}
-            title={`Permission mode: ${modeLabel(props.mode ?? "")} (Shift+Tab)`}
-            onClick={() => props.onCycleMode?.()}
-          >
-            {modeLabel(props.mode ?? "")}
-          </button>
-        </Show>
-        {/* Send is always here; Stop JOINS it while there is a turn to stop.
-            Stop used to REPLACE it, which is the browser half of a turn gate
-            the server gave up on 2026-08-15 — mid-turn sends queue in Claude,
-            and Enter has been doing exactly that all along. What the swap cost
-            was the phone, where there is no Enter key to fall back on.
+      </div>
+      {/* The controls, on their own bar. They used to share the row with the
+          field, which left the field 92.8px of a 343.2px row once a turn
+          started and Stop appeared — 27%, for the thing the composer is for.
+          With the context meter present it fell to 26px and the row overflowed
+          its own width by 20px.
 
-            Rendering Send unconditionally also fixes a second, worse case.
-            `working` comes from the transcript, which lags the pane: measured
-            live, a session whose real state was `done` showed Stop in 98 of 100
-            samples over 300s (and kept doing so after a reload), and 17-22% of
-            sessions disagreed with their state at any moment. A finished
-            session could therefore offer no way to send at all. */}
-        <button
-          type="button"
-          class="tl-send"
-          onClick={submit}
-          title={
-            props.asking
-              ? "Send — this will dismiss the question Claude is asking, and it will ask again"
-              : undefined
-          }
-        >
-          Send
-        </button>
-        <Show when={props.working}>
-          <button type="button" class="tl-stop" onClick={() => props.onStop()}>
-            Stop
+          Two groups. The left one may scroll and give up width; the right one
+          never shrinks, so the controls that must stay reachable always are.
+          Send is the last child of it, permanently: today it jumps 71px left
+          the moment a turn starts, because Stop is inserted after it. */}
+      <div class="tl-composer-bar">
+        <div class="tl-bar-left">
+          <Show when={props.onAttach}>
+            {/* Present on EVERY device, which is the point: the soft-key row
+                carries Copy and Paste only, so a phone had no file picker in either
+                view — and the text view is the default view on a coarse pointer.
+                `capture` is deliberately absent so iOS offers Photo Library / Take
+                Photo / Choose File rather than jumping straight to the camera. */}
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              aria-hidden="true"
+              onChange={(e) => {
+                const el = e.currentTarget;
+                const files = [...(el.files ?? [])];
+                el.value = ""; // let the same file be picked again
+                void attach(files);
+              }}
+            />
+            <button
+              type="button"
+              class="tl-attach-btn"
+              aria-label="Attach a file"
+              title={props.inertReason || "Attach a file"}
+              disabled={!!props.inertReason || attaching()}
+              onClick={() => fileInput?.click()}
+            >
+              <PaperclipIcon />
+            </button>
+          </Show>
+          <Show when={props.mode && props.onCycleMode}>
+            <button
+              type="button"
+              class="tl-mode-chip"
+              // The mode is the chip's whole meaning, so it drives the colour
+              // from CSS rather than a second mapping in here.
+              data-mode={props.mode}
+              title={`Permission mode: ${modeLabel(props.mode ?? "")} (Shift+Tab)`}
+              onClick={() => props.onCycleMode?.()}
+            >
+              {modeLabel(props.mode ?? "")}
+            </button>
+          </Show>
+        </div>
+        <div class="tl-bar-right">
+          <Show when={props.context}>
+            {(ctx) => <ContextMeter state={ctx()} />}
+          </Show>
+          <Show when={props.working}>
+            <button type="button" class="tl-stop" onClick={() => props.onStop()}>
+              Stop
+            </button>
+          </Show>
+          {/* Send is always here; Stop JOINS it while there is a turn to stop.
+              Stop used to REPLACE it, which is the browser half of a turn gate
+              the server gave up on 2026-08-15 — mid-turn sends queue in Claude,
+              and Enter has been doing exactly that all along. What the swap cost
+              was the phone, where there is no Enter key to fall back on.
+
+              Rendering Send unconditionally also fixes a second, worse case.
+              `working` comes from the transcript, which lags the pane: measured
+              live, a session whose real state was `done` showed Stop in 98 of 100
+              samples over 300s (and kept doing so after a reload), and 17-22% of
+              sessions disagreed with their state at any moment. A finished
+              session could therefore offer no way to send at all. */}
+          <button
+            type="button"
+            class="tl-send"
+            onClick={submit}
+            title={
+              props.asking
+                ? "Send — this will dismiss the question Claude is asking, and it will ask again"
+                : undefined
+            }
+          >
+            Send
           </button>
-        </Show>
+        </div>
       </div>
     </div>
   );
