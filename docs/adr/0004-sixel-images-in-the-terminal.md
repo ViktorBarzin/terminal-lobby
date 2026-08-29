@@ -86,3 +86,18 @@ The frontend closes the loop with three pieces:
 - The image addon buffers decoded images in a FIFO per terminal,
   default cap 128 MB (plus a 25 MB single-image limit) — bounded, but
   nonzero browser memory per open session iframe.
+
+## Amendment — 2026-08-28: sixel is skipped on a link judged slow
+
+The decision stands wherever the image addon loads. It now does not load when the
+connection diagnostics classify the link as slow (see
+`docs/plans/2026-08-28-slow-client-performance-design.md`): the terminal page
+skips the webgl, image and unicode11 addons, and tmux falls back to its
+"SIXEL IMAGE (WxH)" text placeholder — the same path this ADR describes for a pty
+with no pixel size.
+
+What that saves is the parse and the decode buffers, not the bytes: the addons are
+vendored inline in term.html, so the code arrives either way. A viewer can force
+the full experience with the Connection setting in the terminal's own settings
+panel, which pins the tier per device.
+
