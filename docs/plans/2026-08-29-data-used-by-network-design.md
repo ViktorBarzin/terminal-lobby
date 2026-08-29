@@ -35,7 +35,7 @@ flowchart TD
   P -->|no| C{"cached<br/>&lt; 6h?"}
   C -->|yes| K["stored verdict"]
   C -->|no| D["Team Cymru DNS<br/>origin → ASN → operator"]
-  D -->|resolved| A["as29580 · A1 Bulgaria EAD · BG<br/>kind guessed from the name"]
+  D -->|resolved| A["as15169 · Google LLC · US<br/>kind guessed from the name"]
   D -->|failed| U["ip-&lt;digest&gt; · unknown<br/>still a distinct network"]
 ```
 
@@ -47,9 +47,9 @@ classifies as WiFi with no lookup at all, and it is the most common case.
 **A public address resolves through Team Cymru's DNS service.** Free, no
 account, no API key, one TXT lookup for the announcing ASN and one for its name,
 cached six hours per address. An address inside overlapping announcements gets
-one record per announcement and the **most specific prefix wins** — `176.12.22.76`
-is AS8717 by its `/18` and AS29580 by its `/20`, and only the second is the
-operator actually routing it.
+one record per announcement and the **most specific prefix wins**: an address
+announced both as part of a `/18` and as part of a `/20` frequently belongs to
+two different operators, and only the `/20` is routing it.
 
 **A failed lookup still names a network**, from a per-process keyed digest of
 the address, so a month spent roaming separates into networks instead of
@@ -59,8 +59,9 @@ collapsing into a single unattributed total.
 
 Whether an operator's network is cellular is guessed only from an unambiguous
 tell in its name — `mobile`, `cellular`, `gsm`, `lte`, `5g`. Brand names are
-excluded: most operators sell fixed and mobile access under one brand, and
-AS29580 is "A1 Bulgaria EAD" exactly as their mobile network is. A confident
+excluded: most operators sell fixed and mobile access under one brand, and the
+AS name on a subscriber line often matches the one on their mobile network. A
+confident
 wrong label costs the same single tap to fix as an unknown one, while being far
 harder to notice, so `unknown` is the default.
 
@@ -117,9 +118,9 @@ column, and the panel says so in a line that only shows when there are any.
 Live on the devvm, exercising each address source:
 
 ```
-CF-Connecting-IP: 176.12.22.76 → {"net":"as29580","kind":"unknown","label":"A1 Bulgaria EAD","cc":"BG","source":"asn"}
+CF-Connecting-IP: 8.8.8.8      → {"net":"as15169","kind":"unknown","label":"Google LLC","cc":"US","source":"asn"}
 X-Forwarded-For:  192.168.1.44 → {"net":"lan","kind":"wifi","label":"Home network","source":"lan"}
-X-Real-Ip:        8.8.8.8      → {"net":"as15169","kind":"unknown","label":"Google LLC","cc":"US","source":"asn"}
+X-Real-Ip:        1.1.1.1      → {"net":"as13335","kind":"unknown","label":"Cloudflare, Inc.","cc":"AU","source":"asn"}
 anonymous                      → 401
 ```
 
@@ -128,9 +129,9 @@ dimension and its migration, 13 for the panel; the full frontend suite is 2,290.
 
 **Open question, and the one thing not proven from this side.** Every request
 reaches tmux-api through Traefik, so the verdict depends on the edge forwarding
-the client address. Traefik's access log shows it holds the real address
-(`176.12.22.76`, a residential Bulgarian one), and generating an authenticated
-request through Cloudflare needs a real browser session. So the handler logs
+the client address. Traefik's access log shows it holds the real subscriber
+address rather than a Cloudflare one, and generating an authenticated request
+through Cloudflare needs a real browser session. So the handler logs
 which header each new network's verdict came from — one line, never the address,
 which Traefik already records:
 

@@ -28,12 +28,12 @@ import { KINDS, type NetKind } from "./usage";
 
 /** What the server reports about the network a request came from. */
 export interface NetworkInfo {
-  /** Stable name for the network: "lan", "as29580", or an opaque digest. The
+  /** Stable name for the network: "lan", "as64501", or an opaque digest. The
    *  key a person's override is stored against. */
   net: string;
   /** The server's guess. Overridden by the person's own answer. */
   kind: NetKind;
-  /** The operator, when it is known — "A1 Bulgaria EAD", "Home network". */
+  /** The operator, when it is known — "Example Telecom Ltd", "Home network". */
   label: string;
   /** Two-letter country the network is registered in, which is how a person
    *  spots at a glance that they are abroad. */
