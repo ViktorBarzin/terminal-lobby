@@ -322,7 +322,15 @@ export const TodoRowView: Component<{ row: TodoRow }> = (props) => {
  * senders apart. While the question is pending the row shows what is being
  * asked; the card is where it is answered.
  */
-export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => (
+export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => {
+  // Same control the live card has: the descriptions are clamped to two lines
+  // and this shows all of them at once. They used to be a `title` attribute —
+  // a hover tooltip, in a view whose main device has no hover — so the reasoning
+  // behind each option was simply absent from the record.
+  const [full, setFull] = createSignal(false);
+  const anyDesc = () =>
+    props.row.questions.some((q) => q.options.some((o) => (o.description ?? "").trim() !== ""));
+  return (
   <div class="tl-row tl-row-question" data-eid={props.row.id} data-pending={props.row.pending ? "true" : undefined}>
     <For each={props.row.questions}>
       {(q) => (
@@ -347,20 +355,31 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => (
             <div class="tl-question-answering">answering below…</div>
           </Show>
           <Show when={!props.row.pending}>
-          <div class="tl-question-options">
+          <div class="tl-question-options" data-full={full() ? "true" : undefined}>
             <For each={q.options}>
               {(o, oi) => (
                 <div
                   class="tl-question-option"
                   data-chosen={props.row.answers.includes(o.label) ? "true" : undefined}
-                  title={o.description}
                 >
                   <span class="tl-option-key">{oi() + 1}</span>
                   <span class="tl-option-label">{o.label}</span>
+                  <Show when={o.description}>
+                    <span class="tl-option-desc">{o.description}</span>
+                  </Show>
                 </div>
               )}
             </For>
           </div>
+          </Show>
+          <Show when={!props.row.pending && anyDesc()}>
+            <button
+              type="button"
+              class="tl-question-full"
+              onClick={() => setFull((v) => !v)}
+            >
+              {full() ? "Show less" : "Show all"}
+            </button>
           </Show>
           <Show when={!props.row.pending && props.row.answers.length > 0}>
             <div class="tl-question-answer">answered: {props.row.answers.join(", ")}</div>
@@ -377,6 +396,7 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => (
     </For>
   </div>
 );
+};
 
 export const PlanRowView: Component<{ row: PlanRow }> = (props) => (
   <div class="tl-row tl-row-plan" data-eid={props.row.id}>

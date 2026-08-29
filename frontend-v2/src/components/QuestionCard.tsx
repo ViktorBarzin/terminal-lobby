@@ -60,6 +60,11 @@ export const QuestionCard: Component<{
   onTerminal?: () => void;
 }> = (props) => {
   const [at, setAt] = createSignal(0);
+  /** Show every description in full rather than the two-line summary. The clamp
+   *  is the default because choosing between four options wants four summaries;
+   *  this is for the reader who wants the whole of all of them at once, which
+   *  choosing each in turn is a poor way to get. */
+  const [full, setFull] = createSignal(false);
   const [drafts, setDrafts] = createSignal<DraftAnswer[]>([]);
 
   const total = () => props.questions.length;
@@ -108,6 +113,15 @@ export const QuestionCard: Component<{
     <div class="tl-qcard" role="dialog" aria-label="Claude needs an answer">
       <div class="tl-qcard-head">
         <span class="tl-qcard-title">Claude needs answers</span>
+        <Show when={!reviewing() && current() && hasDescriptions(current()!)}>
+          <button
+            type="button"
+            class="tl-qcard-full"
+            onClick={() => setFull((v) => !v)}
+          >
+            {full() ? "Show less" : "Show all"}
+          </button>
+        </Show>
         <span class="tl-qcard-step">
           {reviewing()
             ? "review"
@@ -142,7 +156,7 @@ export const QuestionCard: Component<{
             <Show when={q().multiSelect}>
               <div class="tl-qcard-hint">Pick as many as apply</div>
             </Show>
-            <div class="tl-qcard-options">
+            <div class="tl-qcard-options" data-full={full() ? "true" : undefined}>
               <For each={answerableOptions(q())}>
                 {(label) => (
                   <button
@@ -295,6 +309,11 @@ const PartialCard: Component<{
     </div>
   );
 };
+
+/** True when any option carries a description worth expanding. */
+export function hasDescriptions(q: Question): boolean {
+  return q.options.some((o) => (o.description ?? "").trim() !== "");
+}
 
 /** The transcript's description for an option, where it recorded one. */
 function descriptionFor(q: Question, label: string): string {
