@@ -162,34 +162,14 @@ func revertAndHold() int {
 	return 1
 }
 
-// previousVersion is the newest cached version that is not the one installed —
-// apt keeps the .deb it replaced in its archive cache.
+// previousVersion asks apt what it knows about the package and lets the release
+// package decide which version a revert goes back to.
 func previousVersion() (string, error) {
 	out, err := exec.Command("apt-cache", "policy", "terminal-lobby").Output()
 	if err != nil {
 		return "", err
 	}
-	var installed string
-	var candidates []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if v, ok := strings.CutPrefix(line, "Installed: "); ok {
-			installed = v
-			continue
-		}
-		if strings.HasPrefix(line, "***") || strings.HasPrefix(line, "5") || strings.HasPrefix(line, "1") {
-			f := strings.Fields(strings.TrimPrefix(line, "***"))
-			if len(f) > 0 {
-				candidates = append(candidates, f[0])
-			}
-		}
-	}
-	for _, c := range candidates {
-		if c != installed && c != "(none)" {
-			return c, nil
-		}
-	}
-	return "", nil
+	return release.PreviousVersion(string(out))
 }
 
 // writeMetrics exports the outcome where Prometheus already scrapes this box,
