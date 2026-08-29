@@ -403,7 +403,11 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
   <div class="tl-row tl-row-meta" data-eid={props.row.id} data-meta={props.row.meta}>
     <span class="tl-meta-rule" />
-    <span class="tl-meta-text">
+    {/* `title` because the text is clamped to three lines (app.css): a `queued`
+        row carries the whole prompt, and a marker row is not where a reader
+        should have to read one. Nothing is lost — the prompt itself arrives as
+        its own row the moment it is sent. */}
+    <span class="tl-meta-text" title={props.row.body || undefined}>
       {META_LABEL[props.row.meta]}
       <Show when={props.row.body && props.row.meta !== "compact"}>
         {" · "}

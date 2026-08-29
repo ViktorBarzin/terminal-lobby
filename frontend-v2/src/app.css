@@ -635,6 +635,21 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* The transcript reads top-to-bottom and nothing else. Spelled out because
+     the browser would otherwise decide it for us: a box with one axis `auto`
+     and the other `visible` has the visible one computed to `auto` too, so
+     `overflow-y: auto` alone quietly made the whole transcript pannable
+     sideways. Nobody chose that, and one row was enough to trigger it —
+     measured at 390px, a queued prompt holding a long unbroken string gave the
+     timeline a 12,214px scrollWidth, so a swipe on any part of the transcript
+     dragged every row off screen.
+
+     This is the guard, not the fix: text that does not FIT would now be
+     clipped, which is worse than panning. Whatever a row cannot show has to
+     wrap (prose, `.tl-markdown` is overflow-wrap:anywhere) or scroll inside its
+     own box (code, tables, mermaid all declare overflow-x themselves) —
+     containers, not the reader's whole viewport. */
+  overflow-x: hidden;
   /* This transcript owns its own scroll position, so the browser must not also
      adjust it. Scroll anchoring picks a node near the top of the scrollport and
      keeps THAT still across a layout change — which is the wrong invariant when
@@ -2700,8 +2715,25 @@ body.tl-kb-up {
   height: 1px;
   background: var(--border);
 }
+/* "A centred rule with a word on it" holds for `mode` or `skill`, whose bodies
+   are a word. `queued` carries the whole prompt, which is not — and with
+   `flex: none` the row simply grew to fit it, taking the transcript's width
+   with it (12,190px on a 343px row, measured on a queued cross-session
+   message). So the text shrinks and wraps, and stays a marker rather than
+   becoming a second copy of the prompt: three lines, then an ellipsis, with the
+   full text on the element's `title`. */
 .tl-meta-text {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  /* A queued prompt can be one unbroken token — a URL, a socket path — with no
+     space to break at, and `normal` would push that past the edge whole. */
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 .tl-meta-value {
   font-family: var(--mono, ui-monospace, monospace);
