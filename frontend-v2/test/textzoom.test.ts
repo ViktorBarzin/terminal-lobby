@@ -10,6 +10,8 @@
  * not testable headless and stays a manual check, as it is for the terminal.
  */
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   CLASSIFY_MOVE,
   CLASSIFY_RATIO,
@@ -200,5 +202,43 @@ describe("the WebKit front-end", () => {
     r.surface.dispatchEvent(e);
     expect(e.defaultPrevented).toBe(true);
     r.stop();
+  });
+});
+
+/**
+ * The scale drives FONT SIZES, not a zoom.
+ *
+ * The first cut zoomed `.tl-timeline`. Viktor: "I don't like the zoom in. I
+ * want font increase. now the zoom experience is weird especially as it doesn't
+ * work well with the prompt input field." Two things were wrong with it: `zoom`
+ * scales padding, borders and gaps along with the type, so the transcript grew
+ * rather than its text; and it applied to the timeline alone, so the composer
+ * stayed at native size and the two visibly disagreed.
+ *
+ * Now every font-size in app.css is `calc(<px> * var(--tl-text-scale, 1))`. The
+ * variable is set on `.tl-textview`, so everything in the text view — transcript,
+ * answer card, composer — scales together, and everything outside it inherits
+ * the default of 1 and is untouched. Referencing the root variable rather than
+ * an inherited font-size is what stops nested rules compounding.
+ */
+describe("the scale is a font-size scale", () => {
+  const css = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
+
+  it("does not zoom the timeline", () => {
+    expect(css).not.toMatch(/zoom:\s*var\(--tl-text-scale/);
+  });
+
+  it("scales every px font-size in the stylesheet", () => {
+    // A bare `font-size: 13px` would not follow the pinch, and the mismatch is
+    // exactly what made the first attempt feel wrong.
+    const bare = [...css.matchAll(/font-size:\s*[\d.]+px\s*;/g)].map((m) => m[0]);
+    expect(bare, "unscaled px font-sizes").toEqual([]);
+  });
+
+  it("never lets the compose field fall below the iOS zoom floor", () => {
+    // Under 16px iOS zooms the page on focus and leaves it zoomed.
+    expect(css).toMatch(
+      /\.tl-composer-input\s*\{\s*font-size:\s*max\(16px,\s*calc\(16px \* var\(--tl-text-scale, 1\)\)\)/,
+    );
   });
 });
