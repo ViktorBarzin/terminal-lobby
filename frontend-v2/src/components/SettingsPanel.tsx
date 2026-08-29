@@ -33,6 +33,7 @@ import {
 } from "../store/device-prefs";
 import { diagnosticsWanted, setDiagnosticsEnabled } from "../telemetry/diag";
 import {
+  readStoredTier,
   readTierPreference,
   writeTierPreference,
   type TierPreference,
@@ -174,6 +175,11 @@ export const SettingsPanel: Component<{
   // than one that is a minute stale.
   const [usage, setUsage] = createSignal<UsageAggregate>(aggregate(readStore(), new Date()));
   const [tier, setTier] = createSignal<TierPreference>(readTierPreference());
+  // What the link actually measured last time, which is a different question
+  // from what the pin asks for — and the only thing on screen that answers
+  // "why am I in light mode?". connection.ts persists the verdict, not the
+  // sample behind it, so the throughput and round trip are not available here.
+  const measured = readStoredTier();
   const refreshUsage = () => setUsage(aggregate(readStore(), new Date()));
   const widest = () => Math.max(...usage().buckets.map((b) => b.bytes), 0);
   const barWidth = (bytes: number) => (widest() > 0 ? `${(bytes / widest()) * 100}%` : "0%");
@@ -707,6 +713,9 @@ export const SettingsPanel: Component<{
             </For>
           </fieldset>
           <div class="tl-settings-hint">
+            {measured
+              ? `Last measured: ${measured === "slow" ? "light" : "full"}.`
+              : "This link is not measured yet."}{" "}
             Light trims what a session opens with. Auto measures this link on
             every load and applies the verdict to the next one.
           </div>
