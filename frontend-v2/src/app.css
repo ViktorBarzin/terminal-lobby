@@ -3288,11 +3288,20 @@ body.tl-kb-up {
   color: #fff;
 }
 /* Multi-select is a different promise — several of these travel together — so
-   the chip carries a box rather than pretending to be a radio. */
+   the chip carries a tick rather than pretending to be a radio.
+   It is drawn IN the chip, not over it. The first version of this rule was
+   `position: absolute; inset: 0` with nothing positioned between it and
+   `.tl-textview`, which is relative because it anchors the pinch size pill — so
+   `inset: 0` resolved against the whole view. It painted nothing and swallowed
+   every click, and a multi-select could hold exactly one answer before the next
+   tap landed back on the chip that was already chosen. */
+.tl-qcard-option[data-multi="true"][data-chosen="true"] .tl-qcard-key {
+  font-size: calc(0px * var(--tl-text-scale, 1)); /* the digit gives way to the tick */
+}
 .tl-qcard-option[data-multi="true"][data-chosen="true"] .tl-qcard-key::after {
-  content: "";
-  position: absolute;
-  inset: 0;
+  content: "✓";
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1;
 }
 .tl-qcard-label {
   grid-column: 2;
