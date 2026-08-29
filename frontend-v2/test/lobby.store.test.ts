@@ -96,9 +96,6 @@ class FakeApi implements LobbyApi {
   async getSnapshot(ts: string) {
     return this.snapshotRows[ts] ?? [];
   }
-  async listDirs() {
-    return [];
-  }
 }
 
 /**
