@@ -15,8 +15,25 @@ NAME_RE='^[a-zA-Z0-9_-]{1,32}$'
 auth_user="${TTYD_USER:-}"
 auth_local="${auth_user%%@*}"
 
+# Single-user: one account, and it is whoever ttyd runs as. TL_MULTI_USER=off
+# says so outright; "auto" (the default) infers it from the absence of a map,
+# which is the same rule the Go services apply. The identity header still has to
+# be present — that is what proves the request came through a proxy — but its
+# value names nobody here.
+mode_cfg="${TL_MULTI_USER:-auto}"
+single_user=false
+case "$mode_cfg" in
+    off|false|0|no) single_user=true ;;
+    on|true|1|yes)  single_user=false ;;
+    *)              [[ -r "$MAP" ]] || single_user=true ;;
+esac
+
 os_user=""
-if [[ -n "$auth_local" && -r "$MAP" ]]; then
+if [[ "$single_user" == true ]]; then
+    if [[ -n "$auth_user" ]]; then
+        os_user="$(id -un)"
+    fi
+elif [[ -n "$auth_local" && -r "$MAP" ]]; then
     os_user=$(awk -F= -v k="$auth_local" '
         /^[[:space:]]*(#|$)/ {next}
         $1==k {sub(/:.*$/, "", $2); print $2; exit}
@@ -31,11 +48,12 @@ if [[ -z "$os_user" ]] || ! id "$os_user" >/dev/null 2>&1; then
 
   Access denied
   ─────────────
-  No terminal account for Authentik user '${auth_user:-<missing header>}'.
+  No terminal account for '${auth_user:-<missing identity header>}'.
 
-  This DevVM maps Authentik identities to OS users via
-  /etc/ttyd-user-map. Ask Viktor to add a mapping (and a matching
-  /etc/sudoers.d/ttyd-users entry) if you should have access.
+  This box maps identities to OS users via /etc/ttyd-user-map. Either the
+  header your proxy sends is not in it, or no identity header arrived at
+  all — check TL_AUTH_HEADER in /etc/terminal-lobby.conf names the header
+  your proxy actually sets.
 
 EOF
     sleep 10
