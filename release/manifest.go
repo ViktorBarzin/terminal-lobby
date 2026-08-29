@@ -231,7 +231,11 @@ var Package = Manifest{
 
 		// The grant every attach depends on. visudo -cf gates it, because a
 		// malformed grant locks every user out of every session.
-		{Src: "devvm/sudoers.d-ttyd-users", Dest: "/etc/sudoers.d/ttyd-users", Mode: 0o440, Validate: true},
+		// The sudo grant is NOT shipped. It is per-box identity data owned by
+		// the roster, and installing a repository copy revokes the grants of
+		// every user that copy has forgotten. devvm/sudoers.d-ttyd-users.template
+		// is the reference; postinst still validates the live file before
+		// counting the install as done.
 	},
 	// ttyd watches the terminal server binary, which ttyd-devvm installs; that
 	// package restarts it when it upgrades. It is listed here so a change to the
