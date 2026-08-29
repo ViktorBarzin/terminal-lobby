@@ -1174,9 +1174,56 @@ body {
 .tl-composer-row {
   display: flex;
   gap: 8px;
-  align-items: flex-end;
+  /* One child, the field. `flex-end` had four siblings of different heights to
+     bottom-align; with the controls on their own bar below there is nothing to
+     align to, and stretch is what lets the field own the full height. */
+  align-items: stretch;
   max-width: 860px;
   margin: 0 auto;
+}
+
+/* The controls, under the field rather than beside it.
+   Measured on master at 390x844: the field was 163.8px of a 343.2px row idle
+   (47.7%) and 92.8px (27.0%) once Stop appeared beside Send; with the context
+   meter present, 26px (7.6%) and the row overflowed its own width by 20px.
+   The field is now the whole row at every width. */
+.tl-composer-bar {
+  /* The containing block for the context meter's breakdown panel, which used to
+     pin itself to the row. On a 390px screen that put the panel's left edge at
+     x = -30.2, clipped; against this bar it lands inside the row. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  max-width: 860px;
+  margin: 6px auto 0;
+}
+/* May scroll, and may give up width. */
+.tl-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tl-bar-left::-webkit-scrollbar {
+  display: none;
+}
+/* Never shrinks: Stop and Send have to be reachable in every state, and the
+   overflow this replaces is what pushed Stop to 3.7px from the screen edge. */
+.tl-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.tl-composer-bar .tl-attach-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
 }
 /* ---- the attachment tray (design 2026-08-17 decision 1) ----------------
    Above the input, so the field stays prose and the path never has to be read
@@ -1262,6 +1309,9 @@ body {
 }
 .tl-composer-input {
   flex: 1 1 auto;
+  /* Sole flex child now, so a long unbroken token in the draft would otherwise
+     set a min-content floor and push the field past the row. */
+  min-width: 0;
   resize: none;
   font: inherit;
   color: var(--text-primary);
@@ -1279,6 +1329,9 @@ body {
 .tl-send,
 .tl-stop {
   flex: 0 0 auto;
+  /* The 40px touch floor the rest of the app holds to. They were 39px, which
+     mattered less when they shared a row with a taller field. */
+  min-height: 40px;
   font: inherit;
   font-weight: 500;
   border: 0;
@@ -1584,6 +1637,35 @@ body {
 }
 body.tl-kb-up {
   --safe-b: 0px;
+}
+
+/* The 46px the control bar costs while the field is empty, bought back in the
+   states where the bottom of the screen is contested: a phone with the keyboard
+   up. All three surfaces below stack ABOVE the composer, so each one deepens the
+   spill past the keyboard line. Capped they scroll instead of growing.
+   Measured at 390x844 with --kb-offset 336 (keyboard line y=508), a question
+   card docked: a 6-image tray went from 11.8px past the line to 0, and a
+   143-char draft from 35.8px past to 0. Nothing here fires on a desktop, and
+   all of it reverts the moment the keyboard closes. */
+@media (pointer: coarse) {
+  body.tl-kb-up .tl-tray {
+    max-height: 58px; /* one row of thumbnails */
+    overflow-y: auto;
+  }
+  body.tl-kb-up .tl-queued {
+    max-height: 46px; /* two chips */
+    overflow-y: auto;
+  }
+  body.tl-kb-up .tl-complete {
+    max-height: 174px; /* ~4 rows rather than ~5.5 */
+  }
+  body.tl-kb-up .tl-composer {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  body.tl-kb-up .tl-composer-bar {
+    margin-top: 2px;
+  }
 }
 
 #soft-keys {
@@ -2905,13 +2987,15 @@ body.tl-kb-up {
 .tl-complete {
   display: flex;
   flex-direction: column;
+  /* Same column as the field it completes into. */
+  max-width: 860px;
+  margin: 0 auto 4px;
   /* Room for ~4 two-line rows. The CLI's own menu shows three; more than this
      on a phone eats the transcript the reader is completing against. */
   max-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  margin: 0 8px 4px;
   background: var(--bg-card);
 }
 .tl-complete-item {
@@ -2949,7 +3033,8 @@ body.tl-kb-up {
 }
 .tl-mode-chip {
   flex: none;
-  align-self: flex-end;
+  /* The bar is a centred 40px strip, not a row of unequal heights. */
+  align-self: center;
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -3324,9 +3409,13 @@ body.tl-kb-up {
    a glance and the number is there when a glance is not enough; both come from
    the CLI's own `/context` figures, so the chip and the pane agree. */
 .tl-ctx {
-  position: relative;
+  /* STATIC, so the breakdown panel below resolves against .tl-composer-bar
+     instead of this chip. Anchored to the chip on a 390px screen the panel's
+     left edge measured x = -30.2 and was clipped; against the bar it is
+     row-width and lands inside. */
+  position: static;
   flex: none;
-  align-self: flex-end;
+  align-self: center;
 }
 .tl-ctx-chip {
   display: flex;
