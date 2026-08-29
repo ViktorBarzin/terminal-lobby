@@ -17,14 +17,15 @@ import (
 
 func main() {
 	var (
-		lobby = flag.String("lobby", "", "path to the built lobby page (with placeholders)")
-		term  = flag.String("term", "", "path to the terminal page (with placeholders)")
-		diag  = flag.String("diag", "", "path to the shared diagnostics core")
-		out   = flag.String("out", "", "directory to write the stamped surfaces into")
-		build = flag.String("build", "", "provenance stamp: the commit being built")
+		lobby  = flag.String("lobby", "", "path to the built lobby page (with placeholders)")
+		term   = flag.String("term", "", "path to the terminal page (with placeholders)")
+		diag   = flag.String("diag", "", "path to the shared diagnostics core")
+		out    = flag.String("out", "", "directory to write the stamped surfaces into")
+		assets = flag.String("assets", "", "asset directory to write the content-hashed terminal page into")
+		build  = flag.String("build", "", "provenance stamp: the commit being built")
 	)
 	flag.Parse()
-	for name, v := range map[string]*string{"lobby": lobby, "term": term, "diag": diag, "out": out, "build": build} {
+	for name, v := range map[string]*string{"lobby": lobby, "term": term, "diag": diag, "out": out, "build": build, "assets": assets} {
 		if *v == "" {
 			fmt.Fprintf(os.Stderr, "tl-stamp: -%s is required\n", name)
 			os.Exit(2)
@@ -48,6 +49,13 @@ func main() {
 	check(os.MkdirAll(*out, 0o755))
 	check(os.WriteFile(filepath.Join(*out, "index.html"), lobbyOut, 0o644))
 	check(os.WriteFile(filepath.Join(*out, "term.html"), termOut, 0o644))
+
+	// The lobby resolves the terminal page by content hash and only falls back
+	// to /term.html when the meta tag is absent -- which stamping never leaves
+	// it. A mismatch here 404s every attach, so the hashed copy is written from
+	// the same bytes and the same id in one place.
+	check(os.MkdirAll(*assets, 0o755))
+	check(os.WriteFile(filepath.Join(*assets, "term-"+termAsset+".html"), termOut, 0o644))
 
 	// The two stamp endpoints the self-update healer reads.
 	check(os.WriteFile(filepath.Join(*out, "build-id"), []byte(lobbyAsset), 0o644))

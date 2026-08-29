@@ -49,6 +49,15 @@ type Manifest struct {
 	// Checks is what the box runs after installing, to decide whether to keep
 	// the version or revert to the previous one.
 	Checks []Check
+	// Enable is the units to enable, not merely restart. Restarting a unit that
+	// was never enabled starts it exactly once; enabling is what brings the box
+	// back after a reboot.
+	Enable []string
+	// HashedTermPage records that the build generates a content-hashed copy of
+	// the terminal page into the asset payload. The lobby resolves the terminal
+	// page by hash and only falls back to /term.html when the meta tag is
+	// absent -- which stamping never leaves it.
+	HashedTermPage bool
 }
 
 // ExternalFile reports whether a watched path is installed by another package.
@@ -68,8 +77,16 @@ func (m Manifest) ExternalFile(dest string) bool {
 // are slow to build, almost never change, and CI's hot path should not pay for
 // them. They arrive as declared dependencies.
 var Package = Manifest{
-	AssetPayload: "/usr/share/terminal-lobby/assets",
-	External:     []string{"/usr/local/bin/ttyd"},
+	AssetPayload:   "/usr/share/terminal-lobby/assets",
+	HashedTermPage: true,
+	// Enabled, not just restarted: a unit that was only ever restarted does not
+	// come back after a reboot.
+	Enable: []string{
+		"ttyd", "tmux-api", "clipboard-upload",
+		"session-events", "file-api", "skills-api",
+		"clipboard-cleanup.timer",
+	},
+	External: []string{"/usr/local/bin/ttyd"},
 	Checks: []Check{
 		{Unit: "tmux-api", Name: "tmux-api /health", URL: "http://127.0.0.1:7684/health", WantStatus: 200},
 		{Unit: "tmux-api", Name: "tmux-api /whoami refuses anonymous", URL: "http://127.0.0.1:7684/whoami", WantStatus: 401},
@@ -105,10 +122,38 @@ var Package = Manifest{
 		{Src: "devvm/show-image", Dest: "/usr/local/bin/show-image", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/claude-tmux-state", Dest: "/usr/local/bin/claude-tmux-state", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/claude-se-hook", Dest: "/usr/local/bin/claude-se-hook", Mode: 0o755, Unmanaged: true},
-		{Src: "devvm/clipboard-store-clean", Dest: "/usr/local/bin/clipboard-store-clean", Mode: 0o755, Unmanaged: true},
+		{Src: "devvm/clipboard-store-clean", Dest: "/usr/local/bin/clipboard-store-clean", Mode: 0o755},
 
 		{Src: "share/index.html", Dest: "/usr/local/share/ttyd/index.html", Mode: 0o644},
 		{Src: "share/term.html", Dest: "/usr/local/share/ttyd/term.html", Mode: 0o644},
+
+		// The two endpoints the self-update healer polls to learn a version
+		// shipped. Generated at stamp time; without them no open tab ever
+		// updates itself again.
+		{Src: "share/build-id", Dest: "/usr/local/share/ttyd/build-id", Mode: 0o644},
+		{Src: "share/term-build-id", Dest: "/usr/local/share/ttyd/term-build-id", Mode: 0o644},
+
+		// The PWA surface, served by clipboard-upload from an exact-path
+		// whitelist -- a missing file here is a 404 the client cannot route around.
+		{Src: "frontend/sw.js", Dest: "/usr/local/share/ttyd/sw.js", Mode: 0o644},
+		{Src: "frontend/manifest.webmanifest", Dest: "/usr/local/share/ttyd/manifest.webmanifest", Mode: 0o644},
+		{Src: "frontend/icon-192.png", Dest: "/usr/local/share/ttyd/icon-192.png", Mode: 0o644},
+		{Src: "frontend/icon-512.png", Dest: "/usr/local/share/ttyd/icon-512.png", Mode: 0o644},
+		{Src: "frontend/icon-512-maskable.png", Dest: "/usr/local/share/ttyd/icon-512-maskable.png", Mode: 0o644},
+
+		{Src: "frontend/fonts/dm-sans-latin-wght-normal.woff2", Dest: "/usr/local/share/ttyd/fonts/dm-sans-latin-wght-normal.woff2", Mode: 0o644},
+		{Src: "frontend/fonts/JetBrainsMono-Regular.woff2", Dest: "/usr/local/share/ttyd/fonts/JetBrainsMono-Regular.woff2", Mode: 0o644},
+		{Src: "frontend/fonts/JetBrainsMono-Bold.woff2", Dest: "/usr/local/share/ttyd/fonts/JetBrainsMono-Bold.woff2", Mode: 0o644},
+		{Src: "frontend/fonts/JetBrainsMono-Italic.woff2", Dest: "/usr/local/share/ttyd/fonts/JetBrainsMono-Italic.woff2", Mode: 0o644},
+		{Src: "frontend/fonts/JetBrainsMono-BoldItalic.woff2", Dest: "/usr/local/share/ttyd/fonts/JetBrainsMono-BoldItalic.woff2", Mode: 0o644},
+		{Src: "frontend/fonts/tl-symbols.woff2", Dest: "/usr/local/share/ttyd/fonts/tl-symbols.woff2", Mode: 0o644},
+
+		// Shared tmux UX, and the per-user units the session pool runs. Marked
+		// unwatched: they are read at session start and by `systemctl --user`,
+		// not by a system service this package restarts.
+		{Src: "devvm/tmux.conf.system", Dest: "/etc/tmux.conf", Mode: 0o644, Unmanaged: true},
+		{Src: "devvm/tl-pool-warm@.service", Dest: "/etc/systemd/user/tl-pool-warm@.service", Mode: 0o644, Unmanaged: true},
+		{Src: "devvm/tl-prewarm@.service", Dest: "/etc/systemd/user/tl-prewarm@.service", Mode: 0o644, Unmanaged: true},
 
 		{Src: "devvm/ttyd.service", Dest: "/etc/systemd/system/ttyd.service", Mode: 0o644},
 		{Src: "devvm/tmux-api.service", Dest: "/etc/systemd/system/tmux-api.service", Mode: 0o644},
@@ -154,6 +199,11 @@ var Package = Manifest{
 		{Name: "skills-api", Files: []string{
 			"/usr/local/bin/skills-api",
 			"/etc/systemd/system/skills-api.service",
+		}},
+		{Name: "clipboard-cleanup.timer", Files: []string{
+			"/etc/systemd/system/clipboard-cleanup.service",
+			"/etc/systemd/system/clipboard-cleanup.timer",
+			"/usr/local/bin/clipboard-store-clean",
 		}},
 		{Name: "tl-t3-sync@", Template: true, Files: []string{
 			"/usr/local/bin/tl-t3-sync",
