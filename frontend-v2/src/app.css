@@ -38,7 +38,7 @@ body {
   background: var(--bg-page, #0d1117);
   color: var(--text-primary, #e6e8eb);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: calc(14px * var(--tl-text-scale, 1));
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -75,7 +75,7 @@ body {
 }
 .tl-session {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   padding: 2px 8px;
   border: 1px solid var(--border);
@@ -86,7 +86,7 @@ body {
   max-width: 40vw;
 }
 .tl-conn {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -120,7 +120,7 @@ body {
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   padding: 5px 12px;
   border-radius: calc(var(--radius) - 4px);
   cursor: pointer;
@@ -143,7 +143,7 @@ body {
   flex: none;
   align-self: flex-start;
   margin-left: -3px;
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--tl-text-scale, 1));
   font-weight: 600;
   line-height: 1.35;
   color: var(--accent);
@@ -186,7 +186,7 @@ body {
 }
 .tl-settings-title {
   font-weight: 600;
-  font-size: 15px;
+  font-size: calc(15px * var(--tl-text-scale, 1));
 }
 .tl-settings-group {
   padding: 12px 0;
@@ -197,14 +197,14 @@ body {
   padding-top: 0;
 }
 .tl-settings-label {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
   margin-bottom: 8px;
 }
 .tl-settings-hint {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   margin-top: 6px;
 }
@@ -215,7 +215,7 @@ body {
   width: 100%;
   border-collapse: collapse;
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-netusage-totals th,
 .tl-netusage-totals td {
@@ -233,7 +233,7 @@ body {
 }
 .tl-netusage-totals th[scope="col"] {
   text-align: right;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -268,7 +268,7 @@ body {
   align-items: center;
 }
 .tl-netusage-filter legend {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -279,7 +279,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   cursor: pointer;
 }
 
@@ -291,7 +291,7 @@ body {
   justify-content: space-between;
   gap: 6px 10px;
   margin-top: 14px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-netusage-netname {
   color: var(--text-primary);
@@ -304,7 +304,7 @@ body {
 }
 .tl-netusage-current select {
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-primary);
   background: var(--bg-page);
   border: 1px solid var(--border);
@@ -317,7 +317,7 @@ body {
   grid-template-columns: auto auto minmax(48px, 1fr);
   align-items: center;
   gap: 4px 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-netusage-row {
   display: contents;
@@ -362,7 +362,7 @@ body {
   align-items: center;
 }
 .tl-netusage-tier legend {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -373,7 +373,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   cursor: pointer;
 }
 
@@ -394,7 +394,7 @@ body {
    accent — it is a statement of fact about the next attach, not an alert. */
 .tl-card-watch {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   line-height: 1;
   opacity: 0.75;
 }
@@ -428,7 +428,7 @@ body {
 .tl-settings-readout {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 .tl-settings-readout b {
@@ -444,7 +444,7 @@ body {
 }
 .tl-settings-btn {
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   padding: 6px 10px;
   color: var(--text-primary);
   background: var(--bg-page);
@@ -462,7 +462,7 @@ body {
 }
 .tl-theme-swatch {
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   padding: 8px 6px;
   color: var(--text-primary);
   background: var(--bg-page);
@@ -488,7 +488,7 @@ body {
 }
 .tl-fontsize-btn {
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   min-width: 40px;
   padding: 6px 10px;
   color: var(--text-primary);
@@ -506,14 +506,14 @@ body {
 }
 .tl-fontsize-value {
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   min-width: 44px;
   text-align: center;
 }
 .tl-settings-select {
   width: 100%;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   padding: 7px 8px;
   color: var(--text-primary);
   background: var(--bg-page);
@@ -525,7 +525,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   padding: 4px 0;
   cursor: pointer;
 }
@@ -536,7 +536,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   padding: 4px 0;
   cursor: pointer;
 }
@@ -551,7 +551,7 @@ body {
 .tl-settings-num {
   flex: 0 0 46px;
   text-align: right;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
@@ -561,7 +561,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   padding: 4px 0;
 }
 .tl-settings-seg-row > span {
@@ -575,7 +575,7 @@ body {
 }
 .tl-settings-seg button {
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   padding: 4px 9px;
   color: var(--text-muted);
   background: var(--bg-page);
@@ -627,7 +627,7 @@ body {
   border-radius: var(--radius);
   box-shadow: var(--surface-shadow), 0 8px 24px rgba(0, 0, 0, 0.3);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 .tl-toast-card[data-kind="error"] {
   border-left-color: var(--danger);
@@ -653,7 +653,7 @@ body {
 .tl-toast-detail {
   margin: 6px 0 0;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   white-space: pre-wrap;
   word-break: break-word;
@@ -663,7 +663,7 @@ body {
 .tl-toast-close {
   flex: 0 0 auto;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1;
   color: var(--text-muted);
   background: transparent;
@@ -705,6 +705,12 @@ body {
 /* ---- Text view + timeline --------------------------------------------- */
 .tl-textview {
   position: relative; /* the size pill anchors here */
+  /* The base every INHERITING element in the view picks up — buttons and chips
+     that say `font: inherit` and set no size of their own. Without it Send and
+     Stop stayed at the body's 14px while the field beside them grew, which is
+     the same mismatch that made the first attempt feel wrong. Rules that set
+     their own size are absolute and unaffected by this. */
+  font-size: calc(14px * var(--tl-text-scale, 1));
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -714,14 +720,6 @@ body {
 .tl-timeline {
   flex: 1 1 auto;
   min-height: 0;
-  /* Pinch-to-size (mobile/textzoom.ts). `zoom` rather than a font-size because
-     the transcript's type is set in px across a hundred-odd rules — headings,
-     code, chips, the gaps between rows — and a reader asking for bigger text
-     means all of it, not the paragraphs alone. It scales layout properly, which
-     `transform: scale` does not, and it leaves the composer and the answer card
-     at native size: those are controls, and controls should not grow with the
-     prose. 1 unless a pinch has said otherwise. */
-  zoom: var(--tl-text-scale, 1);
   overflow-y: auto;
   /* The transcript reads top-to-bottom and nothing else. Spelled out because
      the browser would otherwise decide it for us: a box with one axis `auto`
@@ -770,7 +768,7 @@ body {
   border: 1px solid var(--border-strong);
   color: var(--text-primary);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   pointer-events: none;
 }
 
@@ -898,7 +896,7 @@ body {
   cursor: pointer;
   padding: 2px 0 0;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 
 /* assistant message */
@@ -922,7 +920,7 @@ body {
   align-items: center;
   gap: 8px;
   width: 100%;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 .tl-tool-toggle {
   display: flex;
@@ -933,7 +931,7 @@ body {
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   padding: 7px 10px;
   cursor: pointer;
   text-align: left;
@@ -961,7 +959,7 @@ body {
   background: var(--bg-page);
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   padding: 2px 8px;
   cursor: pointer;
 }
@@ -988,7 +986,7 @@ body {
   border-top: 1px solid var(--border);
 }
 .tl-tool-section-label {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
@@ -1016,7 +1014,7 @@ body {
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   padding: 5px 12px;
   border-radius: 999px;
   cursor: pointer;
@@ -1038,7 +1036,7 @@ body {
   align-items: center;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 .tl-working-dot {
   width: 8px;
@@ -1062,7 +1060,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   border: 1px solid var(--border);
   border-left: 3px solid var(--state-awaiting);
   border-radius: var(--radius);
@@ -1084,7 +1082,7 @@ body {
   border-left-color: var(--danger);
 }
 .tl-row-status {
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   text-align: center;
 }
@@ -1095,7 +1093,7 @@ body {
 /* ---- code / markdown --------------------------------------------------- */
 .tl-code {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
   background: var(--bg-page);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1409,13 +1407,13 @@ body {
   padding: 10px 12px;
 }
 .tl-permpanel-title {
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   margin-bottom: 6px;
 }
 .tl-permpanel-input {
   max-height: 140px;
   overflow: auto;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-permpanel-actions {
   display: flex;
@@ -1424,7 +1422,7 @@ body {
 }
 .tl-btn {
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 6px 12px;
@@ -1437,7 +1435,7 @@ body {
 }
 .tl-btn kbd {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0 4px;
@@ -1451,7 +1449,7 @@ body {
 }
 .tl-permpanel-more {
   margin-top: 6px;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 
@@ -1504,13 +1502,13 @@ body {
 }
 .tl-frame-failed-title {
   margin: 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--tl-text-scale, 1));
   font-weight: 600;
 }
 .tl-frame-failed-body {
   margin: 0;
   max-width: 42ch;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   line-height: 1.5;
   color: var(--text-muted);
 }
@@ -1521,7 +1519,7 @@ body {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   cursor: pointer;
 }
 .tl-frame-retry:hover {
@@ -1553,7 +1551,7 @@ body {
 }
 .tl-cp-input {
   font: inherit;
-  font-size: 15px;
+  font-size: calc(15px * var(--tl-text-scale, 1));
   color: var(--text-primary);
   background: transparent;
   border: 0;
@@ -1569,14 +1567,14 @@ body {
   padding: 6px;
 }
 .tl-cp-group-label {
-  font-size: 10px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
   padding: 8px 10px 4px;
 }
 .tl-cp-note {
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   padding: 6px 10px 10px;
 }
@@ -1594,7 +1592,7 @@ body {
 .tl-cp-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1604,7 +1602,7 @@ body {
   color: var(--danger);
 }
 .tl-cp-meta {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -1622,7 +1620,7 @@ body {
   padding: 16px 18px 14px;
 }
 .tl-schelp-title {
-  font-size: 15px;
+  font-size: calc(15px * var(--tl-text-scale, 1));
   font-weight: 600;
   margin: 0 0 10px;
 }
@@ -1630,7 +1628,7 @@ body {
   overflow-y: auto;
 }
 .tl-schelp-group-label {
-  font-size: 10px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -1654,7 +1652,7 @@ body {
 .tl-schelp-keys kbd,
 .tl-settings-check kbd {
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-primary);
   background: var(--bg-page);
   border: 1px solid var(--border-strong);
@@ -1664,14 +1662,14 @@ body {
 }
 .tl-schelp-desc {
   flex: 1 1 auto;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-secondary, var(--text-muted));
 }
 .tl-schelp-note {
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 
@@ -1806,7 +1804,7 @@ body.tl-kb-up {
   background: var(--bg-card-hover);
   color: var(--text-primary);
   font: inherit;
-  font-size: 14px;
+  font-size: calc(14px * var(--tl-text-scale, 1));
   cursor: pointer;
   touch-action: manipulation; /* no double-tap-zoom / 300ms delay on keys */
   -webkit-tap-highlight-color: transparent;
@@ -1876,9 +1874,12 @@ body.tl-kb-up {
   body.has-soft-keys .tl-views.tl-kb-inline {
     margin-bottom: calc(var(--sk-h, 50px) + var(--safe-b, 0px));
   }
-  /* 16px blocks iOS Safari's focus auto-zoom on the compose field. */
+  /* 16px blocks iOS Safari's focus auto-zoom on the compose field, so the
+     pinch scale may raise this but never lower it: below 16 the platform zooms
+     the whole page on focus and leaves it zoomed, which is a worse outcome than
+     a field that stops shrinking. */
   .tl-composer-input {
-    font-size: 16px;
+    font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
   }
 }
 
@@ -1915,7 +1916,7 @@ body.tl-kb-up {
 }
 .tl-gallery-title {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: calc(14px * var(--tl-text-scale, 1));
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1985,7 +1986,7 @@ body.tl-kb-up {
   right: 4px;
   padding: 1px 6px;
   border-radius: 6px;
-  font-size: 10px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent) 30%, rgba(0, 0, 0, 0.6));
 }
@@ -1994,7 +1995,7 @@ body.tl-kb-up {
   padding: 12px 4px;
   color: var(--text-muted);
   font-style: italic;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 
 .tl-lightbox {
@@ -2024,7 +2025,7 @@ body.tl-kb-up {
   padding: 3px 10px;
   border-radius: 999px;
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: #fff;
@@ -2092,14 +2093,14 @@ body.tl-kb-up {
 }
 .tl-preview-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: calc(14px * var(--tl-text-scale, 1));
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .tl-preview-size {
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -2118,7 +2119,7 @@ body.tl-kb-up {
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   padding: 4px 12px;
   cursor: pointer;
 }
@@ -2139,7 +2140,7 @@ body.tl-kb-up {
   flex: 1 1 auto;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   color: var(--text-primary);
   background: var(--bg-page);
   border: 1px solid var(--border-strong);
@@ -2159,7 +2160,7 @@ body.tl-kb-up {
   border-bottom: 1px solid var(--border);
 }
 .tl-preview-recents-label {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
@@ -2170,7 +2171,7 @@ body.tl-kb-up {
   background: var(--bg-page);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   padding: 3px 10px;
   cursor: pointer;
   max-width: 220px;
@@ -2193,7 +2194,7 @@ body.tl-kb-up {
 }
 .tl-preview-note {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   padding: 8px 2px;
 }
 .tl-preview-error {
@@ -2265,7 +2266,7 @@ body.tl-kb-up {
 }
 .tl-preview-dirty {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
   line-height: 1;
   color: transparent;
   transition: color 0.12s ease;
@@ -2315,7 +2316,7 @@ body.tl-kb-up {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 .tl-preview-entries {
@@ -2330,7 +2331,7 @@ body.tl-kb-up {
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -2420,7 +2421,7 @@ body.tl-kb-up {
   grid-template-columns: 1fr auto auto;
   gap: 10px;
   padding: 0 8px 4px;
-  font-size: 10px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -2444,7 +2445,7 @@ body.tl-kb-up {
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   text-align: left;
   cursor: pointer;
 }
@@ -2463,7 +2464,7 @@ body.tl-kb-up {
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 10px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -2471,7 +2472,7 @@ body.tl-kb-up {
   display: flex;
   gap: 8px;
   margin: 8px 0 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
 }
 .tl-restore-bulk button {
   padding: 0;
@@ -2497,7 +2498,7 @@ body.tl-kb-up {
   gap: 8px;
   padding: 5px 8px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   cursor: pointer;
 }
 .tl-restore-row:hover {
@@ -2521,7 +2522,7 @@ body.tl-kb-up {
 .tl-restore-cwd,
 .tl-restore-note {
   display: block;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 /* cwd and destination share one line: the path gives way, the project does not. */
@@ -2539,7 +2540,7 @@ body.tl-kb-up {
 }
 .tl-restore-dest {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 /* Splits the rows a restore would act on from the ones already running. */
@@ -2548,7 +2549,7 @@ body.tl-kb-up {
   align-items: center;
   gap: 8px;
   margin: 6px 8px 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 .tl-restore-divider::after {
@@ -2565,12 +2566,12 @@ body.tl-kb-up {
   padding: 7px 9px;
   border: 1px solid var(--accent);
   border-radius: calc(var(--radius) - 3px);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   line-height: 1.5;
 }
 .tl-restore-status {
   margin-top: 8px;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   min-height: 14px;
 }
@@ -2608,7 +2609,7 @@ body.tl-kb-up {
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
   text-align: left;
   cursor: pointer;
   min-width: 0;
@@ -2636,7 +2637,7 @@ body.tl-kb-up {
   padding-left: 10px;
   border-left: 2px solid var(--border);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 
 /* One tool call. The head is a single line: glyph, noun, then what it is
@@ -2679,7 +2680,7 @@ body.tl-kb-up {
 }
 .tl-tool-name {
   flex: none;
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -2687,7 +2688,7 @@ body.tl-kb-up {
 }
 .tl-tool-label {
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2695,25 +2696,25 @@ body.tl-kb-up {
 }
 .tl-tool-detail {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   margin-bottom: 4px;
 }
 .tl-tool-note {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   font-style: italic;
 }
 .tl-tool-input > summary {
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   margin-top: 6px;
 }
 .tl-diff-stat {
   flex: none;
   display: inline-flex;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   font-family: var(--mono, ui-monospace, monospace);
 }
 .tl-diff-add {
@@ -2729,7 +2730,7 @@ body.tl-kb-up {
   border-radius: var(--radius);
   overflow-x: auto;
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.5;
 }
 .tl-diff-hunk {
@@ -2782,11 +2783,11 @@ body.tl-kb-up {
 }
 .tl-todo-count {
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 .tl-todo-title {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -2802,7 +2803,7 @@ body.tl-kb-up {
 .tl-todo-item {
   display: flex;
   gap: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   align-items: baseline;
 }
 .tl-todo-item[data-status="completed"] .tl-todo-text {
@@ -2839,7 +2840,7 @@ body.tl-kb-up {
 .tl-plan-chip,
 .tl-queued-chip {
   flex: none;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 1px 6px;
@@ -2848,7 +2849,7 @@ body.tl-kb-up {
   color: var(--accent);
 }
 .tl-question-text {
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
 }
 .tl-question-options {
   display: flex;
@@ -2866,7 +2867,7 @@ body.tl-kb-up {
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   text-align: left;
   min-height: 32px;
 }
@@ -2890,12 +2891,12 @@ body.tl-kb-up {
   border-radius: 5px; /* matches .tl-qcard-key and .tl-inline-code */
   background: var(--bg-page);
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   font-family: var(--mono, ui-monospace, monospace);
 }
 /* The row is not the record yet — the card below is asking this question. */
 .tl-question-answering {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   font-style: italic;
 }
@@ -2905,7 +2906,7 @@ body.tl-kb-up {
 .tl-option-desc {
   grid-column: 2;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   line-height: 1.35;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -2920,7 +2921,7 @@ body.tl-kb-up {
 }
 .tl-question-answer {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 
@@ -2938,7 +2939,7 @@ body.tl-kb-up {
   margin-bottom: 6px;
 }
 .tl-plan-state {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 
@@ -2949,7 +2950,7 @@ body.tl-kb-up {
   gap: 10px;
   margin-block: 10px;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
 }
 .tl-meta-rule {
   flex: 1 1 auto;
@@ -2988,7 +2989,7 @@ body.tl-kb-up {
 
 /* The live row. */
 .tl-working-tool {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   text-transform: uppercase;
   letter-spacing: 0.04em;
   opacity: 0.7;
@@ -2996,18 +2997,18 @@ body.tl-kb-up {
 }
 .tl-working-label {
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
 }
 .tl-working-elapsed,
 .tl-working-steps {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   margin-left: 8px;
   font-variant-numeric: tabular-nums;
 }
 .tl-fold-files,
 .tl-fold-tokens {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   margin-left: 8px;
 }
@@ -3020,7 +3021,7 @@ body.tl-kb-up {
   display: flex;
   justify-content: center;
   padding: 10px 0 12px;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   user-select: none;
 }
@@ -3033,7 +3034,7 @@ body.tl-kb-up {
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
@@ -3050,7 +3051,7 @@ body.tl-kb-up {
   gap: 8px;
   align-items: center;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 .tl-queued-text {
@@ -3081,7 +3082,7 @@ body.tl-kb-up {
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   font-family: var(--mono, ui-monospace, monospace);
   text-align: left;
   cursor: pointer;
@@ -3096,7 +3097,7 @@ body.tl-kb-up {
 .tl-complete-desc {
   overflow: hidden;
   font-family: var(--font-ui);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   line-height: 1.35;
   color: var(--text-muted);
   text-overflow: ellipsis;
@@ -3114,7 +3115,7 @@ body.tl-kb-up {
   border-radius: 999px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -3207,20 +3208,23 @@ body.tl-kb-up {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 10px;
+  gap: 4px 10px;
+  /* At a large pinch size three items on one line squeeze into columns two
+     words wide. Let the state text drop below instead. */
+  flex-wrap: wrap;
   margin-bottom: 8px;
 }
 .tl-qcard-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 .tl-qcard-step,
 .tl-qcard-hint {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
 }
 .tl-qcard-question {
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
   line-height: 1.4;
 }
 .tl-qcard-hint {
@@ -3248,7 +3252,7 @@ body.tl-kb-up {
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   text-align: left;
   cursor: pointer;
 }
@@ -3275,7 +3279,7 @@ body.tl-kb-up {
   background: var(--bg-page);
   color: var(--text-muted);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   line-height: 1;
 }
 .tl-qcard-option[data-chosen="true"] .tl-qcard-key {
@@ -3305,7 +3309,7 @@ body.tl-kb-up {
 .tl-qcard-desc {
   grid-column: 2;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   line-height: 1.35;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -3327,7 +3331,7 @@ body.tl-kb-up {
   background: none;
   padding: 2px 0;
   font: inherit;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -3349,7 +3353,7 @@ body.tl-kb-up {
   background: var(--bg-page);
   color: inherit;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 .tl-qcard-review {
   display: flex;
@@ -3360,7 +3364,7 @@ body.tl-kb-up {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
 }
 .tl-qcard-reviewq {
   color: var(--text-muted);
@@ -3374,14 +3378,14 @@ body.tl-kb-up {
 .tl-qcard-stopped {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.45;
   color: var(--text-muted);
 }
 .tl-qcard-terminal {
   flex: none;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   font-weight: 500;
   color: #fff;
   background: var(--accent);
@@ -3398,7 +3402,7 @@ body.tl-kb-up {
   background: none;
   padding: 6px 2px;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -3424,7 +3428,7 @@ body.tl-kb-up {
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   cursor: pointer;
 }
 /* Next and Back move through the walk; only Submit commits, and it commits the
@@ -3460,7 +3464,7 @@ body.tl-kb-up {
   flex: none;
   padding-right: 10px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 .tl-find-hit {
@@ -3471,7 +3475,7 @@ body.tl-kb-up {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
 .tl-find-where {
@@ -3485,7 +3489,7 @@ body.tl-kb-up {
 .tl-find-snippet {
   margin-top: 2px;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.4;
   overflow: hidden;
   display: -webkit-box;
@@ -3530,7 +3534,7 @@ body.tl-kb-up {
   border-radius: 999px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -3580,7 +3584,7 @@ body.tl-kb-up {
   border-radius: 8px;
   background: var(--bg-panel, var(--bg-page));
   box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-ctx-head {
   display: flex;
@@ -3623,7 +3627,7 @@ body.tl-kb-up {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
 }
 /* The command that produces a newer reading, named at the size of the line it
    sits in rather than at the browser's default for `code`. */
@@ -3654,7 +3658,7 @@ body.tl-kb-up {
   /* A diff is the widest thing text mode renders; let it scroll on its own
      rather than making the page scroll sideways. */
   .tl-diff {
-    font-size: 11.5px;
+    font-size: calc(11.5px * var(--tl-text-scale, 1));
   }
 }
 .tl-queued-more {
@@ -3681,7 +3685,7 @@ body.tl-kb-up {
   border-radius: 999px;
   background: var(--bg-card);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   opacity: 0.9;
 }
 
@@ -3714,7 +3718,7 @@ body.tl-kb-up {
 }
 .tl-skills-tab {
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3734,7 +3738,7 @@ body.tl-kb-up {
   background: color-mix(in srgb, var(--accent) 16%, var(--bg-page));
 }
 .tl-skills-tab-count {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
@@ -3744,7 +3748,7 @@ body.tl-kb-up {
 .tl-skills-filter {
   width: 100%;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--tl-text-scale, 1));
   margin-top: 10px;
   padding: 7px 8px;
   color: var(--text-primary);
@@ -3772,7 +3776,7 @@ body.tl-kb-up {
 .tl-skill-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-skill-table thead th {
   position: sticky;
@@ -3780,7 +3784,7 @@ body.tl-kb-up {
   z-index: 1;
   padding: 4px 6px;
   text-align: left;
-  font-size: 10px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -3823,7 +3827,7 @@ body.tl-kb-up {
 .tl-skill-name {
   font: inherit;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
   display: block;
   max-width: 100%;
   overflow: hidden;
@@ -3848,7 +3852,7 @@ body.tl-kb-up {
   color: var(--text-primary);
 }
 .tl-skill-meta {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   white-space: nowrap;
 }
 .tl-skill-muted {
@@ -3984,12 +3988,12 @@ body.tl-kb-up {
   border-radius: var(--radius);
 }
 .tl-skill-desc {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-primary);
   margin-bottom: 6px;
 }
 .tl-skill-facts {
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   font-family: var(--font-mono);
   color: var(--text-muted);
 }
@@ -3999,7 +4003,7 @@ body.tl-kb-up {
   max-height: 260px;
   overflow: auto;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   line-height: 1.45;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -4028,7 +4032,7 @@ body.tl-kb-up {
   max-height: 320px;
   overflow: auto;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
   line-height: 1.45;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -4045,7 +4049,7 @@ body.tl-kb-up {
      matching it here makes ch the same character CodeMirror lays out; the extra
      44px covers the line-number gutter and the line padding. */
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
   max-width: calc(80ch + 44px);
   /* .tl-editor is sized for the full-height file pane (min-height: 60vh); in a
      row it grows with the file instead, up to a box that still leaves the list

@@ -359,7 +359,10 @@ src/
                          terminal. Both recognizers ported from term.html —
                          Chromium measures the two-finger span itself, WebKit
                          gets the ratio from GestureEvent — so one gesture, the
-                         same 7%-per-step arithmetic, in both views
+                         same 7%-per-step arithmetic, in both views. It scales
+                         FONT SIZES: every font-size in app.css multiplies by
+                         --tl-text-scale, set on .tl-textview, so transcript,
+                         answer card and composer move together
     swipe.ts             PURE swipe classification + the session-switch gesture
     reorder.ts           PURE geometry for dragging a session row with a
                          finger (which side of the row under it, how fast
