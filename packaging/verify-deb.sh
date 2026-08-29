@@ -62,7 +62,9 @@ check "the content-hashed terminal page is in the payload" \
 check "the revert unit ships (the brake runs outside the dpkg transaction)" \
   "$(printf '%s' "$contents" | grep -c 'terminal-lobby-revert.service' || true)" 1
 
-for dep in ttyd-devvm viu tmux acl; do
+# libwebsockets is deliberately NOT here: it belongs to ttyd-devvm, which links
+# it. A package should declare what its own contents need and nothing else.
+for dep in ttyd-devvm viu tmux acl sudo; do
   check "declares a dependency on $dep" \
     "$(dpkg-deb -f "$DEB" Depends | grep -c "\\b$dep\\b" || true)" 1
 done

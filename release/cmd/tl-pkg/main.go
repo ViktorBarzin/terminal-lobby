@@ -73,7 +73,11 @@ func control(version, commit string) string {
 		"Priority: optional",
 		// What the box needs, declared rather than remembered. This line is what
 		// retires "the environment is a one-time setup" for this repo's footprint.
-		"Depends: ttyd-devvm, viu, tmux, acl, sudo, libwebsockets19 | libwebsockets-dev, libjson-c5 | libjson-c-dev",
+		// Only what this package's own contents need. libwebsockets and
+		// libjson-c belong to ttyd-devvm, which is the thing that links them;
+		// claiming them here made terminal-lobby's dependency list a guess about
+		// somebody else's binary.
+		"Depends: ttyd-devvm, viu, tmux, acl, sudo",
 		"Description: Terminal Lobby - web tmux sessions for the devvm workstation",
 		" The lobby UI, its Go backends, the systemd units and the devvm helper",
 		" scripts, at one version. Built from commit " + commit + ".",
