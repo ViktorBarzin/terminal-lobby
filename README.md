@@ -278,6 +278,22 @@ and smoke-tests `/whoami` + `/health` + the public assets.
 |---|---|---|---|
 | `terminal.viktorbarzin.me` | `ttyd` :7681 | `index.html` (the SolidJS SPA) | `./scripts/deploy-v2.sh` |
 
+> **Pull master before you deploy, and claim `service:ttyd` while you do.**
+> Several agent sessions work this repo at once, each from its own worktree, and
+> a deploy ships whatever *that* worktree's HEAD builds. On 2026-08-28 three
+> deploys from stale worktrees put an older lobby back over a newer one — one of
+> them shipping a placeholder verbatim, because the older script did not know
+> that placeholder existed — and two runs in the same checkout collided in
+> `frontend-v2/dist` mid-build.
+>
+> `deploy-v2.sh` now refuses both: it will not run while another session holds
+> `service:ttyd` (`~/code/scripts/presence claim service:ttyd`), and it will not
+> install a page whose commit is not an ancestor of the one already installed
+> (recorded in `/usr/local/share/ttyd/lobby-build`). `TL_FORCE=1` overrides
+> both, for a deliberate rollback. **A worktree that has not pulled runs its own
+> older copy of this script and has neither check** — which is why pulling first
+> is the actual protection.
+
 `deploy-v2.sh` builds `frontend-v2` (vite single-file) into `index.html` and
 **restarts only ttyd** — never `ttyd-ro`, never a shared backend. It installs no
 systemd unit: `ttyd.service` belongs to `deploy.sh` and its `ExecStart` already

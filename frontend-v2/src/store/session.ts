@@ -184,6 +184,10 @@ export function createSessionStore(
   /** Which log the held ids belong to (the server's ready.epoch), and the cache
    *  that stores the transcript against it. */
   let cachedEpoch = "";
+  /** How many events this open started with, from disk. The other half of the
+   *  measurement is what the server sent anyway. */
+  let seededFromCache = 0;
+  let openReported = false;
   const cache = opts.cache ?? defaultTranscriptCache();
   /** How far up the step ladder a run of paging has climbed. */
   let step = 0;
@@ -450,6 +454,17 @@ export function createSessionStore(
       if (r.epoch) cachedEpoch = r.epoch;
       release();
       scheduleCacheWrite();
+      // One record per open, once the server has said where the window ends:
+      // what this device supplied against what still had to be fetched.
+      if (!openReported) {
+        openReported = true;
+        track("text.open", {
+          "tl.session": session,
+          "tl.cache": seededFromCache > 0 ? "hit" : "miss",
+          "tl.cached": seededFromCache,
+          "tl.fetched": Math.max(0, events.length - seededFromCache),
+        });
+      }
     },
   });
 
@@ -472,6 +487,7 @@ export function createSessionStore(
       cachedEpoch = cached.epoch;
       const fresh = takeFresh([...cached.events]);
       if (fresh.length > 0) {
+        seededFromCache = fresh.length;
         batch(() => {
           setEvents(fresh);
           setOpening(false);
