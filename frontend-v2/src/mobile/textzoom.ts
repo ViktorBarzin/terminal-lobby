@@ -16,12 +16,19 @@
  *     the cumulative span ratio. preventDefault at `gesturestart` is what
  *     suppresses native pinch-zoom for the whole gesture.
  *
- * WHAT IT DRIVES. Not a font-size: the transcript's type is set in px across a
- * hundred-odd rules, and a scale has to move all of it together — headings,
- * code, chips, the gaps between rows. So the step arithmetic is kept in the
- * terminal's units (a font size between FONT_SIZE_MIN and MAX) and published as
- * the RATIO of that to the default, which app.css applies as a zoom on the
- * transcript. Same numbers, same feel, one CSS property.
+ * WHAT IT DRIVES. Font sizes, and only font sizes. The step arithmetic is kept
+ * in the terminal's units — a size between FONT_SIZE_MIN and MAX — and published
+ * as the RATIO of that to the default, which every `font-size` in app.css
+ * multiplies itself by (`calc(13px * var(--tl-text-scale, 1))`). The variable is
+ * set on `.tl-textview`, so the transcript, the answer card and the composer all
+ * follow one pinch, and everything outside inherits the default of 1.
+ *
+ * An earlier cut applied `zoom` to the transcript instead. It was wrong twice
+ * over: `zoom` scales padding, borders and gaps as well as type, so the
+ * transcript grew rather than its text; and it reached the timeline alone, so
+ * the composer stayed native and the two visibly disagreed. Referencing the root
+ * variable in each rule, rather than inheriting a font-size, is also what keeps
+ * nested rules from compounding.
  */
 import { FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN } from "../store/prefs";
 
