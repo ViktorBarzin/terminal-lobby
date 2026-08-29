@@ -12,6 +12,13 @@ sessions on a shared box. Orca is a single-user desktop orchestrator that fans
 one prompt across parallel git worktrees. Running both is coherent. The useful
 output of this evaluation is the list of Orca capabilities worth borrowing.
 
+```stats
+v1.4.192 | Orca version deployed
+6768 | port, advertised ws://10.0.10.10
+550 MB | extracted AppImage on disk
+0 | lines deleted from your Claude settings
+```
+
 ## What is running now
 
 Orca v1.4.192 is deployed headless on the devvm and passes its own readiness
@@ -40,24 +47,23 @@ will not have Orca until the playbook does.
 
 ```mermaid
 flowchart TB
-    subgraph TL["Terminal Lobby — multi-user, browser"]
+    subgraph TL["Terminal Lobby - multi-user, browser"]
         direction TB
         B["Any browser<br/>no install"] --> TF["Traefik + Authentik<br/>forward-auth"]
-        TF -->|"X-authentik-username"| SVC["ttyd 7681 · tmux-api 7684<br/>clipboard 7683 · skills-api 7688"]
+        TF -->|"X-authentik-username"| SVC["ttyd 7681 - tmux-api 7684<br/>clipboard 7683 - skills-api 7688"]
         SVC -->|"sudo -u via /etc/ttyd-user-map"| TMUX["Real tmux sessions<br/>per-uid sockets"]
         TMUX --> U1["wizard"] & U2["emo"] & U3["ancamilea"]
     end
 
-    subgraph OR["Orca — single-user, paired clients"]
+    subgraph OR["Orca - single-user, paired devices"]
         direction TB
         P["iOS app / web client<br/>pairing credential + E2EE"] --> RT["orca serve :6768<br/>one Electron runtime"]
         RT --> WT["Worktree per agent"]
-        WT --> A1["Claude Code"] & A2["Codex"] & A3["…any CLI agent"]
-        RT -.->|"runs as one OS user"| W["wizard only"]
+        WT --> A1["Claude Code"] & A2["Codex"] & A3["any CLI agent"]
+        RT -.->|"one OS user"| W["wizard only"]
     end
 
-    style TL fill:#e8f4f8,stroke:#4a90a4
-    style OR fill:#f8f0e8,stroke:#a4784a
+    TL ~~~ OR
 ```
 
 The shapes differ at the root. Terminal Lobby resolves *who you are* on every
@@ -121,7 +127,7 @@ These are structural, not gaps Orca has yet to fill.
 Keep Terminal Lobby. It is the multi-user front door to a shared machine, and
 Orca is not built to be that.
 
-Orca earns its place as a **single-user orchestrator for wizard**, sitting
+Orca is useful here as a **single-user orchestrator for wizard**, sitting
 beside Terminal Lobby rather than under it. The two answer different questions:
 "let me get at my sessions on that box from anywhere" versus "run five agents on
 this problem and show me the diffs".
@@ -132,9 +138,13 @@ reconstructed in Orca.
 
 ## Findings from the deployment
 
-Things that cost time, recorded so they do not cost it twice.
+What the install turned up, recorded so it does not cost time twice.
 
 ### The GPU FATAL is cosmetic
+
+> [!WARNING]
+> A health check that greps for `FATAL` or watches child exits will call a
+> working Orca server broken. Use the JSON ready contract instead.
 
 Every `orca serve` run on this box logs:
 
@@ -173,6 +183,11 @@ are unrelated.
 
 ### `orca serve` writes into your agent configs on first start
 
+> [!CAUTION]
+> Starting the daemon edits `~/.claude/settings.json` and `~/.codex/`. It
+> appended only here - zero deletions, all six existing hooks intact - but it
+> is a side effect of `systemctl start`, not something you are asked about.
+
 Starting the daemon — before any pairing, without a prompt — created
 `~/.orca/agent-hooks/{claude-hook.sh,codex-hook.sh}` and wired them in:
 
@@ -189,7 +204,7 @@ deleted lines, and all six existing hooks (`auto-learn.py`,
 `pre-compact-backup.sh`, `post-compact-recovery.sh`) survived intact.
 
 The mechanism is reasonable and mirrors ADR-0001 — hooks are how you learn what
-an agent is doing. The difference worth noting is consent: Terminal Lobby's
+an agent is doing. The difference is when it happens and whether you are asked. Terminal Lobby's
 hooks are deployed deliberately through `managed-settings.json`, whereas Orca's
 arrive as a side effect of starting a daemon, and it marks its own Codex hooks
 as trusted on your behalf.
