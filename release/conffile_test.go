@@ -175,3 +175,25 @@ func TestShippedDefaultBindsLoopback(t *testing.T) {
 	}
 	t.Fatal("shipped config does not set TL_BIND")
 }
+
+// The package must never install per-box IDENTITY data. devvm/ttyd-user-map was
+// removed on 2026-08-17 for drifting from the roster; the sudo grant is the same
+// kind of file and a worse failure, because installing a stale copy does not go
+// stale quietly — it REVOKES the grants of every user the copy has forgotten,
+// and their terminals stop attaching.
+//
+// This nearly shipped: a history scrub replaced the real accounts in
+// devvm/sudoers.d-ttyd-users with fictional ones, and the manifest was still
+// installing it over /etc/sudoers.d/ttyd-users.
+func TestThePackageShipsNoIdentityData(t *testing.T) {
+	forbidden := map[string]string{
+		"/etc/sudoers.d/ttyd-users": "the sudo grant is the roster's, and a stale copy revokes real users",
+		"/etc/ttyd-user-map":        "the identity map is the roster's (removed 2026-08-17)",
+		"/etc/ttyd-admins":          "the admin list is the roster's",
+	}
+	for _, f := range Package.Files {
+		if why, bad := forbidden[f.Dest]; bad {
+			t.Errorf("the package installs %s (from %s) — %s", f.Dest, f.Src, why)
+		}
+	}
+}
