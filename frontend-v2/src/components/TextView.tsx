@@ -310,6 +310,11 @@ export const TextView: Component<{
       </Show>
       <Composer
         working={props.working}
+        // Send stays available while a question is docked — ADR-0010's "whoever
+        // answers first wins" — but it says what it will cost: a prompt takes
+        // the dialog down and Claude asks again. `asking()` is the same signal
+        // the card itself is keyed on, so the two cannot disagree.
+        asking={!!asking()}
         pending={props.pending}
         onSend={props.onSend}
         onStop={props.onStop}
