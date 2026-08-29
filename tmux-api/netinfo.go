@@ -148,23 +148,28 @@ func (c *netCache) put(key string, info netInfo) {
 	c.entries[key] = netCacheEntry{info: info, at: time.Now()}
 }
 
-// clientIP is the address the request came from, in trust order. Cloudflare
-// overwrites CF-Connecting-IP with the address it accepted the connection from,
-// so it is the one header no intermediary or client can have typed; Traefik's
-// X-Real-Ip is the same claim one hop later. A leftmost X-Forwarded-For is
-// spoofable, which costs nothing worse here than a wrongly-labelled figure in
-// the spoofer's own browser, so it stays as the third choice ahead of a peer
-// address that is always the edge.
-func clientIP(r *http.Request) string {
+// clientAddr is the address the request came from, and which header it was
+// read from. Trust order: Cloudflare overwrites CF-Connecting-IP with the
+// address it accepted the connection from, so it is the one header no
+// intermediary or client can have typed; Traefik's X-Real-Ip is the same claim
+// one hop later. A leftmost X-Forwarded-For is spoofable, which costs nothing
+// worse here than a wrongly-labelled figure in the spoofer's own browser, so it
+// stays as the third choice ahead of a peer address that is always the edge.
+//
+// The header name is returned because it is the difference between a verdict
+// and a coincidence: every request reaches this service through Traefik, so if
+// the edge ever stopped forwarding, `peer` would be a private address and every
+// byte on every device would be labelled WiFi with nothing on screen to say so.
+func clientAddr(r *http.Request) (addr, via string) {
 	for _, h := range []string{"CF-Connecting-IP", "X-Real-Ip"} {
 		if ip := net.ParseIP(strings.TrimSpace(r.Header.Get(h))); ip != nil {
-			return ip.String()
+			return ip.String(), h
 		}
 	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		first, _, _ := strings.Cut(xff, ",")
 		if ip := net.ParseIP(strings.TrimSpace(first)); ip != nil {
-			return ip.String()
+			return ip.String(), "X-Forwarded-For"
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -172,10 +177,11 @@ func clientIP(r *http.Request) string {
 		host = r.RemoteAddr
 	}
 	if ip := net.ParseIP(strings.TrimSpace(host)); ip != nil {
-		return ip.String()
+		return ip.String(), "peer"
 	}
-	return ""
+	return "", "none"
 }
+
 
 // isLocalAddr covers every address that cannot have crossed the public
 // internet to get here: loopback, link-local, the RFC1918 ranges, unique-local
@@ -349,7 +355,15 @@ func handleNetinfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	info := classifyIP(r.Context(), clientIP(r), netinfoResolver, netinfoCache)
+	addr, via := clientAddr(r)
+	_, cached := netinfoCache.get(addr)
+	info := classifyIP(r.Context(), addr, netinfoResolver, netinfoCache)
+	// One line the first time a network is seen, and never the address itself
+	// — Traefik's access log already holds those, and this only has to answer
+	// "which header did the verdict come from, and what did it decide".
+	if !cached {
+		log.Printf("netinfo: via %s -> %s (%s)", via, info.Net, info.Kind)
+	}
 	// The verdict changes the moment the person moves between networks, which
 	// is exactly when a cached response would be wrong.
 	w.Header().Set("Cache-Control", "no-store")
