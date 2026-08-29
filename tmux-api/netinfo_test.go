@@ -62,7 +62,7 @@ func freshCache() *netCache { return newNetCache(time.Hour, 64) }
 
 func TestClientIPPrefersCloudflareOverForwardedFor(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/netinfo", nil)
-	r.RemoteAddr = "10.0.20.5:41234"
+	r.RemoteAddr = "192.0.2.5:41234"
 	// A client may send its own X-Forwarded-For; Cloudflare overwrites
 	// CF-Connecting-IP, so that one is the only entry nobody downstream typed.
 	r.Header.Set("X-Forwarded-For", "203.0.113.9, 176.12.22.76")
@@ -81,8 +81,8 @@ func TestClientIPFallsBackThroughRealIPThenForwardedThenPeer(t *testing.T) {
 		want    string
 		via     string
 	}{
-		{"x-real-ip", map[string]string{"X-Real-Ip": "176.12.22.76"}, "10.0.20.5:1", "176.12.22.76", "X-Real-Ip"},
-		{"leftmost xff", map[string]string{"X-Forwarded-For": "176.12.22.76, 172.64.0.1"}, "10.0.20.5:1", "176.12.22.76", "X-Forwarded-For"},
+		{"x-real-ip", map[string]string{"X-Real-Ip": "176.12.22.76"}, "192.0.2.5:1", "176.12.22.76", "X-Real-Ip"},
+		{"leftmost xff", map[string]string{"X-Forwarded-For": "176.12.22.76, 172.64.0.1"}, "192.0.2.5:1", "176.12.22.76", "X-Forwarded-For"},
 		{"peer only", nil, "192.168.1.44:52001", "192.168.1.44", "peer"},
 		{"peer without port", nil, "192.168.1.44", "192.168.1.44", "peer"},
 		{"blank header ignored", map[string]string{"X-Real-Ip": "  "}, "192.168.1.44:1", "192.168.1.44", "peer"},
