@@ -1,0 +1,74 @@
+# Build the patched terminal server as its own package.
+#
+# It is slow to build and almost never changes, so it is separate: the lobby's
+# hot path should not rebuild a C program on every commit. This runs only when
+# its own inputs move.
+name: ttyd-devvm
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'devvm/ttyd-local.patch'
+      - 'scripts/build-ttyd.sh'
+      - '.github/workflows/ttyd.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential cmake git libwebsockets-dev libjson-c-dev
+
+      # The upstream pin stays. ttyd is not a dependency, it is a PATCH TARGET:
+      # the local patch is written against specific lines of src/pty.c and
+      # src/http.c, so tracking latest means the patch fails to apply -- or
+      # applies with fuzz, which is worse.
+      - name: build
+        run: ./scripts/build-ttyd.sh --force
+
+      - name: package
+        run: |
+          set -euo pipefail
+          VERSION="1.7.7+$(git rev-parse --short HEAD)"
+          TREE=out/ttyd-pkg
+          mkdir -p "$TREE/usr/local/bin" "$TREE/DEBIAN"
+          install -m 0755 out/ttyd "$TREE/usr/local/bin/ttyd"
+          cat > "$TREE/DEBIAN/control" <<CTL
+          Package: ttyd-devvm
+          Version: $VERSION
+          Architecture: amd64
+          Maintainer: Viktor Barzin <me@viktorbarzin.me>
+          Depends: libwebsockets19 | libwebsockets-dev, libjson-c5 | libjson-c-dev
+          Description: ttyd 1.7.7 with the devvm patches
+           Forwards the browser's pixel size to the pty so tmux re-emits sixel,
+           honours the client PAUSE opcode so flow control works, and serves the
+           custom index with an ETag so boots revalidate instead of re-downloading.
+          CTL
+          # A ttyd upgrade must restart what runs it; the lobby package does not
+          # own this binary and cannot notice.
+          cat > "$TREE/DEBIAN/postinst" <<'PST'
+          #!/bin/sh
+          set -e
+          [ "$1" = "configure" ] || exit 0
+          systemctl is-active --quiet ttyd && systemctl restart ttyd || true
+          PST
+          chmod 0755 "$TREE/DEBIAN/postinst"
+          dpkg-deb --root-owner-group --build "$TREE" "out/ttyd-devvm_${VERSION}_amd64.deb"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: publish
+        env:
+          FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+        run: |
+          curl -sSf --user "viktor:${FORGEJO_GIT_TOKEN}" \
+            --upload-file "out/ttyd-devvm_${VERSION}_amd64.deb" \
+            "https://forgejo.viktorbarzin.me/api/packages/viktor/debian/pool/noble/main/upload"

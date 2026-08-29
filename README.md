@@ -250,6 +250,9 @@ and trade-offs: `docs/adr/0005-session-image-store.md`.
 
 ## Deployment
 
+**Being replaced** — see "CI and the release pipeline" below. What follows is
+the deploy path in use until the package pipeline is switched on.
+
 For now: **manual deploy**, from a workstation that can SSH
 `wizard@10.0.10.10`. There are **three** scripts, split by blast radius — each
 cross-builds what it owns, SCPs to `/tmp`, installs under `sudo`, runs
@@ -403,27 +406,37 @@ tty (viu at 12 rows; Enter closes it). A split — not `display-popup` —
 is deliberate: tmux 3.4 popups don't pass sixel through, so an image
 in a popup renders as an empty box.
 
-### CI status — TODO
+### CI and the release pipeline
 
-`.woodpecker.yml` is ready and the deploy SSH key is provisioned
-(`secret/woodpecker/devvm_ssh_key`), but **Forgejo-side activation is
-blocked**:
+**Being replaced by a package the box installs itself** — design in
+`docs/plans/2026-08-29-iac-native-deployment-design.md`, decision in
+`docs/adr/0013-the-box-installs-the-lobby-nobody-ships-it.md`, runbook in
+`packaging/README.md`, spec in ViktorBarzin/infra#87.
 
-- Woodpecker user `viktor` (forge_id=2) cannot activate `viktor/terminal-lobby`
-  in the current installation — returns HTTP 500 on activation, same
-  symptom that blocked `viktor/payslip-ingest` previously.
-- Forgejo Actions is not enabled in `app.ini` and there's no
-  `forgejo-runner` provisioned in the cluster.
+A merge to master becomes the running version without anyone running anything:
+GitHub Actions builds off-infra, `svu` cuts the semver, a `.deb` lands in
+Forgejo's Debian registry, and a trigger (GHA → Woodpecker → one SSH forced
+command) tells the box to upgrade. `postinst` restarts only the units whose bytes
+changed, verifies, and on failure reverts to the previous package and holds it.
 
-Either of these unblocks CI:
-1. **Enable Forgejo Actions**: add `[actions] ENABLED = true` to
-   Forgejo `app.ini`, restart, then deploy a `forgejo-runner` Helm
-   release in a new Terraform stack. Move `.woodpecker.yml` →
-   `.forgejo/workflows/deploy.yml` (similar syntax, native YAML).
-2. **Fix Woodpecker ↔ Forgejo activation** (root cause of the
-   HTTP 500 unknown — needs server logs).
+What is built and what is not:
 
-Until then: `./scripts/deploy.sh` after each push.
+| Phase | State |
+|---|---|
+| The `release` package, `tl-stamp`, `tl-pkg`, `tl-apply`, the packaging scripts | built and tested |
+| `.github/workflows/{release,ttyd,viu}.yml` | written; needs the GitHub mirror to exist |
+| `infra/.woodpecker/terminal-lobby-deploy.yml`, `devvm/devvm-apply` | written; needs the three confirmations in `packaging/README.md` |
+| The apt source on the box, the first install | not done — a deliberately observed step |
+| Deleting the three deploy scripts | not done — they remain the deploy path until the pipeline is proven |
+
+Note on the previous state of this section: it described a `.woodpecker.yml` as
+"ready" and blocked on a Forgejo activation returning HTTP 500. That file was
+removed in `c9853e6` as part of the ADR-0002 decommission. The activation
+failure is real and unchanged, which is why the deploy pipeline lives in the
+infra repository — already activated — rather than in this one.
+
+**Until the pipeline is switched on: `./scripts/deploy.sh` after each push**, as
+before.
 
 ## Per-user setup
 

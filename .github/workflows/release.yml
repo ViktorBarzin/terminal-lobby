@@ -1,0 +1,102 @@
+# Build and publish the terminal-lobby package.
+#
+# Builds happen here, off-infra, per infra ADR-0002. Toolchains install at
+# latest rather than pinned: artefacts are versioned and immutable, so a version
+# is never rebuilt -- 1.4.2 is not rebuilt, 1.4.3 is built. Each package records
+# the commit and the toolchains it happened to build with, for forensics.
+name: release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # svu needs the whole history and every tag to compute the next version.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - uses: actions/setup-node@v4
+        with: { node-version: lts/* }
+
+      # The tests that exist today start gating releases. They have never run in
+      # CI, because there has never been CI.
+      - name: test
+        run: |
+          set -euo pipefail
+          for mod in release telemetry skillscan authuser sessionio slug \
+                     tmux-api clipboard-upload session-events file-api skills-api \
+                     t3-bridge t3-sync; do
+            [ -f "$mod/go.mod" ] || continue
+            echo "==> $mod"
+            (cd "$mod" && go vet ./... && go test ./...)
+          done
+
+      - name: version
+        id: version
+        run: |
+          set -euo pipefail
+          curl -sSfL https://github.com/caarlos0/svu/releases/download/v3.4.1/svu_3.4.1_linux_amd64.tar.gz \
+            | tar xz svu
+          NEXT="$(./svu next)"
+          rm -f svu
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "version=${NEXT#v}" >> "$GITHUB_OUTPUT"
+          echo "next version: $NEXT"
+
+      - name: build the package
+        run: ./packaging/build-deb.sh "${{ steps.version.outputs.version }}"
+
+      - name: verify the package
+        run: ./packaging/verify-deb.sh "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb"
+
+      # Forgejo is canonical (ADR-0003); this repo is a one-way mirror, so the
+      # tag is pushed back to the forge the code actually lives on.
+      - name: tag on the canonical forge
+        env:
+          FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          git tag "${{ steps.version.outputs.tag }}"
+          git push "https://x-access-token:${FORGEJO_GIT_TOKEN}@forgejo.viktorbarzin.me/viktor/terminal-lobby.git" \
+            "${{ steps.version.outputs.tag }}"
+
+      - name: publish to the Debian registry
+        env:
+          FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -sSf --user "viktor:${FORGEJO_GIT_TOKEN}" \
+            --upload-file "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
+            "https://forgejo.viktorbarzin.me/api/packages/viktor/debian/pool/noble/main/upload"
+
+      # Off-site copy, so a cluster outage cannot block repairing the workstation.
+      - name: attach to a GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
+            --title "${{ steps.version.outputs.tag }}" --generate-notes
+
+      # Runners cannot route to the devvm, so the trigger goes through Woodpecker,
+      # which is deploy-only by ADR-0002 and already activated on the infra repo.
+      - name: trigger the deploy
+        env:
+          WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
+        run: |
+          curl -sSf -X POST \
+            -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"branch":"master","variables":{"PIPELINE":"terminal-lobby-deploy","VERSION":"${{ steps.version.outputs.version }}"}}' \
+            "https://ci.viktorbarzin.me/api/repos/1/pipelines"

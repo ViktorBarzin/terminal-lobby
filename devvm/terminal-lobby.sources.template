@@ -1,0 +1,7 @@
+# Deployed to /etc/apt/sources.list.d/terminal-lobby.list.
+#
+# Credentials do NOT live here -- this file is world-readable and apt reads
+# secrets from /etc/apt/auth.conf.d instead. Root on this box has no unattended
+# Vault access, so the deploy pipeline (which does) installs and refreshes that
+# credential as part of the same trigger it already performs.
+deb [signed-by=/etc/apt/keyrings/forgejo-viktor.asc] https://forgejo.viktorbarzin.me/api/packages/viktor/debian noble main
