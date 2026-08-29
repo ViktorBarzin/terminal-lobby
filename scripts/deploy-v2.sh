@@ -53,6 +53,48 @@ DEVVM="${DEVVM:-192.0.2.10}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# ---------------------------------------------------------------------------
+# Two ways this deploy can make things worse, both seen on 2026-08-28.
+#
+# A CONCURRENT deploy: three times, a session deploying from its own worktree
+# replaced the lobby with an older build minutes after a newer one shipped, and
+# once two runs in the same checkout collided in frontend-v2/dist ("sed: can't
+# read frontend-v2/dist/term.html"). presence is the mechanism for that, and it
+# only works if this script consults it.
+#
+# A STALE build: the page that came back had been built from a commit predating
+# what was installed, which is how a placeholder the newer build knew about
+# shipped verbatim. The installed commit is recorded beside the page, so this is
+# a comparison rather than a guess.
+#
+# Both refuse rather than warn, and both take TL_FORCE=1 for when going
+# backwards is the intent — a rollback.
+# ---------------------------------------------------------------------------
+PRESENCE="${HOME}/code/scripts/presence"
+if [[ -z "${TL_FORCE:-}" && -x "$PRESENCE" ]]; then
+  # A claim held by SOMEBODY ELSE — "(me)" marks our own.
+  if "$PRESENCE" list 2>/dev/null | grep -F "service:ttyd" | grep -qv "(me)"; then
+    echo "deploy-v2.sh: another session holds service:ttyd —" >&2
+    "$PRESENCE" list 2>/dev/null | grep -F "service:ttyd" | sed 's/^/  /' >&2
+    echo "  Wait for it, or claim it yourself; TL_FORCE=1 overrides." >&2
+    exit 1
+  fi
+fi
+
+INSTALLED_REV=$(ssh -o BatchMode=yes "wizard@${DEVVM}" \
+  'cat /usr/local/share/ttyd/lobby-build 2>/dev/null' 2>/dev/null | tr -d '[:space:]')
+if [[ -z "${TL_FORCE:-}" && -n "$INSTALLED_REV" ]]; then
+  if git cat-file -e "${INSTALLED_REV}^{commit}" 2>/dev/null; then
+    if ! git merge-base --is-ancestor "$INSTALLED_REV" HEAD; then
+      echo "deploy-v2.sh: what is installed (${INSTALLED_REV}) is not an ancestor of" >&2
+      echo "  what you are shipping ($(git rev-parse --short HEAD)) — this would take" >&2
+      echo "  the lobby BACKWARDS. Rebase onto master, or TL_FORCE=1 if that is the" >&2
+      echo "  intent." >&2
+      exit 1
+    fi
+  fi
+fi
+
 if [[ -z "${SKIP_BUILD:-}" ]]; then
   echo "==> Building v2 SPA (frontend-v2, vite single-file)..."
   # The build is stamped AFTER the fact, not during it (ADR-0007): vite emits
@@ -176,7 +218,13 @@ grep -q '<meta name="tl-asset" content="'"${ASSET}"'"' out/index.html || {
   echo "deploy-v2.sh: tl-asset meta missing from the built SPA — vite dropped it" >&2
   exit 1
 }
-if grep -q '__TL_[A-Z]*__' out/index.html; then
+# [A-Z_] not [A-Z]: __TL_TERM_ASSET__ has an underscore in the middle, so the
+# old pattern could not match it. A deploy from a worktree that predated that
+# placeholder therefore shipped it VERBATIM to production, where the client read
+# "__TL_TERM_ASSET__" as the terminal page's fingerprint and fell back to the
+# revalidating URL on every attach. This guard exists for exactly that and could
+# not see it.
+if grep -qE '__TL_[A-Z_]*__' out/index.html; then
   echo "deploy-v2.sh: unsubstituted __TL_*__ placeholder in out/index.html" >&2
   exit 1
 fi
@@ -229,7 +277,7 @@ grep -q '<meta name="tl-asset" content="'"${TERM_ASSET}"'"' out/term.html || {
   echo "deploy-v2.sh: tl-asset meta missing from term.html — self-update would be dead" >&2
   exit 1
 }
-if grep -q '__TL_[A-Z]*__' out/term.html; then
+if grep -qE '__TL_[A-Z_]*__' out/term.html; then
   echo "deploy-v2.sh: unsubstituted __TL_*__ placeholder in out/term.html" >&2
   exit 1
 fi
@@ -300,6 +348,10 @@ ssh -o BatchMode=yes "wizard@${DEVVM}" \
   # old page would reload in a loop until the page caught up.
   sudo install -m 0644 /tmp/tl-deploy-build-id /usr/local/share/ttyd/build-id
   sudo install -m 0644 /tmp/tl-deploy-term-build-id /usr/local/share/ttyd/term-build-id
+  # The commit this page was built from, for the NEXT deploy's staleness check.
+  # Written after the page itself, so a half-finished install never claims to be
+  # newer than it is.
+  printf %s "$REV" | sudo tee /usr/local/share/ttyd/lobby-build > /dev/null
   # Hashed output. ADDITIVE on purpose: every name is content-addressed, so old
   # names stay valid for tabs still running the previous build AND for a rollback
   # to index.html.prev, which references the chunks it was built against. Pruned

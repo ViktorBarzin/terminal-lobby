@@ -161,9 +161,6 @@ class FakeApi implements LobbyApi {
   async getSnapshot() {
     return [];
   }
-  async listDirs() {
-    return [];
-  }
 }
 
 function card(session: Session, show: boolean | undefined) {
