@@ -215,6 +215,15 @@ var Package = Manifest{
 		// The only command the deploy SSH key may run. Unmanaged: no unit runs
 		// it, the forced command does.
 		{Src: "devvm/tl-reconcile", Dest: "/usr/local/bin/tl-reconcile", Mode: 0o755, Unmanaged: true},
+		// Renders /etc/terminal-lobby.users into the identity map and the sudo
+		// grant, for boxes with no roster. Unmanaged: an operator runs it, no
+		// unit does, and it refuses to run where a roster owns those files.
+		{Src: "bin/tl-users", Dest: "/usr/local/bin/tl-users", Mode: 0o755, Unmanaged: true},
+		// The declaration's TEMPLATE, not the declaration. It lands beside the
+		// real path rather than on it: shipping content to
+		// /etc/terminal-lobby.users would make the package a writer of identity
+		// data, which is the thing that revoked two users' terminals.
+		{Src: "devvm/terminal-lobby.users.template", Dest: "/usr/share/terminal-lobby/terminal-lobby.users.template", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tmux.conf.system", Dest: "/etc/tmux.conf", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-pool-warm@.service", Dest: "/etc/systemd/user/tl-pool-warm@.service", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-prewarm@.service", Dest: "/etc/systemd/user/tl-prewarm@.service", Mode: 0o644, Unmanaged: true},
