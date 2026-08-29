@@ -42,25 +42,29 @@ jobs:
           TREE=out/ttyd-pkg
           mkdir -p "$TREE/usr/local/bin" "$TREE/DEBIAN"
           install -m 0755 out/ttyd "$TREE/usr/local/bin/ttyd"
-          cat > "$TREE/DEBIAN/control" <<CTL
-          Package: ttyd-devvm
-          Version: $VERSION
-          Architecture: amd64
-          Maintainer: Viktor Barzin <me@viktorbarzin.me>
-          Depends: libwebsockets19 | libwebsockets-dev, libjson-c5 | libjson-c-dev
-          Description: ttyd 1.7.7 with the devvm patches
-           Forwards the browser's pixel size to the pty so tmux re-emits sixel,
-           honours the client PAUSE opcode so flow control works, and serves the
-           custom index with an ETag so boots revalidate instead of re-downloading.
-          CTL
+          # printf, not a heredoc: inside an indented YAML block the terminator
+          # would be indented too, which <<EOF never matches -- and Debian
+          # control fields must start at column 0, since an indented line is a
+          # field continuation.
+          {
+            printf 'Package: ttyd-devvm\n'
+            printf 'Version: %s\n' "$VERSION"
+            printf 'Architecture: amd64\n'
+            printf 'Maintainer: Viktor Barzin <me@viktorbarzin.me>\n'
+            printf 'Depends: libwebsockets19 | libwebsockets-dev, libjson-c5 | libjson-c-dev\n'
+            printf 'Description: ttyd 1.7.7 with the devvm patches\n'
+            printf ' Forwards the browser pixel size to the pty so tmux re-emits sixel,\n'
+            printf ' honours the client PAUSE opcode so flow control works, and serves the\n'
+            printf ' custom index with an ETag so boots revalidate instead of re-downloading.\n'
+          } > "$TREE/DEBIAN/control"
           # A ttyd upgrade must restart what runs it; the lobby package does not
-          # own this binary and cannot notice.
-          cat > "$TREE/DEBIAN/postinst" <<'PST'
-          #!/bin/sh
-          set -e
-          [ "$1" = "configure" ] || exit 0
-          systemctl is-active --quiet ttyd && systemctl restart ttyd || true
-          PST
+          # own this binary and cannot notice it moved.
+          {
+            printf '#!/bin/sh\n'
+            printf 'set -e\n'
+            printf '[ "$1" = "configure" ] || exit 0\n'
+            printf 'systemctl is-active --quiet ttyd && systemctl restart ttyd || true\n'
+          } > "$TREE/DEBIAN/postinst"
           chmod 0755 "$TREE/DEBIAN/postinst"
           dpkg-deb --root-owner-group --build "$TREE" "out/ttyd-devvm_${VERSION}_amd64.deb"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
