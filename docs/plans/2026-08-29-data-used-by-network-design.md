@@ -1,6 +1,10 @@
 # Data used, split by the link it crossed
 
-**Status:** shipped 2026-08-29 · **Scope:** `tmux-api/netinfo.go`,
+**Status:** shipped 2026-08-29; the WiFi/cellular axis is superseded the same
+day by [the network redesign](2026-08-29-data-used-by-network-redesign.md),
+which drops the category and names the networks instead. Everything below about
+why the browser cannot answer, and how the address is resolved, still holds. ·
+**Scope:** `tmux-api/netinfo.go`,
 `frontend-v2/src/diagnostics/{network,usage}.ts`, the Settings panel
 
 "Data used" already answered how much Terminal Lobby cost a device. Abroad it is
