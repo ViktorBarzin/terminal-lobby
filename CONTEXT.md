@@ -329,12 +329,40 @@ _Avoid_: stop, end, close
 **Data used**:
 What Terminal Lobby cost a **device** in **wire bytes** over a period — today,
 the last 7 days, this calendar month, last calendar month — split into five
-feature **buckets**. Per browser profile, never per account: every tab on a
-device, and the terminal iframe inside them, add into one figure. Read in
-Settings; the counter runs whether or not diagnostics are being sent, because
-it never leaves the browser.
+feature **buckets** and across three **network kinds**. Per browser profile,
+never per account: every tab on a device, and the terminal iframe inside them,
+add into one figure. Read in Settings; the counter runs whether or not
+diagnostics are being sent, because it never leaves the browser.
 _Avoid_: bandwidth, traffic, network usage (each ambiguous between what
 travelled and what the app received)
+
+**Network kind**:
+Which link a window's **wire bytes** crossed: **WiFi**, **cellular**, or
+**unknown**. The dimension that makes a monthly figure answerable while
+roaming. Not a browser fact — Safari ships no Network Information API and where
+one exists it calls a wired desktop "4g" — so it is derived from the **network**
+the server saw the request arrive from. `unknown` is a real answer, carrying
+every byte counted before the attribution existed plus any window whose network
+could not be resolved; it stays in the total and out of both named columns.
+_Avoid_: connection type, medium
+
+**Network**:
+One operator's network as the server names it from the address a request came
+from: `lan` for anything that reached the internal ingress without crossing the
+public internet, `as29580` for a resolved operator, or an opaque digest when the
+lookup fails. Carries a label and country for display. The key a **correction**
+is stored against — stable across reconnects and across the address changing,
+which is what lets one tap settle a network for good.
+_Avoid_: ISP, carrier (either may be both), SSID (never visible to the browser)
+
+**Correction**:
+A person's own answer to whether a **network** is WiFi or cellular, which always
+wins over the server's guess. Kept in roamed prefs keyed by **network**, so it
+holds on every device. Needed because the server only claims `cell` on an
+unambiguous tell in the operator's name: most operators sell fixed and mobile
+access under one brand, and a confidently wrong label costs the same tap to fix
+as an unknown one while being harder to notice.
+_Avoid_: override (right in code), manual mode
 
 **Wire bytes**:
 Bytes that actually crossed the link, after compression. Distinct from what the
