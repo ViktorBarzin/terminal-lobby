@@ -57,12 +57,21 @@ downgrade is undone by the next push.
 The pipeline builds and publishes on every push to master. The trigger that
 tells the box to install is off until three things exist.
 
-**A `WOODPECKER_TOKEN` secret** on the GitHub mirror, which is what authenticates
-Actions to Woodpecker. Mint it from the Woodpecker UI under your user settings:
+It was switched on for this homelab on 2026-08-29. What that took, for anyone
+setting it up elsewhere or rebuilding this:
+
+**A `WOODPECKER_TOKEN` secret** on the GitHub mirror, authenticating Actions to
+Woodpecker. Here it comes from Vault `secret/ci/global` → `woodpecker_api_token`:
 
 ```sh
-gh secret set WOODPECKER_TOKEN --repo ViktorBarzin/terminal-lobby
+vault kv get -field=woodpecker_api_token secret/ci/global \
+  | gh secret set WOODPECKER_TOKEN --repo ViktorBarzin/terminal-lobby
 ```
+
+**A pipeline that answers the trigger.** `infra/.woodpecker/terminal-lobby-deploy.yml`,
+gated on `PIPELINE == "terminal-lobby-deploy"`, plus a `devvm_ssh_key`
+repo-secret on the infra repo carrying the private half of
+`secret/woodpecker/devvm_ssh_key`.
 
 Then the two box-side pieces below, and finally:
 
@@ -84,14 +93,21 @@ sudo curl -fsSL -o /etc/apt/keyrings/forgejo-viktor.asc \
   https://forgejo.viktorbarzin.me/api/packages/viktor/debian/repository.key
 ```
 
-And the forced command, in root's `authorized_keys`:
+And the forced command. The key in `secret/woodpecker/devvm_ssh_key` is issued
+for `wizard`, not root, so the entry goes in **wizard's** `authorized_keys` and
+the reconcile reaches root through one narrow sudo grant:
 
 ```
-command="/usr/local/bin/tl-reconcile",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,restrict ssh-ed25519 AAAA... woodpecker-deploy
+command="sudo -n /usr/local/bin/tl-reconcile",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,restrict ssh-ed25519 AAAA... woodpecker-terminal-lobby
 ```
 
-The public half of `secret/woodpecker/devvm_ssh_key` is the key to install. Every
-restriction there matters: without `command=` the key is a root shell.
+```sh
+# /etc/sudoers.d/tl-reconcile, mode 0440 root:root
+wizard ALL=(root) NOPASSWD: /usr/local/bin/tl-reconcile
+```
+
+Every restriction matters: without `command=` this key is a shell. It was
+installed unrestricted before 2026-08-29, which is what that audit found.
 
 ## Stopping a deploy
 
