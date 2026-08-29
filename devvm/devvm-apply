@@ -8,6 +8,13 @@
 #
 # It updates from ONE apt source, not every source on the box: a deploy must not
 # be able to drag in an unrelated distribution upgrade.
+#
+# It takes no version argument, deliberately. The box tracks latest with no pin
+# (design decision 3), so a trigger means "go and see what the source offers",
+# not "install exactly this". The VERSION the pipeline passes is a label for the
+# audit log; if two releases land close together, one trigger can install the
+# newer of them and the next finds nothing to do. That is the intended
+# behaviour of tracking latest, not a lost deploy.
 set -euo pipefail
 
 LIST=/etc/apt/sources.list.d/terminal-lobby.list
