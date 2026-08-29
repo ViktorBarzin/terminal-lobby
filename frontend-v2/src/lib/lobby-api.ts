@@ -306,21 +306,6 @@ export async function getSnapshot(ts: string): Promise<SnapshotRow[]> {
   return Array.isArray(rows) ? rows : [];
 }
 
-/** GET /api/dirs → candidate directories for the project dir picker. */
-export async function listDirs(): Promise<string[]> {
-  try {
-    const arr = await json<unknown>("/dirs", { cache: "no-store" });
-    if (Array.isArray(arr)) return arr.filter((d): d is string => typeof d === "string");
-    // /dirs may return {dirs, truncated}
-    if (arr && typeof arr === "object" && Array.isArray((arr as { dirs?: unknown[] }).dirs)) {
-      return (arr as { dirs: unknown[] }).dirs.filter((d): d is string => typeof d === "string");
-    }
-  } catch {
-    /* dir picker degrades to a free-text field */
-  }
-  return [];
-}
-
 /** The full client surface, bundled so a store/test can inject a fake. */
 export interface LobbyApi {
   whoami(): Promise<Whoami>;
@@ -334,7 +319,6 @@ export interface LobbyApi {
   restoreSessions(sel?: RestoreSelection): Promise<void>;
   listSnapshots(): Promise<SnapshotList>;
   getSnapshot(ts: string): Promise<SnapshotRow[]>;
-  listDirs(): Promise<string[]>;
   prewarm(dir: string): Promise<void>;
   releasePrewarm(dir: string): Promise<void>;
 }
@@ -351,7 +335,6 @@ export const lobbyApi: LobbyApi = {
   restoreSessions,
   listSnapshots,
   getSnapshot,
-  listDirs,
   prewarm,
   releasePrewarm,
 };
