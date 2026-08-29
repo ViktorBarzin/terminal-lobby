@@ -151,6 +151,12 @@ src/
                          owner 4th arg, which the act-as target defaults into)
                          — red-line-class, unit-tested
   diagnostics/
+    usage.ts             Data used: what the lobby cost THIS device in wire
+                         bytes, so the question the 1.83 GB/24h measurement
+                         answered offline can be asked on the device itself.
+                         Three buckets measured from Navigation/Resource Timing;
+                         the WebSocket and SSE streams are modelled, and labelled
+                         as modelled wherever they are shown
     connection.ts        Measures the link (Navigation Timing bytes/time + an
                          optional tiny RTT probe — navigator.connection does not
                          exist on iOS), classifies full/slow, remembers the
