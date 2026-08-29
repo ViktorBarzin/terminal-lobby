@@ -313,7 +313,7 @@ scp -o BatchMode=yes -r out/assets/. "wizard@${DEVVM}:/tmp/tl-deploy-assets/"
 
 echo "==> Installing on $DEVVM (${REMOTE_UNIT} :${REMOTE_PORT})..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" \
-  REMOTE_INDEX="$REMOTE_INDEX" REMOTE_UNIT="$REMOTE_UNIT" \
+  REMOTE_INDEX="$REMOTE_INDEX" REMOTE_UNIT="$REMOTE_UNIT" REV="$REV" \
   bash -se <<'REMOTE'
   set -euo pipefail
   # restart_ttyd tracks whether anything ttyd actually SERVES changed. A restart
