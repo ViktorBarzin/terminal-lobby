@@ -1,0 +1,21 @@
+# Keeps the build cache useful and the image reproducible.
+#
+# The build stage does COPY . ., so without this a markdown edit invalidates the
+# layer and rebuilds all five binaries — defeating the GitHub Actions cache the
+# workflow pays for. node_modules matters more: the web stage runs npm ci and
+# then copies frontend-v2/, so a developer's local install would overwrite the
+# clean one and the local smoke test would build a different bundle than CI.
+.git
+.gitignore
+.github
+.worktrees
+.claude
+.playwright-mcp
+**/node_modules
+**/dist
+out
+tmp-build
+docs
+*.md
+!frontend-v2/README.md
+scripts/devserve

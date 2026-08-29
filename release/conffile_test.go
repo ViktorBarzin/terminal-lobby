@@ -112,3 +112,66 @@ func TestLocalOverrideIsNotAConffile(t *testing.T) {
 		t.Fatalf("%s is listed as a conffile; dpkg would prompt about it every upgrade", LocalConfigPath)
 	}
 }
+
+// Every process that resolves an identity — the five services and t3-sync,
+// which is a CLIENT of tmux-api and has to send what tmux-api expects — must
+// source the config. t3-sync was missed the first time: its unit carried only
+// its own env file, so after an upgrade it sent the compiled default header
+// while tmux-api expected the configured one, and every call 401'd.
+func TestEveryIdentityAwareUnitSourcesTheConfig(t *testing.T) {
+	// ttyd expands ${TL_AUTH_HEADER} in its ExecStart; the rest read the env.
+	binaries := []string{
+		"ttyd", "tmux-api", "file-api", "session-events", "skills-api",
+		"clipboard-upload", "tl-t3-sync",
+	}
+	units, err := filepath.Glob(filepath.Join("..", "devvm", "*.service"))
+	if err != nil || len(units) == 0 {
+		t.Fatalf("no unit files found: %v", err)
+	}
+	checked := 0
+	for _, u := range units {
+		b, err := os.ReadFile(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(b)
+		var wants bool
+		for _, bin := range binaries {
+			if strings.Contains(body, "ExecStart=/usr/local/bin/"+bin+" ") ||
+				strings.Contains(body, "ExecStart=/usr/local/bin/"+bin+"\n") {
+				wants = true
+			}
+		}
+		if !wants {
+			continue
+		}
+		checked++
+		if !strings.Contains(body, "EnvironmentFile=-"+ConfigPath) {
+			t.Errorf("%s runs an identity-aware binary but does not source %s",
+				filepath.Base(u), ConfigPath)
+		}
+		if !strings.Contains(body, "EnvironmentFile=-"+LocalConfigPath) {
+			t.Errorf("%s does not source %s, so the upgrade migration would not reach it",
+				filepath.Base(u), LocalConfigPath)
+		}
+	}
+	if checked < 6 {
+		t.Fatalf("only %d identity-aware units checked; expected at least 6", checked)
+	}
+}
+
+// The default an operator gets with no configuration at all must be the one
+// that needs no shared secret. A service on 0.0.0.0 with TL_PROXY_SECRET unset
+// trusts the identity header from anything that can reach it.
+func TestShippedDefaultBindsLoopback(t *testing.T) {
+	for _, line := range strings.Split(DefaultConfig(), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "TL_BIND=") {
+			if strings.TrimSpace(line) != "TL_BIND=127.0.0.1" {
+				t.Fatalf("shipped default is %q; a fresh install should not be reachable "+
+					"from the network without a secret", strings.TrimSpace(line))
+			}
+			return
+		}
+	}
+	t.Fatal("shipped config does not set TL_BIND")
+}

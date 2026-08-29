@@ -9,7 +9,7 @@
 # Authentication is still the proxy's job. With no proxy in front, ttyd's own
 # basic auth is the shortest way to avoid publishing an open shell:
 #
-#   docker run -p 7681:7681 -e TL_TTYD_CREDENTIAL=me:secret ...
+#   docker run -p 7681:7681 -e TL_BASIC_AUTH=me:secret ...
 
 FROM golang:1.23-bookworm AS build
 WORKDIR /src
@@ -36,7 +36,7 @@ FROM debian:bookworm-slim
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      tmux git ca-certificates curl procps less nano tini; \
+      tmux git ca-certificates curl procps less nano tini nginx openssl; \
     rm -rf /var/lib/apt/lists/*
 
 # ttyd is not in Debian, so the upstream static build is pinned by digest.
@@ -66,12 +66,16 @@ COPY devvm/tmux-attach.sh /usr/local/bin/tmux-attach.sh
 # here unmodified.
 COPY devvm/tmux-user-attach /usr/local/bin/tmux-user-attach
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY docker/nginx.conf.template /etc/nginx/nginx.conf.template
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/tmux-attach.sh \
       /usr/local/bin/tmux-user-attach
 
+# The services bind loopback: nginx is the only thing that reaches them, and it
+# is in the same network namespace. Nothing outside the container can send an
+# identity header directly at a service.
 ENV TL_MULTI_USER=off \
     TL_AUTH_HEADER=X-Forwarded-User \
-    TL_BIND=0.0.0.0 \
+    TL_BIND=127.0.0.1 \
     TL_USER=dev
 
 EXPOSE 7681

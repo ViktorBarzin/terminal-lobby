@@ -13,12 +13,14 @@ proxy configuration at all beyond a username header.
 
 ```sh
 docker run -p 7681:7681 -v ~/work:/home/dev \
-  -e TL_TTYD_CREDENTIAL=me:changeme \
+  -e TL_BASIC_AUTH=me:changeme \
   ghcr.io/viktorbarzin/terminal-lobby
 ```
 
-Then open http://localhost:7681. That is single-user mode: one account, no
-sudo, your sessions and nobody else's.
+Open http://localhost:7681 and sign in. That is single-user mode: one account,
+no sudo, your sessions and nobody else's. Drop `TL_BASIC_AUTH` and the container
+asks for nothing, which is fine on a laptop and not on anything reachable. Put a
+proxy in front instead and set `TL_TRUST_FORWARDED_USER=1`.
 
 ## Install on a machine
 
@@ -57,8 +59,8 @@ set `X-Forwarded-User`.
 ## Single-user and multi-user
 
 Single-user is the default: one account, no user map, no sudo, no ACLs. The
-services run as the invoking user and serve only that user, and Share, project
-members and act-as are absent because there is nobody else to share with.
+services run as the invoking user and serve only that user, and the act-as
+picker is hidden because there is nobody else to be.
 
 Multi-user turns on when `/etc/ttyd-user-map` exists. Several people then get
 kernel-isolated sessions on one box, and can share sessions read-only or

@@ -31,6 +31,12 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/%i/.local/bin
 # on guessed settings. Absent file = unit fails to start = the user is not
 # enabled, which is the correct reading. See tl-t3-sync.env.example for the
 # keys; every one of them is required.
+# The lobby's own configuration first: this syncer is a CLIENT of tmux-api and
+# has to agree with it about which header carries the identity, and about the
+# proxy secret when one is set. Without these two lines it sends the compiled
+# default while tmux-api expects whatever the box configured, and every call 401s.
+EnvironmentFile=-/etc/terminal-lobby.conf
+EnvironmentFile=-/etc/terminal-lobby.local.conf
 EnvironmentFile=/etc/tl-t3-sync/%i.env
 WorkingDirectory=/home/%i
 # ${VAR} substitutes as exactly one argument, including mid-word (systemd.service(5)

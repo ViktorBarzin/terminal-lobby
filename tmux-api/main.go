@@ -348,6 +348,15 @@ func main() {
 			addr = net.JoinHostPort(b, port)
 		}
 	}
+	// Restore the event a refused act-as used to emit. The gate does the
+	// refusing now, so the emitter is wired in rather than re-implemented per
+	// handler; without it an administrator probing targets they are not
+	// entitled to leaves a journald line and nothing the dashboards query.
+	actAsGate.OnActAsRefused = func(realOSUser, target, reason string) {
+		events.Emit("admin.actas.refused", realOSUser, telemetry.Attrs{
+			"tl.to": target, "tl.kind": reason,
+		})
+	}
 	actAsGate.Configure("tmux-api", addr)
 	if a := os.Getenv("TMUX_API_ADDR"); a != "" {
 		addr = a

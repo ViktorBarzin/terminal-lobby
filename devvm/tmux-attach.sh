@@ -25,7 +25,11 @@ single_user=false
 case "$mode_cfg" in
     off|false|0|no) single_user=true ;;
     on|true|1|yes)  single_user=false ;;
-    *)              [[ -r "$MAP" ]] || single_user=true ;;
+    # -e, not -r: the Go gate decides "auto" with os.Stat (exists). An
+    # existing-but-unreadable map would otherwise make the terminal single-user
+    # while the APIs stayed multi-user, dropping every identity into the ttyd
+    # account while the sidebar still showed their own sessions.
+    *)              [[ -e "$MAP" ]] || single_user=true ;;
 esac
 
 os_user=""
