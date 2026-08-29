@@ -147,3 +147,60 @@ func TestParseDialogReadsPastTheComposerBorder(t *testing.T) {
 		t.Fatalf("the option below the border was lost: %+v", d.Questions[0].Options)
 	}
 }
+
+// A question longer than the pane is wide, which is the ordinary case for any
+// real question: the CLI wraps it over several lines and draws its border glyph
+// down the left of each one.
+//
+// Both halves of this were broken, and the second hid the first. The parser took
+// exactly ONE line — the last visual line of the question — so the card asked
+// "…so this needs a designed answer.)": a fragment starting mid-sentence, ending
+// on a bracket opened by a line that never arrived. And the border glyph was
+// never stripped, so what did arrive was prefixed with it. The card had no way to
+// know any of that, so it offered a live Send on a question the reader could only
+// partly read.
+//
+// Stripping the glyph is not new knowledge in this repo — answer.logic.ts does
+// exactly this before matching a pane, and says why. It simply never reached the
+// parser on the other side of the wire.
+func TestParseDialogReadsAQuestionThatWrapsOverSeveralLines(t *testing.T) {
+	d := ParseDialog(fixture(t, "dialog-wrapped.txt"))
+	if d == nil {
+		t.Fatal("a wrapped question dialog was not recognised")
+	}
+	if len(d.Questions) != 1 {
+		t.Fatalf("questions = %+v", d.Questions)
+	}
+	q := d.Questions[0]
+	want := `Push, then — which mechanism delivers "a package was published, go get it"? ` +
+		`(In all four, apt still fetches the bytes; what is being pushed is the trigger.)`
+	if q.Question != want {
+		t.Fatalf("question =\n  %q\nwant\n  %q", q.Question, want)
+	}
+	if q.Header != "Push path" {
+		t.Fatalf("header = %q, want %q", q.Header, "Push path")
+	}
+	if len(q.Options) != 2 {
+		t.Fatalf("options = %+v", q.Options)
+	}
+	if q.Options[0].Label != "GHA → Woodpecker API → SSH forced-command (recommended)" {
+		t.Fatalf("option 1 = %+v", q.Options[0])
+	}
+}
+
+// The header sits above the question with a blank line between them. Accumulating
+// the question upward must stop at that blank, or the header is swallowed into
+// the question text and the chip goes empty.
+func TestParseDialogStopsTheQuestionAtTheBlankAboveIt(t *testing.T) {
+	d := ParseDialog(fixture(t, "dialog-single.txt"))
+	if d == nil {
+		t.Fatal("dialog not recognised")
+	}
+	q := d.Questions[0]
+	if q.Question != "Which font should the badge use?" {
+		t.Fatalf("question = %q — the walk ran past the blank line", q.Question)
+	}
+	if q.Header != "Font" {
+		t.Fatalf("header = %q — swallowed into the question", q.Header)
+	}
+}
