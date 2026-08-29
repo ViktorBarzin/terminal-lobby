@@ -54,6 +54,10 @@ export interface ComposerSinks {
 }
 
 export const Composer: Component<{
+  /** The text view's pinch size. Read only to re-measure the field when it
+   *  changes — the height is written in px, so the text would otherwise outgrow
+   *  a box that stays where it was. */
+  textSize?: number;
   /** A turn is in flight, so there is something to Stop. NOT a reason to
    *  withhold Send: it is derived from the transcript and lags the pane, and a
    *  mid-turn send queues rather than failing. */
@@ -158,10 +162,24 @@ export const Composer: Component<{
   /** Where ↑ has walked to in history; -1 is "not browsing". */
   const [histAt, setHistAt] = createSignal(-1);
 
+  /**
+   * Make the field as tall as its text.
+   *
+   * `scrollHeight` covers content and padding but NOT the border, and
+   * everything here is border-box (app.css:5) — so writing it straight back as
+   * a height leaves the content box short by exactly the borders, and a single
+   * line is sliced along its middle. Measured before this: a 24px line in a
+   * 42px field with 40px of client height.
+   *
+   * Re-measured whenever the pinch size changes as well as on input: the height
+   * is written in px at the moment of typing, so without that the text grows
+   * inside a box that stays where it was.
+   */
   const autosize = () => {
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+    const chrome = ta.offsetHeight - ta.clientHeight; // borders, under border-box
+    ta.style.height = Math.min(ta.scrollHeight + chrome, 200) + "px";
   };
 
   const sync = () => {
@@ -197,6 +215,13 @@ export const Composer: Component<{
       setDraft(saved.text);
       autosize();
     }
+  });
+
+  // The pinch changed the type size under a field whose height is already
+  // written in px. Nothing else re-measures it.
+  createEffect(() => {
+    props.textSize;
+    autosize();
   });
 
   createEffect(() => {

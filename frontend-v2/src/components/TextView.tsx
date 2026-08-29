@@ -366,6 +366,7 @@ export const TextView: Component<{
       </Show>
       <Composer
         working={props.working}
+        textSize={textSize()}
         // Send stays available while a question is docked — ADR-0010's "whoever
         // answers first wins" — but it says what it will cost: a prompt takes
         // the dialog down and Claude asks again. `asking()` is the same signal
