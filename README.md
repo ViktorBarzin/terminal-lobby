@@ -22,34 +22,44 @@ iframe that swaps between sessions on click. Direct-linked sessions
 (`?arg=<name>` at the top level) bypass the lobby and render fullscreen
 for bookmarks / CLI links.
 
-![lobby with an active session, slate theme](docs/screenshots/lobby-active-session.png)
+![the lobby with a session attached](docs/screenshots/terminal.png)
 
 ## Screenshots
 
-<table>
-  <tr>
-    <td><img src="docs/screenshots/lobby-slate.png"  alt="Slate theme — default"></td>
-    <td><img src="docs/screenshots/lobby-carbon.png" alt="Carbon theme — warm dark"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Slate (default) — cool dark, electric blue accent</sub></td>
-    <td align="center"><sub>Carbon — warm dark, restrained amber</sub></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/lobby-mono.png" alt="Mono theme — greyscale"></td>
-    <td><img src="docs/screenshots/lobby-ink.png"  alt="Ink theme — warm paper light"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Mono — strict greyscale</sub></td>
-    <td align="center"><sub>Ink — warm paper, terracotta accent</sub></td>
-  </tr>
-</table>
+Sessions are grouped into projects in the sidebar. A collapsed group keeps
+its session count and the aggregated Claude state dots, so you can tell at a
+glance whether anything is waiting on you.
+
+![sidebar with projects, one expanded and the rest collapsed](docs/screenshots/lobby.png)
+
+**Watch mode** attaches read-only. The eye marks the session, typing is
+disabled, and Upload and Paste grey out, so you can follow along without
+touching the pane.
+
+![watch mode, read-only attach](docs/screenshots/watch-mode.png)
+
+**File preview** opens any file the session's user can read, with syntax
+highlighting and an edit button.
+
+![file preview with syntax highlighting](docs/screenshots/file-preview.png)
+
+**Skills** lists the Claude Code skills each account has and lets you install
+a copy of someone else's without touching theirs.
+
+![the skills manager](docs/screenshots/skills.png)
+
+**Settings** carries nine themes, terminal font and text tuning, cursor
+options and scrolling behaviour. Theme is per-device.
+
+![the settings panel](docs/screenshots/settings.png)
+
+Light themes are first-class, not an afterthought:
+
+![the ink theme, warm paper light](docs/screenshots/theme-ink.png)
 
 The `‹` toggle in the top of the sidebar collapses it for a fullscreen
 terminal view; click `›` to bring it back. Choice persists per browser
 (localStorage).
-
-![sidebar collapsed — fullscreen terminal](docs/screenshots/sidebar-collapsed.png)
 
 ## Projects & session state
 
@@ -542,3 +552,11 @@ keeps pinch-zoom available for accessibility but kills double-tap
 zoom. The sidebar auto-collapses on first session activation on
 mobile so the terminal gets the full viewport; the toggle in the
 top-right re-opens it (choice persists in `localStorage`).
+
+## Licence
+
+AGPL-3.0-or-later, with a commercial licence available for cases the AGPL
+does not fit. The details, including what the network clause means if you
+modify terminal-lobby and serve it to anyone, are in
+[LICENSING.md](LICENSING.md). If you change something, please open a pull
+request; [CONTRIBUTING.md](CONTRIBUTING.md) says what that involves.
