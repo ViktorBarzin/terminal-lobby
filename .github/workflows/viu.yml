@@ -11,7 +11,7 @@ on:
       crate_version:
         description: 'viu crate version to build'
         required: true
-        default: '1.5.1'
+        default: '1.6.1'
 
 permissions:
   contents: read
@@ -25,7 +25,24 @@ jobs:
       - name: build
         run: |
           set -euo pipefail
-          cargo install viu --version "${{ inputs.crate_version }}" --features icy_sixel --root "$PWD/viu-root" --locked
+          # 1.5.1 has no icy_sixel feature -- it arrived later, and the version
+          # running on the devvm today (1.6.1) carries icy_sixel 0.1.3. --locked
+          # is deliberately absent: a yanked transitive crate would fail the
+          # build for no benefit, and nothing here pins versions.
+          cargo install viu --version "${{ inputs.crate_version }}" --features icy_sixel --root "$PWD/viu-root"
+
+      # Sixel is the entire reason this package exists (ADR-0004): without it a
+      # session renders images as nothing. The feature is off by default
+      # upstream, so a silent flag change would otherwise ship a viu that cannot
+      # draw, and nothing downstream would notice.
+      - name: prove sixel is compiled in
+        run: |
+          set -euo pipefail
+          if ! strings viu-root/bin/viu | grep -qi 'icy_sixel'; then
+            echo "the built viu has no sixel encoder; images would not render" >&2
+            exit 1
+          fi
+          echo "sixel encoder present"
 
       - name: package
         run: |
