@@ -133,7 +133,9 @@ export function permissionUrl(reqId: string): string {
 }
 
 /** POST target to inject a prompt into the session's Claude (session-events).
- *  Body: {text}. 204 on success, 409 if a turn is already running. */
+ *  Body: {text}. 204 on success, 400 on an empty body, 502 if the injection
+ *  failed. A mid-turn send is NOT an error — the turn gate was removed on
+ *  2026-08-15 and Claude Code queues typed input itself. */
 export function promptUrl(session: string): string {
   return withActAs(`${API_BASE}/prompt/${encodeURIComponent(session)}`);
 }

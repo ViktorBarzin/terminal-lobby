@@ -564,13 +564,12 @@ export function createSessionStore(
         body: JSON.stringify({ text }),
       });
       if (!res.ok) {
-        // 409 = a turn is already running (config.promptUrl contract).
-        opts.notify?.(
-          res.status === 409
-            ? "A turn is already running"
-            : `Couldn't send prompt (HTTP ${res.status})`,
-          "error",
-        );
+        // No 409 arm any more. It used to say "A turn is already running", from
+        // a gate session-events removed on 2026-08-15 — a mid-turn send is a
+        // normal thing to do now, and Claude queues it. What is left is 400 (an
+        // empty body) and 502 (the injection failed), which mean the same thing
+        // to a reader: it did not land.
+        opts.notify?.(`Couldn't send prompt (HTTP ${res.status})`, "error");
       }
       if (res.ok) {
         pendingSeq += 1;
