@@ -62,9 +62,6 @@ class FakeApi implements LobbyApi {
   async getSnapshot() {
     return [];
   }
-  async listDirs() {
-    return [];
-  }
 }
 
 /**
