@@ -1,0 +1,78 @@
+# The container's reverse proxy, standing in for the ingress in production.
+#
+# It exists because the lobby is not one service: the SPA calls /api/sessions/,
+# /files/, /events/ and /skills/ on its own origin, and something has to route
+# those to five different ports. Without it the terminal works and the sidebar
+# does not, which is most of the product.
+#
+# The routing mirrors the production ingress rule for rule. scripts/qa-harness.py
+# documents the same table and is the place to check when they drift.
+#
+# It is also the thing that authenticates. That is the supported arrangement
+# everywhere else — a proxy decides who you are and sets a header — so the
+# container works the same way rather than inventing a second model.
+
+upstream ttyd             { server 127.0.0.1:7690; }
+upstream tmux_api         { server 127.0.0.1:7684; }
+upstream clipboard_upload { server 127.0.0.1:7683; }
+upstream session_events   { server 127.0.0.1:7685; }
+upstream file_api         { server 127.0.0.1:7686; }
+upstream skills_api       { server 127.0.0.1:7688; }
+
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
+server {
+  listen 7681 default_server;
+  server_name _;
+
+  # A terminal streams; buffering it would hold keystrokes and output.
+  proxy_buffering off;
+  proxy_read_timeout 24h;
+  proxy_send_timeout 24h;
+  client_max_body_size 512m;
+
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+
+  # __AUTH_BLOCK__ is replaced at startup: either a basic-auth challenge, or
+  # nothing when a proxy in front is already authenticating.
+  __AUTH_BLOCK__
+
+  # The identity every service reads. Set HERE, never taken from the client:
+  # a request that arrives carrying it must not be able to choose who it is.
+  proxy_set_header __AUTH_HEADER__ $tl_user;
+
+  # The PWA shell is served without auth, exactly as in production: a service
+  # worker and a manifest have to be fetchable for the app to install.
+  location = /manifest.webmanifest { auth_basic off; proxy_pass http://clipboard_upload; }
+  location = /sw.js               { auth_basic off; proxy_pass http://clipboard_upload; }
+  location = /icon-192.png        { auth_basic off; proxy_pass http://clipboard_upload; }
+  location = /icon-512.png        { auth_basic off; proxy_pass http://clipboard_upload; }
+  location = /icon-512-maskable.png { auth_basic off; proxy_pass http://clipboard_upload; }
+  location /assets/               { auth_basic off; proxy_pass http://clipboard_upload; }
+
+  # tmux-api is the one route whose prefix is stripped, matching the ingress.
+  location /api/sessions/ { proxy_pass http://tmux_api/; }
+
+  location /clipboard/ { proxy_pass http://clipboard_upload/; }
+
+  # session-events keeps its prefixes; /events/ streams, so it must not buffer.
+  location /events/  { proxy_pass http://session_events; proxy_buffering off; }
+  location /prompt/  { proxy_pass http://session_events; }
+  location /cancel/  { proxy_pass http://session_events; }
+  location /earlier/ { proxy_pass http://session_events; }
+  location /result/  { proxy_pass http://session_events; }
+  location /pane/    { proxy_pass http://session_events; }
+  location /keys/    { proxy_pass http://session_events; }
+
+  location /files/ { proxy_pass http://file_api; }
+  location /skills { proxy_pass http://skills_api; }
+
+  # Everything else, including / and the terminal's WebSocket, is ttyd's.
+  location / { proxy_pass http://ttyd; }
+}

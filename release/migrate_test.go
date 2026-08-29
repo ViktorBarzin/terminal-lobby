@@ -91,3 +91,29 @@ func TestPostinstOnlyValidatesTheSudoersGrantWhenItExists(t *testing.T) {
 		t.Fatal("postinst validates the sudoers grant unconditionally; a single-user install has none")
 	}
 }
+
+// The shipped default binds loopback, which is safe but wrong for a box whose
+// proxy is an ingress somewhere else: narrowing under a live install would take
+// the lobby down. The migration widens it on exactly the boxes that were already
+// serving, identified the same way as the header.
+func TestMigrationKeepsAnExistingBoxReachable(t *testing.T) {
+	got, err := run(t, true, "")
+	if err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	if !strings.Contains(got, "TL_BIND=0.0.0.0") {
+		t.Fatalf("an existing box was not kept reachable:\n%s", got)
+	}
+}
+
+// A fresh install keeps the safe default. Writing the wide one here would undo
+// the point of changing the default.
+func TestMigrationDoesNotWidenAFreshInstall(t *testing.T) {
+	got, err := run(t, false, "")
+	if err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	if strings.Contains(got, "TL_BIND=0.0.0.0") {
+		t.Fatalf("a fresh install was widened to every interface:\n%s", got)
+	}
+}

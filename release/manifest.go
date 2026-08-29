@@ -70,9 +70,12 @@ TL_AUTH_HEADER=X-Forwarded-User
 # off   force single-user: everything runs as the invoking user, no sudo
 TL_MULTI_USER=auto
 
-# Listen address for the services. 127.0.0.1 is right when the proxy runs on
-# this host, and removes the LAN path without needing a shared secret.
-TL_BIND=0.0.0.0
+# Listen address for the services. The default admits only a proxy on this same
+# host, which is the arrangement that needs no shared secret at all. Widen it to
+# 0.0.0.0 when the proxy is somewhere else — an ingress in a cluster, say — and
+# set TL_PROXY_SECRET in the same change, because a service reachable from the
+# network trusts TL_AUTH_HEADER from anything that reaches it.
+TL_BIND=127.0.0.1
 `
 }
 
@@ -303,6 +306,12 @@ if [ ! -e "$TL_LOCAL_CONF" ] && [ -e "$TL_USER_MAP" ]; then
 # Yours to edit. The package replaces /etc/terminal-lobby.conf on upgrade and
 # never touches this file.
 TL_AUTH_HEADER=X-Authentik-Username
+
+# This box was already serving before TL_BIND had a default, and its proxy is
+# not on this host, so narrowing to 127.0.0.1 would take the lobby down. Set to
+# what it was. If your proxy can send a shared secret, set TL_PROXY_SECRET here
+# and have it send X-TL-Proxy-Secret — that is what closes the network path.
+TL_BIND=0.0.0.0
 TLEOF
   chmod 0644 "$TL_LOCAL_CONF"
   echo "terminal-lobby: pinned TL_AUTH_HEADER=X-Authentik-Username in $TL_LOCAL_CONF (existing multi-user box)"

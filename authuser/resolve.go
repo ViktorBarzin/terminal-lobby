@@ -132,6 +132,9 @@ func (g *Gate) Resolve(r *http.Request) (Identity, error) {
 			// No second account exists to act as. ErrNotAdmin rather than a new
 			// error: from the caller's side this is the same refusal, and the
 			// services already map it to 403.
+			if g.OnActAsRefused != nil {
+				g.OnActAsRefused(self, as, ErrNotAdmin.Error())
+			}
 			return Identity{}, ErrNotAdmin
 		}
 		return out, nil
@@ -157,10 +160,14 @@ func (g *Gate) Resolve(r *http.Request) (Identity, error) {
 	out.RealOSUser = real
 	out.Admin = g.IsAdmin(real)
 
-	eff, err := g.Effective(real, strings.TrimSpace(r.URL.Query().Get("as")), func(u string) bool {
+	target := strings.TrimSpace(r.URL.Query().Get("as"))
+	eff, err := g.effective(real, target, func(u string) bool {
 		return isTarget(m, u)
-	})
+	}, out.Admin)
 	if err != nil {
+		if g.OnActAsRefused != nil {
+			g.OnActAsRefused(real, target, err.Error())
+		}
 		return Identity{}, err
 	}
 	out.OSUser = eff
@@ -215,16 +222,25 @@ func (g *Gate) mapPath() string {
 }
 
 // self is the OS user this process runs as, and therefore the only account a
-// single-user install serves. Looked up once and cached: it cannot change while
-// the process lives.
+// single-user install serves.
+//
+// It never writes to the Gate. One Gate is shared by every HTTP handler
+// goroutine, and single-user is the hot path — the default for a fresh install
+// and the only mode the container runs — so a lazy assignment here raced with
+// the reads, which the race detector catches.
+//
+// Nor is it guarded by a lock: that would make Gate uncopyable, and five call
+// sites legitimately copy one to override a single field. os/user.Current
+// memoises internally, so the fallback costs a map lookup rather than an NSS
+// call, and Configure sets SelfUser at startup anyway.
 func (g *Gate) self() string {
 	if g.SelfUser != "" {
 		return g.SelfUser
 	}
 	if u, err := user.Current(); err == nil {
-		g.SelfUser = u.Username
+		return u.Username
 	}
-	return g.SelfUser
+	return ""
 }
 
 // userMap parses identity → OS user. Format "<identity>=<os_user>[:<cwd>]", one
@@ -371,6 +387,9 @@ func (g *Gate) Configure(service, bindAddr string) {
 	if g.AdminsPath == "" {
 		g.AdminsPath = DefaultAdminsPath
 	}
+	// Resolve it here, before any handler goroutine exists, so the hot path
+	// never writes to the shared Gate.
+	_ = g.self()
 	mode := "single-user"
 	if g.MultiUser() {
 		mode = "multi-user"

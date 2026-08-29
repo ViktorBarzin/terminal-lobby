@@ -93,10 +93,10 @@ deploy.
 Adding a new user:
 
 1. **Add them to `roster.yaml`** in the infra repo and let the reconcile run (or
-   run it: `sudo /home/wizard/code/infra/scripts/t3-provision-users.sh`). That
+   run whatever provisioning script owns the roster on your box). That
    creates the account and regenerates the map and the admin list.
 2. **Append their sudo grant** to `devvm/sudoers.d-ttyd-users` here — one
-   `wizard ALL=(os_user) NOPASSWD: …` line, copying an existing user's binary
+   `<service_user> ALL=(os_user) NOPASSWD: …` line, copying an existing user's binary
    list — and deploy. This step is deliberately by hand and deliberately
    separate: the roster says who exists, this file says what may be run as them.
    **A roster entry alone is not enough.** Without the grant the user reaches the

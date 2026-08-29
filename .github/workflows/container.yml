@@ -22,6 +22,10 @@ on:
       - "clipboard-upload/**"
       - "authuser/**"
       - "sessionio/**"
+      # skills-api replaces terminal-lobby/skillscan, tmux-api replaces
+      # terminal-lobby/slug — both are bundled, so a fix there must rebuild.
+      - "skillscan/**"
+      - "slug/**"
       - "telemetry/**"
       - "devvm/tmux-attach.sh"
       - "devvm/tmux-user-attach"

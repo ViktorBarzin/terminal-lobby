@@ -2,8 +2,6 @@
 
 Running and testing the lobby without deploying it.
 
-## Local development
-
 The Go services are small and self-contained. To run locally:
 
 ```bash
@@ -11,8 +9,8 @@ The Go services are small and self-contained. To run locally:
 cd tmux-api && go run .
 
 # Then:
-curl -H "X-Authentik-Username: $(whoami)" http://localhost:7684/whoami
-curl -H "X-Authentik-Username: $(whoami)" http://localhost:7684/sessions
+curl -H "X-Forwarded-User: $(whoami)" http://localhost:7684/whoami
+curl -H "X-Forwarded-User: $(whoami)" http://localhost:7684/sessions
 ```
 
 `clipboard-upload` reads the same user map and header for its store
@@ -28,3 +26,7 @@ For end-to-end frontend work there's a loopback harness:
 injection, prefix-stripped API routes, WS passthrough, the split bundle's
 `/assets/` chunks) in front of the DEPLOYED page and the REAL backends, with a
 mutation guard that confines writes to `qa-*` sessions.
+
+The header name is `TL_AUTH_HEADER`, which defaults to `X-Forwarded-User`.
+A box configured for a different proxy sets it in `/etc/terminal-lobby.conf`,
+so use whatever that file names when running against a deployed service.

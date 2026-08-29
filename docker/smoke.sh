@@ -15,7 +15,7 @@ NAME="tl-smoke-$$"
 BUILD=1
 [[ "${1:-}" == "--no-build" ]] && BUILD=0
 
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "$NAME" "$NAME-auth" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -29,50 +29,42 @@ fi
 docker run -d --name "$NAME" -p 17681:7681 "$IMAGE" >/dev/null
 echo "started $NAME"
 
-# ttyd is last to bind, so waiting on it means everything before it is up.
-# The header is required: ttyd runs with -H, so a request without one is 401.
-probe() { curl -sf -o /dev/null -H 'X-Forwarded-User: smoke' "http://127.0.0.1:17681/"; }
-for _ in $(seq 1 60); do
-  probe && break
-  sleep 1
-done
-probe || { docker logs "$NAME" 2>&1 | tail -30 >&2; fail "ttyd never served the lobby on :17681"; }
-ok "ttyd serves the lobby"
+# nginx binds last, so waiting on it means everything behind it is up.
+probe() { curl -sf -o /dev/null "http://127.0.0.1:17681/"; }
+for _ in $(seq 1 60); do probe && break; sleep 1; done
+probe || { docker logs "$NAME" 2>&1 | tail -30 >&2; fail "nothing served the lobby on :17681"; }
+ok "the lobby is served"
 
-# Without the header ttyd refuses, which is what makes the header the thing that
-# proves a request came through a proxy.
-#
-# 407, not 401: ttyd's -H mode treats a missing header as "the proxy in front
-# did not authenticate", so it answers Proxy Authentication Required. The Go
-# services answer 401 for the same condition. Both refuse; the codes differ
-# because ttyd is describing the proxy's failure and they are describing the
-# request's.
-code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/")
-[[ "$code" == "407" ]] || fail "ttyd answered $code without an identity header, want 407"
-ok "ttyd refuses a request with no identity header (407)"
+# The gap the first version of this test missed entirely. The SPA calls
+# /api/sessions/ on its own origin and nothing published those ports, so the
+# terminal worked and the sidebar did not — which is most of the product.
+sessions=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/api/sessions/sessions")
+[[ "$sessions" == "200" ]] || fail "GET /api/sessions/sessions got $sessions, want 200"
+ok "the SPA's session list reaches tmux-api through the proxy"
 
-# The point of the mode: whatever the proxy says the username is, every request
-# resolves to the container's single account.
-who=$(docker exec "$NAME" curl -s -H 'X-Forwarded-User: anyone' \
-        http://127.0.0.1:7684/whoami)
+who=$(curl -s "http://127.0.0.1:17681/api/sessions/whoami")
 echo "$who" | grep -q '"multiUser":false' || fail "whoami is not single-user: $who"
 echo "$who" | grep -q '"osUser":"dev"'    || fail "whoami did not resolve to dev: $who"
 echo "$who" | grep -q '"admin":false'     || fail "single-user reported an admin: $who"
 ok "whoami: single-user, resolves to dev, no admin"
 
-# A different name must land on the same account rather than being refused or
-# creating a second one.
-other=$(docker exec "$NAME" curl -s -H 'X-Forwarded-User: someone.else' \
-          http://127.0.0.1:7684/whoami)
-echo "$other" | grep -q '"osUser":"dev"' || fail "a second identity did not resolve to dev: $other"
-ok "any identity resolves to the one account"
+for path in /files/list /skills; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681$path")
+  [[ "$code" != "404" ]] || fail "$path is not routed (404); the SPA surface is incomplete"
+  ok "$path is routed ($code)"
+done
 
-# Missing identity is still refused: the header's presence is what says the
-# request came through a proxy.
-code=$(docker exec "$NAME" curl -s -o /dev/null -w '%{http_code}' \
-         http://127.0.0.1:7684/whoami)
-[[ "$code" == "401" ]] || fail "no identity header got $code, want 401"
-ok "a request with no identity header is refused"
+# The PWA shell must be fetchable without auth or the app cannot install.
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/manifest.webmanifest")
+[[ "$code" == "200" ]] || fail "the PWA manifest got $code, want 200"
+ok "the PWA shell is served"
+
+# A client cannot choose who it is: nginx sets the identity header itself, so a
+# request that arrives carrying one must not be believed.
+spoof=$(curl -s -H 'X-Forwarded-User: someone.else' "http://127.0.0.1:17681/api/sessions/whoami")
+echo "$spoof" | grep -q '"osUser":"dev"' \
+  || fail "a client-supplied identity header changed the answer: $spoof"
+ok "a client-supplied identity header is ignored"
 
 # The uncertainty this seam was added for: a session actually starts, which
 # means tmux-user-attach took its no-systemd fallback.
@@ -85,5 +77,27 @@ ok "tmux starts a session with no systemd user manager"
 docker exec "$NAME" sh -c 'command -v sudo' >/dev/null 2>&1 \
   && fail "sudo is present in a single-user image"
 ok "no sudo in the image"
+
+# Basic auth is the README's quickstart, and the earlier version of this image
+# logged "basic auth enabled" while still handing a shell to anyone sending an
+# arbitrary header. Assert the whole flow, not the log line.
+AUTH_NAME="$NAME-auth"
+docker rm -f "$AUTH_NAME" >/dev/null 2>&1 || true
+docker run -d --name "$AUTH_NAME" -p 17682:7681 -e TL_BASIC_AUTH=me:changeme "$IMAGE" >/dev/null
+for _ in $(seq 1 60); do
+  curl -sf -o /dev/null -u me:changeme "http://127.0.0.1:17682/" && break
+  sleep 1
+done
+none=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17682/")
+bad=$(curl -s -o /dev/null -w '%{http_code}' -u me:wrong "http://127.0.0.1:17682/")
+good=$(curl -s -o /dev/null -w '%{http_code}' -u me:changeme "http://127.0.0.1:17682/")
+authwho=$(curl -s -u me:changeme "http://127.0.0.1:17682/api/sessions/whoami")
+docker rm -f "$AUTH_NAME" >/dev/null 2>&1 || true
+[[ "$none" == "401" ]] || fail "basic auth: no credentials got $none, want 401"
+[[ "$bad"  == "401" ]] || fail "basic auth: wrong credentials got $bad, want 401"
+[[ "$good" == "200" ]] || fail "basic auth: correct credentials got $good, want 200"
+echo "$authwho" | grep -q '"authentik":"me"' \
+  || fail "the signed-in username did not become the identity: $authwho"
+ok "basic auth refuses without credentials and carries the username through"
 
 echo "smoke: all checks passed"

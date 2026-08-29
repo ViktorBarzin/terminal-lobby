@@ -76,8 +76,21 @@ type Gate struct {
 	Config Config
 
 	// SelfUser is the OS user this process runs as, and the only account a
-	// single-user install serves. Empty means "look it up on first use".
+	// single-user install serves. Empty means "look it up on first use";
+	// Configure resolves it at startup so the request path never writes it.
 	SelfUser string
+
+	// OnActAsRefused reports a refused act-as, so a service can emit it to the
+	// diagnostics stream. A hook rather than a telemetry import: this package
+	// is the security decision and should not depend on how a caller reports.
+	// Nil means only the log line, which is what a service that has no emitter
+	// wants.
+	OnActAsRefused func(realOSUser, target, reason string)
+
+	// countAdminReads is a test seam: the admin list is re-read per request by
+	// design, but re-reading it twice within one is not, and nothing else can
+	// observe the difference.
+	countAdminReads func()
 
 	// LookupUser verifies a mapped account exists on this host. Nil means
 	// os/user.Lookup; the tests supply their own.
@@ -106,6 +119,9 @@ func (g *Gate) IsAdmin(osUser string) bool {
 // but an empty set to return: the caller's next question is only ever "is this
 // user an admin", and with no list the answer is no.
 func (g *Gate) admins() map[string]bool {
+	if g.countAdminReads != nil {
+		g.countAdminReads()
+	}
 	out := map[string]bool{}
 	f, err := os.Open(g.AdminsPath)
 	if err != nil {
@@ -129,6 +145,13 @@ func (g *Gate) admins() map[string]bool {
 // identically and are allowed for everyone, so a client that always sends the
 // parameter is not a special case anywhere downstream.
 func (g *Gate) Effective(real, as string, isMapped func(string) bool) (string, error) {
+	return g.effective(real, as, isMapped, g.IsAdmin(real))
+}
+
+// effective takes the admin answer rather than looking it up, so Resolve — which
+// has already read the admin list to fill Identity.Admin — does not read and
+// parse the same file twice in one request.
+func (g *Gate) effective(real, as string, isMapped func(string) bool, isAdmin bool) (string, error) {
 	if as == "" || as == real {
 		return real, nil
 	}
@@ -139,7 +162,7 @@ func (g *Gate) Effective(real, as string, isMapped func(string) bool) (string, e
 	if !userRe.MatchString(as) {
 		return "", ErrUnknownTarget
 	}
-	if !g.IsAdmin(real) {
+	if !isAdmin {
 		return "", ErrNotAdmin
 	}
 	if !isMapped(as) {

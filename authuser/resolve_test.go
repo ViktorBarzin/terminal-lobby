@@ -19,9 +19,13 @@ func resolveGate(t *testing.T, cfg Config, admins, userMap string) *Gate {
 	// Fixture accounts (bob, carol) do not exist on the machine running the
 	// tests, so the host check passes by default here; the one test that cares
 	// about a missing account overrides this.
+	// SelfUser is pinned rather than resolved: a test that asserts the
+	// single-user account would otherwise depend on the name of whoever runs
+	// it, which is "wizard" on the devvm and "runner" in CI.
 	g := &Gate{
 		AdminsPath: filepath.Join(dir, "ttyd-admins"),
 		Config:     cfg,
+		SelfUser:   "wizard",
 		LookupUser: func(string) error { return nil },
 	}
 	if admins != "" {
@@ -64,6 +68,7 @@ func TestDefaultHeaderIsXForwardedUser(t *testing.T) {
 func TestAnyHeaderNameCanCarryTheIdentity(t *testing.T) {
 	for _, name := range []string{"X-Forwarded-User", "X-Authentik-Username", "X-Remote-User"} {
 		g := resolveGate(t, Config{AuthHeader: name}, "", "")
+		g.SelfUser = "wizard"
 		got, err := g.Resolve(req(name, "wizard"))
 		if err != nil {
 			t.Fatalf("%s: unexpected error %v", name, err)
@@ -95,6 +100,7 @@ func TestMissingIdentityHeaderIsRefused(t *testing.T) {
 
 func TestNoSecretConfiguredMeansNoCheck(t *testing.T) {
 	g := resolveGate(t, Config{}, "", "")
+	g.SelfUser = "wizard"
 	got, err := g.Resolve(req(DefaultAuthHeader, "wizard"))
 	if err != nil {
 		t.Fatalf("unset secret should not gate: %v", err)
@@ -106,6 +112,7 @@ func TestNoSecretConfiguredMeansNoCheck(t *testing.T) {
 
 func TestConfiguredSecretIsRequired(t *testing.T) {
 	g := resolveGate(t, Config{ProxySecret: "s3cret"}, "", "")
+	g.SelfUser = "wizard"
 	if _, err := g.Resolve(req(DefaultAuthHeader, "wizard")); !errors.Is(err, ErrBadSecret) {
 		t.Fatalf("missing secret: err = %v, want ErrBadSecret", err)
 	}
@@ -403,5 +410,74 @@ func TestAccountCheckCanBeSkipped(t *testing.T) {
 	}
 	if got.OSUser != "ghost" {
 		t.Fatalf("resolved to %q, want ghost", got.OSUser)
+	}
+}
+
+// A refused act-as used to reach the diagnostics stream as admin.actas.refused.
+// Folding resolveOSUser into the gate dropped it, leaving an administrator
+// probing targets they are not entitled to visible only in journald — not in
+// the stream the dashboards query. The gate is where it belongs now, so it
+// cannot go missing from one service at a time.
+func TestRefusedActAsIsReportable(t *testing.T) {
+	g := resolveGate(t, Config{MultiUser: "on"}, "wizard\n", "alice=wizard\nbob.smith=bob\n")
+	var gotUser, gotTo, gotKind string
+	var calls int
+	g.OnActAsRefused = func(realOSUser, target, reason string) {
+		calls++
+		gotUser, gotTo, gotKind = realOSUser, target, reason
+	}
+	r := req(DefaultAuthHeader, "bob.smith")
+	q := r.URL.Query()
+	q.Set("as", "wizard")
+	r.URL.RawQuery = q.Encode()
+	if _, err := g.Resolve(r); !errors.Is(err, ErrNotAdmin) {
+		t.Fatalf("expected ErrNotAdmin, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("hook called %d times, want 1", calls)
+	}
+	if gotUser != "bob" || gotTo != "wizard" || gotKind == "" {
+		t.Fatalf("hook got (%q, %q, %q)", gotUser, gotTo, gotKind)
+	}
+}
+
+// An ordinary request must not fire it, or the stream fills with non-events.
+func TestSuccessfulRequestDoesNotReportARefusal(t *testing.T) {
+	g := resolveGate(t, Config{MultiUser: "on"}, "wizard\n", "alice=wizard\n")
+	g.OnActAsRefused = func(string, string, string) { t.Fatal("hook fired on a good request") }
+	if _, err := g.Resolve(req(DefaultAuthHeader, "alice")); err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+// Resolve fills Identity.Admin from the admin list, then act-as needs the same
+// answer. Reading and parsing the file twice in one request is waste on a path
+// tmux-api's /sessions poll hits every five seconds per open tab.
+func TestResolveReadsTheAdminListOnceForAnActAsRequest(t *testing.T) {
+	dir := t.TempDir()
+	admins := filepath.Join(dir, "ttyd-admins")
+	if err := os.WriteFile(admins, []byte("wizard\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	userMap := filepath.Join(dir, "ttyd-user-map")
+	if err := os.WriteFile(userMap, []byte("alice=wizard\nbob.smith=bob\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &Gate{
+		AdminsPath: admins, MapPath: userMap, SelfUser: "wizard",
+		Config:     Config{MultiUser: "on"},
+		LookupUser: func(string) error { return nil },
+	}
+	var reads int
+	g.countAdminReads = func() { reads++ }
+	r := req(DefaultAuthHeader, "alice")
+	q := r.URL.Query()
+	q.Set("as", "bob")
+	r.URL.RawQuery = q.Encode()
+	if _, err := g.Resolve(r); err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if reads != 1 {
+		t.Fatalf("admin list parsed %d times in one request, want 1", reads)
 	}
 }
