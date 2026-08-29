@@ -329,8 +329,24 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => (
         <div class="tl-question">
           <div class="tl-question-head">
             <span class="tl-question-chip">{q.header || "Question"}</span>
-            <span class="tl-question-text">{q.question}</span>
+            {/* The question text is the CARD's job while one is docked — it is a
+                hundred pixels below this and set larger. Printing it here too was
+                the duplication this collapse exists to remove, only quieter. What
+                the transcript needs while waiting is the PLACE the question
+                occupies; the words arrive when it becomes the record. */}
+            <Show when={!props.row.pending}>
+              <span class="tl-question-text">{q.question}</span>
+            </Show>
           </div>
+          {/* While the answer is still being given, this row is not the record
+              yet — the card docked above the composer is asking the very same
+              question, and rendering the options here too showed the whole thing
+              twice, a card's height apart. It says what is being asked and where
+              the answer is going, and becomes the full record when one lands. */}
+          <Show when={props.row.pending}>
+            <div class="tl-question-answering">answering below…</div>
+          </Show>
+          <Show when={!props.row.pending}>
           <div class="tl-question-options">
             <For each={q.options}>
               {(o, oi) => (
@@ -345,6 +361,7 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => (
               )}
             </For>
           </div>
+          </Show>
           <Show when={!props.row.pending && props.row.answers.length > 0}>
             <div class="tl-question-answer">answered: {props.row.answers.join(", ")}</div>
           </Show>
