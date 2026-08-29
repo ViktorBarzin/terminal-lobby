@@ -85,7 +85,21 @@ jobs:
           set -euo pipefail
           curl -sSfL https://github.com/caarlos0/svu/releases/download/v3.4.1/svu_3.4.1_linux_amd64.tar.gz \
             | tar xz svu
-          NEXT="$(./svu next)"
+          # --tag.pattern because this repo carries one pre-existing tag,
+          # v-vanilla-final, which is not semver. svu does not skip it: without
+          # the pattern it stops with "invalid semantic version".
+          #
+          # With the pattern and no semver tags yet it has no baseline to count
+          # from, so the first release is named here rather than guessed. The
+          # branch is explicit, not an error swallowed with `|| true`: falling
+          # back on ANY svu failure could quietly re-release v0.1.0 over a much
+          # later version.
+          if git tag --list 'v[0-9]*' | grep -q .; then
+            NEXT="$(./svu next --tag.pattern 'v[0-9]*')"
+          else
+            NEXT="v0.1.0"
+            echo "no semver tag yet — first release"
+          fi
           rm -f svu
           echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
           echo "version=${NEXT#v}" >> "$GITHUB_OUTPUT"
