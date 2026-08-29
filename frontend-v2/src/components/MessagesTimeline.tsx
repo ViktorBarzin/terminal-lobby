@@ -10,6 +10,7 @@ import {
   type JSX,
 } from "solid-js";
 import type { Event } from "../types/events";
+import { diag } from "../telemetry/diag";
 import {
   deriveRows,
   sameRow,
@@ -546,6 +547,17 @@ export const MessagesTimeline: Component<{
     const before = anchor?.offsetTop ?? 0;
     try {
       await props.onLoadEarlier();
+    } catch (err) {
+      // Telling the reader is the caller's job, and the session store already
+      // does it — it catches its own fetch failures and raises a toast, so in
+      // practice this promise resolves. What this catch is for is the case
+      // where it does not: both scroll paths call `void loadEarlier()` and the
+      // button hands the async function straight to onClick, so an escaping
+      // rejection would surface through ADR-0008's unhandledrejection handler
+      // as an anonymous app.exception. Naming it here keeps the failure
+      // reported and attributed. The finally below still runs, which is what
+      // puts the reader back and re-enables asking.
+      diag().onException(err, "load-earlier");
     } finally {
       // Keep the reader where they were — the same anchor-based compensation the
       // background mount uses, for the same reason. It runs even on a failed
