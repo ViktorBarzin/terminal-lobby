@@ -1,4 +1,12 @@
-import { createEffect, createMemo, createSignal, Show, type Component } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  Show,
+  type Component,
+} from "solid-js";
 import type { Event, PermissionDecision, SessionState } from "../types/events";
 import {
   askingFromPane,
@@ -15,6 +23,12 @@ import { contextState } from "./context.logic";
 import { planAnswer, runAnswer, type DraftAnswer } from "./answer.logic";
 import { QuestionCard } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
+import {
+  installTextZoom,
+  loadTextSize,
+  saveTextSize,
+  scaleFor,
+} from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 
@@ -204,6 +218,28 @@ export const TextView: Component<{
       .join("~"),
   );
   const [answering, setAnswering] = createSignal(false);
+
+  // Pinch to size the transcript, the way a pinch sizes the terminal. The
+  // arithmetic and the guards are ported from term.html so both views answer
+  // the gesture identically; see mobile/textzoom.ts. The size is device-local,
+  // and it is published as a scale the transcript zooms by rather than as a
+  // font-size, because the transcript's type is set in px across a hundred-odd
+  // rules and a size has to move all of them together.
+  const [textSize, setTextSize] = createSignal(loadTextSize());
+  const [sizing, setSizing] = createSignal<number | null>(null);
+  let viewEl: HTMLDivElement | undefined;
+  onMount(() => {
+    const stop = installTextZoom({
+      surface: () => viewEl?.querySelector<HTMLElement>(".tl-timeline") ?? null,
+      get: textSize,
+      set: (n) => {
+        setTextSize(n);
+        saveTextSize(n);
+      },
+      onReadout: setSizing,
+    });
+    onCleanup(stop);
+  });
   /** A send stopped partway, leaving the dialog half-answered — see the card's
    *  `stopped` prop. Keyed to the question it happened on, so the NEXT question
    *  starts clean rather than inheriting the last one's failure. */
@@ -277,7 +313,17 @@ export const TextView: Component<{
   };
 
   return (
-    <div class="tl-textview">
+    <div
+      class="tl-textview"
+      ref={viewEl}
+      style={{ "--tl-text-scale": String(scaleFor(textSize())) }}
+    >
+      {/* What size the pinch has reached, while it is being made. */}
+      <Show when={sizing() !== null}>
+        <div class="tl-size-pill" role="status">
+          Aa {sizing()}px
+        </div>
+      </Show>
       <MessagesTimeline
         opening={props.opening}
         owns={props.onScreen !== false}
