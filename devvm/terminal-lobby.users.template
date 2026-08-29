@@ -1,0 +1,24 @@
+# Who may use this box, and as which account.
+#
+# Install at /etc/terminal-lobby.users, then run:
+#
+#   sudo tl-users check    # show what would be written, touch nothing
+#   sudo tl-users apply    # write the map and the sudo grant
+#
+# apply renders two files from this one: /etc/ttyd-user-map, which the services
+# read to turn an identity into an account, and /etc/sudoers.d/ttyd-users, which
+# lets the service become each of those accounts. Keeping them in step by hand is
+# what this replaces.
+#
+# It does NOT create the accounts. Add each with `useradd -m <name>` first, or
+# tl-users will warn that they cannot attach.
+#
+# Not needed for a single-user install: one account needs no map and no sudo.
+#
+# Format: <identity> = <os_user>
+#   identity  what your proxy sends in TL_AUTH_HEADER. Matched on the local
+#             part, so "alice" and "alice@example.com" are the same person.
+#   os_user   the account on this box.
+
+alice = alice
+bob.smith = bob

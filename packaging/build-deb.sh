@@ -38,6 +38,10 @@ done
   go build -trimpath -ldflags "$LDFLAGS" -o "$STAGE/bin/tl-t3-bridge" .)
 (cd t3-sync && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
   go build -trimpath -ldflags "$LDFLAGS" -o "$STAGE/bin/tl-t3-sync" .)
+# tl-users lands in bin/, not the tooling dir: an operator runs it, unlike
+# tl-apply and tl-pkg which the pipeline runs.
+(cd release && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+  go build -trimpath -o "$STAGE/bin/tl-users" ./cmd/tl-users)
 
 # --- the package's own tooling ---------------------------------------------
 (cd release && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \

@@ -110,6 +110,33 @@ The DNS record, TLS secret, and Authentik forward-auth integration
 all come from there — this repo only owns the application code and
 the DevVM-side artefacts that the application binds to.
 
+## Declaring users without a roster
+
+On a box with no roster, declare everyone in one file and let the tool render
+what the services read:
+
+```sh
+sudo cp /usr/share/terminal-lobby/terminal-lobby.users.template /etc/terminal-lobby.users
+sudo $EDITOR /etc/terminal-lobby.users     # <identity> = <os_user>, one per line
+sudo useradd -m bob                        # tl-users does not create accounts
+sudo tl-users check                        # show what would be written
+sudo tl-users apply                        # write both files
+sudo systemctl restart ttyd tmux-api file-api session-events skills-api
+```
+
+`apply` renders `/etc/ttyd-user-map` and `/etc/sudoers.d/ttyd-users` from that
+one declaration, so the two cannot drift apart. It validates the grant with
+`visudo` before installing anything, and writes both files atomically: an
+invalid sudoers file is not a degraded feature, it breaks every `sudo` call on
+the box including the one needed to repair it.
+
+On a box where a roster owns those files, `apply` refuses. It reads the header
+of the files themselves rather than probing for a roster, so it works on a
+machine that has never heard of this homelab. `-force` overrides, and should be
+needed only if the roster is genuinely gone.
+
+Single-user installs need none of this: one account needs no map and no sudo.
+
 ## Why the package does not ship the sudo grant
 
 `/etc/sudoers.d/ttyd-users` is per-box identity data: it names the accounts the
@@ -125,3 +152,9 @@ still installing the file.
 `devvm/sudoers.d-ttyd-users.template` is the reference. `postinst` still runs
 `visudo -cf` against the live file and refuses the install if it is malformed, so
 the safety check survives on a file the package no longer writes.
+
+Both generators are the answer to the same question. On this homelab
+`roster.yaml` derives the grant, alongside the identity map and the admin list it
+already produced — one writer, reconciled hourly, with offboarding for free.
+Everywhere else `tl-users` renders it from a local declaration. Neither ships
+content in the package.
