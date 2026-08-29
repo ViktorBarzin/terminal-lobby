@@ -396,6 +396,18 @@ func withUserMap(t *testing.T, content string) {
 // withStore redirects the image store (storeRoot — a var for the same reason)
 // at a temp dir, so a test upload can never land in the real
 // /var/lib/clipboard-store next to a user's actual screenshots.
+// withFileDir points the ephemeral-transfer directory at a temporary one, so a
+// test neither depends on the real path existing nor writes into the directory
+// a live service is using.
+func withFileDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	old := fileDir
+	fileDir = dir
+	t.Cleanup(func() { fileDir = old })
+	return dir
+}
+
 func withStore(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -769,6 +781,7 @@ func withAttachCap(t *testing.T, n int64) {
 func TestDocOverTheCapStaysAnEphemeralTransfer(t *testing.T) {
 	withUserMap(t, "qa.tester=qauser\n")
 	root := withStore(t)
+	withFileDir(t)
 	withAttachCap(t, 64)
 
 	rec := httptest.NewRecorder()
