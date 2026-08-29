@@ -518,8 +518,8 @@ func TestForeignRefsFor(t *testing.T) {
 	}}
 	got := foreignRefsFor("wizard", ps, ss)
 	want := []visibleRef{
-		{Owner: "carol", Name: "direct", Access: "ro", Project: ""},
 		{Owner: "bob", Name: "theirs", Access: "rw", Project: "shared"},
+		{Owner: "carol", Name: "direct", Access: "ro", Project: ""},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("foreign refs:\n got %+v\nwant %+v", got, want)
