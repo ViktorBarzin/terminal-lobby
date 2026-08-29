@@ -86,6 +86,22 @@ export function shownOptions(q: Question): string[] {
   return [...q.options.map((o) => o.label), OTHER_LABEL, CHAT_LABEL];
 }
 
+/**
+ * What the CARD offers as an answer: the dialog's list without the chat escape.
+ *
+ * "Chat about this" is not an answer — it abandons the question and hands the
+ * reader the composer, and it acts the moment it is pressed, while every other
+ * row is a draft nothing acts on until Submit. In the same list, told apart only
+ * by an arrow, it read as one more option; it belongs with the actions.
+ *
+ * `shownOptions` above stays the DIALOG's list, because that is what `keysFor`
+ * counts to pick the digit to inject. The number beside a row is still taken
+ * from there — the key we type has to be the key the CLI is listening for.
+ */
+export function answerableOptions(q: Question): string[] {
+  return shownOptions(q).filter((label) => label !== CHAT_LABEL);
+}
+
 /** Where an option sits in the dialog's list, or -1. */
 export function optionIndex(q: Question, label: string): number {
   return shownOptions(q).indexOf(label);

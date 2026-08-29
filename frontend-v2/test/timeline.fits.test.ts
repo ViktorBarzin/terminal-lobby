@@ -106,7 +106,13 @@ describe("a question card leaves the composer room", () => {
     expect(qcard).not.toMatch(/max-height:[^;]*vh/);
   });
 
-  it("still scrolls inside itself rather than growing", () => {
-    expect(rule(".tl-qcard")).toMatch(/overflow-y:\s*auto/);
+  it("scrolls its OPTIONS rather than growing, and never its own actions", () => {
+    // The cap still holds the card down; what changed is which part of it the
+    // cap is allowed to hide. The card itself no longer scrolls — it was one
+    // box holding head, options and actions, so the button that submits sat
+    // below the fold (measured: 388px past the bottom edge at 390x844, 55px on
+    // a 1280x900 desktop). The middle scrolls; the head and the footer cannot.
+    expect(rule(".tl-qcard")).toMatch(/overflow:\s*hidden/);
+    expect(rule(".tl-qcard-body")).toMatch(/overflow-y:\s*auto/);
   });
 });

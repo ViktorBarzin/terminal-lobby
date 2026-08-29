@@ -85,7 +85,7 @@ describe("the docked answer card", () => {
     ]);
 
     await waitFor(() => expect(first.card()).not.toBeNull());
-    expect(first.step()).toBe("question 1 of 1");
+    expect(first.step()).toBe("awaiting your answer");
     expect(first.container.textContent).toContain("Which way for Something else?");
     // Nothing from the previous walk is carried into the new one.
     expect(first.optionByLabel("This one")!.dataset.chosen).toBeUndefined();
@@ -134,7 +134,7 @@ describe("a question the transcript has not caught up with", () => {
     v.setEvents((cur) => [...cur, asking(paneDialog)]);
     await waitFor(() => expect(v.card()).not.toBeNull());
     expect(v.container.textContent).toContain("Which way for Pane?");
-    expect(v.step()).toBe("question 1 of 1");
+    expect(v.step()).toBe("awaiting your answer");
   });
 
   it("lets go when the pane stops showing it", async () => {
@@ -165,13 +165,14 @@ describe("a question the transcript has not caught up with", () => {
     };
     const v = mount([asking(same)]);
     v.optionByLabel("This one")!.click();
-    v.click(".tl-qcard-next");
-    expect(v.step()).toBe("review");
+    expect(v.optionByLabel("This one")!.dataset.chosen).toBe("true");
 
-    // The record lands. Same question, so the walk must survive it.
+    // The record lands. Same question, so what was chosen must survive it — a
+    // single question has no review step to be in, and the choice is the state
+    // a handover would actually destroy.
     v.setEvents((cur) => [...cur, ask("tool-c", [{ ...same.questions[0] }])]);
     await waitFor(() => expect(v.card()).not.toBeNull());
-    expect(v.step()).toBe("review");
+    expect(v.optionByLabel("This one")!.dataset.chosen).toBe("true");
   });
 
   it("reports a multi-question call rather than half-answering it", async () => {
