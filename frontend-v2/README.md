@@ -351,6 +351,11 @@ src/
                          keyboard STOPS moving. The browser's own attempt runs
                          against the geometry from before it opened, which is
                          how a project's new-session box ended up under it
+    textzoom.ts          Pinch to size the TEXT view, the way it sizes the
+                         terminal. Both recognizers ported from term.html —
+                         Chromium measures the two-finger span itself, WebKit
+                         gets the ratio from GestureEvent — so one gesture, the
+                         same 7%-per-step arithmetic, in both views
     swipe.ts             PURE swipe classification + the session-switch gesture
     reorder.ts           PURE geometry for dragging a session row with a
                          finger (which side of the row under it, how fast

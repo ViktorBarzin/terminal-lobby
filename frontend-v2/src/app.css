@@ -704,6 +704,7 @@ body {
 
 /* ---- Text view + timeline --------------------------------------------- */
 .tl-textview {
+  position: relative; /* the size pill anchors here */
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -713,6 +714,14 @@ body {
 .tl-timeline {
   flex: 1 1 auto;
   min-height: 0;
+  /* Pinch-to-size (mobile/textzoom.ts). `zoom` rather than a font-size because
+     the transcript's type is set in px across a hundred-odd rules — headings,
+     code, chips, the gaps between rows — and a reader asking for bigger text
+     means all of it, not the paragraphs alone. It scales layout properly, which
+     `transform: scale` does not, and it leaves the composer and the answer card
+     at native size: those are controls, and controls should not grow with the
+     prose. 1 unless a pinch has said otherwise. */
+  zoom: var(--tl-text-scale, 1);
   overflow-y: auto;
   /* The transcript reads top-to-bottom and nothing else. Spelled out because
      the browser would otherwise decide it for us: a box with one axis `auto`
@@ -747,6 +756,24 @@ body {
   flex-direction: column;
   gap: 14px;
 }
+/* The size a pinch has reached, while it is being made. Mirrors the terminal's
+   own #font-pill: it appears on the claim and fades when the fingers lift. */
+.tl-size-pill {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-page) 88%, transparent);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  pointer-events: none;
+}
+
 /* A transcript is read from its newest end, so a SHORT one sits at the bottom of
    the viewport rather than hanging from the top. This is what makes the first
    paint land where the eye already is: the newest rows mount first and stay
