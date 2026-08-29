@@ -100,6 +100,11 @@ export interface Whoami {
    *  server refuses regardless, this only avoids showing a control that could
    *  never work. */
   admin?: boolean;
+  /** Whether this box runs multi-user: a user map exists, so there are other
+   *  accounts to share with, add to a project, or act as. Absent from a server
+   *  built before the flag, which `lib/mode.ts` reads as multi-user so an older
+   *  backend behaves exactly as it does today. */
+  multiUser?: boolean;
 }
 
 export const LAYOUT_VERSION = 1;

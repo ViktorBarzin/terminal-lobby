@@ -13,6 +13,7 @@ import {
   type NotifyKind,
   type SelectedSession,
 } from "../store/lobby";
+import { canActAs } from "../lib/mode";
 import { NAME_RE, sessionLabel, type Layout } from "../types/lobby";
 import {
   EMPTY_KEEP,
@@ -273,7 +274,9 @@ export const App: Component = () => {
     const w = store.whoami();
     return w?.realUser ? w.osUser : "";
   });
-  const isAdmin = createMemo(() => store.whoami()?.admin === true);
+  // canActAs, not admin alone: a single-user box has one account, so there is
+  // nobody to act as even for someone the server calls an administrator.
+  const isAdmin = createMemo(() => canActAs(store.whoami()));
   // Whose account this tab is a lens on ("" = an ordinary tab). It decides that
   // a session here opens WATCHING, and which namespace a take-control choice is
   // remembered under (lib/act-as.ts). Same derivation the sidebar's cards make
