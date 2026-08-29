@@ -2829,9 +2829,10 @@ body.tl-kb-up {
   gap: 4px;
 }
 .tl-question-option {
-  display: flex;
+  display: grid;
+  grid-template-columns: 18px 1fr;
   align-items: center;
-  gap: 8px;
+  gap: 2px 8px;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2870,6 +2871,25 @@ body.tl-kb-up {
   font-size: 11.5px;
   color: var(--text-muted);
   font-style: italic;
+}
+/* The reasoning behind each option, which used to live only in a `title`
+   attribute — a hover tooltip, in a view whose main device has no hover. Two
+   lines by default, all of it when the row's toggle says so. */
+.tl-option-desc {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.tl-question-options[data-full="true"] .tl-option-desc {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
 }
 .tl-question-answer {
   margin-top: 6px;
@@ -3266,10 +3286,32 @@ body.tl-kb-up {
   line-clamp: 2;
   overflow: hidden;
 }
-.tl-qcard-option[data-chosen="true"] .tl-qcard-desc {
+.tl-qcard-option[data-chosen="true"] .tl-qcard-desc,
+.tl-qcard-options[data-full="true"] .tl-qcard-desc {
   -webkit-line-clamp: unset;
   line-clamp: unset;
   overflow: visible;
+}
+/* "Show all" / "Show less". A quiet control: it changes how much is on screen,
+   not what anything means. */
+.tl-qcard-full,
+.tl-question-full {
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.tl-qcard-full:hover,
+.tl-question-full:hover {
+  color: var(--text-primary);
+}
+.tl-qcard-full {
+  margin-left: auto;
 }
 .tl-qcard-other {
   width: 100%;
