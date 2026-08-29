@@ -223,8 +223,9 @@ export const TextView: Component<{
   // arithmetic and the guards are ported from term.html so both views answer
   // the gesture identically; see mobile/textzoom.ts. The size is device-local,
   // and it is published as a scale the transcript zooms by rather than as a
-  // font-size, because the transcript's type is set in px across a hundred-odd
-  // rules and a size has to move all of them together.
+  // font-size on one element: every font-size in app.css multiplies itself by
+  // this, so the transcript, the answer card and the composer follow one pinch
+  // together.
   const [textSize, setTextSize] = createSignal(loadTextSize());
   const [sizing, setSizing] = createSignal<number | null>(null);
   let viewEl: HTMLDivElement | undefined;
