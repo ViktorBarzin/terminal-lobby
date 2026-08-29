@@ -218,8 +218,8 @@ describe("<Composer> — Enter during IME composition", () => {
 });
 
 /**
- * A prompt the session refuses (409 "a turn is already running", a 502, a dead
- * session) used to be destroyed: submit cleared the textarea by writing the DOM
+ * A prompt the session cannot deliver (a 502 from the injector, a dead session)
+ * used to be destroyed: submit cleared the textarea by writing the DOM
  * ref directly, and no state anywhere else held the text. The composer now
  * clears optimistically and puts the text BACK when the send is refused — so a
  * rejected prompt is retryable instead of retyped.

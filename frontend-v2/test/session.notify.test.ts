@@ -42,8 +42,13 @@ describe("session store — control-channel error toasts", () => {
     g.fetch = origFetch;
   });
 
-  it("toasts an error when a prompt send gets a 409 (turn already running)", async () => {
-    g.fetch = respondWith(false, 409);
+  // 502 rather than 409. session-events removed the turn gate on 2026-08-15 —
+  // a mid-turn send queues in Claude now — so 409 is a status this endpoint can
+  // no longer answer, and a test asserting a toast for it was pinning a message
+  // no user could ever see. 502 ("inject failed") is what a real failure looks
+  // like, and it takes the generic arm.
+  it("toasts an error when a prompt send fails (502 from the injector)", async () => {
+    g.fetch = respondWith(false, 502);
     const notes: Note[] = [];
     await createRoot(async (dispose) => {
       const store = createSessionStore("s", {
@@ -54,7 +59,7 @@ describe("session store — control-channel error toasts", () => {
     });
     expect(notes).toHaveLength(1);
     expect(notes[0]?.kind).toBe("error");
-    expect(notes[0]?.msg).toMatch(/already running/i);
+    expect(notes[0]?.msg).toMatch(/couldn't send prompt/i);
   });
 
   it("toasts on a network failure during send (read path still intact)", async () => {
@@ -86,7 +91,7 @@ describe("session store — control-channel error toasts", () => {
   });
 
   it("stays silent when notify is not provided", async () => {
-    g.fetch = respondWith(false, 409);
+    g.fetch = respondWith(false, 502);
     await createRoot(async (dispose) => {
       const store = createSessionStore("s");
       await expect(store.send("hi")).resolves.toBe(false);
