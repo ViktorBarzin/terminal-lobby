@@ -263,6 +263,53 @@ flowchart TD
   tmux's alternate screen, the client flow control never arms below ~17 MiB/s
   arrival, and the iframe is already lazy behind the `attachAllowed` latch.
 
+## The open items, closed (2026-08-29)
+
+Each was investigated against the telemetry the instrumentation decision put
+there, and every one of them turned out differently than expected.
+
+**The immutable terminal page was not being used at all.** The served lobby
+carried `content="__TL_TERM_ASSET__"` verbatim, so the client read a placeholder
+as a fingerprint and took the fallback on every attach — which is why terminals
+kept working and nobody noticed. Two causes: the guard meant to catch exactly
+this is `__TL_[A-Z]*__`, which cannot match `__TL_TERM_ASSET__` because `[A-Z]`
+excludes the underscore; and the page came from a deploy run out of a worktree
+that predated the placeholder. Both fixed — the pattern is `[A-Z_]` now, and
+`deploy-v2.sh` refuses to install a page built from a commit that is not an
+ancestor of what is installed (recorded in `lobby-build`), or to run while
+another session holds `service:ttyd`. `TL_FORCE=1` overrides both, for a
+deliberate rollback. Verified by running it from an older commit and watching it
+refuse.
+
+**The slow paints were the link, not a defect.** The 17.6 s outlier's siblings
+break down as `nav_ms: 7910` of a 9,297 ms paint — 473,998 B of terminal document
+at ~61 kB/s. That is the cost the immutable URL removes, which had never actually
+been in effect.
+
+**The tier threshold was wrong in the direction that matters.** 60 B/ms was a
+guess picked to sit above a 400 kbps target; the real slow attach measured
+61.7 B/ms, so the worst load ever observed classified as `full`. Viktor's ordinary
+link runs 537–1,332 B/ms across a dozen attaches, so the threshold is 150 B/ms —
+2.4× above the painful case, 3.6× below the slowest ordinary one. Both numbers
+are pinned by tests.
+
+**"Three of seven creates never reached ttyd" was not a failure.** Creation is a
+lobby-only act (`lobby.ts:579`): the tmux session is born when a terminal
+*attaches*, so a session created and left unopened has no tmux session by design.
+Two of the four recent creates match live sessions to the second
+(`network-usage` 12:16:38 against 12:16:52); the two that are absent were created
+and never opened, or killed. Nothing here needs fixing, and the original reading —
+absence from `tmux ls` means the attach leg failed — could not distinguish those
+cases.
+
+**`listDirs` is gone**: no call site, an interface entry and six test stubs kept
+alive for an endpoint answering 110 KB uncompressed.
+
+**The iOS revalidation question is closed by design rather than answered.** Every
+asset that matters is content-hashed and `immutable` now, so nothing on the hot
+path depends on a conditional request succeeding. `index.html` itself stays
+`no-cache` deliberately: it is what names the current chunks.
+
 ## Known limits and open questions
 
 > [!IMPORTANT]
