@@ -206,6 +206,9 @@ var Package = Manifest{
 		// secret survives every upgrade; Unmanaged because no unit runs it,
 		// though every unit sources it.
 		{Src: "devvm/terminal-lobby.conf", Dest: ConfigPath, Mode: 0o644, Unmanaged: true, Conffile: true},
+		// The only command the deploy SSH key may run. Unmanaged: no unit runs
+		// it, the forced command does.
+		{Src: "devvm/tl-reconcile", Dest: "/usr/local/bin/tl-reconcile", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux.conf.system", Dest: "/etc/tmux.conf", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-pool-warm@.service", Dest: "/etc/systemd/user/tl-pool-warm@.service", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-prewarm@.service", Dest: "/etc/systemd/user/tl-prewarm@.service", Mode: 0o644, Unmanaged: true},
