@@ -47,6 +47,8 @@ import { createDeployHealer } from "../deploy/healer";
 import { createDockStore } from "../store/dock";
 import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
 import { installSwipe } from "../mobile/swipe";
+import { installViewportSync } from "../mobile/viewport";
+import { installFocusReveal } from "../mobile/reveal";
 import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
@@ -135,6 +137,33 @@ export const App: Component = () => {
   });
   onMount(() => void prefs.bootSync());
   onCleanup(() => prefs.dispose());
+
+  // ---- soft-keyboard plumbing (shell-wide) --------------------------------
+  // Publishes --kb-offset / --sk-h / --app-vh, and re-reveals whatever field
+  // has focus once the keyboard settles.
+  //
+  // At the SHELL, not per session. Two reasons, and the second is a bug this
+  // fixes: SessionView mounts once per session kept in the tab, so the sync ran
+  // as many times as there were open sessions; and it did not run at all until
+  // a session was opened, which left the LIST screen with no live --kb-offset —
+  // so the sidebar had no way to know a keyboard was covering its bottom third,
+  // and a project's "new session" box opened underneath one.
+  //
+  // The terminal callbacks are global bridges TerminalView owns while it is
+  // mounted, so they no-op cleanly on the list screen.
+  onMount(() => {
+    const stopViewport = installViewportSync({
+      onRefit: () => window.__tlRefitTerminal?.(),
+      // The terminal frame reserves the keyboard's space itself — see
+      // .tl-kb-inline in app.css and keyboardReserve in term.html.
+      onKeyboard: (px) => window.__tlKeyboardOffset?.(px),
+    });
+    const stopReveal = installFocusReveal();
+    onCleanup(() => {
+      stopViewport();
+      stopReveal();
+    });
+  });
 
   // ---- PWA notifications (pillar #2 — inventory Cat.9) ---------------------
   // A plain snapshot of the poll list feeds the tab title/favicon badge + the
