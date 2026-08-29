@@ -15558,7 +15558,15 @@ ${w.join(`
             // under this page's path — strip the trailing filename so it resolves
             // to '' whether this page is served at '/' (vanilla) or '/term.html'
             // (v2 terminal iframe). A bare trailing-slash strip broke /term.html.
-            const base = location.pathname.replace(/\/[^/]*$/, '');
+            //
+            // /assets goes too. Since 486b11a the SPA prefers an immutable copy
+            // of this page at /assets/term-<asset>.html, and the filename strip
+            // alone left '/assets' behind — so the terminal asked
+            // clipboard-upload for /assets/token, got its 404, failed to parse
+            // that as JSON and never opened a socket. A genuine sub-path
+            // deployment keeps its prefix; only this one directory is dropped,
+            // because it is the one place that is NOT an origin root.
+            const base = location.pathname.replace(/\/[^/]*$/, '').replace(/\/assets$/, '');
             const wsUrl = proto + '//' + location.host + base + '/ws' + argSuffix;
             const tokenUrl = base + '/token' + argSuffix;
             livenessUrl = tokenUrl; // the watchdog probes the same origin the socket uses
