@@ -45,9 +45,24 @@ export interface ConnectionSample {
   probeMs: number | null;
 }
 
-/** Below this, a link is slow. 60 kB/s is ~480 kbps: comfortably above the
- *  400 kbps case being designed for, so that case classifies as slow. */
-export const SLOW_THROUGHPUT_BYTES_PER_MS = 60;
+/**
+ * Below this, a link is slow.
+ *
+ * Calibrated against real term.ready records rather than the guess it started
+ * as. That guess was 60 B/ms (~480 kbps), picked to sit "comfortably above" a
+ * 400 kbps design target — and it landed just BELOW the real thing: a measured
+ * attach pulled 473,998 B in 7,910 ms, which is 61.7 B/ms, so the slowest load
+ * observed classified as `full` and got the full experience while taking nearly
+ * eight seconds.
+ *
+ * The observed spread leaves an unusually clear gap. Viktor's ordinary link runs
+ * 537-1,332 B/ms across a dozen attaches; the painful one ran 61.7. (Records
+ * above 150,000 B/ms are loopback — this machine's own probes — and are not a
+ * client.) 150 B/ms sits 2.4x above the slow case and 3.6x below the slowest
+ * ordinary one, so neither side is near the boundary. In user terms it is the
+ * point where a 474 KB terminal page takes more than about three seconds.
+ */
+export const SLOW_THROUGHPUT_BYTES_PER_MS = 150;
 /** A round trip this long makes every sequential request hurt, whatever the
  *  bandwidth. Cellular and long-haul both land here. */
 export const SLOW_PROBE_MS = 700;
