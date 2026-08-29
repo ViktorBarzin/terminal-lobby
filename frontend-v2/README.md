@@ -156,6 +156,9 @@ src/
                          exist on iOS), classifies full/slow, remembers the
                          verdict per device for the NEXT load, and answers what
                          each lever should do. A pin always wins
+    usage.ts             What the lobby cost this device, in wire bytes: three
+                         buckets measured from Navigation/Resource Timing, two
+                         (ttyd WS, SSE) modelled by diag.js and labelled as such
   sse/client.ts          Resumable SSE client (Last-Event-ID, backoff+jitter,
                          instant-retry on visible/online) — DOM-free, testable.
                          Resyncs when `ready` names a log it was not reading:
