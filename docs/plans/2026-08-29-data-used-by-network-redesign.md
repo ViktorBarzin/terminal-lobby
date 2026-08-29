@@ -1,6 +1,6 @@
 # Data used: name the network, drop the guess
 
-**Status:** designed 2026-08-29, not built — awaiting go-ahead ·
+**Status:** built and shipped 2026-08-29 ·
 **Supersedes** the WiFi/cellular axis in
 [the morning's design](2026-08-29-data-used-by-network-design.md); the rest of
 that document — why the browser cannot answer, how the address is resolved —
@@ -198,13 +198,23 @@ To land in `CONTEXT.md` at implementation, replacing **Network kind** and
 
 ## Verification
 
+All asserted, and green:
+
 - The header cannot leak across devices through the per-user `/sessions` body
-  cache — asserted directly, two callers on different networks against one
-  cached body.
+  cache — two callers on different networks against one cached body.
+- `setNetworkHeader` never blocks: against a resolver that never answers it
+  returns immediately, sets no header, and resolves in the background.
 - A window folded with a stale answer lands in Unknown, not in the last network.
 - A peer-sourced address resolves to Unknown, not Home; a forwarded private one
   resolves to Home.
-- Migration from schema 2 preserves the totals and puts every pre-existing byte
-  in Earlier.
-- First real page load through the edge confirms `via X-Forwarded-For` rather
-  than `via peer`, which the morning's design left open.
+- Migration from schema 1 and schema 2 preserves the totals and puts every
+  pre-existing byte in Earlier, which then never grows.
+- A network's name survives being left, and survives arriving before its first
+  window folds — the directory keeps a name for as long as it keeps bytes.
+
+Counts: 40 Go assertions, 27 for the client network module, 69 for the store,
+28 for the panel; the full frontend suite is 2,351.
+
+Still open, and only a real page load can close it: whether the edge forwards
+the client address. The journal line says which header each verdict came from,
+so a `via peer` line names the failure rather than hiding it.

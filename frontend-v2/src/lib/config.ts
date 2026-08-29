@@ -89,6 +89,10 @@ function withActAs(url: string): string {
  */
 export const TMUX_API_PREFIX = "/api/sessions";
 
+/** Response header tmux-api stamps the caller's network id on, so "Data used"
+ *  can attribute a window without a request of its own (tmux-api/netinfo.go). */
+export const NET_HEADER = "X-TL-Net";
+
 /** SSE endpoint for a session's normalized event stream (session-events). */
 export function eventsUrl(session: string, lastEventId: number): string {
   const u = `${API_BASE}/events/${encodeURIComponent(session)}`;

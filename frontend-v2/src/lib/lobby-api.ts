@@ -4,7 +4,8 @@
  * /api prefix (apiUrl). Shapes mirror tmux-api/*.go. Errors throw an
  * ApiError carrying the HTTP status so callers can branch (409 taken, 404 gone).
  */
-import { apiUrl } from "./config";
+import { noteNetworkId } from "../diagnostics/network";
+import { NET_HEADER, apiUrl } from "./config";
 import {
   emptyLayout,
   type Layout,
@@ -82,6 +83,11 @@ async function req(
     ...init,
     signal: withDeadline(timeoutMs, init?.signal),
   });
+  // Which network this request went over, stamped by tmux-api on a response the
+  // app was making anyway (netinfo.go). Read here rather than at one call site
+  // so the freshest answer comes from whichever request happened last — in
+  // practice the 5s /sessions poll. Costs nothing and adds no request.
+  noteNetworkId(res.headers.get(NET_HEADER));
   return res;
 }
 

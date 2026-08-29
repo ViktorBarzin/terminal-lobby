@@ -1,10 +1,5 @@
 import { createSignal, type Accessor } from "solid-js";
 import { apiUrl, PREFS_PATH } from "../lib/config";
-import {
-  coerceOverrides,
-  setNetworkOverrides,
-  type NetOverrides,
-} from "../diagnostics/network";
 import { track } from "../telemetry/track";
 
 /**
@@ -68,15 +63,6 @@ export interface Prefs {
   gestures: { wheelSmooth: boolean; wheelSpeed: WheelSpeed };
   session: { newCommand: NewCommand };
   notify: { onDone: boolean; onAwaiting: boolean };
-  /**
-   * Per-network answers to "is this WiFi or cellular", keyed by the stable
-   * network name `/netinfo` returns (`as64501`, `lan`, …). Roamed rather than
-   * device-local because which network an operator runs is a fact about the
-   * world, not about the phone that noticed it — labelling EE once on the phone
-   * should hold on the laptop too. An open map rather than a fixed namespace,
-   * so it is validated per entry on read (diagnostics/network.ts).
-   */
-  netKinds: NetOverrides;
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
    *  each card — OFF by default, and deliberately not the running session's
    *  live working timer, which is progress on the turn in flight rather than a
@@ -97,7 +83,6 @@ export interface PrefsPatch {
   session?: Partial<Prefs["session"]>;
   notify?: Partial<Prefs["notify"]>;
   sidebar?: Partial<Prefs["sidebar"]>;
-  netKinds?: Prefs["netKinds"];
 }
 
 // Device-local + roamed keys — the exact names the vanilla app uses, so the two
@@ -130,7 +115,6 @@ export const PREF_DEFAULTS: Prefs = {
   session: { newCommand: DEFAULT_NEW_COMMAND },
   notify: { onDone: true, onAwaiting: true },
   sidebar: { showLastActive: false },
-  netKinds: {},
 };
 
 // ---- pure helpers (exported for unit tests) -------------------------------
@@ -225,7 +209,6 @@ export function coercePrefs(raw: unknown): Prefs {
       // namespace entirely, which is what makes it off for everyone already.
       showLastActive: sidebar.showLastActive === true,
     },
-    netKinds: coerceOverrides(src.netKinds),
   };
 }
 
@@ -269,9 +252,6 @@ export function composeDoc(
       onAwaiting: prefs.notify.onAwaiting,
     },
     sidebar: { ...sidebar, showLastActive: prefs.sidebar.showLastActive },
-    // Replaced wholesale rather than merged: removing a correction has to be
-    // able to remove it, and this SPA is the only writer of the namespace.
-    netKinds: { ...prefs.netKinds },
   };
 }
 
@@ -288,7 +268,7 @@ export function mergeAdopt(
   const local = isPlainObject(localRaw) ? localRaw : {};
   const server = isPlainObject(serverRaw) ? serverRaw : {};
   const merged: Record<string, unknown> = { ...local, ...server };
-  for (const k of ["session", "notify", "sidebar", "links", "gestures", "netKinds"] as const) {
+  for (const k of ["session", "notify", "sidebar", "links", "gestures"] as const) {
     const l = isPlainObject(local[k]) ? local[k] : {};
     const s = isPlainObject(server[k]) ? server[k] : {};
     merged[k] = { ...l, ...s };
@@ -329,11 +309,6 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
     prev.sidebar.showLastActive,
     next.sidebar.showLastActive,
   );
-  // One line per network whose kind moved, so the audit reads "netKinds.as64501
-  // = cell" rather than naming the namespace and hiding the value.
-  for (const net of new Set([...Object.keys(prev.netKinds), ...Object.keys(next.netKinds)])) {
-    diff("netKinds." + net, prev.netKinds[net], next.netKinds[net]);
-  }
   return out;
 }
 
@@ -355,9 +330,6 @@ export function applyPatch(cur: Prefs, patch: PrefsPatch): Prefs {
     session: { ...cur.session, ...(patch.session ?? {}) },
     notify: { ...cur.notify, ...(patch.notify ?? {}) },
     sidebar: { ...cur.sidebar, ...(patch.sidebar ?? {}) },
-    // Wholesale, not merged: a patch that drops a network's correction has to
-    // be able to drop it.
-    netKinds: patch.netKinds ?? cur.netKinds,
   };
 }
 
@@ -441,15 +413,6 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   rawDoc = composeDoc(rawDoc, { ...coercePrefs(rawDoc), fontSize: seeded });
   const [prefs, setPrefsSignal] = createSignal<Prefs>(coercePrefs(rawDoc));
 
-  /** Set the typed view AND hand the network module the per-network kinds it
-   *  attributes bytes with. That module is read from a diagnostics callback
-   *  with no access to a store, so the corrections are pushed to it rather
-   *  than pulled — here, at the one place they can change. */
-  const publish = (next: Prefs): void => {
-    setPrefsSignal(next);
-    setNetworkOverrides(next.netKinds);
-  };
-  setNetworkOverrides(prefs().netKinds);
 
   let dirty = false;
   let putTimer: ReturnType<typeof setTimeout> | undefined;
@@ -517,7 +480,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
       track("prefs.changed", { "tl.key": path, "tl.to": value });
     }
     rawDoc = composeDoc(rawDoc, next);
-    publish(next);
+    setPrefsSignal(next);
     markDirty();
     persist();
     pushLive(next);
@@ -532,7 +495,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
     const merged = mergeAdopt(rawDoc, serverDoc);
     const next = { ...coercePrefs(merged), fontSize: seedFontSize(merged) };
     rawDoc = composeDoc(merged, next);
-    publish(next);
+    setPrefsSignal(next);
     persist(); // NO schedulePut: adoption is not a user change (no PUT-back).
     // A roamed font size adopted at boot still has to reach the terminal — the
     // vanilla lobby pushes on adoption for the same reason.

@@ -17,10 +17,11 @@ cellular". The browser cannot answer this — Safari has never shipped the Netwo
 Information API, and where the API does exist it reports "4g" on a wired desktop
 — so the answer is derived here, from the address the request arrived from.
 
-These tests pin the three things that decide whether a person's cellular figure
-is trustworthy: which header the client address is read from, that a private
-address is called WiFi without asking anyone, and that a public one is resolved
-to its owning network exactly once per TTL.
+These tests pin what decides whether a person's per-network figures are
+trustworthy: which header the client address is read from, that ONLY a forwarded
+private address is the house, that a public one is resolved to its owning
+operator exactly once per TTL, and that the header a poll carries never blocks
+and never leaks between callers.
 */
 
 // stubResolver answers TXT lookups from a table and counts them, so a test can
@@ -41,6 +42,14 @@ func (s *stubResolver) LookupTXT(_ context.Context, name string) ([]string, erro
 		return nil, errors.New("NXDOMAIN")
 	}
 	return v, nil
+}
+
+// blockingResolver never answers, standing in for DNS that is slow or gone.
+type blockingResolver struct{}
+
+func (blockingResolver) LookupTXT(ctx context.Context, _ string) ([]string, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 // a1 is a Cymru answer pair in the shape a real one comes back in: the origin lookup returns TWO records because
@@ -106,18 +115,35 @@ func TestClientIPFallsBackThroughRealIPThenForwardedThenPeer(t *testing.T) {
 
 // --- a private address needs no lookup ---------------------------------------
 
-func TestPrivateAddressIsWiFiWithoutADNSLookup(t *testing.T) {
-	// Split-horizon DNS points terminal.viktorbarzin.me at the internal ingress,
-	// so a phone on home WiFi arrives from the LAN and never leaves the house.
-	// That is the one case that classifies with certainty.
+func TestForwardedPrivateAddressIsTheHouseWithoutADNSLookup(t *testing.T) {
+	// Split-horizon DNS points the lobby's host at the internal ingress, so a
+	// phone on home WiFi arrives from the LAN and never leaves the house. That
+	// is the one case that classifies with certainty.
 	for _, ip := range []string{"192.168.1.44", "10.0.20.9", "172.16.4.4", "127.0.0.1", "100.64.0.3", "::1", "fd00::5"} {
 		res := &stubResolver{}
-		got := classifyIP(context.Background(), ip, res, freshCache())
-		if got.Kind != kindWiFi || got.Net != "lan" {
-			t.Fatalf("%s: got %+v, want the lan/wifi verdict", ip, got)
+		got := classifyIP(context.Background(), ip, true, res, freshCache())
+		if got.Net != netLAN || got.Source != sourceLAN {
+			t.Fatalf("%s: got %+v, want the house verdict", ip, got)
 		}
 		if res.n != 0 {
 			t.Fatalf("%s: resolved %d names; a private address must not be looked up", ip, res.n)
+		}
+	}
+}
+
+func TestAnUnforwardedAddressIsNeverTheHouse(t *testing.T) {
+	// Every real request arrives through Traefik, which forwards. One that did
+	// not is an in-cluster probe or something on the box, and its peer address
+	// is always private — so trusting it would mean an edge that stopped
+	// forwarding labelled every device's traffic as home, silently.
+	for _, ip := range []string{"192.168.1.44", "10.0.20.9", "203.0.113.76"} {
+		res := &stubResolver{}
+		got := classifyIP(context.Background(), ip, false, res, freshCache())
+		if got.Net != netUnknown || got.Source != sourceNone {
+			t.Fatalf("%s: got %+v, want unknown", ip, got)
+		}
+		if res.n != 0 {
+			t.Fatalf("%s: resolved %d names; an unforwarded address is not looked up", ip, res.n)
 		}
 	}
 }
@@ -126,7 +152,7 @@ func TestPrivateAddressIsWiFiWithoutADNSLookup(t *testing.T) {
 
 func TestPublicAddressResolvesToTheLongestMatchingPrefix(t *testing.T) {
 	res := a1()
-	got := classifyIP(context.Background(), "203.0.113.76", res, freshCache())
+	got := classifyIP(context.Background(), "203.0.113.76", true, res, freshCache())
 	// 203.0.112.0/20 is more specific than 203.0.64.0/18, so AS64501 is the
 	// network the address actually sits in. Picking the first record instead
 	// would name the wrong operator.
@@ -144,11 +170,23 @@ func TestPublicAddressResolvesToTheLongestMatchingPrefix(t *testing.T) {
 	}
 }
 
+func TestAnOperatorIsNeverCategorised(t *testing.T) {
+	// The category was removed on purpose: an operator's name says nothing
+	// reliable about whether the link is fixed or mobile, so the panel names
+	// networks and leaves the categorising to the reader.
+	body, _ := json.Marshal(classifyIP(context.Background(), "203.0.113.76", true, a1(), freshCache()))
+	for _, word := range []string{"kind", "wifi", "cell"} {
+		if strings.Contains(string(body), word) {
+			t.Fatalf("answer %s still carries %q", body, word)
+		}
+	}
+}
+
 func TestASNResultIsCachedPerAddress(t *testing.T) {
 	res, cache := a1(), freshCache()
-	first := classifyIP(context.Background(), "203.0.113.76", res, cache)
+	first := classifyIP(context.Background(), "203.0.113.76", true, res, cache)
 	after := res.n
-	second := classifyIP(context.Background(), "203.0.113.76", res, cache)
+	second := classifyIP(context.Background(), "203.0.113.76", true, res, cache)
 	if res.n != after {
 		t.Fatalf("second call resolved %d more names; want the cached answer", res.n-after)
 	}
@@ -159,7 +197,7 @@ func TestASNResultIsCachedPerAddress(t *testing.T) {
 
 func TestExpiredCacheEntryIsResolvedAgain(t *testing.T) {
 	res, cache := a1(), newNetCache(time.Hour, 64)
-	classifyIP(context.Background(), "203.0.113.76", res, cache)
+	classifyIP(context.Background(), "203.0.113.76", true, res, cache)
 	after := res.n
 	// Age every entry past the TTL rather than sleeping.
 	cache.mu.Lock()
@@ -168,7 +206,7 @@ func TestExpiredCacheEntryIsResolvedAgain(t *testing.T) {
 		cache.entries[k] = e
 	}
 	cache.mu.Unlock()
-	classifyIP(context.Background(), "203.0.113.76", res, cache)
+	classifyIP(context.Background(), "203.0.113.76", true, res, cache)
 	if res.n <= after {
 		t.Fatal("an expired entry was served from cache")
 	}
@@ -191,47 +229,16 @@ func TestFailedLookupStillNamesAStableNetwork(t *testing.T) {
 	// A lookup that fails must not merge every unknown network into one bucket,
 	// or a month spent roaming reads as a single mystery total.
 	res := &stubResolver{fail: true}
-	a := classifyIP(context.Background(), "203.0.113.76", res, freshCache())
-	b := classifyIP(context.Background(), "203.0.113.9", res, freshCache())
-	if a.Kind != kindUnknown || a.Source != sourceNone {
-		t.Fatalf("got %+v, want an unknown verdict", a)
+	a := classifyIP(context.Background(), "203.0.113.76", true, res, freshCache())
+	b := classifyIP(context.Background(), "203.0.113.9", true, res, freshCache())
+	if a.Source != sourceNone {
+		t.Fatalf("got %+v, want an unresolved verdict", a)
 	}
 	if a.Net == "" || a.Net == b.Net {
 		t.Fatalf("nets %q and %q must be present and distinct", a.Net, b.Net)
 	}
 	if strings.Contains(a.Net, "203.0.113.76") {
 		t.Fatalf("Net %q leaks the address it was derived from", a.Net)
-	}
-}
-
-// --- the guess, which one tap overrides --------------------------------------
-
-func TestKindGuessOnlyFiresOnAnUnambiguousMobileTell(t *testing.T) {
-	cell := []string{
-		"EXAMPLE-MOBILE - Example Mobile, GB",
-		"OTHERTEL-MOBILE, BG",
-		"EXAMPLE-GSM - Example Telecom mobile network, BG",
-		"CELLULAR-ONE, US",
-		"SOMEISP LTE Access, DE",
-	}
-	for _, name := range cell {
-		if got := guessKind(name); got != kindCell {
-			t.Fatalf("guessKind(%q) = %q, want %q", name, got, kindCell)
-		}
-	}
-	// Brand names are deliberately NOT tells: every one of these operators sells
-	// fixed broadband under the same name, and a confidently wrong label is
-	// worse than an unknown one — both cost the same single tap to correct.
-	fixed := []string{
-		"EXAMPLE_RSG - Example Telecom Ltd, BG",
-		"BIGTEL_UK - Bigtel Limited, GB",
-		"OTHER-UK-AS Othernet UK Regional network, GB",
-		"",
-	}
-	for _, name := range fixed {
-		if got := guessKind(name); got != kindUnknown {
-			t.Fatalf("guessKind(%q) = %q, want %q", name, got, kindUnknown)
-		}
 	}
 }
 
@@ -288,5 +295,105 @@ func TestNetinfoAnswersTheCallersNetworkAndIsNotCachedByTheBrowser(t *testing.T)
 	// name for the network, and nothing it does with one needs the address.
 	if strings.Contains(rec.Body.String(), "203.0.113.76") {
 		t.Fatalf("response leaks the client address: %s", rec.Body.String())
+	}
+}
+
+// --- the header a poll carries -----------------------------------------------
+
+func netHeaderFor(t *testing.T, headers map[string]string, peer string) string {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	r.RemoteAddr = peer
+	for k, v := range headers {
+		r.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	setNetworkHeader(rec, r)
+	return rec.Header().Get(netHeader)
+}
+
+func TestNetworkHeaderNamesTheHouseAndTheUnforwarded(t *testing.T) {
+	cases := []struct {
+		name    string
+		headers map[string]string
+		peer    string
+		want    string
+	}{
+		{"forwarded private", map[string]string{"X-Forwarded-For": "192.168.1.44"}, "10.0.20.5:1", netLAN},
+		// A definite answer, not a missing one: the client must drop whatever
+		// it was holding rather than keep attributing to it.
+		{"peer only", nil, "10.0.20.104:1", netUnknown},
+		{"no address at all", nil, "", netUnknown},
+		{"garbage header falls through to the peer", map[string]string{"X-Real-Ip": "nope"}, "10.0.20.104:1", netUnknown},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := netHeaderFor(t, c.headers, c.peer); got != c.want {
+				t.Fatalf("%s = %q, want %q", netHeader, got, c.want)
+			}
+		})
+	}
+}
+
+func TestNetworkHeaderAnswersFromCacheAndNeverBlocks(t *testing.T) {
+	prev := netinfoResolver
+	// A resolver that would hang far past any poll interval. If the header path
+	// ever waited on DNS, the five-second poll would stall behind it.
+	netinfoResolver = blockingResolver{}
+	defer func() { netinfoResolver = prev }()
+	netinfoCache = newNetCache(time.Hour, 64)
+
+	done := make(chan string, 1)
+	go func() {
+		done <- netHeaderFor(t, map[string]string{"CF-Connecting-IP": "203.0.113.76"}, "10.0.20.5:1")
+	}()
+	select {
+	case got := <-done:
+		// A miss sets NO header: the client keeps the answer it has, under its
+		// own staleness rule, rather than being told "unknown" every poll while
+		// a lookup is still in flight.
+		if got != "" {
+			t.Fatalf("%s = %q on a cache miss, want no header", netHeader, got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("setNetworkHeader blocked on the resolver")
+	}
+
+	// Once the answer is cached, the same request answers from it.
+	netinfoCache.put("203.0.113.76", netInfo{Net: "as64501", Source: sourceASN})
+	if got := netHeaderFor(t, map[string]string{"CF-Connecting-IP": "203.0.113.76"}, "10.0.20.5:1"); got != "as64501" {
+		t.Fatalf("%s = %q, want the cached network", netHeader, got)
+	}
+}
+
+func TestSessionsStampsTheCallersOwnNetworkPastTheBodyCache(t *testing.T) {
+	// The /sessions BODY is cached per OS user and shared by that user's
+	// devices. The header must not be: a phone on cellular and a desktop at
+	// home poll the same cached body and have to receive different answers.
+	me, _ := twoLocalUsers(t)
+	withUserMap(t, "wiz="+me)
+	netinfoCache = newNetCache(time.Hour, 64)
+	netinfoCache.put("203.0.113.76", netInfo{Net: "as64501", Source: sourceASN})
+
+	get := func(clientIP string) (string, string) {
+		r := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+		r.Header.Set(authHeader, "wiz")
+		r.Header.Set("CF-Connecting-IP", clientIP)
+		rec := httptest.NewRecorder()
+		handleSessions(rec, r)
+		return rec.Header().Get(netHeader), rec.Body.String()
+	}
+
+	first, bodyA := get("203.0.113.76") // warms the per-user body cache
+	second, bodyB := get("192.168.1.44")
+
+	if first != "as64501" {
+		t.Fatalf("first caller got %q, want as64501", first)
+	}
+	if second != netLAN {
+		t.Fatalf("second caller got %q, want %q — the header rode the cached body", second, netLAN)
+	}
+	if bodyA != bodyB {
+		t.Fatalf("bodies differ (%q vs %q); the cache was supposed to serve both", bodyA, bodyB)
 	}
 }

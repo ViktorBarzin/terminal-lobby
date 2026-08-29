@@ -24,31 +24,26 @@
  * Presenting the decompressed figure as data use would overstate the largest
  * bucket by an unpredictable factor.
  *
- * WHICH NETWORK THE BYTES CROSSED. Every window is also attributed to a network
- * kind — WiFi, cellular, or unknown — because "3.4 GB this month" answers a
- * different question abroad than at home. The kind comes from network.ts, which
- * asks the server what address the request arrived from; this module only
- * carries the dimension through the arithmetic. `unknown` is a real answer, not
- * a gap to hide: it holds every byte counted before this existed, and every
- * window whose network could not be resolved.
+ * WHICH NETWORK THE BYTES CROSSED. Every window is attributed to the network it
+ * went over, because "3.4 GB this month" answers a different question abroad
+ * than at home. Networks are NAMED, not categorised: the server identifies the
+ * operator exactly, from the routing table, and nothing here guesses whether
+ * that operator is WiFi or cellular — an earlier version did, and the guess was
+ * the only unreliable part of the whole feature. A reader knows which row is
+ * their SIM; a heuristic on the operator's name does not.
  *
- * WHAT THIS MODULE OWNS. Persistence and arithmetic only: day and month
- * bucketing, pruning, aggregation over periods, and formatting. Measurement
- * lives in frontend/diag.js, which is shared verbatim with term.html so the
- * terminal iframe can count its own WebSocket. Splitting it this way keeps one
- * storage schema, written by whichever tab is folding and read by one panel.
+ * TWO KINDS OF "WE DON'T KNOW", KEPT APART. `unknown` is traffic counted while
+ * no fresh answer was available — a backgrounded tab, mostly — and it stops
+ * growing the moment someone looks at the tab again. `earlier` is traffic
+ * counted before any of this was measured; it never grows and ages out with
+ * everything else. Both sit in the totals and in neither named network.
+ *
+ * WHAT THIS MODULE OWNS. Persistence and arithmetic only: day, month and
+ * network bucketing, pruning, aggregation over periods, and formatting. Which
+ * network is current lives in network.ts; measurement lives in
+ * frontend/diag.js, shared verbatim with term.html so the terminal iframe can
+ * count its own WebSocket.
  */
-
-/** The three network kinds a window can be attributed to. `unknown` is not a
- *  failure mode to be designed away: it covers every byte counted before this
- *  attribution existed, plus any window whose network could not be resolved,
- *  and a person reading a cellular figure is entitled to know how much sits
- *  outside it. */
-export const KINDS = ["wifi", "cell", "unknown"] as const;
-export type NetKind = (typeof KINDS)[number];
-
-/** What the panel is showing: one kind, or everything summed. */
-export type UsageFilter = NetKind | "all";
 
 /** The five feature buckets the panel reports, each named after something that
  *  could be changed rather than after an endpoint. */
@@ -59,38 +54,65 @@ export type Bucket = (typeof BUCKETS)[number];
  *  server compresses them and the browser hands the app the inflated form. */
 export const MODELLED_BUCKETS = ["term", "text"] as const;
 
+/** Network ids that are not operators. Everything else is `lan`, `as<n>` or an
+ *  `ip-<digest>` the server minted for an address it could not resolve. */
+export const NET_LAN = "lan";
+export const NET_UNKNOWN = "unknown";
+export const NET_EARLIER = "earlier";
+/** Not stored — the row the panel folds everything past the display cap into. */
+export const NET_OTHER = "other";
+
 /** What one rollup window contributed, per bucket. Partial: a window in which
  *  nobody opened a file simply has no `files` key. */
 export type WindowBytes = Partial<Record<Bucket, number>>;
 
-/** Totals for one day or one month. Always complete, so a reader never has to
- *  decide what a missing bucket means. */
+/** Totals for one network over one period. Always complete, so a reader never
+ *  has to decide what a missing bucket means. */
 export type BucketTotals = Record<Bucket, number>;
 
-/** One period's totals, split by the network the bytes crossed. */
-export type KindTotals = Record<NetKind, BucketTotals>;
+/** One period's totals, split by the network the bytes crossed. Sparse: a day
+ *  holds only the networks that carried something. */
+export type NetTotals = Record<string, BucketTotals>;
 
-export interface UsageStore {
-  v: 2;
-  /** keyed `YYYY-MM-DD`, local time */
-  days: Record<string, KindTotals>;
-  /** keyed `YYYY-MM`, local time — kept separately so a named calendar month
-   *  survives after its daily buckets have aged out. */
-  months: Record<string, KindTotals>;
+/** What a network is called, so a row stays readable after you have left it.
+ *  The server hands these over; nothing here invents one. */
+export interface NetMeta {
+  label: string;
+  /** Two-letter country the operator is registered in. Registration, not
+   *  location: it says where the AS is registered, not where the phone is. */
+  cc: string;
+  seen: number;
 }
 
-/** The storage slot is unchanged across the schema bump on purpose: v1 counters
- *  are lifted into the `unknown` kind on read rather than discarded, so the
- *  month someone is in the middle of survives the upgrade. */
+export interface UsageStore {
+  v: 3;
+  /** keyed `YYYY-MM-DD`, local time */
+  days: Record<string, NetTotals>;
+  /** keyed `YYYY-MM`, local time — kept separately so a named calendar month
+   *  survives after its daily buckets have aged out. */
+  months: Record<string, NetTotals>;
+  /** Directory of network names, pruned to what the periods still reference. */
+  nets: Record<string, NetMeta>;
+  /** The one period a person controls: `at` is when they last reset it, and
+   *  `totals` accumulates independently of the calendar ones. Accumulated
+   *  rather than derived, because days age out at 31 and a reset can sit
+   *  anywhere inside a day. */
+  since: { at: number; totals: NetTotals };
+}
+
+/** The storage slot has not changed across either schema bump: what is stored
+ *  is upgraded on read rather than discarded, so nobody loses the month they
+ *  are in the middle of. */
 export const USAGE_STORAGE_KEY = "tl:net:v1";
 /** Enough to cover a calendar month plus the current one's running days. */
 export const DAYS_KEPT = 31;
 /** A year of named months, for twelve numbers. */
 export const MONTHS_KEPT = 12;
+/** Networks listed before the rest fold into one Other row. Six fits a phone
+ *  and covers a trip; the store keeps every network regardless. */
+export const NETWORKS_SHOWN = 6;
 
-const SCHEMA_VERSION = 2;
-/** The shape this store had before bytes were attributed to a network. */
-const LEGACY_SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 3;
 
 const MONTH_NAMES = [
   "January",
@@ -122,31 +144,33 @@ function zeroTotals(): BucketTotals {
   return { term: 0, app: 0, text: 0, files: 0, api: 0 };
 }
 
-function zeroKinds(): KindTotals {
-  return { wifi: zeroTotals(), cell: zeroTotals(), unknown: zeroTotals() };
+export function emptyStore(): UsageStore {
+  return { v: SCHEMA_VERSION, days: {}, months: {}, nets: {}, since: { at: 0, totals: {} } };
 }
 
 /** One period's totals with the network split collapsed — what a reader wants
  *  whenever the question is "how much altogether". */
-export function combined(k: KindTotals | undefined): BucketTotals {
+export function combined(n: NetTotals | undefined): BucketTotals {
   const out = zeroTotals();
-  if (!k) return out;
-  for (const kind of KINDS) {
-    for (const b of BUCKETS) out[b] += k[kind][b];
+  if (!n) return out;
+  for (const totals of Object.values(n)) {
+    for (const b of BUCKETS) out[b] += totals[b];
   }
   return out;
 }
 
-export function emptyStore(): UsageStore {
-  return { v: SCHEMA_VERSION, days: {}, months: {} };
-}
+const sumBuckets = (t: BucketTotals | undefined): number =>
+  t ? BUCKETS.reduce((n, b) => n + t[b], 0) : 0;
+
+/** Bytes across every network in one period. */
+export const totalOf = (n: NetTotals | undefined): number => sumBuckets(combined(n));
 
 /** Keep the newest `keep` keys. Both key formats sort lexicographically in
  *  chronological order, which is the whole reason for those formats. */
-function prune(map: Record<string, KindTotals>, keep: number): Record<string, KindTotals> {
+function prune(map: Record<string, NetTotals>, keep: number): Record<string, NetTotals> {
   const keys = Object.keys(map).sort();
   if (keys.length <= keep) return map;
-  const out: Record<string, KindTotals> = {};
+  const out: Record<string, NetTotals> = {};
   for (const k of keys.slice(keys.length - keep)) {
     const totals = map[k];
     if (totals) out[k] = totals;
@@ -165,12 +189,16 @@ function addWindow(into: BucketTotals, w: WindowBytes): BucketTotals {
   return next;
 }
 
-const isKind = (v: unknown): v is NetKind => (KINDS as readonly unknown[]).includes(v);
-
-/** Fold a window into one kind's slot, leaving the other two untouched. */
-function addKind(into: KindTotals, w: WindowBytes, kind: NetKind): KindTotals {
-  return { ...into, [kind]: addWindow(into[kind], w) };
+/** Fold a window into one network's slot, leaving every other network alone. */
+function addNet(into: NetTotals, w: WindowBytes, net: string): NetTotals {
+  return { ...into, [net]: addWindow(into[net] ?? zeroTotals(), w) };
 }
+
+/** A network id we are willing to store. Anything else — an empty string, a
+ *  value from a hand-edited store — becomes `unknown` rather than minting a row
+ *  nobody can read. */
+const cleanNet = (net: unknown): string =>
+  typeof net === "string" && /^[a-z0-9-]{1,40}$/.test(net) ? net : NET_UNKNOWN;
 
 /**
  * Fold one window's bytes into the store and prune. Pure: returns a new store
@@ -184,46 +212,97 @@ export function foldInto(
   /** Which network the window crossed. Defaults to `unknown` so a caller that
    *  has not learnt the network yet still contributes to the totals — an
    *  unattributed byte is far better than a missing one. */
-  kind: NetKind = "unknown",
+  net: string = NET_UNKNOWN,
 ): UsageStore {
   const dk = dayKey(now);
   const mk = monthKey(now);
-  const k = isKind(kind) ? kind : "unknown";
+  const id = cleanNet(net);
   return {
     v: SCHEMA_VERSION,
-    days: prune({ ...store.days, [dk]: addKind(store.days[dk] ?? zeroKinds(), w, k) }, DAYS_KEPT),
-    months: prune(
-      { ...store.months, [mk]: addKind(store.months[mk] ?? zeroKinds(), w, k) },
-      MONTHS_KEPT,
-    ),
+    days: prune({ ...store.days, [dk]: addNet(store.days[dk] ?? {}, w, id) }, DAYS_KEPT),
+    months: prune({ ...store.months, [mk]: addNet(store.months[mk] ?? {}, w, id) }, MONTHS_KEPT),
+    nets: store.nets,
+    since: {
+      // Stamped on the first fold rather than at construction, so the row reads
+      // "since counting started" for someone who has never reset it.
+      at: store.since.at || now.getTime(),
+      totals: addNet(store.since.totals, w, id),
+    },
   };
 }
 
-const sum = (t: BucketTotals | undefined): number =>
-  t ? BUCKETS.reduce((n, b) => n + t[b], 0) : 0;
-
-/** One period, both as a single figure and split by network. `all` is the sum
- *  of the three and is what the periods read as before anyone filters. */
-export interface PeriodTotals {
-  all: number;
-  wifi: number;
-  cell: number;
-  unknown: number;
+/** Record what a network is called. Names arrive from the server long after
+ *  bytes have been folded under the id, and a row has to stay readable once you
+ *  are somewhere else entirely. */
+export function rememberNet(
+  store: UsageStore,
+  net: string,
+  meta: { label?: string; cc?: string },
+  now: Date = new Date(),
+): UsageStore {
+  const id = cleanNet(net);
+  if (id === NET_UNKNOWN || id === NET_LAN) return store; // both are named in code
+  return {
+    ...store,
+    nets: {
+      ...store.nets,
+      [id]: {
+        label: typeof meta.label === "string" ? meta.label.slice(0, 60) : "",
+        cc: typeof meta.cc === "string" ? meta.cc.slice(0, 4) : "",
+        seen: now.getTime(),
+      },
+    },
+  };
 }
 
-const zeroPeriod = (): PeriodTotals => ({ all: 0, wifi: 0, cell: 0, unknown: 0 });
+/** Clear the resettable period without touching any other figure. */
+export function resetSince(store: UsageStore, now: Date = new Date()): UsageStore {
+  return { ...store, since: { at: now.getTime(), totals: {} } };
+}
 
-function addPeriod(into: PeriodTotals, k: KindTotals | undefined): PeriodTotals {
-  if (!k) return into;
-  const next = { ...into };
-  for (const kind of KINDS) {
-    const n = sum(k[kind]);
-    next[kind] += n;
-    next.all += n;
+/**
+ * Drop directory entries nothing references any more, so the store does not
+ * accumulate the name of every café you have ever sat in.
+ *
+ * "References" includes recently seen, not only carrying bytes: the name of the
+ * network you are on now arrives from the server BEFORE the first window folds
+ * under it, and dropping it in that gap would leave the row reading `AS8374`
+ * until the next lookup happened to land. The window matches the daily one, so
+ * a name outlives the bytes it belongs to by exactly as long as they last.
+ */
+function pruneNets(store: UsageStore, now: number = Date.now()): UsageStore {
+  const live = new Set<string>();
+  for (const map of [store.days, store.months]) {
+    for (const period of Object.values(map)) for (const id of Object.keys(period)) live.add(id);
   }
-  return next;
+  for (const id of Object.keys(store.since.totals)) live.add(id);
+  const keepSince = now - DAYS_KEPT * 24 * 60 * 60 * 1000;
+  const nets: Record<string, NetMeta> = {};
+  for (const [id, meta] of Object.entries(store.nets)) {
+    if (live.has(id) || meta.seen >= keepSince) nets[id] = meta;
+  }
+  return { ...store, nets };
 }
 
+// ---- reading -----------------------------------------------------------------
+
+/** The periods the panel offers, in the order it shows them. */
+export const PERIODS = ["today", "last7", "thisMonth", "lastMonth", "since"] as const;
+export type PeriodKey = (typeof PERIODS)[number];
+
+export interface PeriodRow {
+  key: PeriodKey;
+  label: string;
+  bytes: number;
+}
+
+export interface NetworkRow {
+  id: string;
+  label: string;
+  bytes: number;
+  /** false for the folded Other row, which is a sum rather than a network. */
+  selectable: boolean;
+}
 
 export interface UsageBucket {
   key: Bucket;
@@ -234,68 +313,148 @@ export interface UsageBucket {
 }
 
 export interface UsageAggregate {
-  today: PeriodTotals;
-  last7: PeriodTotals;
-  thisMonth: PeriodTotals;
-  lastMonth: PeriodTotals;
-  /** The name of the month `lastMonth` covers, e.g. "July". */
-  lastMonthLabel: string;
-  /** Today's breakdown under `filter`, every bucket present, largest first. */
+  periods: PeriodRow[];
+  /** Networks in the selected period, largest first, capped and folded. */
+  networks: NetworkRow[];
+  /** Buckets for the selected period, narrowed to the selected network. */
   buckets: UsageBucket[];
-  /** Which network the breakdown is showing, echoed back so a caller renders
-   *  the control and the bars from one value. */
-  filter: UsageFilter;
+  period: PeriodKey;
+  /** null = every network in the period. */
+  net: string | null;
+  /** When the resettable period started; 0 before anything was counted. */
+  sinceAt: number;
 }
 
 const isModelled = (b: Bucket): boolean => (MODELLED_BUCKETS as readonly string[]).includes(b);
 
-/** Today's bytes in one bucket, under a filter. */
-function bucketBytes(k: KindTotals | undefined, b: Bucket, f: UsageFilter): number {
-  if (!k) return 0;
-  return f === "all" ? combined(k)[b] : k[f][b];
+function mergeNetTotals(into: NetTotals, from: NetTotals | undefined): NetTotals {
+  if (!from) return into;
+  const out = { ...into };
+  for (const [id, totals] of Object.entries(from)) {
+    out[id] = addWindow(out[id] ?? zeroTotals(), totals);
+  }
+  return out;
 }
 
-/** Every period the panel shows, computed from one store in one pass. Periods
- *  always carry the full split — a filter narrows the BREAKDOWN, never the
- *  four headline figures, so switching it never makes a total appear to move. */
-export function aggregate(
-  store: UsageStore,
-  now: Date,
-  filter: UsageFilter = "all",
-): UsageAggregate {
-  const today = store.days[dayKey(now)];
-
-  let last7 = zeroPeriod();
+/** One period's per-network totals, whichever period it is. */
+export function periodTotals(store: UsageStore, now: Date, key: PeriodKey): NetTotals {
+  if (key === "today") return store.days[dayKey(now)] ?? {};
+  if (key === "since") return store.since.totals;
+  if (key === "thisMonth") return store.months[monthKey(now)] ?? {};
+  if (key === "lastMonth") return store.months[monthKey(previousMonth(now))] ?? {};
+  let out: NetTotals = {};
   for (let i = 0; i < 7; i++) {
     const d = new Date(now.getTime());
     d.setDate(d.getDate() - i);
-    last7 = addPeriod(last7, store.days[dayKey(d)]);
+    out = mergeNetTotals(out, store.days[dayKey(d)]);
   }
+  return out;
+}
 
+function previousMonth(now: Date): Date {
   const prev = new Date(now.getTime());
   // Anchor to the 1st before stepping back, so 31 March does not land in March.
   prev.setDate(1);
   prev.setMonth(prev.getMonth() - 1);
+  return prev;
+}
+
+/** The name of the month `lastMonth` covers. The year is carried whenever it
+ *  differs from the current one: MONTHS_KEPT spans a year, so a bare "December"
+ *  read in January names an ambiguous month. */
+export function lastMonthLabel(now: Date): string {
+  const prev = previousMonth(now);
+  return (
+    (MONTH_NAMES[prev.getMonth()] ?? "") +
+    (prev.getFullYear() === now.getFullYear() ? "" : " " + prev.getFullYear())
+  );
+}
+
+const shortDate = (ms: number): string =>
+  new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+/** What a network is called on screen. Reserved ids are named in code; an
+ *  operator uses the directory, and falls back to its own id rather than to a
+ *  name nobody supplied. */
+export function netLabel(store: UsageStore, id: string): string {
+  if (id === NET_LAN) return "Home network";
+  if (id === NET_UNKNOWN) return "Unknown network";
+  if (id === NET_EARLIER) return "Earlier";
+  if (id === NET_OTHER) return "Other";
+  const meta = store.nets[id];
+  if (meta?.label) return meta.cc ? `${meta.label} (${meta.cc})` : meta.label;
+  // An address the server could not resolve still gets a distinct row; the
+  // digest tail keeps two of them apart on screen.
+  if (id.startsWith("ip-")) return `Unnamed network (${id.slice(3, 7)})`;
+  return id.toUpperCase();
+}
+
+function networkRows(store: UsageStore, totals: NetTotals): NetworkRow[] {
+  const rows = Object.entries(totals)
+    .map(([id, t]) => ({ id, label: netLabel(store, id), bytes: sumBuckets(t), selectable: true }))
+    .filter((r) => r.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes);
+  if (rows.length <= NETWORKS_SHOWN) return rows;
+  const shown = rows.slice(0, NETWORKS_SHOWN);
+  const rest = rows.slice(NETWORKS_SHOWN);
+  shown.push({
+    id: NET_OTHER,
+    label: `Other (${rest.length} networks)`,
+    bytes: rest.reduce((n, r) => n + r.bytes, 0),
+    selectable: false,
+  });
+  return shown;
+}
+
+/**
+ * Everything the panel shows, computed from one store in one pass. The period
+ * scopes both the network rows and the buckets; the network narrows the buckets
+ * further. Period totals are never narrowed — switching the breakdown must not
+ * make a figure someone just read appear to move.
+ */
+export function aggregate(
+  store: UsageStore,
+  now: Date,
+  period: PeriodKey = "thisMonth",
+  net: string | null = null,
+): UsageAggregate {
+  const selected = periodTotals(store, now, period);
+  const networks = networkRows(store, selected);
+  // A network that has dropped out of the selected period (a trip you are
+  // reading a later month for) narrows to nothing rather than to everything.
+  const scoped =
+    net === null ? combined(selected) : (selected[net] ?? zeroTotals());
 
   return {
-    today: addPeriod(zeroPeriod(), today),
-    last7,
-    thisMonth: addPeriod(zeroPeriod(), store.months[monthKey(now)]),
-    lastMonth: addPeriod(zeroPeriod(), store.months[monthKey(prev)]),
-    // The year is carried whenever it differs from the current one. MONTHS_KEPT
-    // spans a year, so a bare "December" read in January names an ambiguous
-    // month.
-    lastMonthLabel:
-      (MONTH_NAMES[prev.getMonth()] ?? "") +
-      (prev.getFullYear() === now.getFullYear() ? "" : " " + prev.getFullYear()),
+    periods: PERIODS.map((key) => ({
+      key,
+      label:
+        key === "today"
+          ? "Today"
+          : key === "last7"
+            ? "Last 7 days"
+            : key === "thisMonth"
+              ? "This month"
+              : key === "lastMonth"
+                ? lastMonthLabel(now)
+                : store.since.at
+                  ? `Since ${shortDate(store.since.at)}`
+                  : "Since reset",
+      bytes: totalOf(periodTotals(store, now, key)),
+    })),
+    networks,
     buckets: BUCKETS.map((key) => ({
       key,
-      bytes: bucketBytes(today, key, filter),
+      bytes: scoped[key],
       modelled: isModelled(key),
     })).sort((a, b) => b.bytes - a.bytes),
-    filter,
+    period,
+    net,
+    sinceAt: store.since.at,
   };
 }
+
+// ---- persistence -------------------------------------------------------------
 
 type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -303,7 +462,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Coerce one period's stored buckets. A hand-edited or half-written payload
+/** Coerce one network's stored buckets. A hand-edited or half-written payload
  *  becomes zeroes rather than a source of NaN that would silently poison every
  *  total downstream. */
 function readTotals(v: unknown): BucketTotals {
@@ -316,30 +475,98 @@ function readTotals(v: unknown): BucketTotals {
   return totals;
 }
 
-/** Coerce a stored map to the shape the rest of this module may assume. */
-function readMap(v: unknown): Record<string, KindTotals> {
+function readNetTotals(v: unknown): NetTotals {
   if (!isPlainObject(v)) return {};
-  const out: Record<string, KindTotals> = {};
-  for (const [k, raw] of Object.entries(v)) {
-    if (!isPlainObject(raw)) continue;
-    const kinds = zeroKinds();
-    for (const kind of KINDS) kinds[kind] = readTotals(raw[kind]);
-    out[k] = kinds;
+  const out: NetTotals = {};
+  for (const [id, raw] of Object.entries(v)) {
+    if (cleanNet(id) !== id) continue;
+    out[id] = readTotals(raw);
   }
   return out;
 }
 
-/** Lift a v1 map — one flat bucket set per period, written before any byte was
- *  attributed to a network — into the `unknown` kind. The alternative was
- *  discarding it, which would have cost whoever upgrades mid-month their month. */
-function liftLegacyMap(v: unknown): Record<string, KindTotals> {
+function readMap(v: unknown): Record<string, NetTotals> {
   if (!isPlainObject(v)) return {};
-  const out: Record<string, KindTotals> = {};
+  const out: Record<string, NetTotals> = {};
   for (const [k, raw] of Object.entries(v)) {
-    if (!isPlainObject(raw)) continue;
-    out[k] = { ...zeroKinds(), unknown: readTotals(raw) };
+    if (isPlainObject(raw)) out[k] = readNetTotals(raw);
   }
   return out;
+}
+
+function readNets(v: unknown): Record<string, NetMeta> {
+  if (!isPlainObject(v)) return {};
+  const out: Record<string, NetMeta> = {};
+  for (const [id, raw] of Object.entries(v)) {
+    if (cleanNet(id) !== id || !isPlainObject(raw)) continue;
+    out[id] = {
+      label: typeof raw.label === "string" ? raw.label.slice(0, 60) : "",
+      cc: typeof raw.cc === "string" ? raw.cc.slice(0, 4) : "",
+      seen: typeof raw.seen === "number" && Number.isFinite(raw.seen) ? raw.seen : 0,
+    };
+  }
+  return out;
+}
+
+/**
+ * Lift a store written before bytes were attributed to a network.
+ *
+ * Schema 1 held one flat bucket set per period; schema 2 split it three ways by
+ * a WiFi/cellular/unknown kind that no longer exists. Neither can be turned
+ * into a network without inventing data, so all of it lands in `earlier` — a
+ * row that says plainly "counted before this was measured" rather than a name
+ * nobody chose. Discarding it instead would cost whoever upgrades mid-month
+ * their month.
+ */
+function liftLegacyMap(v: unknown, version: number): Record<string, NetTotals> {
+  if (!isPlainObject(v)) return {};
+  const out: Record<string, NetTotals> = {};
+  for (const [k, raw] of Object.entries(v)) {
+    if (!isPlainObject(raw)) continue;
+    const totals = zeroTotals();
+    if (version === 1) {
+      const t = readTotals(raw);
+      for (const b of BUCKETS) totals[b] += t[b];
+    } else {
+      for (const kind of ["wifi", "cell", "unknown"]) {
+        const t = readTotals(raw[kind]);
+        for (const b of BUCKETS) totals[b] += t[b];
+      }
+    }
+    out[k] = { [NET_EARLIER]: totals };
+  }
+  return out;
+}
+
+export function readStore(store: MinStorage | null = storage()): UsageStore {
+  try {
+    const raw = store?.getItem(USAGE_STORAGE_KEY);
+    if (!raw) return emptyStore();
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPlainObject(parsed)) return emptyStore();
+    if (parsed.v === 1 || parsed.v === 2) {
+      const v = parsed.v;
+      return {
+        ...emptyStore(),
+        days: liftLegacyMap(parsed.days, v),
+        months: liftLegacyMap(parsed.months, v),
+      };
+    }
+    if (parsed.v !== SCHEMA_VERSION) return emptyStore();
+    const since = isPlainObject(parsed.since) ? parsed.since : {};
+    return {
+      v: SCHEMA_VERSION,
+      days: readMap(parsed.days),
+      months: readMap(parsed.months),
+      nets: readNets(parsed.nets),
+      since: {
+        at: typeof since.at === "number" && Number.isFinite(since.at) && since.at > 0 ? since.at : 0,
+        totals: readNetTotals(since.totals),
+      },
+    };
+  } catch {
+    return emptyStore();
+  }
 }
 
 function storage(): MinStorage | null {
@@ -350,29 +577,9 @@ function storage(): MinStorage | null {
   }
 }
 
-export function readStore(store: MinStorage | null = storage()): UsageStore {
-  try {
-    const raw = store?.getItem(USAGE_STORAGE_KEY);
-    if (!raw) return emptyStore();
-    const parsed: unknown = JSON.parse(raw);
-    if (!isPlainObject(parsed)) return emptyStore();
-    if (parsed.v === LEGACY_SCHEMA_VERSION) {
-      return {
-        v: SCHEMA_VERSION,
-        days: liftLegacyMap(parsed.days),
-        months: liftLegacyMap(parsed.months),
-      };
-    }
-    if (parsed.v !== SCHEMA_VERSION) return emptyStore();
-    return { v: SCHEMA_VERSION, days: readMap(parsed.days), months: readMap(parsed.months) };
-  } catch {
-    return emptyStore();
-  }
-}
-
 export function writeStore(next: UsageStore, store: MinStorage | null = storage()): void {
   try {
-    store?.setItem(USAGE_STORAGE_KEY, JSON.stringify(next));
+    store?.setItem(USAGE_STORAGE_KEY, JSON.stringify(pruneNets(next)));
   } catch {
     /* a quota-full or blocked store costs history, not the running counter */
   }
@@ -387,19 +594,17 @@ export function resetStore(store: MinStorage | null = storage()): void {
 }
 
 /**
- * Persist one window under a cross-tab lock. Several tabs fold into one key, so
- * an unguarded read-modify-write drops whichever window lost the race. Web
- * Locks is available on every browser this app targets, iOS Safari included; a
- * browser without it falls back to the unguarded path, which can lose a window
- * under concurrent tabs and is acceptable for a diagnostic.
+ * Run a read-modify-write against the store under a cross-tab lock. Several
+ * tabs fold into one key, so an unguarded sequence drops whichever writer lost
+ * the race. Web Locks is available on every browser this app targets, iOS
+ * Safari included; a browser without it falls back to the unguarded path, which
+ * can lose a write under concurrent tabs and is acceptable for a diagnostic.
  */
-export async function commitWindow(
-  w: WindowBytes,
-  kind: NetKind = "unknown",
-  now: Date = new Date(),
-  store: MinStorage | null = storage(),
+async function locked(
+  change: (cur: UsageStore) => UsageStore,
+  store: MinStorage | null,
 ): Promise<void> {
-  const apply = () => writeStore(foldInto(readStore(store), w, now, kind), store);
+  const apply = () => writeStore(change(readStore(store)), store);
   try {
     const locks = navigator?.locks;
     if (!locks?.request) return void apply();
@@ -407,6 +612,34 @@ export async function commitWindow(
   } catch {
     apply();
   }
+}
+
+/** Persist one window's bytes under the network they crossed. */
+export function commitWindow(
+  w: WindowBytes,
+  net: string = NET_UNKNOWN,
+  now: Date = new Date(),
+  store: MinStorage | null = storage(),
+): Promise<void> {
+  return locked((cur) => foldInto(cur, w, now, net), store);
+}
+
+/** Persist what a network is called, so its row stays readable later. */
+export function commitNetName(
+  net: string,
+  meta: { label?: string; cc?: string },
+  now: Date = new Date(),
+  store: MinStorage | null = storage(),
+): Promise<void> {
+  return locked((cur) => rememberNet(cur, net, meta, now), store);
+}
+
+/** Rebaseline the resettable period, leaving every other figure standing. */
+export function commitResetSince(
+  now: Date = new Date(),
+  store: MinStorage | null = storage(),
+): Promise<void> {
+  return locked((cur) => resetSince(cur, now), store);
 }
 
 /** Decimal units, because that is how a data plan is billed. */
