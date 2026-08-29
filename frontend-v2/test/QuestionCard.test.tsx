@@ -31,15 +31,27 @@ function mount(questions: Question[]) {
 }
 
 describe("<QuestionCard>", () => {
-  it("shows the tool's own two extra options beside the transcript's", () => {
+  // The transcript's options plus the tool's own free-text row. "Chat about
+  // this" is NOT here any more: it leaves the question rather than answering it,
+  // and it acts on the press while every row here is a draft. It lives in the
+  // footer now (see the test at the bottom).
+  it("shows the tool's free-text option beside the transcript's", () => {
     const { options } = mount([q()]);
     expect(options().map((o) => o.textContent)).toEqual([
       expect.stringContaining("All Go"),
       expect.stringContaining("All TypeScript"),
       expect.stringContaining("Split"),
       expect.stringContaining("Other"),
-      expect.stringContaining("Chat about this"),
     ]);
+  });
+
+  // The number beside a row is the DIALOG's number — the key we inject — so it
+  // keeps counting past the rows this list does not show.
+  it("numbers each row with the key the pty is listening for", () => {
+    const { options } = mount([q()]);
+    expect(
+      options().map((o) => o.querySelector(".tl-qcard-key")?.textContent),
+    ).toEqual(["1", "2", "3", "4"]);
   });
 
   it("carries each option's description, which is where the reasoning is", () => {
@@ -114,10 +126,9 @@ describe("<QuestionCard>", () => {
     expect(container.textContent).toContain("Split");
   });
 
-  it("sends what the review showed", () => {
+  it("sends the answer from the one screen a single question gets", () => {
     const { optionByLabel, button, onSend } = mount([q()]);
     optionByLabel("Split").click();
-    button(".tl-qcard-next")!.click();
     button(".tl-qcard-send")!.click();
     expect(onSend).toHaveBeenCalledWith([{ chosen: ["Split"] }]);
   });
@@ -127,9 +138,9 @@ describe("<QuestionCard>", () => {
     const { container, optionByLabel, button } = mount([q()]);
     optionByLabel("Other").click();
     const box = container.querySelector<HTMLInputElement>(".tl-qcard-other")!;
-    expect(button(".tl-qcard-next")!.disabled).toBe(true);
+    expect(button(".tl-qcard-send")!.disabled).toBe(true);
     fireEvent.input(box, { target: { value: "none of these" } });
-    expect(button(".tl-qcard-next")!.disabled).toBe(false);
+    expect(button(".tl-qcard-send")!.disabled).toBe(false);
   });
 
   it("sends the typed text with the Other answer", () => {
@@ -138,15 +149,14 @@ describe("<QuestionCard>", () => {
     fireEvent.input(container.querySelector(".tl-qcard-other")!, {
       target: { value: "none of these" },
     });
-    button(".tl-qcard-next")!.click();
     button(".tl-qcard-send")!.click();
     expect(onSend).toHaveBeenCalledWith([{ chosen: ["Other"], other: "none of these" }]);
   });
 
-  // "Chat about this" defers the question rather than answering it.
+  // Deferring the question, from the footer — not from the answer list.
   it("hands the reader the composer instead of choosing for them", () => {
-    const { optionByLabel, onChat, onSend } = mount([q()]);
-    optionByLabel("Chat about this").click();
+    const { button, onChat, onSend } = mount([q()]);
+    button(".tl-qcard-chat")!.click();
     expect(onChat).toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
   });

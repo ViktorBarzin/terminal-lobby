@@ -1,10 +1,11 @@
 import { For, Show, createMemo, createSignal, type Component } from "solid-js";
 import type { Question } from "./canonicalize";
 import {
-  CHAT_LABEL,
   OTHER_LABEL,
+  answerableOptions,
   complete,
-  shownOptions,
+  optionIndex,
+  submitsImmediately,
   type DraftAnswer,
 } from "./answer.logic";
 
@@ -108,7 +109,11 @@ export const QuestionCard: Component<{
       <div class="tl-qcard-head">
         <span class="tl-qcard-title">Claude needs answers</span>
         <span class="tl-qcard-step">
-          {reviewing() ? "review" : `question ${at() + 1} of ${total()}`}
+          {reviewing()
+            ? "review"
+            : submitsImmediately(props.questions)
+              ? "awaiting your answer"
+              : `question ${at() + 1} of ${total()}`}
         </span>
       </div>
 
@@ -138,22 +143,29 @@ export const QuestionCard: Component<{
               <div class="tl-qcard-hint">Pick as many as apply</div>
             </Show>
             <div class="tl-qcard-options">
-              <For each={shownOptions(q())}>
+              <For each={answerableOptions(q())}>
                 {(label) => (
                   <button
                     type="button"
                     class="tl-qcard-option"
                     data-chosen={chosenHere(label) ? "true" : undefined}
-                    // "Chat about this" is not an answer — it defers the whole
-                    // question and hands the reader the composer, which is what
-                    // the CLI's own option of that name does.
-                    onClick={() => (label === CHAT_LABEL ? props.onChat() : toggle(label))}
+                    data-multi={q().multiSelect ? "true" : undefined}
+                    onClick={() => toggle(label)}
                   >
-                    <span class="tl-qcard-mark">
-                      {label === CHAT_LABEL ? "→" : chosenHere(label) ? "●" : "○"}
+                    {/* The DIALOG's number, not this list's position: it is the
+                        key we are about to type, so it has to be the key the CLI
+                        is listening for. The transcript's recorded row numbers
+                        its options the same way, and the card was the only one of
+                        the three surfaces that showed no number at all. */}
+                    <span class="tl-qcard-key" aria-hidden="true">
+                      {optionIndex(q(), label) + 1}
                     </span>
                     <span class="tl-qcard-label">{label}</span>
                     <Show when={descriptionFor(q(), label)}>
+                      {/* Clamped to two lines, and the chosen row expands (see
+                          app.css). Every description stays on screen because the
+                          difference between two options usually lives in them,
+                          not in the labels. */}
                       <span class="tl-qcard-desc">{descriptionFor(q(), label)}</span>
                     </Show>
                   </button>
@@ -175,6 +187,14 @@ export const QuestionCard: Component<{
       </Show>
 
       <div class="tl-qcard-actions">
+        {/* Leaving the question, not answering it. It acts on the press, while
+            every row above is a draft nothing acts on until Submit — which is
+            why it is here and not up there wearing an arrow. */}
+        <Show when={!props.stopped}>
+          <button type="button" class="tl-qcard-chat" onClick={() => props.onChat()}>
+            Type a message instead
+          </button>
+        </Show>
         <Show when={at() > 0 && !props.stopped}>
           <button
             type="button"
@@ -204,7 +224,7 @@ export const QuestionCard: Component<{
           </Show>
         </Show>
         <Show
-          when={reviewing() && !props.stopped}
+          when={(reviewing() || submitsImmediately(props.questions)) && !props.stopped}
           fallback={
             <Show when={!props.stopped}>
               <button
@@ -213,7 +233,7 @@ export const QuestionCard: Component<{
                 disabled={!canAdvance() || props.busy}
                 onClick={() => setAt(at() + 1)}
               >
-                {at() + 1 === total() ? "Review" : "Next"}
+                {at() + 1 === total() ? "Review answers" : "Next"}
               </button>
             </Show>
           }
@@ -224,7 +244,7 @@ export const QuestionCard: Component<{
             disabled={!ready() || props.busy}
             onClick={() => void props.onSend(drafts())}
           >
-            {props.busy ? "Answering…" : "Send answers"}
+            {props.busy ? "Submitting…" : "Submit"}
           </button>
         </Show>
       </div>
