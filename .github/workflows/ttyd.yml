@@ -51,7 +51,12 @@ jobs:
             printf 'Version: %s\n' "$VERSION"
             printf 'Architecture: amd64\n'
             printf 'Maintainer: Viktor Barzin <me@viktorbarzin.me>\n'
-            printf 'Depends: libwebsockets19 | libwebsockets-dev, libjson-c5 | libjson-c-dev\n'
+            # evlib-uv is a SEPARATE package and ttyd cannot create a
+            # libwebsockets context without it. The devvm only has it because
+            # ttyd was built there and libwebsockets-dev pulled it in; a clean
+            # machine installs the runtime lib alone and ttyd dies at startup
+            # with "failed to load evlib_uv". Found on a fresh VM, 2026-08-29.
+            printf 'Depends: libwebsockets19t64 | libwebsockets19, libwebsockets-evlib-uv, libjson-c5 | libjson-c\n'
             printf 'Description: ttyd 1.7.7 with the devvm patches\n'
             printf ' Forwards the browser pixel size to the pty so tmux re-emits sixel,\n'
             printf ' honours the client PAUSE opcode so flow control works, and serves the\n'
