@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { sessionLabel } from "../src/types/lobby";
 import { composeTitle } from "../src/notify/title";
-import { createVisitStore } from "../src/store/visits";
+import { createVisitStore, STATES_KEY, VISITS_KEY } from "../src/store/visits";
 
 describe("sessionLabel", () => {
   it("prefers the title", () => {
@@ -71,6 +71,16 @@ describe("tab title", () => {
 
 describe("visit store: following a rename", () => {
   const sess = (name: string, state = "done") => ({ name, state });
+
+  // The store persists to localStorage and every createVisitStore() seeds from
+  // it, so without this a visit stamped by an earlier case is still there for a
+  // later one that reuses the same session name. Whether that mattered came
+  // down to whether Date.now() had ticked -- isUnseen compares with a strict
+  // `>` -- which made the last case in this block fail about half the time.
+  beforeEach(() => {
+    localStorage.removeItem(VISITS_KEY);
+    localStorage.removeItem(STATES_KEY);
+  });
 
   it("carries a session's visit record to its new name", () => {
     // Without this, observe() prunes the old name as dead and the new one looks
