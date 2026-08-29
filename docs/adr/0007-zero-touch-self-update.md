@@ -116,3 +116,33 @@ deleted. Edit one implementation and not the other and the suite goes red.
 
 Real de-duplication means giving v1 a build step, which is a larger decision than
 this bug warranted.
+
+## Amendment — 2026-08-28: the id is read from a stamp, not from the page
+
+The identity decision above is unchanged. What changed is where a running page
+READS the served id from.
+
+It used to fetch its own URL and parse the `tl-asset` meta out of the response —
+correct, and far more expensive than it looked. The lobby is a 1.43 MB document
+and the check ran every 5 s, on the reasoning that `no-cache` against ttyd's
+strong ETag makes each one a cheap 304. Measured on an iPhone over 24 h: 1,279
+full bodies against exactly 2 not-modified — **1.83 GB/day, 17.16 of the
+17.18 MB/min that client spent at idle**. Why iOS did not revalidate was never
+isolated, which is the point: the check no longer depends on the answer.
+
+- The id is published as its own ~12-byte endpoint, `/build-id` for the lobby and
+  `/term-build-id` for the terminal page, served from the shared asset whitelist
+  by clipboard-upload — no service, no restart.
+- The poll drops from 5 s to 5 min. The boundaries that actually land an update —
+  a resume, a refocus, a bfcache restore — are event-driven and unchanged, so the
+  table above still holds.
+- An origin without the endpoint (an older deploy) falls back to reading the
+  page, at the new interval: self-update degrades, it does not disappear.
+- Checks no longer stack, and one arriving during another is coalesced rather
+  than dropped — dropping it would defer a real update by a full five minutes.
+- The shared kernel keeps a seam whose DEFAULT is the old page-fetch, so
+  term.html and index.html stay byte-identical under the ws-parity test; term.html
+  reassigns it to its own stamp just after the sentinels.
+
+The three-copies problem in "Keeping the three copies honest" is unchanged.
+
