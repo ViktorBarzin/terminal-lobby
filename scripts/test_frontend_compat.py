@@ -23,20 +23,16 @@ import subprocess
 import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# TL_INDEX aims the same guards at a candidate file — out/index.html before a
-# deploy, or an already-installed page you want to audit. With it unset, EVERY
-# page that mounts xterm is checked: the vanilla lobby and term.html, the
-# terminal the v2 SPA frames. term.html was left on a CDN xterm for a while
-# after the vanilla page was vendored, which would have handed bob's iPad the
-# same blank terminal the vendoring existed to fix — so the guard covers both
-# rather than trusting whoever bumps a version to remember the second page.
+# TL_INDEX aims the same guards at a candidate file — an already-installed page
+# you want to audit, say. With it unset, the page checked is term.html, the
+# terminal the v2 SPA frames: it is the only hand-written page left that mounts
+# xterm now that the vanilla lobby has gone (2026-08-29), and it was on a CDN
+# xterm for a while after the vanilla page was vendored, which would have handed
+# bob's iPad the same blank terminal the vendoring existed to fix.
 PAGES = (
     [os.environ["TL_INDEX"]]
     if os.environ.get("TL_INDEX")
-    else [
-        os.path.join(REPO, "frontend", "index.html"),
-        os.path.join(REPO, "frontend", "term.html"),
-    ]
+    else [os.path.join(REPO, "frontend", "term.html")]
 )
 
 # The floor is set by the oldest engine in use: bob's iPad, which cannot be
