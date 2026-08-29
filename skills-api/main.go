@@ -4,7 +4,7 @@
 //
 // A devvm systemd sibling of tmux-api (:7684), session-events (:7685) and
 // file-api (:7686): stdlib net/http, per-user isolation via
-// X-Authentik-Username → OS user (/etc/ttyd-user-map), the same ?as= admin
+// identity header → OS user (/etc/ttyd-user-map), the same ?as= admin
 // switch. What it does that they do not is act as TWO users in one request — an
 // install reads the owner's skill and writes the recipient's, in homes neither
 // user can enter — which is why it is its own binary with its own narrow sudoers
@@ -15,9 +15,11 @@ package main
 import (
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/user"
+	"strings"
 )
 
 // listenAddr — :7688. :7687 is deliberately skipped: it belonged to the retired
@@ -73,6 +75,15 @@ func main() {
 	// unit sets no environment, so production stays :7688. Mirrors
 	// FILE_API_ADDR / TMUX_API_ADDR.
 	addr := listenAddr
+	// TL_BIND narrows the listener. The default is unchanged; an operator who
+	// puts the proxy on the same host can set 127.0.0.1 and remove the LAN
+	// path entirely without needing a shared secret.
+	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			addr = net.JoinHostPort(b, port)
+		}
+	}
+	actAsGate.Configure("skills-api", addr)
 	if a := os.Getenv("SKILLS_API_ADDR"); a != "" {
 		addr = a
 	}

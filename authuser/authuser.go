@@ -82,6 +82,12 @@ type Gate struct {
 	// LookupUser verifies a mapped account exists on this host. Nil means
 	// os/user.Lookup; the tests supply their own.
 	LookupUser func(string) error
+
+	// SkipAccountCheck omits that verification. Set by services that never
+	// exec as the mapped user and only need a name — clipboard-upload keys a
+	// directory by it. The zero value keeps the check, so opting out is a
+	// deliberate act rather than an omission.
+	SkipAccountCheck bool
 }
 
 // Default is the production gate.

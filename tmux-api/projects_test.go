@@ -513,8 +513,8 @@ func TestForeignRefsFor(t *testing.T) {
 	}}
 	ss := ShareSet{Version: 1, Shares: []Share{
 		{Owner: "carol", Name: "direct", Guest: "wizard", Mode: "ro"},
-		{Owner: "bob", Name: "theirs", Guest: "wizard", Mode: "ro"},   // also project(rw) -> rw wins
-		{Owner: "bob", Name: "other", Guest: "carol", Mode: "rw"}, // not for caller
+		{Owner: "bob", Name: "theirs", Guest: "wizard", Mode: "ro"}, // also project(rw) -> rw wins
+		{Owner: "bob", Name: "other", Guest: "carol", Mode: "rw"},   // not for caller
 	}}
 	got := foreignRefsFor("wizard", ps, ss)
 	want := []visibleRef{

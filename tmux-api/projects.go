@@ -78,7 +78,7 @@ var projectStoreInstance = newProjectStore(projectsPath)
 func mappedOSUsers() []string {
 	seen := map[string]bool{}
 	out := []string{}
-	for _, u := range loadUserMap() {
+	for _, u := range actAsGate.Targets() {
 		if !seen[u] {
 			seen[u] = true
 			out = append(out, u)
@@ -534,14 +534,7 @@ func handleUsers(w http.ResponseWriter, r *http.Request) {
 
 // isMappedOSUser reports whether osUser is a valid terminal account (a target
 // in the Authentik→OS-user map) — the population that may be added to projects.
-func isMappedOSUser(osUser string) bool {
-	for _, u := range loadUserMap() {
-		if u == osUser {
-			return true
-		}
-	}
-	return false
-}
+func isMappedOSUser(osUser string) bool { return actAsGate.IsTarget(osUser) }
 
 // addMember adds a mapped user to the project (caller must be a member).
 // Idempotent: adding an existing member is a no-op.

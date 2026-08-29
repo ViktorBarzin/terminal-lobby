@@ -52,7 +52,7 @@ func a1() *stubResolver {
 			"64501 | 203.0.112.0/20 | GB | ripencc | 2011-05-18",
 		},
 		"AS64501.asn.cymru.com": {"64501 | GB | ripencc | 2003-10-15 | EXAMPLE_RSG - Example Telecom Ltd, GB"},
-		"AS64500.asn.cymru.com":  {"64500 | GB | ripencc | 1997-09-19 | EXAMPLE-WIDE-AS, GB"},
+		"AS64500.asn.cymru.com": {"64500 | GB | ripencc | 1997-09-19 | EXAMPLE-WIDE-AS, GB"},
 	}}
 }
 

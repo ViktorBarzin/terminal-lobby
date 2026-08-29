@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"reflect"
 	"testing"
 )
 
@@ -20,48 +19,11 @@ func withUserMap(t *testing.T, content string) {
 		t.Fatal(err)
 	}
 	old := mapPath
-	mapPath = f
-	t.Cleanup(func() { mapPath = old })
+	setMapPath(f)
+	t.Cleanup(func() { setMapPath(old) })
 }
 
-// TestLoadUserMapParsing pins the ported parser: "<auth>=<os>[:<cwd>]" per
-// line, comments/blanks/malformed lines ignored, whitespace around '='
-// trimmed, the optional :cwd stripped. (Real map lines carry no spaces around
-// the ':'; the parser cuts at the first ':' without re-trimming, matching
-// tmux-api verbatim, so the fixture uses the on-disk format.)
-func TestLoadUserMapParsing(t *testing.T) {
-	withUserMap(t, `
-# a comment
-alice=alice_os
-  bob = bob_os
-
-carol=carol_os:/srv/carol
-malformed-no-equals
-=missing-lhs
-missing-rhs=
-`)
-	got := loadUserMap()
-	want := map[string]string{
-		"alice": "alice_os",
-		"bob":   "bob_os",
-		"carol": "carol_os",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("loadUserMap: got %#v, want %#v", got, want)
-	}
-}
-
-// Missing map file yields an empty map, not a panic.
-func TestLoadUserMapMissingFile(t *testing.T) {
-	old := mapPath
-	mapPath = filepath.Join(t.TempDir(), "does-not-exist")
-	t.Cleanup(func() { mapPath = old })
-	if got := loadUserMap(); len(got) != 0 {
-		t.Fatalf("missing map file: got %#v, want empty", got)
-	}
-}
-
-// No X-Authentik-Username header → 401 and empty return.
+// No identity header → 401 and empty return.
 func TestResolveOSUserMissingHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	if got := resolveOSUser(rec, httptest.NewRequest(http.MethodGet, "/files/read", nil)); got != "" {
