@@ -69,7 +69,31 @@ var (
 	// The rule tmux draws for the composer's top border, which the dialog
 	// overlaps.
 	reRule = regexp.MustCompile(`^[\s─━-]+$`)
+	// The box-drawing the dialog paints down the left of every line it owns.
+	// Stripped before the question is read, for the reason answer.logic.ts gives
+	// on the other side of the wire: leaving it in turns "Where should the │
+	// parse live?" into fragments that match nothing — and a line carrying only
+	// the border reads as a line of text rather than as the blank it looks like.
+	reBorder = regexp.MustCompile(`[│┃|┆┊╎╏║]`)
 )
+
+// How many wrapped lines of question to accept. A question is prose written by
+// a model, so it has no fixed length; this is a guard against walking the whole
+// pane into the question when the dialog's shape is not what we think, not a
+// statement about how long a question can be.
+const maxQuestionLines = 12
+
+// stripDialogBorder removes the dialog's left-hand box-drawing from one line.
+func stripDialogBorder(line string) string {
+	return reBorder.ReplaceAllString(line, " ")
+}
+
+// blankDialogLine reports whether a line carries nothing but the dialog's own
+// border and whitespace — which is what separates the header from the question
+// and the question from the options.
+func blankDialogLine(line string) bool {
+	return strings.TrimSpace(stripDialogBorder(line)) == ""
+}
 
 // ParseDialog reads a blocking AskUserQuestion off the visible pane, or returns
 // nil when the pane is not showing one.
@@ -199,15 +223,41 @@ func ParseDialog(pane string) *Dialog {
 	d := &Dialog{Count: 1}
 	q := DialogQuestion{MultiSelect: multi, Options: kept}
 
-	// Above the options: the question, and above that either a tab bar (several
-	// questions) or the header of the only one.
-	for i := first - 1; i >= 0 && i >= first-4; i-- {
-		line := lines[i]
-		if strings.TrimSpace(line) == "" || reRule.MatchString(line) {
-			continue
+	// Above the options: the question, a blank, and above that either a tab bar
+	// (several questions) or the header of the only one.
+	//
+	// The question is the CONTIGUOUS RUN of lines above the options, not one
+	// line. The CLI wraps a question over as many lines as it needs and draws its
+	// border glyph down the left of each, and taking a single line handed the
+	// card the last visual line — a fragment starting mid-sentence and ending on
+	// a bracket opened by a line that never arrived — or, when the border ran
+	// lower than the text, the glyph on its own and nothing else. The card cannot
+	// tell a fragment from a question, so it offered a live Send on something the
+	// reader could only partly read.
+	i := first - 1
+	// The blank the CLI leaves between the question and the option list.
+	for ; i >= 0 && blankDialogLine(lines[i]); i-- {
+	}
+	var qLines []string
+	for ; i >= 0 && len(qLines) < maxQuestionLines; i-- {
+		// A blank ABOVE the question is where it starts — the header is beyond
+		// it, and swallowing that would empty the chip and lengthen the question
+		// with a word that is not part of it.
+		if blankDialogLine(lines[i]) || reRule.MatchString(lines[i]) ||
+			reTabBar.MatchString(lines[i]) || reHeader.MatchString(lines[i]) {
+			break
 		}
-		if q.Question == "" {
-			q.Question = strings.TrimSpace(line)
+		qLines = append(qLines, strings.TrimSpace(stripDialogBorder(lines[i])))
+	}
+	for l, r := 0, len(qLines)-1; l < r; l, r = l+1, r-1 {
+		qLines[l], qLines[r] = qLines[r], qLines[l]
+	}
+	q.Question = strings.Join(qLines, " ")
+
+	// Past the blank: the tab bar, or this question's own header.
+	for ; i >= 0 && i >= first-maxQuestionLines-4; i-- {
+		line := lines[i]
+		if blankDialogLine(line) || reRule.MatchString(line) {
 			continue
 		}
 		if reTabBar.MatchString(line) {
@@ -216,7 +266,7 @@ func ParseDialog(pane string) *Dialog {
 			d.Partial = d.Count > 1
 			break
 		}
-		if m := reHeader.FindStringSubmatch(line); m != nil {
+		if m := reHeader.FindStringSubmatch(stripDialogBorder(line)); m != nil {
 			q.Header = m[1]
 		}
 		break
