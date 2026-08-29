@@ -23,7 +23,7 @@ const snapshotPath = "/run/terminal-lobby-preinst.json"
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: tl-apply snapshot|apply")
+		fmt.Fprintln(os.Stderr, "usage: tl-apply snapshot|apply|revert")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -31,6 +31,8 @@ func main() {
 		os.Exit(snapshot())
 	case "apply":
 		os.Exit(apply())
+	case "revert":
+		os.Exit(revertAndHold())
 	default:
 		fmt.Fprintf(os.Stderr, "tl-apply: unknown command %q\n", os.Args[1])
 		os.Exit(2)
@@ -86,17 +88,20 @@ func apply() int {
 		fmt.Fprintln(os.Stderr, "tl-apply:", err)
 		return 1
 	}
+	// Restarts are proportional to what changed; verification is not. A release
+	// can change only an unwatched file -- a helper script every ttyd WebSocket
+	// execs, the sudo grant, a chunk -- and still break the box, so the probes
+	// run whether or not a unit was restarted.
 	if len(changed) == 0 {
-		fmt.Println("tl-apply: nothing changed; no restarts")
-		return 0
-	}
-	fmt.Printf("tl-apply: %d file(s) changed\n", len(changed))
-
-	targets := release.RestartTargets(release.Package.Units, changed, enabledInstances())
-	for _, t := range targets {
-		fmt.Println("tl-apply: restarting", t)
-		if out, err := exec.Command("systemctl", "restart", t).CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "tl-apply: restart %s: %v: %s\n", t, err, out)
+		fmt.Println("tl-apply: no watched file changed; no restarts")
+	} else {
+		fmt.Printf("tl-apply: %d file(s) changed\n", len(changed))
+		targets := release.RestartTargets(release.Package.Units, changed, enabledInstances())
+		for _, t := range targets {
+			fmt.Println("tl-apply: restarting", t)
+			if out, err := exec.Command("systemctl", "restart", t).CombinedOutput(); err != nil {
+				fmt.Fprintf(os.Stderr, "tl-apply: restart %s: %v: %s\n", t, err, out)
+			}
 		}
 	}
 
@@ -111,20 +116,34 @@ func apply() int {
 			fmt.Fprintln(os.Stderr, "tl-apply: FAILED:", p.Name)
 		}
 	}
-	// The emergency brake. Not the normal way back: with no version pin the box
-	// tracks latest, so a downgrade only holds until the hold is lifted, and the
-	// real fix is a higher version carrying the working code.
-	return revertAndHold()
+	// The emergency brake is ARMED here, not run here. This is executing inside
+	// postinst, which dpkg runs while holding its lock -- a nested apt-get would
+	// wait on a lock its own caller holds. The oneshot unit runs once dpkg has
+	// released the transaction.
+	if out, err := exec.Command("systemctl", "start", "--no-block", "terminal-lobby-revert.service").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "tl-apply: could not arm the revert: %v: %s\n", err, out)
+		fmt.Fprintln(os.Stderr, "tl-apply: the box is on a version that failed verification; revert by hand")
+		return 1
+	}
+	fmt.Fprintln(os.Stderr, "tl-apply: verification failed; revert armed")
+	return 1
 }
+
+// verifyBudget bounds the whole verification, not each probe. Per-probe retries
+// multiply: eleven checks each retrying independently can hold the dpkg lock --
+// and the SSH session waiting on it -- for several minutes, which reads as a
+// hung deploy. One shared deadline means a common-mode failure fails fast.
+const verifyBudget = 90 * time.Second
 
 // verify gives restarted services a moment to bind before probing. A service
 // that has not finished starting is not the same as a broken one.
 func verify() []release.Probe {
 	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(verifyBudget)
 	probes := make([]release.Probe, 0, len(release.Package.Checks))
 	for _, c := range release.Package.Checks {
 		ok := false
-		for attempt := 0; attempt < 10; attempt++ {
+		for {
 			resp, err := client.Get(c.URL)
 			if err == nil {
 				got := resp.StatusCode
@@ -133,6 +152,10 @@ func verify() []release.Probe {
 					ok = true
 					break
 				}
+			}
+			// No sleep after the last attempt: nothing would read the result.
+			if time.Now().Add(time.Second).After(deadline) {
+				break
 			}
 			time.Sleep(time.Second)
 		}
@@ -143,6 +166,9 @@ func verify() []release.Probe {
 
 // revertAndHold puts the previous package back from apt's cache and marks it
 // held, so the next trigger cannot immediately reinstall what just failed.
+//
+// Runs from the oneshot unit, after dpkg has released its lock -- never from
+// inside postinst, where the apt-get below would wait on its own caller.
 func revertAndHold() int {
 	prev, err := previousVersion()
 	if err != nil || prev == "" {
@@ -218,12 +244,7 @@ func enabledInstances() map[string][]string {
 		if err != nil {
 			continue
 		}
-		for _, line := range strings.Split(string(b), "\n") {
-			f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "*"))
-			if len(f) > 0 && strings.HasPrefix(f[0], u.Name) {
-				out[u.Name] = append(out[u.Name], strings.TrimSuffix(f[0], ".service"))
-			}
-		}
+		out[u.Name] = release.ParseUnitInstances(u.Name, string(b))
 	}
 	return out
 }

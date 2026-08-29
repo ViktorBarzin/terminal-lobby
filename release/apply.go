@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Unit is a systemd unit and the installed files whose bytes decide whether it
@@ -189,4 +190,24 @@ func digest(path string) (string, error) {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// ParseUnitInstances reads `systemctl list-units` output and returns the
+// instances of a templated unit, without the .service suffix.
+//
+// systemd prefixes a FAILED unit with a bullet (U+25CF) and, in some versions,
+// an asterisk -- so a parser that strips only one of them silently skips the
+// failed instance, which is the one a release most needs to restart.
+func ParseUnitInstances(prefix, listUnitsOutput string) []string {
+	var out []string
+	for _, line := range strings.Split(listUnitsOutput, "\n") {
+		line = strings.TrimLeft(line, " \t*●▶↻×")
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !strings.HasPrefix(fields[0], prefix) {
+			continue
+		}
+		out = append(out, strings.TrimSuffix(fields[0], ".service"))
+	}
+	sort.Strings(out)
+	return out
 }

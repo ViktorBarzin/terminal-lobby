@@ -19,7 +19,9 @@ STAGE="$BUILD/stage"
 TREE="$BUILD/tree"
 TOOLS="$BUILD/tools"
 rm -rf "$BUILD"
-mkdir -p "$STAGE/bin" "$STAGE/share" "$STAGE/devvm" "$TOOLS"
+mkdir -p "$STAGE/bin" "$STAGE/share" "$STAGE/devvm" "$STAGE/frontend" "$TOOLS"
+CHUNKS="$BUILD/chunks"
+mkdir -p "$CHUNKS"
 
 COMMIT="$(git rev-parse --short HEAD)"
 
@@ -51,21 +53,73 @@ echo "==> building the lobby"
 
 # Stamping happens here, at build time, so the identity a client compares is
 # fixed when the artefact is built rather than when someone installs it.
-"$TOOLS/tl-stamp" \
-  -lobby frontend-v2/dist/index.html \
-  -term  frontend/term.html \
-  -diag  frontend/diag.js \
-  -build "$COMMIT" \
-  -out   "$STAGE/share"
+# The chunks vite emitted, plus the content-hashed terminal page tl-stamp writes
+# alongside them -- both travel as payload, because dpkg must not own them.
+cp -a frontend-v2/dist/assets/. "$CHUNKS/"
 
-# --- devvm helper scripts and units ----------------------------------------
+"$TOOLS/tl-stamp" \
+  -lobby  frontend-v2/dist/index.html \
+  -term   frontend/term.html \
+  -diag   frontend/diag.js \
+  -build  "$COMMIT" \
+  -out    "$STAGE/share" \
+  -assets "$CHUNKS"
+
+# --- ship-blocking guards on the stamped surfaces --------------------------
+# Each of these caught a real production failure under the deploy scripts, so
+# they gate the build rather than the deploy now.
+
+# A placeholder that survives stamping ships verbatim to the client, which then
+# reads the literal string as a fingerprint. An earlier, narrower pattern let
+# __TL_TERM_ASSET__ through exactly that way.
+for surface in "$STAGE/share/index.html" "$STAGE/share/term.html"; do
+  if grep -qE '__TL_[A-Z_]*__' "$surface"; then
+    echo "build: $surface still carries a placeholder after stamping" >&2
+    grep -oE '__TL_[A-Z_]*__' "$surface" | sort -u >&2
+    exit 1
+  fi
+done
+
+# The meta tag is the one leg that depends on the build tool: if vite stops
+# copying the head through verbatim, the page can never self-update.
+LOBBY_ASSET="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["lobby_asset"])' "$STAGE/share/stamps.json")"
+TERM_ASSET="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["term_asset"])' "$STAGE/share/stamps.json")"
+grep -q "<meta name=\"tl-asset\" content=\"${LOBBY_ASSET}\"" "$STAGE/share/index.html" || {
+  echo "build: the lobby lost its tl-asset meta tag" >&2; exit 1; }
+grep -q "content=\"${TERM_ASSET}\"" "$STAGE/share/index.html" || {
+  echo "build: the lobby does not carry the terminal page fingerprint" >&2; exit 1; }
+
+# Every chunk the lobby references must actually be in the payload. A missing
+# entry chunk is a blank lobby.
+missing=0
+for ref in $(grep -oE '(src|href)="/assets/[^"]+"' "$STAGE/share/index.html" | sed -E 's/.*"\/assets\/([^"]+)"/\1/' | sort -u); do
+  [ -f "$CHUNKS/$ref" ] || { echo "build: index.html references /assets/$ref, which is not in the payload" >&2; missing=1; }
+done
+[ "$missing" -eq 0 ] || exit 1
+
+# The baseline-engine gate, run on the exact bytes about to ship. It has caught
+# two separate blank-lobby incidents on iPadOS 15.8.
+#
+# The fixture audits the page AND every assets/*.js beside it, so the gate needs
+# the shipping layout, not just the page: TL_SPA points at a directory where the
+# stamped index.html sits next to the chunks that ship with it.
+if [ -f scripts/test_frontend_compat.py ]; then
+  GATE="$BUILD/gate"
+  rm -rf "$GATE" && mkdir -p "$GATE/assets"
+  cp "$STAGE/share/index.html" "$GATE/index.html"
+  cp -a "$CHUNKS/." "$GATE/assets/"
+  TL_SPA="$GATE/index.html" python3 -m pytest scripts/test_frontend_compat.py -k spa -q
+fi
+
+# --- devvm helper scripts and units, PWA surface, webfonts -----------------
 cp -a devvm/. "$STAGE/devvm/"
+cp -a frontend/. "$STAGE/frontend/"
 
 # --- assemble --------------------------------------------------------------
 "$TOOLS/tl-pkg" \
   -stage "$STAGE" -out "$TREE" -tools "$TOOLS" \
   -version "$VERSION" -commit "$COMMIT" \
-  -assets frontend-v2/dist/assets
+  -assets "$CHUNKS"
 
 mkdir -p "$ROOT/out"
 DEB="$ROOT/out/terminal-lobby_${VERSION}_amd64.deb"
