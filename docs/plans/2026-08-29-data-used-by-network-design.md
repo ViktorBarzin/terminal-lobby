@@ -3,25 +3,24 @@
 **Status:** shipped 2026-08-29 · **Scope:** `tmux-api/netinfo.go`,
 `frontend-v2/src/diagnostics/{network,usage}.ts`, the Settings panel
 
-"Data used" already answered how much Terminal Lobby cost a device. Abroad that
-is the wrong figure: what a person needs to know is how much of it went over
-cellular, because that is the half that is metered. This adds the network
-dimension to the counter and to the panel.
+"Data used" already answered how much Terminal Lobby cost a device. Abroad it is
+not the figure that decides anything: what a person needs to know is how much of
+it went over cellular, because that is the half that is metered. This adds the
+network dimension to the counter and to the panel.
 
-## What the browser can tell us: nothing useful
+## What the browser can tell us
 
-The obvious answer is `navigator.connection`. Two live measurements say it
-cannot carry this feature.
+The obvious answer is `navigator.connection`. Two live measurements rule it out
+for this.
 
 | Device | `tl.net.type` in `app.context` | Reality |
 |---|---|---|
 | iPhone (Safari) | absent — no `tl.net.*` at all | the device this feature exists for |
 | Linux desktop (Chrome) | `"4g"`, rtt 100, downlink 1.45 | wired ethernet |
 
-Safari has never shipped the Network Information API, and where the API does
-exist it reports an effective-throughput class rather than a medium — a wired
-desktop reads as "4g". So the signal is missing exactly where it is needed and
-misleading where it is present.
+Safari has never shipped the Network Information API, so the iPhone reports
+nothing. Where the API does exist it reports an effective-throughput class
+rather than a medium, which is why a wired desktop reads as "4g".
 
 ## What the server can tell us
 
@@ -54,7 +53,7 @@ operator actually routing it.
 
 **A failed lookup still names a network**, from a per-process keyed digest of
 the address, so a month spent roaming separates into networks instead of
-collapsing into one mystery total.
+collapsing into a single unattributed total.
 
 ### The guess is deliberately narrow
 
@@ -63,7 +62,7 @@ tell in its name — `mobile`, `cellular`, `gsm`, `lte`, `5g`. Brand names are
 excluded: most operators sell fixed and mobile access under one brand, and
 AS29580 is "A1 Bulgaria EAD" exactly as their mobile network is. A confident
 wrong label costs the same single tap to fix as an unknown one, while being far
-harder to notice, so `unknown` is the honest default.
+harder to notice, so `unknown` is the default.
 
 That is why the panel carries a correction. A person settles a network in one
 tap; it is kept in their roamed prefs keyed by the network name, so it holds on
@@ -80,8 +79,8 @@ every device and survives the operator's next address change.
 | `SettingsPanel.tsx` | period × network table, breakdown filter, current-network line |
 
 The kind is read **at fold time**, so a 60-second window that straddles a
-network change is attributed to where it ended — which is where most of its
-bytes were.
+network change is attributed to where it ended, which is where most of its bytes
+are likely to have been.
 
 **Refresh triggers.** Coming back online forces a fresh answer, since that is
 the one moment the network has certainly changed; a tab returning from a pocket
