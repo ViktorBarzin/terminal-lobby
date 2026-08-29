@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createRoot } from "solid-js";
 import { createSessionStore } from "../src/store/session";
+import * as trackMod from "../src/telemetry/track";
 import type { Event } from "../src/types/events";
 import type { TranscriptCache } from "../src/store/transcript-cache";
 
@@ -138,3 +139,46 @@ describe("a session opened from the cache", () => {
     dispose();
   });
 });
+
+/**
+ * "The cache works" has to be a measurement, not a claim: one record per open
+ * saying what this device supplied against what the server still sent.
+ */
+describe("what an open reports", () => {
+  it("reports a hit with both halves counted", async () => {
+    const spy = vi.spyOn(trackMod, "track").mockImplementation(() => {});
+    const urls: string[] = [];
+    installEventSource(urls);
+    const cache = fakeCache({
+      read: async () => ({ events: [ev(1), ev(2), ev(3)], epoch: "epoch-a" }),
+    });
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      createSessionStore("cached", { cache });
+    });
+    await settle();
+    const open = spy.mock.calls.find((c) => c[0] === "text.open");
+    expect(open, "no text.open record").toBeTruthy();
+    expect(open![1]).toMatchObject({ "tl.cache": "hit", "tl.cached": 3 });
+    spy.mockRestore();
+    dispose();
+  });
+
+  it("reports a miss when nothing was held", async () => {
+    const spy = vi.spyOn(trackMod, "track").mockImplementation(() => {});
+    const urls: string[] = [];
+    installEventSource(urls);
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      createSessionStore("cached", { cache: fakeCache() });
+    });
+    await settle();
+    const open = spy.mock.calls.find((c) => c[0] === "text.open");
+    expect(open![1]).toMatchObject({ "tl.cache": "miss", "tl.cached": 0 });
+    spy.mockRestore();
+    dispose();
+  });
+});
+
