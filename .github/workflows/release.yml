@@ -121,7 +121,14 @@ jobs:
 
       # Runners cannot route to the devvm, so the trigger goes through Woodpecker,
       # which is deploy-only by ADR-0002 and already activated on the infra repo.
+      #
+      # OFF until phase 3. Building and publishing a package changes nothing on
+      # the box; triggering a deploy does, and three things it depends on do not
+      # exist yet (the Vault apt credential, a confirmed restrictable deploy key,
+      # and a confirmed path to TCP 22). Switch on with:
+      #   gh variable set TL_DEPLOY_ENABLED --body true
       - name: trigger the deploy
+        if: vars.TL_DEPLOY_ENABLED == 'true'
         env:
           WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
         run: |
