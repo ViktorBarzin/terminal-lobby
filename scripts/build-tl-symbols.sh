@@ -23,7 +23,7 @@ set -euo pipefail
 
 IOSEVKA_VERSION="34.7.0"
 # Claude Code TUI symbol coverage (keep in sync with the unicodeRange the
-# frontend passes to the 'TL Symbols' FontFace in frontend/index.html):
+# frontend passes to the 'TL Symbols' FontFace in frontend/term.html):
 #   U+2300-23FF  Miscellaneous Technical  (⏺ ⎿ ⏵ spinner/status, ⌘-class keys)
 #   U+2700-27BF  Dingbats                 (✢ ✳ ✻ ✽ ✔ live-spinner frames)
 #   U+2800-28FF  Braille patterns         (⠋⠙⠹… spinners)
