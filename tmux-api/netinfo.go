@@ -38,9 +38,9 @@ import (
 //
 // WHAT IT DELIBERATELY DOES NOT DECIDE. Whether a named network is cellular is
 // only GUESSED here, and only on an unambiguous tell in the operator's name.
-// Most operators sell fixed and mobile access under one brand — AS29580 is
-// "A1 Bulgaria EAD" and so is their mobile network — so a brand-name match
-// would be confidently wrong about half the time. Unknown is the honest
+// Most operators sell fixed and mobile access under one brand — the AS name on
+// a subscriber line and on the same operator's mobile network is frequently the
+// same string — so a brand-name match would be wrong about half the time. Unknown is the honest
 // default; the client remembers the person's own correction per network, in
 // their roamed prefs, and one tap settles a network for good.
 
@@ -70,7 +70,7 @@ const (
 // and enough to show a person which network they are on. The client's own
 // address is deliberately absent — nothing the client does with this needs it.
 type netInfo struct {
-	// Net is the client's key for this network — "lan", "as29580", or
+	// Net is the client's key for this network — "lan", "as64501", or
 	// "ip-<digest>". Stable across reconnects, which is what lets a person's
 	// correction stick to a network rather than to a session.
 	Net string `json:"net"`
@@ -199,7 +199,7 @@ func isLocalAddr(ip net.IP) bool {
 	return cgnat.Contains(ip)
 }
 
-// reverseIPv4 turns 176.12.22.76 into the 76.22.12.176 that Cymru's origin
+// reverseIPv4 turns 203.0.113.76 into the 76.113.0.203 that Cymru's origin
 // zone is keyed by.
 func reverseIPv4(ip net.IP) (string, bool) {
 	v4 := ip.To4()
@@ -214,7 +214,8 @@ func reverseIPv4(ip net.IP) (string, bool) {
 // | <date>". An address inside overlapping announcements gets one record per
 // announcement, so the MOST SPECIFIC prefix wins: it is the one the address is
 // actually routed by, and the shorter one frequently belongs to a different
-// operator (176.12.22.76 is AS8717 by its /18 and AS29580 by its /20).
+// operator in
+// practice.
 func parseOrigin(txts []string) (asn, cc string, ok bool) {
 	best := -1
 	for _, txt := range txts {
@@ -237,7 +238,8 @@ func parseOrigin(txts []string) (asn, cc string, ok bool) {
 // parseASName reads Cymru's AS answer — "<asn> | <cc> | <registry> | <date> |
 // <name>" — and returns the operator as a person would recognise it. The name
 // field carries a routing handle, the operator, and a country suffix
-// ("A1BG_RSG - A1 Bulgaria EAD, BG"); only the middle part belongs on screen.
+// ("EXAMPLE_RSG - Example Telecom Ltd, GB"); only the middle part belongs on
+// screen.
 func parseASName(txts []string) string {
 	for _, txt := range txts {
 		f := splitCymru(txt)
@@ -328,7 +330,7 @@ func resolveNetwork(ctx context.Context, ip net.IP, res txtResolver) netInfo {
 	info := netInfo{Net: "as" + asn, Kind: kindUnknown, CC: cc, Source: sourceASN}
 
 	// The name is a nicety: without it the network is still named and still
-	// correctable, it just reads as "AS29580" on screen.
+	// correctable, it just reads as "AS64501" on screen.
 	if names, err := res.LookupTXT(ctx, "AS"+asn+".asn.cymru.com"); err == nil {
 		info.Label = parseASName(names)
 		info.Kind = guessKind(info.Label)

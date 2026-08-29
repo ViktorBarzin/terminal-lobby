@@ -43,16 +43,16 @@ func (s *stubResolver) LookupTXT(_ context.Context, name string) ([]string, erro
 	return v, nil
 }
 
-// a1 is a real Cymru answer pair: the origin lookup returns TWO records because
+// a1 is a Cymru answer pair in the shape a real one comes back in: the origin lookup returns TWO records because
 // the address sits inside both a /18 and a /20 announcement.
 func a1() *stubResolver {
 	return &stubResolver{txt: map[string][]string{
-		"76.22.12.176.origin.asn.cymru.com": {
-			"8717 | 176.12.0.0/18 | BG | ripencc | 2011-05-18",
-			"29580 | 176.12.16.0/20 | BG | ripencc | 2011-05-18",
+		"76.113.0.203.origin.asn.cymru.com": {
+			"64500 | 203.0.64.0/18 | GB | ripencc | 2011-05-18",
+			"64501 | 203.0.112.0/20 | GB | ripencc | 2011-05-18",
 		},
-		"AS29580.asn.cymru.com": {"29580 | BG | ripencc | 2003-10-15 | A1BG_RSG - A1 Bulgaria EAD, BG"},
-		"AS8717.asn.cymru.com":  {"8717 | BG | ripencc | 1997-09-19 | A1-BG-AS, BG"},
+		"AS64501.asn.cymru.com": {"64501 | GB | ripencc | 2003-10-15 | EXAMPLE_RSG - Example Telecom Ltd, GB"},
+		"AS64500.asn.cymru.com":  {"64500 | GB | ripencc | 1997-09-19 | EXAMPLE-WIDE-AS, GB"},
 	}}
 }
 
@@ -65,10 +65,10 @@ func TestClientIPPrefersCloudflareOverForwardedFor(t *testing.T) {
 	r.RemoteAddr = "192.0.2.5:41234"
 	// A client may send its own X-Forwarded-For; Cloudflare overwrites
 	// CF-Connecting-IP, so that one is the only entry nobody downstream typed.
-	r.Header.Set("X-Forwarded-For", "203.0.113.9, 176.12.22.76")
-	r.Header.Set("CF-Connecting-IP", "176.12.22.76")
+	r.Header.Set("X-Forwarded-For", "203.0.113.9, 203.0.113.76")
+	r.Header.Set("CF-Connecting-IP", "203.0.113.76")
 	got, via := clientAddr(r)
-	if got != "176.12.22.76" || via != "CF-Connecting-IP" {
+	if got != "203.0.113.76" || via != "CF-Connecting-IP" {
 		t.Fatalf("clientAddr = %q via %q, want the CF-Connecting-IP value", got, via)
 	}
 }
@@ -81,8 +81,8 @@ func TestClientIPFallsBackThroughRealIPThenForwardedThenPeer(t *testing.T) {
 		want    string
 		via     string
 	}{
-		{"x-real-ip", map[string]string{"X-Real-Ip": "176.12.22.76"}, "192.0.2.5:1", "176.12.22.76", "X-Real-Ip"},
-		{"leftmost xff", map[string]string{"X-Forwarded-For": "176.12.22.76, 172.64.0.1"}, "192.0.2.5:1", "176.12.22.76", "X-Forwarded-For"},
+		{"x-real-ip", map[string]string{"X-Real-Ip": "203.0.113.76"}, "192.0.2.5:1", "203.0.113.76", "X-Real-Ip"},
+		{"leftmost xff", map[string]string{"X-Forwarded-For": "203.0.113.76, 172.64.0.1"}, "192.0.2.5:1", "203.0.113.76", "X-Forwarded-For"},
 		{"peer only", nil, "192.168.1.44:52001", "192.168.1.44", "peer"},
 		{"peer without port", nil, "192.168.1.44", "192.168.1.44", "peer"},
 		{"blank header ignored", map[string]string{"X-Real-Ip": "  "}, "192.168.1.44:1", "192.168.1.44", "peer"},
@@ -126,18 +126,18 @@ func TestPrivateAddressIsWiFiWithoutADNSLookup(t *testing.T) {
 
 func TestPublicAddressResolvesToTheLongestMatchingPrefix(t *testing.T) {
 	res := a1()
-	got := classifyIP(context.Background(), "176.12.22.76", res, freshCache())
-	// 176.12.16.0/20 is more specific than 176.12.0.0/18, so AS29580 is the
+	got := classifyIP(context.Background(), "203.0.113.76", res, freshCache())
+	// 203.0.112.0/20 is more specific than 203.0.64.0/18, so AS64501 is the
 	// network the address actually sits in. Picking the first record instead
 	// would name the wrong operator.
-	if got.Net != "as29580" {
-		t.Fatalf("Net = %q, want as29580 (the /20, not the /18)", got.Net)
+	if got.Net != "as64501" {
+		t.Fatalf("Net = %q, want as64501 (the /20, not the /18)", got.Net)
 	}
-	if got.Label != "A1 Bulgaria EAD" {
+	if got.Label != "Example Telecom Ltd" {
 		t.Fatalf("Label = %q, want the operator name without the Cymru handle or country suffix", got.Label)
 	}
-	if got.CC != "BG" {
-		t.Fatalf("CC = %q, want BG", got.CC)
+	if got.CC != "GB" {
+		t.Fatalf("CC = %q, want GB", got.CC)
 	}
 	if got.Source != sourceASN {
 		t.Fatalf("Source = %q, want %q", got.Source, sourceASN)
@@ -146,9 +146,9 @@ func TestPublicAddressResolvesToTheLongestMatchingPrefix(t *testing.T) {
 
 func TestASNResultIsCachedPerAddress(t *testing.T) {
 	res, cache := a1(), freshCache()
-	first := classifyIP(context.Background(), "176.12.22.76", res, cache)
+	first := classifyIP(context.Background(), "203.0.113.76", res, cache)
 	after := res.n
-	second := classifyIP(context.Background(), "176.12.22.76", res, cache)
+	second := classifyIP(context.Background(), "203.0.113.76", res, cache)
 	if res.n != after {
 		t.Fatalf("second call resolved %d more names; want the cached answer", res.n-after)
 	}
@@ -159,7 +159,7 @@ func TestASNResultIsCachedPerAddress(t *testing.T) {
 
 func TestExpiredCacheEntryIsResolvedAgain(t *testing.T) {
 	res, cache := a1(), newNetCache(time.Hour, 64)
-	classifyIP(context.Background(), "176.12.22.76", res, cache)
+	classifyIP(context.Background(), "203.0.113.76", res, cache)
 	after := res.n
 	// Age every entry past the TTL rather than sleeping.
 	cache.mu.Lock()
@@ -168,7 +168,7 @@ func TestExpiredCacheEntryIsResolvedAgain(t *testing.T) {
 		cache.entries[k] = e
 	}
 	cache.mu.Unlock()
-	classifyIP(context.Background(), "176.12.22.76", res, cache)
+	classifyIP(context.Background(), "203.0.113.76", res, cache)
 	if res.n <= after {
 		t.Fatal("an expired entry was served from cache")
 	}
@@ -191,7 +191,7 @@ func TestFailedLookupStillNamesAStableNetwork(t *testing.T) {
 	// A lookup that fails must not merge every unknown network into one bucket,
 	// or a month spent roaming reads as a single mystery total.
 	res := &stubResolver{fail: true}
-	a := classifyIP(context.Background(), "176.12.22.76", res, freshCache())
+	a := classifyIP(context.Background(), "203.0.113.76", res, freshCache())
 	b := classifyIP(context.Background(), "203.0.113.9", res, freshCache())
 	if a.Kind != kindUnknown || a.Source != sourceNone {
 		t.Fatalf("got %+v, want an unknown verdict", a)
@@ -199,7 +199,7 @@ func TestFailedLookupStillNamesAStableNetwork(t *testing.T) {
 	if a.Net == "" || a.Net == b.Net {
 		t.Fatalf("nets %q and %q must be present and distinct", a.Net, b.Net)
 	}
-	if strings.Contains(a.Net, "176.12.22.76") {
+	if strings.Contains(a.Net, "203.0.113.76") {
 		t.Fatalf("Net %q leaks the address it was derived from", a.Net)
 	}
 }
@@ -208,9 +208,9 @@ func TestFailedLookupStillNamesAStableNetwork(t *testing.T) {
 
 func TestKindGuessOnlyFiresOnAnUnambiguousMobileTell(t *testing.T) {
 	cell := []string{
-		"EE-MOBILE - EE Mobile, GB",
-		"VIVACOM-MOBILE, BG",
-		"A1BG-GSM - A1 Bulgaria mobile network, BG",
+		"EXAMPLE-MOBILE - Example Mobile, GB",
+		"OTHERTEL-MOBILE, BG",
+		"EXAMPLE-GSM - Example Telecom mobile network, BG",
 		"CELLULAR-ONE, US",
 		"SOMEISP LTE Access, DE",
 	}
@@ -223,9 +223,9 @@ func TestKindGuessOnlyFiresOnAnUnambiguousMobileTell(t *testing.T) {
 	// fixed broadband under the same name, and a confidently wrong label is
 	// worse than an unknown one — both cost the same single tap to correct.
 	fixed := []string{
-		"A1BG_RSG - A1 Bulgaria EAD, BG",
-		"VODAFONE_UK - Vodafone Limited, GB",
-		"BT-UK-AS BTnet UK Regional network, GB",
+		"EXAMPLE_RSG - Example Telecom Ltd, BG",
+		"BIGTEL_UK - Bigtel Limited, GB",
+		"OTHER-UK-AS Othernet UK Regional network, GB",
 		"",
 	}
 	for _, name := range fixed {
@@ -266,7 +266,7 @@ func TestNetinfoAnswersTheCallersNetworkAndIsNotCachedByTheBrowser(t *testing.T)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/netinfo", nil)
 	r.Header.Set(authHeader, "wiz")
-	r.Header.Set("CF-Connecting-IP", "176.12.22.76")
+	r.Header.Set("CF-Connecting-IP", "203.0.113.76")
 	handleNetinfo(rec, r)
 
 	if rec.Code != http.StatusOK {
@@ -281,12 +281,12 @@ func TestNetinfoAnswersTheCallersNetworkAndIsNotCachedByTheBrowser(t *testing.T)
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
 	}
-	if got.Net != "as29580" || got.Label != "A1 Bulgaria EAD" || got.CC != "BG" {
-		t.Fatalf("body = %+v, want the A1 Bulgaria network", got)
+	if got.Net != "as64501" || got.Label != "Example Telecom Ltd" || got.CC != "GB" {
+		t.Fatalf("body = %+v, want the Example Telecom network", got)
 	}
 	// The address itself is not part of the answer: the client needs a stable
 	// name for the network, and nothing it does with one needs the address.
-	if strings.Contains(rec.Body.String(), "176.12.22.76") {
+	if strings.Contains(rec.Body.String(), "203.0.113.76") {
 		t.Fatalf("response leaks the client address: %s", rec.Body.String())
 	}
 }

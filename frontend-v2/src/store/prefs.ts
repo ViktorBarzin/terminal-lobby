@@ -70,7 +70,7 @@ export interface Prefs {
   notify: { onDone: boolean; onAwaiting: boolean };
   /**
    * Per-network answers to "is this WiFi or cellular", keyed by the stable
-   * network name `/netinfo` returns (`as29580`, `lan`, …). Roamed rather than
+   * network name `/netinfo` returns (`as64501`, `lan`, …). Roamed rather than
    * device-local because which network an operator runs is a fact about the
    * world, not about the phone that noticed it — labelling EE once on the phone
    * should hold on the laptop too. An open map rather than a fixed namespace,
@@ -329,7 +329,7 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
     prev.sidebar.showLastActive,
     next.sidebar.showLastActive,
   );
-  // One line per network whose kind moved, so the audit reads "netKinds.as29580
+  // One line per network whose kind moved, so the audit reads "netKinds.as64501
   // = cell" rather than naming the namespace and hiding the value.
   for (const net of new Set([...Object.keys(prev.netKinds), ...Object.keys(next.netKinds)])) {
     diff("netKinds." + net, prev.netKinds[net], next.netKinds[net]);

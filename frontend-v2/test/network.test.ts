@@ -34,9 +34,9 @@ const lan: NetworkInfo = {
   source: "lan",
 };
 const a1: NetworkInfo = {
-  net: "as29580",
+  net: "as64501",
   kind: "unknown",
-  label: "A1 Bulgaria EAD",
+  label: "Example Telecom Ltd",
   cc: "BG",
   source: "asn",
 };
@@ -78,7 +78,7 @@ describe("reading the server's answer", () => {
     expect(parseNetworkInfo({ kind: "cell" })).toBeNull();
     expect(parseNetworkInfo({ net: "", kind: "cell" })).toBeNull();
     expect(parseNetworkInfo(null)).toBeNull();
-    expect(parseNetworkInfo("as29580")).toBeNull();
+    expect(parseNetworkInfo("as64501")).toBeNull();
   });
 
   it("falls back to unknown for a kind it does not recognise", () => {
@@ -94,15 +94,15 @@ describe("reading the server's answer", () => {
 describe("a person's own correction", () => {
   it("wins over the server's guess", () => {
     expect(effectiveKindOf(a1, {})).toBe("unknown");
-    expect(effectiveKindOf(a1, { as29580: "cell" })).toBe("cell");
+    expect(effectiveKindOf(a1, { as64501: "cell" })).toBe("cell");
   });
 
   it("is keyed by network, so it does not follow you onto another one", () => {
-    expect(effectiveKindOf(lan, { as29580: "cell" })).toBe("wifi");
+    expect(effectiveKindOf(lan, { as64501: "cell" })).toBe("wifi");
   });
 
   it("is unknown when there is no network yet", () => {
-    expect(effectiveKindOf(null, { as29580: "cell" })).toBe("unknown");
+    expect(effectiveKindOf(null, { as64501: "cell" })).toBe("unknown");
   });
 
   it("drops entries a hand-edited prefs doc could carry", () => {
@@ -132,8 +132,8 @@ describe("remembering the network across tabs", () => {
     resetNetworkState();
     // A tab that has not asked the server yet still attributes its first window
     // to the network it was almost certainly still on.
-    expect(currentNetwork()?.net).toBe("as29580");
-    setNetworkOverrides({ as29580: "cell" });
+    expect(currentNetwork()?.net).toBe("as64501");
+    setNetworkOverrides({ as64501: "cell" });
     expect(currentKind()).toBe("cell");
   });
 
@@ -148,9 +148,9 @@ describe("asking the server", () => {
     vi.stubGlobal("fetch", fn);
     await refreshNetwork({ force: true });
     expect(calls[0]).toContain("/netinfo");
-    expect(currentNetwork()?.label).toBe("A1 Bulgaria EAD");
+    expect(currentNetwork()?.label).toBe("Example Telecom Ltd");
     expect(currentKind()).toBe("cell");
-    expect(readStoredNetwork()?.net).toBe("as29580");
+    expect(readStoredNetwork()?.net).toBe("as64501");
   });
 
   it("does not ask again while the answer is still fresh", async () => {
@@ -221,7 +221,7 @@ describe("asking the server", () => {
     // The bytes that failed to reach the server did not cross a different link,
     // so the previous answer is a better attribution than unknown.
     await refreshNetwork({ force: true });
-    expect(currentNetwork()?.net).toBe("as29580");
+    expect(currentNetwork()?.net).toBe("as64501");
   });
 
   it("keeps the last known network when the server errors", async () => {
@@ -230,7 +230,7 @@ describe("asking the server", () => {
     await refreshNetwork({ force: true });
     vi.stubGlobal("fetch", fakeFetch({}, false).fn);
     await refreshNetwork({ force: true });
-    expect(currentNetwork()?.net).toBe("as29580");
+    expect(currentNetwork()?.net).toBe("as64501");
   });
 
   it("keeps the last known network when the reply is malformed", async () => {
@@ -239,7 +239,7 @@ describe("asking the server", () => {
     await refreshNetwork({ force: true });
     vi.stubGlobal("fetch", fakeFetch({ nonsense: true }).fn);
     await refreshNetwork({ force: true });
-    expect(currentNetwork()?.net).toBe("as29580");
+    expect(currentNetwork()?.net).toBe("as64501");
   });
 
   it("tells subscribers when the network changes, and not when it repeats", async () => {
@@ -248,17 +248,17 @@ describe("asking the server", () => {
     vi.stubGlobal("fetch", fakeFetch({ ...a1 }).fn);
     await refreshNetwork({ force: true });
     await refreshNetwork({ force: true });
-    expect(seen).toEqual(["as29580"]);
+    expect(seen).toEqual(["as64501"]);
 
     vi.stubGlobal("fetch", fakeFetch({ ...lan }).fn);
     await refreshNetwork({ force: true });
-    expect(seen).toEqual(["as29580", "lan"]);
+    expect(seen).toEqual(["as64501", "lan"]);
   });
 
   it("tells subscribers when a correction changes the kind", () => {
     const seen: string[] = [];
     onNetworkChange(() => seen.push(currentKind()));
-    setNetworkOverrides({ as29580: "cell" });
+    setNetworkOverrides({ as64501: "cell" });
     expect(seen).toEqual(["unknown"]); // no network known yet, but they heard
   });
 });

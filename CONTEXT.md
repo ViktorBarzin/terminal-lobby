@@ -349,7 +349,7 @@ _Avoid_: connection type, medium
 **Network**:
 One operator's network as the server names it from the address a request came
 from: `lan` for anything that reached the internal ingress without crossing the
-public internet, `as29580` for a resolved operator, or an opaque digest when the
+public internet, `as64501` for a resolved operator, or an opaque digest when the
 lookup fails. Carries a label and country for display. The key a **correction**
 is stored against — stable across reconnects and across the address changing,
 which is what lets one tap settle a network for good.

@@ -388,9 +388,9 @@ describe("Data used — which network you are on", () => {
   });
 
   it("names the operator and the country, which is how roaming shows", async () => {
-    seedNetwork({ net: "as29580", kind: "unknown", label: "A1 Bulgaria EAD", cc: "BG", source: "asn" });
+    seedNetwork({ net: "as64501", kind: "unknown", label: "Example Telecom Ltd", cc: "BG", source: "asn" });
     const { container } = await openPanel();
-    expect(nameOf(container)).toBe("A1 Bulgaria EAD (BG)");
+    expect(nameOf(container)).toBe("Example Telecom Ltd (BG)");
   });
 
   it("says a network on this house's own wire is certain", async () => {
@@ -402,7 +402,7 @@ describe("Data used — which network you are on", () => {
   });
 
   it("offers 'not set' only while the kind is unknown", async () => {
-    seedNetwork({ net: "as29580", kind: "unknown", label: "A1", cc: "BG", source: "asn" });
+    seedNetwork({ net: "as64501", kind: "unknown", label: "A1", cc: "BG", source: "asn" });
     const { container } = await openPanel();
     const values = [...kindSelect(container).options].map((o) => o.value);
     expect(values).toEqual(["unknown", "wifi", "cell"]);
@@ -410,7 +410,7 @@ describe("Data used — which network you are on", () => {
   });
 
   it("records a correction against the network, so it roams and it sticks", async () => {
-    seedNetwork({ net: "as29580", kind: "unknown", label: "A1", cc: "BG", source: "asn" });
+    seedNetwork({ net: "as64501", kind: "unknown", label: "A1", cc: "BG", source: "asn" });
     const patches: PrefsPatch[] = [];
     const { container } = await openPanel(patches);
 
@@ -419,7 +419,7 @@ describe("Data used — which network you are on", () => {
     fireEvent.change(select);
 
     await waitFor(() => expect(patches).toHaveLength(1));
-    expect(patches[0]!.netKinds).toEqual({ as29580: "cell" });
+    expect(patches[0]!.netKinds).toEqual({ as64501: "cell" });
     // Once corrected there is nothing left to un-set, so the placeholder goes.
     await waitFor(() =>
       expect([...kindSelect(container).options].map((o) => o.value)).toEqual(["wifi", "cell"]),
@@ -428,7 +428,7 @@ describe("Data used — which network you are on", () => {
   });
 
   it("keeps corrections for other networks when one is set", async () => {
-    seedNetwork({ net: "as29580", kind: "unknown", label: "A1", cc: "BG", source: "asn" });
+    seedNetwork({ net: "as64501", kind: "unknown", label: "A1", cc: "BG", source: "asn" });
     setNetworkOverrides({ as12576: "cell" });
     const patches: PrefsPatch[] = [];
     const { container } = await openPanel(patches);
@@ -438,6 +438,6 @@ describe("Data used — which network you are on", () => {
     fireEvent.change(select);
 
     await waitFor(() => expect(patches).toHaveLength(1));
-    expect(patches[0]!.netKinds).toEqual({ as12576: "cell", as29580: "wifi" });
+    expect(patches[0]!.netKinds).toEqual({ as12576: "cell", as64501: "wifi" });
   });
 });
