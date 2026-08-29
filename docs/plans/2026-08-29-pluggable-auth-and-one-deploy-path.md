@@ -15,6 +15,13 @@ terminal-lobby went public earlier today at
 `github.com/ViktorBarzin/terminal-lobby`. Three things make it hard for someone
 else to run, and two of them make it harder than it needs to be for us as well.
 
+```stats
+6 | Go modules with the header compiled in
+929 | lines of hand-run deploy script
+562 | README lines, 189 on deployment
+0 | infra repo changes needed
+```
+
 Authentik is a hard dependency. `X-Authentik-Username` is a compiled-in constant
 in six Go modules and a flag on the ttyd unit, so running the lobby means
 running Authentik, or patching six binaries.
@@ -24,7 +31,7 @@ meant to replace them builds and publishes correctly, and its last mile has been
 gated off waiting on prerequisites.
 
 The README is 562 lines. Its deployment section alone is 189 of them, 34% of the
-document, describing a path the same section labels as being replaced.
+document, describing a path that section already notes is being replaced.
 
 ## What we found
 
@@ -46,7 +53,8 @@ curl -H 'X-Authentik-Username: vbarzin' http://10.0.10.10:7684/whoami
 ```
 
 No credential of any kind. Authentik gates the Traefik route; it does not gate
-the ports. What protects them today is the absence of a hostile host on the LAN.
+the ports. The only control today is network position. Any host on the LAN can
+reach the ports.
 
 **There is already a same-user fast path that skips sudo.** `tmuxCmd` and
 `file-api`'s `selfUser` both short-circuit when the target is the running user.
@@ -83,8 +91,8 @@ without it is refused before the identity header is read. This is what closes
 the LAN path above.
 
 ```mermaid
-flowchart LR
-  B[browser] --> P["any reverse proxy<br/>Authentik · oauth2-proxy · Caddy · Tailscale"]
+flowchart TD
+  B[browser] --> P["any reverse proxy<br/>Authentik · oauth2-proxy<br/>Caddy · Tailscale"]
   P -->|"TL_AUTH_HEADER: username<br/>X-TL-Proxy-Secret: optional"| S["terminal-lobby services<br/>tmux-api · file-api · session-events<br/>skills-api · clipboard-upload · ttyd"]
   S --> M{"TL_MULTI_USER<br/>auto → is there a user map?"}
   M -->|no| SU["single-user mode<br/>runs as self, no sudo<br/>sharing and act-as hidden"]
@@ -158,7 +166,7 @@ reinstated an older lobby, because the box will have exactly one writer holding
 `dpkg`'s lock.
 
 `devvm/terminal-lobby.auth.template` is deleted with them. It exists to give apt
-a credential for the registry, and the registry does not ask for one.
+a credential for the registry, and the registry accepts anonymous reads.
 
 ### The container
 
@@ -213,9 +221,10 @@ manual, and the detail stays where someone looking for it will find it.
 
 ## Migration for the existing install
 
-Decision 9 changes the default, so our box needs
-`TL_AUTH_HEADER=X-Authentik-Username` in place at upgrade time. Without it every
-user is locked out until someone notices.
+> [!IMPORTANT]
+> Decision 9 changes the default, so our box needs
+> `TL_AUTH_HEADER=X-Authentik-Username` in place at upgrade time. Without it
+> every user is locked out until someone notices.
 
 The `postinst` writes that value on first install when it finds an existing
 `/etc/ttyd-user-map`, which is the signal that this is our multi-user box rather
@@ -228,13 +237,14 @@ today.
 
 ## Accepted risks
 
-**The LAN path stays open by default.** Decision 3 makes the proxy secret
-optional, so unless `TL_PROXY_SECRET` is set, anything that can reach
-`10.0.10.10:7684` remains able to assert any mapped identity including admin.
-This is today's behaviour, unchanged; the design makes closing it a one-line
-edit rather than a code change, and the startup warning says plainly what is
-reachable. Setting the secret later costs one value in the conffile and one
-`customRequestHeaders` middleware in `infra/stacks/terminal/main.tf`.
+> [!WARNING]
+> **The LAN path stays open by default.** Decision 3 makes the proxy secret
+> optional, so unless `TL_PROXY_SECRET` is set, anything that can reach
+> `10.0.10.10:7684` remains able to assert any mapped identity including admin.
+> This is today's behaviour, unchanged; the design makes closing it a one-line
+> edit rather than a code change, and the startup warning says plainly what is
+> reachable. Setting the secret later costs one value in the conffile and one
+> `customRequestHeaders` middleware in `infra/stacks/terminal/main.tf`.
 
 **The container's tmux scope handling is unproven.** Skipping the systemd
 re-homing should be correct in single-user mode, but it has not been run.
