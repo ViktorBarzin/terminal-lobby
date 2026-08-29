@@ -3,6 +3,16 @@ Description=session-events (terminal-lobby v2 text-mode backend)
 After=network.target
 
 [Service]
+# Every service reads the same configuration: the identity header name, the
+# optional proxy secret, the single/multi-user mode and the bind address.
+# '-' means an absent file is not an error, so a box that predates the package
+# still starts on the compiled-in defaults.
+#
+# Two files, in order: the package's, then local overrides. The second wins on
+# any key it sets. Local settings belong there, not in the first, so a package
+# upgrade never prompts about a conffile you edited.
+EnvironmentFile=-/etc/terminal-lobby.conf
+EnvironmentFile=-/etc/terminal-lobby.local.conf
 # Binds :7685 on all interfaces so the K8s ingress can reach the AUTHED web
 # surface (/events, /prompt, /cancel). The /hooks/* endpoints are hard-gated to
 # loopback in code, and the ingress must not route them publicly.

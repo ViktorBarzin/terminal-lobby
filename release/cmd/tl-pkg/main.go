@@ -57,7 +57,8 @@ func main() {
 	check(os.MkdirAll(filepath.Join(*out, "DEBIAN"), 0o755))
 	check(os.WriteFile(filepath.Join(*out, "DEBIAN/control"), []byte(control(*version, *commit)), 0o644))
 	check(os.WriteFile(filepath.Join(*out, "DEBIAN/preinst"), []byte(preinst), 0o755))
-	post := strings.Replace(postinst, "UNITS_TO_ENABLE", strings.Join(release.Package.Enable, " "), 1)
+	post := strings.Replace(release.PostinstScript, "UNITS_TO_ENABLE", strings.Join(release.Package.Enable, " "), 1)
+	post = strings.Replace(post, "MIGRATE_CONFIG", release.MigrateConfigSnippet, 1)
 	check(os.WriteFile(filepath.Join(*out, "DEBIAN/postinst"), []byte(post), 0o755))
 	check(os.WriteFile(filepath.Join(*out, "/etc/systemd/system/terminal-lobby-revert.service"), []byte(revertUnit), 0o644))
 	fmt.Printf("tl-pkg: staged %d files at version %s\n", len(release.Package.Files), *version)
@@ -92,57 +93,6 @@ const preinst = `#!/bin/sh
 set -e
 [ -x /usr/lib/terminal-lobby/tl-apply ] && /usr/lib/terminal-lobby/tl-apply snapshot || true
 exit 0
-`
-
-// postinst installs the chunks additively, validates the sudo grant, then hands
-// over to tl-apply for restart, verification and the revert decision.
-const postinst = `#!/bin/sh
-set -e
-[ "$1" = "configure" ] || exit 0
-
-# A malformed sudo grant locks every user out of every session, so it is checked
-# before it counts as installed.
-if ! visudo -cf /etc/sudoers.d/ttyd-users >/dev/null; then
-  echo "terminal-lobby: /etc/sudoers.d/ttyd-users is malformed; refusing to configure" >&2
-  exit 1
-fi
-
-# Chunks are copied, never synced: old hashed names must stay valid for tabs on
-# the previous build and for a rollback.
-#
-# install(1), not cp -a: payload files carry their BUILD mtime, and preserving it
-# means the prune below deletes the chunks it just installed whenever the package
-# is older than the window -- which is exactly the revert path.
-mkdir -p /usr/local/share/ttyd/assets
-if [ -d /usr/share/terminal-lobby/assets ]; then
-  for f in /usr/share/terminal-lobby/assets/*; do
-    [ -e "$f" ] || continue
-    install -m 0644 "$f" /usr/local/share/ttyd/assets/
-  done
-  # Pruned by age of INSTALL, which install(1) has just set to now.
-  find /usr/local/share/ttyd/assets -type f -mtime +14 -delete 2>/dev/null || true
-fi
-
-# daemon-reload can transiently time out under heavy devvm load; both deploy
-# scripts retried once and so does this. Without the retry, set -e aborts
-# postinst before anything is restarted and dpkg leaves the package half-configured.
-systemctl daemon-reload || { sleep 3; systemctl daemon-reload; }
-
-# Enabling, not just restarting: a unit that was only ever restarted does not
-# come back after a reboot. Idempotent, and run every time so a unit that was
-# stopped or never enabled comes up even when its bytes did not change.
-for unit in UNITS_TO_ENABLE; do
-  systemctl enable --now "$unit" >/dev/null 2>&1 || true
-done
-
-# Set when reverting: the previous version has already been verified, and
-# re-running the check from inside a revert risks a loop.
-[ -n "$TL_SKIP_VERIFY" ] && exit 0
-
-# Restart what changed and verify. A failed verify does NOT revert from here:
-# dpkg still holds its lock, so a nested apt-get would deadlock. tl-apply arms a
-# oneshot unit instead, which runs once dpkg has released the transaction.
-/usr/lib/terminal-lobby/tl-apply apply
 `
 
 // revertUnit runs the emergency brake OUTSIDE the dpkg transaction. postinst

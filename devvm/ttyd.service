@@ -3,6 +3,19 @@ Description=ttyd Terminal Service (multi-session lobby + per-Authentik-user atta
 After=network.target
 
 [Service]
+# Every service reads the same configuration: the identity header name, the
+# optional proxy secret, the single/multi-user mode and the bind address.
+# '-' means an absent file is not an error, so a box that predates the package
+# still starts on the compiled-in defaults.
+#
+# Two files, in order: the package's, then local overrides. The second wins on
+# any key it sets. Local settings belong there, not in the first, so a package
+# upgrade never prompts about a conffile you edited.
+EnvironmentFile=-/etc/terminal-lobby.conf
+EnvironmentFile=-/etc/terminal-lobby.local.conf
+# Fallback for a box with no config file yet: Environment= is applied
+# BEFORE EnvironmentFile, so the file wins wherever it sets the same key.
+Environment=TL_AUTH_HEADER=X-Forwarded-User
 # Truecolor hint for the spawned tmux client (Task 1.14). INERT on the
 # current tmux 3.4 — upstream only added "Set and check COLORTERM as a
 # hint for RGB colour" in tmux 3.6 — so /etc/tmux.conf (terminal-features
@@ -17,7 +30,7 @@ Environment=COLORTERM=truecolor
 # Cloudflare's ~100s WS idle, so an idle terminal never churns reconnects.
 # The frontend also drops the socket entirely after the tab is hidden 60s
 # (see frontend/index.html battery saver) — this covers foreground-idle.
-ExecStart=/usr/local/bin/ttyd -W -a -H X-authentik-username -P 30 -t enableClipboard=true -I /usr/local/share/ttyd/index.html -p 7681 /usr/local/bin/tmux-attach.sh
+ExecStart=/usr/local/bin/ttyd -W -a -H ${TL_AUTH_HEADER} -P 30 -t enableClipboard=true -I /usr/local/share/ttyd/index.html -p 7681 /usr/local/bin/tmux-attach.sh
 Restart=always
 User=wizard
 
