@@ -305,11 +305,14 @@ scp -o BatchMode=yes out/index.html "wizard@${DEVVM}:/tmp/tl-deploy-index.html"
 scp -o BatchMode=yes out/term.html  "wizard@${DEVVM}:/tmp/tl-deploy-term.html"
 scp -o BatchMode=yes out/build-id   "wizard@${DEVVM}:/tmp/tl-deploy-build-id"
 scp -o BatchMode=yes out/term-build-id "wizard@${DEVVM}:/tmp/tl-deploy-term-build-id"
-# The content-hashed output: the immutable terminal page, and (once the lobby is
-# split) its JS/CSS chunks. Staged as a directory so one scp carries whatever the
-# build produced.
-ssh -o BatchMode=yes "wizard@${DEVVM}" "rm -rf /tmp/tl-deploy-assets && mkdir -p /tmp/tl-deploy-assets"
-scp -o BatchMode=yes -r out/assets/. "wizard@${DEVVM}:/tmp/tl-deploy-assets/"
+# The content-hashed output: the immutable terminal page, and the SPA's JS/CSS
+# chunks. Created and filled in ONE connection, so nothing can remove the
+# directory between the two steps. It could, and did: another session's deploy
+# cleans up the same /tmp path, and an scp landed in that window ("realpath
+# /tmp/tl-deploy-assets/: No such file"). tar also beats scp -r for a few hundred
+# small files.
+tar -C out -cf - assets | ssh -o BatchMode=yes "wizard@${DEVVM}" \
+  'rm -rf /tmp/tl-deploy-assets && mkdir -p /tmp/tl-deploy-assets && tar -C /tmp/tl-deploy-assets --strip-components=1 -xf -'
 
 echo "==> Installing on $DEVVM (${REMOTE_UNIT} :${REMOTE_PORT})..."
 ssh -o BatchMode=yes "wizard@${DEVVM}" \
