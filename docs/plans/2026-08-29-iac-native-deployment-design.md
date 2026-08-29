@@ -3,6 +3,13 @@
 **Status:** design agreed, not yet implemented · **Date:** 2026-08-29 ·
 **Decided with:** Viktor, in a `/grill-with-docs` session
 
+```stats
+3 | hand-run deploy scripts today
+0 | pipelines that reach the box
+7 | Go binaries, one package
+1 | manual install in the whole design
+```
+
 ## What we are solving
 
 Three things, in Viktor's words: deployment is *"outside of the cluster and
@@ -24,8 +31,8 @@ activation, which is no longer the situation.
 
 **Builds are not repeatable.** The Go modules ask for three different toolchains
 (`1.21`, `1.22`, `1.22.2`); nothing passes `-trimpath`; `build-ttyd.sh` clones
-upstream by the *tag* `1.7.7` rather than a commit; `viu` is a `cargo install`
-somebody ran once (`/usr/local/bin/viu`, dated 2026-07-08, sourced from
+upstream by the *tag* `1.7.7` rather than a commit; `viu` was installed once by hand
+with `cargo install` (`/usr/local/bin/viu`, dated 2026-07-08, sourced from
 `~/.cargo/bin`); `deploy-v2.sh` skips `npm ci` while the lockfile hash matches a
 stamp file. A build's result depends on the machine that ran it.
 
@@ -86,8 +93,8 @@ CI holds the credentials and commits; the box reconciles from what was committed
 | 11 | Versioning | Semver, auto-cut by `svu` over conventional commits, from `v0.1.0` |
 | 12 | Sequencing | One project: packaging first, Ansible after |
 
-Two decisions deserve their reasoning recorded, because the alternative was
-argued and rejected rather than overlooked.
+Two decisions carry reasoning worth recording, because their alternatives were
+considered and declined.
 
 **Why the dev environments stay on one shared box (decision 1).** Per-user pods
 or per-user VMs would make the workspace a Terraform resource, which is where
@@ -218,8 +225,8 @@ tab would ever self-update to a fixed `diag.js`.
 Today that dependency set is encoded in the deploy scripts. It has to move into
 the build, along with `deploy.sh`'s two assertions: that `diag.js` lands inside
 an open `<script>` block, and that it contains no literal script tag that would
-truncate the page. These are the least obvious things to carry across and the
-easiest to drop silently, so they get their own CI test.
+truncate the page. These are the least obvious parts to carry across, so they get
+their own CI test.
 
 One capability is deliberately lost: `deploy.sh` seds the *working tree*, so it
 can ship uncommitted edits. Decision 7 gives that up. Local iteration is
@@ -234,6 +241,11 @@ textfile. On failure it reinstalls the previous `.deb` from
 `/var/cache/apt/archives`, marks the package held so the next push cannot
 re-break the box, and records that in the same textfile.
 
+> [!IMPORTANT]
+> With no version pin, a hand-run `apt install terminal-lobby=<older>` is undone
+> by the next push. The rollback that works is a new, higher version carrying the
+> old code. This belongs in the runbook, not in an incident.
+
 The hold is an automatic brake, not a workflow. With no pin (decision 3), the
 normal rollback is **fix forward**: revert the commit, let `svu` cut a higher
 version carrying the old code. A hand-run `apt install terminal-lobby=1.4.1`
@@ -245,7 +257,7 @@ alerting is a rule over the textfile metrics — verify failed, package held, or
 unit in `failed` state — plus a divergence alert comparing the installed version
 against the latest published. That divergence alert is what replaces a polling
 backstop: decision 8 chose push, so a dropped trigger would otherwise leave the
-box quietly stale.
+box stale with no signal.
 
 `unattended-upgrades` is already running daily with only the Ubuntu origins
 allowed. Adding our origin to `Allowed-Origins` would give a once-a-day backstop
@@ -305,10 +317,14 @@ bash applier is retired.
 
 ## Risks
 
+> [!WARNING]
+> The Ansible port is the one phase that can cost someone their access. It runs
+> last, and its check-mode shadow period is part of the phase.
+
 **The Ansible port touches live accounts.** This is the highest-risk work in the
-design, which is why it is last and why the shadow period is not optional.
-`t3-provision-users.sh` encodes rules whose value is invisible in normal
-operation — never removing a group, never replacing a home, never re-locking an
+design, which is why it runs last and why the check-mode shadow period is part
+of the phase. `t3-provision-users.sh` encodes rules that matter only in the
+cases they prevent — never removing a group, never replacing a home, never re-locking an
 existing account — and a port bug there costs someone their access. The pytest
 suite covers the derivation engine, not the applier, so the check-mode diff *is*
 the test.
@@ -323,6 +339,11 @@ an auto-revert in a maintainer script is more logic than a `.deb` normally
 carries. The mitigation is that this logic exists today and is already tested in
 the deploy scripts — it is being moved, not invented — but it needs to be
 genuinely idempotent and safe to re-run, because `dpkg` will re-run it.
+
+> [!CAUTION]
+> `/` is at 93% with 16 GB free and no spare extents in the volume group. Worth
+> fixing on its own account, before a phase-2 install lands a package cache and a
+> rollback copy on it.
 
 **`/` is at 93% (16 GB free) on a single LVM volume**, with `VFree 0` in the VG.
 This is not caused by anything here and is not fixed by anything here, but a
