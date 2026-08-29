@@ -414,6 +414,28 @@ export const SessionCard: Component<{
   let liftFrom = 0;
   let lastY = 0;
   let scroller: HTMLElement | null = null;
+  /** The list's scroll position when the row was lifted. `liftDy` is a
+   *  `translateY`, which is relative to the row's own LAYOUT box — and that box
+   *  lives inside the scroller, so it moves whenever the list does. Without this
+   *  baseline the transform is a client-space delta measured against an origin
+   *  that has since slid: every pixel scrolled is a pixel the row falls behind
+   *  the finger. Measured on a phone: drift equalled the scroll exactly, in both
+   *  directions, and never recovered. */
+  let scrollFrom = 0;
+  /**
+   * How far the list could scroll when the row was lifted — the end of the
+   * list, and where the auto-scroll has to stop.
+   *
+   * It needs recording because the answer changes DURING a drag: the lifted
+   * row's own `translateY` counts toward its scroller's scrollable overflow, so
+   * a row that has travelled past the list's bottom makes the list longer, and
+   * the auto-scroll below would then have somewhere new to go — and would
+   * extend it again. Measured in a browser: scrollHeight - clientHeight climbed
+   * from 255 to 1,356 while a thumb rested still at the edge, carrying the list
+   * 952px past its end. `store.hold()` freezes the rows for the duration of the
+   * drag, so the reading taken at lift is good until it ends.
+   */
+  let scrollMax = 0;
   let scrollRaf: number | undefined;
 
   const startDrag = (y: number) => {
@@ -425,12 +447,28 @@ export const SessionCard: Component<{
     // would move the rows out from under the finger.
     if (!releaseHold) releaseHold = props.store.hold();
     scroller = cardEl?.closest<HTMLElement>(".tl-sidebar-scroll") ?? null;
+    // After the closest() above, not at pointerdown: that is where the scroller
+    // becomes known. (`endDrag` leaves the reference in place, so reading it any
+    // earlier would take the previous drag's list.)
+    scrollFrom = scroller?.scrollTop ?? 0;
+    scrollMax = scroller ? Math.max(0, scroller.scrollHeight - scroller.clientHeight) : 0;
     trackDrag(y);
   };
 
+  /**
+   * Put the lifted row under the finger: how far the finger has travelled, plus
+   * how far the list has travelled beneath it.
+   *
+   * The scroll term is read LIVE and compared against the lift-time baseline
+   * rather than accumulated from tickScroll's own steps — so a scroll from any
+   * source is absorbed (a momentum fling, a programmatic scroll), and the row
+   * stops moving when the list clamps at either end instead of running past it.
+   */
+  const place = () => setLiftDy(lastY - liftFrom + (scroller?.scrollTop ?? 0) - scrollFrom);
+
   const trackDrag = (y: number) => {
     lastY = y;
-    setLiftDy(y - liftFrom);
+    place();
     aim(y);
     tickScroll();
   };
@@ -479,8 +517,20 @@ export const SessionCard: Component<{
       if (!scroller || !lifted() || !box || box.height <= 0) return;
       const by = edgeScroll(lastY, box.top, box.bottom);
       if (by === 0) return;
-      scroller.scrollTop += by;
-      aim(lastY); // the rows moved under a finger that did not
+      // Clamped to where the list ended when the row was lifted, not to where
+      // it ends now — see scrollMax. Without this the row extends the list as
+      // it travels and the scroll never arrives anywhere.
+      const to = Math.max(0, Math.min(scroller.scrollTop + by, scrollMax));
+      if (to === scroller.scrollTop) return;
+      scroller.scrollTop = to;
+      // Both of these, for the same reason: the rows moved under a finger that
+      // did not. `place()` has to be called rather than left to reactivity —
+      // `liftDy` is a signal and `scrollTop` is a plain DOM property with
+      // nothing reactive behind it, so a scroll on its own re-renders nothing.
+      // This loop is the only thing that moves the list without a pointer event,
+      // and before this call the row simply stayed where the last move left it.
+      place();
+      aim(lastY);
       scrollRaf = requestAnimationFrame(step);
     };
     scrollRaf = requestAnimationFrame(step);
