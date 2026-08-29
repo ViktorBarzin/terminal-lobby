@@ -52,6 +52,24 @@ The box tracks whatever the registry publishes as latest. There is no version
 pin, so **rollback is fix-forward**: publish a higher version. A hand-run
 downgrade is undone by the next push.
 
+## Turning it on
+
+The pipeline builds and publishes on every push to master. The trigger that
+tells the box to install is off until three things exist.
+
+**A `WOODPECKER_TOKEN` secret** on the GitHub mirror, which is what authenticates
+Actions to Woodpecker. Mint it from the Woodpecker UI under your user settings:
+
+```sh
+gh secret set WOODPECKER_TOKEN --repo ViktorBarzin/terminal-lobby
+```
+
+Then the two box-side pieces below, and finally:
+
+```sh
+gh variable set TL_DEPLOY_ENABLED --body true --repo ViktorBarzin/terminal-lobby
+```
+
 ## Setting it up on a new box
 
 Two pieces are not in the package, because both need root and neither belongs in

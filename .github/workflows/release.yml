@@ -146,17 +146,22 @@ jobs:
       # Runners cannot route to the devvm, so the trigger goes through Woodpecker,
       # which is deploy-only by ADR-0002 and already activated on the infra repo.
       #
-      # ON since 2026-08-29. The three prerequisites the phase gate was holding
-      # for are met: secret/woodpecker/devvm_ssh_key exists; the Forgejo Debian
-      # registry serves its Packages index and repository.key anonymously, so
-      # the apt credential is not needed; and the box runs no firewall with sshd
-      # listening, while pod-to-box routing is already proven by Traefik
-      # reaching :7681.
+      # OPT-IN, and it has to stay that way. An inverted default (run unless
+      # explicitly false) meant two things went wrong the first time this ran:
+      # a fork of this now-public repo would attempt a deploy it holds no
+      # secrets for, and master went red here because the trigger fired before
+      # anything could answer it.
       #
-      # Still gated on a variable, so a deploy can be stopped without a commit:
-      #   gh variable set TL_DEPLOY_ENABLED --body false
+      # Three things must exist before switching it on, and only the first is a
+      # repository change:
+      #   1. a WOODPECKER_TOKEN secret (this is what 401'd on 2026-08-29)
+      #   2. tl-reconcile installed as a forced command in root's
+      #      authorized_keys on the box
+      #   3. the apt source on the box
+      # See docs/deployment.md. Then:
+      #   gh variable set TL_DEPLOY_ENABLED --body true
       - name: trigger the deploy
-        if: vars.TL_DEPLOY_ENABLED != 'false'
+        if: vars.TL_DEPLOY_ENABLED == 'true'
         env:
           WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
           WOODPECKER_PIPELINE_URL: ${{ secrets.WOODPECKER_PIPELINE_URL }}
