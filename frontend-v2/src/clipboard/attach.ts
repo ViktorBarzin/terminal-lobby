@@ -44,6 +44,29 @@ export interface ImageClipboardDeps {
    *  in a tab acting as another user — and only then types the path, so a
    *  refused write would leave a half-done action behind. Absent = enabled. */
   enabled?: () => boolean;
+  /**
+   * TRUE when this session is the one ON SCREEN. Absent = on screen.
+   *
+   * Distinct from `enabled`, which is about the session's ROLE (watching), and
+   * checked earlier — the listeners below are on the shared document, and every
+   * mounted SessionView installs a set. Since 0e94a63 ("keep every session you
+   * open mounted") a tab holds one per session it has ever opened, all of them
+   * live, so without this a single paste is handled once per open session.
+   *
+   * That is the "image sometimes pastes in multiple times" report, and
+   * "sometimes" was "as many times as you have sessions open": one paste on
+   * 2026-08-29 left four byte-identical PNGs in four session directories of the
+   * store within 307ms, each upload then typing its own path into the one
+   * visible terminal, because `sendToPty` resolves through a global the visible
+   * session owns.
+   *
+   * `e.stopPropagation()` cannot stand in for this. It stops other NODES, not
+   * sibling listeners on the same node in the same phase — and even
+   * `stopImmediatePropagation` would hand the gesture to whichever listener
+   * registered FIRST, which is the oldest session mounted, not the one being
+   * looked at.
+   */
+  active?: () => boolean;
   /** Hand dropped files to the text view's composer (used when composerOwns). */
   onComposerFiles?: (files: File[]) => Promise<unknown>;
   /** seams for tests (default to the live document/window/uploader/toaster). */
@@ -96,6 +119,12 @@ export function installImageClipboard(
 
   const [dropActive, setDropActive] = createSignal(false);
 
+  /** FALSE for every mounted session but the one on screen — see `active`.
+   *  Checked before anything else either intake does, INCLUDING preventDefault:
+   *  a hidden session's listener that bailed later would still have consumed
+   *  the gesture, leaving the visible session (or the composer) a dead event. */
+  const onScreen = (): boolean => deps.active?.() !== false;
+
   /** TRUE when this client only watches — both intakes stop here and say so,
    *  rather than uploading into a session nothing can be typed into. */
   const refused = (): boolean => {
@@ -141,6 +170,7 @@ export function installImageClipboard(
   // Text/other is still passed through untouched, so pasting text into the
   // composer, the path box or any other field behaves natively.
   const onPaste = (e: ClipboardEvent): void => {
+    if (!onScreen()) return; // another mounted session's listener; not ours
     const blob = firstImageBlob(e.clipboardData?.items);
     if (!blob) return; // text/other: let the focused field / browser handle it
     e.preventDefault();
@@ -227,6 +257,11 @@ export function installImageClipboard(
     setDropActive(false);
     const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
     if (!files.length) return;
+    // Same duplication as the paste path, one gesture later: every mounted
+    // session's listener sees this drop. Gated AFTER the preventDefault above,
+    // which is a safety behaviour and costs nothing when several instances do
+    // it, and before the upload, which is the part that must happen once.
+    if (!onScreen()) return;
     // Text view: hand the files to the composer instead of typing paths at the
     // pty. The overlay still raised, because a drop target is the right
     // affordance either way — only the destination differs.
