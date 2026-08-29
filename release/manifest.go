@@ -1,6 +1,9 @@
 package release
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 // ServedAssetDir is where ttyd's shared assets live on the box. The lobby's
 // content-hashed chunks land here, and clipboard-upload serves them from its
@@ -361,3 +364,22 @@ done
 # oneshot unit instead, which runs once dpkg has released the transaction.
 /usr/lib/terminal-lobby/tl-apply apply
 `
+
+// ConffilesContent is DEBIAN/conffiles: the paths dpkg must treat as
+// configuration. Marking a File as a conffile in the manifest is only half of
+// it — dpkg reads this list, and a path absent from it is overwritten on every
+// upgrade regardless of what the manifest says.
+//
+// LocalConfigPath is deliberately not here. postinst writes it, and a conffile
+// written by a maintainer script shows up as locally modified on every later
+// upgrade, which is the prompt the two-file split exists to avoid.
+func ConffilesContent() string {
+	var b strings.Builder
+	for _, f := range Package.Files {
+		if f.Conffile {
+			b.WriteString(f.Dest)
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}

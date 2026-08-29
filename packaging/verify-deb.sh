@@ -42,6 +42,15 @@ check "the sudo grant ships read-only to root and its group" \
 
 check "preinst is present (without it, every release restarts everything)" \
   "$(printf '%s' "$ctrl" | grep -c '^./preinst$' || true)" 1
+# Without this, dpkg replaces /etc/terminal-lobby.conf on every upgrade and an
+# operator's header name or secret goes with it.
+check "conffiles declares the config file" \
+  "$(printf '%s' "$ctrl" | grep -c '^./conffiles$' || true)" 1
+check "the config file is listed as a conffile" \
+  "$(dpkg-deb --ctrl-tarfile "$DEB" | tar -xO ./conffiles 2>/dev/null | grep -c '^/etc/terminal-lobby.conf$' || true)" 1
+check "the local override is NOT a conffile" \
+  "$(dpkg-deb --ctrl-tarfile "$DEB" | tar -xO ./conffiles 2>/dev/null | grep -c '^/etc/terminal-lobby.local.conf$' || true)" 0
+
 check "postinst is present" \
   "$(printf '%s' "$ctrl" | grep -c '^./postinst$' || true)" 1
 

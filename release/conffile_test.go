@@ -68,3 +68,47 @@ func TestShippedFileMatchesDefaultConfig(t *testing.T) {
 		t.Fatal("devvm/terminal-lobby.conf differs from DefaultConfig(); regenerate it")
 	}
 }
+
+// Marking a File as a conffile in the manifest does nothing on its own: dpkg
+// only treats a path as configuration if it is listed in DEBIAN/conffiles. This
+// asserts the list the package actually ships, which is the thing that decides
+// whether an operator's edit survives.
+func TestConffilesListIsWhatDpkgReads(t *testing.T) {
+	got := ConffilesContent()
+	if got == "" {
+		t.Fatal("no DEBIAN/conffiles content; dpkg would overwrite every config file on upgrade")
+	}
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "/") {
+			t.Fatalf("conffiles entry %q is not an absolute path", l)
+		}
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Fatal("conffiles must end in a newline")
+	}
+	var want []string
+	for _, f := range Package.Files {
+		if f.Conffile {
+			want = append(want, f.Dest)
+		}
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("conffiles lists %d paths, manifest marks %d", len(lines), len(want))
+	}
+	for _, w := range want {
+		if !strings.Contains(got, w+"\n") {
+			t.Fatalf("%s is marked Conffile but absent from DEBIAN/conffiles", w)
+		}
+	}
+}
+
+// The local override must NOT be a conffile. dpkg would then track it, and the
+// migration writing it during postinst would show up as a locally-modified
+// conffile on every later upgrade — the prompt the two-file split exists to
+// avoid.
+func TestLocalOverrideIsNotAConffile(t *testing.T) {
+	if strings.Contains(ConffilesContent(), LocalConfigPath) {
+		t.Fatalf("%s is listed as a conffile; dpkg would prompt about it every upgrade", LocalConfigPath)
+	}
+}
