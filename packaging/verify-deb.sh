@@ -37,8 +37,13 @@ else printf '  FAIL no chunk files in the payload\n'; fail=1; fi
 check "the generated identity files are not shipped" \
   "$(printf '%s' "$contents" | grep -cE 'etc/ttyd-(user-map|admins)' || true)" 0
 
-check "the sudo grant ships read-only to root and its group" \
-  "$(printf '%s' "$contents" | grep 'etc/sudoers.d/ttyd-users' | awk '{print $1}')" "-r--r-----"
+# The package must NOT carry the sudo grant. It is per-box identity data owned
+# by the roster, and installing a drifted copy revokes the grants of every user
+# it has forgotten. postinst validates the LIVE file instead.
+check "the sudo grant is NOT shipped" \
+  "$(printf '%s' "$contents" | grep -c 'etc/sudoers.d/ttyd-users' || true)" 0
+check "no identity map is shipped" \
+  "$(printf '%s' "$contents" | grep -c 'etc/ttyd-user-map' || true)" 0
 
 check "preinst is present (without it, every release restarts everything)" \
   "$(printf '%s' "$ctrl" | grep -c '^./preinst$' || true)" 1
