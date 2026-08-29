@@ -377,6 +377,7 @@ func main() {
 	http.HandleFunc("/users", handleUsers)
 	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
+	http.HandleFunc("/netinfo", handleNetinfo)
 	http.HandleFunc("/telemetry", handleTelemetry)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
 	http.HandleFunc("/push/vapid-public", handlePushVAPIDPublic)
