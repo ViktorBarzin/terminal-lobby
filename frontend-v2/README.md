@@ -157,6 +157,12 @@ src/
                          Three buckets measured from Navigation/Resource Timing;
                          the WebSocket and SSE streams are modelled, and labelled
                          as modelled wherever they are shown
+    network.ts           Which network this device is on, so Data used can
+                         separate a month's cellular from its WiFi. The browser
+                         cannot say (Safari ships no Network Information API, and
+                         where it exists a wired desktop reports "4g"), so the
+                         server names it from the address a request arrives from;
+                         a person's own per-network correction roams in prefs
     connection.ts        Measures the link (Navigation Timing bytes/time + an
                          optional tiny RTT probe — navigator.connection does not
                          exist on iOS), classifies full/slow, remembers the
