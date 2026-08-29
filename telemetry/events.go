@@ -29,11 +29,16 @@ var knownEvents = map[string]bool{
 	"session.created":       true,
 	"session.selected":      true, // a row was activated in the sidebar
 	"session.attached":      true, // the terminal actually mounted
-	"session.detached":      true,
-	"session.renamed":       true,
-	"session.moved":         true, // between projects / reordered (tl.from, tl.to)
-	"session.killed":        true,
-	"session.restored":      true, // tmux-persist restore (tl.count)
+	// Opening a session's transcript in Text mode: whether this device already
+	// held it, how many events it seeded from, and how many the server still had
+	// to send. The pair is what says whether the client-side transcript cache is
+	// earning its keep in the wild rather than in a test.
+	"text.open":        true, // tl.cache, tl.cached, tl.fetched
+	"session.detached": true,
+	"session.renamed":  true,
+	"session.moved":    true, // between projects / reordered (tl.from, tl.to)
+	"session.killed":   true,
+	"session.restored": true, // tmux-persist restore (tl.count)
 
 	// -- skills & plugins (skills-api) --------------------------------------
 	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)
