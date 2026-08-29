@@ -460,6 +460,12 @@ export const SessionView: Component<{
     session: () => session,
     sendToPty: (t) => window.__tlSendToTerminal?.(t) ?? false,
     enabled: () => !watch(),
+    // The one subsystem in this file that had no `onScreen` in it, and the one
+    // that needed it most: its listeners are on the shared DOCUMENT, and every
+    // session this tab has opened is still mounted behind a CSS class. Without
+    // this each of them handled the same paste, uploading a copy into its own
+    // bucket and typing its own path into the one visible terminal.
+    active: onScreen,
     // Route on the ACTIVE VIEW (design 2026-08-17 decision 5). In the text view a
     // paste or a drop belongs to the composer — which is the bug this fixes: the
     // capture-phase paste listener swallowed every image and typed its path at a
