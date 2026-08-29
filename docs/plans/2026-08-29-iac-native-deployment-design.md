@@ -278,8 +278,10 @@ Each phase is independently verifiable, and the first three touch no user
 accounts.
 
 **Phase 0 — build, publish, prove.** Create the `ViktorBarzin/terminal-lobby`
-GitHub mirror (it does not exist yet; the API returns 404) and enable the
-one-way Forgejo push-mirror per ADR-0003. Add `.github/workflows/` with the
+GitHub mirror and enable the one-way Forgejo push-mirror per ADR-0003. The
+mirror's credential needs GitHub's `workflow` scope, or the push is rejected as
+soon as the tree carries `.github/workflows/` — the token in `~/.git-credentials`
+does not have it; `secret/viktor` → `github_pat` does. Add `.github/workflows/` with the
 `svu` step (the tripit/wrongmove pattern: `fetch-depth: 0`, `fetch-tags: true`,
 tag pushed back to canonical Forgejo with `FORGEJO_GIT_TOKEN`), the build, the
 `.deb` packaging, and publication to the Forgejo Debian registry. Nothing on the
