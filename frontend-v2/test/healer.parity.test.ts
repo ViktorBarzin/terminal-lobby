@@ -1,14 +1,16 @@
 /**
  * v1 ⟷ v2 update-kernel PARITY.
  *
- * The update policy exists three times: `healer.logic.ts` (v2) and inline in
- * `frontend/index.html` + `frontend/term.html` (v1, which has no build step and
- * therefore no test harness of its own). That duplication is what let the two
- * drift apart — v2 cleared its pill state before reloading, v1 never did, and
- * only v1 is the daily driver. So this file slices v1's kernel out of the HTML
- * between its `>>> tl-update-kernel` / `<<< tl-update-kernel` sentinels, runs it
- * in a `node:vm` context, and puts it through the SAME case table the v2 unit
- * tests use.
+ * The update policy exists twice: `healer.logic.ts` (the SPA) and inline in
+ * `frontend/term.html`, which has no build step and therefore no test harness of
+ * its own. That duplication is what let the two drift apart once already — one
+ * cleared its pill state before reloading and the other never did. So this file
+ * slices the page's kernel out of the HTML between its `>>> tl-update-kernel` /
+ * `<<< tl-update-kernel` sentinels, runs it in a `node:vm` context, and puts it
+ * through the SAME case table the SPA's unit tests use.
+ *
+ * It covered `frontend/index.html` as well until the vanilla page was removed
+ * (2026-08-29).
  *
  * If someone edits one implementation and not the other, this goes red.
  */
@@ -18,7 +20,7 @@ import { resolve } from "node:path";
 import { runInNewContext } from "node:vm";
 import { MAX_UPDATE_ATTEMPTS, STORM_WINDOW_MS, planUpdate } from "../src/deploy/healer.logic";
 
-const V1_PAGES = ["frontend/index.html", "frontend/term.html"];
+const V1_PAGES = ["frontend/term.html"];
 const repoFile = (p: string): string => resolve(__dirname, "../..", p);
 
 /** The kernel source between the sentinels. */
