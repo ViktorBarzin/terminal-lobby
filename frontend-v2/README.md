@@ -147,6 +147,10 @@ src/
                          plus lensTarget(), the one answer for "whose account
                          is this tab looking at": it makes a session open
                          WATCHING and namespaces the Watch choice per target
+    mode.ts              Which features this box has: multiUser() reads the
+                         /whoami flag (an older server sends none, which reads
+                         as multi-user), canActAs() requires admin AND
+                         multi-user — single-user has nobody to act as
     terminal-url.ts      ttyd `?arg=` POSITIONAL contract (incl. the foreign-
                          owner 4th arg, which the act-as target defaults into)
                          — red-line-class, unit-tested
