@@ -88,3 +88,25 @@ describe("what does not fit is wrapped or scrolled in its own box", () => {
     expect(rule(selector)).toMatch(/overflow-x:\s*auto|overflow:\s*auto/);
   });
 });
+
+/**
+ * The composer stays on screen when a question card is open.
+ *
+ * Same shape as the new-session box, one screen over: `.tl-qcard` capped itself
+ * at `min(52vh, 420px)` "so the composer under it never leaves the screen", and
+ * `vh` is the one unit that cannot promise that on iOS Safari — the keyboard
+ * shrinks the visual viewport and leaves `vh` resolving against the full
+ * screen. Measured at 390x844 with a 336px keyboard: the card held 420px and
+ * the composer sat 84px under the keyboard.
+ */
+describe("a question card leaves the composer room", () => {
+  it("caps itself against its pane, not against the viewport", () => {
+    const qcard = rule(".tl-qcard");
+    expect(qcard).toMatch(/max-height:\s*min\(52%,\s*420px\)/);
+    expect(qcard).not.toMatch(/max-height:[^;]*vh/);
+  });
+
+  it("still scrolls inside itself rather than growing", () => {
+    expect(rule(".tl-qcard")).toMatch(/overflow-y:\s*auto/);
+  });
+});
