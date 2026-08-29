@@ -67,8 +67,9 @@ func TestClientIPPrefersCloudflareOverForwardedFor(t *testing.T) {
 	// CF-Connecting-IP, so that one is the only entry nobody downstream typed.
 	r.Header.Set("X-Forwarded-For", "203.0.113.9, 176.12.22.76")
 	r.Header.Set("CF-Connecting-IP", "176.12.22.76")
-	if got := clientIP(r); got != "176.12.22.76" {
-		t.Fatalf("clientIP = %q, want the CF-Connecting-IP value", got)
+	got, via := clientAddr(r)
+	if got != "176.12.22.76" || via != "CF-Connecting-IP" {
+		t.Fatalf("clientAddr = %q via %q, want the CF-Connecting-IP value", got, via)
 	}
 }
 
@@ -78,13 +79,15 @@ func TestClientIPFallsBackThroughRealIPThenForwardedThenPeer(t *testing.T) {
 		headers map[string]string
 		peer    string
 		want    string
+		via     string
 	}{
-		{"x-real-ip", map[string]string{"X-Real-Ip": "176.12.22.76"}, "10.0.20.5:1", "176.12.22.76"},
-		{"leftmost xff", map[string]string{"X-Forwarded-For": "176.12.22.76, 172.64.0.1"}, "10.0.20.5:1", "176.12.22.76"},
-		{"peer only", nil, "192.168.1.44:52001", "192.168.1.44"},
-		{"peer without port", nil, "192.168.1.44", "192.168.1.44"},
-		{"blank header ignored", map[string]string{"X-Real-Ip": "  "}, "192.168.1.44:1", "192.168.1.44"},
-		{"garbage header ignored", map[string]string{"X-Real-Ip": "not-an-ip"}, "192.168.1.44:1", "192.168.1.44"},
+		{"x-real-ip", map[string]string{"X-Real-Ip": "176.12.22.76"}, "10.0.20.5:1", "176.12.22.76", "X-Real-Ip"},
+		{"leftmost xff", map[string]string{"X-Forwarded-For": "176.12.22.76, 172.64.0.1"}, "10.0.20.5:1", "176.12.22.76", "X-Forwarded-For"},
+		{"peer only", nil, "192.168.1.44:52001", "192.168.1.44", "peer"},
+		{"peer without port", nil, "192.168.1.44", "192.168.1.44", "peer"},
+		{"blank header ignored", map[string]string{"X-Real-Ip": "  "}, "192.168.1.44:1", "192.168.1.44", "peer"},
+		{"garbage header ignored", map[string]string{"X-Real-Ip": "not-an-ip"}, "192.168.1.44:1", "192.168.1.44", "peer"},
+		{"nothing at all", nil, "", "", "none"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -93,8 +96,9 @@ func TestClientIPFallsBackThroughRealIPThenForwardedThenPeer(t *testing.T) {
 			for k, v := range c.headers {
 				r.Header.Set(k, v)
 			}
-			if got := clientIP(r); got != c.want {
-				t.Fatalf("clientIP = %q, want %q", got, c.want)
+			got, via := clientAddr(r)
+			if got != c.want || via != c.via {
+				t.Fatalf("clientAddr = %q via %q, want %q via %q", got, via, c.want, c.via)
 			}
 		})
 	}
