@@ -285,7 +285,9 @@ src/
                          would recreate, choose which rows to bring back
     SettingsPanel.tsx    Settings overlay: theme, font size, session-list
                          last-active time, new-session command, keyboard,
-                         notifications, and the admin act-as picker
+                         notifications, "Data used" (this device's wire bytes
+                         with the Full/Auto/Light link pin), and the admin
+                         act-as picker
     SkillsPanel.tsx      The Skills overlay (docs/adr/0011), its own dialog off
                          the shell bar beside Settings: a tab per list — this
                          account's skills, each other account's with a
@@ -422,7 +424,12 @@ All of the following ship in the deployed build:
   time (`sidebar.showLastActive`, roamed, **off by default** — it hides the
   relative "5m ago", never a running session's live working timer), the
   new-session command, keyboard toggles and notification prefs; roamed fields
-  ride `/prefs`.
+  ride `/prefs`. It also carries **Data used** — what the lobby cost THIS
+  browser profile in bytes that crossed the link, for today, the last 7 days
+  and the last two calendar months, split into five feature buckets, with the
+  Full/Auto/Light experience pin for this device. Counting continues while
+  "Send diagnostics" is off: that toggle governs sending, and the counter never
+  leaves the browser (docs/adr/0008).
 - **Self-update** (ADR-0007) — the page polls its own served bytes and reloads
   itself when the asset id changes, deferring while a terminal is attached until
   the next resume. `index.html` and `term.html` each carry their own id.
