@@ -116,20 +116,23 @@ jobs:
       - name: tag on the canonical forge
         env:
           FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+          FORGEJO_REPO_PATH: ${{ secrets.FORGEJO_REPO_PATH }}
         run: |
           set -euo pipefail
           git tag "${{ steps.version.outputs.tag }}"
-          git push "https://x-access-token:${FORGEJO_GIT_TOKEN}@forgejo.viktorbarzin.me/viktor/terminal-lobby.git" \
+          git push "https://x-access-token:${FORGEJO_GIT_TOKEN}@${FORGEJO_REPO_PATH}" \
             "${{ steps.version.outputs.tag }}"
 
       - name: publish to the Debian registry
         env:
           FORGEJO_GIT_TOKEN: ${{ secrets.FORGEJO_GIT_TOKEN }}
+          FORGEJO_USER: ${{ secrets.FORGEJO_USER }}
+          FORGEJO_DEB_UPLOAD_URL: ${{ secrets.FORGEJO_DEB_UPLOAD_URL }}
         run: |
           set -euo pipefail
-          curl -sSf --user "viktor:${FORGEJO_GIT_TOKEN}" \
+          curl -sSf --user "${FORGEJO_USER}:${FORGEJO_GIT_TOKEN}" \
             --upload-file "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
-            "https://forgejo.viktorbarzin.me/api/packages/viktor/debian/pool/noble/main/upload"
+            "${FORGEJO_DEB_UPLOAD_URL}"
 
       # Off-site copy, so a cluster outage cannot block repairing the workstation.
       - name: attach to a GitHub release
@@ -152,9 +155,10 @@ jobs:
         if: vars.TL_DEPLOY_ENABLED == 'true'
         env:
           WOODPECKER_TOKEN: ${{ secrets.WOODPECKER_TOKEN }}
+          WOODPECKER_PIPELINE_URL: ${{ secrets.WOODPECKER_PIPELINE_URL }}
         run: |
           curl -sSf -X POST \
             -H "Authorization: Bearer ${WOODPECKER_TOKEN}" \
             -H "Content-Type: application/json" \
             -d '{"branch":"master","variables":{"PIPELINE":"terminal-lobby-deploy","VERSION":"${{ steps.version.outputs.version }}"}}' \
-            "https://ci.viktorbarzin.me/api/repos/1/pipelines"
+            "${WOODPECKER_PIPELINE_URL}"
