@@ -49,6 +49,22 @@ describe("connection tier — classification", () => {
     expect(classify(sample({ ttfbMs: 300, navEndMs: 24_300, probeMs: 300 }))).toBe("slow");
   });
 
+  it("calls the real slow attach slow — the one the first threshold missed", () => {
+    // Measured from term.ready: 473,998 B in 7,910 ms with a 230 ms first byte,
+    // i.e. 61.7 B/ms. The original 60 B/ms threshold sat just underneath it, so
+    // the worst load actually observed was handed the full experience.
+    expect(
+      classify({ navBytes: 473_998, ttfbMs: 230, navEndMs: 7_910, probeMs: null }),
+    ).toBe("slow");
+  });
+
+  it("leaves the ordinary link alone", () => {
+    // The slowest of a dozen ordinary attaches: 474,760 B in 1,111 ms = 537 B/ms.
+    expect(
+      classify({ navBytes: 474_760, ttfbMs: 228, navEndMs: 1_111, probeMs: null }),
+    ).toBe("full");
+  });
+
   it("trusts a slow round trip even when bandwidth looks fine", () => {
     // Long-haul: plenty of throughput, but every sequential request costs.
     expect(classify(sample({ probeMs: SLOW_PROBE_MS }))).toBe("slow");

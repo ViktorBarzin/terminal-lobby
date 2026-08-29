@@ -71,9 +71,6 @@ class FakeApi implements LobbyApi {
   async getSnapshot() {
     return [];
   }
-  async listDirs() {
-    return [];
-  }
 }
 
 async function mountList(names: string[], sessions?: Session[]) {

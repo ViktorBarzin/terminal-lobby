@@ -151,11 +151,20 @@ src/
                          owner 4th arg, which the act-as target defaults into)
                          — red-line-class, unit-tested
   diagnostics/
+    usage.ts             Data used: what the lobby cost THIS device in wire
+                         bytes, so the question the 1.83 GB/24h measurement
+                         answered offline can be asked on the device itself.
+                         Three buckets measured from Navigation/Resource Timing;
+                         the WebSocket and SSE streams are modelled, and labelled
+                         as modelled wherever they are shown
     connection.ts        Measures the link (Navigation Timing bytes/time + an
                          optional tiny RTT probe — navigator.connection does not
                          exist on iOS), classifies full/slow, remembers the
                          verdict per device for the NEXT load, and answers what
                          each lever should do. A pin always wins
+    usage.ts             What the lobby cost this device, in wire bytes: three
+                         buckets measured from Navigation/Resource Timing, two
+                         (ttyd WS, SSE) modelled by diag.js and labelled as such
   sse/client.ts          Resumable SSE client (Last-Event-ID, backoff+jitter,
                          instant-retry on visible/online) — DOM-free, testable.
                          Resyncs when `ready` names a log it was not reading:
