@@ -9,6 +9,7 @@ import {
   writeTierPreference,
 } from "../src/diagnostics/connection";
 import { emptyStore, foldInto, writeStore, resetStore } from "../src/diagnostics/usage";
+import { TIER_STORAGE_KEY } from "../src/diagnostics/connection";
 
 /**
  * The Data used section: what a person on a metered connection reads to answer
@@ -46,6 +47,7 @@ const section = (c: HTMLElement) => c.querySelector(".tl-netusage") as HTMLEleme
 beforeEach(() => {
   resetStore();
   localStorage.removeItem(TIER_PREF_STORAGE_KEY);
+  localStorage.removeItem(TIER_STORAGE_KEY);
 });
 
 describe("Data used — the totals", () => {
@@ -201,5 +203,29 @@ describe("Data used — the experience control", () => {
     fireEvent.click(auto);
 
     await waitFor(() => expect(readTierPreference()).toBe("auto"));
+  });
+});
+
+describe("Data used — what Auto measured", () => {
+  /**
+   * The pin says what you asked for; this says what the link actually did.
+   * Without it "why is my app in light mode?" has no answer on the screen
+   * that put it there.
+   */
+  it("reports the stored verdict", async () => {
+    localStorage.setItem(TIER_STORAGE_KEY, "slow");
+    const { container } = await openPanel();
+    expect(section(container)!.textContent).toContain("Last measured: light");
+  });
+
+  it("names a full link as full", async () => {
+    localStorage.setItem(TIER_STORAGE_KEY, "full");
+    const { container } = await openPanel();
+    expect(section(container)!.textContent).toContain("Last measured: full");
+  });
+
+  it("says so plainly when nothing has been measured yet", async () => {
+    const { container } = await openPanel();
+    expect(section(container)!.textContent).toContain("not measured yet");
   });
 });
