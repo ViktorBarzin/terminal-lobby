@@ -34,15 +34,15 @@ jobs:
           TREE=out/viu-pkg
           mkdir -p "$TREE/usr/local/bin" "$TREE/DEBIAN"
           install -m 0755 viu-root/bin/viu "$TREE/usr/local/bin/viu"
-          cat > "$TREE/DEBIAN/control" <<CTL
-          Package: viu
-          Version: $VERSION
-          Architecture: amd64
-          Maintainer: Viktor Barzin <me@viktorbarzin.me>
-          Description: Terminal image viewer with sixel support
-           Built with the icy_sixel feature, which is off by default upstream and
-           is what makes images render inline in a session.
-          CTL
+          {
+            printf 'Package: viu\n'
+            printf 'Version: %s\n' "$VERSION"
+            printf 'Architecture: amd64\n'
+            printf 'Maintainer: Viktor Barzin <me@viktorbarzin.me>\n'
+            printf 'Description: Terminal image viewer with sixel support\n'
+            printf ' Built with the icy_sixel feature, which is off by default upstream and\n'
+            printf ' is what makes images render inline in a session.\n'
+          } > "$TREE/DEBIAN/control"
           dpkg-deb --root-owner-group --build "$TREE" "out/viu_${VERSION}_amd64.deb"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
