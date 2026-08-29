@@ -26,6 +26,7 @@ import { Sidebar } from "./Sidebar";
 import { SessionView } from "./SessionView";
 import { SettingsPanel } from "./SettingsPanel";
 import { Toaster } from "./Toaster";
+import { startNetworkWatch } from "../diagnostics/network";
 import { createPrefsStore } from "../store/prefs";
 import { createSkillsStore } from "../store/skills";
 import { SkillsPanel } from "./SkillsPanel";
@@ -137,6 +138,12 @@ export const App: Component = () => {
   });
   onMount(() => void prefs.bootSync());
   onCleanup(() => prefs.dispose());
+
+  // Which network this device is on, which is what lets Data used separate a
+  // month's cellular from its WiFi. Started at the shell so the answer is in
+  // place before the first 60s window closes, and re-asked when the device
+  // comes back online or the tab returns from a pocket.
+  onMount(() => onCleanup(startNetworkWatch()));
 
   // ---- soft-keyboard plumbing (shell-wide) --------------------------------
   // Publishes --kb-offset / --sk-h / --app-vh, and re-reveals whatever field

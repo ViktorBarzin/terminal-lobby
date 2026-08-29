@@ -76,6 +76,7 @@ describe("coercePrefs — validate-or-default", () => {
       fontWeightBold: "700",
       links: { copyChip: true },
       gestures: { wheelSmooth: true, wheelSpeed: 1 },
+      netKinds: {},
     });
   });
 });
