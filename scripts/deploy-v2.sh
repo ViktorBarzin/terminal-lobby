@@ -81,8 +81,12 @@ if [[ -z "${TL_FORCE:-}" && -x "$PRESENCE" ]]; then
   fi
 fi
 
+# `|| true` is load-bearing under `set -e`: before the first deploy that writes
+# it, lobby-build does not exist, cat exits 1, ssh passes that on, and a failing
+# command substitution in an assignment takes the whole script down — silently,
+# with no output at all, which is exactly how this first presented.
 INSTALLED_REV=$(ssh -o BatchMode=yes "wizard@${DEVVM}" \
-  'cat /usr/local/share/ttyd/lobby-build 2>/dev/null' 2>/dev/null | tr -d '[:space:]')
+  'cat /usr/local/share/ttyd/lobby-build 2>/dev/null' 2>/dev/null | tr -d '[:space:]' || true)
 if [[ -z "${TL_FORCE:-}" && -n "$INSTALLED_REV" ]]; then
   if git cat-file -e "${INSTALLED_REV}^{commit}" 2>/dev/null; then
     if ! git merge-base --is-ancestor "$INSTALLED_REV" HEAD; then
