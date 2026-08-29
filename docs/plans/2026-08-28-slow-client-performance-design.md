@@ -310,6 +310,38 @@ asset that matters is content-hashed and `immutable` now, so nothing on the hot
 path depends on a conditional request succeeding. `index.html` itself stays
 `no-cache` deliberately: it is what names the current chunks.
 
+## Follow-ups, closed (2026-08-29)
+
+**`tl.nav.load` was 0 in every record ever collected**, including after a fix
+meant to correct exactly that. The re-emit registered and fired; it read
+`loadEventEnd` from inside the `load` listener, and that field is only filled in
+once the load event has finished dispatching — so it read 0, the guard against 0
+bailed, and nothing was emitted. It looked correct from every angle except the
+data. The read now happens a task later; verified in a browser (`loadEventEnd`
+reads 1702 after the event), and the test models the browser's sequence and fails
+against the shipped behaviour.
+
+**The tier threshold cannot be tested on demand, so it reports instead.** Every
+late context now carries `tl.nav.bps` — the throughput the classifier would read
+from that load — so the 150 B/ms boundary keeps being checkable against every
+future load rather than the dozen it was calibrated from.
+
+**The transcript cache now says whether it works.** `text.open`, one record per
+open: `tl.cache` hit or miss, `tl.cached` (events seeded from disk) and
+`tl.fetched` (what the server still sent). On the usage channel beside the other
+session lifecycle events, with the catalog and the ADR vocabulary table moved
+together as their test requires.
+
+**The stale-script hazard is bounded, not eliminated**, and that is worth stating
+plainly: a worktree that has not pulled runs its own older copy of
+`deploy-v2.sh`, which has neither the presence check nor the ancestor check. It
+bit again during this very deploy — `out/index.html` vanished between stamping
+and staging because another session rebuilt in the same checkout while this one
+held the claim. Of the six live worktrees only one was clean and fully merged
+(removed); the rest carry uncommitted work or unmerged commits and belong to
+running sessions. The README now states the requirement where any session will
+read it.
+
 ## Known limits and open questions
 
 > [!IMPORTANT]
