@@ -2391,7 +2391,7 @@ body.tl-kb-up {
   border: 0;
   border-radius: var(--radius);
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font: inherit;
   font-size: 12.5px;
   text-align: left;
@@ -2420,7 +2420,7 @@ body.tl-kb-up {
   margin: 2px 0 6px 22px;
   padding-left: 10px;
   border-left: 2px solid var(--border);
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -2441,7 +2441,7 @@ body.tl-kb-up {
   padding: 2px 4px;
   border: 0;
   background: transparent;
-  color: var(--fg);
+  color: var(--text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -2450,7 +2450,7 @@ body.tl-kb-up {
   flex: none;
   width: 16px;
   text-align: center;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-weight: 700;
 }
 .tl-tool-glyph[data-item="file_change"] {
@@ -2467,7 +2467,7 @@ body.tl-kb-up {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   opacity: 0.8;
 }
 .tl-tool-label {
@@ -2479,18 +2479,18 @@ body.tl-kb-up {
   min-width: 0;
 }
 .tl-tool-detail {
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 12px;
   margin-bottom: 4px;
 }
 .tl-tool-note {
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 12px;
   font-style: italic;
 }
 .tl-tool-input > summary {
   cursor: pointer;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 11.5px;
   margin-top: 6px;
 }
@@ -2520,7 +2520,7 @@ body.tl-kb-up {
 .tl-diff-hunk {
   padding: 2px 8px;
   background: var(--bg-card);
-  color: var(--fg-muted);
+  color: var(--text-muted);
   border-bottom: 1px solid var(--border);
 }
 .tl-diff-line {
@@ -2568,13 +2568,13 @@ body.tl-kb-up {
 .tl-todo-count {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11.5px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 .tl-todo-title {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 .tl-todo-list {
   list-style: none;
@@ -2591,7 +2591,7 @@ body.tl-kb-up {
   align-items: baseline;
 }
 .tl-todo-item[data-status="completed"] .tl-todo-text {
-  color: var(--fg-muted);
+  color: var(--text-muted);
   text-decoration: line-through;
 }
 .tl-todo-item[data-status="inProgress"] .tl-todo-text {
@@ -2648,7 +2648,7 @@ body.tl-kb-up {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: transparent;
-  color: var(--fg);
+  color: var(--text-primary);
   font: inherit;
   font-size: 13px;
   text-align: left;
@@ -2672,7 +2672,7 @@ body.tl-kb-up {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  background: var(--bg);
+  background: var(--bg-page);
   border: 1px solid var(--border);
   font-size: 11px;
   font-family: var(--mono, ui-monospace, monospace);
@@ -2680,7 +2680,7 @@ body.tl-kb-up {
 .tl-question-answer {
   margin-top: 6px;
   font-size: 12px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 
 .tl-row-plan {
@@ -2698,7 +2698,7 @@ body.tl-kb-up {
 }
 .tl-plan-state {
   font-size: 11.5px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 
 /* Session lifecycle: a centred rule with a word on it. */
@@ -2707,7 +2707,7 @@ body.tl-kb-up {
   align-items: center;
   gap: 10px;
   margin-block: 10px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 11.5px;
 }
 .tl-meta-rule {
@@ -2760,14 +2760,14 @@ body.tl-kb-up {
 .tl-working-elapsed,
 .tl-working-steps {
   font-size: 11.5px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   margin-left: 8px;
   font-variant-numeric: tabular-nums;
 }
 .tl-fold-files,
 .tl-fold-tokens {
   font-size: 11.5px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   margin-left: 8px;
 }
 
@@ -2791,7 +2791,7 @@ body.tl-kb-up {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--bg-card);
-  color: var(--fg);
+  color: var(--text-primary);
   font-size: 12px;
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
@@ -2810,7 +2810,7 @@ body.tl-kb-up {
   align-items: center;
   min-width: 0;
   font-size: 12px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 .tl-queued-text {
   overflow: hidden;
@@ -2836,7 +2836,7 @@ body.tl-kb-up {
   padding: 6px 10px;
   border: 0;
   background: transparent;
-  color: var(--fg);
+  color: var(--text-primary);
   font: inherit;
   font-size: 13px;
   font-family: var(--mono, ui-monospace, monospace);
@@ -2869,7 +2869,7 @@ body.tl-kb-up {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 11.5px;
   cursor: pointer;
   white-space: nowrap;
@@ -2956,7 +2956,7 @@ body.tl-kb-up {
 }
 .tl-qcard-step,
 .tl-qcard-hint {
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 11.5px;
 }
 .tl-qcard-question {
@@ -2998,7 +2998,7 @@ body.tl-kb-up {
 }
 .tl-qcard-desc {
   grid-column: 2;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 11.5px;
   line-height: 1.35;
 }
@@ -3025,10 +3025,32 @@ body.tl-kb-up {
   font-size: 12.5px;
 }
 .tl-qcard-reviewq {
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 .tl-qcard-reviewa {
   text-align: right;
+}
+/* A send that stopped partway. The wording carries the whole state, so it is
+   body text rather than an error banner: nothing is broken, an answer is simply
+   half-delivered and the Terminal is where the rest of it lives. */
+.tl-qcard-stopped {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.tl-qcard-terminal {
+  flex: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  cursor: pointer;
 }
 .tl-qcard-actions {
   display: flex;
@@ -3073,7 +3095,7 @@ body.tl-kb-up {
 .tl-find-count {
   flex: none;
   padding-right: 10px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -3086,7 +3108,7 @@ body.tl-kb-up {
   justify-content: space-between;
   gap: 10px;
   font-size: 11.5px;
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 .tl-find-where {
   overflow: hidden;
@@ -3139,7 +3161,7 @@ body.tl-kb-up {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 11.5px;
   cursor: pointer;
   white-space: nowrap;
@@ -3149,7 +3171,7 @@ body.tl-kb-up {
   width: 26px;
   height: 4px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--fg-muted) 25%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 25%, transparent);
   overflow: hidden;
 }
 .tl-ctx-fill {
@@ -3161,7 +3183,7 @@ body.tl-kb-up {
 /* Coloured by how much room is LEFT, because compaction is the thing worth
    noticing before it happens — read as a traffic light, like the mode chip. */
 .tl-ctx-chip[data-tone="ok"] {
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 .tl-ctx-chip[data-tone="warn"] {
   color: var(--state-awaiting);
@@ -3206,7 +3228,7 @@ body.tl-kb-up {
 .tl-ctx-model,
 .tl-ctx-age,
 .tl-ctx-empty {
-  color: var(--fg-muted);
+  color: var(--text-muted);
 }
 .tl-ctx-rows {
   margin: 0;
@@ -3226,7 +3248,7 @@ body.tl-kb-up {
 }
 .tl-ctx-tokens {
   flex: none;
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 .tl-ctx-age {
@@ -3290,7 +3312,7 @@ body.tl-kb-up {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--bg-card);
-  color: var(--fg-muted);
+  color: var(--text-muted);
   font-size: 11.5px;
   opacity: 0.9;
 }
