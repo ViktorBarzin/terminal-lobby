@@ -2929,8 +2929,18 @@ body.tl-kb-up {
   border-radius: 10px;
   background: var(--bg-panel, var(--bg-page));
   /* A long walk on a short phone scrolls inside the card, so the composer under
-     it never leaves the screen. */
-  max-height: min(52vh, 420px);
+     it never leaves the screen.
+
+     52% OF THE PANE, not of the viewport. The pane is what the composer has to
+     fit into beside the card, and on iOS Safari the two part company the moment
+     a keyboard opens: the keyboard shrinks only the VISUAL viewport, so `52vh`
+     went on resolving against the whole 844px screen while the pane holding the
+     card was 465px. Measured at 390x844 with a 336px keyboard: the card kept
+     its 420px, and the composer — the thing being typed into — was pushed to
+     501-592, its bottom 84px underneath the keyboard. With plenty of room the
+     two readings agree (417px against 420px at full height), so this changes
+     nothing but the case it fixes. */
+  max-height: min(52%, 420px);
   overflow-y: auto;
 }
 .tl-qcard-head {
