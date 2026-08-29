@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vendor xterm.js + addons into frontend/index.html, transpiled for old WebKit.
+"""Vendor xterm.js + addons into frontend/term.html, transpiled for old WebKit.
 
 Why this exists
 ---------------
@@ -18,7 +18,7 @@ What it does
 ------------
 Downloads each pinned asset, verifies it against the published sha384 (the
 same supply-chain check the old SRI attributes gave us), transpiles the JS to
-BASELINE with esbuild, and splices the result into frontend/index.html between
+BASELINE with esbuild, and splices the result into frontend/term.html between
 the VENDOR markers. Self-hosting also removes the runtime dependency on
 cdn.jsdelivr.net.
 
@@ -38,14 +38,14 @@ import tempfile
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# TL_INDEX aims this at a page other than the vanilla one — the same knob
+# TL_INDEX aims this at another page — the same knob
 # scripts/test_frontend_compat.py uses, so vendoring a page and then checking it
-# name the target the same way. frontend/term.html is the second page that
-# mounts xterm (the terminal the v2 SPA frames), and it needs the identical
-# transpiled bundle: iPadOS 15.8 ships a WebKit that cannot PARSE xterm 6's
-# `static{}` blocks, so a CDN-loaded xterm there is a blank terminal on that
-# device, exactly as it was on the vanilla page before it was vendored.
-INDEX = os.environ.get("TL_INDEX") or os.path.join(REPO, "frontend", "index.html")
+# name the target the same way. frontend/term.html is the page that mounts xterm
+# (the terminal the v2 SPA frames) now that the vanilla lobby has gone, and it
+# needs the transpiled bundle for the same reason that page did: iPadOS 15.8
+# ships a WebKit that cannot PARSE xterm 6's `static{}` blocks, so a CDN-loaded
+# xterm there is a blank terminal on that device.
+INDEX = os.environ.get("TL_INDEX") or os.path.join(REPO, "frontend", "term.html")
 
 # esbuild target. Floor is set by the oldest engine we serve: iPadOS 15.8.
 BASELINE = "safari15"

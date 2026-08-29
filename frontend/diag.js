@@ -1433,19 +1433,37 @@ globalThis.tlDiag = (function () {
           window.addEventListener(
             "load",
             function () {
-              try {
-                var late = performance.getEntriesByType("navigation")[0];
-                if (!late || !late.loadEventEnd) return;
-                d.navContext({
+              // A TASK LATER, not in this handler. loadEventEnd is only filled
+              // in once the load event has finished dispatching, so reading it
+              // from inside a load listener gives 0 — which is exactly what
+              // shipped: the guard below bailed on every page life, and
+              // tl.nav.load stayed 0 in all 22 records collected over three
+              // hours while looking like a working fix.
+              setTimeout(function () {
+                try {
+                  var late = performance.getEntriesByType("navigation")[0];
+                  if (!late || !late.loadEventEnd) return;
+                  d.navContext({
                   "tl.nav.ttfb": Math.round(late.responseStart),
                   "tl.nav.dom": Math.round(late.domContentLoadedEventEnd),
                   "tl.nav.load": Math.round(late.loadEventEnd),
-                  "tl.nav.bytes": late.transferSize || 0,
-                  "tl.nav.cached": late.transferSize === 0,
-                });
-              } catch (e) {
-                /* one missing context record must never break a page */
-              }
+                    "tl.nav.bytes": late.transferSize || 0,
+                    "tl.nav.cached": late.transferSize === 0,
+                    // What the connection tier WOULD read from this load, so a
+                    // threshold picked from a dozen samples can be re-checked
+                    // against every later one without new machinery. Bytes per
+                    // millisecond of download, the same arithmetic
+                    // diagnostics/connection.ts does.
+                    "tl.nav.bps": (function () {
+                      var down = late.responseEnd - late.responseStart;
+                      if (!(late.transferSize > 8192) || !(down >= 20)) return 0;
+                      return Math.round((late.transferSize / down) * 10) / 10;
+                    })(),
+                  });
+                } catch (e) {
+                  /* one missing context record must never break a page */
+                }
+              }, 0);
             },
             { once: true },
           );

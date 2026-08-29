@@ -37,6 +37,10 @@ export type TlEvent =
   | "session.created"
   | "session.selected"
   | "session.attached"
+  // Opening a transcript in Text mode: did this device already hold it, how
+  // many events did it seed from, and how many did the server still send.
+  // Without the pair, "the cache works" is a claim rather than a measurement.
+  | "text.open"
   | "session.detached"
   | "session.renamed"
   | "session.moved"
