@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# The whole of what the deploy key may do.
+#
+# The key in ~root/.ssh/authorized_keys carries
+#   command="/usr/local/sbin/devvm-apply",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding
+# so SSH_ORIGINAL_COMMAND is deliberately ignored: whatever the caller asks for,
+# this is what runs. A compromised CI token can start a reconcile and nothing else.
+#
+# It updates from ONE apt source, not every source on the box: a deploy must not
+# be able to drag in an unrelated distribution upgrade.
+set -euo pipefail
+
+LIST=/etc/apt/sources.list.d/terminal-lobby.list
+LOG_TAG=devvm-apply
+
+log() { logger -t "$LOG_TAG" -- "$*"; echo "[$LOG_TAG] $*"; }
+
+[ -r "$LIST" ] || { log "no apt source at $LIST; nothing to do"; exit 1; }
+
+if apt-mark showhold 2>/dev/null | grep -qx terminal-lobby; then
+  log "terminal-lobby is HELD after a failed verify; refusing to upgrade"
+  log "the way forward is a higher version carrying working code, then: apt-mark unhold terminal-lobby"
+  exit 75   # EX_TEMPFAIL: a real condition, not a broken trigger
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+
+log "updating from $LIST"
+apt-get update -o Dir::Etc::sourcelist="$LIST" -o Dir::Etc::sourceparts=/dev/null -o APT::Get::List-Cleanup=0
+
+before="$(dpkg-query -W -f='${Version}' terminal-lobby 2>/dev/null || echo none)"
+log "installed before: $before"
+
+# Tracking latest, with no version pin: whatever the source offers is what runs.
+apt-get install -y terminal-lobby
+
+after="$(dpkg-query -W -f='${Version}' terminal-lobby 2>/dev/null || echo none)"
+if [ "$before" = "$after" ]; then
+  log "already at $after; nothing changed"
+else
+  log "moved $before -> $after"
+fi
