@@ -182,7 +182,6 @@ func clientAddr(r *http.Request) (addr, via string) {
 	return "", "none"
 }
 
-
 // isLocalAddr covers every address that cannot have crossed the public
 // internet to get here: loopback, link-local, the RFC1918 ranges, unique-local
 // v6, and the carrier-grade NAT range — which reaching this server means a

@@ -1,11 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,7 +22,6 @@ import (
 
 const (
 	listenAddr     = "0.0.0.0:7684"
-	authHeader     = "X-Authentik-Username"
 	restoreWrapper = "/usr/local/bin/tmux-restore-user"
 	// @claude_state is stamped by the claude-tmux-state hook script
 	// (ADR-0001). pane_pid feeds the liveness backstop (proc.go): state
@@ -91,10 +89,21 @@ const (
 
 var sessionsCacheInstance = newSessionsCache(sessionsTTL)
 
-// mapPath is the Authentik→OS-user map consumed by resolveOSUser. A var
-// (not const) purely as a test seam: handler tests point it at a fixture
-// so the real header→user path runs hermetically (see prefs_test.go).
-var mapPath = "/etc/ttyd-user-map"
+// mapPath is the identity→OS-user map. A var (not const) purely as a test
+// seam: handler tests point it at a fixture so the real header→user path runs
+// hermetically (see prefs_test.go). setMapPath keeps the gate in step, since
+// the gate is what actually reads it.
+var mapPath = authuser.DefaultMapPath
+
+func setMapPath(p string) {
+	mapPath = p
+	actAsGate.MapPath = p
+}
+
+// authHeader is the identity header this build resolves by default. The name is
+// configuration now (TL_AUTH_HEADER); this constant exists so tests can set the
+// header the running gate is actually reading.
+const authHeader = authuser.DefaultAuthHeader
 
 // tmuxBinary is a var (not const) for the same reason as mapPath: endpoint
 // tests swap it for a stub that records its argv and mimics tmux exit
@@ -192,75 +201,9 @@ const (
 
 var knownStates = map[string]bool{stateRunning: true, stateAwaiting: true, stateDone: true}
 
-// loadUserMap reads /etc/ttyd-user-map → map[authentik_local]os_user.
-// Format: "<auth>=<os_user>[:<cwd>]" per line. Comments (#) and blanks ignored.
-// Re-read on every request — file is small and changes are rare.
-func loadUserMap() map[string]string {
-	m := map[string]string{}
-	f, err := os.Open(mapPath)
-	if err != nil {
-		log.Printf("loadUserMap: %v", err)
-		return m
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		eq := strings.IndexByte(line, '=')
-		if eq <= 0 {
-			continue
-		}
-		auth := strings.TrimSpace(line[:eq])
-		rhs := strings.TrimSpace(line[eq+1:])
-		if c := strings.IndexByte(rhs, ':'); c > 0 {
-			rhs = rhs[:c]
-		}
-		if auth != "" && rhs != "" {
-			m[auth] = rhs
-		}
-	}
-	return m
-}
-
-// resolveRealOSUser → the CALLER's own mapped OS user from the Authentik
-// header, or "" after writing the appropriate 401/403/500 to w. Ignores ?as=
-// entirely.
-//
-// Two callers want this rather than resolveOSUser: the push-subscription
-// endpoints, whose writes must never land under an act-as target (see
-// handlePushSubscriptions), and resolveOSUser itself, which starts here and
-// then applies the switch.
-func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	authUser := r.Header.Get(authHeader)
-	if authUser == "" {
-		log.Printf("auth: missing %s header (%s %s)", authHeader, r.Method, r.URL.Path)
-		http.Error(w, "missing "+authHeader, http.StatusUnauthorized)
-		return ""
-	}
-	local := authUser
-	if i := strings.IndexByte(local, '@'); i > 0 {
-		local = local[:i]
-	}
-	osUser := loadUserMap()[local]
-	if osUser == "" {
-		log.Printf("auth: no terminal account for %q (local=%q, %s %s)", authUser, local, r.Method, r.URL.Path)
-		http.Error(w, fmt.Sprintf("no terminal account for '%s'", authUser), http.StatusForbidden)
-		return ""
-	}
-	if _, err := user.Lookup(osUser); err != nil {
-		log.Printf("mapped OS user %q missing on this host: %v", osUser, err)
-		http.Error(w, "mapped OS user missing on this host", http.StatusInternalServerError)
-		return ""
-	}
-	return osUser
-}
-
-// actAsGate decides whether a ?as= request may proceed. A var only as a test
-// seam (actas_test.go points it at a fixture admin list); production never
-// reassigns it.
+// actAsGate resolves every request: the proxy secret, the identity header, the
+// mode, and the act-as switch. A var only as a test seam (actas_test.go points
+// it at a fixture admin list); production configures it in main.
 var actAsGate = authuser.Default
 
 // actAsTarget is the query parameter carrying the switch. It rides the URL
@@ -269,34 +212,28 @@ var actAsGate = authuser.Default
 // and a parameter is the only form all of them can carry.
 const actAsTarget = "as"
 
-// resolveOSUser → the OS user this request ACTS AS: normally the caller, or an
-// act-as target when an administrator asked for one and is entitled to it.
-// Returns "" after writing 401/403/500, exactly as before.
+// resolveRealOSUser → the CALLER's own mapped OS user from the identity
+// header, or "" after writing the appropriate 401/403/500 to w. Ignores ?as=
+// entirely.
 //
-// Every handler in this service resolves identity through here, so the switch
-// reaches sessions, layout, projects, prefs, restore, kill and rename with no
-// per-endpoint work. The one deliberate exception is push subscriptions, which
-// call resolveRealOSUser instead.
+// Two callers want this rather than resolveOSUser: the push-subscription
+// endpoints, whose writes must never land under an act-as target (see
+// handlePushSubscriptions), and resolveOSUser itself, which starts here and
+// then applies the switch.
+func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
+	id, ok := actAsGate.Authorize(w, r)
+	if !ok {
+		return ""
+	}
+	return id.RealOSUser
+}
+
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
-	real := resolveRealOSUser(w, r)
-	if real == "" {
+	id, ok := actAsGate.Authorize(w, r)
+	if !ok {
 		return ""
 	}
-	eff, err := actAsGate.Effective(real, r.URL.Query().Get(actAsTarget), isMappedOSUser)
-	if err != nil {
-		// Denials are rare and worth a line each; an allowed switch is NOT
-		// logged here, because the lobby polls /sessions every 5 s and that
-		// would bury the trail it is meant to leave. The audit points are
-		// /whoami (once per tab) and /internal/attach (once per attach).
-		log.Printf("act-as refused: %s -> %q: %v (%s %s)",
-			real, r.URL.Query().Get(actAsTarget), err, r.Method, r.URL.Path)
-		events.Emit("admin.actas.refused", real, telemetry.Attrs{
-			"tl.to": r.URL.Query().Get(actAsTarget), "tl.kind": err.Error(),
-		})
-		http.Error(w, "not permitted to act as that user", http.StatusForbidden)
-		return ""
-	}
-	return eff
+	return id.OSUser
 }
 
 // tmuxCmd builds an exec.Cmd that runs `tmux <args...>` AS osUser. When
@@ -403,6 +340,15 @@ func main() {
 	// which can't bind 7684 while the production service holds it).
 	// The systemd unit sets no environment — production stays :7684.
 	addr := listenAddr
+	// TL_BIND narrows the listener. The default is unchanged; an operator who
+	// puts the proxy on the same host can set 127.0.0.1 and remove the LAN
+	// path entirely without needing a shared secret.
+	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			addr = net.JoinHostPort(b, port)
+		}
+	}
+	actAsGate.Configure("tmux-api", addr)
 	if a := os.Getenv("TMUX_API_ADDR"); a != "" {
 		addr = a
 	}
@@ -427,15 +373,11 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	authUser := r.Header.Get(authHeader)
-	real := resolveRealOSUser(w, r)
-	if real == "" {
+	id, ok := actAsGate.Authorize(w, r)
+	if !ok {
 		return
 	}
-	osUser := resolveOSUser(w, r)
-	if osUser == "" {
-		return
-	}
+	authUser, real, osUser := id.Header, id.RealOSUser, id.OSUser
 	if osUser != real {
 		// One of the two audit points. /whoami is called once per page load
 		// (the lobby AND each terminal iframe), so this fires when a tab
@@ -460,10 +402,14 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	// trust its own URL for that. admin drives whether Settings offers the
 	// picker at all; the server refuses regardless, this just avoids showing a
 	// control that could only fail.
+	// multiUser tells the SPA which features exist on this box. Without it the
+	// frontend would have to infer the mode from an empty /users list, and a
+	// Share dialog with nobody in it reads as a defect rather than as a mode.
 	body := map[string]any{
 		"authentik": authUser,
 		"osUser":    osUser,
-		"admin":     actAsGate.IsAdmin(real),
+		"admin":     id.Admin,
+		"multiUser": id.MultiUser,
 	}
 	if osUser != real {
 		body["realUser"] = real

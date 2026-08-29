@@ -1,26 +1,30 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"terminal-lobby/authuser"
 )
 
-const authHeader = "X-Authentik-Username"
+// authHeader is the identity header this build resolves by default. The name
+// is configuration now (TL_AUTH_HEADER); the constant remains so tests can set
+// the header the running gate is actually reading.
+const authHeader = authuser.DefaultAuthHeader
 
 // mapPath is the Authentik→OS-user map consumed by resolveOSUser. A var (not
 // const) purely as a test seam: handler tests point it at a fixture so the real
 // header→user path runs hermetically (see auth_test.go). Production never
 // reassigns it.
-var mapPath = "/etc/ttyd-user-map"
+var mapPath = authuser.DefaultMapPath
+
+// setMapPath keeps the gate in step, since the gate is what reads the file.
+func setMapPath(p string) {
+	mapPath = p
+	actAsGate.MapPath = p
+}
 
 // homeBase is the parent directory of every user's home; production "/home".
 // A var so tests can point the filesystem root at a temp dir.
@@ -44,7 +48,7 @@ func userHome(osUser string) string {
 func peers(self string) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, u := range loadUserMap() {
+	for _, u := range actAsGate.Targets() {
 		if u == self || seen[u] {
 			continue
 		}
@@ -59,47 +63,7 @@ func peers(self string) []string {
 // Format: "<auth>=<os_user>[:<cwd>]" per line. Comments (#) and blanks ignored.
 // Re-read on every request — file is small and changes are rare. Ported
 // verbatim from tmux-api/main.go (and clipboard-upload/main.go).
-func loadUserMap() map[string]string {
-	m := map[string]string{}
-	f, err := os.Open(mapPath)
-	if err != nil {
-		log.Printf("loadUserMap: %v", err)
-		return m
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		eq := strings.IndexByte(line, '=')
-		if eq <= 0 {
-			continue
-		}
-		auth := strings.TrimSpace(line[:eq])
-		rhs := strings.TrimSpace(line[eq+1:])
-		if c := strings.IndexByte(rhs, ':'); c > 0 {
-			rhs = rhs[:c]
-		}
-		if auth != "" && rhs != "" {
-			m[auth] = rhs
-		}
-	}
-	return m
-}
-
-// isMappedOSUser reports whether osUser is a real terminal account — a target
-// in the Authentik→OS-user map. The population an admin may act as; existing
-// as a Unix account is not authorization on its own.
-func isMappedOSUser(osUser string) bool {
-	for _, u := range loadUserMap() {
-		if u == osUser {
-			return true
-		}
-	}
-	return false
-}
+func isMappedOSUser(osUser string) bool { return actAsGate.IsTarget(osUser) }
 
 // actAsGate decides whether a ?as= request may proceed. A var only as a test
 // seam (actas_test.go points it at a fixture admin list); production never
@@ -116,51 +80,24 @@ var actAsGate = authuser.Default
 // and their writes land with bob's ownership — the cross-user path built for
 // this service already does the rest.
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
-	real := resolveRealOSUser(w, r)
-	if real == "" {
+	id, ok := actAsGate.Authorize(w, r)
+	if !ok {
 		return ""
 	}
-	eff, err := actAsGate.Effective(real, r.URL.Query().Get("as"), isMappedOSUser)
-	if err != nil {
-		log.Printf("act-as refused: %s -> %q: %v (%s %s)",
-			real, r.URL.Query().Get("as"), err, r.Method, r.URL.Path)
-		http.Error(w, "not permitted to act as that user", http.StatusForbidden)
-		return ""
-	}
-	if eff != real {
+	if id.OSUser != id.RealOSUser {
 		// Logged per request here, unlike tmux-api: skills-api is not polled, so
 		// these lines are one per user action rather than one per five seconds,
 		// and a write under someone else's account is worth a record.
-		log.Printf("act-as: %s acting as %s (%s %s)", real, eff, r.Method, r.URL.Path)
+		log.Printf("act-as: %s acting as %s (%s %s)", id.RealOSUser, id.OSUser, r.Method, r.URL.Path)
 	}
-	return eff
+	return id.OSUser
 }
 
 // resolveRealOSUser → the CALLER's own mapped OS user, ignoring ?as= entirely.
-// Ported verbatim from tmux-api/main.go: this service execs file ops as the
-// mapped user in production, so the user.Lookup gate (500 when the mapped
-// account is missing on this host) is kept.
 func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	authUser := r.Header.Get(authHeader)
-	if authUser == "" {
-		log.Printf("auth: missing %s header (%s %s)", authHeader, r.Method, r.URL.Path)
-		http.Error(w, "missing "+authHeader, http.StatusUnauthorized)
+	id, ok := actAsGate.Authorize(w, r)
+	if !ok {
 		return ""
 	}
-	local := authUser
-	if i := strings.IndexByte(local, '@'); i > 0 {
-		local = local[:i]
-	}
-	osUser := loadUserMap()[local]
-	if osUser == "" {
-		log.Printf("auth: no terminal account for %q (local=%q, %s %s)", authUser, local, r.Method, r.URL.Path)
-		http.Error(w, fmt.Sprintf("no terminal account for '%s'", authUser), http.StatusForbidden)
-		return ""
-	}
-	if _, err := user.Lookup(osUser); err != nil {
-		log.Printf("mapped OS user %q missing on this host: %v", osUser, err)
-		http.Error(w, "mapped OS user missing on this host", http.StatusInternalServerError)
-		return ""
-	}
-	return osUser
+	return id.RealOSUser
 }

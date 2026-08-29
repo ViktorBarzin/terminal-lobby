@@ -24,7 +24,7 @@ func TestMarkDrivenSeparatesDrivingFromMerelyAttached(t *testing.T) {
 			want:    map[string]bool{"work": true, "idle": false},
 		},
 		{
-			name: "a lone watcher is NOT driving",
+			name:    "a lone watcher is NOT driving",
 			clients: "work attached,focused,ignore-size,read-only,UTF-8\n",
 			want:    map[string]bool{"work": false, "idle": false},
 		},

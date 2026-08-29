@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"flag"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"os/signal"
 	"os/user"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -248,6 +251,14 @@ func main() {
 	// to loopback (defense in depth alongside the ingress not routing /hooks/*
 	// publicly).
 	root.HandleFunc("POST /hooks/session-start", localhostOnly(rg.handleSessionStart()))
+	// TL_BIND narrows the listener; the gate's Configure reports the mode and
+	// warns when no proxy secret is set.
+	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
+		if _, port, err := net.SplitHostPort(*addr); err == nil {
+			*addr = net.JoinHostPort(b, port)
+		}
+	}
+	actAsGate.Configure("session-events", *addr)
 	root.Handle("/", authMiddleware(*mapPath, web))
 
 	go timing.Run(ctx.Done())

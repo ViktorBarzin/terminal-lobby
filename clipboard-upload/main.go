@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
@@ -12,6 +11,7 @@ import (
 	"log"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,7 +41,6 @@ const (
 	// prefix, so this is what keeps a document out of a grid of thumbnails.
 	attachPrefix = "file-"
 	listenAddr   = "0.0.0.0:7683"
-	authHeader   = "X-Authentik-Username"
 	// unsortedSession is the store bucket for writes that arrive without a
 	// (valid) session name. Nothing ties its contents to a session's
 	// lifetime, so the cleaner (devvm/clipboard-store-clean) ages it out on
@@ -57,7 +56,7 @@ const (
 // own mapPath. Production never reassigns them.
 var (
 	storeRoot = "/var/lib/clipboard-store"
-	mapPath   = "/etc/ttyd-user-map"
+	mapPath   = authuser.DefaultMapPath
 	// maxAttach bounds a non-image upload that joins the per-(user, session)
 	// store as a text-view attachment. Same number as maxRegister and for the
 	// same reason: ADR-0005 names those caps as what bounds a store whose
@@ -105,6 +104,15 @@ func main() {
 	// which can't bind 7683 while the production service holds it).
 	// The systemd unit sets no environment — production stays :7683.
 	addr := listenAddr
+	// TL_BIND narrows the listener. The default is unchanged; an operator who
+	// puts the proxy on the same host can set 127.0.0.1 and remove the LAN
+	// path entirely without needing a shared secret.
+	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			addr = net.JoinHostPort(b, port)
+		}
+	}
+	actAsGate.Configure("clipboard-upload", addr)
 	if a := os.Getenv("CLIPBOARD_UPLOAD_ADDR"); a != "" {
 		addr = a
 	}
@@ -340,107 +348,52 @@ func handleAsset(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "", info.ModTime(), f)
 }
 
-// loadUserMap reads /etc/ttyd-user-map → map[authentik_local]os_user.
-// Format: "<auth>=<os_user>[:<cwd>]" per line. Comments (#) and blanks
-// ignored. Re-read on every request — file is small and changes are rare.
-// (Mirrors tmux-api/main.go.)
-func loadUserMap() map[string]string {
-	m := map[string]string{}
-	f, err := os.Open(mapPath)
-	if err != nil {
-		log.Printf("loadUserMap: %v", err)
-		return m
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		eq := strings.IndexByte(line, '=')
-		if eq <= 0 {
-			continue
-		}
-		auth := strings.TrimSpace(line[:eq])
-		rhs := strings.TrimSpace(line[eq+1:])
-		if c := strings.IndexByte(rhs, ':'); c > 0 {
-			rhs = rhs[:c]
-		}
-		if auth != "" && rhs != "" {
-			m[auth] = rhs
-		}
-	}
-	return m
-}
-
-// actAsGate decides whether a ?as= request may proceed. A var only as a test
-// seam (actas_test.go points it at a fixture admin list); production never
-// reassigns it. Shared with tmux-api and file-api so the admin check has
-// exactly one implementation.
-var actAsGate = authuser.Default
-
-// resolveOSUser → the OS user this request ACTS AS: normally the caller from
-// the Authentik header, or an act-as target when an administrator asked for one
-// and is entitled to it. Returns "" after writing the appropriate 401/403.
+// actAsGate resolves every request: the proxy secret, the identity header, the
+// mode, and the act-as switch. A var only as a test seam; production
+// configures it in main.
 //
-// The gallery is keyed per (OS user, session) under a service-owned store, so
-// acting as someone reads and writes their directory directly — no privilege
-// drop is involved here, unlike file-api's home-directory access.
+// SkipAccountCheck: this service never execs as the mapped user, it only needs
+// a directory name for the per-user store, so an account missing from the host
+// is not a reason to fail the request. That matches what resolveRealOSUser did
+// before the gate absorbed it.
+var actAsGate = &authuser.Gate{
+	AdminsPath:       authuser.DefaultAdminsPath,
+	SkipAccountCheck: true,
+}
+
+// authHeader is the identity header this build resolves by default. The name is
+// configuration now (TL_AUTH_HEADER); the constant remains so tests, and the
+// one handler that only wants to know whether a request carries an identity at
+// all, can name it.
+const authHeader = authuser.DefaultAuthHeader
+
+// setMapPath keeps the gate in step, since the gate is what reads the file.
+func setMapPath(p string) {
+	mapPath = p
+	actAsGate.MapPath = p
+}
+
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
-	real := resolveRealOSUser(w, r)
-	if real == "" {
+	id, ok := actAsGate.Authorize(w, r)
+	if !ok {
 		return ""
 	}
-	eff, err := actAsGate.Effective(real, r.URL.Query().Get("as"), osUserKnown)
-	if err != nil {
-		log.Printf("act-as refused: %s -> %q: %v (%s %s)",
-			real, r.URL.Query().Get("as"), err, r.Method, r.URL.Path)
-		http.Error(w, "not permitted to act as that user", http.StatusForbidden)
-		return ""
-	}
-	return eff
+	return id.OSUser
 }
 
-// resolveRealOSUser → the CALLER's own mapped OS user from the Authentik
-// header, ignoring ?as=. The store is keyed per OS user, so an unauthenticated
-// request has no directory to touch. (Mirrors tmux-api/main.go minus the
-// user.Lookup — this service never execs as the user, it only needs a
-// directory name.)
+// resolveRealOSUser → the CALLER's own mapped OS user, ignoring ?as=. The store
+// is keyed per OS user, so an unauthenticated request has no directory to touch.
 func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	authUser := r.Header.Get(authHeader)
-	if authUser == "" {
-		log.Printf("auth: missing %s header (%s %s)", authHeader, r.Method, r.URL.Path)
-		http.Error(w, "missing "+authHeader, http.StatusUnauthorized)
+	id, ok := actAsGate.Authorize(w, r)
+	if !ok {
 		return ""
 	}
-	local := authUser
-	if i := strings.IndexByte(local, '@'); i > 0 {
-		local = local[:i]
-	}
-	osUser := loadUserMap()[local]
-	if osUser == "" {
-		log.Printf("auth: no terminal account for %q (local=%q, %s %s)", authUser, local, r.Method, r.URL.Path)
-		http.Error(w, fmt.Sprintf("no terminal account for '%s'", authUser), http.StatusForbidden)
-		return ""
-	}
-	return osUser
+	return id.RealOSUser
 }
 
-// osUserKnown reports whether name is a mapped OS user (a right-hand side
-// in /etc/ttyd-user-map). /register's localhost callers self-report their
-// user; only real terminal accounts are accepted.
-func osUserKnown(name string) bool {
-	if name == "" {
-		return false
-	}
-	for _, osUser := range loadUserMap() {
-		if osUser == name {
-			return true
-		}
-	}
-	return false
-}
+// osUserKnown reports whether name is a mapped OS user. /register's localhost
+// callers self-report their user; only real terminal accounts are accepted.
+func osUserKnown(name string) bool { return actAsGate.IsTarget(name) }
 
 // galleryPrefixes are the stored-name prefixes the 🖼 gallery lists: a
 // clipboard paste/upload, and a `show-image` render registered by the script

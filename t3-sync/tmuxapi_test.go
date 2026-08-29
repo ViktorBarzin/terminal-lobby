@@ -30,7 +30,7 @@ func newFakeTmuxAPI(t *testing.T) *fakeTmuxAPI {
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := readAllString(r)
 		f.mu.Lock()
-		f.calls = append(f.calls, r.Method+" "+r.URL.Path+" "+r.Header.Get("X-Authentik-Username")+" "+body)
+		f.calls = append(f.calls, r.Method+" "+r.URL.Path+" "+r.Header.Get(tmuxAuthHeader())+" "+body)
 		status, forced := f.status[r.URL.Path]
 		f.mu.Unlock()
 

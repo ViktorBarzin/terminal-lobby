@@ -22,8 +22,13 @@ func withAdmins(t *testing.T, content string) {
 	if err := os.WriteFile(f, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Copy rather than replace: the gate also carries the map path and the
+	// mode, which withUserMap and TestMain have already set. Building a fresh
+	// one here would silently drop both and send every lookup at /etc.
 	old := actAsGate
-	actAsGate = &authuser.Gate{AdminsPath: f}
+	next := *actAsGate
+	next.AdminsPath = f
+	actAsGate = &next
 	t.Cleanup(func() { actAsGate = old })
 }
 

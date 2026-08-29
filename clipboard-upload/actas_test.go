@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"terminal-lobby/authuser"
 )
 
 // withAdmins points the act-as gate at a fixture admin list. Production reads
@@ -19,7 +17,11 @@ func withAdmins(t *testing.T, content string) {
 		t.Fatal(err)
 	}
 	old := actAsGate
-	actAsGate = &authuser.Gate{AdminsPath: f}
+	// Copy rather than replace: the gate also carries the map path and the
+	// mode, which withUserMap and TestMain have already set.
+	next := *actAsGate
+	next.AdminsPath = f
+	actAsGate = &next
 	t.Cleanup(func() { actAsGate = old })
 }
 

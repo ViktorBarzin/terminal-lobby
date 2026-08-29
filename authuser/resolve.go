@@ -20,9 +20,11 @@ import (
 	"bufio"
 	"crypto/subtle"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"os/user"
+	"sort"
 	"strings"
 )
 
@@ -147,8 +149,10 @@ func (g *Gate) Resolve(r *http.Request) (Identity, error) {
 	if !ok || real == "" {
 		return Identity{}, ErrNoAccount
 	}
-	if err := g.lookupUser(real); err != nil {
-		return Identity{}, ErrNoSuchAccount
+	if !g.SkipAccountCheck {
+		if err := g.lookupUser(real); err != nil {
+			return Identity{}, ErrNoSuchAccount
+		}
 	}
 	out.RealOSUser = real
 	out.Admin = g.IsAdmin(real)
@@ -281,4 +285,101 @@ func isTarget(m map[string]string, osUser string) bool {
 		}
 	}
 	return false
+}
+
+// IsTarget reports whether osUser is a real terminal account: a right-hand side
+// of the user map. This is the population that may be added to a project, named
+// as a share guest, or used as an act-as target. Each service had its own copy
+// of this, all reading the same file.
+//
+// In single-user mode the only account is the one the process runs as, and the
+// map is not consulted.
+func (g *Gate) IsTarget(osUser string) bool {
+	if osUser == "" {
+		return false
+	}
+	if !g.MultiUser() {
+		return osUser == g.self()
+	}
+	return isTarget(g.userMap(), osUser)
+}
+
+// Targets lists every terminal account, for the pickers. Single-user returns
+// just the invoking user, so a Share dialog cannot come up empty.
+func (g *Gate) Targets() []string {
+	if !g.MultiUser() {
+		if self := g.self(); self != "" {
+			return []string{self}
+		}
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, u := range g.userMap() {
+		if u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Authorize is Resolve plus the HTTP answer, which is what every handler
+// actually wants. It returns the identity and true, or writes the refusal and
+// returns false.
+//
+// The three statuses are kept distinguishable on purpose. 401 says the request
+// did not authenticate, 403 says it did and may not do this, and 500 says the
+// box is misconfigured rather than the caller being at fault — an operator
+// reading logs needs to tell a bad map entry from a denied user.
+func (g *Gate) Authorize(w http.ResponseWriter, r *http.Request) (Identity, bool) {
+	id, err := g.Resolve(r)
+	if err == nil {
+		return id, true
+	}
+	switch {
+	case errors.Is(err, ErrBadSecret):
+		log.Printf("auth: bad or missing proxy secret (%s %s)", r.Method, r.URL.Path)
+		http.Error(w, "missing or incorrect proxy secret", http.StatusUnauthorized)
+	case errors.Is(err, ErrNoIdentity):
+		log.Printf("auth: missing identity header (%s %s)", r.Method, r.URL.Path)
+		http.Error(w, "missing identity header", http.StatusUnauthorized)
+	case errors.Is(err, ErrNoAccount):
+		log.Printf("auth: no terminal account (%s %s)", r.Method, r.URL.Path)
+		http.Error(w, "no terminal account for that identity", http.StatusForbidden)
+	case errors.Is(err, ErrNoSuchAccount):
+		log.Printf("auth: %v (%s %s)", err, r.Method, r.URL.Path)
+		http.Error(w, "mapped OS user missing on this host", http.StatusInternalServerError)
+	default:
+		log.Printf("act-as refused: %v (%s %s)", err, r.Method, r.URL.Path)
+		http.Error(w, "not permitted to act as that user", http.StatusForbidden)
+	}
+	return Identity{}, false
+}
+
+// Configure wires a service's gate from the environment and reports what it
+// found. Called once at startup by each service, so the six processes agree
+// because they read the same EnvironmentFile.
+//
+// The warning exists because the secret is optional by decision, and an
+// operator who has not set one should be able to learn that from the log rather
+// than from a security review. It names the bind address and what a caller
+// reaching it can do, rather than saying something is "insecure".
+func (g *Gate) Configure(service, bindAddr string) {
+	g.Config = ConfigFromEnv()
+	if g.AdminsPath == "" {
+		g.AdminsPath = DefaultAdminsPath
+	}
+	mode := "single-user"
+	if g.MultiUser() {
+		mode = "multi-user"
+	}
+	log.Printf("%s: identity header %q, %s mode", service, g.Config.header(), mode)
+	if g.Config.ProxySecret == "" {
+		log.Printf("%s: no TL_PROXY_SECRET set — any caller that can reach %s may "+
+			"send %s and be treated as that user. Set TL_PROXY_SECRET in "+
+			"/etc/terminal-lobby.conf and have your proxy send %s to require one.",
+			service, bindAddr, g.Config.header(), SecretHeader)
+	}
 }

@@ -1,7 +1,7 @@
 // Command file-api is the per-user file read/write/list backend for the
 // terminal-lobby v2 file preview + editor surface (roadmap pillar #6). It is a
 // devvm systemd sibling of tmux-api (:7684) and clipboard-upload (:7683):
-// stdlib net/http, per-user isolation via X-Authentik-Username → OS user
+// stdlib net/http, per-user isolation via the identity header → OS user
 // (/etc/ttyd-user-map), every path confined to the caller's /home/<osUser> by
 // the four-layer defense in paths.go. A request that maps to a DIFFERENT OS
 // user than the service runs as re-execs this binary under `sudo -u <user>`
@@ -12,9 +12,11 @@ package main
 import (
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/user"
+	"strings"
 )
 
 // listenAddr — :7686, the next free port after clipboard-upload (:7683),
@@ -54,6 +56,15 @@ func main() {
 	// sets no environment — production stays :7686. Mirrors TMUX_API_ADDR /
 	// CLIPBOARD_UPLOAD_ADDR.
 	addr := listenAddr
+	// TL_BIND narrows the listener. The default is unchanged; an operator who
+	// puts the proxy on the same host can set 127.0.0.1 and remove the LAN
+	// path entirely without needing a shared secret.
+	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			addr = net.JoinHostPort(b, port)
+		}
+	}
+	actAsGate.Configure("file-api", addr)
 	if a := os.Getenv("FILE_API_ADDR"); a != "" {
 		addr = a
 	}

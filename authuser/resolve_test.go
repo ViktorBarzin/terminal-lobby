@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -298,5 +299,109 @@ func TestSingleUserDoesNotLookUpTheAccount(t *testing.T) {
 	g.LookupUser = func(string) error { t.Fatal("single-user looked the account up"); return nil }
 	if _, err := g.Resolve(req(DefaultAuthHeader, "anyone")); err != nil {
 		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+// --- the HTTP shape --------------------------------------------------------
+
+// Every service answered these three shapes identically, and the distinction
+// matters to an operator reading logs: 401 the request did not authenticate,
+// 403 it did and may not do this, 500 the box is misconfigured.
+func TestAuthorizeMapsRefusalsToStatuses(t *testing.T) {
+	cases := []struct {
+		name string
+		gate func() *Gate
+		req  func() *http.Request
+		want int
+	}{
+		{"no identity", func() *Gate { return resolveGate(t, Config{}, "", "") },
+			func() *http.Request { return req("", "") }, http.StatusUnauthorized},
+		{"bad secret", func() *Gate { return resolveGate(t, Config{ProxySecret: "s"}, "", "") },
+			func() *http.Request { return req(DefaultAuthHeader, "wizard") }, http.StatusUnauthorized},
+		{"unmapped identity", func() *Gate { return resolveGate(t, Config{MultiUser: "on"}, "", "alice=wizard\n") },
+			func() *http.Request { return req(DefaultAuthHeader, "stranger") }, http.StatusForbidden},
+		{"account missing on host", func() *Gate {
+			g := resolveGate(t, Config{MultiUser: "on"}, "", "alice=ghost\n")
+			g.LookupUser = func(string) error { return errors.New("nope") }
+			return g
+		}, func() *http.Request { return req(DefaultAuthHeader, "alice") }, http.StatusInternalServerError},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		if _, ok := c.gate().Authorize(rec, c.req()); ok {
+			t.Fatalf("%s: Authorize reported ok", c.name)
+		}
+		if rec.Code != c.want {
+			t.Fatalf("%s: status %d, want %d", c.name, rec.Code, c.want)
+		}
+	}
+}
+
+func TestAuthorizeReturnsTheIdentityOnSuccess(t *testing.T) {
+	g := resolveGate(t, Config{MultiUser: "on"}, "", "alice=wizard\n")
+	rec := httptest.NewRecorder()
+	id, ok := g.Authorize(rec, req(DefaultAuthHeader, "alice"))
+	if !ok {
+		t.Fatalf("Authorize refused a good request: status %d", rec.Code)
+	}
+	if id.OSUser != "wizard" {
+		t.Fatalf("OSUser = %q, want wizard", id.OSUser)
+	}
+	if rec.Code != http.StatusOK || rec.Body.Len() != 0 {
+		t.Fatalf("Authorize wrote to the response on success: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// --- user map parsing ------------------------------------------------------
+
+// Moved here from file-api when the gate absorbed loadUserMap. The five copies
+// parsed identically and this pins that behaviour in the one place it now
+// lives: comments and blanks ignored, whitespace trimmed either side of the
+// '=', the optional ":<cwd>" suffix cut, and every malformed shape skipped
+// rather than half-accepted.
+func TestUserMapParsing(t *testing.T) {
+	g := resolveGate(t, Config{MultiUser: "on"}, "", `
+# a comment
+alice=alice_os
+  bob = bob_os
+
+carol=carol_os:/srv/carol
+malformed-no-equals
+=missing-lhs
+missing-rhs=
+`)
+	got := g.userMap()
+	want := map[string]string{"alice": "alice_os", "bob": "bob_os", "carol": "carol_os"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("userMap: got %#v, want %#v", got, want)
+	}
+}
+
+// A missing map file is an empty map, not a panic. In multi-user mode that
+// refuses everyone, which is the fail-closed direction.
+func TestUserMapMissingFileIsEmpty(t *testing.T) {
+	g := resolveGate(t, Config{MultiUser: "on"}, "", "")
+	if got := g.userMap(); len(got) != 0 {
+		t.Fatalf("missing map file: got %#v, want empty", got)
+	}
+}
+
+// clipboard-upload never execs as the mapped user — it only needs a directory
+// name — so it deliberately did not fail a request when the account was absent
+// from the host. The zero value keeps the check, so a service opts out
+// explicitly rather than by forgetting to opt in.
+func TestAccountCheckCanBeSkipped(t *testing.T) {
+	g := resolveGate(t, Config{MultiUser: "on"}, "", "alice=ghost\n")
+	g.LookupUser = func(string) error { return errors.New("absent") }
+	if _, err := g.Resolve(req(DefaultAuthHeader, "alice")); !errors.Is(err, ErrNoSuchAccount) {
+		t.Fatalf("default gate: err = %v, want ErrNoSuchAccount", err)
+	}
+	g.SkipAccountCheck = true
+	got, err := g.Resolve(req(DefaultAuthHeader, "alice"))
+	if err != nil {
+		t.Fatalf("SkipAccountCheck: unexpected error %v", err)
+	}
+	if got.OSUser != "ghost" {
+		t.Fatalf("resolved to %q, want ghost", got.OSUser)
 	}
 }

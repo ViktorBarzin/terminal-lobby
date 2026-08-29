@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"strings"
 
 	"terminal-lobby/telemetry"
 )
@@ -19,11 +18,14 @@ var (
 // dropped file) legitimately never resolve a user because they don't need one;
 // attributing their event must not be able to fail their request.
 func osUserQuiet(r *http.Request) string {
-	local := r.Header.Get(authHeader)
-	if i := strings.IndexByte(local, '@'); i > 0 {
-		local = local[:i]
+	// Resolve rather than reading the header directly, so this honours the
+	// configured header name and the mode like every other caller. The error is
+	// deliberately dropped: an unattributable event is still an event.
+	id, err := actAsGate.Resolve(r)
+	if err != nil {
+		return ""
 	}
-	return loadUserMap()[local]
+	return id.RealOSUser
 }
 
 // diagEvents is this service's diagnostics emitter and timing is the request

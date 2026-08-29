@@ -30,12 +30,25 @@ import (
 // defaultTmuxAPIEndpoint is where tmux-api listens on this box.
 const defaultTmuxAPIEndpoint = "http://127.0.0.1:7684"
 
-// tmuxAuthHeader is the header tmux-api authenticates with. It is set by the
-// Authentik proxy in front of the lobby; a loopback client supplies it itself
-// and is trusted because tmux-api is not reachable from outside the box.
-const tmuxAuthHeader = "X-Authentik-Username"
+// tmuxAuthHeader is the header tmux-api authenticates with. The reverse proxy
+// in front of the lobby sets it; a loopback client supplies it itself and is
+// trusted because tmux-api is not reachable from outside the box.
+//
+// The name is configuration (TL_AUTH_HEADER), and this client has to agree with
+// the server about it, so it reads the same variable from the same
+// EnvironmentFile rather than hard-coding a second answer.
+func tmuxAuthHeader() string {
+	if h := strings.TrimSpace(os.Getenv("TL_AUTH_HEADER")); h != "" {
+		return h
+	}
+	return "X-Forwarded-User"
+}
 
-// DefaultUserMapPath is the Authentik→OS-user map tmux-api itself reads. The
+// tmuxProxySecret is sent when the services are configured to require one.
+// Empty means the server is not checking, which is the default.
+func tmuxProxySecret() string { return os.Getenv("TL_PROXY_SECRET") }
+
+// DefaultUserMapPath is the identity→OS-user map tmux-api itself reads. The
 // syncer reads it backwards: it knows its OS user and needs the auth identity
 // that maps to it.
 const DefaultUserMapPath = "/etc/ttyd-user-map"
@@ -121,7 +134,10 @@ func (t *TmuxAPI) do(ctx context.Context, method, path, op, session string, body
 	if err != nil {
 		return fmt.Errorf("tmux-api %s %s: %w", op, session, err)
 	}
-	req.Header.Set(tmuxAuthHeader, t.authUser)
+	req.Header.Set(tmuxAuthHeader(), t.authUser)
+	if secret := tmuxProxySecret(); secret != "" {
+		req.Header.Set("X-TL-Proxy-Secret", secret)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

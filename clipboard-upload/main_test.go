@@ -389,8 +389,8 @@ func withUserMap(t *testing.T, content string) {
 		t.Fatal(err)
 	}
 	old := mapPath
-	mapPath = f
-	t.Cleanup(func() { mapPath = old })
+	setMapPath(f)
+	t.Cleanup(func() { setMapPath(old) })
 }
 
 // withStore redirects the image store (storeRoot — a var for the same reason)
