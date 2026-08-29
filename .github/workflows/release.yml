@@ -72,7 +72,10 @@ jobs:
       - name: test (python)
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet pytest
+          # aiohttp because test_qa_harness stubs its own server with it; the
+          # 84 cases are self-contained and need no devvm. pytest is also what
+          # the build step's baseline-engine gate runs on.
+          python3 -m pip install --quiet pytest aiohttp
           python3 -m pytest scripts/test_qa_harness.py -q
 
       - name: version
