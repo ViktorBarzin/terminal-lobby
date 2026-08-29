@@ -27,11 +27,9 @@
 package authuser
 
 import (
-	"bufio"
 	"errors"
 	"os"
 	"regexp"
-	"strings"
 )
 
 // DefaultAdminsPath is where t3-provision-users.sh installs the admin list,
@@ -60,14 +58,30 @@ var (
 // lookup stays, this just means nothing malformed reaches it.
 var userRe = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,31}$`)
 
-// Gate answers the act-as question against one admin list.
+// Gate answers the whole "which OS user is this request" question against one
+// set of files and one Config. See resolve.go for the resolution itself; this
+// file keeps the act-as half, which Resolve calls.
 type Gate struct {
 	// AdminsPath is the admin list. Read on demand rather than cached: the
 	// file is three lines, changes are rare, and the hourly reconcile rewrites
 	// it — so a promotion or demotion takes effect on the next request rather
-	// than on the next service restart. Mirrors loadUserMap's reasoning in
-	// each service.
+	// than on the next service restart. The user map is read the same way.
 	AdminsPath string
+
+	// MapPath is the identity → OS user map. Empty means DefaultMapPath. Its
+	// existence is also what Config.MultiUser="auto" reads.
+	MapPath string
+
+	// Config carries the operator-facing TL_* settings.
+	Config Config
+
+	// SelfUser is the OS user this process runs as, and the only account a
+	// single-user install serves. Empty means "look it up on first use".
+	SelfUser string
+
+	// LookupUser verifies a mapped account exists on this host. Nil means
+	// os/user.Lookup; the tests supply their own.
+	LookupUser func(string) error
 }
 
 // Default is the production gate.
@@ -92,12 +106,7 @@ func (g *Gate) admins() map[string]bool {
 		return out
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
+	for _, line := range readLines(f) {
 		out[line] = true
 	}
 	return out
