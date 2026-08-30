@@ -107,8 +107,11 @@ src/
                          file read/list/write, TERMINAL_BASE + build id;
                          also ACT_AS (?as=) and the appendActAs() every
                          builder applies — push is deliberately excluded
-    lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/rename/
+    lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/
                          retitle/title/…)
+    focus-trap.ts        The modal dialog contract — Tab wraps at both ends,
+                         focus lands on the dialog and returns to its opener.
+                         Shared by Settings, Skills and the file preview
     ownwhile.ts          Hold a window.__tl* handle only while a view is the one
                          on screen. With several sessions mounted, mount order
                          stopped meaning anything; handover is order-independent
