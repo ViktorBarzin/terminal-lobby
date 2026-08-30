@@ -4,6 +4,7 @@ import {
   createSignal,
   For,
   Show,
+  onCleanup,
   onMount,
   type Component,
 } from "solid-js";
@@ -217,11 +218,47 @@ export const Composer: Component<{
     }
   });
 
-  // The pinch changed the type size under a field whose height is already
-  // written in px. Nothing else re-measures it.
+  /**
+   * Keep the field's height derived, not pinned.
+   *
+   * autosize writes a px height, and it used to run only on input, on clear,
+   * and on mount when a draft was restored — so an untouched field kept
+   * whatever the single measurement at mount produced. Clicking it called
+   * sync(), which called autosize, which is why touching it "resized it
+   * correctly": the click was the second measurement.
+   *
+   * Three things that decide a line's height can arrive after that first
+   * measurement, so all three re-derive it:
+   *   - the pinch scale, which reaches this field through a custom property on
+   *     an ancestor;
+   *   - the webfont, whose metrics differ from the fallback it replaces;
+   *   - the field's own WIDTH, which decides how many lines the text wraps to,
+   *     and changes when the sidebar collapses or the phone rotates.
+   *
+   * Width only from the observer: autosize writes the height, so watching the
+   * height would chase itself.
+   */
   createEffect(() => {
     props.textSize;
     autosize();
+  });
+
+  onMount(() => {
+    autosize();
+    // The font swap changes the metrics under a height already written in px.
+    void (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready
+      ?.then(() => autosize())
+      .catch(() => {});
+    if (!ta || typeof ResizeObserver === "undefined") return;
+    let lastWidth = -1;
+    const ro = new ResizeObserver(() => {
+      const w = ta ? ta.clientWidth : 0;
+      if (w === lastWidth) return; // our own height write, not a real change
+      lastWidth = w;
+      autosize();
+    });
+    ro.observe(ta);
+    onCleanup(() => ro.disconnect());
   });
 
   createEffect(() => {
