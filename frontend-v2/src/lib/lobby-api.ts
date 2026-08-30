@@ -187,17 +187,6 @@ export async function killSession(name: string): Promise<void> {
   if (!res.ok && res.status !== 404) throw new ApiError(res.status, `kill HTTP ${res.status}`);
 }
 
-/** POST /api/sessions/{name}/rename {name} — 204/404/409(taken)/400(invalid).
- *  Kept for the name-only rename; the lobby retitles through `retitleSession`. */
-export async function renameSession(oldName: string, newName: string): Promise<void> {
-  const res = await req(`/sessions/${encodeURIComponent(oldName)}/rename`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: newName }),
-  });
-  if (!res.ok) throw new ApiError(res.status, `rename HTTP ${res.status}`);
-}
-
 /**
  * PATCH /api/sessions/{name} {title, name} — 204/404/409(taken)/400(invalid).
  *
@@ -320,7 +309,6 @@ export interface LobbyApi {
   getLayout(): Promise<Layout>;
   putLayout(layout: Layout): Promise<void>;
   killSession(name: string): Promise<void>;
-  renameSession(oldName: string, newName: string): Promise<void>;
   retitleSession(oldName: string, newName: string, title: string): Promise<void>;
   setSessionTitle(name: string, title: string): Promise<void>;
   restoreSessions(sel?: RestoreSelection): Promise<void>;
@@ -336,7 +324,6 @@ export const lobbyApi: LobbyApi = {
   getLayout,
   putLayout,
   killSession,
-  renameSession,
   retitleSession,
   setSessionTitle,
   restoreSessions,
