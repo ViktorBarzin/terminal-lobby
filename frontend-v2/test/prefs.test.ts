@@ -68,7 +68,7 @@ describe("coercePrefs — validate-or-default", () => {
       notify: { onDone: false, onAwaiting: true },
       // Absent from the input, so these take their defaults. This assertion is
       // exhaustive on purpose: a new pref has to show up here.
-      sidebar: { showLastActive: false },
+      sidebar: { showLastActive: false, order: "created" },
       lineHeight: 1,
       letterSpacing: 0,
       cursorStyle: "block",
