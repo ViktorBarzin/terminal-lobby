@@ -136,30 +136,7 @@ func (s *layoutStore) save(osUser string, l Layout) error {
 // saveLocked writes atomically (tmp + rename) so a crash mid-write can't
 // leave a truncated document behind.
 func (s *layoutStore) saveLocked(osUser string, l Layout) error {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return err
-	}
-	raw, err := json.Marshal(l)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(s.dir, osUser+".*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.path(osUser))
+	return writeAtomicJSON(s.dir, osUser+".*.tmp", s.path(osUser), l)
 }
 
 // removeSession drops a session from every list — called ONLY on an

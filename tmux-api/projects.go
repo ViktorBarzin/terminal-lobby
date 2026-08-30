@@ -163,31 +163,7 @@ func (s *projectStore) update(fn func(*ProjectSet) error) error {
 // saveLocked writes atomically (tmp + rename) so a crash mid-write can't leave
 // a truncated document behind.
 func (s *projectStore) saveLocked(ps ProjectSet) error {
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	raw, err := json.Marshal(ps)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, "projects.*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.path)
+	return writeAtomicJSON(filepath.Dir(s.path), "projects.*.tmp", s.path, ps)
 }
 
 // validateProjectSet enforces the global-document invariants: known version,
