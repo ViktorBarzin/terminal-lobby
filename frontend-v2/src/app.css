@@ -270,7 +270,12 @@ body {
 
 .tl-netusage-breakdown {
   display: grid;
-  grid-template-columns: auto auto minmax(48px, 1fr);
+  /* The name track must be allowed to SHRINK. A bare `auto` is floored at the
+     column's min-content width, and the min-content of a nowrap label is the
+     whole string — so one long operator name ("_Uzbektelekom_ Joint Stock
+     Company (UZ)") sized the track to 242px and pushed the figure and its bar
+     27px outside the panel. minmax(0, auto) removes that floor. */
+  grid-template-columns: minmax(0, auto) auto minmax(48px, 1fr);
   align-items: center;
   gap: 4px 8px;
   font-size: calc(12px * var(--tl-text-scale, 1));
@@ -290,7 +295,13 @@ body {
 }
 .tl-netusage-name {
   color: var(--text-muted);
-  white-space: nowrap;
+  /* Wraps rather than truncates: an operator's name is what identifies the
+     row, and half of one identifies nothing. `anywhere` rather than
+     `break-word` because only `anywhere` lowers the intrinsic min-content
+     width — which is what actually lets the grid track above shrink. Short
+     labels are unaffected: the track still sizes to content when it fits. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .tl-netusage-bytes {
   text-align: right;
@@ -316,6 +327,27 @@ body {
   background: var(--accent);
   /* A bucket with bytes in it stays visible even when the largest dwarfs it. */
   min-width: 1px;
+}
+
+/* Which network you are on, read-only — what you glance at after landing
+   somewhere. Restored 2026-08-30: these rules were removed by accident with
+   the WiFi/cellular table they happened to sit beside, which left the line
+   unstyled. */
+.tl-netusage-current {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin-top: 14px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-netusage-netname {
+  color: var(--text-primary);
+  /* Same reasoning as the rows: a long operator name wraps rather than being
+     cut off, and the marker beside it keeps its own width. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tl-netusage-tier {
