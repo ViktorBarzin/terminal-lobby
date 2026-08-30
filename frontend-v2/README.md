@@ -109,6 +109,10 @@ src/
                          builder applies — push is deliberately excluded
     lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/
                          retitle/title/…)
+    http.ts              The transport: a deadline on every request and
+                         same-origin credentials. Without a deadline a fetch on
+                         a half-open connection never settles, which is what a
+                         phone hands us when the radio drops a socket
     focus-trap.ts        The modal dialog contract — Tab wraps at both ends,
                          focus lands on the dialog and returns to its opener.
                          Shared by Settings, Skills and the file preview
@@ -361,6 +365,11 @@ src/
     keybytes.ts          Pre-baked terminal byte sequences for the soft keys
     softmods.ts          PURE one-shot/latched soft Ctrl+Alt machine
     compose.ts           PURE bracketed-paste + trailing-submit split
+    softkeys-reserve.ts  body.has-soft-keys, the height both views reserve for
+                         the toolbar and the keyboard. Installed once per APP:
+                         SessionView is mounted once per kept session, so a
+                         writer there let the first session closed take the
+                         reservation from every other one
     viewport.ts          visualViewport → CSS var so the keyboard can't cover
     reveal.ts            Re-scrolls the focused field into view once the
                          keyboard STOPS moving. The browser's own attempt runs
