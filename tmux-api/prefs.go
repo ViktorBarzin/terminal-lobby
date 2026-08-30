@@ -73,26 +73,7 @@ func (s *prefsStore) load(osUser string) ([]byte, error) {
 func (s *prefsStore) save(osUser string, doc []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(s.dir, osUser+".*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(append(doc, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.path(osUser))
+	return writeAtomic(s.dir, osUser+".*.tmp", s.path(osUser), doc)
 }
 
 // validatePrefs enforces the envelope: exactly one JSON object, nothing

@@ -85,31 +85,7 @@ func (s *shareStore) loadLocked() (ShareSet, error) {
 }
 
 func (s *shareStore) saveLocked(ss ShareSet) error {
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	raw, err := json.Marshal(ss)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, "shares.*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.path)
+	return writeAtomicJSON(filepath.Dir(s.path), "shares.*.tmp", s.path, ss)
 }
 
 // update loads, applies fn, validates, saves — atomically under the lock.

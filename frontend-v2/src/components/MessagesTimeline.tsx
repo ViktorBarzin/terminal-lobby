@@ -196,6 +196,14 @@ const ANCHOR_ROW_SELECTOR = ".tl-row:not(.tl-row-filling):not(.tl-row-earlier)";
  */
 export const MessagesTimeline: Component<{
   events: Event[];
+  /** The rows for `events`, when the owner has already derived them.
+   *
+   *  A derivation costs ~10ms on a 1,383-event window, and the same transcript
+   *  was being folded here, in TextView and in SessionView on every stream
+   *  event. Passing the rows down collapses the three into one. Absent — which
+   *  is how the tests render this — the rows are derived here as before, so the
+   *  prop is a shortcut and never a second source of truth. */
+  rows?: TimelineRow[];
   /** open a file path in the preview overlay (Read/Edit/Write tool rows). */
   onOpenPreview?: (path: string) => void;
   /** fetch a capped tool result in full. */
@@ -221,7 +229,9 @@ export const MessagesTimeline: Component<{
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
-  const derived = createMemo<TimelineRow[]>(() => deriveRows(props.events));
+  const derived = createMemo<TimelineRow[]>(
+    () => props.rows ?? deriveRows(props.events),
+  );
   const rows = createMemo<TimelineRow[]>(() =>
     visibleRows(derived(), expandedTurns()),
   );

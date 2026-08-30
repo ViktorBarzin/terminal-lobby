@@ -225,11 +225,24 @@ as trusted on your behalf.
 
 ## Open questions
 
-- **Does the phone actually reach it?** The route exists — pfSense serves
-  `10.0.10.0/24` on the tailnet and the devvm has no firewall — but the iPhone
-  node has been offline since 2026-05-22, so the path is unproven end to end.
-  Its headscale key is valid until 2026-10-12, so no re-registration should be
-  needed.
+- ~~**Does the phone actually reach it?**~~ **Answered 2026-08-30: the path
+  works, and Orca was never the problem.** A diagnostic node enrolled on
+  headscale pulled HTTP 200 from `10.0.10.10:6768` over the tailnet, proving the
+  destination reachable. What blocked pairing was the homelab VPN, not Orca —
+  the phone held no session on either tunnel. Root cause was carrier-grade NAT
+  (Uzbektelecom, `213.230.87.142`) rebinding the source port every couple of
+  minutes, with `PersistentKeepalive` absent from every peer in the WireGuard
+  server config. Fixed server-side on 2026-08-30 (keepalive 25 on 18 peers), and
+  the client still needs its own `PersistentKeepalive = 15`.
+
+  One diagnostic distinction worth keeping: a connect timeout with **zero
+  packets** is not an MTU symptom. A TCP SYN is 60 bytes and passes any MTU.
+  MTU breaks the data phase, so handshake-succeeds-then-no-throughput is MTU,
+  while handshake-never-happens is a dead tunnel. Chasing the wrong one of those
+  cost an afternoon. Separately, the same investigation found the WireGuard
+  server running MTU 1500 against a 1450-byte pod network with no MSS clamping,
+  which would have throttled Orca's traffic even once the tunnel held; that is
+  also now fixed (MTU 1390 plus `TCPMSS --clamp-mss-to-pmtu`).
 - **Memory headroom.** The box was at 27 GiB of 31 GiB used before Orca. Orca
   idles at 7 processes. What several agents in parallel worktrees cost has not
   been measured, and this box is shared with emo.

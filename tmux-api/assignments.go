@@ -150,30 +150,7 @@ func (s *assignmentStore) rename(osUser, oldName, newName string) error {
 }
 
 func (s *assignmentStore) saveLocked(osUser string, set AssignmentSet) error {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return err
-	}
-	raw, err := json.Marshal(set)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(s.dir, osUser+".*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(append(raw, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.path(osUser))
+	return writeAtomicJSON(s.dir, osUser+".*.tmp", s.path(osUser), set)
 }
 
 // assignmentProjectOf reads the memory. The bool separates "remembered as

@@ -649,3 +649,95 @@ func TestRegistryClearsTheDialogWhenASessionStopsWorking(t *testing.T) {
 		t.Fatalf("a settled session is still being polled (%d reads)", pane.count()-before)
 	}
 }
+
+// A source with no readers used to live for the life of the process: sweep
+// skipped it, and only a request that found the transcript moved would ever
+// retire it. Closing the Text view drops the subscription and nothing else, so
+// every session ever opened kept a tail goroutine re-opening its transcript
+// five times a second and held its whole event buffer — measured at 3,396
+// events and 3.9 MB for one 20.8 MB transcript.
+func TestRegistrySweepClosesASourceNobodyHasReadForAWhile(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-sweep-abandoned"
+	)
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-A")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+	now := time.Unix(1000, 0)
+	rg.now = func() time.Time { return now }
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve after SessionStart")
+	}
+	_, release := fs.Subscribe()
+	release() // the reader closed the Text view
+
+	// The first sweep only notes that nobody is reading — a reconnect within
+	// the grace finds the source still warm.
+	rg.sweep()
+	if !sourceCached(rg, osUser, tmux) {
+		t.Fatal("the source was dropped the instant its last reader left")
+	}
+
+	now = now.Add(idleGrace + time.Second)
+	rg.sweep()
+	if sourceCached(rg, osUser, tmux) {
+		t.Fatal("a source nobody has read for longer than the grace is still tailing")
+	}
+}
+
+// Losing a reader for a moment must not cost the next one its warm buffer: a
+// page reload drops the subscription and takes it again.
+func TestRegistrySweepKeepsASourceThatIsReadAgainWithinTheGrace(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-sweep-reconnect"
+	)
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-A")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+	now := time.Unix(1000, 0)
+	rg.now = func() time.Time { return now }
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve after SessionStart")
+	}
+	_, release := fs.Subscribe()
+	release()
+	rg.sweep() // marked idle
+
+	_, release2 := fs.Subscribe() // the browser is back
+	defer release2()
+	rg.sweep()
+
+	now = now.Add(idleGrace + time.Second)
+	rg.sweep()
+	if !sourceCached(rg, osUser, tmux) {
+		t.Fatal("a source that regained a reader was retired on its old idle mark")
+	}
+}
+
+// sourceCached reports whether the registry still holds a live source, without
+// asking source() for one (which would build a new one).
+func sourceCached(rg *registry, osUser, session string) bool {
+	us := rg.user(osUser)
+	us.mu.Lock()
+	defer us.mu.Unlock()
+	_, ok := us.srcs[session]
+	return ok
+}

@@ -97,30 +97,7 @@ func (s *pushStore) loadLocked(osUser string) ([]pushSubscription, error) {
 // poll — until the user's last device is removed, at which point the file is
 // deleted (removeLocked). Callers hold s.mu.
 func (s *pushStore) saveLocked(osUser string, subs []pushSubscription) error {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return err
-	}
-	doc, err := json.Marshal(subs)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(s.dir, osUser+".*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(append(doc, '\n')); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.path(osUser))
+	return writeAtomicJSON(s.dir, osUser+".*.tmp", s.path(osUser), subs)
 }
 
 func (s *pushStore) list(osUser string) ([]pushSubscription, error) {
