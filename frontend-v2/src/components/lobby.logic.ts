@@ -19,7 +19,7 @@
  *  - foreign sessions (owner ≠ me) are a separate Shared-with-me list, owner-major.
  *  - the dock session (hidden scratch shell) is never rendered and never touched.
  */
-import type { ClaudeState, Layout, LayoutProject, Session } from "../types/lobby";
+import type { Layout, LayoutProject, Session } from "../types/lobby";
 
 export type GroupKind = "project" | "ungrouped";
 
@@ -513,5 +513,3 @@ export function countStates(sessions: Session[]): StateCounts {
   }
   return c;
 }
-
-export const CLAUDE_STATES: ClaudeState[] = ["running", "awaiting", "done"];

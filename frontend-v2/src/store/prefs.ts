@@ -1,6 +1,12 @@
 import { createSignal, type Accessor } from "solid-js";
+import {
+  DEFAULT_SESSION_ORDER,
+  isSessionOrder,
+  type SessionOrder,
+} from "../components/order.logic";
 import { apiUrl, PREFS_PATH } from "../lib/config";
 import { track } from "../telemetry/track";
+import { fetchWithDeadline } from "../lib/http";
 
 /**
  * Roamed preferences — the whole-document, last-writer-wins store that mirrors
@@ -66,9 +72,13 @@ export interface Prefs {
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
    *  each card — OFF by default, and deliberately not the running session's
    *  live working timer, which is progress on the turn in flight rather than a
-   *  timestamp. Its own namespace because the vanilla page never wrote one, so
-   *  there is nothing to collide with. */
-  sidebar: { showLastActive: boolean };
+   *  timestamp. `order` is which order the cards come in (manual / created /
+   *  active), roamed rather than per-browser because it is a view preference
+   *  about the SAME list on every device — a phone that ordered itself
+   *  differently from the laptop beside it would be answering a question
+   *  nobody asked. Its own namespace because the vanilla page never wrote one,
+   *  so there is nothing to collide with. */
+  sidebar: { showLastActive: boolean; order: SessionOrder };
 }
 
 export interface PrefsPatch {
@@ -114,7 +124,7 @@ export const PREF_DEFAULTS: Prefs = {
   gestures: { wheelSmooth: true, wheelSpeed: 1 },
   session: { newCommand: DEFAULT_NEW_COMMAND },
   notify: { onDone: true, onAwaiting: true },
-  sidebar: { showLastActive: false },
+  sidebar: { showLastActive: false, order: DEFAULT_SESSION_ORDER },
 };
 
 // ---- pure helpers (exported for unit tests) -------------------------------
@@ -208,6 +218,10 @@ export function coercePrefs(raw: unknown): Prefs {
       // "true" string. Every doc written before this pref existed lacks the
       // namespace entirely, which is what makes it off for everyone already.
       showLastActive: sidebar.showLastActive === true,
+      // An absent key resolves to created-time, which is how the default
+      // reaches the people who already have a hand-arranged layout saved: the
+      // arrangement stays in the layout, waiting for them to ask for it back.
+      order: isSessionOrder(sidebar.order) ? sidebar.order : DEFAULT_SESSION_ORDER,
     },
   };
 }
@@ -251,7 +265,11 @@ export function composeDoc(
       onDone: prefs.notify.onDone,
       onAwaiting: prefs.notify.onAwaiting,
     },
-    sidebar: { ...sidebar, showLastActive: prefs.sidebar.showLastActive },
+    sidebar: {
+      ...sidebar,
+      showLastActive: prefs.sidebar.showLastActive,
+      order: prefs.sidebar.order,
+    },
   };
 }
 
@@ -309,6 +327,7 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
     prev.sidebar.showLastActive,
     next.sidebar.showLastActive,
   );
+  diff("sidebar.order", prev.sidebar.order, next.sidebar.order);
   return out;
 }
 
@@ -403,7 +422,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   const fetchImpl: FetchLike | undefined =
     opts.fetchImpl ??
     (typeof fetch !== "undefined"
-      ? (input, init) => fetch(input, init)
+      ? (input, init) => fetchWithDeadline(input, init)
       : undefined);
 
   // rawDoc is the canonical persisted document (unknown keys preserved). The
@@ -437,7 +456,6 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
       const sentMark = lsGet(PREFS_DIRTY_KEY);
       void fetchImpl(apiUrl(PREFS_PATH), {
         method: "PUT",
-        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(rawDoc),
       })
@@ -507,7 +525,6 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
     let doc: unknown;
     try {
       const resp = await fetchImpl(apiUrl(PREFS_PATH), {
-        credentials: "same-origin",
       });
       if (!resp.ok) return; // keep local; next boot retries
       doc = await resp.json();

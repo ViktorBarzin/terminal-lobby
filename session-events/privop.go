@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"terminal-lobby/sessionio"
@@ -63,14 +64,14 @@ type privResponse struct {
 // configuration detail, and the answer here decides what the child will agree
 // to read.
 func ownHome() (string, error) {
-	if u, err := user.Current(); err == nil && u.HomeDir != "" {
-		return u.HomeDir, nil
-	}
-	h, err := os.UserHomeDir()
+	u, err := user.LookupId(strconv.Itoa(os.Getuid()))
 	if err != nil {
-		return "", fmt.Errorf("privop: cannot determine own home: %w", err)
+		return "", fmt.Errorf("privop: cannot resolve uid %d: %w", os.Getuid(), err)
 	}
-	return h, nil
+	if u.HomeDir == "" {
+		return "", fmt.Errorf("privop: user %s has no home directory", u.Username)
+	}
+	return u.HomeDir, nil
 }
 
 // runPrivop is the child's whole life: serve requests on stdin until it closes.

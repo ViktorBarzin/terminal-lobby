@@ -99,7 +99,9 @@ describe("sidebar.showLastActive — the roamed pref", () => {
   });
 
   it("reports its dotted path to telemetry with the NEW value", () => {
-    const on = { ...PREF_DEFAULTS, sidebar: { showLastActive: true } };
+    // Spread the namespace rather than replacing it: `sidebar` carries the
+    // list's ordering too, and dropping it here would report that as changed.
+    const on = { ...PREF_DEFAULTS, sidebar: { ...PREF_DEFAULTS.sidebar, showLastActive: true } };
     expect(changedPrefPaths(PREF_DEFAULTS, on)).toEqual([
       ["sidebar.showLastActive", "true"],
     ]);

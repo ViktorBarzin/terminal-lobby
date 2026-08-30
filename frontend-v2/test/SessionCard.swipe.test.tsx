@@ -61,9 +61,6 @@ class FakeApi implements LobbyApi {
     this.kills.push(name);
     this.sessionsVal = this.sessionsVal.filter((s) => s.name !== name);
   }
-  async renameSession() {
-    throw new ApiError(404, "no");
-  }
   async retitleSession() {
     throw new ApiError(404, "no");
   }

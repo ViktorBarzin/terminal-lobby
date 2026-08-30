@@ -65,9 +65,6 @@ class FakeApi implements LobbyApi {
     this.layoutVal = l;
   }
   async killSession() {}
-  async renameSession(): Promise<never> {
-    throw new ApiError(404, "no");
-  }
   async retitleSession(): Promise<never> {
     throw new ApiError(404, "no");
   }

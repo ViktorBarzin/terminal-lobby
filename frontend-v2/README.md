@@ -107,8 +107,15 @@ src/
                          file read/list/write, TERMINAL_BASE + build id;
                          also ACT_AS (?as=) and the appendActAs() every
                          builder applies — push is deliberately excluded
-    lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/rename/
+    lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/
                          retitle/title/…)
+    http.ts              The transport: a deadline on every request and
+                         same-origin credentials. Without a deadline a fetch on
+                         a half-open connection never settles, which is what a
+                         phone hands us when the radio drops a socket
+    focus-trap.ts        The modal dialog contract — Tab wraps at both ends,
+                         focus lands on the dialog and returns to its opener.
+                         Shared by Settings, Skills and the file preview
     ownwhile.ts          Hold a window.__tl* handle only while a view is the one
                          on screen. With several sessions mounted, mount order
                          stopped meaning anything; handover is order-independent
@@ -245,8 +252,14 @@ src/
     StateDot.tsx         Claude state dot (running / awaiting / done)
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
     CreateSessionRow.tsx New-session input + the Claude/Codex/shell picker
+    OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
+    order.logic.ts       PURE session ordering: newest-first by created or by
+                         last DRIVEN time (never session_activity, which a
+                         read-only attach bumps), and the capture that freezes
+                         the visible order into the layout when a drag hands the
+                         list back to manual
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot
     TextView.tsx         Text mode: timeline above the composer
@@ -382,6 +395,11 @@ src/
     keybytes.ts          Pre-baked terminal byte sequences for the soft keys
     softmods.ts          PURE one-shot/latched soft Ctrl+Alt machine
     compose.ts           PURE bracketed-paste + trailing-submit split
+    softkeys-reserve.ts  body.has-soft-keys, the height both views reserve for
+                         the toolbar and the keyboard. Installed once per APP:
+                         SessionView is mounted once per kept session, so a
+                         writer there let the first session closed take the
+                         reservation from every other one
     viewport.ts          visualViewport → CSS var so the keyboard can't cover
     reveal.ts            Re-scrolls the focused field into view once the
                          keyboard STOPS moving. The browser's own attempt runs

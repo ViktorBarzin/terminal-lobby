@@ -22,12 +22,10 @@ class FakeApi implements LobbyApi {
   layoutVal: Layout = emptyLayout();
   puts: Layout[] = [];
   kills: string[] = [];
-  renames: [string, string][] = [];
   restores = 0;
   restoreSelections: { snapshot: string; sessions: string[] }[] = [];
   snapshotsVal: import("../src/types/lobby").Snapshot[] = [];
   snapshotRows: Record<string, import("../src/types/lobby").SnapshotRow[]> = {};
-  renameError?: number;
   killError = false;
   layoutError = false;
   putError = false;
@@ -62,13 +60,6 @@ class FakeApi implements LobbyApi {
   titles: [string, string][] = [];
   retitleError = 0;
   titleError = 0;
-  async renameSession(o: string, n: string) {
-    if (this.renameError) throw new ApiError(this.renameError, "x");
-    this.renames.push([o, n]);
-    // mirror the backend: rename the tmux session AND the server layout.
-    this.sessionsVal = this.sessionsVal.map((s) => (s.name === o ? { ...s, name: n } : s));
-    this.layoutVal = renameSessionInLayout(this.layoutVal, o, n);
-  }
   async retitleSession(o: string, n: string, title: string) {
     if (this.retitleError) throw new ApiError(this.retitleError, "x");
     this.retitles.push([o, n, title]);

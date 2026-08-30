@@ -14,6 +14,7 @@ import {
   skillViewUrl,
   skillsUrl,
 } from "./config";
+import { fetchWithDeadline } from "./http";
 
 export class SkillsApiError extends Error {
   constructor(
@@ -107,10 +108,29 @@ export interface SkillDiff {
   diff: string;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+/**
+ * Client deadlines, each set ABOVE the bound skills-api puts on the same work,
+ * so a slow-but-legitimate operation finishes and the server's own error is
+ * what a caller sees. Reads take the shared default.
+ *
+ *   source/install  skills-api installTimeout   5 min  (cold npm cache)
+ *   plugin-update   skills-api pluginUpdateTimeout 90 s (a git fetch + npm)
+ *   source/inspect  skills-api inspectTimeout   45 s
+ */
+const INSTALL_TIMEOUT_MS = 330_000;
+const PLUGIN_UPDATE_TIMEOUT_MS = 120_000;
+const INSPECT_TIMEOUT_MS = 60_000;
+/** Everything else that CHANGES something: a copy, a toggle, a file write. */
+const MUTATION_TIMEOUT_MS = 30_000;
+
+async function request<T>(
+  url: string,
+  init?: RequestInit,
+  timeoutMs?: number,
+): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, init);
+    res = await fetchWithDeadline(url, init, timeoutMs);
   } catch (e) {
     // A dropped connection and a refused one are the same thing to the panel:
     // it could not ask. Status 0 distinguishes it from anything the server said.
@@ -124,12 +144,20 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-function post<T>(url: string, body: unknown): Promise<T> {
-  return request<T>(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+function post<T>(
+  url: string,
+  body: unknown,
+  timeoutMs: number = MUTATION_TIMEOUT_MS,
+): Promise<T> {
+  return request<T>(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    timeoutMs,
+  );
 }
 
 export function fetchInventory(): Promise<Inventory> {
@@ -231,7 +259,7 @@ export interface SourceInfo {
 /** Look at a repo without installing anything: what it offers, and whether it is
  *  a skills repo, a plugin marketplace, or both. */
 export function inspectSource(source: string): Promise<SourceInfo> {
-  return post(skillActionUrl("source/inspect"), { source });
+  return post(skillActionUrl("source/inspect"), { source }, INSPECT_TIMEOUT_MS);
 }
 
 /** Install the chosen names from a repo, by running the ecosystem's own
@@ -241,12 +269,12 @@ export function installFromSource(
   kind: "skills" | "plugins",
   names: string[],
 ): Promise<{ source: string; kind: string; names: string[]; output: string }> {
-  return post(skillActionUrl("source/install"), { source, kind, names });
+  return post(skillActionUrl("source/install"), { source, kind, names }, INSTALL_TIMEOUT_MS);
 }
 
 /** Update one marketplace plugin by running the caller's own claude CLI. */
 export function updatePlugin(plugin: string): Promise<{ plugin: string; output: string }> {
-  return post(skillActionUrl("plugin-update"), { plugin });
+  return post(skillActionUrl("plugin-update"), { plugin }, PLUGIN_UPDATE_TIMEOUT_MS);
 }
 
 /** Respawn one session's Claude with --continue so it loads the new skill set.

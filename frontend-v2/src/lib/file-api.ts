@@ -13,6 +13,14 @@ import {
   classifyFile,
   type RendererKind,
 } from "../store/preview.logic";
+import { fetchWithDeadline } from "./http";
+
+/**
+ * A file may be up to 10MB (file-api maxFileSize), which is not an 8-second
+ * transfer on a phone, so reads and writes take a deadline of their own rather
+ * than the shared default. Directory listings are small and take the default.
+ */
+const FILE_TIMEOUT_MS = 60_000;
 
 /**
  * Where one path's bytes are read from. The file-api serves anything under the
@@ -129,7 +137,7 @@ export async function imageErrorMessage(path: string): Promise<string> {
   try {
     const url = contentUrl(path);
     if (!url) return IMAGE_DECODE_MESSAGE;
-    const resp = await fetch(url, { credentials: "same-origin" });
+    const resp = await fetchWithDeadline(url, undefined, FILE_TIMEOUT_MS);
     if (resp.ok) {
       await resp.body?.cancel().catch(() => {});
       return IMAGE_DECODE_MESSAGE;
@@ -179,7 +187,7 @@ export async function readFile(path: string, name = path): Promise<LoadedFile> {
 
   const url = contentUrl(path);
   if (!url) throw new FileApiError(400, readErrorMessage(400, ""));
-  const resp = await fetch(url, { credentials: "same-origin" });
+  const resp = await fetchWithDeadline(url, undefined, FILE_TIMEOUT_MS);
   if (!resp.ok) {
     // 400 is the only status whose body distinguishes anything worth saying (a
     // directory, vs the three refusals that stay deliberately vague), so it is
@@ -227,7 +235,7 @@ export async function readFile(path: string, name = path): Promise<LoadedFile> {
 /** GET /files/list?dir= — directory entries (dirs first, then name). Throws
  *  FileApiError on a non-OK response. */
 export async function listDir(dir: string, all = false): Promise<FileEntry[]> {
-  const resp = await fetch(fileListUrl(dir, all), { credentials: "same-origin" });
+  const resp = await fetchWithDeadline(fileListUrl(dir, all));
   if (!resp.ok) {
     await resp.body?.cancel().catch(() => {});
     throw new FileApiError(resp.status, listErrorMessage(resp.status));
@@ -261,12 +269,15 @@ export function writeErrorMessage(status: number): string {
  * distinctly. The body is drained on failure so the connection can be reused.
  */
 export async function writeFile(path: string, content: string): Promise<void> {
-  const resp = await fetch(fileWriteUrl(), {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, content }),
-  });
+  const resp = await fetchWithDeadline(
+    fileWriteUrl(),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, content }),
+    },
+    FILE_TIMEOUT_MS,
+  );
   if (resp.ok) {
     await resp.body?.cancel().catch(() => {});
     return;

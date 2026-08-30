@@ -7,6 +7,7 @@ import {
   type StoredImage,
 } from "./gallery.logic";
 import { track } from "../telemetry/track";
+import { fetchWithDeadline } from "../lib/http";
 
 /**
  * The session image-gallery store (feature-inventory Cat.8). Owns the overlay's
@@ -47,8 +48,7 @@ export interface GalleryDeps {
 }
 
 async function defaultFetchList(session: string): Promise<StoredImage[]> {
-  const resp = await fetch(clipboardListUrl(session), {
-    credentials: "same-origin",
+  const resp = await fetchWithDeadline(clipboardListUrl(session), {
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = (await resp.json()) as unknown;

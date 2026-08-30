@@ -13,6 +13,7 @@ import type { LobbyStore } from "../store/lobby";
 import type { PrefsStore } from "../store/prefs";
 import { SHARED_KEY } from "../store/collapse";
 import { isGroupVisible } from "./lobby.logic";
+import { OrderMenu } from "./OrderMenu";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
 import { CreateSessionRow } from "./CreateSessionRow";
@@ -62,6 +63,10 @@ export const Sidebar: Component<{
   // (through ProjectGroup for projects and Ungrouped, directly for the
   // shared-with-me section).
   const showLastActive = () => props.prefs.prefs().sidebar.showLastActive;
+
+  // The list's ordering — roamed beside it, and read by the STORE (which is
+  // what orders the model); the header only picks it.
+  const order = () => props.prefs.prefs().sidebar.order;
 
   // Restore picker overlay (2026-08-14). The footer button opens it rather than
   // restoring immediately: after a partial loss the newest snapshot is the
@@ -139,6 +144,11 @@ export const Sidebar: Component<{
       <div class="tl-sidebar-head">
         <div class="tl-sidebar-head-row">
           <h1 class="tl-sidebar-title">tmux sessions</h1>
+          <OrderMenu
+            order={order}
+            onPick={(next) => props.prefs.setPref({ sidebar: { order: next } })}
+            hold={() => store.hold()}
+          />
           <button
             class="tl-icon-btn tl-head-btn"
             type="button"

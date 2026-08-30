@@ -33,6 +33,15 @@ import {
   type PendingPrompt,
   type SlashCommand,
 } from "../components/compose.logic";
+import { fetchWithDeadline } from "../lib/http";
+
+/**
+ * Transcript reads move real bytes — loadEarlier asks for up to 400KB
+ * (EARLIER_STEPS_BYTES) and a full tool result is whatever the wire cap left
+ * behind — so they get a longer deadline than the interactive calls beside
+ * them, which are all a keystroke or a short JSON body.
+ */
+const TRANSCRIPT_READ_TIMEOUT_MS = 30_000;
 
 export interface SessionStore {
   /** Reactive, ordered, deduped event list (Solid store proxy). */
@@ -540,7 +549,7 @@ export function createSessionStore(
     decision: PermissionDecision,
   ): Promise<boolean> => {
     try {
-      const res = await fetch(permissionUrl(reqId), {
+      const res = await fetchWithDeadline(permissionUrl(reqId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ decision }),
@@ -557,9 +566,8 @@ export function createSessionStore(
 
   const send = async (text: string): Promise<boolean> => {
     try {
-      const res = await fetch(promptUrl(session), {
+      const res = await fetchWithDeadline(promptUrl(session), {
         method: "POST",
-        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
@@ -594,9 +602,8 @@ export function createSessionStore(
 
   const interrupt = async (): Promise<void> => {
     try {
-      const res = await fetch(cancelUrl(session), {
+      const res = await fetchWithDeadline(cancelUrl(session), {
         method: "POST",
-        credentials: "same-origin",
       });
       if (!res.ok) opts.notify?.(`Couldn't interrupt (HTTP ${res.status})`, "error");
     } catch {
@@ -607,9 +614,8 @@ export function createSessionStore(
 
   const answer = async (keys: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(keysUrl(session), {
+      const res = await fetchWithDeadline(keysUrl(session), {
         method: "POST",
-        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keys }),
       });
@@ -627,9 +633,8 @@ export function createSessionStore(
   // landed in the field.
   const answerText = async (text: string): Promise<boolean> => {
     try {
-      const res = await fetch(answerTextUrl(session), {
+      const res = await fetchWithDeadline(answerTextUrl(session), {
         method: "POST",
-        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
@@ -643,7 +648,7 @@ export function createSessionStore(
 
   const search = async (q: string): Promise<SearchHit[]> => {
     try {
-      const res = await fetch(searchUrl(session, q), { credentials: "same-origin" });
+      const res = await fetchWithDeadline(searchUrl(session, q));
       if (!res.ok) return [];
       return ((await res.json()) as SearchHit[] | null) ?? [];
     } catch {
@@ -660,7 +665,7 @@ export function createSessionStore(
    */
   const commands = async (): Promise<SlashCommand[]> => {
     try {
-      const res = await fetch(commandsUrl(session), { credentials: "same-origin" });
+      const res = await fetchWithDeadline(commandsUrl(session));
       if (!res.ok) return [];
       return ((await res.json()) as SlashCommand[] | null) ?? [];
     } catch {
@@ -670,7 +675,7 @@ export function createSessionStore(
 
   const pane = async (): Promise<{ pane: string; state: string } | null> => {
     try {
-      const res = await fetch(paneUrl(session), { credentials: "same-origin" });
+      const res = await fetchWithDeadline(paneUrl(session));
       if (!res.ok) return null;
       return (await res.json()) as { pane: string; state: string };
     } catch {
@@ -680,9 +685,11 @@ export function createSessionStore(
 
   const fullResult = async (toolId: string): Promise<string | null> => {
     try {
-      const res = await fetch(resultUrl(session, toolId), {
-        credentials: "same-origin",
-      });
+      const res = await fetchWithDeadline(
+        resultUrl(session, toolId),
+        undefined,
+        TRANSCRIPT_READ_TIMEOUT_MS,
+      );
       if (!res.ok) {
         opts.notify?.("That output is no longer in the transcript", "warning");
         return null;
@@ -708,9 +715,11 @@ export function createSessionStore(
       bytes ??
       EARLIER_STEPS_BYTES[Math.min(step, EARLIER_STEPS_BYTES.length - 1)]!;
     try {
-      const res = await fetch(earlierUrl(session, before, ask), {
-        credentials: "same-origin",
-      });
+      const res = await fetchWithDeadline(
+        earlierUrl(session, before, ask),
+        undefined,
+        TRANSCRIPT_READ_TIMEOUT_MS,
+      );
       if (!res.ok) return 0;
       const body = (await res.json()) as {
         events?: Event[];
