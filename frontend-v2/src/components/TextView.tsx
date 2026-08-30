@@ -24,6 +24,7 @@ import { contextState } from "./context.logic";
 import { planAnswer, runAnswer, type DraftAnswer } from "./answer.logic";
 import { QuestionCard } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { track } from "../telemetry/track";
 import {
   installTextZoom,
   loadTextSize,
@@ -279,12 +280,46 @@ export const TextView: Component<{
     const steps = planAnswer(q.questions, answers);
     if (steps.length === 0) return;
     setAnswering(true);
+    // Which step the sequence reached, so a failure can say WHERE it stopped.
+    // runAnswer walks the plan in order and stops at the first step that does
+    // not verify, so the count of completed key batches locates it.
+    let reached = 0;
+    let paneReads = 0;
     const res = await runAnswer(steps, {
-      keys: props.onKeys,
+      keys: async (batch: string[]) => {
+        reached = Math.max(reached, steps.findIndex((st) => st.batches.includes(batch)) + 1);
+        return props.onKeys!(batch);
+      },
       text: async (t: string) => (await props.onAnswerText?.(t)) ?? false,
-      pane: async () => (await props.onPane?.())?.pane ?? null,
+      pane: async () => {
+        paneReads += 1;
+        return (await props.onPane?.())?.pane ?? null;
+      },
     });
     setAnswering(false);
+    // Default-on, and deliberately content-free: a dialog can quote anything the
+    // session was working on, so this records the SHAPE of the failure and where
+    // it stopped, never what was on screen. Nothing about this path was recorded
+    // before, which is why a report of it could only be answered with guesses.
+    const shape = {
+      "tl.multi": q.questions.some((x) => x.multiSelect),
+      "tl.questions": q.questions.length,
+      "tl.options": q.questions[0]?.options.length ?? 0,
+      "tl.steps": steps.length,
+      "tl.source": recorded() ? "transcript" : "pane",
+    };
+    if (res.ok) {
+      track("text.answer_sent", shape);
+    } else {
+      track("text.answer_failed", {
+        ...shape,
+        "tl.reason": res.reason ?? "unknown",
+        "tl.step": reached,
+        "tl.pane_read": paneReads,
+        // The LENGTH of what we were looking for, not the text.
+        "tl.expect_len": steps[Math.max(0, reached - 1)]?.expect?.length ?? 0,
+      });
+    }
     if (!res.ok) {
       // Latch. Some keys landed and the pane has moved on, so the plan this card
       // is holding no longer describes what is on screen — pressing Send again
