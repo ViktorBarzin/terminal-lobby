@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -106,5 +108,46 @@ func TestPrivopRejectsAnUnknownOp(t *testing.T) {
 	home, _ := mkHome(t, `{}`)
 	if resp := ask(t, home, privRequest{Op: "delete-everything"}); resp.OK {
 		t.Fatal("unknown op accepted")
+	}
+}
+
+// ownHome must come from the password database, never from $HOME.
+//
+// The privop child is spawned as `sudo -n -u <osUser> <exe> -privop`, and sudo
+// may or may not reset HOME depending on how sudoers is configured. A child
+// that trusted the environment would resolve the INVOKING user's home and serve
+// that person's transcripts to a request about someone else. skills-api's copy
+// of this function says the same thing in its comment; this one used to fall
+// back to os.UserHomeDir(), which is $HOME.
+func TestOwnHomeIgnoresTheEnvironment(t *testing.T) {
+	want, err := ownHome()
+	if err != nil {
+		t.Skipf("no password-db entry for this uid: %v", err)
+	}
+	t.Setenv("HOME", "/tmp/not-my-home")
+	got, err := ownHome()
+	if err != nil {
+		t.Fatalf("ownHome after HOME was moved: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ownHome followed $HOME: got %q, want %q", got, want)
+	}
+	if got == "/tmp/not-my-home" {
+		t.Fatal("ownHome returned $HOME verbatim")
+	}
+}
+
+// It resolves THIS process's uid, which under sudo is the target user.
+func TestOwnHomeMatchesThePasswordDatabaseForThisUid(t *testing.T) {
+	u, err := user.LookupId(strconv.Itoa(os.Getuid()))
+	if err != nil {
+		t.Skipf("no password-db entry for uid %d: %v", os.Getuid(), err)
+	}
+	got, err := ownHome()
+	if err != nil {
+		t.Fatalf("ownHome: %v", err)
+	}
+	if got != u.HomeDir {
+		t.Fatalf("ownHome = %q, password database says %q", got, u.HomeDir)
 	}
 }
