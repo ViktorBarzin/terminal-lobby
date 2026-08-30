@@ -117,6 +117,50 @@ describe("the Settings rail", () => {
     expect(title(container)).toBe("Appearance");
   });
 
+  it("reports the page showing, not the page it was sent to", async () => {
+    // Whoever opened it needs this: the rail moves the page afterwards, and an
+    // opener holding its own copy would say the wrong thing about its button.
+    const seen: string[] = [];
+    const { container } = render(() => (
+      <SettingsPanel
+        prefs={fakePrefs()}
+        onClose={() => {}}
+        initialPage="skills"
+        onPageChange={(id) => seen.push(id)}
+      />
+    ));
+    await waitFor(() => expect(seen).toEqual(["skills"]));
+
+    fireEvent.click(rail(container).find((r) => r.textContent === "Terminal")!);
+    await waitFor(() => expect(seen).toEqual(["skills", "terminal"]));
+  });
+
+  it("moves to a page an opener asks for while it is already open", async () => {
+    // The header's Skills button pressed over an open Settings. It must switch
+    // pages rather than leave the panel where it was.
+    const [asked, setAsked] = createSignal<"terminal" | "skills">("terminal");
+    const { container } = render(() => (
+      <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage={asked()} />
+    ));
+    expect(title(container)).toBe("Terminal");
+
+    setAsked("skills");
+    await waitFor(() => expect(title(container)).toBe("Skills"));
+    // Being sent somewhere is not navigating there, so nothing is remembered.
+    expect(localStorage.getItem(LAST_PAGE_KEY)).toBeNull();
+  });
+
+  it("steps into the page on Enter, so the keyboard is not stuck on the rail", async () => {
+    const { container } = panel("terminal");
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Terminal"));
+
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    await waitFor(() => {
+      const page = container.querySelector(".tl-set-page")!;
+      expect(page.contains(document.activeElement)).toBe(true);
+    });
+  });
+
   it("adds the admin page, below its own rule, only for an admin", () => {
     const admin = render(() => (
       <SettingsPanel

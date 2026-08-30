@@ -473,17 +473,31 @@ All of the following ship in the deployed build:
 - **Mobile** — a coarse-pointer soft-key toolbar (raw byte sequences a phone
   keyboard cannot produce), soft Ctrl/Alt modifiers, and visualViewport
   plumbing so the soft keyboard cannot cover the composer.
-- **Settings** — an overlay with the 9-theme grid (per-device), terminal font
-  size (roamed + dual-written for the ttyd page), the session-list last-active
-  time (`sidebar.showLastActive`, roamed, **off by default** — it hides the
-  relative "5m ago", never a running session's live working timer), the
-  new-session command, keyboard toggles and notification prefs; roamed fields
-  ride `/prefs`. It also carries **Data used** — what the lobby cost THIS
-  browser profile in bytes that crossed the link, for today, the last 7 days
-  and the last two calendar months, split into five feature buckets, with the
+- **Settings** — one overlay, navigated by a category rail with a single page
+  showing: Appearance, Terminal, Sessions, Keyboard, Notifications, Network,
+  Privacy, then Skills, then Act as user for an admin. ↑↓ walk the rail, Enter
+  steps into the page, and it reopens where you left it (`tl:settings:page`,
+  per device). Each row is label-left/control-right; explanations sit behind a
+  ⓘ that expands in place, except the three that describe a consequence
+  (acting as another user, clearing local data, what diagnostics send). A
+  `this device` chip marks what does not roam — everything unmarked rides
+  `/prefs`. Notable rows: the nine themes as swatch cards painting their own
+  colours (per-device), terminal font size (roamed + dual-written for the ttyd
+  page), the session-list last-active time (`sidebar.showLastActive`, roamed,
+  **off by default** — it hides the relative "5m ago", never a running
+  session's live working timer), and the new-session command. **Network**
+  carries **Data used** — what the lobby cost THIS browser profile in bytes
+  that crossed the link, for today, the last 7 days and the last two calendar
+  months, split into five feature buckets and by named network, with the
   Full/Auto/Light experience pin for this device. Counting continues while
   "Send diagnostics" is off: that toggle governs sending, and the counter never
   leaves the browser (docs/adr/0008).
+- **Skills** (docs/adr/0011) — a page on that rail, reachable in one click from
+  its own header button, which opens Settings straight onto it. A tab per list
+  with a count — this account's skills, each other account's with a
+  same/differs verdict, the marketplace plugins, the live sessions — a
+  name/description filter, and install / replace-with-backup / disable /
+  remove / update / restart on the row itself.
 - **Self-update** (ADR-0007) — the page polls its own served bytes and reloads
   itself when the asset id changes, deferring while a terminal is attached until
   the next resume. `index.html` and `term.html` each carry their own id.

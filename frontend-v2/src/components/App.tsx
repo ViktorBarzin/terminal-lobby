@@ -26,6 +26,7 @@ import {
 import { Sidebar } from "./Sidebar";
 import { SessionView } from "./SessionView";
 import { SettingsPanel, type PageId } from "./SettingsPanel";
+import { openerAction } from "./settings/rail";
 import { Toaster } from "./Toaster";
 import { startNetworkWatch } from "../diagnostics/network";
 import { createPrefsStore } from "../store/prefs";
@@ -262,16 +263,33 @@ export const App: Component = () => {
 
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   // Skills is a page on the Settings rail, so both header buttons open the same
-  // overlay. This says which page the opener asked for; undefined leaves the
-  // panel on whichever page it was last closed on.
+  // overlay. This is the page SHOWING — seeded by whoever opened it, then kept
+  // honest by the panel's onPageChange, because the rail moves it afterwards
+  // and a copy that ignored that would make the buttons lie.
   const [settingsPage, setSettingsPage] = createSignal<PageId | undefined>(undefined);
+  /**
+   * Open the panel, or act on it when it is already open. What a press means
+   * with two buttons over one dialog is decided in rail.ts, where it is
+   * testable; this wires the verdict up.
+   */
   const openSettings = (page?: PageId): void => {
-    if (settingsOpen()) {
+    const act = openerAction({
+      isOpen: settingsOpen(),
+      showing: settingsPage(),
+      pressed: page,
+    });
+    if (act.kind === "close") {
       setSettingsOpen(false);
       return;
     }
-    if (page !== "skills") track("settings.opened");
-    setSettingsPage(page);
+    if (act.kind === "goto") {
+      setSettingsPage(act.page);
+      return;
+    }
+    // Skills has always been its own thing to reach for; counting it as a
+    // Settings visit would overstate how often people open Settings.
+    if (act.page !== "skills") track("settings.opened");
+    setSettingsPage(act.page);
     setSettingsOpen(true);
   };
   const skillsOpen = () => settingsOpen() && settingsPage() === "skills";
@@ -424,14 +442,7 @@ export const App: Component = () => {
       const acts: PaletteAction[] = [
         { label: "New session", hint: "name box", keepFocus: true, run: () => run("session.new") },
         { label: "Keyboard shortcuts", hint: "/", run: () => run("shortcuts.help") },
-        {
-          label: "Skills",
-          hint: "install, disable, share",
-          run: () => {
-            setSettingsPage("skills");
-            setSettingsOpen(true);
-          },
-        },
+        { label: "Skills", hint: "install, disable, share", run: () => openSettings("skills") },
       ];
       if (cur) {
         acts.push(
@@ -743,6 +754,7 @@ export const App: Component = () => {
           prefs={prefs}
           onClose={() => setSettingsOpen(false)}
           initialPage={settingsPage()}
+          onPageChange={setSettingsPage}
           keybindings={{
             enabled: engine.enabled,
             setEnabled: engine.setEnabled,

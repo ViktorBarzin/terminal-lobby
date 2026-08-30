@@ -69,7 +69,6 @@ export const PrivacyPage: Component<{
         </Row>
         <ActionRow
           label="Clear local data"
-          deviceOnly
           note="Removes this browser's saved theme, font size, sidebar layout, gestures and notification opt-in, then reloads. Your tmux sessions are not affected."
         >
           <button

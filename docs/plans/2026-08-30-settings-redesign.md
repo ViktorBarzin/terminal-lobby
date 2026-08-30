@@ -163,8 +163,14 @@ stays unmarked; the rows that live only in this browser carry a quiet
 
 | Scope | Rows |
 |---|---|
-| this device | theme, app shortcuts, flow control, diagnostics, connection tier, byte counters, notification bell |
-| roams | font size, line height, letter spacing, bold weight, cursor shape, blink, scroll settings, link copy chip, session list, new-session command, the two notification toggles |
+| chipped `this device` | theme, app shortcuts, flow control, send diagnostics, connection tier |
+| roams, unmarked | font size, line height, letter spacing, bold weight, cursor shape, blink, scroll settings, link copy chip, session list, new-session command, the two notification toggles |
+
+Two device-scoped things carry no chip because they are not settings rows: the
+byte counters say it in the group's footnote ("Counted on this device"), and
+the notification bell is a readout under a group headed "This device". Actions
+go unchipped too — "Clear local data" and "Send a test" have no stored value to
+roam, and both name their scope in the words beside them.
 
 ### Text controls
 
@@ -209,8 +215,17 @@ already on Skills, so the one-click path stays exactly as it is.
 ## Opening
 
 The panel reopens on the page you last used, stored per device. Focus lands on
-the rail, so ↑↓ walks categories and Enter or Tab moves into the page. Nothing
-captures keystrokes on open.
+the rail, so ↑↓ walk categories, Home and End jump to its ends, and Enter or
+Tab moves into the page. Nothing captures keystrokes on open.
+
+Two buttons now open one dialog, which gives a press three meanings rather than
+two. The button for the page you are looking at closes the panel; the other one
+takes you to its page rather than closing the surface you asked to see. That
+rule lives in `rail.ts` as `openerAction`, away from the shell, because the
+first draft put it inline in `App.tsx` and got it wrong — pressing Skills over
+an open Settings closed the dialog. The panel reports the page SHOWING back to
+its opener, so the rule is judged against that rather than against the page the
+opener last asked for, which the rail moves out from under it.
 
 On a phone, below 720px, the rail turns into a row of chips above the page
 rather than a screen of its own.
@@ -229,6 +244,9 @@ rail better, and the page components do not depend on which one wraps them.
 - The Data used breakdown's internals — periods, named networks, buckets, the
   `≈` marker for modelled compressed streams. It gains a page of its own and
   the connection tier is promoted from a fieldset inside it to a row above it.
+  One timing does change: the network re-check that fired on any Settings open
+  now fires on landing on the Network page, so it no longer asks the server on
+  behalf of someone who came to change their theme.
 - The dialog contract Settings and Skills share: `role="dialog"`,
   `aria-modal`, a wrapping Tab trap, Escape to close, focus returned to the
   opener.

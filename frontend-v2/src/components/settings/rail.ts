@@ -72,3 +72,35 @@ export const resolvePage = (
   const hit = entries.find((e) => e.id === stored);
   return hit ? hit.id : (entries[0]?.id ?? "appearance");
 };
+
+/** What pressing an opener's button should do to a panel that may already be
+ *  open. `goto` is the case that is easy to miss: two buttons, one dialog. */
+export type OpenerAction =
+  | { kind: "open"; page: PageId | undefined }
+  | { kind: "close" }
+  | { kind: "goto"; page: PageId };
+
+/**
+ * The rule behind the header's two buttons, and the phone's two menu items.
+ *
+ * Settings and Skills were separate overlays that toggled independently. They
+ * are one dialog now, so a button press has three possible meanings and only
+ * one of them is "close": the button for the page you are looking at closes the
+ * panel, and the other one takes you to its page rather than shutting the
+ * surface you asked to see.
+ *
+ * `pressed` is undefined for the gear, which means Settings-in-general and so
+ * has no page of its own to compare against.
+ */
+export const openerAction = (state: {
+  isOpen: boolean;
+  /** the page the panel is SHOWING, not the one it was last sent to. */
+  showing: PageId | undefined;
+  pressed: PageId | undefined;
+}): OpenerAction => {
+  if (!state.isOpen) return { kind: "open", page: state.pressed };
+  if (state.pressed === undefined || state.pressed === state.showing) {
+    return { kind: "close" };
+  }
+  return { kind: "goto", page: state.pressed };
+};
