@@ -110,6 +110,9 @@ export const App: Component = () => {
   const notify = (message: string, kind: NotifyKind) =>
     toasts.push({ kind, message });
 
+  // Ahead of the lobby store, which reads the roamed session ordering out of it.
+  const prefs = createPrefsStore();
+
   const store = createLobbyStore({
     initialSelected: readInitialSelection(),
     notify,
@@ -119,10 +122,15 @@ export const App: Component = () => {
     onActivate: () => {
       if (isMobileFlip()) setCollapsed(true);
     },
+    // Manual / created / last-active, roamed. The store owns the sort so the
+    // cards, the Alt+1..0 chips and a drop's anchor all read one order; a drag
+    // that names a position writes the visible order into the layout and hands
+    // the list back to manual.
+    sessionOrder: () => prefs.prefs().sidebar.order,
+    setSessionOrder: (order) => prefs.setPref({ sidebar: { order } }),
   });
   onCleanup(() => store.dispose());
 
-  const prefs = createPrefsStore();
   // The skill manager's store (ADR-0011). Created here so it survives the panel
   // being closed and reopened, but it fetches nothing until the group renders.
   const skills = createSkillsStore();

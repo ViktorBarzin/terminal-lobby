@@ -190,6 +190,47 @@
   border-color: var(--accent);
   opacity: 1;
 }
+/* The ordering picker. Its popup hangs off this, so it owns the positioning
+   context the way .tl-group-actions does for a group's ⋯ menu. */
+.tl-order {
+  flex: 0 0 auto;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+/* Wider than its siblings because it carries a word: which ordering is on is
+   worth a glance, not a tap. The word goes below 520px (see the narrow-header
+   block), leaving a 32/40px box exactly like ↻ and the bell. */
+.tl-order-btn {
+  width: auto;
+  gap: 6px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+.tl-order-glyph {
+  font-size: 14px;
+}
+.tl-order-label {
+  font-size: 12px;
+}
+/* Tick column, label, hint. The tick is drawn in a fixed-width column that
+   stays put when empty, so the three labels share one left edge. */
+.tl-order-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.tl-order-tick {
+  flex: 0 0 auto;
+  width: 10px;
+  color: var(--accent);
+}
+.tl-order-hint {
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
 /* Who you are and whose sessions these are. Hidden on a coarse pointer, as on
    the vanilla page: on a phone the list is worth more than the explanation. */
 .tl-sidebar-sub {
@@ -1204,6 +1245,17 @@
      pillar-#2 research asked for and never got built. */
   .tl-viewswitch .tl-seg-label {
     display: none;
+  }
+  /* Same trade for the sidebar's ordering picker, which shares this header row
+     with the title, ↻ and the bell. At 390px the word costs about 45px of the
+     ~230px the title has left; the glyph, the tooltip and the tick inside the
+     menu all still say which ordering is on. */
+  .tl-order-label {
+    display: none;
+  }
+  .tl-order-btn {
+    width: 40px;
+    padding: 0;
   }
   .tl-viewswitch .tl-seg {
     padding: 0 9px;
