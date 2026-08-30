@@ -18,6 +18,11 @@ import {
   type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
+import {
+  applySessionOrder,
+  captureVisibleOrder,
+  type SessionOrder,
+} from "../components/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
 import type { DropSpot } from "../mobile/reorder";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
@@ -111,6 +116,21 @@ export interface LobbyStoreOptions {
   /** surface a store message to the app's toast stack (in ADDITION to the
    *  legacy `toast()` signal). Omitted in tests. */
   notify?: (message: string, kind: NotifyKind) => void;
+  /**
+   * Which order the session list comes in — the roamed `sidebar.order` pref,
+   * read here rather than in the sidebar so that ONE ordered model feeds the
+   * cards, the Alt+1..0 chips, the next/prev-session chords and the anchor a
+   * drop resolves against. Sorting in the render instead would have left the
+   * keyboard walking an order nobody could see.
+   *
+   * Omitted means `manual`: exactly the behaviour every caller had before the
+   * pref existed. The default that reaches a PERSON is the pref store's
+   * (created time), which is where a default belongs.
+   */
+  sessionOrder?: Accessor<SessionOrder>;
+  /** Change the ordering. A drop that names a position calls this with
+   *  "manual" — see `move`. */
+  setSessionOrder?: (order: SessionOrder) => void;
 }
 
 const LAYOUT_GRACE_MS = 4000;
@@ -256,10 +276,19 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   // The docked scratch shell is not a thread: it has its own panel, so it is
   // kept out of the sidebar (vanilla parity). ✕ clears layout.dock, and it
   // reappears here as an ordinary card the very next derive.
+  const sessionOrder = (): SessionOrder => opts.sessionOrder?.() ?? "manual";
+
+  // applySessionOrder sits between the two on purpose: deriving decides which
+  // sessions each group HAS, the ordering decides the sequence they come in,
+  // and stabilize then hands back the group objects that came out the same
+  // either way.
   const model = createMemo<SidebarModel>((prev) =>
     stabilizeModel(
       prev,
-      deriveSidebar(layout(), hideDockedSession(mergedSessions(), layout()), me()),
+      applySessionOrder(
+        deriveSidebar(layout(), hideDockedSession(mergedSessions(), layout()), me()),
+        sessionOrder(),
+      ),
     ),
   );
 
@@ -750,14 +779,34 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   }
 
   async function move(name: string, group: string, anchor?: DropAnchor): Promise<void> {
+    // A drop that names a POSITION cannot be honoured while a timestamp is
+    // deciding positions: the layout is the only place a position can be
+    // written, and the sort would put the card straight back on the next
+    // derive. So the list hands ordering back to the user — after freezing what
+    // is on screen into the layout, which is what keeps every card the finger
+    // did not touch in the seat it already had. A move that names only a GROUP
+    // (the card menu's "Move to…", a drop on a group header) asks for no
+    // position at all, so it leaves the ordering alone.
+    const wasOrder = sessionOrder();
+    const handBack = wasOrder !== "manual" && !!anchor;
+    const frozen = handBack ? captureVisibleOrder(layout(), model()) : layout();
     // Swept-in members occupy rendered positions they have no raw entry for, so
     // nothing can be placed relative to them (nor after them) until they are
     // materialized — Ungrouped's leftovers, and a project's members that only
     // the session record assigned to it.
-    const base = materializeGroup(layout(), group, groupRender(group));
-    await saveLayout(
-      anchor ? moveSessionToAnchor(base, name, group, anchor) : moveSession(base, name, group),
-    );
+    const base = materializeGroup(frozen, group, groupRender(group));
+    const next = anchor
+      ? moveSessionToAnchor(base, name, group, anchor)
+      : moveSession(base, name, group);
+    // Before the write, not after: saveLayout applies the new layout locally
+    // straight away, and a frame rendered while the ordering still ran would
+    // sort the dropped card back where it came from.
+    if (handBack) opts.setSessionOrder?.("manual");
+    const ok = await saveLayout(next);
+    // saveLayout rolls the layout back on a failed PUT; the ordering it changed
+    // on the way in goes back with it, or the list is left in manual showing an
+    // arrangement the server never took.
+    if (!ok && handBack) opts.setSessionOrder?.(wasOrder);
   }
 
   async function moveGroupBy(groupName: string, dir: -1 | 1): Promise<void> {

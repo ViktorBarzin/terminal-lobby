@@ -1,4 +1,9 @@
 import { createSignal, type Accessor } from "solid-js";
+import {
+  DEFAULT_SESSION_ORDER,
+  isSessionOrder,
+  type SessionOrder,
+} from "../components/order.logic";
 import { apiUrl, PREFS_PATH } from "../lib/config";
 import { track } from "../telemetry/track";
 
@@ -66,9 +71,13 @@ export interface Prefs {
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
    *  each card — OFF by default, and deliberately not the running session's
    *  live working timer, which is progress on the turn in flight rather than a
-   *  timestamp. Its own namespace because the vanilla page never wrote one, so
-   *  there is nothing to collide with. */
-  sidebar: { showLastActive: boolean };
+   *  timestamp. `order` is which order the cards come in (manual / created /
+   *  active), roamed rather than per-browser because it is a view preference
+   *  about the SAME list on every device — a phone that ordered itself
+   *  differently from the laptop beside it would be answering a question
+   *  nobody asked. Its own namespace because the vanilla page never wrote one,
+   *  so there is nothing to collide with. */
+  sidebar: { showLastActive: boolean; order: SessionOrder };
 }
 
 export interface PrefsPatch {
@@ -114,7 +123,7 @@ export const PREF_DEFAULTS: Prefs = {
   gestures: { wheelSmooth: true, wheelSpeed: 1 },
   session: { newCommand: DEFAULT_NEW_COMMAND },
   notify: { onDone: true, onAwaiting: true },
-  sidebar: { showLastActive: false },
+  sidebar: { showLastActive: false, order: DEFAULT_SESSION_ORDER },
 };
 
 // ---- pure helpers (exported for unit tests) -------------------------------
@@ -208,6 +217,10 @@ export function coercePrefs(raw: unknown): Prefs {
       // "true" string. Every doc written before this pref existed lacks the
       // namespace entirely, which is what makes it off for everyone already.
       showLastActive: sidebar.showLastActive === true,
+      // An absent key resolves to created-time, which is how the default
+      // reaches the people who already have a hand-arranged layout saved: the
+      // arrangement stays in the layout, waiting for them to ask for it back.
+      order: isSessionOrder(sidebar.order) ? sidebar.order : DEFAULT_SESSION_ORDER,
     },
   };
 }
@@ -251,7 +264,11 @@ export function composeDoc(
       onDone: prefs.notify.onDone,
       onAwaiting: prefs.notify.onAwaiting,
     },
-    sidebar: { ...sidebar, showLastActive: prefs.sidebar.showLastActive },
+    sidebar: {
+      ...sidebar,
+      showLastActive: prefs.sidebar.showLastActive,
+      order: prefs.sidebar.order,
+    },
   };
 }
 
@@ -309,6 +326,7 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
     prev.sidebar.showLastActive,
     next.sidebar.showLastActive,
   );
+  diff("sidebar.order", prev.sidebar.order, next.sidebar.order);
   return out;
 }
 
