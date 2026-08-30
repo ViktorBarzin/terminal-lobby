@@ -6,6 +6,7 @@ import {
 } from "../components/order.logic";
 import { apiUrl, PREFS_PATH } from "../lib/config";
 import { track } from "../telemetry/track";
+import { fetchWithDeadline } from "../lib/http";
 
 /**
  * Roamed preferences — the whole-document, last-writer-wins store that mirrors
@@ -421,7 +422,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   const fetchImpl: FetchLike | undefined =
     opts.fetchImpl ??
     (typeof fetch !== "undefined"
-      ? (input, init) => fetch(input, init)
+      ? (input, init) => fetchWithDeadline(input, init)
       : undefined);
 
   // rawDoc is the canonical persisted document (unknown keys preserved). The
@@ -455,7 +456,6 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
       const sentMark = lsGet(PREFS_DIRTY_KEY);
       void fetchImpl(apiUrl(PREFS_PATH), {
         method: "PUT",
-        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(rawDoc),
       })
@@ -525,7 +525,6 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
     let doc: unknown;
     try {
       const resp = await fetchImpl(apiUrl(PREFS_PATH), {
-        credentials: "same-origin",
       });
       if (!resp.ok) return; // keep local; next boot retries
       doc = await resp.json();

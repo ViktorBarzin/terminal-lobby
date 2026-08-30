@@ -50,6 +50,7 @@ import { createDockStore } from "../store/dock";
 import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
 import { installSwipe } from "../mobile/swipe";
 import { installViewportSync } from "../mobile/viewport";
+import { installSoftKeysReserve } from "../mobile/softkeys-reserve";
 import { installFocusReveal } from "../mobile/reveal";
 import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
@@ -180,6 +181,10 @@ export const App: Component = () => {
       stopReveal();
     });
   });
+
+  // The soft-key height reservation, installed once for the app — see the
+  // module for why it cannot live in SessionView.
+  installSoftKeysReserve(createCoarsePointer());
 
   // ---- PWA notifications (pillar #2 — inventory Cat.9) ---------------------
   // A plain snapshot of the poll list feeds the tab title/favicon badge + the

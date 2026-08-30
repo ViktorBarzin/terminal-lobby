@@ -425,16 +425,6 @@ export const SessionView: Component<{
     const el = document.activeElement as HTMLElement | null;
     el?.blur?.();
   };
-  // Reserve the toolbar height on <body> while the toolbar is mounted.
-  createEffect(() => {
-    if (typeof document === "undefined") return;
-    document.body.classList.toggle("has-soft-keys", coarse());
-  });
-  onCleanup(() => {
-    if (typeof document !== "undefined") {
-      document.body.classList.remove("has-soft-keys");
-    }
-  });
   // Keyboard-offset plumbing (--kb-offset / --sk-h / --app-vh) lives in App,
   // not here. It used to be installed by this component, which meant it ran
   // once PER KEPT SESSION — every session opened in the tab stays mounted, so

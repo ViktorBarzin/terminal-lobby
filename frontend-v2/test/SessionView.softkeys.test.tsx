@@ -78,12 +78,17 @@ describe("<SessionView> — the soft keys are the terminal view's", () => {
     expect(document.getElementById("soft-keys")).not.toBeNull();
   });
 
-  // The reservation RULE stays on: text mode still has to clear the keyboard,
-  // it just reserves 0 for a toolbar instead of a toolbar's height.
-  it("keeps body.has-soft-keys on, so the keyboard is still reserved for", () => {
+  // The reservation RULE stays on in text mode — it just reserves 0 for a
+  // toolbar instead of a toolbar's height — but the class is written by the
+  // APP, not here. It is one piece of shared document state and this component
+  // is mounted once per kept session, so a per-session writer let the first
+  // session to close take the reservation from all the others (installSoftKeysReserve,
+  // and test/softkeys-reserve.test.ts, which owns that behaviour now).
+  it("does not write the shared body class itself", () => {
     stubPhone();
+    document.body.classList.remove("has-soft-keys");
     const { container } = render(() => <SessionView session="qa-softkeys" />);
     fireEvent.click(segment(container as HTMLElement, /Text/i));
-    expect(document.body.classList.contains("has-soft-keys")).toBe(true);
+    expect(document.body.classList.contains("has-soft-keys")).toBe(false);
   });
 });
