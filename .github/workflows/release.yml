@@ -139,8 +139,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Two copies of one file. The versioned name is what the registry and
+          # a human looking at the release want; the unversioned one is what
+          # makes /releases/latest/download/terminal-lobby_amd64.deb resolve,
+          # which is the install command the README gives. Without it that URL
+          # 404s, because the asset name carries the version.
+          cp "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
+             "out/terminal-lobby_amd64.deb"
           gh release create "${{ steps.version.outputs.tag }}" \
             "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
+            "out/terminal-lobby_amd64.deb" \
             --title "${{ steps.version.outputs.tag }}" --generate-notes
 
       # Runners cannot route to the devvm, so the trigger goes through Woodpecker,
