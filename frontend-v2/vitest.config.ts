@@ -1,8 +1,8 @@
 import { defineConfig } from "vitest/config";
 import solid from "vite-plugin-solid";
 
-// Separate from vite.config.ts on purpose: the singlefile plugin's build
-// rewrites must not run during tests, and Solid needs its dev/browser export
+// Separate from vite.config.ts on purpose: the build's asset hashing and
+// chunking must not run during tests, and Solid needs its dev/browser export
 // conditions so `render()` uses the DOM runtime (not the SSR one).
 export default defineConfig({
   plugins: [solid()],
