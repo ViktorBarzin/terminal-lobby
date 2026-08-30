@@ -22,6 +22,11 @@ no sudo, your sessions and nobody else's. Drop `TL_BASIC_AUTH` and the container
 asks for nothing, which is fine on a laptop and not on anything reachable. Put a
 proxy in front instead and set `TL_TRUST_FORWARDED_USER=1`.
 
+It listens on 7681 unless `TL_PORT` says otherwise, and a host that assigns the
+port itself can set `PORT`, so the image runs on a container platform without
+being configured for one. `docs/deployment.md` has the rest of the container's
+settings.
+
 ## Install on a machine
 
 ```sh

@@ -131,6 +131,31 @@ The single-user image is built and published by `.github/workflows/container.yml
 which smoke-tests it before pushing, so a broken image is never published. It is
 for people running terminal-lobby elsewhere; this box installs the package.
 
+nginx inside the container is the only thing that listens. It publishes 7681 and
+routes to the five services and ttyd on loopback, so those ports are internal and
+the container needs exactly one published.
+
+| variable | default | what it does |
+|---|---|---|
+| `TL_PORT` | `7681` | the port nginx publishes |
+| `PORT` | unset | the same thing under the name a container platform assigns; `TL_PORT` wins when both are set |
+| `TL_BASIC_AUTH` | unset | `user:pass`; nginx asks for it and the username becomes the identity |
+| `TL_TRUST_FORWARDED_USER` | unset | take the identity from the proxy in front instead |
+| `TL_AUTH_HEADER` | `X-Forwarded-User` | which header that is |
+| `TL_USER` | `dev` | the account everything runs as |
+
+A `TL_PORT` that is not a number, is outside 1-65535, or collides with a service
+inside the container is refused at startup rather than at nginx's bind.
+
+Mount a volume at `/home/dev` to keep sessions, projects and files across a
+restart; everything the lobby writes is under that home.
+
+> [!IMPORTANT]
+> With neither `TL_BASIC_AUTH` nor a proxy in front, anything that reaches the
+> published port gets a shell. The entrypoint logs that on startup. It is a
+> laptop default, not one to carry onto a host that gives the container a public
+> address.
+
 ## What used to be here
 
 `deploy.sh`, `deploy-v2.sh` and `deploy-services.sh`, 929 lines that
