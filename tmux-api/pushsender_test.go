@@ -78,30 +78,24 @@ func (s *stubStater) set(m map[string]string) {
 	s.m = m
 }
 
-func (s *stubStater) states(string) map[string]string {
+func (s *stubStater) read(string) (map[string]string, map[string]int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := make(map[string]string, len(s.m))
 	for k, v := range s.m {
 		cp[k] = v
 	}
-	return cp
+	act := make(map[string]int64, len(s.act))
+	for k, v := range s.act {
+		act[k] = v
+	}
+	return cp, act
 }
 
 func (s *stubStater) setAct(m map[string]int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.act = m
-}
-
-func (s *stubStater) activity(string) map[string]int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := make(map[string]int64, len(s.act))
-	for k, v := range s.act {
-		cp[k] = v
-	}
-	return cp
 }
 
 // pushRecorder is a stub push service: it counts POSTs per endpoint path and

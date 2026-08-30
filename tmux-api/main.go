@@ -519,17 +519,33 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 // nil when tmux errors (no server / not reachable); a healthy server with no
 // sessions returns a non-nil empty slice.
 func userSessions(osUser string) []Session {
+	sessions, _ := userSessionsAndActivity(osUser)
+	return sessions
+}
+
+// userSessionsAndActivity is userSessions plus the client-activity reading the
+// push sender gates on, which comes out of the same `list-clients` call. The
+// two used to be separate forks a few milliseconds apart, once per subscribed
+// user per tick, for two halves of one answer.
+//
+// The activity map is nil when tmux could not be reached or nothing is
+// attached; the gate reads that as "no data" and fails open, as before.
+func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	out, err := tmuxCmd(osUser, "list-sessions", "-F", tmuxListFmt).Output()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	sessions := parseSessions(out)
-	// Who is DRIVING, as opposed to merely attached (Watch mode). One extra
-	// fork per list build, behind the same sessionsTTL cache as the rest; a
-	// failure here just leaves every session undriven, which is the safe way
-	// round — the lobby then attaches read-write exactly as it did before.
-	if clients, cerr := tmuxCmd(osUser, "list-clients", "-F", drivenListFmt).Output(); cerr == nil {
+	var activity map[string]int64
+	// Who is DRIVING, as opposed to merely attached (Watch mode), and when each
+	// session last saw a keystroke. One extra fork per list build, behind the
+	// same sessionsTTL cache as the rest; a failure here just leaves every
+	// session undriven, which is the safe way round — the lobby then attaches
+	// read-write exactly as it did before.
+	if raw, cerr := tmuxCmd(osUser, "list-clients", "-F", clientsListFmt).Output(); cerr == nil {
+		clients := parseClients(raw)
 		markDriven(sessions, clients)
+		activity = latestActivity(clients)
 		// Driven is what "last driven" is derived from, so the stamp is written
 		// here, while the client list is in hand. A read-only client reaches
 		// markDriven and is skipped by it, which is exactly why watching a
@@ -548,7 +564,7 @@ func userSessions(osUser string) []Session {
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
 	}
-	return sessions
+	return sessions, activity
 }
 
 // buildSessionsBody returns the JSON body to write on the wire for GET
