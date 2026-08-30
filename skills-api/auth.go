@@ -91,8 +91,3 @@ func init() {
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
 	return actAsGate.ResolveOSUser(w, r)
 }
-
-// resolveRealOSUser → the CALLER's own mapped OS user, ignoring ?as= entirely.
-func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	return actAsGate.ResolveRealOSUser(w, r)
-}

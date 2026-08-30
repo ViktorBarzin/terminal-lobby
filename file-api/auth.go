@@ -39,12 +39,6 @@ func userHome(osUser string) string {
 	return filepath.Join(homeBase, osUser)
 }
 
-// loadUserMap reads /etc/ttyd-user-map → map[authentik_local]os_user.
-// Format: "<auth>=<os_user>[:<cwd>]" per line. Comments (#) and blanks ignored.
-// Re-read on every request — file is small and changes are rare. Ported
-// verbatim from tmux-api/main.go (and clipboard-upload/main.go).
-func isMappedOSUser(osUser string) bool { return actAsGate.IsTarget(osUser) }
-
 // actAsGate decides whether a ?as= request may proceed. A var only as a test
 // seam (actas_test.go points it at a fixture admin list); production never
 // reassigns it. Shared with tmux-api and clipboard-upload so the admin check
@@ -70,9 +64,4 @@ func init() {
 // this service already does the rest.
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
 	return actAsGate.ResolveOSUser(w, r)
-}
-
-// resolveRealOSUser → the CALLER's own mapped OS user, ignoring ?as= entirely.
-func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	return actAsGate.ResolveRealOSUser(w, r)
 }

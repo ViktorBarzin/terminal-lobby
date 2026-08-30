@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -597,5 +598,71 @@ func TestNewProjectIDUnique(t *testing.T) {
 			t.Fatalf("duplicate project ID %q", id)
 		}
 		seen[id] = true
+	}
+}
+
+// Every project mutation is member-authorized — that IS co-equal governance
+// (CONTEXT.md: any member may rename, re-dir, add or remove members, set the
+// mode, or delete it). The lookup and the check used to sit at each of six call
+// sites, where a seventh operation could omit them and nothing would notice.
+func TestUpdateProjectRefusesANonMember(t *testing.T) {
+	swapProjectStore(t)
+	if err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		ps.Projects = append(ps.Projects, GlobalProject{
+			ID: "p1", Name: "work", Members: []Member{{OSUser: "alice"}},
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ran := false
+	err := updateProject("p1", "bob", func(ps *ProjectSet, i int) error {
+		ran = true
+		return nil
+	})
+	if !errors.Is(err, errNotMember) {
+		t.Fatalf("err = %v, want errNotMember", err)
+	}
+	if ran {
+		t.Fatal("the body ran for a non-member")
+	}
+}
+
+func TestUpdateProjectReportsAMissingProject(t *testing.T) {
+	swapProjectStore(t)
+	err := updateProject("nope", "alice", func(ps *ProjectSet, i int) error {
+		t.Fatal("the body ran for a project that does not exist")
+		return nil
+	})
+	if !errors.Is(err, errProjectNotFound) {
+		t.Fatalf("err = %v, want errProjectNotFound", err)
+	}
+}
+
+// The index, not the project: deleteProject splices ps.Projects[i] out and
+// addSession scans every project for a duplicate ref.
+func TestUpdateProjectHandsTheBodyTheIndexIntoTheLiveSet(t *testing.T) {
+	swapProjectStore(t)
+	if err := projectStoreInstance.update(func(ps *ProjectSet) error {
+		ps.Projects = append(ps.Projects,
+			GlobalProject{ID: "p0", Name: "other", Members: []Member{{OSUser: "alice"}}},
+			GlobalProject{ID: "p1", Name: "work", Members: []Member{{OSUser: "alice"}}})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateProject("p1", "alice", func(ps *ProjectSet, i int) error {
+		if ps.Projects[i].ID != "p1" {
+			t.Fatalf("index %d points at %q", i, ps.Projects[i].ID)
+		}
+		ps.Projects = append(ps.Projects[:i], ps.Projects[i+1:]...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ps, _ := projectStoreInstance.load()
+	if len(ps.Projects) != 1 || ps.Projects[0].ID != "p0" {
+		t.Fatalf("after the splice: %+v", ps.Projects)
 	}
 }
