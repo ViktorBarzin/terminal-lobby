@@ -51,6 +51,15 @@ func isMappedOSUser(osUser string) bool { return actAsGate.IsTarget(osUser) }
 // has exactly one implementation.
 var actAsGate = authuser.Default
 
+// Every act-as request is recorded. Unlike tmux-api, file-api is not polled,
+// so these lines are one per user action rather than one per five seconds,
+// and a write under someone else's account is worth a record.
+func init() {
+	actAsGate.OnActAs = func(realOSUser, osUser, method, path string) {
+		log.Printf("act-as: %s acting as %s (%s %s)", realOSUser, osUser, method, path)
+	}
+}
+
 // resolveOSUser → the OS user this request ACTS AS: normally the caller from
 // the Authentik header, or an act-as target when an administrator asked for one
 // and is entitled to it. Returns "" after writing the appropriate 401/403/500.
@@ -60,24 +69,10 @@ var actAsGate = authuser.Default
 // and their writes land with bob's ownership — the cross-user path built for
 // this service already does the rest.
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
-	id, ok := actAsGate.Authorize(w, r)
-	if !ok {
-		return ""
-	}
-	if id.OSUser != id.RealOSUser {
-		// Logged per request here, unlike tmux-api: file-api is not polled, so
-		// these lines are one per user action rather than one per five seconds,
-		// and a write under someone else's account is worth a record.
-		log.Printf("act-as: %s acting as %s (%s %s)", id.RealOSUser, id.OSUser, r.Method, r.URL.Path)
-	}
-	return id.OSUser
+	return actAsGate.ResolveOSUser(w, r)
 }
 
 // resolveRealOSUser → the CALLER's own mapped OS user, ignoring ?as= entirely.
 func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	id, ok := actAsGate.Authorize(w, r)
-	if !ok {
-		return ""
-	}
-	return id.RealOSUser
+	return actAsGate.ResolveRealOSUser(w, r)
 }

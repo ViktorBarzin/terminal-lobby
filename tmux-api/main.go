@@ -221,19 +221,13 @@ const actAsTarget = "as"
 // handlePushSubscriptions), and resolveOSUser itself, which starts here and
 // then applies the switch.
 func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	id, ok := actAsGate.Authorize(w, r)
-	if !ok {
-		return ""
-	}
-	return id.RealOSUser
+	return actAsGate.ResolveRealOSUser(w, r)
 }
 
+// No OnActAs hook here on purpose: tmux-api is polled every five seconds, so
+// a line per act-as request would be noise rather than a record.
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
-	id, ok := actAsGate.Authorize(w, r)
-	if !ok {
-		return ""
-	}
-	return id.OSUser
+	return actAsGate.ResolveOSUser(w, r)
 }
 
 // tmuxCmd builds an exec.Cmd that runs `tmux <args...>` AS osUser. When
