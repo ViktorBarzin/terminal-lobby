@@ -57,6 +57,12 @@ RUN set -eux; \
 # ever calls sudo — which is why no sudo is installed.
 RUN useradd --create-home --shell /bin/bash dev
 
+# Projects, layout, titles and pasted images live here. The services run as dev
+# and cannot create a directory under /var/lib themselves, so a missing one is
+# not an error they can recover from — it just makes every write fail with a
+# line in the log and no sign in the interface.
+RUN install -d -o dev -g dev -m 0755 /var/lib/tmux-api /var/lib/clipboard-store
+
 COPY --from=build /out/ /usr/local/bin/
 COPY --from=web /src/frontend-v2/dist/ /usr/local/share/ttyd/
 COPY devvm/tmux-attach.sh /usr/local/bin/tmux-attach.sh
@@ -77,6 +83,15 @@ ENV TL_MULTI_USER=off \
     TL_AUTH_HEADER=X-Forwarded-User \
     TL_BIND=127.0.0.1 \
     TL_USER=dev
+
+# A terminal needs a UTF-8 locale, and tmux needs it for a reason that is not
+# obvious: with no locale set it decides the client cannot do UTF-8 and
+# sanitizes its output, which turns the tab separating `list-sessions -F` fields
+# into "_". The lobby splits those fields on the tab, so all 11 arrive as 1,
+# every row is dropped in parsing, and the session list is permanently empty.
+# C.UTF-8 is built into glibc, so this costs no locale package.
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
 # The default. TL_PORT, or a PORT injected by a platform-as-a-service, moves
 # the listener; EXPOSE is metadata and does not follow it.

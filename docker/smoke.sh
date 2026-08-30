@@ -54,6 +54,20 @@ for path in /files/list /skills; do
   ok "$path is routed ($code)"
 done
 
+# The terminal itself is an iframe onto /term.html, which clipboard-upload
+# serves and ttyd does not. Unrouted, ttyd answers 404 with its own error page,
+# the iframe shows that instead of a terminal, and no session is ever created —
+# with the lobby around it looking entirely healthy.
+term=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/term.html")
+[[ "$term" == "200" ]] || fail "GET /term.html got $term, want 200; the terminal cannot load"
+# Counted rather than matched with grep -q, and never held in a variable: the
+# page carries vendored xterm and runs to well over a megabyte, which an early
+# -q exit turns into a SIGPIPE that pipefail reports as a failed curl.
+termhits=$(curl -s "http://127.0.0.1:17681/term.html" | grep -c "TERMINAL-MODE page" || true)
+[[ "$termhits" != "0" ]] \
+  || fail "/term.html is routed somewhere that is not the terminal page"
+ok "the terminal page is served"
+
 # The PWA shell must be fetchable without auth or the app cannot install.
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/manifest.webmanifest")
 [[ "$code" == "200" ]] || fail "the PWA manifest got $code, want 200"
@@ -72,6 +86,39 @@ docker exec -u dev "$NAME" tmux new-session -d -s smoke 2>/dev/null || true
 docker exec -u dev "$NAME" tmux list-sessions | grep -q smoke \
   || fail "tmux could not start a session in the container"
 ok "tmux starts a session with no systemd user manager"
+
+# And the lobby must SEE it. Asserting only that tmux works, and separately that
+# /sessions answers 200, missed a build where every row was dropped in parsing
+# and the sidebar was permanently empty: with no UTF-8 locale set, tmux renders
+# the tab separating the -F fields as "_", so the 11 fields arrived as 1. The
+# list is the product, so the test asks for the session by name.
+sleep 6  # the session list is cached for 5s and this one was made behind the API
+listed=$(curl -s "http://127.0.0.1:17681/api/sessions/sessions")
+echo "$listed" | grep -q '"name":"smoke"' \
+  || fail "the API does not list a session that tmux has: $listed"
+ok "a running session appears in the lobby's session list"
+
+# The per-session routes. Status alone cannot tell these apart: a route the
+# proxy does not know falls through to ttyd, which answers 404, and so does
+# session-events for a session it has not registered — this one was made behind
+# its back with tmux directly. So the assertion is on WHO answered. ttyd's 404
+# is an HTML page linking /error.css; session-events replies in plain text.
+# /commands/, the session's slash commands, shipped unrouted and looked like a
+# feature that simply returned nothing.
+for path in /commands/smoke /pane/smoke; do
+  hits=$(curl -s "http://127.0.0.1:17681$path" | grep -c "error.css" || true)
+  [[ "$hits" == "0" ]] || fail "$path is not routed; ttyd's error page answered it"
+  ok "$path reaches session-events"
+done
+
+# The services write projects, layout, titles and pasted images under /var/lib.
+# Those directories have to exist and belong to the user the services run as, or
+# every write fails and the failures are only visible in the log.
+for d in /var/lib/tmux-api /var/lib/clipboard-store; do
+  docker exec -u dev "$NAME" test -w "$d" \
+    || fail "$d is not writable by the user the services run as"
+  ok "$d is writable"
+done
 
 # And no sudo anywhere: single-user never escalates, so the image does not ship it.
 docker exec "$NAME" sh -c 'command -v sudo' >/dev/null 2>&1 \
