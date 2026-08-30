@@ -1,9 +1,10 @@
 # Settings: from one long column to a two-pane rail
 
 **Status:** shipped 2026-08-30 · **Scope:**
-`frontend-v2/src/components/SettingsPanel.tsx` (889 lines) and
-`SkillsPanel.tsx` (937), the `.tl-settings-*` block in `app.css`, `App.tsx`'s
-two header buttons, `docs/interface.md`
+`frontend-v2/src/components/SettingsPanel.tsx` (was 889 lines) and the
+Skills panel (937), which becomes `settings/pages/SkillsPage.tsx`; the
+`.tl-settings-*` block in `app.css`; `theme.css`; `App.tsx`'s two header
+buttons; `docs/interface.md`
 
 Settings had accumulated thirteen groups in a 420px column. Each one is sound
 on its own — the Data used breakdown, the notification readouts and the
@@ -12,8 +13,7 @@ single visual weight: a nine-theme grid, a byte-usage dashboard and a
 destructive button all read as the same kind of thing, down roughly 2,400px of
 scroll.
 
-The complaint this redesign answers is hierarchy, not findability and not
-content. No setting is added, removed, or renamed.
+What this redesign changes is hierarchy, not findability and not content. No setting is added, removed, or renamed.
 
 ## What was there
 
@@ -68,37 +68,49 @@ width — its rows are a four-column table that had ~400px of slack even in the
 The design started at 960px. Built, that left ~120px of dead space to the right
 of every capped row, so the dialog came in to 900.
 
-### Where the thirteen groups land
+### The figures
+
+```stats
+13 → 9 | groups become pages
+2,400 → 0 | px of scroll to reach any of them
+889 → 307 | lines in SettingsPanel.tsx
+2,387 | tests passing
+```
+
+### The shape of it
 
 ```mermaid
-flowchart LR
-  subgraph OLD["before · 13 groups, one column"]
-    direction TB
-    O2["Theme"]; O3["Font size"]; O4["Terminal text"]; O5["Cursor"]
-    O6["Scrolling & links"]; O7["Session list"]; O8["New session runs"]
-    O9["Keyboard"]; O10["Notifications"]; O11["This browser"]
-    O12["Data used"]; O13["Advanced"]; O1["Act as user"]
-  end
+flowchart TD
+  G["⚙ Settings"] --> R["category rail"]
+  S["Skills button"] --> R
 
-  subgraph NEW["after · 9 rail pages"]
-    direction TB
-    N1["Appearance"]; N2["Terminal"]; N3["Sessions"]; N4["Keyboard"]
-    N5["Notifications"]; N6["Network"]; N7["Privacy"]
-    N8["Skills"]; N9["Act as user"]
-  end
+  R --> P["Appearance"]
+  R --> T["Terminal"]
+  R --> SE["Sessions"]
+  R --> K["Keyboard"]
+  R --> N["Notifications"]
+  R --> NW["Network"]
+  R --> PR["Privacy"]
+  R -.rule.-> SK["Skills"]
+  R -.rule.-> AA["Act as user<br/>admins only"]
 
-  O2 --> N1
-  O3 --> N2; O4 --> N2; O5 --> N2; O6 --> N2
-  O11 -->|"flow control"| N2
-  O7 --> N3; O8 --> N3
-  O9 --> N4
-  O10 --> N5
-  O12 --> N6
-  O11 -->|"diagnostics"| N7
-  O13 --> N7
-  O1 --> N9
-  SK["Skills overlay<br/>(its own dialog before)"] --> N8
+  SK --> TB["its own tab strip:<br/>Mine · Plugins · peers · Sessions"]
 ```
+
+### Where the thirteen groups land
+
+| Was | Is now |
+|---|---|
+| Theme | Appearance |
+| Terminal font size · Terminal text · Cursor · Scrolling & links | Terminal |
+| This browser → flow control | Terminal |
+| Session list · New session runs | Sessions |
+| Keyboard | Keyboard |
+| Notifications | Notifications |
+| Data used | Network |
+| This browser → diagnostics · Advanced | Privacy |
+| Act as user | Act as user |
+| *(the separate Skills overlay)* | Skills |
 
 Group 11, "This browser", is the one that splits: flow control is a terminal
 behaviour and diagnostics is a privacy consent, and they were together because
@@ -138,9 +150,9 @@ explain a control:
 | Clear local data | says what is removed and that tmux sessions survive |
 | Send diagnostics | states the boundary — never terminal contents, keystrokes or session names |
 
-The trade-off we are accepting: an explanation one click away is an
-explanation some people will not read. The three above are the ones where not
-reading it has a cost, so they keep their place in the page.
+The trade-off: an explanation one click away is one some people will not
+read. The three above are where not reading it has a cost, so they keep their
+place in the page.
 
 ### Roaming
 
@@ -179,17 +191,17 @@ from `prefers-color-scheme` at render time, and its swatch follows.
 
 Skills was a Settings group until 2026-08-19, when it moved to its own overlay
 because 38 own skills, 7 plugins, 21 of a peer's and 13 live sessions did not
-fit a 420px column under six other groups. That reasoning held for that
-container. The rail gives Skills a dedicated page with the full dialog height and no
-chrome of its own to pay for.
+fit a 420px column under six other groups. That reasoning was about that container.
+The rail gives Skills a dedicated page with the full dialog height and no
+chrome of its own above it.
 
 What moves is the address, not the design. The tab strip, the filter over name
 and description, the install-from-repo form and the row actions are unchanged.
 The refresh control moves from the dialog head to the page, beside the tabs.
 
-Navigation nests: rail → Skills → tabs. Tabs are right for that list because
-they are filters with live counts over one collection, and one tab appears per
-peer on the roster, which a fixed rail would not express as well.
+Navigation nests: rail → Skills → tabs. Tabs suit that list because they are
+filters with live counts over one collection, and one tab appears per peer on
+the roster, which a fixed rail would express less directly.
 
 The header keeps both buttons. Skills opens the Settings dialog with the rail
 already on Skills, so the one-click path stays exactly as it is.
@@ -207,9 +219,8 @@ This is a change from the drill-in the design assumed. Built and measured on a
 390×844 viewport, the eight categories wrap to three rows of chips and cost
 about 105px — 12% of the screen — and in exchange every category stays one tap
 away with no back navigation and no second screen to be stranded on. At eight
-short labels that trade looked worth taking. A drill-in is still the better
-shape if the rail grows much past this, and the page components do not care
-which one wraps them.
+short labels that trade looked worth taking. A drill-in would suit a longer
+rail better, and the page components do not depend on which one wraps them.
 
 ## What does not change
 
@@ -233,7 +244,7 @@ components/settings/
   rail.ts               the category model: id, label, group, when it renders
   controls.tsx          Row, Toggle, Stepper, Segmented, Hint, ScopeChip
   pages/
-    AppearancePage.tsx  ThemePage swatches
+    AppearancePage.tsx  the nine theme swatch cards
     TerminalPage.tsx    font, text, cursor, scrolling, links, flow control
     SessionsPage.tsx
     KeyboardPage.tsx
