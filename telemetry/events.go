@@ -34,6 +34,13 @@ var knownEvents = map[string]bool{
 	// to send. The pair is what says whether the client-side transcript cache is
 	// earning its keep in the wild rather than in a test.
 	"text.open":        true, // tl.cache, tl.cached, tl.fetched
+	// Answering a blocking AskUserQuestion from the text view. The failure
+	// carries WHERE the sequence stopped and WHY, never what the pane held:
+	// a dialog can quote anything the session was working on.
+	// tl.reason, tl.step, tl.steps, tl.multi, tl.questions, tl.options,
+	// tl.source, tl.expect_len, tl.pane_read
+	"text.answer_failed": true,
+	"text.answer_sent":   true, // tl.multi, tl.questions, tl.steps
 	"session.detached": true,
 	"session.renamed":  true,
 	"session.moved":    true, // between projects / reordered (tl.from, tl.to)
