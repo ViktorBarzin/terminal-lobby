@@ -17,6 +17,7 @@ import {
   queuedPrompts,
   withPendingPrompts,
   type PendingPermission,
+  type TimelineRow,
 } from "./timeline.logic";
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "./compose.logic";
 import { contextState } from "./context.logic";
@@ -71,6 +72,11 @@ export const TextView: Component<{
   onCommands?: () => Promise<SlashCommand[]>;
   /** prompts sent from here the transcript has not shown yet. */
   pendingPrompts?: () => PendingPrompt[];
+  /** The rows for `events`, when the owner has already derived them — the
+   *  session view needs the same fold to know whether a turn is running, and
+   *  one derivation costs ~10ms on a large window. Absent, they are derived
+   *  here, so this is a shortcut and never a second source of truth. */
+  rows?: () => TimelineRow[];
   /** the opening window is still arriving. */
   opening?: boolean;
   /** FALSE while the lobby is keeping this session mounted without showing it:
@@ -101,8 +107,15 @@ export const TextView: Component<{
   onOpenTerminal?: () => void;
 }> = (props) => {
   // What the transcript says, plus what it has not caught up with.
-  const shown = createMemo(() =>
-    withPendingPrompts(props.events, props.pendingPrompts?.() ?? []),
+  const sent = createMemo(() => props.pendingPrompts?.() ?? []);
+  const shown = createMemo(() => withPendingPrompts(props.events, sent()));
+  /** The transcript folded, once. */
+  const baseRows = createMemo(() => props.rows?.() ?? deriveRows(props.events));
+  /** What the timeline draws. `withPendingPrompts` returns `events` itself when
+   *  nothing is in flight, so the common case reuses the fold above rather than
+   *  repeating it; an unsent prompt is rare and short-lived. */
+  const shownRows = createMemo(() =>
+    sent().length === 0 ? baseRows() : deriveRows(shown()),
   );
   const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
   const history = createMemo(() => promptHistory(props.events, props.sessionState));
@@ -181,7 +194,7 @@ export const TextView: Component<{
    * Claude Code takes a dialog down when something claims the turn and leaves
    * that call unresolved for good (timeline.logic `markSuperseded`).
    */
-  const recorded = createMemo(() => pendingQuestion(deriveRows(props.events)));
+  const recorded = createMemo(() => pendingQuestion(baseRows()));
   /**
    * What the PANE says, for the window where the record has not been written.
    *
@@ -329,6 +342,7 @@ export const TextView: Component<{
         opening={props.opening}
         owns={props.onScreen !== false}
         events={shown()}
+        rows={shownRows()}
         onOpenPreview={props.onOpenPreview}
         onLoadFull={props.onLoadFull}
         onLoadEarlier={props.onLoadEarlier}

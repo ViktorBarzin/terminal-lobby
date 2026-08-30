@@ -830,6 +830,7 @@ export const SessionView: Component<{
           <TextView
             onScreen={onScreen()}
             events={store.events}
+            rows={rows}
             working={working()}
             pending={pending()}
             onSend={send}
