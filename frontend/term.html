@@ -1251,31 +1251,15 @@ __TL_DIAG__
             color: var(--text-muted); font-style: italic; font-size: 13px;
         }
 
-        /* Lobby */
-        #lobby {
+        /* The refusal screen — the only full-page surface this page still has
+           besides the terminal itself. Hidden until showAccessDenied fills it. */
+        #access-denied {
             display: none; height: 100vh; box-sizing: border-box;
+            padding: 32px; overflow-y: auto;
             font-family: var(--font-ui);
             color: var(--text-primary); background: var(--bg-sidebar);
         }
-        #lobby.visible { display: block; }
-        #lobby.access-denied { padding: 32px; overflow-y: auto; }
-        /* Film grain over the lobby chrome (Task 1.11a — T3's body::after,
-           same SVG turbulence tile at 3.5%). body.lobby is set ONLY in
-           lobby mode; z-0 keeps it UNDER the z-1 #lobby-content pane, so
-           the terminal iframe (and any sixel inside it) is never washed by
-           grain — and terminal-mode pages never carry the class at all.
-           pointer-events: none = purely decorative, hit-testing unchanged. */
-        body.lobby::after {
-            content: '';
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            opacity: 0.035;
-            z-index: 0;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-            background-repeat: repeat;
-            background-size: 256px 256px;
-        }
+        #access-denied.visible { display: block; }
         /* T3 weight scale on the UI face: 400 body / 500 buttons / 600
            headings (headings already carry 600 individually). Chrome-text
            buttons only — icon/glyph buttons (#sidebar-toggle 600, floating
@@ -1284,16 +1268,6 @@ __TL_DIAG__
         .session-actions button, .project-actions button, .popup-menu button {
             font-weight: 500;
         }
-        #lobby.sidebar-collapsed #lobby-shell { grid-template-columns: 0 1fr; }
-        #lobby.sidebar-collapsed #sidebar-toggle { left: 12px; }
-        @media (max-width: 720px) {
-            #lobby.sidebar-collapsed #sidebar-toggle {
-                left: calc(12px + env(safe-area-inset-left));
-                right: auto;
-            }
-        }
-        #session-frame.hidden { display: none; }
-        #lobby-empty.hidden { display: none; }
         #dock {
             display: flex; flex-direction: column; min-height: 0;
             overflow: hidden; background: var(--terminal-bg);
@@ -1310,40 +1284,6 @@ __TL_DIAG__
             background: var(--bg-card-hover); opacity: 1;
         }
         .lobby-sub { color: var(--text-muted); font-size: 12px; margin: 0 0 18px 0; line-height: 1.5; }
-        /* T3 default-button metric (Task 2.8, button.tsx size default):
-           h-8 = 32px, px 11px, 500 14px (weight via the group rule
-           above), radius already var(--radius). */
-        .new-row button {
-            box-sizing: border-box; height: 32px;
-            padding: 0 11px; border-radius: var(--radius);
-            border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-            background: color-mix(in srgb, var(--accent) 18%, transparent);
-            color: var(--text-primary); font-family: inherit; font-size: 14px; cursor: pointer;
-            /* T3 primary-button finish (Task 1.11b): 1px light inner bevel +
-               a primary-tinted drop (T3 hardcodes its blue at 24%; ours is
-               theme-accent-tinted — same recipe, themed). */
-            box-shadow: inset 0 1px rgba(255, 255, 255, 0.16),
-                        0 1px 2px color-mix(in srgb, var(--accent) 24%, transparent);
-        }
-        /* Thin single-line rows (2026-07-16 redesign): no per-row border,
-           shadow, or card surface — T3's thread-list density. A tint + left
-           accent mark the active row; hover is a neutral tint. See
-           docs/plans/2026-07-16-thin-session-rows-design.md */
-        .session-card {
-            display: flex; align-items: center; gap: 7px;
-            position: relative;  /* .kb-badge anchor (Task 4.1) — no visual change */
-            border-left: 2px solid transparent;
-            border-radius: calc(var(--radius) - 2px);
-            box-sizing: border-box;
-            padding: 4px 8px; min-height: 28px; cursor: pointer;
-            transition: background 0.12s, border-color 0.12s;
-            font-family: inherit; color: var(--text-primary); text-align: left;
-            /* Task M.4: press-and-hold belongs to the long-press recognizer
-               on touch — suppress text selection and the iOS callout so the
-               OS doesn't fight it. */
-            user-select: none; -webkit-user-select: none;
-            -webkit-touch-callout: none;
-        }
         /* Touch rows match desktop density (28px) — Viktor 2026-07-17. The old
            `@media (pointer: coarse) { min-height: 44px }` floor made mobile rows
            noticeably taller than desktop. The row's long-press opens the actions
@@ -1446,23 +1386,19 @@ __TL_DIAG__
            (xterm gets themed slider COLORS via readTerminalTheme() instead —
            live since the 6.0 upgrade, which routes them into the VS Code-
            derived .xterm-scrollable-element overlay scrollbar.) */
-        #lobby-sidebar::-webkit-scrollbar,
-        #lobby.access-denied::-webkit-scrollbar,
+        #access-denied::-webkit-scrollbar,
         #img-gallery .gallery-grid::-webkit-scrollbar,
         .popup-menu::-webkit-scrollbar { width: 6px; }
-        #lobby-sidebar::-webkit-scrollbar-track,
-        #lobby.access-denied::-webkit-scrollbar-track,
+        #access-denied::-webkit-scrollbar-track,
         #img-gallery .gallery-grid::-webkit-scrollbar-track,
         .popup-menu::-webkit-scrollbar-track { background: transparent; }
-        #lobby-sidebar::-webkit-scrollbar-thumb,
-        #lobby.access-denied::-webkit-scrollbar-thumb,
+        #access-denied::-webkit-scrollbar-thumb,
         #img-gallery .gallery-grid::-webkit-scrollbar-thumb,
         .popup-menu::-webkit-scrollbar-thumb {
             background: var(--scrollbar-thumb);
             border-radius: 3px;
         }
-        #lobby-sidebar::-webkit-scrollbar-thumb:hover,
-        #lobby.access-denied::-webkit-scrollbar-thumb:hover,
+        #access-denied::-webkit-scrollbar-thumb:hover,
         #img-gallery .gallery-grid::-webkit-scrollbar-thumb:hover,
         .popup-menu::-webkit-scrollbar-thumb:hover {
             background: var(--scrollbar-thumb-hover);
@@ -1487,17 +1423,6 @@ __TL_DIAG__
         .theme-options button.active {
             border-color: var(--accent); color: var(--accent);
             background: var(--bg-card-hover);
-        }
-
-        /* Settings popover (Task 2.6) — roaming terminal prefs, opened
-           from the gear pinned at the sidebar bottom (the row inherited
-           the old theme picker's margin-top:auto pinning + hairline when
-           the picker moved into the panel, MF-1). Same surface
-           language as .popup-menu (hairline border, --radius, elevation
-           drop + scheme bevel). */
-        .settings-row {
-            margin-top: auto; padding-top: 14px;
-            border-top: 1px solid var(--border);
         }
         .settings-panel {
             position: fixed; z-index: 10000;
@@ -1681,21 +1606,6 @@ __TL_DIAG__
             font-size: 11px; color: var(--text-muted);
         }
 
-        /* Keyboard-shortcuts help overlay (opened with / or ? in the lobby,
-           or the "Keyboard shortcuts" command-palette action). Reuses the
-           .cmd-palette-backdrop shade. */
-        .sc-help {
-            position: fixed; z-index: 10001;
-            top: 10vh; left: 50%; transform: translateX(-50%);
-            width: min(520px, calc(100vw - 32px));
-            max-height: 76vh; display: flex; flex-direction: column;
-            background: var(--bg-card);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), var(--surface-shadow);
-            font-family: var(--font-ui); font-size: 13px;
-            color: var(--text-primary); overflow: hidden;
-        }
-
         /* ——— Chrome density pass (Task 2.8, T3 metrics) ———
            Focus treatment: 2px var(--ring) at 1px offset, keyboard-only
            (:focus-visible — pointer clicks stay ring-free; text inputs
@@ -1704,7 +1614,7 @@ __TL_DIAG__
            .project-header) keep their inset −2px variants and the inline
            rename editor keeps its own outline: none. Terminal-mode
            floating buttons are body-level, hence the second selector. */
-        :where(#lobby, .popup-menu, .settings-panel, #img-gallery, .toast-card)
+        :where(#access-denied, .popup-menu, .settings-panel, #img-gallery, .toast-card)
             :where(button, input, [tabindex]):focus-visible,
         :where(#paste-btn, #img-btn, #gallery-btn, #font-inc-btn, #font-dec-btn):focus-visible {
             outline: 2px solid var(--ring);
@@ -1713,21 +1623,14 @@ __TL_DIAG__
         /* One disabled treatment across the chrome (T3's
            disabled:opacity-64). Higher-specificity rules above restate
            0.64 where they add cursor/etc. */
-        :where(#lobby, .popup-menu, .settings-panel, .toast-card)
+        :where(#access-denied, .popup-menu, .settings-panel, .toast-card)
             :where(button, input):disabled {
             opacity: 0.64; cursor: default;
         }
 
         @media (max-width: 720px) {
-            /* Stack sidebar + terminal; let the terminal pane take whatever
-               remains after the sidebar so it tracks the soft keyboard via
-               the dynamic viewport height. */
-            #lobby, #lobby-shell { height: 100dvh; }
-            #lobby.sidebar-collapsed #lobby-shell {
-                grid-template-columns: 1fr;
-                grid-template-rows: 0 1fr;
-            }
-            #lobby.sidebar-collapsed #lobby-content { height: auto; }
+            /* Track the soft keyboard via the dynamic viewport height. */
+            #access-denied { height: 100dvh; }
         }
 
         /* Task 2.8 touch ergonomics: 44px minimum targets (T3's
@@ -1739,12 +1642,10 @@ __TL_DIAG__
            jump the card layout mid-rename. min-height beats the 32px
            height on the standard buttons by CSS min-wins rules. */
         @media (pointer: coarse) {
-            :where(#lobby, .popup-menu, .settings-panel)
+            :where(#access-denied, .popup-menu, .settings-panel)
                 :where(button, input:not(.rename-input)) {
                 min-height: 44px;
             }
-            /* Square icon buttons stay square at target size. */
-            #sidebar-toggle, #notify-toggle, #reload-toggle, #list-close { width: 44px; height: 44px; }
             /* The header row's reserve for the fixed #sidebar-toggle
                grows with it (44px + 12px inset). */
             .lobby-header-row { padding-right: 56px; }
@@ -2135,6 +2036,10 @@ __TL_DIAG__
     })();
     </script>
     <div id="terminal"></div>
+    <!-- Shown instead of the terminal when the preflight refuses. It used to be
+         drawn inside the lobby this page carried; with that gone it has its own
+         container rather than borrowing one. -->
+    <div id="access-denied"></div>
     <div id="toast"></div>
     <div id="conn-pill" class="hidden" role="status"></div>
     <button id="font-dec-btn" title="Smaller terminal font">A&#8722;</button>
@@ -4629,21 +4534,21 @@ ${w.join(`
             document.getElementById('gallery-btn').classList.add('hidden');
             document.getElementById('font-inc-btn').classList.add('hidden');
             document.getElementById('font-dec-btn').classList.add('hidden');
-            const lobby = document.getElementById('lobby');
-            clearChildren(lobby);
+            const panel = document.getElementById('access-denied');
+            clearChildren(panel);
             const h = document.createElement('h1');
             h.className = 'lobby-header';
             h.textContent = 'Access denied';
-            lobby.appendChild(h);
+            panel.appendChild(h);
             const p = document.createElement('p');
             p.className = 'lobby-sub';
             p.textContent = detail || 'You do not have a terminal account on this server.';
-            lobby.appendChild(p);
+            panel.appendChild(p);
             const p2 = document.createElement('p');
             p2.className = 'lobby-sub';
             p2.textContent = 'Authentik logs you in; access here requires an OS-user mapping in /etc/ttyd-user-map. Ask Viktor to add one.';
-            lobby.appendChild(p2);
-            lobby.classList.add('visible', 'access-denied');
+            panel.appendChild(p2);
+            panel.classList.add('visible');
             document.title = 'access denied';
         }
 
