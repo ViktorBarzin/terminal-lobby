@@ -94,7 +94,8 @@
 
 /* Themes — set on <body> as theme-{carbon,slate,mono,ink,t3-dark,
    t3-light,catppuccin-mocha,catppuccin-latte}. Slate is the default. */
-body.theme-carbon {
+body.theme-carbon,
+.tl-swatch--carbon {
   --bg-page: #0c0c0a;
   --bg-sidebar: #131311;
   --bg-card: #1a1916;
@@ -131,7 +132,8 @@ body.theme-carbon {
   --terminal-ansi-bright-cyan: #a7f4f7;
   --terminal-ansi-bright-white: #f4f7fc;
 }
-body.theme-slate {
+body.theme-slate,
+.tl-swatch--slate {
   --bg-page: #0d1117;
   --bg-sidebar: #11151c;
   --bg-card: #161b22;
@@ -168,7 +170,8 @@ body.theme-slate {
   --terminal-ansi-bright-cyan: #a7f4f7;
   --terminal-ansi-bright-white: #f4f7fc;
 }
-body.theme-mono {
+body.theme-mono,
+.tl-swatch--mono {
   --bg-page: #0d0d0d;
   --bg-sidebar: #131313;
   --bg-card: #1a1a1a;
@@ -205,7 +208,8 @@ body.theme-mono {
   --terminal-ansi-bright-cyan: #a7f4f7;
   --terminal-ansi-bright-white: #f4f7fc;
 }
-body.theme-ink {
+body.theme-ink,
+.tl-swatch--ink {
   --bg-page: #faf7f2;
   --bg-sidebar: #f1ebda;
   --bg-card: #ffffff;
@@ -243,7 +247,8 @@ body.theme-ink {
   --terminal-ansi-bright-white: #ecf0f6;
 }
 /* T3 Code parity pair — surfaces/accents ported from t3code index.css. */
-body.theme-t3-dark {
+body.theme-t3-dark,
+.tl-swatch--t3-dark {
   --bg-page: #161616;
   --bg-sidebar: #1b1b1b;
   --bg-card: #1b1b1b;
@@ -280,7 +285,8 @@ body.theme-t3-dark {
   --terminal-ansi-bright-cyan: #a7f4f7;
   --terminal-ansi-bright-white: #f4f7fc;
 }
-body.theme-t3-light {
+body.theme-t3-light,
+.tl-swatch--t3-light {
   --bg-page: #ffffff;
   --bg-sidebar: #f7f7f7;
   --bg-card: #ffffff;
@@ -318,7 +324,8 @@ body.theme-t3-light {
   --terminal-ansi-bright-white: #ecf0f6;
 }
 /* Catppuccin pair — colors verbatim from the official palette. */
-body.theme-catppuccin-mocha {
+body.theme-catppuccin-mocha,
+.tl-swatch--catppuccin-mocha {
   --bg-page: #1e1e2e; /* base */
   --bg-sidebar: #181825; /* mantle */
   --bg-card: #313244; /* surface0 */
@@ -355,7 +362,8 @@ body.theme-catppuccin-mocha {
   --terminal-ansi-bright-cyan: #94e2d5;
   --terminal-ansi-bright-white: #a6adc8;
 }
-body.theme-catppuccin-latte {
+body.theme-catppuccin-latte,
+.tl-swatch--catppuccin-latte {
   --bg-page: #eff1f5; /* base */
   --bg-sidebar: #e6e9ef; /* mantle */
   --bg-card: #ffffff;

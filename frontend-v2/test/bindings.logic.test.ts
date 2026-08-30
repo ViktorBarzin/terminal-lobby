@@ -34,7 +34,6 @@ function ctx(over: Partial<KeyContextInput> = {}): KeyContext {
     paletteOpen: false,
     helpOpen: false,
     settingsOpen: false,
-    skillsOpen: false,
     galleryOpen: false,
     previewOpen: false,
     previewDirty: false,

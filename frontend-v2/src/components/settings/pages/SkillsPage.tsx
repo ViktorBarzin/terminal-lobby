@@ -3,14 +3,13 @@ import {
   Show,
   createMemo,
   createSignal,
-  onCleanup,
   onMount,
   type Accessor,
   type Component,
 } from "solid-js";
-import type { PeerSkill, Skill, SourceInfo } from "../lib/skills-api";
-import { CodeEditor } from "./CodeEditor";
-import { rowKey, type SkillsStore } from "../store/skills";
+import type { PeerSkill, Skill, SourceInfo } from "../../../lib/skills-api";
+import { CodeEditor } from "../../CodeEditor";
+import { rowKey, type SkillsStore } from "../../../store/skills";
 import {
   fileSummary,
   peerAction,
@@ -19,7 +18,7 @@ import {
   restartTargets,
   skillStatus,
   type RowStatus,
-} from "../store/skills.logic";
+} from "../../../store/skills.logic";
 import {
   emptyReason,
   matches,
@@ -29,15 +28,22 @@ import {
   resolveTab,
   tabsFor,
   type TabId,
-} from "../store/skills.tabs";
+} from "../../../store/skills.tabs";
 
 /**
- * The Skills panel: its own overlay off the shell bar, beside Settings.
+ * The Skills page: one entry on the Settings rail, below the preferences.
  *
- * It began as a group inside the Settings overlay and outgrew it — 38 own
- * skills, 7 plugins, 21 of a peer's and every live session do not read as one
- * 420px column. So the surface is its own dialog, wider, with a tab per list and
- * a filter, and Settings is back to being settings.
+ * It was a group inside the old 420px Settings column, outgrew it in August
+ * 2026 — 38 own skills, 7 plugins, 21 of a peer's and every live session do not
+ * read as one narrow column — and became its own overlay. The rail gives it the
+ * room that overlay was for, at the full width and height of the dialog, so the
+ * surface comes back into Settings while keeping the shape that fixed it: a tab
+ * per list with its count, a filter over name and description, and the list
+ * scrolling under a fixed strip.
+ *
+ * Navigation nests, rail → Skills → tabs, and that is deliberate. These tabs are
+ * filters with live counts over one collection, and one of them appears per peer
+ * on the roster; a rail entry each would churn as people come and go.
  *
  * What a row means and what it offers is unchanged, and still decided in
  * skills.logic.ts: every user's skills are visible to every other one (which
@@ -134,15 +140,13 @@ const SkillFile: Component<{
   );
 };
 
-export const SkillsPanel: Component<{
+export const SkillsPage: Component<{
   skills: SkillsStore;
-  onClose: () => void;
   /** The caller's live sessions, for the Sessions tab. */
   sessions?: Accessor<ReadonlyArray<{ name: string; state?: string }>>;
   confirm?: (message: string) => boolean;
 }> = (props) => {
   const s = props.skills;
-  let dialogEl: HTMLDivElement | undefined;
   const [tab, setTab] = createSignal<TabId | "">("");
   const [query, setQuery] = createSignal("");
   const [draft, setDraft] = createSignal("");
@@ -169,99 +173,18 @@ export const SkillsPanel: Component<{
   const isBusy = (key: string) => s.busy() === key;
   const anyBusy = () => s.busy() !== "";
 
-  // --- the dialog contract, the same one SettingsPanel keeps ------------------
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      props.onClose();
-      return;
-    }
-    if (e.key === "Tab" && dialogEl) {
-      const items = [
-        ...dialogEl.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ];
-      const first = items[0];
-      const last = items[items.length - 1];
-      const at = document.activeElement;
-      const outside = !dialogEl.contains(at);
-      if (!first || !last) {
-        e.preventDefault();
-        dialogEl.focus();
-      } else if (e.shiftKey && (outside || at === first || at === dialogEl)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (outside || at === last)) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  };
-  onMount(() => window.addEventListener("keydown", onKey, true));
-  onCleanup(() => window.removeEventListener("keydown", onKey, true));
-
-  let opener: HTMLElement | null = null;
-  onMount(() => {
-    opener =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    queueMicrotask(() => dialogEl?.focus());
-  });
-  onCleanup(() => {
-    if (opener && opener !== document.body && opener.isConnected)
-      opener.focus();
-  });
-
   const meta = (st: RowStatus) => (
     <span class={`tl-skill-meta tl-skill-${st.tone}`}>{st.label}</span>
   );
 
   return (
-    <div
-      class="tl-settings-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
-    >
-      <div
-        class="tl-settings tl-skills-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Skills"
-        tabindex="-1"
-        ref={dialogEl}
-      >
-        <div class="tl-settings-head">
-          <span class="tl-settings-title">Skills</span>
-          <div class="tl-skills-head-right">
-            <button
-              type="button"
-              class="tl-icon-btn"
-              onClick={() => void s.load()}
-              disabled={s.loading()}
-              aria-label="Re-read every account's skills"
-              title="Re-read every account's skills"
-            >
-              {s.loading() ? "…" : "⟳"}
-            </button>
-            <button
-              type="button"
-              class="tl-icon-btn"
-              onClick={() => props.onClose()}
-              aria-label="Close skills"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-
+    <div class="tl-skills-page">
         <Show when={s.error()}>
-          <div class="tl-settings-hint tl-skill-warn">{s.error()}</div>
+          <div class="tl-set-hint tl-set-hint-static tl-skill-warn">{s.error()}</div>
         </Show>
 
         <Show when={inv()}>
+          <div class="tl-skills-tabbar">
           <div class="tl-skills-tabs" role="tablist" aria-label="Skill lists">
             <For each={tabs()}>
               {(t) => (
@@ -280,6 +203,17 @@ export const SkillsPanel: Component<{
                 </button>
               )}
             </For>
+          </div>
+          <button
+            type="button"
+            class="tl-icon-btn"
+            onClick={() => void s.load()}
+            disabled={s.loading()}
+            aria-label="Re-read every account's skills"
+            title="Re-read every account's skills"
+          >
+            {s.loading() ? "…" : "⟳"}
+          </button>
           </div>
 
           <Show when={active() !== "sessions"}>
@@ -642,12 +576,11 @@ export const SkillsPanel: Component<{
             </Show>
           </div>
 
-          <div class="tl-settings-hint">
+          <div class="tl-set-hint tl-set-hint-static">
             Everyone here can see everyone's skills. Installing copies it into
             your account; the owner's copy is untouched.
           </div>
         </Show>
-      </div>
     </div>
   );
 };

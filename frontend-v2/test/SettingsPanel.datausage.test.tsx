@@ -66,11 +66,23 @@ function seedNetwork(info: Record<string, string>): void {
   resetNetworkState();
 }
 
+/** Settings opens on its Network page, which is where this all lives now. */
 async function openPanel() {
-  const utils = render(() => <SettingsPanel prefs={fakePrefs()} onClose={() => {}} />);
+  const utils = render(() => (
+    <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage="network" />
+  ));
   await waitFor(() => expect(utils.container.querySelector(".tl-settings")).not.toBeNull());
   return utils;
 }
+
+/** The experience pin, a button strip on the row above the breakdown. */
+const tierButtons = (c: HTMLElement) => [
+  ...c.querySelectorAll<HTMLButtonElement>(
+    '[aria-label="Experience on this device"] button',
+  ),
+];
+const tierOn = (c: HTMLElement) =>
+  tierButtons(c).find((b) => b.getAttribute("aria-pressed") === "true");
 
 const section = (c: HTMLElement) => c.querySelector(".tl-netusage") as HTMLElement | null;
 
@@ -284,7 +296,7 @@ describe("Data used — which network you are on", () => {
     seedNetwork({ net: "lan", label: "Home network", cc: "", source: "lan" });
     const { container } = await openPanel();
     expect(nameOf(container)).toBe("Home network");
-    expect(section(container)!.textContent).toContain("house's own network");
+    expect(container.textContent).toContain("house's own network");
   });
 
   it("marks an answer nobody has confirmed lately", async () => {
@@ -292,10 +304,10 @@ describe("Data used — which network you are on", () => {
     // says so rather than implying the name still applies.
     seedNetwork({ net: "as8374", label: "Polkomtel", cc: "PL", source: "asn" });
     const { container } = await openPanel();
-    expect(section(container)!.textContent).toContain("not confirmed");
+    expect(container.textContent).toContain("not confirmed");
 
     noteNetworkId("as8374");
-    await waitFor(() => expect(section(container)!.textContent).toContain("Polkomtel"));
+    await waitFor(() => expect(nameOf(container)).toContain("Polkomtel"));
   });
 
   it("offers no way to categorise it, because there is nothing to categorise", async () => {
@@ -308,33 +320,27 @@ describe("Data used — which network you are on", () => {
 describe("Data used — the experience control", () => {
   it("offers auto, full and slow", async () => {
     const { container } = await openPanel();
-    const labels = [...container.querySelectorAll(".tl-netusage-tier label")].map(
-      (l) => l.textContent?.trim(),
-    );
-    expect(labels).toEqual(["Auto", "Full", "Light"]);
+    expect(tierButtons(container).map((b) => b.textContent?.trim())).toEqual([
+      "Auto",
+      "Full",
+      "Light",
+    ]);
   });
 
   it("starts on auto when nothing is pinned", async () => {
     const { container } = await openPanel();
-    const checked = container.querySelector<HTMLInputElement>(
-      ".tl-netusage-tier input:checked",
-    );
-    expect(checked?.value).toBe("auto");
+    expect(tierOn(container)?.textContent?.trim()).toBe("Auto");
   });
 
   it("reflects a pin that is already set", async () => {
     writeTierPreference("slow");
     const { container } = await openPanel();
-    expect(
-      container.querySelector<HTMLInputElement>(".tl-netusage-tier input:checked")?.value,
-    ).toBe("slow");
+    expect(tierOn(container)?.textContent?.trim()).toBe("Light");
   });
 
   it("writes the pin when one is chosen", async () => {
     const { container } = await openPanel();
-    const full = [
-      ...container.querySelectorAll<HTMLInputElement>(".tl-netusage-tier input"),
-    ].find((i) => i.value === "full")!;
+    const full = tierButtons(container).find((b) => b.textContent?.trim() === "Full")!;
 
     fireEvent.click(full);
 
@@ -344,9 +350,7 @@ describe("Data used — the experience control", () => {
   it("clears the pin when auto is chosen again", async () => {
     writeTierPreference("slow");
     const { container } = await openPanel();
-    const auto = [
-      ...container.querySelectorAll<HTMLInputElement>(".tl-netusage-tier input"),
-    ].find((i) => i.value === "auto")!;
+    const auto = tierButtons(container).find((b) => b.textContent?.trim() === "Auto")!;
 
     fireEvent.click(auto);
 
@@ -358,23 +362,33 @@ describe("Data used — what Auto measured", () => {
   /**
    * The pin says what you asked for; this says what the link actually did.
    * Without it "why is my app in light mode?" has no answer on the screen
-   * that put it there.
+   * that put it there. It reads out of the experience row's ⓘ, so each of
+   * these opens it the way a person would.
    */
+  const explain = async (): Promise<HTMLElement> => {
+    const utils = await openPanel();
+    fireEvent.click(utils.getByLabelText("Explain Experience"));
+    return utils.container;
+  };
+
   it("reports the stored verdict", async () => {
     localStorage.setItem(TIER_STORAGE_KEY, "slow");
-    const { container } = await openPanel();
-    expect(section(container)!.textContent).toContain("Last measured: light");
+    expect((await explain()).textContent).toContain("Last measured: light");
   });
 
   it("names a full link as full", async () => {
     localStorage.setItem(TIER_STORAGE_KEY, "full");
-    const { container } = await openPanel();
-    expect(section(container)!.textContent).toContain("Last measured: full");
+    expect((await explain()).textContent).toContain("Last measured: full");
   });
 
   it("says so plainly when nothing has been measured yet", async () => {
+    expect((await explain()).textContent).toContain("not measured yet");
+  });
+
+  it("keeps the verdict out of the way until it is asked for", async () => {
+    localStorage.setItem(TIER_STORAGE_KEY, "slow");
     const { container } = await openPanel();
-    expect(section(container)!.textContent).toContain("not measured yet");
+    expect(container.textContent).not.toContain("Last measured");
   });
 });
 

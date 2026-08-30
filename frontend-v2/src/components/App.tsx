@@ -25,12 +25,11 @@ import {
 } from "../store/keepalive";
 import { Sidebar } from "./Sidebar";
 import { SessionView } from "./SessionView";
-import { SettingsPanel } from "./SettingsPanel";
+import { SettingsPanel, type PageId } from "./SettingsPanel";
 import { Toaster } from "./Toaster";
 import { startNetworkWatch } from "../diagnostics/network";
 import { createPrefsStore } from "../store/prefs";
 import { createSkillsStore } from "../store/skills";
-import { SkillsPanel } from "./SkillsPanel";
 import { SkillsIcon } from "./Icons";
 import { toasts } from "../store/toast";
 import { createKeybindingEngine } from "../keybindings/engine";
@@ -262,7 +261,20 @@ export const App: Component = () => {
   };
 
   const [settingsOpen, setSettingsOpen] = createSignal(false);
-  const [skillsOpen, setSkillsOpen] = createSignal(false);
+  // Skills is a page on the Settings rail, so both header buttons open the same
+  // overlay. This says which page the opener asked for; undefined leaves the
+  // panel on whichever page it was last closed on.
+  const [settingsPage, setSettingsPage] = createSignal<PageId | undefined>(undefined);
+  const openSettings = (page?: PageId): void => {
+    if (settingsOpen()) {
+      setSettingsOpen(false);
+      return;
+    }
+    if (page !== "skills") track("settings.opened");
+    setSettingsPage(page);
+    setSettingsOpen(true);
+  };
+  const skillsOpen = () => settingsOpen() && settingsPage() === "skills";
 
   // --- act as another user (admin only) -------------------------------------
   //
@@ -412,7 +424,14 @@ export const App: Component = () => {
       const acts: PaletteAction[] = [
         { label: "New session", hint: "name box", keepFocus: true, run: () => run("session.new") },
         { label: "Keyboard shortcuts", hint: "/", run: () => run("shortcuts.help") },
-        { label: "Skills", hint: "install, disable, share", run: () => setSkillsOpen(true) },
+        {
+          label: "Skills",
+          hint: "install, disable, share",
+          run: () => {
+            setSettingsPage("skills");
+            setSettingsOpen(true);
+          },
+        },
       ];
       if (cur) {
         acts.push(
@@ -469,7 +488,6 @@ export const App: Component = () => {
       paletteOpen: palette.isOpen(),
       helpOpen: help.isOpen(),
       settingsOpen: settingsOpen(),
-      skillsOpen: skillsOpen(),
       galleryOpen: gallery.view() !== "closed",
       previewOpen: previewState().open,
       previewDirty: previewState().dirty,
@@ -544,26 +562,23 @@ export const App: Component = () => {
       aria-label="Settings"
       title="Settings"
       aria-expanded={settingsOpen()}
-      onClick={() => {
-        if (!settingsOpen()) track("settings.opened");
-        setSettingsOpen((v) => !v);
-      }}
+      onClick={() => openSettings()}
     >
       ⚙<span class="tl-btn-label">Settings</span>
     </button>
   );
 
   // Beside Settings, and labelled for the same reason: a bare glyph in the far
-  // corner of a wide bar is findable only if you already know it is there. It is
-  // its own control rather than a Settings group because the lists are long —
-  // 38 own skills, a peer's 21, the plugins and every live session.
+  // corner of a wide bar is findable only if you already know it is there. It
+  // opens the same overlay on its own page, so the one-click path to Skills
+  // survives the move back into Settings.
   const skillsButton = () => (
     <button
       class="tl-icon-btn tl-skills-btn"
       aria-label="Skills"
       title="Skills"
       aria-expanded={skillsOpen()}
-      onClick={() => setSkillsOpen((v) => !v)}
+      onClick={() => openSettings("skills")}
     >
       <SkillsIcon />
       <span class="tl-btn-label">Skills</span>
@@ -590,18 +605,11 @@ export const App: Component = () => {
           // The phone folds the shell bar (and with it the gear) into the
           // session bar, which only exists once a session is open. Without this
           // the sidebar's own screen has no route to Settings at all.
-          onOpenSettings={
-            flip()
-              ? () => {
-                  if (!settingsOpen()) track("settings.opened");
-                  setSettingsOpen((v) => !v);
-                }
-              : undefined
-          }
+          onOpenSettings={flip() ? () => openSettings() : undefined}
           // The Skills panel needs the same phone route as Settings: its button
           // lives on the folded-away shell bar, and the session-bar menu that
           // also carries it is only there once a session is open.
-          onOpenSkills={flip() ? () => setSkillsOpen((v) => !v) : undefined}
+          onOpenSkills={flip() ? () => openSettings("skills") : undefined}
           // Same reason as onOpenSettings: on a phone the shell bar that
           // carries the chip is folded away, so the list screen needs its own
           // one-tap route back to your own lobby.
@@ -681,17 +689,14 @@ export const App: Component = () => {
                         <button
                           class="tl-menu-item"
                           role="menuitem"
-                          onClick={() => setSkillsOpen((v) => !v)}
+                          onClick={() => openSettings("skills")}
                         >
                           Skills
                         </button>
                         <button
                           class="tl-menu-item"
                           role="menuitem"
-                          onClick={() => {
-                            if (!settingsOpen()) track("settings.opened");
-                            setSettingsOpen((v) => !v);
-                          }}
+                          onClick={() => openSettings()}
                         >
                           Settings
                         </button>
@@ -737,6 +742,7 @@ export const App: Component = () => {
         <SettingsPanel
           prefs={prefs}
           onClose={() => setSettingsOpen(false)}
+          initialPage={settingsPage()}
           keybindings={{
             enabled: engine.enabled,
             setEnabled: engine.setEnabled,
@@ -744,14 +750,8 @@ export const App: Component = () => {
           }}
           notifications={notifications}
           actAs={actAsControl()}
-        />
-      </Show>
-
-      <Show when={skillsOpen()}>
-        <SkillsPanel
           skills={skills}
-          sessions={skillSessions}
-          onClose={() => setSkillsOpen(false)}
+          skillSessions={skillSessions}
         />
       </Show>
 
