@@ -15,6 +15,7 @@ import {
   type SnapshotList,
   type SnapshotRow,
   type Whoami,
+  NAME_RE,
 } from "../types/lobby";
 
 export class ApiError extends Error {
@@ -160,7 +161,7 @@ export function normalizeLayout(raw: Partial<Layout> | null | undefined): Layout
     ungroupedIndex: ui,
   };
   const d = raw.dock;
-  if (d && typeof d === "object" && typeof d.session === "string" && /^[a-zA-Z0-9_-]{1,32}$/.test(d.session)) {
+  if (d && typeof d === "object" && typeof d.session === "string" && NAME_RE.test(d.session)) {
     l.dock = {
       session: d.session,
       visible: d.visible !== false,

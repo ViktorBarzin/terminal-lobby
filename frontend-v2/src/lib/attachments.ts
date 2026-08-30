@@ -1,5 +1,6 @@
 import { clipboardFileUrl, clipboardImgUrl, fileReadUrl } from "./config";
 import { extOf, IMAGE_EXT } from "../store/preview.logic";
+import { NAME_RE } from "../types/lobby";
 
 /**
  * Attachments in the text view: which paths in a message are files worth
@@ -24,9 +25,6 @@ export interface StorePath {
   session: string;
   name: string;
 }
-
-/** Same charset every surface keys a session by (tmux-api, the store, the URL). */
-const SESSION_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 
 /**
  * Document formats that render as a chip when they are NOT in the store.
@@ -106,7 +104,7 @@ export function parseStorePath(path: string): StorePath | null {
   if (parts.length !== 3) return null;
   const [owner, session, name] = parts as [string, string, string];
   if (!owner || !session || !name) return null;
-  if (!SESSION_RE.test(owner) || !SESSION_RE.test(session)) return null;
+  if (!NAME_RE.test(owner) || !NAME_RE.test(session)) return null;
   if (name.includes("..") || name.startsWith(".")) return null;
   return { owner, session, name };
 }
