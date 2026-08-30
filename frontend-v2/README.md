@@ -248,8 +248,14 @@ src/
     StateDot.tsx         Claude state dot (running / awaiting / done)
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
     CreateSessionRow.tsx New-session input + the Claude/Codex/shell picker
+    OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
+    order.logic.ts       PURE session ordering: newest-first by created or by
+                         last DRIVEN time (never session_activity, which a
+                         read-only attach bumps), and the capture that freezes
+                         the visible order into the layout when a drag hands the
+                         list back to manual
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot
     TextView.tsx         Text mode: timeline above the composer
