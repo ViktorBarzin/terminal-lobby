@@ -78,6 +78,8 @@ ENV TL_MULTI_USER=off \
     TL_BIND=127.0.0.1 \
     TL_USER=dev
 
+# The default. TL_PORT, or a PORT injected by a platform-as-a-service, moves
+# the listener; EXPOSE is metadata and does not follow it.
 EXPOSE 7681
 # tini reaps: six processes under one entrypoint, and tmux leaves children.
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

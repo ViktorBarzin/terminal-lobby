@@ -15,7 +15,7 @@ NAME="tl-smoke-$$"
 BUILD=1
 [[ "${1:-}" == "--no-build" ]] && BUILD=0
 
-cleanup() { docker rm -f "$NAME" "$NAME-auth" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "$NAME" "$NAME-auth" "$NAME-port" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -99,5 +99,22 @@ docker rm -f "$AUTH_NAME" >/dev/null 2>&1 || true
 echo "$authwho" | grep -q '"authentik":"me"' \
   || fail "the signed-in username did not become the identity: $authwho"
 ok "basic auth refuses without credentials and carries the username through"
+
+# A PaaS hands the container a port in the environment rather than letting it
+# choose one. TL_PORT is the lobby's own name for it and wins; PORT is the
+# convention Heroku, Cloud Run, Railway, Render and Fly all use, so an image
+# started by one of them needs no configuration at all. Setting both here
+# proves the precedence in a single run.
+PORT_NAME="$NAME-port"
+docker rm -f "$PORT_NAME" >/dev/null 2>&1 || true
+docker run -d --name "$PORT_NAME" -p 17683:9090 -e PORT=8080 -e TL_PORT=9090 "$IMAGE" >/dev/null
+for _ in $(seq 1 60); do
+  curl -sf -o /dev/null "http://127.0.0.1:17683/" && break
+  sleep 1
+done
+ported=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17683/" || echo none)
+docker rm -f "$PORT_NAME" >/dev/null 2>&1 || true
+[[ "$ported" == "200" ]] || fail "TL_PORT=9090 did not move the listener there (got $ported)"
+ok "the listen port comes from the environment, TL_PORT over PORT"
 
 echo "smoke: all checks passed"

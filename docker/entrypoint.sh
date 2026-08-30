@@ -18,7 +18,30 @@ export TL_MULTI_USER="${TL_MULTI_USER:-off}"
 export TL_AUTH_HEADER="${TL_AUTH_HEADER:-X-Forwarded-User}"
 export TL_BIND="${TL_BIND:-127.0.0.1}"
 
+# What nginx publishes. TL_PORT is the lobby's own name for it; PORT is the
+# convention a platform-as-a-service uses to hand a container the port it has
+# already routed, so honouring it means an image started by one needs no
+# configuration. TL_PORT wins when both are set.
+TL_PORT="${TL_PORT:-${PORT:-7681}}"
+
 log() { echo "entrypoint: $*"; }
+
+case "$TL_PORT" in
+  ''|*[!0-9]*) echo "entrypoint: TL_PORT must be a number, got '$TL_PORT'" >&2; exit 64 ;;
+esac
+if [ "$TL_PORT" -lt 1 ] || [ "$TL_PORT" -gt 65535 ]; then
+  echo "entrypoint: TL_PORT must be 1-65535, got $TL_PORT" >&2
+  exit 64
+fi
+# The five services and ttyd hold these on loopback. nginx taking one of them
+# fails at bind time with a message about an address in use, which does not say
+# what to change; say it here instead.
+for taken in 7683 7684 7685 7686 7688 7690; do
+  if [ "$TL_PORT" = "$taken" ]; then
+    echo "entrypoint: TL_PORT $TL_PORT is used by a service inside the container" >&2
+    exit 64
+  fi
+done
 
 # The services run AS the single user. That is what makes the same-user fast
 # path apply, so nothing here needs sudo and nothing needs a user map.
@@ -55,13 +78,14 @@ elif [ -n "${TL_TRUST_FORWARDED_USER:-}" ]; then
   log "trusting $TL_AUTH_HEADER from the proxy in front"
 else
   AUTH_BLOCK="set \$tl_user $TL_USER;"
-  log "NO AUTHENTICATION — anything reaching :7681 gets a shell as $TL_USER."
+  log "NO AUTHENTICATION — anything reaching :$TL_PORT gets a shell as $TL_USER."
   log "Set TL_BASIC_AUTH=user:pass for a login prompt, or put a proxy in front"
   log "and set TL_TRUST_FORWARDED_USER=1."
 fi
 
 sed -e "s|__AUTH_BLOCK__|$AUTH_BLOCK|" \
     -e "s|__AUTH_HEADER__|$TL_AUTH_HEADER|" \
+    -e "s|__PORT__|$TL_PORT|" \
     /etc/nginx/nginx.conf.template > "$CONF"
 nginx -t >/dev/null
 
@@ -86,5 +110,5 @@ for p in $pids; do
   ( while kill -0 "$p" 2>/dev/null; do sleep 5; done; log "a service exited; stopping"; kill 1 ) &
 done
 
-log "listening on :7681"
+log "listening on :$TL_PORT"
 exec nginx -g 'daemon off;'
