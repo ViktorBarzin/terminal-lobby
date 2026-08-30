@@ -74,6 +74,9 @@ export const NetworkPage: Component = () => {
   // "why am I in light mode?". connection.ts persists the verdict, not the
   // sample behind it, so the throughput and round trip are not available here.
   const measured = readStoredTier();
+  // Read once, like the counters: Privacy owns this switch and lives on another
+  // page, so the two are never on screen together, and leaving this page and
+  // coming back re-reads it.
   const diagOn = diagnosticsWanted();
 
   const refreshUsage = () => setUsage(aggregate(readStore(), new Date(), period(), net()));
@@ -117,8 +120,10 @@ export const NetworkPage: Component = () => {
     refreshUsage();
   };
 
-  // Opening Settings is a moment worth re-asking the server: it is the one
-  // interaction that means "tell me about this connection".
+  // Landing on this page is a moment worth re-asking the server: it is the one
+  // interaction that means "tell me about this connection". It used to fire on
+  // any Settings open, which asked on behalf of someone who had come to change
+  // their theme.
   onMount(() => {
     void refreshNetwork({ force: true });
     onCleanup(onNetworkChange((info) => setNetwork(info)));

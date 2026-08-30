@@ -112,7 +112,7 @@ const SkillFile: Component<{
                 <span class="tl-skill-file-btns">
                   <button
                     type="button"
-                    class="tl-settings-btn"
+                    class="tl-set-btn"
                     disabled={!dirty() || saving()}
                     onClick={() => {
                       if (ask(`Throw away your changes to ${props.name}?`)) void s.reread();
@@ -123,7 +123,7 @@ const SkillFile: Component<{
                   </button>
                   <button
                     type="button"
-                    class="tl-settings-btn tl-settings-btn-go"
+                    class="tl-set-btn tl-set-btn-go"
                     disabled={!dirty() || saving()}
                     onClick={() => void s.save(props.name)}
                     title="Save (Ctrl/Cmd-S)"
@@ -251,7 +251,7 @@ export const SkillsPage: Component<{
               />
               <button
                 type="submit"
-                class="tl-settings-btn"
+                class="tl-set-btn"
                 disabled={s.inspecting() || !draft().trim()}
               >
                 {s.inspecting() ? "Looking…" : "Look"}
@@ -313,7 +313,7 @@ export const SkillsPage: Component<{
                                 <Show when={skill.updateAvailable && skill.from}>
                                   <button
                                     type="button"
-                                    class="tl-settings-btn"
+                                    class="tl-set-btn"
                                     disabled={anyBusy()}
                                     onClick={() => {
                                       if (
@@ -332,7 +332,7 @@ export const SkillsPage: Component<{
                                 </Show>
                                 <button
                                   type="button"
-                                  class="tl-settings-btn"
+                                  class="tl-set-btn"
                                   disabled={anyBusy()}
                                   onClick={() => {
                                     if (confirm(`Remove ${skill.name}? A backup is kept.`)) {
@@ -348,7 +348,7 @@ export const SkillsPage: Component<{
                                     question and names what cannot come back. */}
                                 <button
                                   type="button"
-                                  class="tl-settings-btn tl-settings-btn-danger"
+                                  class="tl-set-btn tl-set-btn-danger"
                                   disabled={anyBusy()}
                                   onClick={() => {
                                     if (confirm(deleteWarning(skill))) {
@@ -477,7 +477,7 @@ export const SkillsPage: Component<{
                             <Show when={plugin.stale}>
                               <button
                                 type="button"
-                                class="tl-settings-btn"
+                                class="tl-set-btn"
                                 disabled={anyBusy()}
                                 onClick={() => void s.update(plugin.id)}
                               >
@@ -486,7 +486,7 @@ export const SkillsPage: Component<{
                             </Show>
                             <button
                               type="button"
-                              class="tl-settings-btn tl-settings-btn-danger"
+                              class="tl-set-btn tl-set-btn-danger"
                               disabled={anyBusy()}
                               onClick={() => {
                                 if (
@@ -516,7 +516,7 @@ export const SkillsPage: Component<{
 
             {/* --- what can pick a change up -------------------------------- */}
             <Show when={active() === "sessions"}>
-              <div class="tl-settings-hint">
+              <div class="tl-set-hint tl-set-hint-static">
                 A skill is read when a session starts, so a change reaches new ones.
               </div>
               <table class="tl-skill-table">
@@ -558,7 +558,7 @@ export const SkillsPage: Component<{
                             >
                               <button
                                 type="button"
-                                class="tl-settings-btn"
+                                class="tl-set-btn"
                                 disabled={anyBusy()}
                                 onClick={() => void s.restart(row.name)}
                                 title="Respawn with claude --continue: the conversation survives"
@@ -728,16 +728,16 @@ const SourceResult: Component<{
         </For>
       </Show>
 
-      <div class="tl-settings-btnrow">
+      <div class="tl-set-actions">
         <button
           type="button"
-          class="tl-settings-btn"
+          class="tl-set-btn"
           disabled={total() === 0 || busy()}
           onClick={install}
         >
           {busy() ? "Installing…" : `Install ${total() || ""}`.trim()}
         </button>
-        <button type="button" class="tl-settings-btn" onClick={() => s.clearSource()}>
+        <button type="button" class="tl-set-btn" onClick={() => s.clearSource()}>
           Cancel
         </button>
       </div>
@@ -752,7 +752,7 @@ const SourceResult: Component<{
 /** Empty renders the reason a list is empty, and nothing when it is not. */
 const Empty: Component<{ text: string; shown: boolean }> = (props) => (
   <Show when={props.shown && props.text}>
-    <div class="tl-settings-hint">{props.text}</div>
+    <div class="tl-set-hint tl-set-hint-static">{props.text}</div>
   </Show>
 );
 
@@ -795,7 +795,7 @@ const PeerRow: Component<{
             <Show when={action() === "install"}>
               <button
                 type="button"
-                class="tl-settings-btn"
+                class="tl-set-btn"
                 disabled={anyBusy()}
                 onClick={() => void s.install(props.peer, skill.name)}
               >
@@ -805,7 +805,7 @@ const PeerRow: Component<{
             <Show when={action() === "replace"}>
               <button
                 type="button"
-                class="tl-settings-btn"
+                class="tl-set-btn"
                 disabled={anyBusy()}
                 onClick={() => void s.showDiff(props.peer, skill.name)}
                 title="See how their copy differs from yours"
@@ -814,7 +814,7 @@ const PeerRow: Component<{
               </button>
               <button
                 type="button"
-                class="tl-settings-btn"
+                class="tl-set-btn"
                 disabled={anyBusy()}
                 onClick={() => {
                   if (

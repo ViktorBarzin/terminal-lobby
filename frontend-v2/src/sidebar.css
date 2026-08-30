@@ -62,9 +62,6 @@
 .tl-actas-chip:hover .tl-actas-x {
   opacity: 1;
 }
-.tl-actas-group .tl-settings-select {
-  border-color: var(--tl-actas);
-}
 
 /* ---- Shell grid -------------------------------------------------------- */
 .tl-shell {

@@ -3,8 +3,10 @@ import {
   Match,
   Show,
   Switch,
+  createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   onMount,
   type Accessor,
@@ -64,9 +66,16 @@ const writeLastPage = (id: PageId): void => {
 export const SettingsPanel: Component<{
   prefs: PrefsStore;
   onClose: () => void;
-  /** Which page to open on, overriding the remembered one. The header's Skills
-   *  button passes "skills" so its one-click path survives the move. */
+  /** Which page to show, overriding the remembered one. The header's Skills
+   *  button passes "skills" so its one-click path survives the move, and it may
+   *  change while the panel is open — pressing Skills over an open Settings
+   *  switches to that page rather than closing it. */
   initialPage?: PageId;
+  /** Which page is actually showing. The openers need this to say whether the
+   *  surface behind their button is on screen; without it they would have to
+   *  keep a copy of this component's state, which goes stale the moment
+   *  someone uses the rail. */
+  onPageChange?: (id: PageId) => void;
   /** the keybinding layer's opt-in toggle (per-device, not roamed). */
   keybindings?: KeybindingsControl;
   /** the PWA notification system (per-device readouts + test actions). */
@@ -85,6 +94,7 @@ export const SettingsPanel: Component<{
 }> = (props) => {
   let dialogEl: HTMLDivElement | undefined;
   let railEl: HTMLDivElement | undefined;
+  let pageEl: HTMLDivElement | undefined;
 
   const rail = createMemo<RailEntry[]>(() => railFor({ admin: !!props.actAs }));
   const [page, setPage] = createSignal<PageId>(
@@ -99,6 +109,24 @@ export const SettingsPanel: Component<{
     setPage(id);
     writeLastPage(id);
   };
+
+  // An opener may ask for a different page while the panel is already open.
+  // Deferred, so the signal's own seed owns the first render, and it does not
+  // write the remembered page: being sent to a page is not the same as
+  // navigating to one.
+  createEffect(
+    on(
+      () => props.initialPage,
+      (id) => {
+        if (id && id !== page()) setPage(id);
+      },
+      { defer: true },
+    ),
+  );
+
+  // Report the page that is SHOWING, which is not always the one asked for:
+  // the rail moves it, and the rail can drop an entry under a live panel.
+  createEffect(on(current, (id) => props.onPageChange?.(id)));
 
   /** Tabbable descendants in DOM order — a disabled −/+ drops out on its own. */
   const tabbable = (): HTMLElement[] =>
@@ -140,11 +168,22 @@ export const SettingsPanel: Component<{
   onCleanup(() => window.removeEventListener("keydown", onKey, true));
 
   /**
-   * ↑↓ walk the rail, Home/End jump to its ends — what a vertical tablist is
-   * expected to do, and the reason the rail rather than a text box takes focus
-   * when the panel opens.
+   * ↑↓ walk the rail, Home/End jump to its ends, Enter steps into the page —
+   * what a vertical tablist is expected to do, and the reason the rail rather
+   * than a text box takes focus when the panel opens.
    */
   const onRailKey = (e: KeyboardEvent): void => {
+    // Enter on a tab that is already selected would otherwise re-select it and
+    // leave you where you were, which is a dead end for a keyboard.
+    if (e.key === "Enter") {
+      const first = pageEl?.querySelector<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!first) return; // a page with nothing to focus keeps the rail
+      e.preventDefault();
+      first.focus();
+      return;
+    }
     const order = rail();
     const at = order.findIndex((r) => r.id === current());
     let next = -1;
@@ -240,6 +279,7 @@ export const SettingsPanel: Component<{
           </div>
 
           <div
+            ref={pageEl}
             class="tl-set-page"
             classList={{ "is-skills": current() === "skills" }}
             role="tabpanel"

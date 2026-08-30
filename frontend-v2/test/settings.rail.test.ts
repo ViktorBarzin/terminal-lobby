@@ -8,7 +8,12 @@
  * strand the panel on an entry that is no longer in the rail.
  */
 import { describe, it, expect } from "vitest";
-import { railFor, resolvePage, type PageId } from "../src/components/settings/rail";
+import {
+  openerAction,
+  railFor,
+  resolvePage,
+  type PageId,
+} from "../src/components/settings/rail";
 
 const ids = (admin: boolean): PageId[] => railFor({ admin }).map((e) => e.id);
 
@@ -63,5 +68,40 @@ describe("resolvePage", () => {
     expect(resolvePage(railFor({ admin: true }), "nonsense")).toBe("appearance");
     expect(resolvePage(railFor({ admin: true }), "")).toBe("appearance");
     expect(resolvePage(railFor({ admin: true }), null)).toBe("appearance");
+  });
+});
+
+describe("openerAction", () => {
+  const press = (
+    isOpen: boolean,
+    showing: PageId | undefined,
+    pressed: PageId | undefined,
+  ) => openerAction({ isOpen, showing, pressed });
+
+  it("opens on the asked-for page when nothing is open", () => {
+    expect(press(false, undefined, "skills")).toEqual({ kind: "open", page: "skills" });
+    expect(press(false, undefined, undefined)).toEqual({ kind: "open", page: undefined });
+  });
+
+  it("closes when you press the button for the page you are on", () => {
+    expect(press(true, "skills", "skills")).toEqual({ kind: "close" });
+  });
+
+  it("closes on the gear, which stands for the whole dialog", () => {
+    expect(press(true, "skills", undefined)).toEqual({ kind: "close" });
+    expect(press(true, "appearance", undefined)).toEqual({ kind: "close" });
+  });
+
+  it("switches pages rather than closing the panel you asked to see", () => {
+    // The regression this exists for: Settings open on Appearance, press
+    // Skills, and the old rule closed the dialog instead of showing Skills.
+    expect(press(true, "appearance", "skills")).toEqual({ kind: "goto", page: "skills" });
+    expect(press(true, "network", "skills")).toEqual({ kind: "goto", page: "skills" });
+  });
+
+  it("judges by the page SHOWING, so the rail cannot strand it", () => {
+    // Opened via the Skills button, then walked to Terminal on the rail.
+    // Pressing Skills again has to come back, not close.
+    expect(press(true, "terminal", "skills")).toEqual({ kind: "goto", page: "skills" });
   });
 });

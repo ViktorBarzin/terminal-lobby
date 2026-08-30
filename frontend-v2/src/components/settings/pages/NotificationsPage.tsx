@@ -61,7 +61,6 @@ export const NotificationsPage: Component<{
             <ActionRow
               label="Send a test"
               hint="Push is per device and per browser — enable the bell on each device you want notified."
-              deviceOnly
             >
               <button
                 type="button"

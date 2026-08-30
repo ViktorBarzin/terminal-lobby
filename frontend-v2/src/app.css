@@ -188,26 +188,6 @@ body {
   font-weight: 600;
   font-size: calc(15px * var(--tl-text-scale, 1));
 }
-.tl-settings-group {
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-}
-.tl-settings-group:first-of-type {
-  border-top: 0;
-  padding-top: 0;
-}
-.tl-settings-label {
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-}
-.tl-settings-hint {
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-  margin-top: 6px;
-}
 
 /* ---- Settings: the rail and the page ------------------------------------
    The panel was thirteen groups down one 420px column, ~2,400px of scroll, and
@@ -394,6 +374,11 @@ label.tl-set-row-label {
   margin-top: 6px;
   max-width: 56ch;
 }
+/* A hint that stands on its own rather than hanging off a ⓘ — a group's
+   footnote. It has no row above it to sit tight against. */
+.tl-set-hint-static {
+  margin-top: 10px;
+}
 .tl-set-note {
   /* A consequence rather than an explanation, so it is always on screen and
      marked as something to read. */
@@ -542,6 +527,16 @@ label.tl-set-row-label {
 .tl-set-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* The affirmative action of its row — Look at a repo, Save a skill — so it
+   reads like one. */
+.tl-set-btn-go:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tl-set-btn-go:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg-page);
 }
 .tl-set-btn-danger {
   color: var(--danger);
@@ -879,108 +874,9 @@ label.tl-set-row-label {
 }
 
 /* Settings → Notifications: per-device readouts + test buttons. */
-.tl-settings-readouts {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 10px;
-}
-.tl-settings-readout {
-  display: flex;
-  justify-content: space-between;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-}
-.tl-settings-readout b {
-  color: var(--text-primary);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.tl-settings-btnrow {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-.tl-settings-btn {
-  font: inherit;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  padding: 6px 10px;
-  color: var(--text-primary);
-  background: var(--bg-page);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-.tl-settings-btn:hover {
-  background: var(--bg-card-hover);
-}
-.tl-theme-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-}
-.tl-theme-swatch {
-  font: inherit;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  padding: 8px 6px;
-  color: var(--text-primary);
-  background: var(--bg-page);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tl-theme-swatch:hover {
-  background: var(--bg-card-hover);
-}
-.tl-theme-swatch.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-.tl-fontsize {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.tl-fontsize-btn {
-  font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  min-width: 40px;
-  padding: 6px 10px;
-  color: var(--text-primary);
-  background: var(--bg-page);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-.tl-fontsize-btn:hover:not(:disabled) {
-  background: var(--bg-card-hover);
-}
-.tl-fontsize-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.tl-fontsize-value {
-  font-variant-numeric: tabular-nums;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  min-width: 44px;
-  text-align: center;
-}
-.tl-settings-select {
-  width: 100%;
-  font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  padding: 7px 8px;
-  color: var(--text-primary);
-  background: var(--bg-page);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
+/* Named for the Settings panel it was written for; its only consumer now is
+   FilePreview's overlay, which borrowed the style. Left in place rather than
+   renamed so this change stays inside Settings. */
 .tl-settings-check {
   display: flex;
   align-items: center;
@@ -992,77 +888,8 @@ label.tl-set-row-label {
 
 /* A labelled slider with its value: line height, letter spacing. The value is
    tabular so the row does not jog as digits change under the thumb. */
-.tl-settings-range {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  padding: 4px 0;
-  cursor: pointer;
-}
-.tl-settings-range > span {
-  flex: 0 0 92px;
-}
-.tl-settings-range input[type="range"] {
-  flex: 1 1 auto;
-  min-width: 0;
-  accent-color: var(--accent);
-}
-.tl-settings-num {
-  flex: 0 0 46px;
-  text-align: right;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-}
 
 /* A labelled segmented control: bold weight, cursor shape, scroll speed. */
-.tl-settings-seg-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  padding: 4px 0;
-}
-.tl-settings-seg-row > span {
-  flex: 0 0 92px;
-}
-.tl-settings-seg {
-  display: flex;
-  gap: 4px;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-}
-.tl-settings-seg button {
-  font: inherit;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  padding: 4px 9px;
-  color: var(--text-muted);
-  background: var(--bg-page);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-.tl-settings-seg button:hover:not(:disabled) {
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-.tl-settings-seg button.active {
-  color: var(--text-primary);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg-page));
-}
-.tl-settings-seg button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.tl-settings-btn-danger {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-.tl-settings-btn-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 12%, var(--bg-page));
-}
 
 /* ---- Toast stack (top-right) ------------------------------------------- */
 .tl-toaster {
@@ -2107,16 +1934,6 @@ label.tl-set-row-label {
   gap: 4px;
 }
 .tl-schelp-keys kbd,
-.tl-settings-check kbd {
-  font-family: var(--font-mono, monospace);
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  color: var(--text-primary);
-  background: var(--bg-page);
-  border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  padding: 1px 6px;
-  white-space: nowrap;
-}
 .tl-schelp-desc {
   flex: 1 1 auto;
   font-size: calc(12px * var(--tl-text-scale, 1));
@@ -4164,17 +3981,6 @@ body.tl-kb-up {
 
    The dialog reuses .tl-settings for its chrome and only widens it, so the two
    overlays cannot drift apart on border, radius, shadow or padding. */
-.tl-skills-dialog {
-  width: min(880px, 100%);
-  display: flex;
-  flex-direction: column;
-  max-height: calc(100vh - 96px);
-}
-.tl-skills-head-right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 .tl-skills-tabs {
   display: flex;
   gap: 4px;
@@ -4546,14 +4352,6 @@ body.tl-kb-up {
   gap: 6px;
 }
 /* Saving a skill is the affirmative action of this row, so it reads like one. */
-.tl-settings-btn-go:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.tl-settings-btn-go:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--bg-page);
-}
 
 /* The session state dots reuse the sidebar's vocabulary so the same colour means
    the same thing in both places. */
