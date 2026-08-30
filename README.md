@@ -24,8 +24,9 @@ proxy in front instead and set `TL_TRUST_FORWARDED_USER=1`.
 
 It listens on 7681 unless `TL_PORT` says otherwise, and a host that assigns the
 port itself can set `PORT`, so the image runs on a container platform without
-being configured for one. `docs/deployment.md` has the rest of the container's
-settings.
+being configured for one. The image carries tmux and a shell rather than
+`claude` or `codex`, so pick **Plain shell** in the new session row until you
+give it one. `docs/deployment.md` has the rest of the container's settings.
 
 ## Install on a machine
 
