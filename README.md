@@ -44,7 +44,7 @@ Everything lives in `/etc/terminal-lobby.conf`. Your own settings go in
 | `TL_AUTH_HEADER` | `X-Forwarded-User` | the header your proxy puts the username in |
 | `TL_PROXY_SECRET` | unset | a shared secret the proxy must also send, in `X-TL-Proxy-Secret` |
 | `TL_MULTI_USER` | `auto` | `auto` (multi-user when `/etc/ttyd-user-map` exists), `on`, `off` |
-| `TL_BIND` | `0.0.0.0` | listen address; `127.0.0.1` when the proxy is on the same host |
+| `TL_BIND` | `127.0.0.1` | listen address; widen to `0.0.0.0` when the proxy is on another host, and set the secret in the same change |
 
 Any proxy that emits a username header works. Authentik sets
 `X-Authentik-Username`; oauth2-proxy, Caddy, Cloudflare Access and Tailscale
