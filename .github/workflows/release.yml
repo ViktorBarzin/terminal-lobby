@@ -9,9 +9,9 @@ name: release
 on:
   push:
     branches: [master]
-    # svu only bumps on commits that warrant it, so a docs-only merge resolves to
-    # a tag that already exists and the tag push fails -- after building. Skipping
-    # paths that cannot change the artefact avoids a red build for a typo fix.
+    # Skipping paths that cannot change the artefact avoids releasing a version
+    # for a typo fix. Anything that reaches this workflow is a code change and
+    # gets a version, since the version step passes --always.
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
@@ -94,8 +94,21 @@ jobs:
           # branch is explicit, not an error swallowed with `|| true`: falling
           # back on ANY svu failure could quietly re-release v0.1.0 over a much
           # later version.
+          #
+          # --always because svu only bumps on feat: and fix:. A push of
+          # refactor: or perf: commits otherwise resolves to the tag that is
+          # already there, and the tag push below fails with "already exists"
+          # -- after the tests, the build and the verify have all passed, and
+          # before the deploy. The work then sits on master, built and unshipped,
+          # until somebody happens to land a feat: or a fix:. Measured
+          # 2026-08-30 on the cleanup that prompted this: svu next said v0.10.0
+          # against an existing v0.10.0, and with --always says v0.10.1.
+          #
+          # Anything reaching this workflow changed a file that can alter the
+          # artefact (paths-ignore keeps docs and markdown out), so a version
+          # for every run is what we want.
           if git tag --list 'v[0-9]*' | grep -q .; then
-            NEXT="$(./svu next --tag.pattern 'v[0-9]*')"
+            NEXT="$(./svu next --always --tag.pattern 'v[0-9]*')"
           else
             NEXT="v0.1.0"
             echo "no semver tag yet — first release"
