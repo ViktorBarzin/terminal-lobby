@@ -41,6 +41,8 @@ export type TlEvent =
   // many events did it seed from, and how many did the server still send.
   // Without the pair, "the cache works" is a claim rather than a measurement.
   | "text.open"
+  | "text.answer_sent"
+  | "text.answer_failed"
   | "session.detached"
   | "session.renamed"
   | "session.moved"
