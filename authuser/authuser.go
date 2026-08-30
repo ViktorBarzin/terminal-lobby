@@ -7,10 +7,12 @@
 // gallery, terminal) then belongs to that user.
 //
 // It exists as a shared module rather than a fourth copy of the auth code
-// because it is the security decision. tmux-api, file-api and clipboard-upload
-// each keep their own resolveOSUser (which reads the header and the user map);
-// all three route the act-as question through this one implementation, so the
-// admin check cannot drift between services.
+// because it is the security decision. tmux-api, file-api, skills-api and
+// clipboard-upload all resolve through this one implementation — Authorize for
+// the header, the user map and the HTTP refusal, and ResolveOSUser /
+// ResolveRealOSUser for the answer a handler wants — so nothing about who a
+// request acts as can drift between services. Each keeps a package-local
+// resolveOSUser of its own, but only as the name its handlers call.
 //
 // Two properties the tests pin down and the callers rely on:
 //
@@ -86,6 +88,17 @@ type Gate struct {
 	// Nil means only the log line, which is what a service that has no emitter
 	// wants.
 	OnActAsRefused func(realOSUser, target, reason string)
+
+	// OnActAs reports a request that resolved to somebody OTHER than the
+	// caller, so a service can record who did what under whose account. Fired
+	// by ResolveOSUser only, and only when the two names differ.
+	//
+	// A hook because the services disagree, deliberately: file-api and
+	// skills-api log every one (a handful per user action, and a write under
+	// another account is worth a record), while tmux-api does not (it is
+	// polled every five seconds, so the same line would be noise). Nil means
+	// no report.
+	OnActAs func(realOSUser, osUser, method, path string)
 
 	// countAdminReads is a test seam: the admin list is re-read per request by
 	// design, but re-reading it twice within one is not, and nothing else can

@@ -402,3 +402,37 @@ func (g *Gate) Configure(service, bindAddr string) {
 			service, bindAddr, g.Config.header(), SecretHeader)
 	}
 }
+
+// ResolveOSUser → the OS user this request ACTS AS: normally the caller from
+// the identity header, or an act-as target when an administrator asked for one
+// and is entitled to it. Returns "" after writing the appropriate 401/403/500.
+//
+// The resolved name is what a service confines the request to and what a
+// privop re-exec runs as, so an admin acting as bob is confined to bob's home
+// and their writes land with bob's ownership.
+//
+// This lived in each service as a private resolveOSUser. The four copies were
+// identical, which is the same argument that put Effective here: it is the
+// security decision, and a decision with four implementations can drift.
+func (g *Gate) ResolveOSUser(w http.ResponseWriter, r *http.Request) string {
+	id, ok := g.Authorize(w, r)
+	if !ok {
+		return ""
+	}
+	if id.OSUser != id.RealOSUser && g.OnActAs != nil {
+		g.OnActAs(id.RealOSUser, id.OSUser, r.Method, r.URL.Path)
+	}
+	return id.OSUser
+}
+
+// ResolveRealOSUser → the CALLER's own mapped OS user, ignoring ?as= entirely.
+// The push-subscription endpoints want this rather than ResolveOSUser: a
+// subscription must never land under an act-as target. It reports no act-as,
+// because from its point of view none happened.
+func (g *Gate) ResolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
+	id, ok := g.Authorize(w, r)
+	if !ok {
+		return ""
+	}
+	return id.RealOSUser
+}
