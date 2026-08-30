@@ -14,6 +14,7 @@ import {
 } from "solid-js";
 import type { PrefsStore } from "../store/prefs";
 import type { NotificationSystem } from "../notify/notifications";
+import { installDialogFocus, wrapTab } from "../lib/focus-trap";
 import type { SkillsStore } from "../store/skills";
 import { railFor, resolvePage, type PageId, type RailEntry } from "./settings/rail";
 import { AppearancePage } from "./settings/pages/AppearancePage";
@@ -128,41 +129,13 @@ export const SettingsPanel: Component<{
   // the rail moves it, and the rail can drop an entry under a live panel.
   createEffect(on(current, (id) => props.onPageChange?.(id)));
 
-  /** Tabbable descendants in DOM order — a disabled −/+ drops out on its own. */
-  const tabbable = (): HTMLElement[] =>
-    dialogEl
-      ? [
-          ...dialogEl.querySelectorAll<HTMLElement>(
-            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          ),
-        ]
-      : [];
-
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
       props.onClose();
       return;
     }
-    // aria-modal="true" tells assistive tech Tab cannot leave this dialog, so
-    // it must not: wrap at both ends instead of landing on the app behind.
-    if (e.key === "Tab" && dialogEl) {
-      const items = tabbable();
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      const outside = !dialogEl.contains(active);
-      if (!first || !last) {
-        e.preventDefault();
-        dialogEl.focus();
-      } else if (e.shiftKey && (outside || active === first || active === dialogEl)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (outside || active === last)) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
+    if (e.key === "Tab" && dialogEl) wrapTab(e, dialogEl);
   };
   onMount(() => window.addEventListener("keydown", onKey, true));
   onCleanup(() => window.removeEventListener("keydown", onKey, true));
@@ -200,21 +173,16 @@ export const SettingsPanel: Component<{
   };
 
   // Opening moves focus to the rail rather than to the ✕, so Enter doesn't
-  // immediately close the panel and ↑↓ work from the first keystroke; every
-  // close path unmounts, so the restore belongs in onCleanup and covers the ✕,
-  // the backdrop and Escape alike.
-  let opener: HTMLElement | null = null;
-  onMount(() => {
-    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    // Deferred like the command palette's: the node is in the document by the
-    // time the microtask runs.
-    queueMicrotask(() =>
-      (railEl?.querySelector<HTMLElement>('[aria-selected="true"]') ?? dialogEl)?.focus(),
-    );
-  });
-  onCleanup(() => {
-    if (opener && opener !== document.body && opener.isConnected) opener.focus();
-  });
+  // immediately close the panel and ↑↓ work from the first keystroke. The
+  // shared helper saves and restores the opener; it takes the target as an
+  // accessor precisely so a panel like this can aim it somewhere other than
+  // the dialog itself.
+  installDialogFocus(
+    () => railEl?.querySelector<HTMLElement>('[aria-selected="true"]') ?? dialogEl,
+  );
+  // Fill the "Subscribed here" readout once the panel opens (async: it compares
+  // this browser's live push endpoint against the server's stored list).
+  onMount(() => void props.notifications?.refreshDeviceState());
 
   const heading = () => rail().find((r) => r.id === current())?.label ?? "";
 

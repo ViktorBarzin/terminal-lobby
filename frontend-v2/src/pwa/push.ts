@@ -16,6 +16,7 @@
  * device. See the integration ledger note about the lobby-api prefix.
  */
 import { base64urlToUint8Array } from "./vapid";
+import { fetchWithDeadline } from "../lib/http";
 
 export const PUSH_SUBS_API = "/api/sessions/push-subscriptions";
 export const VAPID_PUBLIC_API = "/api/sessions/push/vapid-public";
@@ -40,7 +41,7 @@ export async function subscribePush(): Promise<void> {
   try {
     if (!pushSupported()) return;
     const reg = await navigator.serviceWorker.ready;
-    const resp = await fetch(VAPID_PUBLIC_API, { credentials: "same-origin" });
+    const resp = await fetchWithDeadline(VAPID_PUBLIC_API);
     if (!resp.ok) return; // 404 → push dark server-side
     const key = (await resp.text()).trim();
     if (!key) return;
@@ -51,9 +52,8 @@ export async function subscribePush(): Promise<void> {
         applicationServerKey: base64urlToUint8Array(key),
       });
     }
-    await fetch(PUSH_SUBS_API, {
+    await fetchWithDeadline(PUSH_SUBS_API, {
       method: "PUT",
-      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(sub.toJSON ? sub.toJSON() : sub),
     });
@@ -77,9 +77,8 @@ export async function unsubscribePush(): Promise<void> {
     if (!sub) return;
     const endpoint = sub.endpoint;
     await sub.unsubscribe();
-    await fetch(PUSH_SUBS_API, {
+    await fetchWithDeadline(PUSH_SUBS_API, {
       method: "DELETE",
-      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpoint }),
     });
@@ -103,7 +102,7 @@ export async function deviceSubscriptionState(): Promise<DeviceSubscriptionState
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (!sub) return "no";
-    const resp = await fetch(PUSH_SUBS_API, { credentials: "same-origin" });
+    const resp = await fetchWithDeadline(PUSH_SUBS_API);
     if (!resp.ok) return "no";
     const list = (await resp.json()) as unknown;
     return Array.isArray(list) &&
@@ -127,9 +126,8 @@ export type PushTestOutcome =
  */
 export async function testAllDevices(): Promise<PushTestOutcome> {
   try {
-    const resp = await fetch(PUSH_TEST_API, {
+    const resp = await fetchWithDeadline(PUSH_TEST_API, {
       method: "POST",
-      credentials: "same-origin",
     });
     if (!resp.ok) return { ok: false, status: resp.status };
     const body = (await resp.json()) as { sent?: number; pruned?: number };

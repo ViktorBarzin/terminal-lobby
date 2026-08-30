@@ -173,6 +173,7 @@ export const SkillsPage: Component<{
   const isBusy = (key: string) => s.busy() === key;
   const anyBusy = () => s.busy() !== "";
 
+
   const meta = (st: RowStatus) => (
     <span class={`tl-skill-meta tl-skill-${st.tone}`}>{st.label}</span>
   );

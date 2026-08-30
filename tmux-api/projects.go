@@ -166,6 +166,30 @@ func (s *projectStore) saveLocked(ps ProjectSet) error {
 	return writeAtomicJSON(filepath.Dir(s.path), "projects.*.tmp", s.path, ps)
 }
 
+// updateProject runs fn against the project named by id, for members only.
+//
+// Every project mutation is member-authorized, and that check IS the co-equal
+// governance model: any member may rename a project, change its directory, add
+// or remove members, set the attach mode, or delete it. It used to sit at each
+// of six call sites. A seventh operation that forgot it would be a silent hole,
+// and nothing in the type system would have caught it.
+//
+// fn receives the index rather than the project, because deleteProject splices
+// ps.Projects[i] out of the slice and addSession scans every project for a
+// duplicate session ref.
+func updateProject(id, osUser string, fn func(ps *ProjectSet, i int) error) error {
+	return projectStoreInstance.update(func(ps *ProjectSet) error {
+		i := indexByID(ps, id)
+		if i < 0 {
+			return errProjectNotFound
+		}
+		if !projectMember(ps.Projects[i], osUser) {
+			return errNotMember
+		}
+		return fn(ps, i)
+	})
+}
+
 // validateProjectSet enforces the global-document invariants: known version,
 // bounded count, unique non-empty ids, project/member/session names in the
 // tmux name charset, absolute dirs, a valid attach mode, at least one member
@@ -528,14 +552,7 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		return
 	}
 	var grant *coownOp
-	err := projectStoreInstance.update(func(ps *ProjectSet) error {
-		i := indexByID(ps, id)
-		if i < 0 {
-			return errProjectNotFound
-		}
-		if !projectMember(ps.Projects[i], osUser) {
-			return errNotMember
-		}
+	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if !projectMember(ps.Projects[i], target) {
 			ps.Projects[i].Members = append(ps.Projects[i].Members, Member{OSUser: target, AddedBy: osUser})
 			if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
@@ -561,14 +578,7 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 // member may, co-equal). If the last member leaves, the project dissolves.
 func removeMember(w http.ResponseWriter, osUser, id, target string) {
 	var revoke *coownOp
-	err := projectStoreInstance.update(func(ps *ProjectSet) error {
-		i := indexByID(ps, id)
-		if i < 0 {
-			return errProjectNotFound
-		}
-		if !projectMember(ps.Projects[i], osUser) {
-			return errNotMember
-		}
+	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" && projectMember(p, target) {
 			revoke = &coownOp{"revoke", p.Dir, []string{target}}
 		}
@@ -626,14 +636,7 @@ func addSession(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		return
 	}
 	ref := SessionRef{Owner: owner, Name: name}
-	err := projectStoreInstance.update(func(ps *ProjectSet) error {
-		i := indexByID(ps, id)
-		if i < 0 {
-			return errProjectNotFound
-		}
-		if !projectMember(ps.Projects[i], osUser) {
-			return errNotMember
-		}
+	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		for pi := range ps.Projects {
 			for _, s := range ps.Projects[pi].Sessions {
 				if s == ref {
@@ -662,14 +665,7 @@ func addSession(w http.ResponseWriter, r *http.Request, osUser, id string) {
 // session — only the grouping.
 func removeSession(w http.ResponseWriter, osUser, id, owner, name string) {
 	ref := SessionRef{Owner: owner, Name: name}
-	err := projectStoreInstance.update(func(ps *ProjectSet) error {
-		i := indexByID(ps, id)
-		if i < 0 {
-			return errProjectNotFound
-		}
-		if !projectMember(ps.Projects[i], osUser) {
-			return errNotMember
-		}
+	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		out := ps.Projects[i].Sessions[:0]
 		for _, s := range ps.Projects[i].Sessions {
 			if s != ref {
@@ -722,14 +718,7 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 	var updated GlobalProject
 	var wasCoOwned bool
 	var oldDir string
-	err := projectStoreInstance.update(func(ps *ProjectSet) error {
-		i := indexByID(ps, id)
-		if i < 0 {
-			return errProjectNotFound
-		}
-		if !projectMember(ps.Projects[i], osUser) {
-			return errNotMember
-		}
+	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		wasCoOwned = ps.Projects[i].CoOwned
 		oldDir = ps.Projects[i].Dir
 		if body.Name != nil {
@@ -785,14 +774,7 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 // grouping only — sessions are tmux state and are never touched here.
 func deleteProject(w http.ResponseWriter, osUser, id string) {
 	var revoke *coownOp
-	err := projectStoreInstance.update(func(ps *ProjectSet) error {
-		i := indexByID(ps, id)
-		if i < 0 {
-			return errProjectNotFound
-		}
-		if !projectMember(ps.Projects[i], osUser) {
-			return errNotMember
-		}
+	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
 			revoke = &coownOp{"revoke", p.Dir, memberUsers(p)}
 		}

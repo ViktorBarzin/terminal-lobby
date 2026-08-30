@@ -50,6 +50,7 @@ import { createDockStore } from "../store/dock";
 import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
 import { installSwipe } from "../mobile/swipe";
 import { installViewportSync } from "../mobile/viewport";
+import { installSoftKeysReserve } from "../mobile/softkeys-reserve";
 import { installFocusReveal } from "../mobile/reveal";
 import { Dock } from "./Dock";
 import { track, tracker } from "../telemetry/track";
@@ -110,6 +111,9 @@ export const App: Component = () => {
   const notify = (message: string, kind: NotifyKind) =>
     toasts.push({ kind, message });
 
+  // Ahead of the lobby store, which reads the roamed session ordering out of it.
+  const prefs = createPrefsStore();
+
   const store = createLobbyStore({
     initialSelected: readInitialSelection(),
     notify,
@@ -119,10 +123,15 @@ export const App: Component = () => {
     onActivate: () => {
       if (isMobileFlip()) setCollapsed(true);
     },
+    // Manual / created / last-active, roamed. The store owns the sort so the
+    // cards, the Alt+1..0 chips and a drop's anchor all read one order; a drag
+    // that names a position writes the visible order into the layout and hands
+    // the list back to manual.
+    sessionOrder: () => prefs.prefs().sidebar.order,
+    setSessionOrder: (order) => prefs.setPref({ sidebar: { order } }),
   });
   onCleanup(() => store.dispose());
 
-  const prefs = createPrefsStore();
   // The skill manager's store (ADR-0011). Created here so it survives the panel
   // being closed and reopened, but it fetches nothing until the group renders.
   const skills = createSkillsStore();
@@ -172,6 +181,10 @@ export const App: Component = () => {
       stopReveal();
     });
   });
+
+  // The soft-key height reservation, installed once for the app — see the
+  // module for why it cannot live in SessionView.
+  installSoftKeysReserve(createCoarsePointer());
 
   // ---- PWA notifications (pillar #2 — inventory Cat.9) ---------------------
   // A plain snapshot of the poll list feeds the tab title/favicon badge + the
