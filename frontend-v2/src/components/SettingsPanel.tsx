@@ -56,6 +56,7 @@ import {
   type NetworkInfo,
 } from "../diagnostics/network";
 import type { NotificationSystem } from "../notify/notifications";
+import { installDialogFocus, wrapTab } from "../lib/focus-trap";
 
 /** What each bucket is called on screen. Feature names rather than endpoints,
  *  because the breakdown exists to be acted on. */
@@ -107,60 +108,19 @@ export const SettingsPanel: Component<{
 }> = (props) => {
   let dialogEl: HTMLDivElement | undefined;
 
-  /** Tabbable descendants in DOM order — a disabled A−/A+ drops out on its own. */
-  const tabbable = (): HTMLElement[] =>
-    dialogEl
-      ? [
-          ...dialogEl.querySelectorAll<HTMLElement>(
-            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          ),
-        ]
-      : [];
-
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
       props.onClose();
       return;
     }
-    // aria-modal="true" tells assistive tech Tab cannot leave this dialog, so
-    // it must not: wrap at both ends instead of landing on the app behind.
-    if (e.key === "Tab" && dialogEl) {
-      const items = tabbable();
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      const outside = !dialogEl.contains(active);
-      if (!first || !last) {
-        e.preventDefault();
-        dialogEl.focus();
-      } else if (e.shiftKey && (outside || active === first || active === dialogEl)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (outside || active === last)) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
+    if (e.key === "Tab" && dialogEl) wrapTab(e, dialogEl);
   };
   onMount(() => window.addEventListener("keydown", onKey, true));
   onCleanup(() => window.removeEventListener("keydown", onKey, true));
 
-  // The focus half of the contract in the header comment. Opening moves focus
-  // to the dialog itself (tabindex=-1) rather than to the ✕, so Enter doesn't
-  // immediately close it and screen readers announce the dialog's label; every
-  // close path unmounts the panel, so the restore belongs in onCleanup and
-  // covers the ✕, the backdrop and Escape alike.
-  let opener: HTMLElement | null = null;
-  onMount(() => {
-    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    // Deferred like the command palette's: the node is in the document by the
-    // time the microtask runs.
-    queueMicrotask(() => dialogEl?.focus());
-  });
-  onCleanup(() => {
-    if (opener && opener !== document.body && opener.isConnected) opener.focus();
-  });
+  // The focus half of the contract in the header comment.
+  installDialogFocus(() => dialogEl);
   // Fill the "Subscribed here" readout once the panel opens (async: it compares
   // this browser's live push endpoint against the server's stored list).
   onMount(() => void props.notifications?.refreshDeviceState());

@@ -15,6 +15,7 @@ import { IMAGE_DECODE_MESSAGE, contentUrl, imageErrorMessage } from "../lib/file
 import { Markdown } from "./Markdown";
 import { CodeView } from "./CodeView";
 import { CodeEditor } from "./CodeEditor";
+import { wrapTab } from "../lib/focus-trap";
 
 /**
  * The file-preview overlay (roadmap pillar #6). A pure view over the preview
@@ -91,16 +92,6 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
     });
   };
 
-  /** Tabbable descendants of the panel, in DOM order (disabled ones drop out). */
-  const tabbable = (): HTMLElement[] =>
-    panelEl
-      ? [
-          ...panelEl.querySelectorAll<HTMLElement>(
-            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          ),
-        ]
-      : [];
-
   // Keyboard handling (capture + stop so it never leaks to the shell's other
   // handlers). Cmd/Ctrl-S saves while editing (regardless of focus in the
   // overlay); Tab is trapped inside the panel; Escape steps out of
@@ -127,21 +118,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
     // both ends instead. CodeMirror's own Tab (indent) is untouched: its
     // contenteditable is not in the tabbable run, so this leaves it alone.
     if (e.key === "Tab" && panelEl) {
-      const items = tabbable();
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      const outside = !panelEl.contains(active);
-      if (!first || !last) {
-        e.preventDefault();
-        panelEl.focus();
-      } else if (e.shiftKey && (outside || active === first || active === panelEl)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (outside || active === last)) {
-        e.preventDefault();
-        first.focus();
-      }
+      wrapTab(e, panelEl);
       return;
     }
     if (e.key !== "Escape") return;

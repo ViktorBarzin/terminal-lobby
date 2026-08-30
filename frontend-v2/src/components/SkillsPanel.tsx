@@ -30,6 +30,7 @@ import {
   tabsFor,
   type TabId,
 } from "../store/skills.tabs";
+import { installDialogFocus, wrapTab } from "../lib/focus-trap";
 
 /**
  * The Skills panel: its own overlay off the shell bar, beside Settings.
@@ -176,43 +177,12 @@ export const SkillsPanel: Component<{
       props.onClose();
       return;
     }
-    if (e.key === "Tab" && dialogEl) {
-      const items = [
-        ...dialogEl.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ];
-      const first = items[0];
-      const last = items[items.length - 1];
-      const at = document.activeElement;
-      const outside = !dialogEl.contains(at);
-      if (!first || !last) {
-        e.preventDefault();
-        dialogEl.focus();
-      } else if (e.shiftKey && (outside || at === first || at === dialogEl)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (outside || at === last)) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
+    if (e.key === "Tab" && dialogEl) wrapTab(e, dialogEl);
   };
   onMount(() => window.addEventListener("keydown", onKey, true));
   onCleanup(() => window.removeEventListener("keydown", onKey, true));
 
-  let opener: HTMLElement | null = null;
-  onMount(() => {
-    opener =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    queueMicrotask(() => dialogEl?.focus());
-  });
-  onCleanup(() => {
-    if (opener && opener !== document.body && opener.isConnected)
-      opener.focus();
-  });
+  installDialogFocus(() => dialogEl);
 
   const meta = (st: RowStatus) => (
     <span class={`tl-skill-meta tl-skill-${st.tone}`}>{st.label}</span>
