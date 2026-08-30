@@ -481,3 +481,94 @@ func TestResolveReadsTheAdminListOnceForAnActAsRequest(t *testing.T) {
 		t.Fatalf("admin list parsed %d times in one request, want 1", reads)
 	}
 }
+
+// The two resolvers each service used to declare for itself. They are the
+// whole of what four copies of auth.go had in common, which is why they moved
+// here — the same reason Effective did.
+
+// resolverGate: alice administers the box, bob is a second mapped account.
+func resolverGate(t *testing.T) *Gate {
+	t.Helper()
+	return resolveGate(t, Config{MultiUser: "on"}, "alice\n", "alice=alice\nbob=bob\n")
+}
+
+func TestResolveOSUserReturnsTheActedAsUser(t *testing.T) {
+	g := resolverGate(t)
+	w := httptest.NewRecorder()
+	r := req(DefaultAuthHeader, "alice")
+	r.URL.RawQuery = "as=bob"
+	if got := g.ResolveOSUser(w, r); got != "bob" {
+		t.Fatalf("got %q, want bob (status %d)", got, w.Code)
+	}
+}
+
+func TestResolveRealOSUserIgnoresActAs(t *testing.T) {
+	g := resolverGate(t)
+	r := req(DefaultAuthHeader, "alice")
+	r.URL.RawQuery = "as=bob"
+	if got := g.ResolveRealOSUser(httptest.NewRecorder(), r); got != "alice" {
+		t.Fatalf("got %q, want alice", got)
+	}
+}
+
+func TestResolversReturnEmptyAfterWritingTheRefusal(t *testing.T) {
+	g := resolverGate(t)
+	w := httptest.NewRecorder()
+	if got := g.ResolveOSUser(w, req("", "")); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d, want 401", w.Code)
+	}
+	w2 := httptest.NewRecorder()
+	if got := g.ResolveRealOSUser(w2, req("", "")); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+	if w2.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d, want 401", w2.Code)
+	}
+}
+
+// The hook is why these could move: file-api and skills-api record every
+// act-as request, tmux-api deliberately does not (it is polled every 5s).
+func TestOnActAsFiresOnlyWhenTheUserIsSwitched(t *testing.T) {
+	g := resolverGate(t)
+	var seen []string
+	g.OnActAs = func(real, target, method, path string) {
+		seen = append(seen, real+"->"+target+" "+method+" "+path)
+	}
+
+	g.ResolveOSUser(httptest.NewRecorder(), req(DefaultAuthHeader, "alice"))
+	if len(seen) != 0 {
+		t.Fatalf("a request with no ?as= reported %v", seen)
+	}
+
+	r := req(DefaultAuthHeader, "alice")
+	r.URL.RawQuery = "as=bob"
+	g.ResolveOSUser(httptest.NewRecorder(), r)
+	if len(seen) != 1 || seen[0] != "alice->bob GET /whoami" {
+		t.Fatalf("got %v", seen)
+	}
+}
+
+func TestOnActAsIsOptional(t *testing.T) {
+	g := resolverGate(t)
+	g.OnActAs = nil
+	r := req(DefaultAuthHeader, "alice")
+	r.URL.RawQuery = "as=bob"
+	if got := g.ResolveOSUser(httptest.NewRecorder(), r); got != "bob" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestResolveRealOSUserDoesNotReportAnActAs(t *testing.T) {
+	g := resolverGate(t)
+	fired := 0
+	g.OnActAs = func(_, _, _, _ string) { fired++ }
+	r := req(DefaultAuthHeader, "alice")
+	r.URL.RawQuery = "as=bob"
+	g.ResolveRealOSUser(httptest.NewRecorder(), r)
+	if fired != 0 {
+		t.Fatalf("the real-user resolver reported %d act-as switches", fired)
+	}
+}

@@ -39,6 +39,12 @@ type liveSource struct {
 	fs   *sessionio.FileSource
 	stop context.CancelFunc
 	done <-chan struct{}
+
+	// idleSince is when the sweep first found this source with no readers,
+	// zero while somebody is reading it. Two sweeps rather than one so a
+	// reader who drops and comes straight back — a page reload — finds the
+	// buffer still warm.
+	idleSince time.Time
 }
 
 // paneReader reads what a session's pane is showing. An interface so the pane
@@ -59,12 +65,17 @@ type registry struct {
 	// How the pane watcher reads a pane. nil disables it, which is what a test
 	// that does not care about panes gets.
 	panes paneReader
+
+	// now is the clock the idle sweep measures against. A seam so a test can
+	// age a source without waiting; production leaves it as time.Now.
+	now func() time.Time
 }
 
 func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts sessionio.Options, self string) *registry {
 	return &registry{
 		users: map[string]*userState{}, ctx: ctx,
 		poll: poll, homeBase: homeBase, opts: opts, self: self,
+		now: time.Now,
 	}
 }
 
@@ -145,6 +156,15 @@ func (us *userState) retire(session string, ls *liveSource) {
 // that the tmux round trip it costs per WATCHED session is nothing.
 const SweepInterval = 5 * time.Second
 
+// idleGrace is how long a source with no readers is kept before its tail is
+// stopped and its buffer released.
+//
+// Long enough to cover a reader coming back — a reload, a laptop lid, an SSE
+// reconnect — since rebuilding costs a full re-read of the transcript. Short
+// enough that a session opened once in the morning is not still polling its
+// file five times a second at the end of the day.
+const idleGrace = 2 * time.Minute
+
 // sweep retires every source whose tmux session has moved on since it was
 // built, without waiting for a request to ask for it.
 //
@@ -165,8 +185,24 @@ func (rg *registry) sweep() {
 		us.mu.Lock()
 		for name, ls := range us.srcs {
 			if ls.fs.Subscribers() == 0 {
+				// Nobody is reading. Retire it once it has been that way for
+				// idleGrace: the tail re-opens the transcript at the poll
+				// interval and the buffer holds every event it has seen, so an
+				// abandoned source is pure cost. Rebuilding is what the first
+				// reader after a restart already pays.
+				if ls.idleSince.IsZero() {
+					ls.idleSince = rg.now()
+					continue
+				}
+				if rg.now().Sub(ls.idleSince) < idleGrace {
+					continue
+				}
+				log.Printf("sweep %s/%s: no reader for %s, stopping the tail",
+					us.osUser, name, idleGrace)
+				us.retire(name, ls)
 				continue
 			}
+			ls.idleSince = time.Time{}
 			info, ok := us.sm.Get(name)
 			if ok && info.Transcript == ls.fs.Path() {
 				continue

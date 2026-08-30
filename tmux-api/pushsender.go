@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -46,11 +45,14 @@ const (
 // client-activity (user keystroke) time per session. Abstracted so the
 // sender's transition logic is testable without a live tmux server.
 type sessionStater interface {
-	states(osUser string) map[string]string
-	// activity maps session name → unix time of the newest input from any
-	// tmux client attached to it. Sessions with no attached client are
-	// simply absent — the sender remembers the max it has ever seen.
-	activity(osUser string) map[string]int64
+	// read returns the session name→state map, and the session name → unix
+	// time of the newest input from any tmux client attached to it. Sessions
+	// with no attached client are simply absent from the second map — the
+	// sender remembers the max it has ever seen.
+	//
+	// One method rather than two because both come out of the same tmux reads,
+	// and asking separately forked `list-clients` twice per user per tick.
+	read(osUser string) (states map[string]string, activity map[string]int64)
 }
 
 // prefsLoader reads a user's raw roamed prefs document. *prefsStore satisfies
@@ -66,41 +68,13 @@ type prefsLoader interface {
 // claude — so the server-side edge rule matches the browser's.
 type liveStater struct{}
 
-func (liveStater) states(osUser string) map[string]string {
-	sessions := userSessions(osUser)
+func (liveStater) read(osUser string) (map[string]string, map[string]int64) {
+	sessions, activity := userSessionsAndActivity(osUser)
 	m := make(map[string]string, len(sessions))
 	for _, s := range sessions {
 		m[s.Name] = s.State
 	}
-	return m
-}
-
-// activity shells one read-only `tmux list-clients` per user per tick and
-// keeps the NEWEST client_activity per session. client_activity moves on
-// client INPUT (keystrokes through ttyd), not on pane output, which is what
-// makes it usable as a "the human touched this session" signal. tmux errors
-// (no server) or absent clients return an empty map — the gate then has no
-// data and fails open.
-func (liveStater) activity(osUser string) map[string]int64 {
-	out, err := tmuxCmd(osUser, "list-clients", "-F", "#{session_name}\t#{client_activity}").Output()
-	if err != nil {
-		return nil
-	}
-	m := map[string]int64{}
-	for _, line := range strings.Split(string(out), "\n") {
-		name, ts, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
-		if !ok || name == "" {
-			continue
-		}
-		v, err := strconv.ParseInt(ts, 10, 64)
-		if err != nil {
-			continue
-		}
-		if v > m[name] {
-			m[name] = v
-		}
-	}
-	return m
+	return m, activity
 }
 
 // vapidConfig is the VAPID keypair + subject the sender signs pushes with.
@@ -253,9 +227,9 @@ func (p *pushSender) tick() {
 	for _, u := range users {
 		seen[u] = true
 		prev := p.last[u]
-		cur := p.stater.states(u)
+		cur, act := p.stater.read(u)
 		p.last[u] = cur
-		p.observeActivity(u)
+		p.observeActivity(u, act)
 		if prev == nil {
 			continue // first observation of this user seeds silently
 		}
@@ -296,8 +270,7 @@ func (p *pushSender) tick() {
 // observeActivity folds the stater's current client-activity reading into
 // seenAct, keeping the max ever observed per session — a client detaching
 // (tab closed) must not erase the fact that the user typed a prompt.
-func (p *pushSender) observeActivity(u string) {
-	act := p.stater.activity(u)
+func (p *pushSender) observeActivity(u string, act map[string]int64) {
 	if len(act) == 0 {
 		return
 	}

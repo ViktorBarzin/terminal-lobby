@@ -221,19 +221,13 @@ const actAsTarget = "as"
 // handlePushSubscriptions), and resolveOSUser itself, which starts here and
 // then applies the switch.
 func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	id, ok := actAsGate.Authorize(w, r)
-	if !ok {
-		return ""
-	}
-	return id.RealOSUser
+	return actAsGate.ResolveRealOSUser(w, r)
 }
 
+// No OnActAs hook here on purpose: tmux-api is polled every five seconds, so
+// a line per act-as request would be noise rather than a record.
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
-	id, ok := actAsGate.Authorize(w, r)
-	if !ok {
-		return ""
-	}
-	return id.OSUser
+	return actAsGate.ResolveOSUser(w, r)
 }
 
 // tmuxCmd builds an exec.Cmd that runs `tmux <args...>` AS osUser. When
@@ -525,17 +519,33 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 // nil when tmux errors (no server / not reachable); a healthy server with no
 // sessions returns a non-nil empty slice.
 func userSessions(osUser string) []Session {
+	sessions, _ := userSessionsAndActivity(osUser)
+	return sessions
+}
+
+// userSessionsAndActivity is userSessions plus the client-activity reading the
+// push sender gates on, which comes out of the same `list-clients` call. The
+// two used to be separate forks a few milliseconds apart, once per subscribed
+// user per tick, for two halves of one answer.
+//
+// The activity map is nil when tmux could not be reached or nothing is
+// attached; the gate reads that as "no data" and fails open, as before.
+func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	out, err := tmuxCmd(osUser, "list-sessions", "-F", tmuxListFmt).Output()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	sessions := parseSessions(out)
-	// Who is DRIVING, as opposed to merely attached (Watch mode). One extra
-	// fork per list build, behind the same sessionsTTL cache as the rest; a
-	// failure here just leaves every session undriven, which is the safe way
-	// round — the lobby then attaches read-write exactly as it did before.
-	if clients, cerr := tmuxCmd(osUser, "list-clients", "-F", drivenListFmt).Output(); cerr == nil {
+	var activity map[string]int64
+	// Who is DRIVING, as opposed to merely attached (Watch mode), and when each
+	// session last saw a keystroke. One extra fork per list build, behind the
+	// same sessionsTTL cache as the rest; a failure here just leaves every
+	// session undriven, which is the safe way round — the lobby then attaches
+	// read-write exactly as it did before.
+	if raw, cerr := tmuxCmd(osUser, "list-clients", "-F", clientsListFmt).Output(); cerr == nil {
+		clients := parseClients(raw)
 		markDriven(sessions, clients)
+		activity = latestActivity(clients)
 		// Driven is what "last driven" is derived from, so the stamp is written
 		// here, while the client list is in hand. A read-only client reaches
 		// markDriven and is skipped by it, which is exactly why watching a
@@ -545,14 +555,16 @@ func userSessions(osUser string) []Session {
 	// One /proc snapshot serves two readers: the liveness backstop (drop
 	// states whose claude died without a SessionEnd hook) and the tool mark
 	// (which command each session runs). A failed scan fails open — states
-	// are kept as-is and tools stay empty.
-	if tree, err := procTreeFrom("/proc"); err == nil {
+	// are kept as-is and tools stay empty. The snapshot is machine-global,
+	// so it comes from procCacheInstance and is shared by every user looked
+	// at in the same request or push tick.
+	if tree, err := procCacheInstance.get(); err == nil {
 		clearDeadStates(sessions, tree)
 		annotateTools(sessions, tree)
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
 	}
-	return sessions
+	return sessions, activity
 }
 
 // buildSessionsBody returns the JSON body to write on the wire for GET

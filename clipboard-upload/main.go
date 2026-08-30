@@ -374,21 +374,13 @@ func setMapPath(p string) {
 }
 
 func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
-	id, ok := actAsGate.Authorize(w, r)
-	if !ok {
-		return ""
-	}
-	return id.OSUser
+	return actAsGate.ResolveOSUser(w, r)
 }
 
 // resolveRealOSUser → the CALLER's own mapped OS user, ignoring ?as=. The store
 // is keyed per OS user, so an unauthenticated request has no directory to touch.
 func resolveRealOSUser(w http.ResponseWriter, r *http.Request) string {
-	id, ok := actAsGate.Authorize(w, r)
-	if !ok {
-		return ""
-	}
-	return id.RealOSUser
+	return actAsGate.ResolveRealOSUser(w, r)
 }
 
 // osUserKnown reports whether name is a mapped OS user. /register's localhost

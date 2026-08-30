@@ -17,12 +17,14 @@ import {
   queuedPrompts,
   withPendingPrompts,
   type PendingPermission,
+  type TimelineRow,
 } from "./timeline.logic";
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "./compose.logic";
 import { contextState } from "./context.logic";
 import { planAnswer, runAnswer, type DraftAnswer } from "./answer.logic";
 import { QuestionCard } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { track } from "../telemetry/track";
 import {
   installTextZoom,
   loadTextSize,
@@ -71,6 +73,11 @@ export const TextView: Component<{
   onCommands?: () => Promise<SlashCommand[]>;
   /** prompts sent from here the transcript has not shown yet. */
   pendingPrompts?: () => PendingPrompt[];
+  /** The rows for `events`, when the owner has already derived them — the
+   *  session view needs the same fold to know whether a turn is running, and
+   *  one derivation costs ~10ms on a large window. Absent, they are derived
+   *  here, so this is a shortcut and never a second source of truth. */
+  rows?: () => TimelineRow[];
   /** the opening window is still arriving. */
   opening?: boolean;
   /** FALSE while the lobby is keeping this session mounted without showing it:
@@ -101,8 +108,15 @@ export const TextView: Component<{
   onOpenTerminal?: () => void;
 }> = (props) => {
   // What the transcript says, plus what it has not caught up with.
-  const shown = createMemo(() =>
-    withPendingPrompts(props.events, props.pendingPrompts?.() ?? []),
+  const sent = createMemo(() => props.pendingPrompts?.() ?? []);
+  const shown = createMemo(() => withPendingPrompts(props.events, sent()));
+  /** The transcript folded, once. */
+  const baseRows = createMemo(() => props.rows?.() ?? deriveRows(props.events));
+  /** What the timeline draws. `withPendingPrompts` returns `events` itself when
+   *  nothing is in flight, so the common case reuses the fold above rather than
+   *  repeating it; an unsent prompt is rare and short-lived. */
+  const shownRows = createMemo(() =>
+    sent().length === 0 ? baseRows() : deriveRows(shown()),
   );
   const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
   const history = createMemo(() => promptHistory(props.events, props.sessionState));
@@ -181,7 +195,7 @@ export const TextView: Component<{
    * Claude Code takes a dialog down when something claims the turn and leaves
    * that call unresolved for good (timeline.logic `markSuperseded`).
    */
-  const recorded = createMemo(() => pendingQuestion(deriveRows(props.events)));
+  const recorded = createMemo(() => pendingQuestion(baseRows()));
   /**
    * What the PANE says, for the window where the record has not been written.
    *
@@ -266,12 +280,46 @@ export const TextView: Component<{
     const steps = planAnswer(q.questions, answers);
     if (steps.length === 0) return;
     setAnswering(true);
+    // Which step the sequence reached, so a failure can say WHERE it stopped.
+    // runAnswer walks the plan in order and stops at the first step that does
+    // not verify, so the count of completed key batches locates it.
+    let reached = 0;
+    let paneReads = 0;
     const res = await runAnswer(steps, {
-      keys: props.onKeys,
+      keys: async (batch: string[]) => {
+        reached = Math.max(reached, steps.findIndex((st) => st.batches.includes(batch)) + 1);
+        return props.onKeys!(batch);
+      },
       text: async (t: string) => (await props.onAnswerText?.(t)) ?? false,
-      pane: async () => (await props.onPane?.())?.pane ?? null,
+      pane: async () => {
+        paneReads += 1;
+        return (await props.onPane?.())?.pane ?? null;
+      },
     });
     setAnswering(false);
+    // Default-on, and deliberately content-free: a dialog can quote anything the
+    // session was working on, so this records the SHAPE of the failure and where
+    // it stopped, never what was on screen. Nothing about this path was recorded
+    // before, which is why a report of it could only be answered with guesses.
+    const shape = {
+      "tl.multi": q.questions.some((x) => x.multiSelect),
+      "tl.questions": q.questions.length,
+      "tl.options": q.questions[0]?.options.length ?? 0,
+      "tl.steps": steps.length,
+      "tl.source": recorded() ? "transcript" : "pane",
+    };
+    if (res.ok) {
+      track("text.answer_sent", shape);
+    } else {
+      track("text.answer_failed", {
+        ...shape,
+        "tl.reason": res.reason ?? "unknown",
+        "tl.step": reached,
+        "tl.pane_read": paneReads,
+        // The LENGTH of what we were looking for, not the text.
+        "tl.expect_len": steps[Math.max(0, reached - 1)]?.expect?.length ?? 0,
+      });
+    }
     if (!res.ok) {
       // Latch. Some keys landed and the pane has moved on, so the plan this card
       // is holding no longer describes what is on screen — pressing Send again
@@ -329,6 +377,7 @@ export const TextView: Component<{
         opening={props.opening}
         owns={props.onScreen !== false}
         events={shown()}
+        rows={shownRows()}
         onOpenPreview={props.onOpenPreview}
         onLoadFull={props.onLoadFull}
         onLoadEarlier={props.onLoadEarlier}
