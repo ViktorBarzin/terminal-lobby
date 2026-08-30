@@ -35,9 +35,6 @@ export function firstFreeShellName(taken: Iterable<string>): string {
   return `shell-${Date.now()}`; // pathological fallback
 }
 
-/** A live scratch shell is `shell` / `shell-N`. */
-export const SHELL_NAME_RE = /^shell(-\d+)?$/;
-
 /**
  * What Ctrl+J does next. Three states, one chord — create, then hide, then
  * show — so the shell keeps running behind a hidden panel rather than being
