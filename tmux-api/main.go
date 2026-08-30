@@ -545,8 +545,10 @@ func userSessions(osUser string) []Session {
 	// One /proc snapshot serves two readers: the liveness backstop (drop
 	// states whose claude died without a SessionEnd hook) and the tool mark
 	// (which command each session runs). A failed scan fails open — states
-	// are kept as-is and tools stay empty.
-	if tree, err := procTreeFrom("/proc"); err == nil {
+	// are kept as-is and tools stay empty. The snapshot is machine-global,
+	// so it comes from procCacheInstance and is shared by every user looked
+	// at in the same request or push tick.
+	if tree, err := procCacheInstance.get(); err == nil {
 		clearDeadStates(sessions, tree)
 		annotateTools(sessions, tree)
 	} else {
