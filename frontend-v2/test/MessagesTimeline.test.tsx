@@ -3,6 +3,7 @@ import { render, fireEvent } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import type { Event } from "../src/types/events";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
+import { deriveRows } from "../src/components/timeline.logic";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
   session: "s",
@@ -377,5 +378,36 @@ describe("attachments render in place", () => {
       ev({ id: 1, kind: "text", body: "![shot](/files/read?path=%2Ftmp%2Fa.png)" }),
     ]);
     expect(container.querySelector(".tl-row-message img")).not.toBeNull();
+  });
+});
+
+describe("<MessagesTimeline> — rows handed down by the owner", () => {
+  const TURN: Event[] = [
+    ev({ id: 1, kind: "user", body: "derive me" }),
+    ev({ id: 2, kind: "text", body: "done" }),
+    ev({ id: 3, kind: "turn_end" }),
+  ];
+
+  it("renders the rows it is given rather than folding the events again", () => {
+    const rows = deriveRows(TURN);
+    const { container } = render(() => (
+      <MessagesTimeline events={[]} rows={rows} />
+    ));
+    expect(container.textContent).toContain("derive me");
+  });
+
+  it("falls back to deriving from events when no rows are passed", () => {
+    const { container } = render(() => <MessagesTimeline events={TURN} />);
+    expect(container.textContent).toContain("derive me");
+  });
+
+  it("follows the rows when they change", () => {
+    const [rows, setRows] = createSignal(deriveRows(TURN));
+    const { container } = render(() => (
+      <MessagesTimeline events={[]} rows={rows()} />
+    ));
+    expect(container.textContent).not.toContain("second prompt");
+    setRows(deriveRows([...TURN, ev({ id: 4, kind: "user", body: "second prompt" })]));
+    expect(container.textContent).toContain("second prompt");
   });
 });
