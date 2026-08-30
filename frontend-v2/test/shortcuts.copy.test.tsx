@@ -99,25 +99,32 @@ describe("shortcuts help — the always-on exemptions are stated", () => {
 });
 
 describe("Settings — the App shortcuts checkbox says what it does not cover", () => {
+  /**
+   * The exemptions are an EXPLANATION rather than a consequence, so they live
+   * behind the row's ⓘ. Each case opens it, which is what a reader wondering
+   * "does this switch cover everything?" does.
+   */
   const keyboardGroupText = (altLabel: string): string => {
-    const { container } = render(() => (
+    const r = render(() => (
       <SettingsPanel
         prefs={fakePrefs()}
         onClose={() => {}}
+        initialPage="keyboard"
         keybindings={{ enabled: () => true, setEnabled: () => {}, altLabel }}
       />
     ));
-    const group = Array.from(container.querySelectorAll(".tl-settings-group")).find((g) =>
+    fireEvent.click(r.getByLabelText("Explain App shortcuts"));
+    const group = Array.from(r.container.querySelectorAll(".tl-set-group")).find((g) =>
       (g.textContent ?? "").includes("App shortcuts"),
     );
-    expect(group, "the Keyboard settings group").toBeTruthy();
+    expect(group, "the Keyboard settings page").toBeTruthy();
     return (group?.textContent ?? "").toLowerCase();
   };
 
   it("names the exemptions next to the toggle", () => {
     const text = keyboardGroupText("Alt");
     expect(text).toContain("alt+shift+backspace");
-    expect(text).toContain("always on");
+    expect(text).toContain("stay on either way");
   });
 
   it("names the view toggle too — the exemption the hint used to omit", () => {

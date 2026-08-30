@@ -201,10 +201,9 @@ export interface KeyContextInput {
   paletteOpen: boolean;
   /** the keyboard-shortcuts help overlay. */
   helpOpen: boolean;
-  /** the ⚙ Settings dialog (aria-modal, traps Tab). */
+  /** the ⚙ Settings dialog (aria-modal, traps Tab). Skills is a page inside
+   *  it, so it needs no flag of its own. */
   settingsOpen: boolean;
-  /** the Skills panel (aria-modal, traps Tab, like Settings). */
-  skillsOpen: boolean;
   /** the session image gallery. */
   galleryOpen: boolean;
   /** the per-session file-preview overlay. */
@@ -248,8 +247,7 @@ export function keyContext(s: KeyContextInput): KeyContext {
   return {
     terminalFocus: false,
     lobbyOpen: true,
-    overlayOpen:
-      s.paletteOpen || s.helpOpen || s.settingsOpen || s.skillsOpen || s.galleryOpen,
+    overlayOpen: s.paletteOpen || s.helpOpen || s.settingsOpen || s.galleryOpen,
     paletteOpen: s.paletteOpen,
     helpOpen: s.helpOpen,
     galleryOpen: s.galleryOpen,

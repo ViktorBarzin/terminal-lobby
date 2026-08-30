@@ -17,9 +17,20 @@ function fakePrefs(): PrefsStore {
   };
 }
 
+/**
+ * The picker is its own rail page now, below a rule, and the page exists only
+ * for a caller who administers the box. `initialPage` asks for it directly;
+ * for a non-admin the rail has no such entry and the panel falls back to the
+ * first page, which is exactly the behaviour worth asserting.
+ */
 function panel(actAs?: ActAsControl) {
   return render(() => (
-    <SettingsPanel prefs={fakePrefs()} onClose={() => {}} actAs={actAs} />
+    <SettingsPanel
+      prefs={fakePrefs()}
+      onClose={() => {}}
+      initialPage="actas"
+      actAs={actAs}
+    />
   ));
 }
 
@@ -91,10 +102,11 @@ describe("Settings — the act-as picker", () => {
       current: () => "",
       switchTo: () => {},
     });
-    const group = Array.from(container.querySelectorAll(".tl-settings-group")).find(
-      (g) => (g.textContent ?? "").includes("Act as user"),
-    );
-    const text = (group?.textContent ?? "").toLowerCase();
+    // A note, not a hint: it describes what the switch DOES rather than
+    // explaining the control, so it stays in the page instead of going behind
+    // the ⓘ with the explanatory ones.
+    const note = container.querySelector(".tl-set-note");
+    const text = (note?.textContent ?? "").toLowerCase();
     expect(text).toContain("read-write");
     expect(text).toContain("recorded");
     expect(text).toContain("tab");

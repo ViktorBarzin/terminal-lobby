@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { SkillsPanel } from "../src/components/SkillsPanel";
+import { SettingsPanel } from "../src/components/SettingsPanel";
+import { PREF_DEFAULTS, type Prefs, type PrefsStore } from "../src/store/prefs";
 import { rowKey, type SkillsStore } from "../src/store/skills";
 import type { Inventory, SkillDiff, SkillView, SourceInfo } from "../src/lib/skills-api";
 
@@ -169,20 +170,44 @@ const sessions = () => [
   { name: "notes", state: "done" },
 ];
 
-/** open renders the panel and returns the queries plus a tab selector. */
+function fakePrefs(): PrefsStore {
+  const [prefs] = createSignal<Prefs>(structuredClone(PREF_DEFAULTS));
+  return { prefs, setPref() {}, setFontSize() {}, async bootSync() {}, dispose() {} };
+}
+
+/**
+ * Mount Settings on its Skills page — the surface this file has always tested,
+ * at the address it moved to. `initialPage` is what the header's Skills button
+ * passes, so this is the app's own route in.
+ */
 function open(over: Partial<SkillsStore> = {}, opts: { sessions?: boolean; confirm?: (m: string) => boolean; onClose?: () => void } = {}) {
   const { store, calls } = stubStore(over);
   const r = render(() => (
-    <SkillsPanel
-      skills={store}
+    <SettingsPanel
+      prefs={fakePrefs()}
       onClose={opts.onClose ?? (() => {})}
-      sessions={opts.sessions ? sessions : undefined}
+      initialPage="skills"
+      skills={store}
+      skillSessions={opts.sessions ? sessions : undefined}
       confirm={opts.confirm}
     />
   ));
-  const tab = (name: string) => fireEvent.click(r.getByRole("tab", { name: new RegExp(name) }));
+  // The rail is a tablist too, so a tab lookup has to stay inside the page.
+  const tab = (name: string) => {
+    const strip = r.container.querySelector('[aria-label="Skill lists"]')!;
+    const hit = [...strip.querySelectorAll('[role="tab"]')].find((el) =>
+      new RegExp(name).test(el.textContent ?? ""),
+    );
+    if (!hit) throw new Error(`no skills tab matching ${name}`);
+    fireEvent.click(hit);
+  };
   return { ...r, store, calls, tab };
 }
+
+/** The tabs of the Skills page itself, excluding the settings rail's. */
+const skillTabs = (c: HTMLElement) => [
+  ...c.querySelectorAll('[aria-label="Skill lists"] [role="tab"]'),
+] as HTMLElement[];
 
 describe("the Skills panel's shell", () => {
   it("asks for the inventory when it first opens, not before", () => {
@@ -197,25 +222,31 @@ describe("the Skills panel's shell", () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it("is a modal dialog that closes on the ✕, Escape and the backdrop", async () => {
+  it("sits inside the Settings modal, which owns closing it", async () => {
     let closed = 0;
-    const { getByLabelText, container } = open({}, { onClose: () => closed++ });
+    const { container } = open({}, { onClose: () => closed++ });
     expect(container.querySelector('[role="dialog"][aria-modal="true"]')).toBeTruthy();
-
-    fireEvent.click(getByLabelText("Close skills"));
-    expect(closed).toBe(1);
+    expect(container.querySelector(".tl-skills-page")).toBeTruthy();
 
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(closed).toBe(2);
+    expect(closed).toBe(1);
 
-    const backdrop = container.querySelector(".tl-settings-backdrop")!;
-    fireEvent.click(backdrop);
-    expect(closed).toBe(3);
+    fireEvent.click(container.querySelector(".tl-settings-backdrop")!);
+    expect(closed).toBe(2);
+  });
+
+  it("is reachable from the rail, below the preference pages", () => {
+    const { container } = open();
+    const rail = container.querySelector('[aria-label="Settings categories"]')!;
+    const skills = rail.querySelector<HTMLElement>('[data-page="skills"]')!;
+    expect(skills.textContent).toBe("Skills");
+    expect(skills.getAttribute("aria-selected")).toBe("true");
+    expect(skills.classList.contains("starts-group")).toBe(true);
   });
 
   it("offers one tab per list, the caller's own first", () => {
-    const { getAllByRole } = open({}, { sessions: true });
-    expect(getAllByRole("tab").map((t) => t.textContent)).toEqual([
+    const { container } = open({}, { sessions: true });
+    expect(skillTabs(container).map((t) => t.textContent)).toEqual([
       "Mine3",
       "bob2", // two takeable of bob's three; the identical one is not
       "Plugins2",
@@ -363,8 +394,8 @@ describe("the Plugins and Sessions tabs", () => {
   });
 
   it("drops the Sessions tab when there are none", () => {
-    const { getAllByRole } = open();
-    expect(getAllByRole("tab").map((t) => t.textContent)).not.toContain("Sessions");
+    const { container } = open();
+    expect(skillTabs(container).map((t) => t.textContent)).not.toContain("Sessions");
   });
 
   it("has no filter box on Sessions, where a name filter would mean something else", () => {
@@ -382,12 +413,12 @@ describe("what the panel always says", () => {
   });
 
   it("surfaces a failed inventory read rather than an empty list", () => {
-    const { getByText, queryAllByRole } = open({
+    const { getByText, container } = open({
       inventory: () => null,
       error: () => "Nothing is answering /skills — the skills service is not reachable from here.",
     });
     expect(getByText(/Nothing is answering/)).toBeTruthy();
-    expect(queryAllByRole("tab")).toHaveLength(0);
+    expect(skillTabs(container)).toHaveLength(0);
   });
 });
 
@@ -521,15 +552,21 @@ describe("installing from a repo", () => {
       ...over,
     });
     const r = render(() => (
-      <SkillsPanel skills={base.store} onClose={() => {}} confirm={() => true} />
+      <SettingsPanel
+        prefs={fakePrefs()}
+        onClose={() => {}}
+        initialPage="skills"
+        skills={base.store}
+        confirm={() => true}
+      />
     ));
     return { ...r, calls, store: base.store };
   };
 
   it("offers the field on Mine and Plugins, but not on Sessions", () => {
-    const { getByLabelText, queryByLabelText, getByRole } = withSource();
+    const { getByLabelText, queryByLabelText, container } = withSource();
     expect(getByLabelText("Install from a repo")).toBeTruthy();
-    fireEvent.click(getByRole("tab", { name: /Plugins/ }));
+    fireEvent.click(skillTabs(container).find((el) => /Plugins/.test(el.textContent ?? ""))!);
     expect(queryByLabelText("Install from a repo")).not.toBeNull();
   });
 
@@ -574,7 +611,13 @@ describe("installing from a repo", () => {
     });
     const { store } = stubStore({ source: src, inspecting: () => false, clearSource: () => setSrc(null) });
     const { getAllByRole, getByRole } = render(() => (
-      <SkillsPanel skills={store} onClose={() => {}} confirm={(m) => (asked.push(m), false)} />
+      <SettingsPanel
+        prefs={fakePrefs()}
+        onClose={() => {}}
+        initialPage="skills"
+        skills={store}
+        confirm={(m: string) => (asked.push(m), false)}
+      />
     ));
     fireEvent.click(getAllByRole("checkbox").find((b) => (b.parentElement?.textContent ?? "").startsWith("x"))!);
     fireEvent.click(getByRole("button", { name: /^Install/ }));
@@ -587,7 +630,9 @@ describe("installing from a repo", () => {
       skills: [{ name: "x", path: "skills/x/SKILL.md" }],
     });
     const { store } = stubStore({ source: src, inspecting: () => false });
-    const { getByText } = render(() => <SkillsPanel skills={store} onClose={() => {}} />);
+    const { getByText } = render(() => (
+      <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage="skills" skills={store} />
+    ));
     expect(getByText(/not an owner you have installed from before/)).toBeTruthy();
   });
 });
@@ -607,7 +652,7 @@ describe("a source that offers a lot", () => {
     const [src] = createSignal<SourceInfo | null>(bigSource());
     const { store } = stubStore({ source: src, inspecting: () => false });
     const { getByLabelText, getByText, queryByText } = render(() => (
-      <SkillsPanel skills={store} onClose={() => {}} />
+      <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage="skills" skills={store} />
     ));
     // 200 of 286 offered, and it says so rather than presenting 200 as all of them.
     expect(getByText(/Plugins in claude-plugins-official \(200 of 286\)/)).toBeTruthy();
@@ -623,7 +668,9 @@ describe("a source that offers a lot", () => {
       skills: [{ name: "one", path: "one/SKILL.md" }],
     });
     const { store } = stubStore({ source: src, inspecting: () => false });
-    const { queryByLabelText } = render(() => <SkillsPanel skills={store} onClose={() => {}} />);
+    const { queryByLabelText } = render(() => (
+      <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage="skills" skills={store} />
+    ));
     expect(queryByLabelText("Narrow what this repo offers")).toBeNull();
   });
 });

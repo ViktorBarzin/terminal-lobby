@@ -6,8 +6,9 @@ behaves on a phone.
 ## Keyboard shortcuts
 
 Switch sessions and drive the lobby without the mouse. The shortcut layer
-is **on by default** (per-browser; uncheck **App shortcuts** in ⚙ Settings
-to send these keys to the terminal instead — the opt-out persists). Chords
+is **on by default** (per-browser; turn **App shortcuts** off on ⚙ Settings →
+**Keyboard** to send these keys to the terminal instead — the opt-out
+persists). Chords
 are user-overridable via the `tl:keybindings:v1` localStorage key.
 
 **Hold `Alt`** for ~100 ms to reveal numbered chips on the first ten
@@ -65,13 +66,46 @@ grace after it dies; *non-image* drops remain 7-day ephemera in
 `/tmp` — they're transfer conveniences, not gallery content. Details
 and trade-offs: `docs/adr/0005-session-image-store.md`.
 
+## Settings
+
+⚙ Settings is a category rail on the left and one page at a time on the
+right. The pages, in rail order:
+
+| Page | What is on it |
+|---|---|
+| Appearance | the nine themes, as cards painting their own colours |
+| Terminal | font size, line height, letter spacing, bold weight, cursor, scrolling, the link copy button, flow control |
+| Sessions | what a new session runs, and the session list's last-driven time |
+| Keyboard | the app-shortcut layer's on/off |
+| Notifications | when to notify, this device's permission and subscription, two tests |
+| Network | the Full/Auto/Light link pin, which network you are on, and "Data used" |
+| Privacy | send diagnostics, and clear this browser's data |
+| Skills | install, disable, share — see `docs/adr/0011` |
+| Act as user | admins only; see [multi-user](multi-user.md) |
+
+↑↓ walk the rail from the moment the panel opens, Home and End jump to its
+ends, and it reopens on the page you last used. The Skills button in the
+header opens the same panel straight onto its Skills page.
+
+Two things a row can carry beside its name. **ⓘ** expands an explanation
+underneath it; click again to fold it away. A **this device** chip means the
+setting is stored in this browser and does not follow you to your other
+devices — everything unmarked roams. A few rows keep their text on screen
+rather than behind the ⓘ, because they describe what is about to happen
+rather than what the control is: acting as another user, clearing local data,
+and what diagnostics do and do not send.
+
+On a phone the rail becomes a row of chips above the page.
+
 ## Theme
 
 Nine presets shipped as CSS variables on `body.theme-*`: `carbon`, `slate`
 (default), `mono`, `ink`, `t3-dark`, `t3-light`, `catppuccin-mocha`,
 `catppuccin-latte`, plus `system`, which follows the OS light/dark setting
-(as T3 Light / T3 Dark, tracking scheme changes live). The picker is a
-9-button grid in the ⚙ Settings panel. Choice persists per device in
+(as T3 Light / T3 Dark, tracking scheme changes live). The picker is on
+⚙ Settings → **Appearance**: nine cards, each painting its own theme's
+colours rather than carrying its name alone, so you pick by seeing it.
+Choice persists per device in
 `localStorage` (`tmux-theme`) — deliberately not part of the roamed prefs
 doc. Switches apply live: the lobby posts `tl-theme` to the attached
 terminal iframe, which re-reads the CSS vars and repaints xterm without a

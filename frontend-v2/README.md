@@ -295,29 +295,59 @@ src/
     ShortcutsHelp.tsx    Keyboard-shortcuts help overlay
     RestorePicker.tsx    Restore overlay: pick a session snapshot, see what it
                          would recreate, choose which rows to bring back
-    SettingsPanel.tsx    Settings overlay: theme, font size, session-list
-                         last-active time, new-session command, keyboard,
-                         notifications, "Data used" (this device's wire bytes
-                         with the Full/Auto/Light link pin), and the admin
-                         act-as picker
-    SkillsPanel.tsx      The Skills overlay (docs/adr/0011), its own dialog off
-                         the shell bar beside Settings: a tab per list — this
-                         account's skills, each other account's with a
-                         same/differs verdict, the marketplace plugins, the live
-                         sessions — a name/description filter, and the install /
-                         replace-with-backup / disable / remove / update / restart
-                         actions, plus the two permanent ones — Delete (the
-                         skill and every backup of it) and Uninstall (a plugin
-                         and its files). Every action is ON the row for both
-                         lists; expanding one shows that skill's SKILL.md —
-                         your own in an editor that writes it back, a peer's
-                         read-only.
-                         Also the owner/repo field: one read-only look decides
-                         whether a repo offers skills, a plugin marketplace or
-                         both, then the ecosystem's own installer runs as you
-                         (docs/adr/0012) It started as a group INSIDE Settings and
-                         outgrew it: 38 own skills and a peer's 21 do not read as
-                         one 420px column
+    SettingsPanel.tsx    Settings overlay: the shell only — the category
+                         rail, which page is showing, and the dialog contract
+                         (aria-modal, a wrapping Tab trap, Escape, focus back
+                         to the opener). Every page is a file under settings/
+    settings/
+      rail.ts            The rail's model: which pages exist, in what order,
+                         which of them start a group, and which page a
+                         remembered id resolves to (an admin-only entry read
+                         back by a non-admin falls to the first)
+      stepper.ts         − / value / + arithmetic for the three text controls:
+                         step-index maths so 0.05 steps do not drift, and an
+                         off-grid value moves to the next grid point
+      controls.tsx       The row grammar every page is built from — Row (label
+                         left, control right, ⓘ that expands in place, a
+                         "this device" chip on what does not roam), Toggle,
+                         Stepper, Segmented, Readout, Group
+      pages/
+        AppearancePage.tsx    The nine themes as swatch cards painting their own
+                              colours; "System" follows the OS live
+        TerminalPage.tsx      Font size, line height, letter spacing, bold
+                              weight, cursor, scrolling, link copy chip, and
+                              flow control
+        SessionsPage.tsx      New-session command, session-list last-active time
+        KeyboardPage.tsx      The app-shortcut layer's opt-out, and the four
+                              chords that outlive it
+        NotificationsPage.tsx The two roamed toggles, this device's permission /
+                              subscription / bell readouts, and the two tests
+        NetworkPage.tsx       The Full/Auto/Light link pin and which network you
+                              are on, then "Data used" — this device's wire
+                              bytes by period, by named network, by feature
+        PrivacyPage.tsx       Send diagnostics, and Clear local data with the
+                              roamed-settings opt-in
+        ActAsPage.tsx         The admin act-as picker; renders for an admin only
+        SkillsPage.tsx        The Skills surface (docs/adr/0011), a rail page
+                              since 2026-08-30: a tab per list — this account's
+                              skills, each other account's with a same/differs
+                              verdict, the marketplace plugins, the live
+                              sessions — a name/description filter, and the
+                              install / replace-with-backup / disable / remove /
+                              update / restart actions, plus the two permanent
+                              ones — Delete (the skill and every backup of it)
+                              and Uninstall (a plugin and its files). Every
+                              action is ON the row for both lists; expanding one
+                              shows that skill's SKILL.md — your own in an
+                              editor that writes it back, a peer's read-only.
+                              Also the owner/repo field: one read-only look
+                              decides whether a repo offers skills, a plugin
+                              marketplace or both, then the ecosystem's own
+                              installer runs as you (docs/adr/0012). It was a
+                              group inside the old 420px Settings column,
+                              outgrew it into its own overlay in August 2026,
+                              and came back as a rail page with the room that
+                              overlay was for
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     BellIcon.tsx         Header notification-bell glyph (on/off)

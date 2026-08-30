@@ -33,7 +33,8 @@ across your devices. Design + security model: `docs/plans/2026-07-17-shared-mult
 
 An administrator can work as another mapped user without asking them to share
 anything — the way to see what is happening on a shared box. Pick them under
-**Act as user** in ⚙ Settings; the tab reloads at `?as=<osUser>` and becomes
+**Act as user** on the ⚙ Settings rail (admins only); the tab reloads at
+`?as=<osUser>` and becomes
 their lobby: their sessions, layout, projects, prefs, files and gallery. Per tab,
 so another tab stays you.
 
