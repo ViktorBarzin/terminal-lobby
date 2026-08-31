@@ -1,8 +1,12 @@
 # Terminal Lobby
 
-Web tmux sessions gated by Authentik, isolated per OS user, at
+Web tmux sessions behind a reverse proxy, isolated per OS user, at
 `terminal.viktorbarzin.me`. This context covers the lobby UI, the
 tmux-api, and the devvm-side session plumbing.
+
+Authentik gates this deployment, but nothing requires it: since 2026-08-29 the
+identity header's name is configuration (`TL_AUTH_HEADER`), so any proxy that
+authenticates and names the user works.
 
 ## Language
 
@@ -403,9 +407,10 @@ ground until it lands.
 **Package**:
 The unit of release: a Debian package built by GitHub Actions and installed by
 `apt` on the devvm. `terminal-lobby` carries the whole application — the Go
-services, the SPA, `term.html`, the helper scripts, the units, the sudoers
-grant — at one **version**, which is what makes frontend/backend skew
-unreachable. `ttyd-devvm` and `viu` are separate packages because they are slow
+services, the SPA, `term.html`, the helper scripts and the units — at one
+**version**, which is what makes frontend/backend skew unreachable. It
+deliberately carries NO identity data: the sudo grant, the user map and the
+admin list belong to whoever owns the accounts on that box. `ttyd-devvm` and `viu` are separate packages because they are slow
 to build and rarely change.
 _Avoid_: build, artefact, release bundle
 
@@ -452,3 +457,35 @@ fix-forward, because the box tracks latest and a hand-run downgrade is undone by
 the next push.
 _Avoid_: rollback (that names the outcome, and the normal rollback is a new
 version), pin
+
+**Identity header**:
+The request header carrying the authenticated username, named by
+`TL_AUTH_HEADER` and set by whatever reverse proxy sits in front. Its NAME is
+configuration; its presence is what proves a request came through that proxy.
+The services never trust one a client supplies directly — in the container,
+nginx sets it and discards any that arrives.
+_Avoid_: the Authentik header (Authentik is one proxy among several since
+2026-08-29), auth header (it carries identity, not authorisation)
+
+**Proxy secret**:
+The optional shared secret in `X-TL-Proxy-Secret`, compared in constant time.
+When set, a request without it is refused BEFORE the identity header is read, so
+an unauthenticated caller never reaches identity resolution. Unset — the default
+— means the check is off and anything that can reach the ports may assert any
+identity.
+_Avoid_: API key, token (it authenticates the proxy, not a user or a client)
+
+**Single-user mode**:
+One account, and it is whoever the services run as. No user map, no sudo, no
+ACLs: the same-user fast path applies to every request, so the privilege layer
+is never entered. The default for a fresh install and the only mode the
+container runs. **Share**, **member** and the act-as switch are absent rather
+than empty, because there is nobody else to be.
+_Avoid_: solo mode, personal mode
+
+**Multi-user mode**:
+Several people, kernel-isolated per Unix user, reached by `sudo -u`. Turned on
+by `TL_MULTI_USER`, whose `auto` default means "a user map exists". This is what
+**share**, **project** membership and **lens** are for.
+_Avoid_: shared mode (that names sharing a session, which is a **share**),
+team mode
