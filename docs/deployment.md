@@ -150,14 +150,18 @@ inside the container is refused at startup rather than at nginx's bind.
 Mount a volume at `/home/dev` to keep sessions, projects and files across a
 restart; everything the lobby writes is under that home.
 
-The image carries tmux, git and a shell, and not `claude` or `codex`. The new
-session row still offers all three and defaults to Claude, so the first session
-a new reader creates runs a command the image does not have and closes straight
-away, with nothing on screen to say why. Choose **Plain shell** in that
-dropdown. A session can be given a real command either by installing one into
-the image and mounting nothing over it, or by writing
-`~/.config/terminal-lobby/commands` (`claude=<command line>`) inside the mounted
-home, which `tmux-user-attach` reads before its built-in map.
+The image carries tmux, git, a shell and Claude Code, so the new session row's
+default runs. Claude is a pinned binary at `/usr/local/bin/claude` rather than a
+`claude.ai/install.sh` install, because that installer puts everything under
+`$HOME` and the quickstart mounts a volume over `/home/dev` — an install there
+would disappear the first time anyone followed the README. Credentials and
+config live in `~/.claude`, which is inside the mount and so persists. Claude
+signs in on first run, and it accounts for about 335MB of the image.
+
+Codex is the one option in that dropdown with nothing behind it. Give it, or any
+other key, a command by writing `~/.config/terminal-lobby/commands`
+(`codex=<command line>`) in the mounted home; `tmux-user-attach` reads that
+before its built-in map.
 
 > [!IMPORTANT]
 > With neither `TL_BASIC_AUTH` nor a proxy in front, anything that reaches the

@@ -120,6 +120,20 @@ for d in /var/lib/tmux-api /var/lib/clipboard-store; do
   ok "$d is writable"
 done
 
+# The new session row defaults to Claude, so the image carries it. Checked
+# through a login+interactive shell because that is exactly how the command
+# reaches tmux: tmux-user-attach runs "$user_shell" -lic "$cmd". And checked to
+# be OUTSIDE the home, because the quickstart mounts a volume over /home/dev and
+# anything installed under that home would vanish the moment someone did.
+claude_path=$(docker exec -u dev "$NAME" bash -lic 'command -v claude' 2>/dev/null | tr -d '\r')
+[[ -n "$claude_path" ]] || fail "claude is not on the PATH of a login shell; the default new session would die"
+case "$claude_path" in
+  /home/*) fail "claude is at $claude_path, inside the home a volume mounts over" ;;
+esac
+docker exec -u dev "$NAME" bash -lic 'claude --version' >/dev/null 2>&1 \
+  || fail "claude is on the PATH at $claude_path but does not run"
+ok "claude runs from a login shell, at $claude_path"
+
 # And no sudo anywhere: single-user never escalates, so the image does not ship it.
 docker exec "$NAME" sh -c 'command -v sudo' >/dev/null 2>&1 \
   && fail "sudo is present in a single-user image"
