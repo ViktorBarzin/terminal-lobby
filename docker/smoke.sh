@@ -134,6 +134,16 @@ docker exec -u dev "$NAME" bash -lic 'claude --version' >/dev/null 2>&1 \
   || fail "claude is on the PATH at $claude_path but does not run"
 ok "claude runs from a login shell, at $claude_path"
 
+# What the new-session dropdown greys out. The image has Claude and a shell and
+# does not have Codex, so this is the one place where all three answers exist at
+# once — and it is the assertion that would fail if the probe stopped reaching
+# the login shell, which is where the answer for a shell function lives.
+probe=$(curl -s "http://127.0.0.1:17681/api/sessions/new-commands")
+echo "$probe" | grep -q '"claude":true' || fail "new-commands did not report claude: $probe"
+echo "$probe" | grep -q '"shell":true'  || fail "new-commands did not report shell: $probe"
+echo "$probe" | grep -q '"codex":false' || fail "new-commands did not report codex missing: $probe"
+ok "new-commands: claude and shell run here, codex does not"
+
 # And no sudo anywhere: single-user never escalates, so the image does not ship it.
 docker exec "$NAME" sh -c 'command -v sudo' >/dev/null 2>&1 \
   && fail "sudo is present in a single-user image"

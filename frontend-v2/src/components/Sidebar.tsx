@@ -33,6 +33,10 @@ export const Sidebar: Component<{
   store: LobbyStore;
   /** roamed prefs — the create row's command dropdown is one of its knobs. */
   prefs: PrefsStore;
+  /** which new-session commands this box can actually run, for greying out the
+   *  ones with nothing installed behind them. Optional: absent means no opinion
+   *  and the row offers everything, which is what it did before. */
+  availableCommands?: () => Record<string, boolean>;
   /** true while Alt is held (engine): overlays numbered chips on the first 10 cards. */
   altActive?: Accessor<boolean>;
   /** confirm seam for the destructive card actions (tests inject it). */
@@ -190,7 +194,11 @@ export const Sidebar: Component<{
         </Show>
       </div>
 
-      <CreateSessionRow store={store} prefs={props.prefs} />
+      <CreateSessionRow
+        store={store}
+        prefs={props.prefs}
+        available={props.availableCommands}
+      />
 
       <div class="tl-sidebar-scroll">
         <Show when={store.loadError()}>

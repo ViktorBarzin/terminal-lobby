@@ -293,6 +293,7 @@ func main() {
 	http.HandleFunc("/sessions", handleSessions)
 	// Registered ahead of "/sessions/" so the more specific path wins: Go's mux
 	// prefers the longer pattern, but stating the order makes the intent plain.
+	http.HandleFunc("/new-commands", handleNewCommands)
 	http.HandleFunc("/sessions/prewarm", handlePrewarm)
 	http.HandleFunc("/sessions/", handleSessionByName)
 	http.HandleFunc("/whoami", handleWhoami)

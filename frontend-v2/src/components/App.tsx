@@ -57,7 +57,12 @@ import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
 import { actAsUrl, lensTarget } from "../lib/act-as";
 import { ACT_AS } from "../lib/config";
-import { listUsers } from "../lib/lobby-api";
+import { availableCommands, listUsers } from "../lib/lobby-api";
+import {
+  effectiveCommand,
+  NEW_SESSION_COMMANDS,
+  type CommandAvailability,
+} from "../lib/new-commands";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
 
@@ -349,7 +354,17 @@ export const App: Component = () => {
   createEffect(() => {
     if (flip() && selectedName() === null) setCollapsed(false);
   });
-  const newCommand = () => prefs.prefs().session.newCommand;
+  // What this box can actually start. Fetched once — it changes when somebody
+  // installs something, not while a page is open — and it costs a login shell
+  // on the server, so it is not something to poll.
+  const [cmdAvail, setCmdAvail] = createSignal<CommandAvailability>({});
+  onMount(() => void availableCommands().then(setCmdAvail));
+  // The command the terminal is actually told to run, which is why the fallback
+  // lives here and not only in the dropdown: the same resolution has to hold for
+  // a session started by the create row and one started from a restored
+  // preference, or the row shows one thing and the attach does another.
+  const newCommand = () =>
+    effectiveCommand(prefs.prefs().session.newCommand, cmdAvail(), NEW_SESSION_COMMANDS);
 
   // A selected session the poll has never returned does not exist in tmux yet:
   // `store.create` only writes the layout, and the session comes into being when
@@ -624,6 +639,7 @@ export const App: Component = () => {
         <Sidebar
           store={store}
           prefs={prefs}
+          availableCommands={cmdAvail}
           altActive={engine.altActive}
           notifications={notifications}
           // The phone folds the shell bar (and with it the gear) into the
@@ -765,6 +781,7 @@ export const App: Component = () => {
       <Show when={settingsOpen()}>
         <SettingsPanel
           prefs={prefs}
+          availableCommands={cmdAvail}
           onClose={() => setSettingsOpen(false)}
           initialPage={settingsPage()}
           onPageChange={setSettingsPage}

@@ -77,6 +77,9 @@ export const SettingsPanel: Component<{
    *  keep a copy of this component's state, which goes stale the moment
    *  someone uses the rail. */
   onPageChange?: (id: PageId) => void;
+  /** which new-session commands this box can run, for the Sessions page's
+   *  picker. The sidebar's create row reads the same answer. */
+  availableCommands?: () => Record<string, boolean>;
   /** the keybinding layer's opt-in toggle (per-device, not roamed). */
   keybindings?: KeybindingsControl;
   /** the PWA notification system (per-device readouts + test actions). */
@@ -262,7 +265,10 @@ export const SettingsPanel: Component<{
                 <TerminalPage prefs={props.prefs} />
               </Match>
               <Match when={current() === "sessions"}>
-                <SessionsPage prefs={props.prefs} />
+                <SessionsPage
+                  prefs={props.prefs}
+                  availableCommands={props.availableCommands}
+                />
               </Match>
               <Match when={current() === "keyboard"}>
                 <Show

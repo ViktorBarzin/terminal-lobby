@@ -154,6 +154,12 @@ src/
                          plus lensTarget(), the one answer for "whose account
                          is this tab looking at": it makes a session open
                          WATCHING and namespaces the Watch choice per target
+    new-commands.ts      Which new-session commands this box can actually run:
+                         GET /new-commands is tmux-user-attach --probe run in
+                         the session's own login shell, so a key with nothing
+                         installed behind it is greyed out rather than offered
+                         and handing back a session that dies on open. A key
+                         the server said nothing about stays enabled
     mode.ts              Which features this box has: multiUser() reads the
                          /whoami flag (an older server sends none, which reads
                          as multi-user), canActAs() requires admin AND

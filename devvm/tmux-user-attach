@@ -85,28 +85,81 @@ speculative="${TL_POOL_SPECULATIVE:-}"
 # Empty/invalid/'default' → no explicit command: tmux default-command
 # rules, exactly as before this feature.
 CMD_RE='^[a-z0-9_-]{1,16}$'
-cmd_key="${3:-}"
-[[ "$cmd_key" =~ $CMD_RE ]] || cmd_key=""
-cmd=""
-plain_shell=no
-if [[ -n "$cmd_key" && "$cmd_key" != "default" ]]; then
-    f="$HOME/.config/terminal-lobby/commands"
-    if [[ -r "$f" ]]; then
-        cmd=$(awk -F= -v k="$cmd_key" '
+COMMANDS_FILE="$HOME/.config/terminal-lobby/commands"
+BUILTIN_KEYS=(claude codex shell)
+
+user_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
+user_shell="${user_shell:-/bin/sh}"
+
+# Resolve a command KEY to what actually runs, setting `cmd` and `plain_shell`.
+# A function rather than a straight line because --probe asks the same question
+# about every key, and two copies of these rules would be free to disagree about
+# what a session is going to start.
+resolve_cmd() {
+    local key="$1"
+    cmd=""
+    plain_shell=no
+    [[ -n "$key" && "$key" != "default" ]] || return 0
+    if [[ -r "$COMMANDS_FILE" ]]; then
+        cmd=$(awk -F= -v k="$key" '
             /^[[:space:]]*(#|$)/ {next}
             $1==k {sub(/^[^=]*=/, ""); print; exit}
-        ' "$f")
+        ' "$COMMANDS_FILE")
     fi
     if [[ -z "$cmd" ]]; then
-        case "$cmd_key" in
+        case "$key" in
             claude) cmd="claude" ;;
             codex)  cmd="codex --yolo" ;;
             shell)  plain_shell=yes ;;
         esac
     fi
+}
+
+# --probe: which keys would actually start something, one `key<TAB>0|1` line
+# each. tmux-api serves this to the lobby so the new-session dropdown can grey
+# out a command the box cannot run, instead of offering it and handing back a
+# session that closes immediately.
+#
+# The test runs in the SAME login+interactive shell a session gets, because that
+# is the only place the answer is true: `claude` here is a binary on PATH, and
+# on the devvm it is a shell function from a user's rc file, which nothing else
+# can see. Every key is probed in ONE shell — a login shell is expensive enough
+# that three of them would be felt.
+if [[ "${1:-}" == "--probe" ]]; then
+    keys=("${BUILTIN_KEYS[@]}")
+    if [[ -r "$COMMANDS_FILE" ]]; then
+        while IFS= read -r k; do
+            [[ "$k" =~ $CMD_RE ]] || continue
+            [[ " ${keys[*]} " == *" $k "* ]] || keys+=("$k")
+        done < <(awk -F= '/^[[:space:]]*(#|$)/ {next} {print $1}' "$COMMANDS_FILE")
+    fi
+    probe=""
+    for k in "${keys[@]}"; do
+        resolve_cmd "$k"
+        if [[ "$plain_shell" == yes ]]; then
+            # The login shell itself. It is what tmux falls back to, so it
+            # cannot be missing in the way a named tool can.
+            probe+="printf '%s\t1\n' $(printf '%q' "$k")"$'\n'
+        elif [[ -z "$cmd" ]]; then
+            probe+="printf '%s\t0\n' $(printf '%q' "$k")"$'\n'
+        else
+            # First word only: the rest are arguments, and `command -v` answers
+            # for the thing being run. A pipeline or an env-var prefix would
+            # defeat this and report unavailable, which is the safe direction.
+            probe+="command -v $(printf '%q' "${cmd%% *}") >/dev/null 2>&1 \
+                && printf '%s\t1\n' $(printf '%q' "$k") \
+                || printf '%s\t0\n' $(printf '%q' "$k")"$'\n'
+        fi
+    done
+    # An rc file is free to print a banner, so the caller filters to lines that
+    # match the shape. stderr carries the job-control warning -i produces
+    # without a tty and is dropped.
+    exec "$user_shell" -lic "$probe" 2>/dev/null
 fi
-user_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
-user_shell="${user_shell:-/bin/sh}"
+
+cmd_key="${3:-}"
+[[ "$cmd_key" =~ $CMD_RE ]] || cmd_key=""
+resolve_cmd "$cmd_key"
 # tmux args after the session flags: nothing (default-command decides),
 # an explicit plain login shell, or the mapped command via login+
 # interactive shell (-l loads profile/PATH, -i loads rc functions like
