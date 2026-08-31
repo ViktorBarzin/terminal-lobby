@@ -52,6 +52,23 @@ RUN set -eux; \
     echo "${TTYD_SHA256}  /usr/local/bin/ttyd" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/ttyd
 
+# Claude Code, because the lobby's new session row defaults to it. Installed as
+# a pinned binary rather than through claude.ai/install.sh: that installer puts
+# everything under $HOME, and the quickstart mounts a volume over /home/dev, so
+# an install there disappears the first time anyone follows the README. Here it
+# sits outside the home and the credentials in ~/.claude persist with the mount,
+# which is the right way round.
+#
+# It self-updates into ~/.local/bin, which a login shell puts ahead of this on
+# PATH, so a container that has been running a while can be newer than the pin.
+ARG CLAUDE_VERSION=2.1.236
+ARG CLAUDE_SHA256=6c8818fa22187aa555c242be4abbacc44d6b71a32ac9631ee7b2b5d12f51f752
+RUN set -eux; \
+    curl -fsSL -o /usr/local/bin/claude \
+      "https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude"; \
+    echo "${CLAUDE_SHA256}  /usr/local/bin/claude" | sha256sum -c -; \
+    chmod 0755 /usr/local/bin/claude
+
 # One unprivileged account. The services resolve every request to this user
 # because TL_MULTI_USER=off, and the same-user fast path means none of them
 # ever calls sudo — which is why no sudo is installed.
