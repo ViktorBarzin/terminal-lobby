@@ -158,10 +158,13 @@ would disappear the first time anyone followed the README. Credentials and
 config live in `~/.claude`, which is inside the mount and so persists. Claude
 signs in on first run, and it accounts for about 335MB of the image.
 
-Codex is the one option in that dropdown with nothing behind it. Give it, or any
+Codex is the one option in that dropdown with nothing behind it, and the lobby
+says so: it greys the option out and labels it "not installed", because
+`tmux-api` asks the box what it can run before offering it. Give Codex, or any
 other key, a command by writing `~/.config/terminal-lobby/commands`
 (`codex=<command line>`) in the mounted home; `tmux-user-attach` reads that
-before its built-in map.
+before its built-in map, and the greyed-out option comes back to life within two
+minutes, which is how long the answer is cached.
 
 > [!IMPORTANT]
 > With neither `TL_BASIC_AUTH` nor a proxy in front, anything that reaches the

@@ -1,10 +1,19 @@
 import { For, type Component } from "solid-js";
 import { NEW_COMMANDS, type NewCommand, type PrefsStore } from "../../../store/prefs";
+import { canRun, COMMAND_LABELS, type CommandAvailability } from "../../../lib/new-commands";
 import { Group, Row, Toggle } from "../controls";
 
 /** What a new session starts as, and what the sidebar tells you about the ones
- *  you already have. */
-export const SessionsPage: Component<{ prefs: PrefsStore }> = (props) => {
+ *  you already have.
+ *
+ *  `availableCommands` is the same answer the sidebar's create row uses. Both
+ *  write this one pref, so offering a command here that the row greys out would
+ *  only move the dead option somewhere less visible. */
+export const SessionsPage: Component<{
+  prefs: PrefsStore;
+  availableCommands?: () => CommandAvailability;
+}> = (props) => {
+  const avail = (): CommandAvailability => props.availableCommands?.() ?? {};
   const p = () => props.prefs.prefs();
 
   return (
@@ -24,7 +33,14 @@ export const SessionsPage: Component<{ prefs: PrefsStore }> = (props) => {
             })
           }
         >
-          <For each={NEW_COMMANDS}>{(c) => <option value={c}>{c}</option>}</For>
+          <For each={NEW_COMMANDS}>
+            {(c) => (
+              <option value={c} disabled={!canRun(c, avail())}>
+                {COMMAND_LABELS[c]}
+                {canRun(c, avail()) ? "" : " (not installed)"}
+              </option>
+            )}
+          </For>
         </select>
       </Row>
 

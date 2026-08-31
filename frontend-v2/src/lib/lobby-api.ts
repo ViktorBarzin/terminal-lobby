@@ -91,6 +91,27 @@ export async function listUsers(): Promise<string[]> {
   }
 }
 
+/**
+ * GET /api/new-commands → {key: canRun} for the new-session dropdown.
+ *
+ * Degrades to {} on anything at all, which the callers read as "no opinion" and
+ * so leaves every option enabled. Not part of the injectable LobbyApi surface,
+ * for the same reason listUsers is not: two components read it from the
+ * concrete client, and putting it in the interface would mean a stub in every
+ * store fake for a call none of them make.
+ */
+export async function availableCommands(): Promise<Record<string, boolean>> {
+  try {
+    const m = await json<Record<string, boolean>>("/new-commands", { cache: "no-store" });
+    if (!m || typeof m !== "object" || Array.isArray(m)) return {};
+    return Object.fromEntries(
+      Object.entries(m).filter(([, v]) => typeof v === "boolean"),
+    );
+  } catch {
+    return {};
+  }
+}
+
 /** GET /api/sessions → own + foreign sessions. */
 export async function listSessions(): Promise<Session[]> {
   const arr = await json<Session[]>("/sessions", { cache: "no-store" });

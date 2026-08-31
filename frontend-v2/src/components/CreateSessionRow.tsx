@@ -1,13 +1,14 @@
-import { createSignal, onCleanup, onMount, Show, type Component } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show, type Component } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
 import type { NewCommand, PrefsStore } from "../store/prefs";
 import { cleanTitle, MAX_TITLE_RUNES, nameForTitle } from "../lib/slug";
-
-const COMMANDS: { value: NewCommand; label: string }[] = [
-  { value: "claude", label: "Claude" },
-  { value: "codex", label: "Codex" },
-  { value: "shell", label: "Plain shell" },
-];
+import {
+  canRun,
+  COMMAND_LABELS,
+  effectiveCommand,
+  NEW_SESSION_COMMANDS as COMMANDS,
+  type CommandAvailability,
+} from "../lib/new-commands";
 
 /**
  * The new-session row (inventory Cat.2 "Create session"): a title input + a
@@ -25,14 +26,23 @@ const COMMANDS: { value: NewCommand; label: string }[] = [
  * (App → SessionView → TerminalView → terminalUrl's arg2), so the choice made
  * here is the choice that runs, and it follows the user across devices.
  * `default` is a valid backing value for launcher accounts: it is reflected as
- * `claude` without being written back, so only a real change overwrites it.
+ * the first command that runs without being written back, so only a real change
+ * overwrites it.
+ *
+ * `available` says which commands this box can actually start. One it cannot is
+ * greyed out and labelled, because the alternative is offering it and handing
+ * back a session that closes the moment it opens. A command the server said
+ * nothing about stays enabled, so nothing here can take away a working tool.
  */
-export const CreateSessionRow: Component<{ store: LobbyStore; prefs: PrefsStore }> = (props) => {
+export const CreateSessionRow: Component<{
+  store: LobbyStore;
+  prefs: PrefsStore;
+  available?: () => CommandAvailability;
+}> = (props) => {
   const [name, setName] = createSignal("");
-  const cmd = (): NewCommand => {
-    const v = props.prefs.prefs().session.newCommand;
-    return COMMANDS.some((c) => c.value === v) ? v : "claude";
-  };
+  const avail = (): CommandAvailability => props.available?.() ?? {};
+  const cmd = (): NewCommand =>
+    effectiveCommand(props.prefs.prefs().session.newCommand, avail(), COMMANDS);
   let inputEl: HTMLInputElement | undefined;
 
   // The session.new command (Alt+Shift+N / palette "New session") focuses this
@@ -82,9 +92,14 @@ export const CreateSessionRow: Component<{ store: LobbyStore; prefs: PrefsStore 
           props.prefs.setPref({ session: { newCommand: e.currentTarget.value as NewCommand } })
         }
       >
-        {COMMANDS.map((c) => (
-          <option value={c.value}>{c.label}</option>
-        ))}
+        <For each={COMMANDS}>
+          {(c) => (
+            <option value={c} disabled={!canRun(c, avail())}>
+              {COMMAND_LABELS[c]}
+              {canRun(c, avail()) ? "" : " (not installed)"}
+            </option>
+          )}
+        </For>
       </select>
       <button class="tl-new-btn" onClick={() => void submit()}>
         Create
