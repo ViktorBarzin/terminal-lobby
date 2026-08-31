@@ -1,6 +1,6 @@
 # Pluggable auth, one deployment path, a shorter README
 
-**Status:** approved, not yet built
+**Status:** shipped 2026-08-29/30 — see the "As built" note at the end
 **Date:** 2026-08-29
 **Author:** Viktor Barzin (decisions), Claude (research + design)
 **Scope:** the six Go modules, `frontend-v2/`, `devvm/`, `packaging/`,
@@ -264,3 +264,36 @@ verifiable even though it is wide.
 - Whether the divergence alert in ADR-0013 is still worth building now that the
   push path is the only writer. It was designed as the backstop for a dropped
   trigger and that risk has not changed, so the current answer is yes.
+
+## As built, 2026-08-30
+
+Everything above shipped. Four things differ from the design, each because
+building it taught us something the design had assumed.
+
+**The package shipped the sudo grant, and that revoked two users' terminals.**
+The design did not mention the file; the manifest installed it. A history scrub
+had replaced the real accounts with fictional ones, so the first install
+overwrote the live grant. The package now carries no identity data, a test
+refuses those three destinations by path, and `verify-deb.sh` checks the built
+`.deb`. The grant gained a generator instead: `roster.yaml` here,
+`tl-users` elsewhere.
+
+**The container needed a reverse proxy inside it.** The design treated the image
+as "the services under one supervisor". But the SPA calls `/api/sessions/`,
+`/files/` and `/events/` on its own origin, which production routes through an
+ingress, so the first image served a working terminal and a dead sidebar. nginx
+now sits in front, and is also what authenticates.
+
+**`TL_BIND` defaults to `127.0.0.1`, not `0.0.0.0`.** The design left the
+shipped default wide with the secret optional, which meant a fresh install
+trusted the identity header from anything on the network. The migration widens
+it only for boxes that were already serving.
+
+**The deploy trigger is opt-in.** The design left it on unless explicitly
+disabled. In a public repo that means a fork attempts a deploy it holds no
+secrets for, and it turned master red the moment it fired before the box was
+wired.
+
+The accepted risk from decision 3 is unchanged: `TL_PROXY_SECRET` is still
+optional, so this box still trusts the identity header from anything that can
+reach its ports.

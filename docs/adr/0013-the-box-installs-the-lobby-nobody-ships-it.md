@@ -96,3 +96,40 @@ keep telling the truth about what is installed.
   and are deliberately not package files.
 - Upgrades land at moments nobody chose, `bob`'s mid-turn included. Bounded by
   restart-if-changed; tmux sessions survive, browsers reconnect.
+
+## Amendment, 2026-08-30: the trigger is live
+
+The decision above stands unchanged. This records what the phase gate cost to
+lift, because three of its open questions turned out not to be questions.
+
+**The apt credential was never needed.** The Forgejo Debian registry serves its
+`Packages` index and `repository.key` anonymously, so the box authenticates
+nothing to fetch its own package. `devvm/terminal-lobby.auth.template` is
+deleted.
+
+**`secret/woodpecker/devvm_ssh_key` existed already**, provisioned for exactly
+this and carrying `purpose: woodpecker-terminal-lobby`. It is issued for
+`wizard`, not root, so the forced command lives in wizard's `authorized_keys`
+and reaches root through one narrow grant in `/etc/sudoers.d/tl-reconcile`. It
+had been sitting there UNRESTRICTED — a full shell for anyone holding it —
+until this work bound it to `command="sudo -n /usr/local/bin/tl-reconcile"`.
+
+**Pod-to-box TCP 22 was never blocked.** The box runs no firewall and sshd
+listens on all interfaces.
+
+Two things the ADR did not anticipate:
+
+- Nothing was listening for the trigger. `POST /api/repos/1/pipelines` with
+  `PIPELINE=terminal-lobby-deploy` needed a workflow to answer it;
+  `infra/.woodpecker/terminal-lobby-deploy.yml` is that workflow.
+- A bare `event: manual` in Woodpecker matches EVERY manual pipeline, so the
+  first real trigger also ran four unrelated infra syncs. All four now carry an
+  `evaluate` guard on `PIPELINE`.
+
+**A consequence worth stating plainly.** The ADR says the package carries "the
+units, the sudoers grant". Shipping the grant was wrong and it fired: a package
+built from a repository whose account names had been scrubbed for publication
+overwrote the live `/etc/sudoers.d/ttyd-users` and revoked two users'
+terminals. The package now carries no identity data at all. `roster.yaml`
+derives the grant alongside the map and the admin list it already produced, and
+`tl-users` renders it from a local declaration on boxes with no roster.
