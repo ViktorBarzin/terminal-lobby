@@ -684,12 +684,19 @@ export const Composer: Component<{
             <button
               type="button"
               class="tl-attach-btn"
-              aria-label="Attach a file"
-              title={props.inertReason || "Attach a file"}
+              aria-label="Attach an image or file"
+              // What it TAKES and where it goes. A paperclip on its own was the
+              // only wordless control on this bar, and its purpose lived in a
+              // title, which a phone has no way to show.
+              title={
+                props.inertReason ||
+                "Attach an image or file — images join this session's gallery"
+              }
               disabled={!!props.inertReason || attaching()}
               onClick={() => fileInput?.click()}
             >
               <PaperclipIcon />
+              <span class="tl-attach-label">{attaching() ? "Attaching…" : "Attach"}</span>
             </button>
           </Show>
           <Show when={props.mode && props.onCycleMode}>

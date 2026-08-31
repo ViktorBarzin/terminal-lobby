@@ -1552,9 +1552,11 @@ label.tl-set-row-label {
   flex: 0 0 auto;
 }
 .tl-composer-bar .tl-attach-btn {
-  width: 40px;
+  /* min-width, not width: it carries a word now. The 40px stays as the touch
+     floor, which is what the fixed size was for. */
+  min-width: 40px;
   height: 40px;
-  padding: 0;
+  padding: 0 10px;
 }
 /* ---- the attachment tray (design 2026-08-17 decision 1) ----------------
    Above the input, so the field stays prose and the path never has to be read
@@ -1624,16 +1626,32 @@ label.tl-set-row-label {
   align-items: center;
   justify-content: center;
   padding: 9px;
-  color: var(--text-muted);
+  /* Not --text-muted: that tier is for text meant to recede, and this is
+     something to press. It was the faintest thing on a bar whose other controls
+     are a coloured chip and two filled buttons. */
+  color: var(--text-secondary, var(--text-primary));
   background: none;
   /* The only icon control in the app that wore a box, which made it read as an
      empty input rather than a button. The header's icon buttons carry none. */
   border: 0;
+  gap: 6px;
   border-radius: var(--radius);
   cursor: pointer;
 }
 .tl-attach-btn:hover:not(:disabled) {
   color: var(--text-primary);
+}
+/* The word that makes the paperclip legible. It is the first thing the left
+   group gives up if the bar ever runs out of room — the icon and the title
+   still carry the meaning then. */
+.tl-attach-label {
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  white-space: nowrap;
+}
+@media (max-width: 360px) {
+  .tl-attach-label {
+    display: none;
+  }
 }
 .tl-attach-btn:hover:not(:disabled) {
   color: var(--text-primary);
