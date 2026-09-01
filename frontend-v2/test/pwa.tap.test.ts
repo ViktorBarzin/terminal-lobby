@@ -204,3 +204,23 @@ describe("push badge", () => {
     expect(self.registration.showNotification).toHaveBeenCalled();
   });
 });
+
+/**
+ * The two copies of the worker.
+ *
+ * `frontend-v2/public/sw.js` is the one vite serves and the one these tests
+ * drive; `frontend/sw.js` is the one the Debian package actually installs to
+ * /usr/local/share/ttyd/sw.js (release/manifest.go). Nothing else keeps them in
+ * step, and the natural place to edit is the copy that does NOT ship — so an
+ * edit to one alone means either the fix never reaches the box, or dev and
+ * production quietly disagree about how a notification tap is routed.
+ */
+describe("the shipped worker", () => {
+  it("is byte-identical to the one under test", () => {
+    const shipped = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../frontend/sw.js"),
+      "utf8",
+    );
+    expect(shipped).toBe(SRC);
+  });
+});
