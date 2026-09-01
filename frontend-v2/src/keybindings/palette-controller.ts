@@ -7,6 +7,7 @@ import {
   type PaletteItem,
 } from "./palette.logic";
 import { track } from "../telemetry/track";
+import { VISITS_KEY } from "../store/visits";
 
 /**
  * The reactive controller behind the command palette (feature-inventory Cat.2
@@ -29,7 +30,9 @@ export interface PaletteAction {
 /** The host wiring the palette drives. */
 export interface PaletteEnv {
   /** the session list to rank (resolved once per open; may be async). */
-  sessions: () => Promise<{ name: string; title?: string; state?: string }[]>;
+  sessions: () => Promise<{ name: string; id?: string; title?: string; state?: string }[]>;
+  /** finished since the user last looked (the visit store). */
+  isUnseen?: (s: { name: string; state?: string }) => boolean;
   /** the currently-attached session name (marked "current"), or null. */
   current: () => string | null;
   /** attach a session by name. */
@@ -62,7 +65,7 @@ export interface PaletteController {
   runSelected: () => void;
 }
 
-const VISITS_KEY = "tl:session-visits:v1";
+// Imported rather than re-declared: two copies of a storage key drift.
 
 function readVisitTimes(): Record<string, number> {
   try {
@@ -79,7 +82,7 @@ export function createPaletteController(env: PaletteEnv): PaletteController {
   const [isOpen, setOpen] = createSignal(false);
   const [query, setQuerySig] = createSignal("");
   const [sessionsCache, setSessionsCache] = createSignal<
-    { name: string; title?: string; state?: string }[] | null
+    { name: string; id?: string; title?: string; state?: string }[] | null
   >(null);
   const [selIdx, setSelIdx] = createSignal(0);
   let openSeq = 0;
@@ -94,7 +97,14 @@ export function createPaletteController(env: PaletteEnv): PaletteController {
       // types that, and someone who has been working in a shell types the tmux
       // name they saw there.
       terms: s.title ? [s.title, s.name] : [s.name],
-      meta: s.name === cur ? "current" : s.state || "",
+      // "done" alone read the same for a turn you watched land and one you
+      // have never opened, which is the distinction the app icon counts.
+      meta:
+        s.name === cur
+          ? "current"
+          : s.state === "done" && (env.isUnseen?.(s) ?? false)
+            ? "done · new"
+            : s.state || "",
       run: () => env.attach(s.name),
     }));
   });

@@ -198,6 +198,8 @@ export const App: Component = () => {
   const sessionSnapshot = createMemo<TitleSession[]>(() =>
     store.sessions.map((s) => ({
       name: s.name,
+      // tmux's session id, so the visit store survives a rename made anywhere.
+      id: s.id,
       // The tab title and the OS notification body speak in titles like every
       // other surface; the name still identifies the session underneath.
       title: s.title,
@@ -445,9 +447,12 @@ export const App: Component = () => {
   // Session rows for the palette (recents-first is applied inside the palette).
   const paletteSessions = () => {
     const m = store.model();
-    const out: { name: string; state?: string }[] = [];
-    for (const g of m.groups) for (const s of g.sessions) out.push({ name: s.name, state: s.state || "" });
-    for (const s of m.foreign) out.push({ name: s.name, state: s.state || "" });
+    // The id rides along so the recents-first sort can find a visit record that
+    // is filed under it rather than under a name that may since have changed.
+    const out: { name: string; id?: string; state?: string }[] = [];
+    for (const g of m.groups)
+      for (const s of g.sessions) out.push({ name: s.name, id: s.id, state: s.state || "" });
+    for (const s of m.foreign) out.push({ name: s.name, id: s.id, state: s.state || "" });
     return out;
   };
 
@@ -455,6 +460,7 @@ export const App: Component = () => {
   let run: (cmd: string) => void = () => {};
   const palette = createPaletteController({
     sessions: () => Promise.resolve(paletteSessions()),
+    isUnseen: (sn) => notifications.isUnseen(sn),
     current: () => store.selected()?.name ?? null,
     attach: (name) => {
       if (store.selected()?.name === name) return;
@@ -506,6 +512,9 @@ export const App: Component = () => {
     palette,
     help,
     toggleSidebar: () => toggleSidebar(),
+    // The app icon counts awaiting plus unread-finished; Alt+Shift+U walks the
+    // second half the way Alt+Shift+Enter walks the first.
+    isUnseen: (sn) => notifications.isUnseen(sn),
     focusNewSession: () => {
       if (collapsed()) toggleSidebar(); // the box lives in the sidebar
       window.dispatchEvent(new CustomEvent("tl:focus-new-session"));

@@ -71,6 +71,8 @@ describe("tab title", () => {
 
 describe("visit store: following a rename", () => {
   const sess = (name: string, state = "done") => ({ name, state });
+  /** The same session, under whatever name it is wearing. */
+  const kept = (name: string, state = "done") => ({ name, id: "$3", state });
 
   // The store persists to localStorage and every createVisitStore() seeds from
   // it, so without this a visit stamped by an earlier case is still there for a
@@ -82,42 +84,49 @@ describe("visit store: following a rename", () => {
     localStorage.removeItem(STATES_KEY);
   });
 
-  it("carries a session's visit record to its new name", () => {
-    // Without this, observe() prunes the old name as dead and the new one looks
-    // never-visited — so a completion the user already watched land comes back
-    // as an unseen green tick.
-    const visits = createVisitStore();
-    visits.observe([sess("deploy-the-thing")], "deploy-the-thing");
-    expect(visits.isUnseen(sess("deploy-the-thing"))).toBe(false);
+  // The guarantee is unchanged: a rename must not resurrect work the user has
+  // already read. What changed is HOW it is kept. There used to be an explicit
+  // rename() driven by a `tl:session-renamed` window event, which only fired for
+  // a rename made in the same tab — one from a second tab, the phone, or a shell
+  // still pruned the record. Records are keyed by tmux's session id now, so the
+  // rename carries itself and no notification is involved.
+  it("carries a session's visit record across a rename", () => {
+    const visits = createVisitStore({ visible: () => true });
+    visits.observe([kept("deploy-the-thing")], "deploy-the-thing");
+    expect(visits.isUnseen(kept("deploy-the-thing"))).toBe(false);
 
-    visits.rename("deploy-the-thing", "fix-the-parser");
-    visits.observe([sess("fix-the-parser")], null);
+    visits.observe([kept("fix-the-parser")], null);
 
-    expect(visits.isUnseen(sess("fix-the-parser"))).toBe(false);
+    expect(visits.isUnseen(kept("fix-the-parser"))).toBe(false);
+  });
+
+  it("carries it for a rename this tab was never told about", () => {
+    const visits = createVisitStore({ visible: () => true });
+    visits.observe([kept("old")], "old");
+    // No event, no rename() call: just the next poll, with a different name.
+    visits.observe([kept("new")], null);
+    expect(visits.isUnseen(kept("new"))).toBe(false);
   });
 
   it("leaves other sessions alone", () => {
-    const visits = createVisitStore();
-    visits.observe([sess("a"), sess("b")], "a");
-    visits.rename("a", "renamed");
-    visits.observe([sess("renamed"), sess("b")], null);
-    expect(visits.isUnseen(sess("renamed"))).toBe(false);
+    const visits = createVisitStore({ visible: () => true });
+    visits.observe([kept("a"), sess("b")], "a");
+    visits.observe([kept("renamed"), sess("b")], null);
+    expect(visits.isUnseen(kept("renamed"))).toBe(false);
     expect(visits.isUnseen(sess("b"))).toBe(true); // never looked at
   });
 
-  it("is a no-op when the name did not move", () => {
-    const visits = createVisitStore();
-    visits.observe([sess("a")], "a");
-    visits.rename("a", "a");
-    visits.observe([sess("a")], null);
-    expect(visits.isUnseen(sess("a"))).toBe(false);
+  it("does not invent a record for a session that never had one", () => {
+    const visits = createVisitStore({ visible: () => true });
+    visits.observe([kept("a")], null); // never looked at it
+    visits.observe([kept("b")], null);
+    expect(visits.isUnseen(kept("b"))).toBe(true);
   });
 
-  it("does not invent a record for a session that never had one", () => {
-    const visits = createVisitStore();
-    visits.observe([sess("a")], null); // never looked at it
-    visits.rename("a", "b");
-    visits.observe([sess("b")], null);
-    expect(visits.isUnseen(sess("b"))).toBe(true);
+  it("does not hand a NEW session the record of a dead one with the same name", () => {
+    const visits = createVisitStore({ visible: () => true });
+    visits.observe([{ name: "work", id: "$1", state: "done" }], "work");
+    visits.observe([{ name: "work", id: "$2", state: "done" }], null);
+    expect(visits.isUnseen({ name: "work", id: "$2", state: "done" })).toBe(true);
   });
 });

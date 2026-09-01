@@ -300,11 +300,11 @@ export function createNotificationSystem(
   // to move or the next poll prunes them as dead — and a completion the user
   // already saw returns as an unseen tick. The lobby store announces the rename
   // rather than calling in, because it is built before this system is.
-  const onRenamed = (e: Event): void => {
-    const d = (e as CustomEvent<{ from?: unknown; to?: unknown }>).detail;
-    if (typeof d?.from === "string" && typeof d?.to === "string") visits.rename(d.from, d.to);
-  };
-  if (hasWin) window.addEventListener("tl:session-renamed", onRenamed);
+  // The visit store keys by tmux session id now, so a rename carries itself and
+  // the `tl:session-renamed` listener that used to patch it is gone. It only ever
+  // fired for a rename made in THIS tab: one from a second tab, the phone, or a
+  // shell looked like a session vanishing and a stranger arriving, so the visit
+  // was pruned and work you had already read came back unread.
   const badger = createFaviconBadger();
 
   /**
@@ -538,7 +538,6 @@ export function createNotificationSystem(
     testHere,
     testAll,
     dispose: () => {
-      if (hasWin) window.removeEventListener("tl:session-renamed", onRenamed);
       sw.dispose();
     },
   };

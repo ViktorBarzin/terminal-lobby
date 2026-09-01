@@ -5,6 +5,7 @@ import {
   cycleTarget,
   flatSessionOrder,
   nextAwaitingTarget,
+  nextMatchingTarget,
   type OrderedSession,
 } from "../src/keybindings/navigation.logic";
 import type { SidebarModel } from "../src/components/lobby.logic";
@@ -120,5 +121,52 @@ describe("nextAwaitingTarget", () => {
   it("returns null when none are awaiting", () => {
     expect(nextAwaitingTarget(order, () => "running", "a")).toBeNull();
     expect(nextAwaitingTarget([], stateOf, null)).toBeNull();
+  });
+});
+
+/**
+ * The app icon counts awaiting AND unread-finished, and only the first half was
+ * reachable from the keyboard (Alt+Shift+Enter). nextMatchingTarget is the
+ * generalisation the second half needed; nextAwaitingTarget now calls it, so
+ * both walk the list identically — same wrap, same starting point.
+ */
+describe("nextMatchingTarget", () => {
+  const order = [
+    { name: "a" },
+    { name: "b" },
+    { name: "c" },
+    { name: "d" },
+  ];
+
+  it("finds the next match after the current session", () => {
+    const hit = new Set(["c"]);
+    expect(nextMatchingTarget(order, (s) => hit.has(s.name), "a")?.name).toBe("c");
+  });
+
+  it("wraps past the end", () => {
+    const hit = new Set(["b"]);
+    expect(nextMatchingTarget(order, (s) => hit.has(s.name), "c")?.name).toBe("b");
+  });
+
+  it("returns the current session when it is the only match", () => {
+    const hit = new Set(["b"]);
+    expect(nextMatchingTarget(order, (s) => hit.has(s.name), "b")?.name).toBe("b");
+  });
+
+  it("starts from the top when nothing is selected", () => {
+    const hit = new Set(["b", "d"]);
+    expect(nextMatchingTarget(order, (s) => hit.has(s.name), null)?.name).toBe("b");
+  });
+
+  it("is null when nothing matches, and for an empty list", () => {
+    expect(nextMatchingTarget(order, () => false, "a")).toBeNull();
+    expect(nextMatchingTarget([], () => true, null)).toBeNull();
+  });
+
+  it("agrees with nextAwaitingTarget, which is now built on it", () => {
+    const stateOf = (n: string) => (n === "c" ? "awaiting" : "running");
+    expect(nextAwaitingTarget(order, stateOf, "a")?.name).toBe(
+      nextMatchingTarget(order, (s) => stateOf(s.name) === "awaiting", "a")?.name,
+    );
   });
 });

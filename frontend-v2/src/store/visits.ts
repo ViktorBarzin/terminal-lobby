@@ -33,7 +33,28 @@ export const VISITS_KEY = "tl:session-visits:v1";
 export const STATES_KEY = "tl:session-states:v1";
 
 /** The only session fields this store needs. */
-export type VisitSession = { name: string; state?: string };
+export type VisitSession = {
+  name: string;
+  state?: string;
+  /**
+   * tmux's own session id ($0, $1, …) — the one identifier that survives a
+   * rename. Optional: a server that predates the field, and a few synthetic
+   * sessions, have none, and those stay keyed by name.
+   */
+  id?: string;
+};
+
+/**
+ * The key a session's records live under. The id when there is one, because a
+ * rename made anywhere else — a second tab, the phone, `tmux rename-session` at
+ * a shell — used to look like a session disappearing and a stranger arriving, so
+ * the visit was pruned and a completion you had already read came back unread.
+ * Only a rename made in THIS tab was carried, by a listener that no longer needs
+ * to exist.
+ */
+export function visitKeyFor(s: VisitSession): string {
+  return s.id || s.name;
+}
 
 interface StateStamp {
   state: string;
@@ -49,15 +70,6 @@ export interface VisitStore {
   observe(sessions: readonly VisitSession[], active: string | null): void;
   /** Stamp a visit right now (visibility/focus return). No-op for null. */
   stamp(name: string | null): void;
-  /**
-   * Carry a session's visit and state records to its new name.
-   *
-   * Retitling renames, so this happens whenever someone renames a session from
-   * this tab. Without it, `observe` prunes the old name as dead and the new one
-   * looks never-visited — so a completion the user already saw comes back as an
-   * unseen green tick.
-   */
-  rename(oldName: string, newName: string): void;
   /** true when this session finished AFTER the user last looked at it. */
   isUnseen(s: VisitSession): boolean;
   /**
@@ -198,8 +210,9 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
 
   const isUnseen = (s: VisitSession): boolean => {
     if (s.state !== "done") return false;
-    const rec = states[s.name];
-    return (rec?.at ?? 0) > (visits[s.name] ?? 0);
+    const key = visitKeyFor(s);
+    const rec = states[key];
+    return (rec?.at ?? 0) > (visits[key] ?? 0);
   };
 
   /**
@@ -234,8 +247,28 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
     // nothing to walk, and the active stamp needs `live.has(active)`.
     if (sessions.length === 0) return;
     const at = now();
-    const live = new Set(sessions.map((s) => s.name));
     let dirty = false;
+    // Carry any record still filed under a NAME across to its session id, once,
+    // the first time we see that session with an id. Without this, switching to
+    // id keys would read as "nothing has ever been seen" and mark the whole
+    // account unread on upgrade — the exact thing this change set exists to fix.
+    for (const s of sessions) {
+      const key = visitKeyFor(s);
+      if (key === s.name) continue;
+      const v = visits[s.name];
+      if (v !== undefined && visits[key] === undefined) {
+        visits[key] = v;
+        delete visits[s.name];
+        dirty = true;
+      }
+      const st = states[s.name];
+      if (st !== undefined && states[key] === undefined) {
+        states[key] = st;
+        delete states[s.name];
+        dirty = true;
+      }
+    }
+    const live = new Set(sessions.map(visitKeyFor));
     for (const name of Object.keys(states)) {
       if (!live.has(name)) delete states[name];
     }
@@ -247,14 +280,18 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
     }
     for (const s of sessions) {
       const cur = s.state || "";
-      const rec = states[s.name];
-      if (!rec || rec.state !== cur) states[s.name] = { state: cur, at };
+      const key = visitKeyFor(s);
+      const rec = states[key];
+      if (!rec || rec.state !== cur) states[key] = { state: cur, at };
     }
     // The session on screen counts as seen — including the completion that just
     // landed while you were watching it (stamped with the same `at`, and the
     // unseen test is a STRICT >).
-    if (active && live.has(active) && visible()) {
-      visits[active] = at;
+    const activeKey = active
+      ? visitKeyFor(sessions.find((s) => s.name === active) ?? { name: active })
+      : null;
+    if (activeKey && live.has(activeKey) && visible()) {
+      visits[activeKey] = at;
       dirty = true;
     }
     known = sessions;
@@ -269,24 +306,6 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
     sync();
   };
 
-  const rename = (oldName: string, newName: string): void => {
-    if (oldName === newName) return;
-    let dirty = false;
-    if (oldName in visits) {
-      visits[newName] = visits[oldName]!;
-      delete visits[oldName];
-      dirty = true;
-    }
-    if (oldName in states) {
-      states[newName] = states[oldName]!;
-      delete states[oldName];
-    }
-    // `known` still describes the pre-rename poll; leaving the old name in it
-    // would let the next observe() prune what was just carried over.
-    known = known.map((s) => (s.name === oldName ? { ...s, name: newName } : s));
-    if (dirty) persistVisits(visits);
-    sync();
-  };
 
-  return { observe, stamp, isUnseen, rename, revision };
+  return { observe, stamp, isUnseen, revision };
 }

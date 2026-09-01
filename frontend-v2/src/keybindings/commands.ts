@@ -7,6 +7,7 @@ import {
   cycleTarget,
   flatSessionOrder,
   nextAwaitingTarget,
+  nextMatchingTarget,
 } from "./navigation.logic";
 import { track } from "../telemetry/track";
 
@@ -27,6 +28,8 @@ export interface CommandDeps {
   /** open + focus the new-session name box in the sidebar. */
   focusNewSession: () => void;
   notify: (message: string, kind: NotifyKind) => void;
+  /** finished since the user last looked (the visit store, via notifications). */
+  isUnseen?: (s: { name: string; state?: string }) => boolean;
   /** open the SPA session image gallery (🖼) for the selected session. */
   openGallery: () => void;
   /** post a terminal-document command DOWN to the active iframe; false if none. */
@@ -97,6 +100,15 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
       const target = nextAwaitingTarget(order(), stateOf, current());
       if (target) store.select(target.name, target.owner);
       else deps.notify("No session awaiting input", "info");
+      return;
+    }
+
+    // The app icon counts awaiting AND unread-finished, and only the first half
+    // was reachable from the keyboard.
+    if (cmd === "session.next.unseen") {
+      const target = nextMatchingTarget(order(), (s: { name: string; state?: string }) => deps.isUnseen?.(s) ?? false, current());
+      if (target) store.select(target.name, target.owner);
+      else deps.notify("No unread sessions", "info");
       return;
     }
 

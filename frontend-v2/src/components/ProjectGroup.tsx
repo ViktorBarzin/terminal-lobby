@@ -82,6 +82,10 @@ export const ProjectGroup: Component<{
   const canDown = () => seqPos().pos >= 0 && seqPos().pos < seqPos().len - 1;
 
   const menu = createDismissableMenu(() => props.store.hold());
+  /** How many of this group's finished sessions have not been read. */
+  const unseenCount = (): number =>
+    props.isUnseen ? props.group.sessions.filter((sn) => props.isUnseen!(sn)).length : 0;
+
   const counts = () => countStates(props.group.sessions);
 
   const toggleCollapse = () => props.store.collapse.toggle(collapseKey());
@@ -281,6 +285,17 @@ export const ProjectGroup: Component<{
             </Show>
             <Show when={counts().done > 0}>
               <span class="tl-chip"><StateDot state="done" size={7} title={false} />{counts().done}</span>
+            </Show>
+            {/* Unread, as its own chip. The done chip counts every finished
+                session and renders dimmed, which is the inverse of what a card
+                does, so a collapsed group could not say whether anything inside
+                it was still waiting to be read — and that is the half of the
+                app-icon count a person is most likely to be hunting for. */}
+            <Show when={unseenCount() > 0}>
+              <span class="tl-chip" title={`${unseenCount()} not seen yet`}>
+                <StateDot state="done" unseen size={7} title={false} />
+                {unseenCount()}
+              </span>
             </Show>
           </Show>
         </span>

@@ -239,3 +239,66 @@ describe("createVisitStore — seen requires focus, not just visibility", () => 
     expect(v.isUnseen(done("a"))).toBe(false);
   });
 });
+
+/**
+ * Records follow the SESSION, not its name. A rename made in another tab, on the
+ * phone, or with `tmux rename-session` used to look like one session vanishing
+ * and a stranger arriving: the visit was pruned, and a completion the user had
+ * already read came back unread. Only a rename made in the same tab was carried,
+ * by a listener that no longer needs to exist.
+ */
+describe("createVisitStore — keyed by tmux session id", () => {
+  const withId = (name: string, id: string, state = "done"): VisitSession =>
+    ({ name, id, state });
+
+  it("carries a visit across a rename nothing told it about", () => {
+    const c = clock();
+    const v = createVisitStore({ now: c.now, visible: () => true });
+    v.observe([{ name: "old", id: "$1", state: "running" }], null);
+    c.tick();
+    v.observe([withId("old", "$1")], "old"); // finished, and read
+    expect(v.isUnseen(withId("old", "$1"))).toBe(false);
+
+    // The next poll shows the same session under a new name.
+    v.observe([withId("new", "$1")], null);
+    expect(v.isUnseen(withId("new", "$1"))).toBe(false);
+  });
+
+  it("carries records written before the switch, once, without a flash of unread", () => {
+    const c = clock(1_000);
+    // A record from the old scheme: keyed by NAME.
+    localStorage.setItem(VISITS_KEY, JSON.stringify({ alpha: 2_000 }));
+    localStorage.setItem(STATES_KEY, JSON.stringify({ alpha: { state: "done", at: 1_000 } }));
+    const v = createVisitStore({ now: c.now, visible: () => true });
+
+    v.observe([withId("alpha", "$7")], null);
+
+    expect(v.isUnseen(withId("alpha", "$7"))).toBe(false); // still seen
+    const visits = JSON.parse(localStorage.getItem(VISITS_KEY) || "{}");
+    expect(visits["$7"]).toBe(2_000);
+    expect(visits.alpha).toBeUndefined();
+  });
+
+  it("still works for a session with no id at all", () => {
+    const c = clock();
+    const v = createVisitStore({ now: c.now, visible: () => true });
+    v.observe([running("plain")], null);
+    c.tick();
+    v.observe([done("plain")], null);
+    expect(v.isUnseen(done("plain"))).toBe(true);
+    v.observe([done("plain")], "plain");
+    expect(v.isUnseen(done("plain"))).toBe(false);
+  });
+
+  it("does not let a new session inherit a dead session's record by name", () => {
+    const c = clock();
+    const v = createVisitStore({ now: c.now, visible: () => true });
+    v.observe([withId("work", "$1", "running")], null);
+    c.tick();
+    v.observe([withId("work", "$1")], "work"); // read
+    // The session is killed and a NEW one is created with the same name.
+    c.tick();
+    v.observe([withId("work", "$2")], null);
+    expect(v.isUnseen(withId("work", "$2"))).toBe(true);
+  });
+});

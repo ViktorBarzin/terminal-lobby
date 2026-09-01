@@ -33,6 +33,9 @@ const faviconNow = (): string => h.kinds[h.kinds.length - 1] ?? "";
 describe("createNotificationSystem (integration smoke)", () => {
   beforeEach(() => {
     localStorage.clear();
+    // A session counts as seen only while the tab is on screen AND focused;
+    // jsdom reports no focus, so say the user is looking at the app.
+    Object.defineProperty(document, "hasFocus", { value: () => true, configurable: true });
     h.kinds.length = 0;
   });
   afterEach(() => localStorage.clear());
