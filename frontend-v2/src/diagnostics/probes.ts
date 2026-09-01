@@ -17,7 +17,7 @@
  *    someone's pocket is one they stop running.
  */
 
-import { API_BASE } from "../lib/config";
+import { apiUrl } from "../lib/config";
 import { PUSH_SUBS_API, deviceSubscriptionState } from "../pwa/push";
 import type { CheckProbe } from "./check";
 import {
@@ -43,9 +43,17 @@ export interface ProbeDeps {
   fetch?: typeof fetch;
 }
 
-/** Read-only liveness of the API this tab talks to. */
+/**
+ * Read-only liveness of the API this tab talks to.
+ *
+ * Through `apiUrl`, like every other call in the app. API_BASE alone is EMPTY
+ * unless a `?api=` override is present — the service prefix lives in apiUrl —
+ * so building the URL by hand requested `/health` at the site root, got a 404,
+ * and made this probe report "the API is not answering" on a perfectly healthy
+ * box. Caught end to end against the deployed package.
+ */
 async function apiReachable(f: typeof fetch, signal: AbortSignal): Promise<boolean> {
-  const res = await f(`${API_BASE}/health`, {
+  const res = await f(apiUrl("/health"), {
     credentials: "same-origin",
     cache: "no-store",
     signal,
