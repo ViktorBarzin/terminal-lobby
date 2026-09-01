@@ -2,15 +2,17 @@ package main
 
 import (
 	"testing"
+	"time"
 )
 
 // cfg is the shape every test starts from: warn at 3 GiB, confirm a dead claude
 // over two consecutive ticks, and ignore the prewarm pool.
 func cfg() Config {
 	return Config{
-		PaneWarnBytes: 3 * GiB,
-		ConfirmTicks:  2,
-		SkipPrefixes:  []string{"__terminal_lobby_"},
+		PaneWarnBytes:  3 * GiB,
+		ConfirmTicks:   2,
+		SkipPrefixes:   []string{"__terminal_lobby_"},
+		TombstoneGrace: 90 * time.Second,
 	}
 }
 
@@ -28,12 +30,20 @@ func live(name string) Session {
 	}
 }
 
+// now is a fixed clock, so a tombstone's age in a test is exact.
+var now = time.Date(2026, 9, 1, 18, 0, 0, 0, time.UTC)
+
 func snap(user, boot string, sessions ...Session) Snapshot {
-	s := Snapshot{User: user, BootID: boot, Sessions: map[string]Session{}, Manifest: map[string]bool{}}
+	s := Snapshot{User: user, BootID: boot, Taken: now, Sessions: map[string]Session{}, Tombstones: map[string]int64{}}
 	for _, sess := range sessions {
 		s.Sessions[sess.Name] = sess
-		s.Manifest[sess.Name] = true
 	}
+	return s
+}
+
+// forgot stamps a deliberate kill of name, secs ago.
+func forgot(s Snapshot, name string, secs int) Snapshot {
+	s.Tombstones[name] = s.Taken.Add(-time.Duration(secs) * time.Second).Unix()
 	return s
 }
 
@@ -77,32 +87,52 @@ func TestFirstTickSeedsWithoutDeaths(t *testing.T) {
 
 // --- shape 2: the session left tmux ---------------------------------------
 
-// The manifest row is what carries intent. A row still present means nobody
-// called tmux-persist-forget, so the session was not deliberately ended.
-func TestVanishedWithManifestRowIsADeath(t *testing.T) {
+// A tombstone is what carries intent: tmux-persist-forget appends
+// <session>\t<epoch> to <user>.forgotten.tsv. No tombstone means nobody ended
+// this session on purpose.
+func TestVanishedWithNoTombstoneIsADeath(t *testing.T) {
 	w := NewWatcher(cfg())
 	w.Tick([]Snapshot{snap("wizard", "boot-1", live("immich"), live("f1"))})
 
-	cur := snap("wizard", "boot-1", live("f1"))
-	cur.Manifest["immich"] = true // the forget never ran
-
-	f := only(t, w.Tick([]Snapshot{cur}), KindSessionDied)
+	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", live("f1"))}), KindSessionDied)
 	if f.Session != "immich" || f.User != "wizard" {
 		t.Fatalf("want wizard/immich, got %s/%s", f.User, f.Session)
 	}
 }
 
-// A kill through the lobby calls tmux-persist-forget, so the row goes with the
-// session. That is a deliberate end and must not reach Slack.
-func TestVanishedWithoutManifestRowIsAKill(t *testing.T) {
+// A kill through the lobby calls tmux-persist-forget, which tombstones the name.
+// That is a deliberate end and must not reach Slack.
+func TestVanishedWithAFreshTombstoneIsAKill(t *testing.T) {
 	w := NewWatcher(cfg())
 	w.Tick([]Snapshot{snap("wizard", "boot-1", live("immich"), live("f1"))})
 
-	cur := snap("wizard", "boot-1", live("f1")) // immich gone from both
-
-	got := w.Tick([]Snapshot{cur})
+	got := w.Tick([]Snapshot{forgot(snap("wizard", "boot-1", live("f1")), "immich", 5)})
 	none(t, got, KindSessionDied)
 	only(t, got, KindSessionKilled)
+}
+
+// The tombstone file is append-only and never pruned, so a name killed weeks ago
+// still has a row. Without the age check, a session that reused that name and
+// then genuinely died would be written off as a deliberate kill — which is the
+// one failure this whole alert exists to prevent.
+func TestVanishedWithAStaleTombstoneIsStillADeath(t *testing.T) {
+	w := NewWatcher(cfg())
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("immich"), live("f1"))})
+
+	got := w.Tick([]Snapshot{forgot(snap("wizard", "boot-1", live("f1")), "immich", 600)})
+	only(t, got, KindSessionDied)
+	none(t, got, KindSessionKilled)
+}
+
+// A tombstone for a session that is still running says nothing about it: the
+// name was killed in an earlier life and created again.
+func TestATombstoneForALiveSessionSaysNothing(t *testing.T) {
+	w := NewWatcher(cfg())
+	s := forgot(snap("wizard", "boot-1", live("immich")), "immich", 5)
+	w.Tick([]Snapshot{s})
+	got := w.Tick([]Snapshot{s})
+	none(t, got, KindSessionDied)
+	none(t, got, KindSessionKilled)
 }
 
 // A death is one episode, not one per tick. Without this the journal carries a
@@ -112,7 +142,6 @@ func TestADeathIsReportedOnce(t *testing.T) {
 	w.Tick([]Snapshot{snap("wizard", "boot-1", live("immich"))})
 
 	cur := snap("wizard", "boot-1")
-	cur.Manifest["immich"] = true
 
 	only(t, w.Tick([]Snapshot{cur}), KindSessionDied)
 	none(t, w.Tick([]Snapshot{cur}), KindSessionDied)
@@ -125,7 +154,6 @@ func TestARestoredSessionCanDieAgain(t *testing.T) {
 	w.Tick([]Snapshot{snap("wizard", "boot-1", live("immich"))})
 
 	gone := snap("wizard", "boot-1")
-	gone.Manifest["immich"] = true
 	only(t, w.Tick([]Snapshot{gone}), KindSessionDied)
 
 	w.Tick([]Snapshot{snap("wizard", "boot-1", live("immich"))}) // restored
@@ -196,9 +224,7 @@ func TestPrewarmPoolIsIgnored(t *testing.T) {
 	w.Tick([]Snapshot{snap("wizard", "boot-1", pool)})
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", pool)}), KindClaudeDied)
 
-	gone := snap("wizard", "boot-1")
-	gone.Manifest[pool.Name] = true
-	none(t, w.Tick([]Snapshot{gone}), KindSessionDied)
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1")}), KindSessionDied)
 }
 
 // --- reboots --------------------------------------------------------------
@@ -210,8 +236,7 @@ func TestARebootIsOneFindingWithTheRestoreGap(t *testing.T) {
 	w := NewWatcher(cfg())
 	w.Tick([]Snapshot{snap("wizard", "boot-1", live("a"), live("b"), live("c"))})
 
-	after := snap("wizard", "boot-2", live("a"), live("b"))
-	after.Manifest["c"] = true // c did not come back
+	after := snap("wizard", "boot-2", live("a"), live("b")) // c did not come back
 
 	got := w.Tick([]Snapshot{after})
 	f := only(t, got, KindRebooted)
@@ -291,7 +316,6 @@ func TestUsersDoNotShareState(t *testing.T) {
 	})
 
 	wizGone := snap("wizard", "boot-1")
-	wizGone.Manifest["immich"] = true
 
 	got := w.Tick([]Snapshot{wizGone, snap("emo", "boot-1", live("immich"))})
 	f := only(t, got, KindSessionDied)

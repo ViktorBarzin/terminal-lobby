@@ -65,16 +65,31 @@ func TestParsePaneListSkipsUnparseablePids(t *testing.T) {
 	}
 }
 
-func TestParseManifest(t *testing.T) {
-	// name, cwd, claude session uuid — tab separated. Only the name matters
-	// here; the uuid is what a --resume recovery would need later.
-	in := "alerts\t/home/wizard/code/terminal-lobby\td62c81ae-c752-42d9-83a6-2d37d12e9563\n" +
-		"claude\t/home/wizard/code\t-\n" +
+func TestParseTombstones(t *testing.T) {
+	// <session>\t<epoch>, appended once per deliberate kill.
+	in := "reflection\t1788286792\n" +
+		"drill-shape2\t1788286655\n" +
 		"\n"
-	got := parseManifest(in)
+	got := parseTombstones(in)
 
-	if len(got) != 2 || !got["alerts"] || !got["claude"] {
-		t.Fatalf("want alerts and claude, got %v", got)
+	if got["reflection"] != 1788286792 || got["drill-shape2"] != 1788286655 {
+		t.Fatalf("want both kills with their epochs, got %v", got)
+	}
+}
+
+func TestParseTombstonesKeepsTheNewestRowPerName(t *testing.T) {
+	// The file is append-only, so a reused session name accumulates rows. Only
+	// the latest kill can explain a disappearance happening now.
+	got := parseTombstones("immich\t1000\nimmich\t5000\nimmich\t3000\n")
+	if got["immich"] != 5000 {
+		t.Fatalf("want the newest epoch 5000, got %d", got["immich"])
+	}
+}
+
+func TestParseTombstonesSkipsMalformedRows(t *testing.T) {
+	got := parseTombstones("noepoch\nimmich\tnotanumber\nf1\t42\n")
+	if len(got) != 1 || got["f1"] != 42 {
+		t.Fatalf("want only the parseable row, got %v", got)
 	}
 }
 
