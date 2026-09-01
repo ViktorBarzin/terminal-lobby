@@ -36,6 +36,7 @@ import {
 } from "./attention";
 import { createFaviconBadger, faviconKind } from "./favicon";
 import { composeTitle, type TitleSession } from "./title";
+import { applyAppBadge, waitingCount } from "./appbadge";
 import { createVisitStore } from "../store/visits";
 import {
   computeTransitions,
@@ -295,6 +296,15 @@ export function createNotificationSystem(
     // settles after one extra pass instead of looping.
     visits.observe(list, active);
     badger.apply(faviconKind(list, att.bell, isUnseen));
+    // Same set, third surface: the app icon carries the count while the lobby is
+    // shut. Painted from the poll (not from the push) whenever a window is open,
+    // because only the page knows what you have already looked at.
+    //
+    // Not before the first poll, though: `list` is empty until then, and
+    // painting it would CLEAR the count sw.js drew from the push — wiping the
+    // badge for real outstanding work in the second before the lobby knows what
+    // exists. The push-time count stands until the page can better it.
+    if (!opts.loading()) applyAppBadge(waitingCount(list, isUnseen));
     if (hasDoc) {
       const user = opts.osUser();
       document.title = composeTitle({

@@ -509,7 +509,8 @@ func TestHandlePushTestSendsAndPrunes(t *testing.T) {
 }
 
 // The test payload has the shape sw.js parses and the fixed tl-test tag /
-// device-proof wording, independent of any session.
+// device-proof wording, independent of any session — and carries NO badge key,
+// so a delivery check leaves the app icon exactly as it found it.
 func TestBuildTestPayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
 	if err := json.Unmarshal(buildTestPayload(), &got); err != nil {
@@ -523,5 +524,8 @@ func TestBuildTestPayloadMatchesServiceWorker(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("test payload shape drift:\n got %v\nwant %v", got, want)
+	}
+	if _, ok := got["badge"]; ok {
+		t.Fatal("the test push carries a badge — a diagnostic would repaint the app icon")
 	}
 }

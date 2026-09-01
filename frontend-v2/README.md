@@ -389,6 +389,7 @@ src/
     fire.ts              Show ONE foreground OS notification per session edge
     title.ts             Tab-title state badge
     favicon.ts           Canvas-rendered favicon badge
+    appbadge.ts          PWA icon badge — how many sessions are waiting
     attention.ts         Bell / output-while-hidden latches from the iframe
     opt-in.ts            Per-browser notification opt-in flag
     notifications.ts     Wires the above + push into the running app

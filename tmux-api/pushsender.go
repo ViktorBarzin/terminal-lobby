@@ -164,7 +164,7 @@ func (p *pushSender) notifyPrefsFor(osUser string) notifyPrefs {
 }
 
 // pushPayload is the JSON delivered to the browser's service worker. The field
-// names are EXACTLY what frontend/sw.js reads (title, body, tag, session);
+// names are EXACTLY what frontend/sw.js reads (title, body, tag, session, badge);
 // TestBuildPushPayloadMatchesServiceWorker / TestBuildDonePayloadMatchesServiceWorker
 // pin the shape so a drift from sw.js fails loudly instead of silently
 // dropping notifications.
@@ -173,32 +173,58 @@ type pushPayload struct {
 	Body    string `json:"body"`
 	Tag     string `json:"tag"`
 	Session string `json:"session"`
+	// Badge is how many of this user's sessions are waiting — what sw.js draws
+	// on the app icon. A POINTER so the three states stay distinct: a count, an
+	// explicit zero (which CLEARS the icon, and must survive `omitempty`), and
+	// ABSENT — the self-diagnosis push, which carries no session and must leave
+	// whatever the icon is showing alone.
+	Badge *int `json:"badge,omitempty"`
+}
+
+// waitingCount is how many of a user's sessions are asking for attention:
+// awaiting input, or finished. It is the number the installed app wears on its
+// icon, and deliberately the same set this sender alerts on, so the badge and
+// the notifications can never disagree about what is outstanding.
+//
+// The server cannot know which finished sessions the user has already looked
+// at — "seen" lives in the browser's visit store — so this can read high until
+// the app is next opened, when notify/appbadge.ts repaints it exactly. Counting
+// high is the right direction to be wrong in: it points at real work.
+func waitingCount(states map[string]string) int {
+	n := 0
+	for _, st := range states {
+		if st == stateAwaiting || st == stateDone {
+			n++
+		}
+	}
+	return n
 }
 
 // marshalPayload builds the SW payload for one session. Both wordings share
 // the tag `tl-<session>`: coalescing is by tag only (sw.js omits renotify),
 // so a later awaiting push REPLACES a finished one for the same session
 // rather than stacking a second alert.
-func marshalPayload(title, body, session string) []byte {
+func marshalPayload(title, body, session string, badge int) []byte {
 	b, _ := json.Marshal(pushPayload{
 		Title:   title,
 		Body:    body,
 		Tag:     "tl-" + session,
 		Session: session,
+		Badge:   &badge,
 	})
 	return b
 }
 
 // buildPushPayload is the running→awaiting "needs input" wording.
-func buildPushPayload(session string) []byte {
-	return marshalPayload(session+" needs input", "Claude is awaiting your input.", session)
+func buildPushPayload(session string, badge int) []byte {
+	return marshalPayload(session+" needs input", "Claude is awaiting your input.", session, badge)
 }
 
 // buildDonePayload is the running→done "finished" wording — the first-class
 // notification for a turn completing. Same tag as the awaiting payload (see
 // marshalPayload): a subsequent awaiting alert supersedes it.
-func buildDonePayload(session string) []byte {
-	return marshalPayload(session+" finished", "Claude finished its turn.", session)
+func buildDonePayload(session string, badge int) []byte {
+	return marshalPayload(session+" finished", "Claude finished its turn.", session, badge)
 }
 
 // tick runs one poll cycle: for every subscribed user, diff the current
@@ -234,6 +260,7 @@ func (p *pushSender) tick() {
 			continue // first observation of this user seeds silently
 		}
 		np := p.notifyPrefsFor(u) // one prefs read per user per tick
+		badge := waitingCount(cur) // one icon count per user per tick
 		for name, st := range cur {
 			was := prev[name] // "" when the session was absent last poll
 			switch {
@@ -242,7 +269,7 @@ func (p *pushSender) tick() {
 				// newly-appeared already-awaiting session — unchanged edge).
 				if np.onAwaiting && p.userTypedSinceLastPush(u, name) {
 					p.markPushed(u, name)
-					p.notify(u, name, kindAwaiting)
+					p.notify(u, name, kindAwaiting, badge)
 				}
 			case st == stateDone && was == stateRunning:
 				// running→done ONLY. A session first seen already done
@@ -250,7 +277,7 @@ func (p *pushSender) tick() {
 				// SessionStart hook stamping "done" never fires.
 				if np.onDone && p.userTypedSinceLastPush(u, name) {
 					p.markPushed(u, name)
-					p.notify(u, name, kindDone)
+					p.notify(u, name, kindDone, badge)
 				}
 			}
 		}
@@ -312,12 +339,12 @@ func (p *pushSender) markPushed(u, name string) {
 // notify builds the payload for `session` of the given kind and fans it out
 // to the user's devices. The wording comes from the kind; the tag is shared
 // across kinds so a later push for the same session coalesces (send()).
-func (p *pushSender) notify(osUser, session, kind string) {
+func (p *pushSender) notify(osUser, session, kind string, badge int) {
 	var payload []byte
 	if kind == kindDone {
-		payload = buildDonePayload(session)
+		payload = buildDonePayload(session, badge)
 	} else {
-		payload = buildPushPayload(session)
+		payload = buildPushPayload(session, badge)
 	}
 	p.send(osUser, session, payload, kind)
 }

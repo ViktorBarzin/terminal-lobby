@@ -287,6 +287,10 @@ func handlePushSubscriptions(w http.ResponseWriter, r *http.Request) {
 // tl-test (never a tl-<session>) keeps it in a separate coalescing lane, and
 // it carries no session — a click just focuses the app. Built directly rather
 // than via marshalPayload, whose tag is derived from the session.
+//
+// It carries no badge either, and that is the point of the pointer field: a
+// diagnostic must not repaint the app icon. Proving delivery works should never
+// clear a count of real work the user has not dealt with yet.
 func buildTestPayload() []byte {
 	b, _ := json.Marshal(pushPayload{
 		Title:   "Test notification",

@@ -202,6 +202,17 @@ export function registerServiceWorker(opts: {
     // Warm tap handled — consume any stash the SW wrote for this push so a later
     // plain (icon) launch won't replay it.
     void readAndClearPendingSession();
+    // Tell sw.js a real lobby took it. The worker cannot reliably tell a lobby
+    // from a terminal iframe by URL — it tried, and a URL change unrelated to
+    // notifications silently killed tap routing twice — so it now moves on to
+    // the next candidate when nobody answers. Replying is what stops the tap
+    // dying quietly next time a page URL moves. Sent AFTER the switch, so a
+    // throw above leaves the worker free to try another window.
+    try {
+      (e.ports && e.ports[0])?.postMessage({ type: "tl-activate-ack" });
+    } catch {
+      /* no port (an older worker posts without one) */
+    }
   };
 
   if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {

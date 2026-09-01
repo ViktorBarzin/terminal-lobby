@@ -11,7 +11,7 @@
 // app, and keep the server's subscription list current across browser key
 // rotations.
 //
-// Push payload (JSON): { title, body, tag: 'tl-<session>', session }.
+// Push payload (JSON): { title, body, tag: 'tl-<session>', session, badge }.
 // Coalescing is by tag ONLY — a re-fire for the same session REPLACES
 // the visible notification; `renotify` is intentionally omitted so a
 // repeat never re-alerts the user (tripit-proven).
@@ -78,6 +78,32 @@ function stashPendingSession(session, tapped) {
     });
 }
 
+// Paint the app-icon badge — the count of sessions waiting for the user, drawn
+// on the installed app's icon the way an unread count is.
+//
+// The worker is the ONLY writer while the app is closed, which is the case the
+// badge exists for. It uses the count the SERVER put in the payload, because a
+// worker cannot see the session list: pushsender.go counts every awaiting and
+// done session for that user. The server cannot know which finished sessions
+// the user already looked at, so the number can read high until the app is
+// opened, at which point notify/appbadge.ts repaints it from the poll and the
+// visit store, and it becomes exact.
+//
+// Best-effort and silent, like the page's copy: the Badging API is absent on
+// most browsers and REJECTS where it exists but the app is not installed.
+function paintBadge(count) {
+    try {
+        const nav = self.navigator;
+        if (!nav) return Promise.resolve();
+        const done = count > 0
+            ? (nav.setAppBadge && nav.setAppBadge(count))
+            : (nav.clearAppBadge && nav.clearAppBadge());
+        return Promise.resolve(done).catch(() => {});
+    } catch (e) {
+        return Promise.resolve();
+    }
+}
+
 self.addEventListener('push', (event) => {
     let data = {};
     try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
@@ -96,9 +122,71 @@ self.addEventListener('push', (event) => {
         // or aborted stash can't hold up (or reject away) the notification.
         const tasks = [self.registration.showNotification(title, options)];
         if (data.session) tasks.push(stashPendingSession(data.session, false));
+        // Same rule as the stash: the badge is a courtesy and must never gate or
+        // delay showNotification (iOS revokes permission if a push shows nothing).
+        if (typeof data.badge === 'number') tasks.push(paintBadge(data.badge));
         await Promise.allSettled(tasks);
     })());
 });
+
+// Is this client the TERMINAL rather than the lobby?
+//
+// Tested POSITIVELY, and that direction is the point: the lobby is whatever is
+// left over, so a page shape nobody anticipated still RECEIVES the switch
+// instead of silently swallowing it.
+//
+// Two terminal shapes exist. A deep-linked or legacy terminal carries the
+// positional '?arg=<name>' contract in its query. The FRAMED attach does not:
+// it passes those args out of band on iframe.name (TERMINAL_FRAME_PREFIX in
+// lib/terminal-url.ts) because the page URL is a CACHE KEY — with the session
+// name in the query, every session was a separate entry for a 1.8 MB document,
+// measured at 1,796,377 B cold against 300 B for a repeat, so each new session
+// cost 8.4-10.3 s on a 400 kbps link. The iframe is therefore a bare
+// '/term.html' or '/assets/term-<hash>.html'.
+//
+// Matching the query ALONE is what broke tap routing on 2026-09-01: the bare
+// iframe read as a lobby, took a postMessage it has no listener for, and the
+// handler returned having done nothing. Both shapes are matched here.
+function looksLikeTerminal(url) {
+    let u;
+    try { u = new URL(url); } catch (e) { return false; }
+    const arg = u.searchParams.get('arg');
+    if (arg && /^[a-zA-Z0-9_-]{1,32}$/.test(arg)) return true;
+    return /(^|\/)term(-[0-9a-f]+)?\.html$/.test(u.pathname);
+}
+
+// How long a client gets to say it took the switch.
+const ACK_MS = 400;
+
+// Hand the switch to one client and find out whether it LANDED.
+//
+// The page answers on the MessagePort sent with the message (pwa/register.ts),
+// so a client that stays silent for ACK_MS is not a lobby, or is gone, and the
+// next candidate gets its turn. Deciding which client is the lobby from its URL
+// alone has now failed twice, both times because something unrelated changed a
+// URL; the acknowledgement is what makes this self-correcting. A misjudged
+// candidate costs ACK_MS, not a dead notification.
+//
+// A page too old to acknowledge still ACTS on the message — the listener has
+// shipped since July and only the reply is new — so a false negative here
+// re-posts to the other lobbies rather than losing the tap.
+function deliver(client, session) {
+    const msg = { type: 'tl-activate-session', session };
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => { if (!settled) { settled = true; resolve(ok); } };
+        let ch = null;
+        try { ch = new MessageChannel(); } catch (e) { ch = null; }
+        if (!ch) { // no MessageChannel: post blind and assume nothing
+            try { client.postMessage(msg); } catch (e) { /* client gone */ }
+            finish(false);
+            return;
+        }
+        ch.port1.onmessage = () => finish(true);
+        try { client.postMessage(msg, [ch.port2]); } catch (e) { finish(false); return; }
+        setTimeout(() => finish(false), ACK_MS);
+    });
+}
 
 self.addEventListener('notificationclick', (event) => {
     event.notification.close();
@@ -109,49 +197,40 @@ self.addEventListener('notificationclick', (event) => {
     const session = event.notification.data && event.notification.data.session;
     event.waitUntil((async () => {
         // Bring the app to the foreground AND switch it to the notified session.
-        // The old handler only did focus()+return, so on a resident mobile PWA —
-        // where a window is almost always open — the tap foregrounded the app on
-        // whatever session was last shown and never switched: the "resident-PWA
-        // focus-without-switch" bug this fixes. The switch is delivered by
+        // A handler that only focused foregrounded a resident PWA on whatever
+        // session was last shown and never switched — the original
+        // "resident-PWA focus-without-switch" bug. The switch travels by
         // postMessage to the page's navigator.serviceWorker 'message' listener,
         // NOT WindowClient.navigate(): navigate() needs a CONTROLLED client
-        // (rejects on the uncontrolled windows matchAll surfaces right after a
-        // fresh SW register/update), has inconsistent hash-fragment semantics
-        // (esp. WebKit/iOS), and can reload — tearing down the live terminal
-        // iframe + WebSocket. postMessage reaches the page even on an
-        // uncontrolled client and even if focus() rejects, and on iOS standalone
-        // it is the ONLY reliable warm-path switch (openWindow drops the hash).
-        //
-        // Target a LOBBY window specifically. The terminal and the docked shell
-        // are same-origin '/?arg=<name>' iframes (and a deep-linked terminal can
-        // be a top-level '/?arg=' tab) that ALSO surface as window clients but
-        // have neither the message listener nor activateSession — both are
-        // lobby-only. matchAll returns those nested frames too, and the user is
-        // usually viewing a terminal when they background the app, so posting to
-        // the first client would hit the terminal and the switch would silently
-        // die. Skip any client whose URL carries ?arg=; post to the first (most
-        // recently focused) lobby window only — posting to all would hijack every
-        // open window onto this session.
-        const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        for (const c of wins) {
-            if (!('focus' in c)) continue;
-            // A client is the lobby UNLESS its URL is a real terminal —
-            // '/?arg=<valid session name>'. This mirrors the page's own
-            // lobby/terminal split (index.html: validArg = arg && NAME_RE.test),
-            // so a top-level page carrying a malformed ?arg= still counts as the
-            // lobby (and thus can receive the switch).
-            let isLobby = true;
-            try {
-                const arg = new URL(c.url).searchParams.get('arg');
-                isLobby = !(arg && /^[a-zA-Z0-9_-]{1,32}$/.test(arg));
-            } catch (e) { /* unparseable → treat as lobby */ }
-            if (!isLobby) continue;
-            try { await c.focus(); } catch (e) { /* switch below regardless — focus() can reject (InvalidAccessError) and is moot for foregrounding on iOS */ }
-            if (session) c.postMessage({ type: 'tl-activate-session', session });
+        // (it rejects on the uncontrolled windows matchAll surfaces right after
+        // a fresh register/update), has inconsistent hash-fragment semantics on
+        // WebKit, and can reload — tearing down the live terminal iframe and its
+        // WebSocket. postMessage reaches an uncontrolled client, survives a
+        // rejected focus(), and on iOS standalone is the only reliable warm-path
+        // switch, since openWindow drops the hash.
+        const wins = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+            .filter((c) => 'focus' in c);
+        // matchAll also returns the nested terminal and dock iframes, which have
+        // neither the message listener nor activateSession — both are lobby-only.
+        const lobbies = wins.filter((c) => !looksLikeTerminal(c.url));
+        // A focused window before a background one: with several lobbies open,
+        // the switch belongs to the one the user is actually looking at.
+        lobbies.sort((a, b) => (a.focused ? 0 : 1) - (b.focused ? 0 : 1));
+
+        if (lobbies.length) {
+            try { await lobbies[0].focus(); } catch (e) { /* focus() can reject (InvalidAccessError) and is moot for foregrounding on iOS; the switch below still stands */ }
+            if (!session) return; // test tap: foreground, never switch
+            for (const c of lobbies) {
+                if (await deliver(c, session)) return;
+            }
+            // Nobody acknowledged, but every lobby has now been posted to and an
+            // older page half acts without replying. The app is already up, so
+            // opening a second window on top of it would be the worse answer.
             return;
         }
-        // No lobby window open — cold start (or only a bare terminal tab). Carry
-        // the session in the hash so boot-hash activation attaches it on load; a
+
+        // No lobby open — a cold start, or only a bare terminal tab. Carry the
+        // session in the hash so boot-hash activation attaches it on load; a
         // session-less test tap just opens the lobby. (On iOS a KILLED PWA
         // cold-launches at start_url and can drop this hash — a documented WebKit
         // limitation, not fixable from the click handler.)
