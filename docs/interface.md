@@ -136,6 +136,18 @@ giving the terminal the full screen. iOS PWA cookies are sandboxed
 per-app, so on first launch you may need to re-authenticate via
 Authentik.
 
+**The icon carries a count.** Installed, the app badges its icon with
+how many sessions are waiting for you: one awaiting your input, plus
+one that finished a turn you have not looked at yet. A running session
+is busy rather than waiting, so it is not counted. That is the same set
+push notifies on, so the badge and the notifications agree about what is
+outstanding. While the lobby is open the count comes from the poll and
+the visit store, which knows what you have already seen; while it is
+shut the service worker takes the count from the push payload, and the
+server cannot know what you have seen, so it can read high until you
+next open the app. Where the Badging API is missing or the page is not
+installed, nothing is drawn and nothing breaks.
+
 **Gestures.** `overscroll-behavior: none` suppresses Chrome
 pull-to-refresh and iOS rubber-band on the terminal. `touch-action`
 keeps pinch-zoom available for accessibility but kills double-tap
