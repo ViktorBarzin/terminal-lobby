@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -336,7 +337,7 @@ func TestPushSenderIgnoresUsersWithoutSubs(t *testing.T) {
 // background notifications silently, so pin it.
 func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("worktree", 3), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("worktree", 3, nil), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -358,7 +359,7 @@ func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 // renotify).
 func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildDonePayload("worktree", 1), &got); err != nil {
+	if err := json.Unmarshal(buildDonePayload("worktree", 1, nil), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -372,7 +373,7 @@ func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 		t.Fatalf("done payload shape drift:\n got %v\nwant %v", got, want)
 	}
 	var aw map[string]any
-	_ = json.Unmarshal(buildPushPayload("worktree", 1), &aw)
+	_ = json.Unmarshal(buildPushPayload("worktree", 1, nil), &aw)
 	if got["tag"] != aw["tag"] {
 		t.Fatalf("done tag %q != awaiting tag %q — coalescing would break", got["tag"], aw["tag"])
 	}
@@ -556,7 +557,7 @@ func TestPushSenderUsesSharedClient(t *testing.T) {
 // stale count on the user's home screen.
 func TestPushPayloadCarriesZeroBadge(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("worktree", 0), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("worktree", 0, nil), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	if _, ok := got["badge"]; !ok {
@@ -589,5 +590,78 @@ func TestWaitingCountCountsOnlyAttentionStates(t *testing.T) {
 				t.Fatalf("waitingCount(%v) = %d, want %d", tc.states, got, tc.want)
 			}
 		})
+	}
+}
+
+// waitingList names the same set waitingCount totals, so the device can subtract
+// what it has already shown the user instead of trusting a server-side total
+// that cannot know. Sorted, so a payload is stable for a given state map.
+func TestWaitingListSplitsAwaitingAndDone(t *testing.T) {
+	got := waitingList(map[string]string{
+		"zeta": stateDone, "alpha": stateAwaiting, "mid": stateRunning,
+		"beta": stateDone, "yak": stateAwaiting, "blank": "",
+	})
+	if got == nil {
+		t.Fatal("waitingList returned nil under the cap")
+	}
+	if !reflect.DeepEqual(got.Awaiting, []string{"alpha", "yak"}) {
+		t.Fatalf("awaiting = %v, want [alpha yak]", got.Awaiting)
+	}
+	if !reflect.DeepEqual(got.Done, []string{"beta", "zeta"}) {
+		t.Fatalf("done = %v, want [beta zeta]", got.Done)
+	}
+}
+
+// The named list and the total must always agree about the size of the set, or
+// a device that falls back to Badge draws a different number from one that does
+// not.
+func TestWaitingListAgreesWithWaitingCount(t *testing.T) {
+	states := map[string]string{
+		"a": stateAwaiting, "b": stateDone, "c": stateRunning,
+		"d": stateDone, "e": "", "f": stateAwaiting,
+	}
+	w := waitingList(states)
+	if got, want := len(w.Awaiting)+len(w.Done), waitingCount(states); got != want {
+		t.Fatalf("waitingList holds %d names, waitingCount says %d", got, want)
+	}
+}
+
+// Past the cap the payload carries the total alone rather than an oversized
+// list: a Web Push body is small, and falling back to today's behaviour beats a
+// push the browser refuses to decrypt.
+func TestWaitingListReturnsNilPastTheCap(t *testing.T) {
+	states := map[string]string{}
+	for i := 0; i <= waitingListCap; i++ {
+		states[fmt.Sprintf("s%03d", i)] = stateDone
+	}
+	if got := waitingList(states); got != nil {
+		t.Fatalf("over the cap: got %d+%d names, want nil", len(got.Awaiting), len(got.Done))
+	}
+	states = map[string]string{}
+	for i := 0; i < waitingListCap; i++ {
+		states[fmt.Sprintf("s%03d", i)] = stateDone
+	}
+	if waitingList(states) == nil {
+		t.Fatal("exactly at the cap must still send the list")
+	}
+}
+
+// An awaiting push carries the named set, and it matches the wire keys sw.js
+// reads ("waiting" -> {"a": [...], "d": [...]}).
+func TestPushPayloadCarriesTheNamedSet(t *testing.T) {
+	var got map[string]any
+	w := waitingList(map[string]string{"one": stateAwaiting, "two": stateDone})
+	if err := json.Unmarshal(buildPushPayload("one", 2, w), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	wait, ok := got["waiting"].(map[string]any)
+	if !ok {
+		t.Fatalf("no waiting object in %v", got)
+	}
+	if !reflect.DeepEqual(wait["a"], []any{"one"}) {
+		t.Fatalf("waiting.a = %v, want [one]", wait["a"])
+	}
+	if !reflect.DeepEqual(wait["d"], []any{"two"}) {
+		t.Fatalf("waiting.d = %v, want [two]", wait["d"])
 	}
 }
