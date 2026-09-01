@@ -22,6 +22,7 @@ viewer's platform):
 | `Alt+0` | Attach the 10th session |
 | `Alt+Shift+[` / `Alt+Shift+]` | Cycle to the previous / next session |
 | `Alt+Shift+Enter` | Jump to the next session **awaiting input** (amber dot) |
+| `Alt+Shift+U` | Jump to the next **unread** session (finished since you last looked) |
 | `Alt+Shift+S` | Toggle the sidebar (fullscreen terminal ⇄ lobby) |
 | `Alt+Shift+N` | New session (focus the name box) |
 | `Alt+Shift+W` / `Alt+Shift+R` | Kill / rename the current session |
@@ -139,14 +140,39 @@ Authentik.
 **The icon carries a count.** Installed, the app badges its icon with
 how many sessions are waiting for you: one awaiting your input, plus
 one that finished a turn you have not looked at yet. A running session
-is busy rather than waiting, so it is not counted. That is the same set
-push notifies on, so the badge and the notifications agree about what is
-outstanding. While the lobby is open the count comes from the poll and
-the visit store, which knows what you have already seen; while it is
-shut the service worker takes the count from the push payload, and the
-server cannot know what you have seen, so it can read high until you
-next open the app. Where the Badging API is missing or the page is not
+is busy rather than waiting, so it is not counted, and a session someone
+else shared with you is their work, so it is not counted either.
+
+Notifications tell you when something changed; the badge tells you how
+much is outstanding. The two are related without being the same set: a
+push fires on the edge into `awaiting` or `done`, and only when you have
+typed into that session since the last one, while the badge counts a
+standing population and `done` is where a finished session rests. So a
+session stays in the count for as long as it stays finished and unread.
+
+The number is the same whether the app is open or shut. The server sends
+which sessions are awaiting or finished, by name, and the device subtracts
+the ones it has already shown you — so a notification arriving cannot
+change the count to something the open app would disagree with. Two
+limits worth knowing. Seen is per device, so reading a session on the
+laptop does not clear the phone's badge. And while the app is shut the
+badge cannot shrink: a push that shows no notification costs iOS the
+notification permission, so there is no silent count-only update to send,
+and answering something elsewhere leaves this device reading high until
+you next open it.
+
+If the browser has no stored record of what you have seen — a private
+window, cleared site data — every finished session counts until the app
+is next opened. Where the Badging API is missing or the page is not
 installed, nothing is drawn and nothing breaks.
+
+**Which ones are unread.** A finished session you have not looked at
+keeps a full-strength dot, a bar down the left of its row and a heavier
+name; once you have looked, the dot dims and the bar goes. `Alt+Shift+U`
+jumps to the next unread one. A collapsed project carries a separate
+unread chip beside its finished count, and the command palette marks an
+unread session `done · new`. Screen readers and tooltips get the same
+distinction as words: "Done, not seen yet".
 
 **Gestures.** `overscroll-behavior: none` suppresses Chrome
 pull-to-refresh and iOS rubber-band on the terminal. `touch-action`
