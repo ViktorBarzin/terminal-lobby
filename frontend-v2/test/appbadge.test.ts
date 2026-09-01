@@ -36,17 +36,37 @@ describe("waitingCount", () => {
     expect(waitingCount([], doneIsUnseen)).toBe(0);
   });
 
+  // `owner` is stamped on EVERY session, your own included — it is not a
+  // "this one is foreign" flag. The first version of this test supplied
+  // `owner: undefined` for own sessions, matching the wrong assumption in the
+  // code, so both agreed and the badge shipped pinned at zero.
+  it("counts YOUR sessions, which arrive with your own name in owner", () => {
+    const list = [
+      { name: "a", state: "awaiting", owner: "wizard" },
+      { name: "b", state: "done", owner: "wizard" },
+    ];
+    expect(waitingCount(list, doneIsUnseen, "wizard")).toBe(2);
+  });
+
   it("leaves out a session someone else owns — that is their work", () => {
     const list = [
-      s("mine", "awaiting"),
+      { name: "mine", state: "awaiting", owner: "wizard" },
       { name: "theirs", state: "awaiting", owner: "bob" },
       { name: "also-theirs", state: "done", owner: "carol" },
     ];
-    expect(waitingCount(list, doneIsUnseen)).toBe(1);
+    expect(waitingCount(list, doneIsUnseen, "wizard")).toBe(1);
   });
 
-  it("counts a session with no owner field, which is how your own arrive", () => {
-    expect(waitingCount([s("mine", "awaiting")], doneIsUnseen)).toBe(1);
+  it("counts a session with no owner field at all", () => {
+    expect(waitingCount([s("mine", "awaiting")], doneIsUnseen, "wizard")).toBe(1);
+  });
+
+  it("excludes nothing when the caller offers no identity", () => {
+    const list = [
+      { name: "mine", state: "awaiting", owner: "wizard" },
+      { name: "theirs", state: "awaiting", owner: "bob" },
+    ];
+    expect(waitingCount(list, doneIsUnseen)).toBe(2);
   });
 });
 

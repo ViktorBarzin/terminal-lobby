@@ -34,7 +34,11 @@
 export interface BadgeSession {
   name: string;
   state?: string;
-  /** set when someone else owns it (a shared session); absent for your own. */
+  /**
+   * The OS user who owns it. Populated for EVERY session, including your own —
+   * `/sessions` stamps it unconditionally. It is not a "this one is foreign"
+   * flag, which is why `waitingCount` needs to know who you are to use it.
+   */
   owner?: string;
 }
 
@@ -58,13 +62,24 @@ export type BadgingNavigator = Navigator & {
 export function waitingCount<S extends BadgeSession>(
   sessions: readonly S[],
   isUnseen: (s: S) => boolean,
+  me?: string,
 ): number {
   let n = 0;
   for (const s of sessions) {
     // Someone else's session, shared with you, is their work waiting for them.
     // The push sender only sees your own tmux server, so counting a foreign one
     // here would put the page permanently above the number a closed app draws.
-    if (s.owner) continue;
+    //
+    // `owner` is set on EVERY session, your own included, so the test is the
+    // same one the rest of the app uses (SessionCard.foreign, deriveSidebar):
+    // owned by someone, and that someone is not you. Testing `owner` alone
+    // excluded everything and pinned the badge at zero — shipped in v0.16.0,
+    // caught by driving the deployed build rather than by any unit test, because
+    // the tests were written to the same wrong assumption as the code.
+    //
+    // With no `me` supplied nothing is excluded, which keeps the pure function
+    // usable from a caller that has no identity to offer.
+    if (me && s.owner && s.owner !== me) continue;
     if (s.state === "awaiting" || isUnseen(s)) n++;
   }
   return n;
