@@ -91,6 +91,35 @@ function stashPendingSession(session, tapped) {
 //
 // Best-effort and silent, like the page's copy: the Badging API is absent on
 // most browsers and REJECTS where it exists but the app is not installed.
+// Is a lobby window on screen right now?
+//
+// If one is, the PAGE owns the icon: it has the visit store, so it knows which
+// finished sessions you have already read, and the worker's number would paint
+// over a smaller, better one. This is the difference the user reported as "once
+// a new notification comes, the counter wrongly resets to a bigger number".
+//
+// The test is focused-or-visible rather than "a window exists". A backgrounded
+// PWA is still a window client, and store/lobby.ts parks its poll while the page
+// is hidden, so treating any open window as authoritative would leave the badge
+// frozen on stale work. Terminal frames are skipped for the same reason as in
+// the tap handler: they are not the lobby.
+async function lobbyOnScreen() {
+    try {
+        const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        return wins.some((c) =>
+            !looksLikeTerminal(c.url) && (c.focused || c.visibilityState === 'visible'));
+    } catch (e) {
+        // Unknowable: assume nothing is on screen, so a real count still lands.
+        return false;
+    }
+}
+
+// paintBadge, but only when no lobby is on screen to do it better.
+async function badgeIfHidden(count) {
+    if (await lobbyOnScreen()) return;
+    await paintBadge(count);
+}
+
 function paintBadge(count) {
     try {
         const nav = self.navigator;
@@ -124,7 +153,10 @@ self.addEventListener('push', (event) => {
         if (data.session) tasks.push(stashPendingSession(data.session, false));
         // Same rule as the stash: the badge is a courtesy and must never gate or
         // delay showNotification (iOS revokes permission if a push shows nothing).
-        if (typeof data.badge === 'number') tasks.push(paintBadge(data.badge));
+        // showNotification was CALLED on the line above, so its promise is
+        // already in flight and the client lookup inside badgeIfHidden cannot
+        // hold it up.
+        if (typeof data.badge === 'number') tasks.push(badgeIfHidden(data.badge));
         await Promise.allSettled(tasks);
     })());
 });
