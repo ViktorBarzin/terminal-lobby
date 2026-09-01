@@ -85,11 +85,16 @@ in for the ingress so the dev server authenticates (injected on `proxyReq` *and*
 - **`term.html`** — the terminal-mode page the iframe frames, copied from
   `../frontend/term.html` by the `copyTermHtml` plugin and stamped with the same
   build id. It is deliberately outside the bundle: it pulls xterm from a CDN and
-  speaks ttyd's binary WS protocol. `deploy-v2.sh` ships it beside `index.html`.
+  speaks ttyd's binary WS protocol. The Debian package installs it beside
+  `index.html` (ADR-0013; the hand-run `deploy-v2.sh` is retired).
 - **`public/` verbatim** — `sw.js`, `manifest.webmanifest` and the three icons,
   which Vite copies as static assets. In production these are served by
-  clipboard-upload from its exact-path whitelist and installed by
-  `scripts/deploy.sh` from the identical copies in `frontend/`.
+  clipboard-upload from its exact-path whitelist, and the Debian package installs
+  them **from `frontend/`, not from here** (`release/manifest.go`). The two copies
+  of each are byte-identical and `test/pwa.tap.test.ts` pins `sw.js` that way:
+  this directory is the one Vite serves and the tests drive, so it is the natural
+  place to edit and the one that does not ship. An edit to it alone passes the
+  whole suite and changes nothing in production.
 
 ## Layout
 
@@ -491,10 +496,11 @@ All of the following ship in the deployed build:
   directory, open a file by path or from the transcript-derived recents, render
   markdown (Markdown+Mermaid), HTML (sandboxed `srcdoc`), images, or
   syntax-highlighted code, and edit-and-save in CodeMirror 6.
-- **Notifications** — tab-title and favicon badges, attention latches from the
-  terminal iframe, foreground OS notifications on state edges, and background
-  **Web Push** via `/sw.js` + `/api/sessions/push/*` when the browser and the
-  server's VAPID key allow it.
+- **Notifications** — tab-title, favicon and **app-icon** badges, attention
+  latches from the terminal iframe, foreground OS notifications on state edges,
+  and background **Web Push** via `/sw.js` + `/api/sessions/push/*` when the
+  browser and the server's VAPID key allow it. A tap routes to the session that
+  called (ADR-0014).
 - **Mobile** — a coarse-pointer soft-key toolbar (raw byte sequences a phone
   keyboard cannot produce), soft Ctrl/Alt modifiers, and visualViewport
   plumbing so the soft keyboard cannot cover the composer.
