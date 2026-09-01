@@ -148,6 +148,15 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
     sessions: readonly VisitSession[],
     active: string | null,
   ): void => {
+    // An EMPTY list is "I do not know yet", never "you have no sessions". The
+    // prunes below key off `live`, so folding in the pre-poll empty list deleted
+    // every visit and every state stamp — and the first real poll then re-stamped
+    // each session's state at that moment, newer than any visit that had
+    // survived, so everything came back unread. Every app open reset the whole
+    // record, which on iOS includes the cold launch a notification tap performs.
+    // Nothing here is meaningful for an empty list anyway: the stamp loop has
+    // nothing to walk, and the active stamp needs `live.has(active)`.
+    if (sessions.length === 0) return;
     const at = now();
     const live = new Set(sessions.map((s) => s.name));
     let dirty = false;

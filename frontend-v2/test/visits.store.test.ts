@@ -160,3 +160,52 @@ describe("createVisitStore — revision (repaint trigger)", () => {
     expect(v.revision()).toBe(afterVisit);
   });
 });
+
+/**
+ * The boot wipe (found 2026-09-01). `observe` prunes its records against the
+ * list it is handed, and the notification effect used to hand it the pre-poll
+ * EMPTY list on every mount — deleting every visit and every state stamp, so
+ * the first real poll re-stamped each session as freshly finished and the whole
+ * account came back unread. On iOS a notification tap cold-launches the PWA,
+ * which is a mount, which was a wipe.
+ */
+describe("createVisitStore — an empty list is 'not known yet'", () => {
+  it("prunes nothing when handed an empty session list", () => {
+    const c = clock();
+    const v = createVisitStore({ now: c.now });
+    v.observe([running("a")], null);
+    c.tick();
+    v.observe([done("a")], null);
+    c.tick();
+    v.observe([done("a")], "a"); // looked at it
+    expect(v.isUnseen(done("a"))).toBe(false);
+
+    v.observe([], null); // a mount, before the first poll answers
+
+    c.tick();
+    v.observe([done("a")], null);
+    expect(v.isUnseen(done("a"))).toBe(false); // still seen
+  });
+
+  it("keeps the persisted records across an empty observe", () => {
+    const c = clock();
+    const v = createVisitStore({ now: c.now });
+    v.observe([done("a")], "a");
+    const visitsBefore = localStorage.getItem(VISITS_KEY);
+    const statesBefore = localStorage.getItem(STATES_KEY);
+
+    v.observe([], null);
+
+    expect(localStorage.getItem(VISITS_KEY)).toBe(visitsBefore);
+    expect(localStorage.getItem(STATES_KEY)).toBe(statesBefore);
+  });
+
+  it("still prunes a session that a REAL poll no longer lists", () => {
+    const c = clock();
+    const v = createVisitStore({ now: c.now });
+    v.observe([done("a"), done("b")], "a");
+    v.observe([done("b")], null); // a genuinely shorter list
+    const visits = JSON.parse(localStorage.getItem(VISITS_KEY) || "{}");
+    expect(Object.keys(visits)).not.toContain("a");
+  });
+});

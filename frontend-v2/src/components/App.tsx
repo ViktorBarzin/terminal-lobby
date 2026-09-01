@@ -211,6 +211,7 @@ export const App: Component = () => {
     osUser: store.me,
     notifyPrefs: () => prefs.prefs().notify,
     loading: store.loading,
+    polls: store.polls,
     toast: notify,
     onActivateSession: (name) => store.select(name),
   });

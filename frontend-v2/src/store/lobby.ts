@@ -54,6 +54,16 @@ export interface LobbyStore {
   sessions: Session[];
   loading: Accessor<boolean>;
   loadError: Accessor<string | null>;
+  /**
+   * How many polls have RETURNED a session list. Zero means nothing is known
+   * yet, which `loading` cannot express: loading goes false even when /sessions
+   * rejected. Anything deriving from the list — the app-icon badge, the visit
+   * store's pruning — needs "we have an answer", not "we stopped waiting".
+   *
+   * It also ticks on every poll whose payload was unchanged, which is what an
+   * effect needs in order to repaint on a schedule rather than only on a diff.
+   */
+  polls: Accessor<number>;
   selected: Accessor<SelectedSession | null>;
   toast: Accessor<string | null>;
   /** name of the session card currently being dragged (HTML5 DnD), or null. */
@@ -199,6 +209,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   const [pending, setPending] = createSignal<Session[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
+  const [polls, setPolls] = createSignal(0);
   const [selected, setSelected] = createSignal<SelectedSession | null>(
     opts.initialSelected ?? null,
   );
@@ -402,6 +413,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       // <For> re-creates every group and card (taking open menus with it).
       followRenamedSelection(sessions, sRes.value);
       setSessions(reconcile(sRes.value, { key: "name" }));
+      // After setSessions, so a reader waking on `polls` sees the new list.
+      setPolls((n) => n + 1);
       // drop optimistic pending that the server now knows about
       const known = new Set(sRes.value.map((s) => s.name));
       const stillPending = pending().filter((p) => !known.has(p.name));
@@ -937,6 +950,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     sessions,
     loading,
     loadError,
+    polls,
     selected,
     toast,
     dragName,
