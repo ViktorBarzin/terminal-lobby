@@ -29,6 +29,8 @@
 export interface BadgeSession {
   name: string;
   state?: string;
+  /** set when someone else owns it (a shared session); absent for your own. */
+  owner?: string;
 }
 
 /** The subset of Navigator the Badging API adds (absent on most browsers). */
@@ -44,6 +46,9 @@ export type BadgingNavigator = Navigator & {
  * `isUnseen` is the visit store's (store/visits.ts): a `done` session counts
  * only until you look at it. The two arms cannot double-count — isUnseen is
  * false for anything whose state is not `done`.
+ *
+ * A session someone else owns is skipped entirely. It is their work, and the
+ * server's copy of this count never sees it.
  */
 export function waitingCount<S extends BadgeSession>(
   sessions: readonly S[],
@@ -51,6 +56,10 @@ export function waitingCount<S extends BadgeSession>(
 ): number {
   let n = 0;
   for (const s of sessions) {
+    // Someone else's session, shared with you, is their work waiting for them.
+    // The push sender only sees your own tmux server, so counting a foreign one
+    // here would put the page permanently above the number a closed app draws.
+    if (s.owner) continue;
     if (s.state === "awaiting" || isUnseen(s)) n++;
   }
   return n;

@@ -35,6 +35,19 @@ describe("waitingCount", () => {
   it("is zero for an empty list", () => {
     expect(waitingCount([], doneIsUnseen)).toBe(0);
   });
+
+  it("leaves out a session someone else owns — that is their work", () => {
+    const list = [
+      s("mine", "awaiting"),
+      { name: "theirs", state: "awaiting", owner: "bob" },
+      { name: "also-theirs", state: "done", owner: "carol" },
+    ];
+    expect(waitingCount(list, doneIsUnseen)).toBe(1);
+  });
+
+  it("counts a session with no owner field, which is how your own arrive", () => {
+    expect(waitingCount([s("mine", "awaiting")], doneIsUnseen)).toBe(1);
+  });
 });
 
 describe("applyAppBadge", () => {

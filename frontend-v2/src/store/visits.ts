@@ -72,7 +72,16 @@ export interface VisitStore {
 export interface VisitStoreOptions {
   /** injectable clock (tests). */
   now?: () => number;
-  /** is the tab on screen? default `!document.hidden`, as in the vanilla port. */
+  /**
+   * Is the user actually looking at this tab? Default: on screen AND focused.
+   *
+   * `!document.hidden` alone was too generous. It stays true for a desktop
+   * window that is visible but not focused — a lobby sitting behind an editor on
+   * a wide screen — so a turn that finished while the user was in another app
+   * was stamped as read and never made the unread count. The foreground
+   * notification path already uses the stricter test (`away()` in
+   * notify/notifications.ts); this brings the visit store in line with it.
+   */
   visible?: () => boolean;
 }
 
@@ -175,7 +184,10 @@ function mirrorSeenDone(names: readonly string[]): void {
 export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
   const now = opts.now ?? (() => Date.now());
   const visible =
-    opts.visible ?? (() => typeof document === "undefined" || !document.hidden);
+    opts.visible ??
+    (() =>
+      typeof document === "undefined" ||
+      (!document.hidden && (typeof document.hasFocus !== "function" || document.hasFocus())));
 
   const visits = loadVisits();
   const states = loadStates();

@@ -203,6 +203,8 @@ export const App: Component = () => {
       title: s.title,
       state: s.state,
       pane_current_command: s.pane_current_command,
+      // Only set for a session shared with you. The badge leaves those out.
+      owner: s.owner,
     })),
   );
   const notifications = createNotificationSystem({
