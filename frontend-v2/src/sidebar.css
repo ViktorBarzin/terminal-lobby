@@ -534,6 +534,30 @@
   border-radius: 2px;
   background: var(--accent);
 }
+/* Finished since you last looked. Measured on the resting sidebar backdrop, the
+   seen/unseen opacity step on the dot alone is 3.35:1 on slate, 2.97:1 on carbon
+   and 1.77:1 on catppuccin-latte — five of the eight themes fall under the 3:1
+   floor for non-text contrast, so the dot cannot be the only carrier. The row
+   gets a bar and a heavier name instead, reusing the vocabulary .tl-card-active
+   already establishes so there is one language to learn rather than two. Weight
+   600 sits under the active row's 700. Words for the same thing are in
+   stateLabel(): "Done, not seen yet". */
+.tl-card-unseen::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--state-done);
+}
+.tl-card-active.tl-card-unseen::before {
+  background: var(--accent);
+}
+.tl-card-unseen .tl-card-name {
+  font-weight: 600;
+}
 .tl-drop-above {
   box-shadow: inset 0 2px 0 var(--accent);
 }
@@ -686,9 +710,14 @@
   background: var(--state-done);
   opacity: 0.45;
 }
+/* Full strength against the dimmed 0.45 a session drops to once you have looked
+   at it. The halo that used to sit here has moved out: on an 8px dot it added
+   1.3-1.6:1, and it made an unread-done dot differ from an AWAITING dot by hue
+   alone, which is the one pair that must not be confusable. Awaiting owns the
+   halo now; unread is carried by the row (.tl-card-unseen below), where there
+   is room for it. */
 .tl-state-done.tl-state-unseen {
   opacity: 1;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-done) 22%, transparent);
 }
 @keyframes tl-state-pulse {
   0%,
@@ -938,7 +967,8 @@
   }
   /* The active row's accent bar insets from the row's edges; at 40px the old
      6px left a 28px stub, which reads as a dash rather than a bar. */
-  .tl-card-active::before {
+  .tl-card-active::before,
+  .tl-card-unseen::before {
     top: 4px;
     bottom: 4px;
   }

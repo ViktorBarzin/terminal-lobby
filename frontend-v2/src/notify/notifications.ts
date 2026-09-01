@@ -123,6 +123,17 @@ export interface NotificationSystem {
   testHere: () => Promise<void>;
   /** fan a real push to every registered device (server). */
   testAll: () => Promise<void>;
+  /**
+   * Has this session finished since you last looked at it?
+   *
+   * The sidebar's own answer to the number on the app icon: the badge counts
+   * this set, so the list has to be able to point at its members. It reads
+   * `revision` INTERNALLY, which is what makes a caller in JSX repaint when the
+   * set changes — a visit that clears unseen usually moves nothing else, so a
+   * card reading a plain predicate would sit at its mount value. No loop:
+   * `revision` bumps only when the unseen set actually changes.
+   */
+  isUnseen: (s: TitleSession) => boolean;
   dispose: () => void;
 }
 
@@ -507,7 +518,14 @@ export function createNotificationSystem(
     }
   };
 
+  /** The predicate the sidebar reads. See NotificationSystem.isUnseen. */
+  const isUnseenReactive = (sn: TitleSession): boolean => {
+    visits.revision();
+    return isUnseen(sn);
+  };
+
   return {
+    isUnseen: isUnseenReactive,
     bellMode,
     bellOn,
     bellTitle,

@@ -483,15 +483,22 @@ export function formatWorking(ms: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-/** Human phrase for a session's Claude state (tooltip / a11y). */
-export function stateLabel(state: string | undefined): string {
+/**
+ * Human phrase for a session's Claude state (tooltip / a11y).
+ *
+ * `unseen` gets its own wording rather than a second attribute, so the one
+ * distinction the app-icon badge counts reaches a tooltip and a screen reader
+ * as words. A colour and an opacity carry it for everyone else, and neither
+ * survives being read aloud.
+ */
+export function stateLabel(state: string | undefined, unseen = false): string {
   switch (state) {
     case "running":
       return "Working";
     case "awaiting":
       return "Awaiting input";
     case "done":
-      return "Done";
+      return unseen ? "Done, not seen yet" : "Done";
     default:
       return "";
   }
