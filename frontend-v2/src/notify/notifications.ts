@@ -333,7 +333,7 @@ export function createNotificationSystem(
     // `revision` only bumps when the unseen set actually changes, so this
     // settles after one extra pass instead of looping.
     visits.observe(list, active);
-    applyAppBadge(waitingCount(list, isUnseen));
+    applyAppBadge(waitingCount(list, isUnseen, opts.osUser()));
   });
 
   createEffect(() => {

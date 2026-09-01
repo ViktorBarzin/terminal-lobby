@@ -22,7 +22,7 @@ const FIXTURE = JSON.parse(
 ) as {
   cases: {
     case: string;
-    sessions: { name: string; state: string }[];
+    sessions: { name: string; state: string; owner?: string }[];
     visits: Record<string, number>;
     states: Record<string, { state: string; at: number }>;
     want: number;
@@ -39,8 +39,12 @@ describe("badge parity — the page's arithmetic", () => {
       localStorage.setItem(VISITS_KEY, JSON.stringify(c.visits));
       localStorage.setItem(STATES_KEY, JSON.stringify(c.states));
       const store = createVisitStore({ now: () => 9_999 });
-      const list = c.sessions.map((s) => ({ name: s.name, state: s.state || undefined }));
-      expect(waitingCount(list, (s) => store.isUnseen(s))).toBe(c.want);
+      const list = c.sessions.map((s) => ({
+        name: s.name,
+        state: s.state || undefined,
+        owner: s.owner,
+      }));
+      expect(waitingCount(list, (s) => store.isUnseen(s), "wizard")).toBe(c.want);
     });
   }
 
