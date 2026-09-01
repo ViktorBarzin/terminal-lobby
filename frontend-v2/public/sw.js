@@ -11,7 +11,8 @@
 // app, and keep the server's subscription list current across browser key
 // rotations.
 //
-// Push payload (JSON): { title, body, tag: 'tl-<session>', session, badge }.
+// Push payload (JSON): { title, body, tag: 'tl-<session>', session, badge,
+// waiting: { a: [names awaiting], d: [names done] } }.
 // Coalescing is by tag ONLY — a re-fire for the same session REPLACES
 // the visible notification; `renotify` is intentionally omitted so a
 // repeat never re-alerts the user (tripit-proven).
@@ -91,6 +92,56 @@ function stashPendingSession(session, tapped) {
 //
 // Best-effort and silent, like the page's copy: the Badging API is absent on
 // most browsers and REJECTS where it exists but the app is not installed.
+// The finished sessions this DEVICE has already shown the user.
+//
+// Written by store/visits.ts (db 'tl-badge', store 'seen', key 'done') whenever
+// the unseen set changes. The worker cannot read localStorage, so this is the
+// only way it can know what the page knows. An empty answer is the honest
+// default: every finished session then counts, which is a number that is too big
+// rather than a number that moves under the user.
+function readSeenDone() {
+    return new Promise((resolve) => {
+        let req;
+        try { req = indexedDB.open('tl-badge', 1); } catch (e) { resolve([]); return; }
+        // Never CREATE the store here: if the page has not written yet there is
+        // nothing to read, and an upgrade from the worker would race the page.
+        req.onupgradeneeded = () => { try { req.result.createObjectStore('seen'); } catch (e) {} };
+        req.onerror = () => resolve([]);
+        req.onsuccess = () => {
+            const db = req.result;
+            try {
+                const tx = db.transaction('seen', 'readonly');
+                const get = tx.objectStore('seen').get('done');
+                const done = () => { try { db.close(); } catch (e) {} };
+                tx.oncomplete = () => {
+                    done();
+                    const v = get.result;
+                    resolve(v && Array.isArray(v.names) ? v.names : []);
+                };
+                tx.onerror = () => { done(); resolve([]); };
+                tx.onabort = () => { done(); resolve([]); };
+            } catch (e) { try { db.close(); } catch (e2) {} resolve([]); }
+        };
+    });
+}
+
+// How many sessions are waiting, from the named set the server sent minus what
+// this device has already shown.
+//
+// `pushed` is the session this notification is ABOUT. It is dropped from the
+// seen set: it just transitioned, so whatever the user read of it is stale and
+// it is unread again by definition. That is the same rule the page applies, and
+// it is why an already-read session finishing a second time still counts.
+async function badgeFromWaiting(waiting, pushed) {
+    const awaiting = Array.isArray(waiting.a) ? waiting.a : [];
+    const finished = Array.isArray(waiting.d) ? waiting.d : [];
+    const seen = new Set(await readSeenDone());
+    if (pushed) seen.delete(pushed);
+    let n = awaiting.length;
+    for (const name of finished) if (!seen.has(name)) n++;
+    return n;
+}
+
 // Is a lobby window on screen right now?
 //
 // If one is, the PAGE owns the icon: it has the visit store, so it knows which
@@ -115,9 +166,12 @@ async function lobbyOnScreen() {
 }
 
 // paintBadge, but only when no lobby is on screen to do it better.
+//
+// `count` may be a number or a promise of one, so the caller can start the work
+// without awaiting it ahead of showNotification.
 async function badgeIfHidden(count) {
     if (await lobbyOnScreen()) return;
-    await paintBadge(count);
+    await paintBadge(await count);
 }
 
 function paintBadge(count) {
@@ -156,7 +210,15 @@ self.addEventListener('push', (event) => {
         // showNotification was CALLED on the line above, so its promise is
         // already in flight and the client lookup inside badgeIfHidden cannot
         // hold it up.
-        if (typeof data.badge === 'number') tasks.push(badgeIfHidden(data.badge));
+        // Prefer the NAMED set: it lets this device subtract what it has already
+        // shown, so the number matches what the page would have drawn. `badge`
+        // is the fallback for a payload over the name cap, and for a server that
+        // predates `waiting`.
+        if (data.waiting) {
+            tasks.push(badgeIfHidden(badgeFromWaiting(data.waiting, data.session)));
+        } else if (typeof data.badge === 'number') {
+            tasks.push(badgeIfHidden(data.badge));
+        }
         await Promise.allSettled(tasks);
     })());
 });

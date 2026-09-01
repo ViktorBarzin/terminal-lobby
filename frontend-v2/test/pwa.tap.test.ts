@@ -47,8 +47,34 @@ function lobby(url = "/", focused = false, ack = true): FakeClient & { got: unkn
   };
 }
 
+/**
+ * The smallest IndexedDB the worker's readSeenDone() will accept: one store, one
+ * record. `names === null` means the page has never written, which is the
+ * fallback path.
+ */
+function fakeIndexedDB(names: string[] | null) {
+  return {
+    open: () => {
+      const req: Record<string, unknown> = {};
+      const get: Record<string, unknown> = { result: names === null ? undefined : { names } };
+      const store = { get: () => get, put: () => {} };
+      const tx: Record<string, unknown> = { objectStore: () => store };
+      req.result = { transaction: () => tx, close: () => {}, createObjectStore: () => {} };
+      setTimeout(() => {
+        (req.onsuccess as (() => void) | undefined)?.();
+        setTimeout(() => (tx.oncomplete as (() => void) | undefined)?.(), 0);
+      }, 0);
+      return req;
+    },
+  };
+}
+
 /** Load the real worker with a stubbed global scope and return its listeners. */
-function loadWorker(clients: FakeClient[], openWindow = vi.fn(async () => null)) {
+function loadWorker(
+  clients: FakeClient[],
+  openWindow = vi.fn(async () => null),
+  seen: string[] | null = null,
+) {
   const listeners = new Map<string, (e: unknown) => void>();
   const navigator = { setAppBadge: vi.fn(async () => {}), clearAppBadge: vi.fn(async () => {}) };
   const self = {
@@ -64,7 +90,7 @@ function loadWorker(clients: FakeClient[], openWindow = vi.fn(async () => null))
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function("self", "indexedDB", "MessageChannel", "setTimeout", "URL", "atob", SRC)(
     self,
-    undefined,
+    fakeIndexedDB(seen),
     MessageChannel,
     setTimeout,
     URL,
@@ -285,5 +311,87 @@ describe("push badge — deferring to a visible page", () => {
     const { listeners, self } = loadWorker([c]);
     await push(listeners, payload);
     expect(self.registration.showNotification).toHaveBeenCalled();
+  });
+});
+
+/**
+ * The number, once the server sends the POPULATION instead of a total.
+ *
+ * This is the fix for "the counter wrongly resets to a bigger number": the
+ * worker now subtracts the finished sessions this device has already shown,
+ * which is what the page does, so the two writers arrive at the same figure.
+ */
+describe("push badge — the device applies its own seen set", () => {
+  const hidden = () => ({ ...lobby("http://x/", false, true), visibilityState: "hidden" });
+  const push = async (
+    listeners: Map<string, (e: unknown) => void>,
+    data: Record<string, unknown>,
+  ) => {
+    const waits: Promise<unknown>[] = [];
+    listeners.get("push")!({
+      data: { json: () => data },
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    });
+    await Promise.all(waits);
+  };
+  const payload = (over: Record<string, unknown> = {}) => ({
+    title: "t",
+    body: "b",
+    tag: "tl-z",
+    session: "z",
+    badge: 99, // must be IGNORED whenever `waiting` is present
+    waiting: { a: [], d: ["a", "b", "c"] },
+    ...over,
+  });
+
+  it("counts only the finished sessions this device has NOT shown", async () => {
+    const { listeners, navigator } = loadWorker([hidden()], undefined, ["a", "b"]);
+    await push(listeners, payload());
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(1); // only "c"
+  });
+
+  it("counts every finished session when the device has shown none", async () => {
+    const { listeners, navigator } = loadWorker([hidden()], undefined, []);
+    await push(listeners, payload());
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(3);
+  });
+
+  it("adds awaiting sessions unconditionally — a prompt is waiting however often you have looked", async () => {
+    const { listeners, navigator } = loadWorker([hidden()], undefined, ["a", "b", "c"]);
+    await push(listeners, payload({ waiting: { a: ["p", "q"], d: ["a", "b", "c"] } }));
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(2);
+  });
+
+  it("re-counts the session this push is ABOUT, even though it was read before", async () => {
+    // "a" is in the seen set, but "a" just finished again — so it is unread now.
+    const { listeners, navigator } = loadWorker([hidden()], undefined, ["a", "b", "c"]);
+    await push(listeners, payload({ session: "a" }));
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(1);
+  });
+
+  it("clears the icon when everything has been read", async () => {
+    const { listeners, navigator } = loadWorker([hidden()], undefined, ["a", "b", "c"]);
+    await push(listeners, payload({ session: "" }));
+    expect(navigator.clearAppBadge).toHaveBeenCalled();
+  });
+
+  it("falls back to the server's total when the device has no record at all", async () => {
+    const { listeners, navigator } = loadWorker([hidden()], undefined, null);
+    await push(listeners, payload());
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(3); // nothing subtracted
+  });
+
+  it("uses `badge` when the payload carries no named set (over the cap, or an old server)", async () => {
+    const { listeners, navigator } = loadWorker([hidden()], undefined, ["a", "b"]);
+    await push(listeners, payload({ waiting: undefined }));
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(99);
+  });
+
+  it("still defers to a visible lobby, named set or not", async () => {
+    const onscreen = { ...lobby("http://x/", true, true), visibilityState: "visible" };
+    const { listeners, navigator } = loadWorker([onscreen], undefined, ["a"]);
+    await push(listeners, payload());
+    expect(navigator.setAppBadge).not.toHaveBeenCalled();
+    expect(navigator.clearAppBadge).not.toHaveBeenCalled();
   });
 });

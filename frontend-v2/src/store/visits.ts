@@ -113,6 +113,65 @@ function persistVisits(visits: Record<string, number>): void {
   }
 }
 
+/** The IndexedDB the service worker reads the seen set from. */
+export const SEEN_DB = "tl-badge";
+export const SEEN_STORE = "seen";
+export const SEEN_KEY = "done";
+
+/**
+ * Mirror the finished-and-READ session names where sw.js can reach them.
+ *
+ * A deliberately separate database from `tl-notif`. That one is opened at
+ * version 1 in three places (both sw.js copies and pwa/register.ts), so adding a
+ * store to it means a version bump, and a bump makes every un-upgraded v1 open
+ * fail with VersionError.
+ *
+ * Best-effort and silent, exactly like persistVisits: this is a courtesy to a
+ * worker that has a documented fallback (the server's total), so a private
+ * window or blocked storage must cost nothing here. Resolves on abort as well as
+ * error — a transaction can abort with no preceding error event.
+ */
+function mirrorSeenDone(names: readonly string[]): void {
+  if (typeof indexedDB === "undefined") return;
+  let req: IDBOpenDBRequest;
+  try {
+    req = indexedDB.open(SEEN_DB, 1);
+  } catch {
+    return;
+  }
+  req.onupgradeneeded = () => {
+    try {
+      req.result.createObjectStore(SEEN_STORE);
+    } catch {
+      /* already there */
+    }
+  };
+  req.onerror = () => {};
+  req.onsuccess = () => {
+    const db = req.result;
+    try {
+      const tx = db.transaction(SEEN_STORE, "readwrite");
+      tx.objectStore(SEEN_STORE).put({ names: [...names], at: Date.now() }, SEEN_KEY);
+      const close = () => {
+        try {
+          db.close();
+        } catch {
+          /* closed */
+        }
+      };
+      tx.oncomplete = close;
+      tx.onerror = close;
+      tx.onabort = close;
+    } catch {
+      try {
+        db.close();
+      } catch {
+        /* closed */
+      }
+    }
+  };
+}
+
 export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
   const now = opts.now ?? (() => Date.now());
   const visible =
@@ -141,6 +200,11 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
     for (const s of known) if (isUnseen(s)) next += s.name + ",";
     if (next === signature) return;
     signature = next;
+    // Hand the worker what only this device knows. It is painting the same icon
+    // from the same set, but it cannot see localStorage, so without this its
+    // only option was the server's total — every finished session counted,
+    // including the ones already read, which is the upward jump.
+    mirrorSeenDone(known.filter((s) => s.state === "done" && !isUnseen(s)).map((s) => s.name));
     setRevision((r) => r + 1);
   };
 

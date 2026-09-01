@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -173,12 +174,60 @@ type pushPayload struct {
 	Body    string `json:"body"`
 	Tag     string `json:"tag"`
 	Session string `json:"session"`
-	// Badge is how many of this user's sessions are waiting — what sw.js draws
-	// on the app icon. A POINTER so the three states stay distinct: a count, an
-	// explicit zero (which CLEARS the icon, and must survive `omitempty`), and
-	// ABSENT — the self-diagnosis push, which carries no session and must leave
-	// whatever the icon is showing alone.
+	// Badge is how many of this user's sessions are waiting — the count a worker
+	// too old to understand Waiting draws on the app icon. A POINTER so the three
+	// states stay distinct: a count, an explicit zero (which CLEARS the icon, and
+	// must survive `omitempty`), and ABSENT — the self-diagnosis push, which
+	// carries no session and must leave whatever the icon is showing alone.
 	Badge *int `json:"badge,omitempty"`
+	// Waiting is the same set, NAMED rather than totalled, so the device can
+	// subtract the sessions it has already shown the user before drawing a
+	// number. See waitingList.
+	Waiting *waitList `json:"waiting,omitempty"`
+}
+
+// waitList is which sessions are asking for attention, by name.
+//
+// The server sends the POPULATION and lets the device reach the conclusion,
+// because the two halves of the answer live in different places: only the server
+// knows what is awaiting or done, and only the browser knows what the user has
+// already looked at. Sending a total forced the worker to paint a number that
+// counted every finished session, including ones the user had read, so any push
+// reset the icon upward. Sending names lets sw.js apply the device's own seen
+// set and arrive at the same number the page would.
+//
+// Short JSON keys because a Web Push payload is limited (~4 KB after encryption)
+// and a name may be up to 32 bytes (NAME_RE).
+type waitList struct {
+	Awaiting []string `json:"a"`
+	Done     []string `json:"d"`
+}
+
+// waitingListCap bounds the two slices COMBINED. 64 names at 32 bytes is ~2 KB,
+// comfortably inside the payload budget, and no account here is close to it.
+// Past the cap the payload carries Badge alone and the device falls back to the
+// server's total, which is the pre-existing behaviour rather than a new failure.
+const waitingListCap = 64
+
+// waitingList splits the same set waitingCount totals. Names are sorted so a
+// payload is stable for a given state map, which keeps it diffable in a log and
+// testable without ordering noise. Returns nil past the cap.
+func waitingList(states map[string]string) *waitList {
+	w := &waitList{}
+	for name, st := range states {
+		switch st {
+		case stateAwaiting:
+			w.Awaiting = append(w.Awaiting, name)
+		case stateDone:
+			w.Done = append(w.Done, name)
+		}
+	}
+	if len(w.Awaiting)+len(w.Done) > waitingListCap {
+		return nil
+	}
+	sort.Strings(w.Awaiting)
+	sort.Strings(w.Done)
+	return w
 }
 
 // waitingCount is how many of a user's sessions are asking for attention:
@@ -204,27 +253,28 @@ func waitingCount(states map[string]string) int {
 // the tag `tl-<session>`: coalescing is by tag only (sw.js omits renotify),
 // so a later awaiting push REPLACES a finished one for the same session
 // rather than stacking a second alert.
-func marshalPayload(title, body, session string, badge int) []byte {
+func marshalPayload(title, body, session string, badge int, waiting *waitList) []byte {
 	b, _ := json.Marshal(pushPayload{
 		Title:   title,
 		Body:    body,
 		Tag:     "tl-" + session,
 		Session: session,
 		Badge:   &badge,
+		Waiting: waiting,
 	})
 	return b
 }
 
 // buildPushPayload is the running→awaiting "needs input" wording.
-func buildPushPayload(session string, badge int) []byte {
-	return marshalPayload(session+" needs input", "Claude is awaiting your input.", session, badge)
+func buildPushPayload(session string, badge int, waiting *waitList) []byte {
+	return marshalPayload(session+" needs input", "Claude is awaiting your input.", session, badge, waiting)
 }
 
 // buildDonePayload is the running→done "finished" wording — the first-class
 // notification for a turn completing. Same tag as the awaiting payload (see
 // marshalPayload): a subsequent awaiting alert supersedes it.
-func buildDonePayload(session string, badge int) []byte {
-	return marshalPayload(session+" finished", "Claude finished its turn.", session, badge)
+func buildDonePayload(session string, badge int, waiting *waitList) []byte {
+	return marshalPayload(session+" finished", "Claude finished its turn.", session, badge, waiting)
 }
 
 // tick runs one poll cycle: for every subscribed user, diff the current
@@ -259,8 +309,9 @@ func (p *pushSender) tick() {
 		if prev == nil {
 			continue // first observation of this user seeds silently
 		}
-		np := p.notifyPrefsFor(u) // one prefs read per user per tick
-		badge := waitingCount(cur) // one icon count per user per tick
+		np := p.notifyPrefsFor(u)   // one prefs read per user per tick
+		badge := waitingCount(cur)  // one icon count per user per tick
+		waiting := waitingList(cur) // and the same set by name, for the device to filter
 		for name, st := range cur {
 			was := prev[name] // "" when the session was absent last poll
 			switch {
@@ -269,7 +320,7 @@ func (p *pushSender) tick() {
 				// newly-appeared already-awaiting session — unchanged edge).
 				if np.onAwaiting && p.userTypedSinceLastPush(u, name) {
 					p.markPushed(u, name)
-					p.notify(u, name, kindAwaiting, badge)
+					p.notify(u, name, kindAwaiting, badge, waiting)
 				}
 			case st == stateDone && was == stateRunning:
 				// running→done ONLY. A session first seen already done
@@ -277,7 +328,7 @@ func (p *pushSender) tick() {
 				// SessionStart hook stamping "done" never fires.
 				if np.onDone && p.userTypedSinceLastPush(u, name) {
 					p.markPushed(u, name)
-					p.notify(u, name, kindDone, badge)
+					p.notify(u, name, kindDone, badge, waiting)
 				}
 			}
 		}
@@ -339,12 +390,12 @@ func (p *pushSender) markPushed(u, name string) {
 // notify builds the payload for `session` of the given kind and fans it out
 // to the user's devices. The wording comes from the kind; the tag is shared
 // across kinds so a later push for the same session coalesces (send()).
-func (p *pushSender) notify(osUser, session, kind string, badge int) {
+func (p *pushSender) notify(osUser, session, kind string, badge int, waiting *waitList) {
 	var payload []byte
 	if kind == kindDone {
-		payload = buildDonePayload(session, badge)
+		payload = buildDonePayload(session, badge, waiting)
 	} else {
-		payload = buildPushPayload(session, badge)
+		payload = buildPushPayload(session, badge, waiting)
 	}
 	p.send(osUser, session, payload, kind)
 }
