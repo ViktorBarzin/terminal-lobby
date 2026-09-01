@@ -178,7 +178,7 @@ describe("push badge", () => {
   };
 
   it("paints the count the server sent", async () => {
-    const { listeners, navigator } = loadWorker([]);
+    const { listeners, navigator } = loadWorker([]); // nothing on screen
     await push(listeners, { title: "t", body: "b", tag: "tl-a", session: "a", badge: 4 });
     expect(navigator.setAppBadge).toHaveBeenCalledWith(4);
   });
@@ -222,5 +222,68 @@ describe("the shipped worker", () => {
       "utf8",
     );
     expect(shipped).toBe(SRC);
+  });
+});
+
+/**
+ * Who owns the icon while the app is OPEN.
+ *
+ * The page has the visit store, so it knows which finished sessions have been
+ * read and its number is the smaller, truer one. The worker's count comes from
+ * the server, which cannot know that. A push landing while the lobby is on
+ * screen used to overwrite the good number with the bigger one, which is what
+ * the user saw as the counter resetting upward.
+ */
+describe("push badge — deferring to a visible page", () => {
+  const push = async (
+    listeners: Map<string, (e: unknown) => void>,
+    data: Record<string, unknown>,
+  ) => {
+    const waits: Promise<unknown>[] = [];
+    listeners.get("push")!({
+      data: { json: () => data },
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    });
+    await Promise.all(waits);
+  };
+  const payload = { title: "t", body: "b", tag: "tl-a", session: "a", badge: 9 };
+
+  /** A window client with a visibility state, which lobby() does not carry. */
+  const win = (url: string, focused: boolean, visibilityState: string) => ({
+    ...lobby(url, focused, true),
+    visibilityState,
+  });
+
+  it("does not paint while a focused lobby is on screen", async () => {
+    const { listeners, navigator } = loadWorker([win("http://x/", true, "visible")]);
+    await push(listeners, payload);
+    expect(navigator.setAppBadge).not.toHaveBeenCalled();
+  });
+
+  it("does not paint while a visible but unfocused lobby is on screen", async () => {
+    const { listeners, navigator } = loadWorker([win("http://x/", false, "visible")]);
+    await push(listeners, payload);
+    expect(navigator.setAppBadge).not.toHaveBeenCalled();
+  });
+
+  it("DOES paint when every window is hidden — a backgrounded PWA parks its poll", async () => {
+    const { listeners, navigator } = loadWorker([win("http://x/", false, "hidden")]);
+    await push(listeners, payload);
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(9);
+  });
+
+  it("DOES paint when the only visible window is a terminal frame, not the lobby", async () => {
+    const { listeners, navigator } = loadWorker([
+      win("http://x/assets/term-2d2be4d7a166.html", true, "visible"),
+    ]);
+    await push(listeners, payload);
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(9);
+  });
+
+  it("still shows the notification when a lobby is on screen", async () => {
+    const c = win("http://x/", true, "visible");
+    const { listeners, self } = loadWorker([c]);
+    await push(listeners, payload);
+    expect(self.registration.showNotification).toHaveBeenCalled();
   });
 });
