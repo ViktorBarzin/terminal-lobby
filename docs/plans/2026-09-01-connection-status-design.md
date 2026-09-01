@@ -155,6 +155,18 @@ carrying each row's verdict and its timing, under the same opt-out as everything
 else. It is the only record that says what the UI *claimed*, which is what a
 support question is actually about.
 
+Testing that record end to end surfaced a separate, pre-existing gap:
+`packaging/build-deb.sh` built the SPA without `TL_BUILD` in its environment, so
+vite compiled the literal `__TL_BUILD__` into the bundle and every lobby
+diagnostics record reported that string as its build — 100 of 100 records over
+12 hours, well before this work. `tl.build` is the attribute that says which
+build a client was running when something broke, so the SPA's half of ADR-0008
+could not be attributed to a release. `term.html` was unaffected, because
+`tl-stamp` stamps it with the same commit. Fixed by passing `$COMMIT` to the
+build, and the placeholder guard now scans the emitted chunks as well as the two
+stamped HTML surfaces — it only covered the surfaces, which is why this class of
+leak got past it.
+
 ## What opening the real page changed
 
 Three things were wrong in a way the tests could not see, because each was a
