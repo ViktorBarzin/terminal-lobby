@@ -67,10 +67,15 @@ const ROWS: Record<string, SnapshotRow[]> = {
 class FakeApi implements RestorePickerApi {
   restores: { snapshot: string; sessions: string[] }[] = [];
   failRestore = false;
+  fetched: string[] = [];
+  /** The server this fake speaks for. "one-call" sends the newest snapshot's
+   *  rows with the list; "list-only" is a box that predates that. */
+  list: SnapshotList = LIST;
   async listSnapshots() {
-    return LIST;
+    return this.list;
   }
   async getSnapshot(ts: string) {
+    this.fetched.push(ts);
     return ROWS[ts] ?? [];
   }
   async restoreSessions(sel: { snapshot: string; sessions: string[] }) {
@@ -343,6 +348,54 @@ describe("restore picker — behaviour", () => {
     expect(dest?.textContent).toContain("code");
     // Nothing invented for rows with no project.
     expect(container.querySelectorAll(".tl-restore-dest").length).toBe(1);
+  });
+
+  // Opening the picker is ONE request: the list arrives with the newest
+  // snapshot already resolved. Asking twice meant two sudo/bash/tmux round
+  // trips that could not overlap, since the second needed the first's answer.
+  it("renders the newest snapshot from the list response, without a second call", async () => {
+    const api = new FakeApi();
+    api.list = {
+      ...LIST,
+      newestTs: "20260814T130500",
+      rows: ROWS["20260814T130500"]!,
+    };
+    mount(api);
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+    expect(api.fetched).toEqual([]);
+  });
+
+  // Switching to an older version is still a fetch — only the open is bundled.
+  it("still fetches when you pick a different version", async () => {
+    const api = new FakeApi();
+    api.list = {
+      ...LIST,
+      newestTs: "20260814T130500",
+      rows: ROWS["20260814T130500"]!,
+    };
+    const { container } = mount(api);
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+
+    clickSnapshot(container, 2);
+    await waitFor(() => expect(screen.getByText("chesscom")).toBeTruthy());
+    expect(api.fetched).toEqual(["20260814T125000"]);
+  });
+
+  // A box whose tmux-persist predates the one-call open sends the list alone.
+  it("asks for the rows when the list does not carry them", async () => {
+    const api = new FakeApi();
+    mount(api);
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+    expect(api.fetched).toEqual(["20260814T130500"]);
+  });
+
+  // Rows for a snapshot that is no longer the newest are not the rows to show.
+  it("ignores bundled rows that belong to another snapshot", async () => {
+    const api = new FakeApi();
+    api.list = { ...LIST, newestTs: "20260814T125000", rows: ROWS["20260814T125000"]! };
+    mount(api);
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+    expect(api.fetched).toEqual(["20260814T130500"]);
   });
 
   it("says so when nothing has been snapshotted yet", async () => {

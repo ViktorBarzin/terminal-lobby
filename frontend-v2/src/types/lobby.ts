@@ -150,13 +150,19 @@ export interface Snapshot {
   lastFull: boolean;
 }
 
-/** GET /api/snapshots. */
+/** GET /api/snapshots — everything the picker needs to open, in one call. */
 export interface SnapshotList {
   snapshots: Snapshot[];
   /** -1 when /proc/meminfo could not be read — the UI then says nothing rather
    *  than implying there is room. */
   memAvailableMb: number;
   perSessionMb: number;
+  /** The snapshot `rows` was resolved from. Absent on a server that predates
+   *  the one-call open, or when there are no snapshots yet. */
+  newestTs?: string;
+  /** That snapshot already resolved against live state, so the picker renders
+   *  from this response. Absent means fetch it with getSnapshot, as before. */
+  rows?: SnapshotRow[];
 }
 
 /** One session inside a snapshot, already resolved against what is live. */
