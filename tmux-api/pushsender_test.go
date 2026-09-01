@@ -332,11 +332,11 @@ func TestPushSenderIgnoresUsersWithoutSubs(t *testing.T) {
 }
 
 // The marshaled payload is EXACTLY the shape frontend/sw.js parses: keys
-// title, body, tag, session and nothing else. A drift here breaks background
-// notifications silently, so pin it.
+// title, body, tag, session, badge and nothing else. A drift here breaks
+// background notifications silently, so pin it.
 func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("worktree"), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("worktree", 3), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -344,6 +344,7 @@ func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 		"body":    "Claude is awaiting your input.",
 		"tag":     "tl-worktree",
 		"session": "worktree",
+		"badge":   float64(3),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("push payload shape drift:\n got %v\nwant %v", got, want)
@@ -357,7 +358,7 @@ func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 // renotify).
 func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildDonePayload("worktree"), &got); err != nil {
+	if err := json.Unmarshal(buildDonePayload("worktree", 1), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -365,12 +366,13 @@ func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 		"body":    "Claude finished its turn.",
 		"tag":     "tl-worktree",
 		"session": "worktree",
+		"badge":   float64(1),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("done payload shape drift:\n got %v\nwant %v", got, want)
 	}
 	var aw map[string]any
-	_ = json.Unmarshal(buildPushPayload("worktree"), &aw)
+	_ = json.Unmarshal(buildPushPayload("worktree", 1), &aw)
 	if got["tag"] != aw["tag"] {
 		t.Fatalf("done tag %q != awaiting tag %q — coalescing would break", got["tag"], aw["tag"])
 	}
@@ -547,4 +549,45 @@ func TestPushSenderUsesSharedClient(t *testing.T) {
 		t.Fatalf("sender.client.Timeout = %s, want %s", hc.Timeout, pushClientTimeout)
 	}
 	dialHonorsRequestedNetwork(t, hc)
+}
+
+// A zero badge is a real value, not an absent one: it is what CLEARS the app
+// icon, and `omitempty` on the field would drop it from the wire and leave a
+// stale count on the user's home screen.
+func TestPushPayloadCarriesZeroBadge(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal(buildPushPayload("worktree", 0), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	if _, ok := got["badge"]; !ok {
+		t.Fatal("badge:0 dropped from the payload — the icon would keep a stale count")
+	}
+	if got["badge"] != float64(0) {
+		t.Fatalf("badge = %v, want 0", got["badge"])
+	}
+}
+
+// waitingCount counts the sessions asking for attention — awaiting or done —
+// and nothing else. A running session is busy, not waiting.
+func TestWaitingCountCountsOnlyAttentionStates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		states map[string]string
+		want   int
+	}{
+		{"empty", map[string]string{}, 0},
+		{"only running", map[string]string{"a": stateRunning, "b": stateRunning}, 0},
+		{"awaiting counts", map[string]string{"a": stateAwaiting}, 1},
+		{"done counts", map[string]string{"a": stateDone}, 1},
+		{"mixed", map[string]string{
+			"a": stateAwaiting, "b": stateRunning, "c": stateDone, "d": stateDone,
+		}, 3},
+		{"unknown state ignored", map[string]string{"a": "", "b": "weird"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := waitingCount(tc.states); got != tc.want {
+				t.Fatalf("waitingCount(%v) = %d, want %d", tc.states, got, tc.want)
+			}
+		})
+	}
 }
