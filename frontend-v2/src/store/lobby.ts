@@ -1,5 +1,6 @@
 import { createMemo, createSignal, type Accessor } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
+import type { SessionsReport } from "../diagnostics/status";
 import {
   addProject,
   addSessionToGroup,
@@ -64,6 +65,14 @@ export interface LobbyStore {
    * effect needs in order to repaint on a schedule rather than only on a diff.
    */
   polls: Accessor<number>;
+  /**
+   * How the poll itself is doing, for the connection status panel. The session
+   * list is the one channel that is not a persistent connection — it is
+   * request/response with a backoff ladder — so "connected" is a fiction for it
+   * and this reports what is true instead: when it last got an answer, and how
+   * long it has been failing.
+   */
+  pollHealth: Accessor<SessionsReport>;
   selected: Accessor<SelectedSession | null>;
   toast: Accessor<string | null>;
   /** name of the session card currently being dragged (HTML5 DnD), or null. */
@@ -210,6 +219,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [polls, setPolls] = createSignal(0);
+  /** Poll health, for the connection status panel: when the last poll returned,
+   *  when the current run of failures started, and how many there have been. */
+  const [pollOk, setPollOk] = createSignal<number | null>(null);
+  const [pollFailingSince, setPollFailingSince] = createSignal<number | null>(null);
+  const [pollFails, setPollFails] = createSignal(0);
   const [selected, setSelected] = createSignal<SelectedSession | null>(
     opts.initialSelected ?? null,
   );
@@ -456,6 +470,17 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
 
   function scheduleNextPoll(outcome: LoadOutcome): void {
     if (!polling) return; // disposed while this poll was still out
+    // The status panel reports this channel, and "how the poll is doing" was
+    // knowable only from in here (ADR-0016). Recorded before the ladder moves
+    // so `failingSince` marks the FIRST failure, not the latest one.
+    if (outcome === "ok") {
+      setPollOk(Date.now());
+      setPollFailingSince(null);
+    } else if (outcome === "failed" && pollFailingSince() === null) {
+      setPollFailingSince(Date.now());
+    }
+    if (outcome !== "skipped") setPollFails(outcome === "ok" ? 0 : (n) => n + 1);
+
     if (outcome === "ok") pollFailures = 0;
     // Stop counting once the ladder has saturated: the delay is capped there
     // anyway, and an overnight outage should not leave 2 ** <hours> behind.
@@ -951,6 +976,16 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     loading,
     loadError,
     polls,
+    pollHealth: () => {
+      const ok = pollOk();
+      const failing = pollFailingSince();
+      const at = Date.now();
+      return {
+        failures: pollFails(),
+        lastOkMs: ok === null ? null : at - ok,
+        downMs: failing === null ? null : at - failing,
+      };
+    },
     selected,
     toast,
     dragName,
