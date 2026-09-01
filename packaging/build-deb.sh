@@ -30,7 +30,7 @@ COMMIT="$(git rev-parse --short HEAD)"
 # the path it happened to run in.
 echo "==> building Go services (commit $COMMIT)"
 LDFLAGS="-X main.buildID=$COMMIT"
-for svc in tmux-api clipboard-upload session-events file-api skills-api; do
+for svc in tmux-api clipboard-upload session-events file-api skills-api tl-session-watch; do
   (cd "$svc" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
     go build -trimpath -ldflags "$LDFLAGS" -o "$STAGE/bin/$svc" .)
 done
