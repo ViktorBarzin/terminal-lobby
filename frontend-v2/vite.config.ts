@@ -78,10 +78,17 @@ const TTYD = process.env.TL_TTYD || "http://127.0.0.1:7681";
 // in for the ingress so the dev server actually authenticates. Injected via the
 // proxyReq hook (the static `headers` option is unreliable across versions).
 const DEV_AUTH = process.env.TL_DEV_AUTH || "";
+// WHICH header carries the identity is configuration on the box as of
+// 2026-08-29 (`TL_AUTH_HEADER` in /etc/terminal-lobby.conf, default
+// X-Forwarded-User), so the dev proxy reads the same variable rather than
+// assuming Authentik. Hardcoding the Authentik name left `vite` authenticating
+// against nothing on a box configured for any other proxy, and the default here
+// keeps every existing invocation working.
+const DEV_AUTH_HEADER = process.env.TL_AUTH_HEADER || "X-Authentik-Username";
 const injectAuth: ProxyOptions["configure"] = (proxy) => {
   if (!DEV_AUTH) return;
   const setHeader = (proxyReq: ClientRequest) => {
-    proxyReq.setHeader("X-Authentik-Username", DEV_AUTH);
+    proxyReq.setHeader(DEV_AUTH_HEADER, DEV_AUTH);
   };
   proxy.on("proxyReq", setHeader);
   // WebSocket upgrades (the ttyd /ws attach) fire proxyReqWs, NOT proxyReq — the

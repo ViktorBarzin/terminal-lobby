@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Reading the box. The parsers here are separated from the calls that produce
@@ -29,7 +30,11 @@ var (
 	cgroupRoot    = "/sys/fs/cgroup"
 	procRoot      = "/proc"
 	userMap       = "/etc/ttyd-user-map"
-	manifestFn    = func(user string) string { return "/var/lib/tmux-persist/" + user + ".tsv" }
+	// The TOMBSTONE file, not the manifest. tmux-persist-forget appends here on a
+	// deliberate kill and leaves the manifest row alone until the next 5-minute
+	// save, so an orphaned manifest row cannot tell a kill from a death in the
+	// window that matters.
+	tombstonesFn = func(user string) string { return "/var/lib/tmux-persist/" + user + ".forgotten.tsv" }
 )
 
 // parseUserMap takes the OS users out of /etc/ttyd-user-map, whose rows are
@@ -96,20 +101,22 @@ func parsePaneList(in string) map[string][]int {
 	return out
 }
 
-// parseManifest takes the session names out of a tmux-persist manifest, whose
-// rows are name, cwd, claude session uuid.
-func parseManifest(in string) map[string]bool {
-	out := map[string]bool{}
+// parseTombstones reads /var/lib/tmux-persist/<user>.forgotten.tsv, whose rows
+// are `<session>\t<epoch>`, into name -> most recent kill epoch. The file is
+// append-only, so a name can appear several times and the newest row wins.
+func parseTombstones(in string) map[string]int64 {
+	out := map[string]int64{}
 	for _, line := range strings.Split(in, "\n") {
-		if line == "" {
+		i := strings.LastIndex(line, "\t")
+		if i < 1 {
 			continue
 		}
-		name := line
-		if i := strings.Index(line, "\t"); i >= 0 {
-			name = line[:i]
+		ts, err := strconv.ParseInt(strings.TrimSpace(line[i+1:]), 10, 64)
+		if err != nil {
+			continue
 		}
-		if name != "" {
-			out[name] = true
+		if name := line[:i]; ts > out[name] {
+			out[name] = ts
 		}
 	}
 	return out
@@ -168,10 +175,11 @@ func Collect(users []string, bootID string) []Snapshot {
 
 func collectUser(user, bootID string) Snapshot {
 	snap := Snapshot{
-		User:     user,
-		BootID:   bootID,
-		Sessions: map[string]Session{},
-		Manifest: map[string]bool{},
+		User:       user,
+		BootID:     bootID,
+		Taken:      time.Now(),
+		Sessions:   map[string]Session{},
+		Tombstones: map[string]int64{},
 	}
 
 	sessOut, err := asUser(user, tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{@claude_state}")
@@ -192,8 +200,8 @@ func collectUser(user, bootID string) Snapshot {
 		}
 	}
 
-	if raw, err := readManifest(user); err == nil {
-		snap.Manifest = parseManifest(raw)
+	if raw, err := readTombstones(user); err == nil {
+		snap.Tombstones = parseTombstones(raw)
 	}
 	return snap
 }
@@ -254,7 +262,7 @@ func realChildren(pid int) []int {
 //
 // A session with several panes keeps the largest, since that is the one whose
 // cap bites first.
-func paneFacts(s Session, samples []procSample, memOf func(pid int) (cur, max uint64)) Session {
+func paneFacts(s Session, samples []procSample, memOf func(pid int) (cur, unreclaimable, max uint64)) Session {
 	for _, sm := range samples {
 		if sm.IsClaude {
 			s.ClaudeAlive = true
@@ -265,12 +273,35 @@ func paneFacts(s Session, samples []procSample, memOf func(pid int) (cur, max ui
 	if top.Pid == 0 {
 		return s
 	}
-	cur, max := memOf(top.Pid)
+	cur, unreclaimable, max := memOf(top.Pid)
 	if cur < s.PaneBytes {
 		return s
 	}
-	s.PaneBytes, s.PaneLimit, s.TopIsClaude = cur, max, top.IsClaude
+	s.PaneBytes, s.PaneUnreclaimable, s.PaneLimit, s.TopIsClaude = cur, unreclaimable, max, top.IsClaude
 	return s
+}
+
+// parseMemStatUnreclaimable sums the fields of memory.stat that the cap cannot
+// reclaim: anon and shmem. With memory.swap.max=0 inherited from the user slice,
+// neither can be paged out, so this is what a cap has to kill for.
+//
+// anon_thp is deliberately not added — it is already counted inside anon, and
+// adding it would double-count transparent huge pages.
+func parseMemStatUnreclaimable(in string) uint64 {
+	var total uint64
+	for _, line := range strings.Split(in, "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		if f[0] != "anon" && f[0] != "shmem" {
+			continue
+		}
+		if v, err := strconv.ParseUint(f[1], 10, 64); err == nil {
+			total += v
+		}
+	}
+	return total
 }
 
 // sampleTree reads every process under a pane pid with its resident size.
@@ -289,19 +320,23 @@ func sampleTree(panePid int) []procSample {
 	return out
 }
 
-// cgroupMemOf reads memory.current and memory.max from the cgroup a pid is in.
-func cgroupMemOf(pid int) (uint64, uint64) {
+// cgroupMemOf reads memory.current, the unreclaimable part of memory.stat, and
+// memory.max from the cgroup a pid is in.
+func cgroupMemOf(pid int) (uint64, uint64, uint64) {
 	raw, err := os.ReadFile(fmt.Sprintf("%s/%d/cgroup", procRoot, pid))
 	if err != nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	scope := cgroupPath(string(raw))
 	if scope == "" {
-		return 0, 0
+		return 0, 0, 0
 	}
 	dir := filepath.Join(cgroupRoot, scope)
-	// memory.max reads "max" when uncapped, which parses to 0.
-	return readUint(filepath.Join(dir, "memory.current")), readUint(filepath.Join(dir, "memory.max"))
+	stat, _ := os.ReadFile(filepath.Join(dir, "memory.stat"))
+	return readUint(filepath.Join(dir, "memory.current")),
+		parseMemStatUnreclaimable(string(stat)),
+		// memory.max reads "max" when uncapped, which parses to 0.
+		readUint(filepath.Join(dir, "memory.max"))
 }
 
 // readRSS reads VmRSS out of /proc/<pid>/status, in bytes.
@@ -382,14 +417,13 @@ func asUser(target, bin string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// readManifest reads the root-owned 0600 manifest, which is why this unit runs
-// as root rather than as wizard like the rest of the lobby's services. The
-// alternative was a new line in /etc/sudoers.d/ttyd-users, which is per-box
+// readTombstones reads the root-owned 0600 tombstone file, which is why this
+// unit runs as root rather than as wizard like the rest of the lobby's services.
+// The alternative was a new line in /etc/sudoers.d/ttyd-users, which is per-box
 // identity data the package deliberately does not ship and which is maintained
-// by hand; a hardened unit that needs no grant is the smaller surface of the
-// two. The path is a symlink into snapshots/<user>/, so it is read, not walked.
-func readManifest(user string) (string, error) {
-	raw, err := os.ReadFile(manifestFn(user))
+// by hand; a hardened unit that needs no grant is the smaller surface of the two.
+func readTombstones(user string) (string, error) {
+	raw, err := os.ReadFile(tombstonesFn(user))
 	return string(raw), err
 }
 

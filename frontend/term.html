@@ -9328,6 +9328,25 @@ ${w.join(`
                 // rare failed-write case. Idempotent with the tl-font-size
                 // message the lobby sends alongside for stale builds.
                 applyTermPrefs(readRawPrefs() ? getPrefs() : normalizePrefs(e.data.prefs));
+            } else if (e.data.type === 'tl-conn-retry') {
+                // The Reconnect button in the status panel. Explicitly tapped,
+                // never automatic: a check that reconnected what it found
+                // broken would destroy the state its reader came to look at.
+                // Routed through the existing paths so a battery suspend
+                // resumes and anything else takes one rung off the ladder
+                // rather than opening a second socket.
+                try {
+                    if (!resumeFromSuspend('asked by the lobby')) {
+                        clearTimeout(retryTimer); retryTimer = null;
+                        connect();
+                    }
+                } catch (e2) { /* ladder not wired yet */ }
+            } else if (e.data.type === 'tl-conn-ask') {
+                // Run check asking what this socket is doing, or a shell that
+                // mounted after the last real change. Reads state, never
+                // touches the connection — the check must not repair what it
+                // came to measure.
+                try { reportConnNow(); } catch (e2) { /* ladder not wired yet */ }
             } else if (e.data.type === 'tl-focus') {
                 requestTerminalFocus();
             } else if (e.data.type === 'tl-theme') {
@@ -9769,8 +9788,49 @@ ${w.join(`
             () => heldShadow ? 'held'
                 : connPill.classList.contains('offline') ? 'offline' : 'connecting');
         let connAttemptShown = 0;
+        // >>> tl-conn-report
+        // This socket lives in another document, so the lobby shell could never
+        // see it: its badge reported the transcript stream and said nothing
+        // about the terminal in front of you. One message closes that (ADR-0016).
+        //
+        // A PROVIDER, NOT A PROTOCOL. The shell treats "no message" as "not
+        // reporting" rather than as health, which is what makes this safe to
+        // send from a page the shell might be a cached older build of — and what
+        // lets a native terminal component later replace it with a local signal
+        // without the status model noticing.
+        //
+        // The pill stays exactly as it is. It is the loud, in-place signal where
+        // the eyes already are, and it carries the attempt number; the badge is
+        // the one-glance summary and the way into the panel.
+        let connReported = '';
+        function reportConn(state, attempt) {
+            if (!isFramed) return; // a standalone term.html has nobody to tell
+            const line = state + ':' + (attempt || 0);
+            if (line === connReported) return; // one message per real change
+            connReported = line;
+            try {
+                parent.postMessage({ type: 'tl-conn', state: state, attempt: attempt || 0 },
+                                   location.origin);
+            } catch (e) { /* the shell is gone; the terminal keeps working */ }
+        }
+        // Answer "what are you doing right now" for Run check, and for a shell
+        // that mounted after the last real change. Re-posts even when nothing
+        // moved, which the dedupe above would otherwise swallow.
+        function reportConnNow() {
+            connReported = '';
+            reportConn(currentConnState(), connAttemptShown);
+        }
+        function currentConnState() {
+            if (batterySuspended) return 'suspended';
+            if (navigator.onLine === false) return 'offline';
+            if (ws && ws.readyState === WebSocket.OPEN) return 'open';
+            if (retryTimer || (ws && ws.readyState === WebSocket.CONNECTING)) return 'connecting';
+            return hasConnectedOnce ? 'closed' : 'connecting';
+        }
+        // <<< tl-conn-report
         function paintConnPill(attempt) {
             connAttemptShown = attempt;
+            reportConn(navigator.onLine === false ? 'offline' : 'connecting', attempt);
             const held = heldCount();
             connPill.textContent =
                 (navigator.onLine === false ? 'You are offline'
@@ -9830,6 +9890,9 @@ ${w.join(`
             clearTimeout(retryTimer); retryTimer = null; // drop any pending reconnect
             clearTimeout(stableTimer);
             hideConnPill();
+            // Deliberate, and reconnected on the next visibility change — the
+            // shell must not paint this as a fault the phone caused.
+            reportConn('suspended', 0);
             connPill.classList.remove('dropped');
             discardHeldInput(); // a suspend outlives the replay window by design
             // Tear down through the shared path so a half-finished attempt
@@ -10084,6 +10147,7 @@ ${w.join(`
                     scheduleReconnect();
                 } else {
                     hideConnPill();
+                    reportConn('closed', 0); // the session is gone, no ladder is running
                     discardHeldInput(); // nothing left to replay them into
                     term.write('\r\n\x1b[33mSession ended.\x1b[0m\r\n');
                 }
@@ -10206,6 +10270,7 @@ ${w.join(`
                         mirrorLineReset();
                         cancelScrollMomentum();   // a (re)attach / session switch hard-cancels a coast
                         hideConnPill();
+                        reportConn('open', 0);
                         // Ladder reset only after the connection PROVES
                         // stable (30s up) — an instant re-drop keeps the
                         // escalated delay instead of restarting at 1s.

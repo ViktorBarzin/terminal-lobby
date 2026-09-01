@@ -26,12 +26,17 @@
 #                                      the root-owned manifest + runuser into the
 #                                      target user). Self-validates its one arg
 #                                      against /etc/ttyd-user-map.
-#   /usr/local/bin/tmux-persist-forget tmux-api DELETE /sessions/<name>: drops
-#                                      the killed session from the root-owned
-#                                      0600 restore manifest, so Restore cannot
-#                                      resurrect it. Self-validates both args
-#                                      (user against /etc/ttyd-user-map, session
-#                                      against tmux-api's session-name charset).
+#   /usr/local/bin/tmux-persist-forget tmux-api DELETE /sessions/<name>: writes
+#                                      a TOMBSTONE for the killed session into
+#                                      the root-owned 0600
+#                                      <user>.forgotten.tsv, so Restore cannot
+#                                      resurrect it. It does NOT edit the
+#                                      manifest — deleting a row there would
+#                                      erase the session from every older
+#                                      snapshot too (changed 2026-08-14).
+#                                      Self-validates both args (user against
+#                                      /etc/ttyd-user-map, session against
+#                                      tmux-api's session-name charset).
 #   /usr/local/bin/file-api           file-api re-execs ITSELF as the mapped
 #                                      user (`-privop list|read|write`) so the
 #                                      four-layer path validation in paths.go
@@ -121,8 +126,12 @@ wizard ALL=(<os_user>) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach,
 # wrapper self-validates its args (canonical dir strictly under a home, real
 # users, inode cap) so this grant can't become an arbitrary-path ACL writer.
 #
-# tmux-persist-forget (the other half of a deliberate kill): removes one row
-# from /var/lib/tmux-persist/<user>.tsv, which is root-owned 0600. Same trust
+# tmux-persist-forget (the other half of a deliberate kill): appends one
+# tombstone row to /var/lib/tmux-persist/<user>.forgotten.tsv, root-owned 0600.
+# It leaves <user>.tsv alone; the manifest row goes at the next 5-minute save.
+# That distinction is load-bearing for anything deciding whether a vanished
+# session was killed on purpose — reading the manifest instead says "deliberate
+# kill" for up to five minutes after every one of them. Same trust
 # shape as the two above — exactly two args, user re-checked against
 # /etc/ttyd-user-map, session name confined to tmux-api's sessionNameRe charset,
 # and no path ever taken from the input, so it can't become an arbitrary-file

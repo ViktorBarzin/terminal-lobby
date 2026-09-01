@@ -195,6 +195,24 @@ src/
     usage.ts             What the lobby cost this device, in wire bytes: three
                          buckets measured from Navigation/Resource Timing, two
                          (ttyd WS, SSE) modelled by diag.js and labelled as such
+    status.ts            Connection status, PURE (ADR-0016): five channels
+                         (terminal, transcript, session list, notifications,
+                         build) in three states, plus `unknown` — which every
+                         rule skips rather than counting as health or as fault.
+                         Owns worst-of, the badge's word, the panel's verdict,
+                         the per-channel mappings and `readConn`, the parser for
+                         the terminal frame's `tl-conn` message
+    status-store.ts      The live wiring: providers push in, transitions are
+                         logged in memory for the life of the page (and into
+                         diag.js's flight recorder, so an incident carries the
+                         connection history behind it), and `check()` drives the
+                         probes. Also `ConnectionControl`, what the panel is handed
+    check.ts             Run check: every probe at once, each capped at 5s,
+                         each row reported the moment it lands. A probe that
+                         hangs is aborted and reported, never left running
+    probes.ts            The five probes themselves. All read-only — /health and
+                         GET /push-subscriptions are the only server calls, and
+                         nothing is ever sent to a device
   sse/client.ts          Resumable SSE client (Last-Event-ID, backoff+jitter,
                          instant-retry on visible/online) — DOM-free, testable.
                          Resyncs when `ready` names a log it was not reading:
@@ -261,6 +279,12 @@ src/
     ProjectGroup.tsx     One project group header + its cards (DnD, menu)
     SessionCard.tsx      One session row: dot, tool mark, timer, inline rename
     StateDot.tsx         Claude state dot (running / awaiting / done)
+    StatusDot.tsx        The connection badge (ADR-0016). Dot always, a word
+                         only when something is wrong. One component in two
+                         places, each SCOPED to the channels its surface can
+                         honestly report — the session bar has all five, the
+                         sidebar header the three a list screen can answer for.
+                         Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
     CreateSessionRow.tsx New-session input + the Claude/Codex/shell picker
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
@@ -331,6 +355,12 @@ src/
       stepper.ts         − / value / + arithmetic for the three text controls:
                          step-index maths so 0.05 steps do not drift, and an
                          off-grid value moves to the next grid point
+      RightNow.tsx       The connection panel (ADR-0016), rendered as the
+                         Network page's first group: a verdict sentence, one row
+                         per channel with its state, what it dropped since this
+                         page loaded and the last check's timing, Run check, and
+                         a repair on any row that has one. Nothing here
+                         reconnects anything on its own
       controls.tsx       The row grammar every page is built from — Row (label
                          left, control right, ⓘ that expands in place, a
                          "this device" chip on what does not roam), Toggle,
