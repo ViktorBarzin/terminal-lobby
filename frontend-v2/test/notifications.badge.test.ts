@@ -23,6 +23,9 @@ const badges: number[] = [];
 beforeEach(() => {
   localStorage.clear();
   badges.length = 0;
+  // The visit store only stamps a session seen while the tab is on screen AND
+  // focused. jsdom reports no focus, so say the user is looking at the app.
+  Object.defineProperty(document, "hasFocus", { value: () => true, configurable: true });
   Object.defineProperty(navigator, "setAppBadge", {
     value: (n: number) => {
       badges.push(n);

@@ -25,6 +25,16 @@ export type TitleSession = {
   title?: string;
   state?: string;
   pane_current_command?: string;
+  /**
+   * The OS user who owns it, when that is NOT the viewer — a session shared with
+   * you through a project or a direct share. Absent for your own.
+   *
+   * Carried so the app-icon badge can leave other people's work out of "how many
+   * are waiting for you". The push sender only ever sees the caller's own tmux
+   * server, so without this the page's count and the server's could not agree
+   * for anyone who has been shared a session.
+   */
+  owner?: string;
 };
 
 export interface TitleCounts {

@@ -7,6 +7,11 @@ import {
 } from "../src/store/visits";
 
 /**
+ * Most cases pass `visible: () => true` explicitly. The real default is "on
+ * screen AND focused", and jsdom reports no focus, so a store left on the
+ * default would never stamp anything and every case would be testing the same
+ * thing. The focus rule has its own describe at the bottom.
+ *
  * Seen/visit tracking (inventory Cat.2) — the store the v2 port was missing, so
  * the tab-title `(N✓)` badge counted every `done` session forever instead of the
  * ones the user has not looked at yet.
@@ -27,7 +32,7 @@ afterEach(() => localStorage.clear());
 describe("createVisitStore — unseen-done", () => {
   it("counts a finished session the user has never looked at as unseen", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([running("a")], null);
     c.tick();
     v.observe([done("a")], null);
@@ -35,7 +40,7 @@ describe("createVisitStore — unseen-done", () => {
   });
 
   it("never counts a running or awaiting session as unseen-done", () => {
-    const v = createVisitStore({ now: clock().now });
+    const v = createVisitStore({ now: clock().now, visible: () => true });
     v.observe([running("a"), { name: "b", state: "awaiting" }], null);
     expect(v.isUnseen(running("a"))).toBe(false);
     expect(v.isUnseen({ name: "b", state: "awaiting" })).toBe(false);
@@ -43,7 +48,7 @@ describe("createVisitStore — unseen-done", () => {
 
   it("clears unseen for the session the user is looking at", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([running("a"), running("b")], null);
     c.tick();
     v.observe([done("a"), done("b")], null);
@@ -57,7 +62,7 @@ describe("createVisitStore — unseen-done", () => {
 
   it("re-badges a session that finishes AGAIN after the last visit", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([done("a")], "a"); // seen while attached
     expect(v.isUnseen(done("a"))).toBe(false);
     c.tick();
@@ -78,7 +83,7 @@ describe("createVisitStore — unseen-done", () => {
 
   it("stamp() marks a session seen straight away (visibility/focus return)", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([running("a")], null);
     c.tick();
     v.observe([done("a")], null);
@@ -93,7 +98,7 @@ describe("createVisitStore — unseen-done", () => {
 describe("createVisitStore — persistence", () => {
   it("persists visits under tl:session-visits:v1 as name → epoch ms", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([done("a")], "a");
     // the shape the palette's recents-first sort already reads
     expect(JSON.parse(localStorage.getItem(VISITS_KEY) as string)).toEqual({
@@ -103,9 +108,9 @@ describe("createVisitStore — persistence", () => {
 
   it("survives a reload: a session seen before the reload stays seen", () => {
     const c = clock();
-    createVisitStore({ now: c.now }).observe([done("a")], "a");
+    createVisitStore({ now: c.now, visible: () => true }).observe([done("a")], "a");
     c.tick();
-    const reloaded = createVisitStore({ now: c.now });
+    const reloaded = createVisitStore({ now: c.now, visible: () => true });
     expect(reloaded.isUnseen(done("a"))).toBe(false);
   });
 
@@ -119,7 +124,7 @@ describe("createVisitStore — persistence", () => {
 
   it("prunes sessions that no longer exist", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([done("a"), done("b")], "a");
     c.tick();
     v.observe([done("b")], null); // 'a' was killed
@@ -129,7 +134,7 @@ describe("createVisitStore — persistence", () => {
   it("degrades quietly on corrupt storage", () => {
     localStorage.setItem(VISITS_KEY, "{not json");
     localStorage.setItem(STATES_KEY, "[]");
-    const v = createVisitStore({ now: clock().now });
+    const v = createVisitStore({ now: clock().now, visible: () => true });
     expect(() => v.observe([done("a")], null)).not.toThrow();
     expect(v.isUnseen(done("a"))).toBe(true);
   });
@@ -138,7 +143,7 @@ describe("createVisitStore — persistence", () => {
 describe("createVisitStore — revision (repaint trigger)", () => {
   it("bumps when the unseen set changes, and NOT on a repeated stamp", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([running("a")], null);
     const seed = v.revision();
 
@@ -172,7 +177,7 @@ describe("createVisitStore — revision (repaint trigger)", () => {
 describe("createVisitStore — an empty list is 'not known yet'", () => {
   it("prunes nothing when handed an empty session list", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([running("a")], null);
     c.tick();
     v.observe([done("a")], null);
@@ -189,7 +194,7 @@ describe("createVisitStore — an empty list is 'not known yet'", () => {
 
   it("keeps the persisted records across an empty observe", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([done("a")], "a");
     const visitsBefore = localStorage.getItem(VISITS_KEY);
     const statesBefore = localStorage.getItem(STATES_KEY);
@@ -202,10 +207,35 @@ describe("createVisitStore — an empty list is 'not known yet'", () => {
 
   it("still prunes a session that a REAL poll no longer lists", () => {
     const c = clock();
-    const v = createVisitStore({ now: c.now });
+    const v = createVisitStore({ now: c.now, visible: () => true });
     v.observe([done("a"), done("b")], "a");
     v.observe([done("b")], null); // a genuinely shorter list
     const visits = JSON.parse(localStorage.getItem(VISITS_KEY) || "{}");
     expect(Object.keys(visits)).not.toContain("a");
+  });
+});
+
+/**
+ * Seen means LOOKED AT. `!document.hidden` alone was true for a desktop window
+ * sitting behind an editor, so a turn that finished while the user was in
+ * another app was stamped read and never reached the unread count.
+ */
+describe("createVisitStore — seen requires focus, not just visibility", () => {
+  it("does not stamp a session while the window is visible but unfocused", () => {
+    const c = clock();
+    const v = createVisitStore({ now: c.now, visible: () => false });
+    v.observe([running("a")], "a");
+    c.tick();
+    v.observe([done("a")], "a");
+    expect(v.isUnseen(done("a"))).toBe(true);
+  });
+
+  it("stamps it once the window has focus", () => {
+    const c = clock();
+    const v = createVisitStore({ now: c.now, visible: () => true });
+    v.observe([running("a")], "a");
+    c.tick();
+    v.observe([done("a")], "a");
+    expect(v.isUnseen(done("a"))).toBe(false);
   });
 });
