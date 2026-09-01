@@ -65,16 +65,31 @@ func TestParsePaneListSkipsUnparseablePids(t *testing.T) {
 	}
 }
 
-func TestParseManifest(t *testing.T) {
-	// name, cwd, claude session uuid — tab separated. Only the name matters
-	// here; the uuid is what a --resume recovery would need later.
-	in := "alerts\t/home/wizard/code/terminal-lobby\td62c81ae-c752-42d9-83a6-2d37d12e9563\n" +
-		"claude\t/home/wizard/code\t-\n" +
+func TestParseTombstones(t *testing.T) {
+	// <session>\t<epoch>, appended once per deliberate kill.
+	in := "reflection\t1788286792\n" +
+		"drill-shape2\t1788286655\n" +
 		"\n"
-	got := parseManifest(in)
+	got := parseTombstones(in)
 
-	if len(got) != 2 || !got["alerts"] || !got["claude"] {
-		t.Fatalf("want alerts and claude, got %v", got)
+	if got["reflection"] != 1788286792 || got["drill-shape2"] != 1788286655 {
+		t.Fatalf("want both kills with their epochs, got %v", got)
+	}
+}
+
+func TestParseTombstonesKeepsTheNewestRowPerName(t *testing.T) {
+	// The file is append-only, so a reused session name accumulates rows. Only
+	// the latest kill can explain a disappearance happening now.
+	got := parseTombstones("immich\t1000\nimmich\t5000\nimmich\t3000\n")
+	if got["immich"] != 5000 {
+		t.Fatalf("want the newest epoch 5000, got %d", got["immich"])
+	}
+}
+
+func TestParseTombstonesSkipsMalformedRows(t *testing.T) {
+	got := parseTombstones("noepoch\nimmich\tnotanumber\nf1\t42\n")
+	if len(got) != 1 || got["f1"] != 42 {
+		t.Fatalf("want only the parseable row, got %v", got)
 	}
 }
 
@@ -196,7 +211,7 @@ func TestPaneFactsFindsClaudeAnywhereInTheTree(t *testing.T) {
 		{Pid: 10, RSSBytes: 5 << 30, IsClaude: false},
 		{Pid: 11, RSSBytes: 500 << 20, IsClaude: true},
 	}
-	got := paneFacts(Session{}, samples, func(int) (uint64, uint64) { return 5 << 30, 6 << 30 })
+	got := paneFacts(Session{}, samples, func(int) (uint64, uint64, uint64) { return 5 << 30, 5 << 30, 6 << 30 })
 
 	if !got.ClaudeAlive {
 		t.Error("want ClaudeAlive when a claude is anywhere in the tree")
@@ -213,11 +228,11 @@ func TestPaneFactsReadsMemoryFromTheTopProcessCgroup(t *testing.T) {
 		{Pid: 1501087, RSSBytes: 3 << 20, IsClaude: false},   // the shell
 		{Pid: 1501091, RSSBytes: 2094133248, IsClaude: true}, // claude
 	}
-	memOf := func(pid int) (uint64, uint64) {
+	memOf := func(pid int) (uint64, uint64, uint64) {
 		if pid == 1501091 {
-			return 2094133248, 6 << 30
+			return 2094133248, 2094133248, 6 << 30
 		}
-		return 0, 6 << 30 // the tmux-spawn scope, holding only the shell
+		return 0, 0, 6 << 30 // the tmux-spawn scope, holding only the shell
 	}
 	got := paneFacts(Session{}, samples, memOf)
 
@@ -233,7 +248,7 @@ func TestPaneFactsReadsMemoryFromTheTopProcessCgroup(t *testing.T) {
 }
 
 func TestPaneFactsClaimsNothingForAnEmptyPane(t *testing.T) {
-	got := paneFacts(Session{}, nil, func(int) (uint64, uint64) { return 9, 9 })
+	got := paneFacts(Session{}, nil, func(int) (uint64, uint64, uint64) { return 9, 9, 9 })
 	if got.ClaudeAlive || got.TopIsClaude || got.PaneBytes != 0 {
 		t.Fatalf("want no claims about an empty pane, got %+v", got)
 	}
@@ -242,9 +257,9 @@ func TestPaneFactsClaimsNothingForAnEmptyPane(t *testing.T) {
 func TestPaneFactsKeepsTheLargestPaneAcrossCalls(t *testing.T) {
 	// A session with several panes reports the one whose cap bites first.
 	s := paneFacts(Session{}, []procSample{{Pid: 1, RSSBytes: 4 << 30, IsClaude: true}},
-		func(int) (uint64, uint64) { return 4 << 30, 6 << 30 })
+		func(int) (uint64, uint64, uint64) { return 4 << 30, 4 << 30, 6 << 30 })
 	s = paneFacts(s, []procSample{{Pid: 2, RSSBytes: 1 << 30, IsClaude: false}},
-		func(int) (uint64, uint64) { return 1 << 30, 6 << 30 })
+		func(int) (uint64, uint64, uint64) { return 1 << 30, 1 << 30, 6 << 30 })
 
 	if s.PaneBytes != 4<<30 {
 		t.Errorf("want the larger pane retained, got %d", s.PaneBytes)
@@ -289,5 +304,56 @@ func TestAsUserArgvFallsBackToSudoWhenNotRoot(t *testing.T) {
 	want := []string{"/usr/bin/sudo", "-n", "-u", "emo", "/usr/bin/tmux", "list-sessions"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("want the sudo fallback, got %v", got)
+	}
+}
+
+// --- reading the unreclaimable figure --------------------------------------
+
+func TestParseMemStatUnreclaimable(t *testing.T) {
+	// The real memory.stat of the "issues" pane, 2026-09-01 19:10. Only anon and
+	// shmem count: 5131 MB of the file total was cold inactive_file, which the
+	// cap reclaims rather than kills for.
+	in := `anon 654311424
+file 5528823808
+kernel 104857600
+sock 0
+shmem 3145728
+inactive_anon 312475648
+active_anon 346030080
+inactive_file 5380705280
+active_file 143654912
+slab 96468992
+`
+	if got := parseMemStatUnreclaimable(in); got != 654311424+3145728 {
+		t.Fatalf("want anon+shmem = %d, got %d", 654311424+3145728, got)
+	}
+}
+
+func TestParseMemStatUnreclaimableOnAnEmptyFile(t *testing.T) {
+	if got := parseMemStatUnreclaimable(""); got != 0 {
+		t.Fatalf("want 0 for a scope with no stats, got %d", got)
+	}
+}
+
+// A field named anonymously similar must not be counted: anon_thp is already
+// included in anon, so adding it would double-count transparent huge pages.
+func TestParseMemStatUnreclaimableIgnoresAnonThp(t *testing.T) {
+	got := parseMemStatUnreclaimable("anon 1000\nanon_thp 900\nshmem 5\n")
+	if got != 1005 {
+		t.Fatalf("want 1005, got %d", got)
+	}
+}
+
+func TestPaneFactsCarriesUnreclaimableSeparately(t *testing.T) {
+	// current at the cap, unreclaimable nowhere near it: the shape that must not
+	// warn.
+	got := paneFacts(Session{}, []procSample{{Pid: 1, RSSBytes: 500 << 20, IsClaude: true}},
+		func(int) (uint64, uint64, uint64) { return 6143 << 20, 628 << 20, 6144 << 20 })
+
+	if got.PaneBytes != 6143<<20 {
+		t.Errorf("want memory.current 6143MB, got %d", got.PaneBytes>>20)
+	}
+	if got.PaneUnreclaimable != 628<<20 {
+		t.Errorf("want unreclaimable 628MB, got %d", got.PaneUnreclaimable>>20)
 	}
 }

@@ -16,6 +16,7 @@ import { effectiveTier } from "../diagnostics/connection";
 import { currentNetworkId } from "../diagnostics/network";
 import { commitWindow, type WindowBytes } from "../diagnostics/usage";
 import { isBuildStale } from "../deploy/healer.logic";
+import { readConn, type TerminalReport } from "../diagnostics/status";
 import { track } from "../telemetry/track";
 import { ownWhile } from "../lib/ownwhile";
 
@@ -100,6 +101,16 @@ export const TerminalView: Component<{
    *  reconnect heal saw a new build. TOP-owned reload — the iframe NEVER reloads
    *  itself, it hands the reload UP to the lobby, which owns the single reload. */
   onFrameBuildStale?: () => void;
+  /** The frame's WebSocket changed state (ADR-0016). Null means the frame is
+   *  gone or has never spoken, which the status model reads as "not reporting"
+   *  rather than as health or as a fault. */
+  onFrameConn?: (report: TerminalReport | null) => void;
+  /** Ask the frame what its socket is doing right now — Run check's terminal
+   *  probe, and a re-mount that missed the last change. Reads, never repairs. */
+  askConn?: (ask: () => void) => void;
+  /** Retry the frame's socket. Only ever called from an explicit Reconnect tap;
+   *  the check never repairs what it came to measure. */
+  retryConn?: (retry: () => void) => void;
 }> = (props) => {
   let iframe: HTMLIFrameElement | undefined;
   let cover: HTMLDivElement | undefined;
@@ -319,10 +330,18 @@ export const TerminalView: Component<{
       if (d.totals && typeof d.totals === "object") {
         void commitWindow(d.totals as WindowBytes, currentNetworkId());
       }
+    } else if (d.type === "tl-conn") {
+      // The frame's socket, which this document cannot observe any other way.
+      // Origin + source were validated above, and the payload is two scalars —
+      // a state word and an attempt number.
+      props.onFrameConn?.(readConn(e.data));
     } else if (d.type === "tl-terminal-ready") {
       disarmWatchdog(); // the page painted, so it arrived whole
       hideCover();
       postViewState(); // the fresh document assumes it is visible
+      // A fresh document has not reported its socket yet, and the shell may
+      // have been showing the previous one's. Ask rather than assume.
+      postToFrame({ type: "tl-conn-ask" });
     } else if (d.type === "tl-theme-ack") {
       if (themeAckTimer) clearTimeout(themeAckTimer);
     } else if (d.type === "tl-command") {
@@ -431,6 +450,11 @@ export const TerminalView: Component<{
 
   onMount(() => {
     window.addEventListener("message", onMessage);
+    // Hand the caller a way to ask the frame for its socket state. Registered
+    // on mount so Run check can reach whichever terminal is currently on
+    // screen, without the panel holding a reference to the frame itself.
+    props.askConn?.(() => postToFrame({ type: "tl-conn-ask" }));
+    props.retryConn?.(() => postToFrame({ type: "tl-conn-retry" }));
   });
   // The bridges belong to whichever frame is on screen, not to whichever mounted
   // last: the lobby keeps every visited session mounted, and the dock mounts a
@@ -453,6 +477,13 @@ export const TerminalView: Component<{
       track("session.detached", { "tl.session": untrack(() => props.session) });
     }
     window.removeEventListener("message", onMessage);
+    // The frame is going away, so whatever it last said about its socket stops
+    // being true. Saying "not reporting" is the honest handover; leaving the
+    // last state behind would have the badge describing a terminal that is no
+    // longer on screen.
+    props.onFrameConn?.(null);
+    props.askConn?.(() => {});
+    props.retryConn?.(() => {});
     if (watchdogTimer) clearTimeout(watchdogTimer);
     if (coverTimer) clearTimeout(coverTimer);
     if (themeAckTimer) clearTimeout(themeAckTimer);

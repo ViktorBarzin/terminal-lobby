@@ -5,7 +5,8 @@ package telemetry
 // a typo would mint a series nobody queries.
 //
 // Adding a record = add it here, in the same commit as the call site, and to
-// the vocabulary table in docs/adr/0008-client-diagnostics.md.
+// the vocabulary table of the ADR that introduces it: docs/adr/0008 for the
+// original catalog, docs/adr/0016 for diag.selfcheck.
 //
 // Every diagnostics record additionally carries the correlation attributes
 // tl.tab, tl.parent, tl.device, tl.session, tl.conn, tl.client and tl.role.
@@ -45,6 +46,14 @@ var knownDiagEvents = map[string]bool{
 	"app.exception": true, // tl.msg, tl.src, tl.stack, tl.n, tl.kind
 	"api.slow":      true, // tl.ep, tl.status, tl.ms, tl.req
 	"diag.incident": true, // tl.kind + tl.trace, the flight recorder
+
+	// -- what a person was told ----------------------------------------------
+	// ADR-0016. One record per Run check: tl.chk.<channel> is the verdict a
+	// human just read on that row and tl.chk.<channel>_ms is how long the probe
+	// took. Pressing the button means someone is having a problem, so this is
+	// the highest-value moment on the channel — and it is the only record that
+	// says what the UI CLAIMED, which is what a support question asks about.
+	"diag.selfcheck": true,
 
 	// -- server side ---------------------------------------------------------
 	"api.served":  true, // one handler's duration, joined by tl.req
