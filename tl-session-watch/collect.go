@@ -262,7 +262,7 @@ func realChildren(pid int) []int {
 //
 // A session with several panes keeps the largest, since that is the one whose
 // cap bites first.
-func paneFacts(s Session, samples []procSample, memOf func(pid int) (cur, max uint64)) Session {
+func paneFacts(s Session, samples []procSample, memOf func(pid int) (cur, unreclaimable, max uint64)) Session {
 	for _, sm := range samples {
 		if sm.IsClaude {
 			s.ClaudeAlive = true
@@ -273,12 +273,35 @@ func paneFacts(s Session, samples []procSample, memOf func(pid int) (cur, max ui
 	if top.Pid == 0 {
 		return s
 	}
-	cur, max := memOf(top.Pid)
+	cur, unreclaimable, max := memOf(top.Pid)
 	if cur < s.PaneBytes {
 		return s
 	}
-	s.PaneBytes, s.PaneLimit, s.TopIsClaude = cur, max, top.IsClaude
+	s.PaneBytes, s.PaneUnreclaimable, s.PaneLimit, s.TopIsClaude = cur, unreclaimable, max, top.IsClaude
 	return s
+}
+
+// parseMemStatUnreclaimable sums the fields of memory.stat that the cap cannot
+// reclaim: anon and shmem. With memory.swap.max=0 inherited from the user slice,
+// neither can be paged out, so this is what a cap has to kill for.
+//
+// anon_thp is deliberately not added — it is already counted inside anon, and
+// adding it would double-count transparent huge pages.
+func parseMemStatUnreclaimable(in string) uint64 {
+	var total uint64
+	for _, line := range strings.Split(in, "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		if f[0] != "anon" && f[0] != "shmem" {
+			continue
+		}
+		if v, err := strconv.ParseUint(f[1], 10, 64); err == nil {
+			total += v
+		}
+	}
+	return total
 }
 
 // sampleTree reads every process under a pane pid with its resident size.
@@ -297,19 +320,23 @@ func sampleTree(panePid int) []procSample {
 	return out
 }
 
-// cgroupMemOf reads memory.current and memory.max from the cgroup a pid is in.
-func cgroupMemOf(pid int) (uint64, uint64) {
+// cgroupMemOf reads memory.current, the unreclaimable part of memory.stat, and
+// memory.max from the cgroup a pid is in.
+func cgroupMemOf(pid int) (uint64, uint64, uint64) {
 	raw, err := os.ReadFile(fmt.Sprintf("%s/%d/cgroup", procRoot, pid))
 	if err != nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	scope := cgroupPath(string(raw))
 	if scope == "" {
-		return 0, 0
+		return 0, 0, 0
 	}
 	dir := filepath.Join(cgroupRoot, scope)
-	// memory.max reads "max" when uncapped, which parses to 0.
-	return readUint(filepath.Join(dir, "memory.current")), readUint(filepath.Join(dir, "memory.max"))
+	stat, _ := os.ReadFile(filepath.Join(dir, "memory.stat"))
+	return readUint(filepath.Join(dir, "memory.current")),
+		parseMemStatUnreclaimable(string(stat)),
+		// memory.max reads "max" when uncapped, which parses to 0.
+		readUint(filepath.Join(dir, "memory.max"))
 }
 
 // readRSS reads VmRSS out of /proc/<pid>/status, in bytes.
