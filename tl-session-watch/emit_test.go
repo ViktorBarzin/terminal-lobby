@@ -36,9 +36,9 @@ func TestLineQuotesValuesThatNeedIt(t *testing.T) {
 func TestPaneLineCarriesTheNumbers(t *testing.T) {
 	got := Line(Finding{
 		Kind: KindPaneNearCap, User: "emo", Session: "infra",
-		PaneBytes: 4 << 30, PaneLimit: 6 << 30,
+		PaneBytes: 4 << 30, PaneUnreclaimable: 3 << 30, PaneLimit: 6 << 30,
 	})
-	for _, want := range []string{`event=pane_near_cap`, `pane_bytes=4294967296`, `pane_limit=6442450944`} {
+	for _, want := range []string{`event=pane_near_cap`, `pane_bytes=4294967296`, `pane_unreclaimable=3221225472`, `pane_limit=6442450944`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("want %q in %q", want, got)
 		}
@@ -76,7 +76,7 @@ func TestRenderTextfile(t *testing.T) {
 	snaps := []Snapshot{{
 		User: "wizard",
 		Sessions: map[string]Session{
-			"immich": {Name: "immich", PaneBytes: 1 << 30, PaneLimit: 6 << 30, TopIsClaude: true},
+			"immich": {Name: "immich", PaneBytes: 1 << 30, PaneUnreclaimable: 700 << 20, PaneLimit: 6 << 30, TopIsClaude: true},
 		},
 	}}
 	got := renderTextfile(snaps)
@@ -84,6 +84,7 @@ func TestRenderTextfile(t *testing.T) {
 	for _, want := range []string{
 		`# TYPE tl_pane_memory_bytes gauge`,
 		`tl_pane_memory_bytes{user="wizard",session="immich"} 1073741824`,
+		`tl_pane_unreclaimable_bytes{user="wizard",session="immich"} 734003200`,
 		`tl_pane_memory_max_bytes{user="wizard",session="immich"} 6442450944`,
 		`tl_pane_top_is_claude{user="wizard",session="immich"} 1`,
 	} {
