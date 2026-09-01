@@ -142,6 +142,9 @@ var Package = Manifest{
 		"ttyd", "tmux-api", "clipboard-upload",
 		"session-events", "file-api", "skills-api",
 		"clipboard-cleanup.timer",
+		// A long-running service rather than a timer: the comparison is between
+		// consecutive looks, so the previous snapshot has to survive the tick.
+		"tl-session-watch",
 	},
 	External: []string{"/usr/local/bin/ttyd"},
 	Checks: []Check{
@@ -155,6 +158,11 @@ var Package = Manifest{
 		{Unit: "file-api", Name: "file-api /files/list refuses anonymous", URL: "http://127.0.0.1:7686/files/list", WantStatus: 401},
 		{Unit: "skills-api", Name: "skills-api /health", URL: "http://127.0.0.1:7688/health", WantStatus: 200},
 		{Unit: "skills-api", Name: "skills-api /skills refuses anonymous", URL: "http://127.0.0.1:7688/skills", WantStatus: 401},
+		// Reports stale rather than up once ticks stop, so a watcher that is
+		// running but no longer looking fails the release check instead of
+		// passing it. It carries no authed surface, so there is no refusal to
+		// assert alongside it.
+		{Unit: "tl-session-watch", Name: "tl-session-watch /health", URL: "http://127.0.0.1:7689/health", WantStatus: 200},
 		// ttyd is launched with -H X-authentik-username, so an unauthenticated
 		// request is refused by the proxy-auth layer with 407, not 401. Verified
 		// against the live service rather than assumed.
@@ -167,6 +175,7 @@ var Package = Manifest{
 		{Src: "bin/file-api", Dest: "/usr/local/bin/file-api", Mode: 0o755},
 		{Src: "bin/skills-api", Dest: "/usr/local/bin/skills-api", Mode: 0o755},
 		{Src: "bin/tl-t3-sync", Dest: "/usr/local/bin/tl-t3-sync", Mode: 0o755},
+		{Src: "bin/tl-session-watch", Dest: "/usr/local/bin/tl-session-watch", Mode: 0o755},
 		// Spawned by T3 in place of claude, once per thread — no unit supervises it.
 		{Src: "bin/tl-t3-bridge", Dest: "/usr/local/bin/tl-t3-bridge", Mode: 0o755, Unmanaged: true},
 		// Invoked by ttyd per WebSocket, by sessions, and by tmux-api via sudo.
@@ -237,6 +246,7 @@ var Package = Manifest{
 		{Src: "devvm/clipboard-cleanup.service", Dest: "/etc/systemd/system/clipboard-cleanup.service", Mode: 0o644},
 		{Src: "devvm/clipboard-cleanup.timer", Dest: "/etc/systemd/system/clipboard-cleanup.timer", Mode: 0o644},
 		{Src: "devvm/tl-t3-sync@.service", Dest: "/etc/systemd/system/tl-t3-sync@.service", Mode: 0o644},
+		{Src: "devvm/tl-session-watch.service", Dest: "/etc/systemd/system/tl-session-watch.service", Mode: 0o644},
 
 		// The grant every attach depends on. visudo -cf gates it, because a
 		// malformed grant locks every user out of every session.
@@ -281,6 +291,10 @@ var Package = Manifest{
 			"/etc/systemd/system/clipboard-cleanup.service",
 			"/etc/systemd/system/clipboard-cleanup.timer",
 			"/usr/local/bin/clipboard-store-clean",
+		}},
+		{Name: "tl-session-watch", Files: []string{
+			"/usr/local/bin/tl-session-watch",
+			"/etc/systemd/system/tl-session-watch.service",
 		}},
 		{Name: "tl-t3-sync@", Template: true, Files: []string{
 			"/usr/local/bin/tl-t3-sync",

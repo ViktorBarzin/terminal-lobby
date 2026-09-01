@@ -1,0 +1,62 @@
+# tl-session-watch — says when a Claude session on this box dies.
+#
+# A long-running service rather than a timer, because the comparison is between
+# consecutive looks: the previous snapshot, the confirm streak for a dead claude,
+# and which episodes have already been reported all have to survive to the next
+# tick. A timer-launched process starts blind every 30 seconds and would either
+# report nothing or report everything twice.
+#
+# Design: infra/docs/plans/2026-09-01-devvm-session-loss-alerting.md
+[Unit]
+Description=terminal-lobby Claude session-loss watcher
+Documentation=https://github.com/ViktorBarzin/terminal-lobby
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/terminal-lobby.conf
+EnvironmentFile=-/etc/terminal-lobby.local.conf
+ExecStart=/usr/local/bin/tl-session-watch
+Restart=always
+RestartSec=5
+
+# promtail labels this identifier, and the Loki rules select on the label. The
+# allowlist in infra/scripts/devvm-promtail.yaml has to name it too: without the
+# label the rules match nothing, silently.
+SyslogIdentifier=tl-session-watch
+
+# Root, unlike every other unit in this package, for two reads: the tmux-persist
+# manifest is 0600 root-owned, and /proc/<pid>/exe for another user's process
+# needs privilege. The alternative was a new line in /etc/sudoers.d/ttyd-users,
+# which is per-box identity data the package deliberately does not ship and which
+# is maintained by hand — a sandboxed unit that needs no grant is the smaller of
+# the two surfaces, and it travels with the package.
+#
+# What it may touch: everything read-only except the one metric file, /run and
+# /tmp. Both of those are writable because reaching another user's tmux means
+# connect() on their socket, and connect() is a write on the socket inode.
+#
+# PrivateTmp is deliberately NOT set, and this is load-bearing rather than an
+# oversight. tmux keeps its sockets in /tmp/tmux-<uid>, so a private /tmp hides
+# every one of them: measured 2026-09-01, the same binary reported
+# "sessions=38" without it and "sessions=0" with it, exiting 0 either way. A
+# watcher that cannot see a session cannot notice it leaving, and it would have
+# looked healthy the whole time.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/node_exporter/textfile /run /tmp
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+# The watcher holds one snapshot per user and nothing else, so it has no reason
+# to grow. If it ever does, systemd stops it, Restart=always brings it back, and
+# the heartbeat gap trips SessionWatchSilent — which is the outcome we want over
+# a watcher that quietly becomes the memory problem it is watching for.
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target
