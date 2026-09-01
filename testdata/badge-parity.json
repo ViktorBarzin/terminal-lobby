@@ -1,0 +1,130 @@
+{
+  "_comment": [
+    "The app-icon badge is drawn by TWO writers: the page (notify/appbadge.ts, over",
+    "the visit store) and the service worker (sw.js, over the named set in the push",
+    "payload built by tmux-api/pushsender.go). Nothing pinned them to the same",
+    "arithmetic, and they disagreed in production: the server counted every finished",
+    "session, the page counted only the unread ones, so any push reset the icon",
+    "upward. This fixture is read by BOTH test suites and both must reach `want`.",
+    "",
+    "`visits[name]` is when the user last looked at that session; `states[name].at`",
+    "is when it reached its current state. Read AFTER it finished means seen.",
+    "Both sides derive the seen set that way rather than being handed it."
+  ],
+  "cases": [
+    {
+      "case": "nothing waiting",
+      "sessions": [
+        { "name": "idle", "state": "running" },
+        { "name": "shell", "state": "" }
+      ],
+      "visits": {},
+      "states": { "idle": { "state": "running", "at": 1000 } },
+      "want": 0
+    },
+    {
+      "case": "everything finished and everything read",
+      "sessions": [
+        { "name": "a", "state": "done" },
+        { "name": "b", "state": "done" },
+        { "name": "c", "state": "done" }
+      ],
+      "visits": { "a": 2000, "b": 2000, "c": 2000 },
+      "states": {
+        "a": { "state": "done", "at": 1000 },
+        "b": { "state": "done", "at": 1000 },
+        "c": { "state": "done", "at": 1000 }
+      },
+      "want": 0
+    },
+    {
+      "case": "eight finished all read, plus one asking — the live shape that read 9",
+      "sessions": [
+        { "name": "a", "state": "done" },
+        { "name": "b", "state": "done" },
+        { "name": "c", "state": "done" },
+        { "name": "d", "state": "done" },
+        { "name": "e", "state": "done" },
+        { "name": "f", "state": "done" },
+        { "name": "g", "state": "done" },
+        { "name": "h", "state": "done" },
+        { "name": "i", "state": "awaiting" }
+      ],
+      "visits": {
+        "a": 2000, "b": 2000, "c": 2000, "d": 2000,
+        "e": 2000, "f": 2000, "g": 2000, "h": 2000
+      },
+      "states": {
+        "a": { "state": "done", "at": 1000 },
+        "b": { "state": "done", "at": 1000 },
+        "c": { "state": "done", "at": 1000 },
+        "d": { "state": "done", "at": 1000 },
+        "e": { "state": "done", "at": 1000 },
+        "f": { "state": "done", "at": 1000 },
+        "g": { "state": "done", "at": 1000 },
+        "h": { "state": "done", "at": 1000 },
+        "i": { "state": "awaiting", "at": 1000 }
+      },
+      "want": 1
+    },
+    {
+      "case": "read BEFORE it finished is still unread",
+      "sessions": [{ "name": "a", "state": "done" }],
+      "visits": { "a": 500 },
+      "states": { "a": { "state": "done", "at": 1000 } },
+      "want": 1
+    },
+    {
+      "case": "a running session is busy, not waiting, however long since you looked",
+      "sessions": [
+        { "name": "a", "state": "running" },
+        { "name": "b", "state": "running" }
+      ],
+      "visits": {},
+      "states": {
+        "a": { "state": "running", "at": 1000 },
+        "b": { "state": "running", "at": 1000 }
+      },
+      "want": 0
+    },
+    {
+      "case": "an awaiting session counts even though you are looking at it",
+      "sessions": [{ "name": "a", "state": "awaiting" }],
+      "visits": { "a": 5000 },
+      "states": { "a": { "state": "awaiting", "at": 1000 } },
+      "want": 1
+    },
+    {
+      "case": "mixed: two unread, one read, one running, one asking",
+      "sessions": [
+        { "name": "one", "state": "done" },
+        { "name": "two", "state": "done" },
+        { "name": "three", "state": "done" },
+        { "name": "four", "state": "running" },
+        { "name": "five", "state": "awaiting" }
+      ],
+      "visits": { "three": 2000 },
+      "states": {
+        "one": { "state": "done", "at": 1000 },
+        "two": { "state": "done", "at": 1000 },
+        "three": { "state": "done", "at": 1000 },
+        "four": { "state": "running", "at": 1000 },
+        "five": { "state": "awaiting", "at": 1000 }
+      },
+      "want": 3
+    },
+    {
+      "case": "a session with no visit record at all has never been read",
+      "sessions": [
+        { "name": "a", "state": "done" },
+        { "name": "b", "state": "done" }
+      ],
+      "visits": { "a": 2000 },
+      "states": {
+        "a": { "state": "done", "at": 1000 },
+        "b": { "state": "done", "at": 1000 }
+      },
+      "want": 1
+    }
+  ]
+}
