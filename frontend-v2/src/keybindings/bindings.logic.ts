@@ -102,6 +102,7 @@ export const KB_DEFAULT_BINDINGS: Binding[] = [
   { key: "alt+shift+]", command: "session.next", when: SWITCH_WHEN },
   // Dev-flow chords (Alt+Shift namespace).
   { key: "alt+shift+enter", command: "session.next.awaiting", when: `lobbyOpen && ${SWITCH_WHEN}` },
+  { key: "alt+shift+u", command: "session.next.unseen", when: `lobbyOpen && ${SWITCH_WHEN}` },
   { key: "alt+shift+s", command: "sidebar.toggle", when: LOBBY_WHEN },
   { key: "alt+shift+n", command: "session.new", when: LOBBY_WHEN },
   { key: "alt+shift+w", command: "session.kill.current", when: LOBBY_WHEN },

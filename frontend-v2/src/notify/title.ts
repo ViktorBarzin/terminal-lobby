@@ -21,6 +21,8 @@
 
 export type TitleSession = {
   name: string;
+  /** tmux's session id, the one identifier a rename does not change. */
+  id?: string;
   /** The display title, when the session has one. */
   title?: string;
   state?: string;

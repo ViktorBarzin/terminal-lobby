@@ -74,16 +74,24 @@ export function cycleTarget(
  * AFTER `current` (wraps; may return `current` itself if it is the only awaiting
  * one). null when none are awaiting.
  */
-export function nextAwaitingTarget(
+export function nextMatchingTarget(
   order: OrderedSession[],
-  stateOf: (name: string) => string | undefined,
+  match: (s: OrderedSession) => boolean,
   current: string | null,
 ): OrderedSession | null {
   if (!order.length) return null;
   const start = current ? order.findIndex((s) => s.name === current) : -1;
   for (let k = 1; k <= order.length; k++) {
     const s = order[(start + k + order.length) % order.length]!;
-    if (stateOf(s.name) === "awaiting") return s;
+    if (match(s)) return s;
   }
   return null;
+}
+
+export function nextAwaitingTarget(
+  order: OrderedSession[],
+  stateOf: (name: string) => string | undefined,
+  current: string | null,
+): OrderedSession | null {
+  return nextMatchingTarget(order, (s) => stateOf(s.name) === "awaiting", current);
 }

@@ -60,14 +60,17 @@ export function rankItem(item: { terms: string[] }, q: string): number {
 /**
  * Recents-first: last-attach epoch desc (from `tl:session-visits:v1`);
  * never-visited keep the input order (the sort is stable). Non-mutating.
+ *
+ * Records are filed under tmux's session id where there is one, so that a
+ * rename does not lose them; a session without an id, and a record written
+ * before the switch, are still under the name. Look for both.
  */
-export function recentsFirst<T extends { name: string }>(
+export function recentsFirst<T extends { name: string; id?: string }>(
   sessions: T[],
   visitTimes: Record<string, number>,
 ): T[] {
-  return sessions
-    .slice()
-    .sort((a, b) => (visitTimes[b.name] || 0) - (visitTimes[a.name] || 0));
+  const at = (s: T): number => (s.id ? visitTimes[s.id] : undefined) ?? visitTimes[s.name] ?? 0;
+  return sessions.slice().sort((a, b) => at(b) - at(a));
 }
 
 /**
