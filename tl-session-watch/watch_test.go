@@ -7,6 +7,8 @@ import (
 
 // cfg is the shape every test starts from: warn at 3 GiB, confirm a dead claude
 // over two consecutive ticks, and ignore the prewarm pool.
+const MiB = 1 << 20
+
 func cfg() Config {
 	return Config{
 		PaneWarnBytes:  3 * GiB,
@@ -21,12 +23,13 @@ func cfg() Config {
 // places at once make it unclear which difference the assertion is about.
 func live(name string) Session {
 	return Session{
-		Name:        name,
-		ClaudeState: "running",
-		ClaudeAlive: true,
-		PaneBytes:   1 * GiB,
-		PaneLimit:   6 * GiB,
-		TopIsClaude: true,
+		Name:              name,
+		ClaudeState:       "running",
+		ClaudeAlive:       true,
+		PaneBytes:         1 * GiB,
+		PaneUnreclaimable: 500 * MiB,
+		PaneLimit:         6 * GiB,
+		TopIsClaude:       true,
 	}
 }
 
@@ -255,6 +258,7 @@ func TestPaneOverThresholdWithClaudeFattestWarns(t *testing.T) {
 	w := NewWatcher(cfg())
 	big := live("infra")
 	big.PaneBytes = 4 * GiB
+	big.PaneUnreclaimable = 4 * GiB
 
 	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
 	if f.Session != "infra" || f.PaneBytes != 4*GiB || f.PaneLimit != 6*GiB {
@@ -269,6 +273,7 @@ func TestPaneOverThresholdWithABuildFattestStaysQuiet(t *testing.T) {
 	w := NewWatcher(cfg())
 	big := live("infra")
 	big.PaneBytes = 5 * GiB
+	big.PaneUnreclaimable = 5 * GiB
 	big.TopIsClaude = false
 
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
@@ -285,6 +290,7 @@ func TestUncappedPaneStaysQuiet(t *testing.T) {
 	w := NewWatcher(cfg())
 	big := live("infra")
 	big.PaneBytes = 5 * GiB
+	big.PaneUnreclaimable = 5 * GiB
 	big.PaneLimit = 0
 
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
@@ -296,6 +302,7 @@ func TestPaneWarningIsPerEpisode(t *testing.T) {
 	w := NewWatcher(cfg())
 	big := live("infra")
 	big.PaneBytes = 4 * GiB
+	big.PaneUnreclaimable = 4 * GiB
 
 	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
@@ -322,4 +329,59 @@ func TestUsersDoNotShareState(t *testing.T) {
 	if f.User != "wizard" {
 		t.Fatalf("emo's identically-named session was implicated: %+v", f)
 	}
+}
+
+// --- what "near the cap" has to mean ---------------------------------------
+//
+// memory.current is the wrong number, and the box proved it. The "issues" pane
+// read 6143 MB of a 6144 MB cap while holding only 624 MB anon and 3 MB shmem;
+// the other 5272 MB was page cache, 5131 MB of it cold inactive_file. Its
+// memory.events showed max=45450 with oom_kill=0 — the cap had been reached
+// forty-five thousand times and had never killed anything, because each time the
+// kernel simply reclaimed cache.
+//
+// So current riding at the cap is normal for any pane doing file I/O, and a
+// threshold on it fires on every busy pane forever. What forces a kill is the
+// memory that CANNOT be reclaimed: anon plus shmem, since the user slice sets
+// memory.swap.max=0 and neither can be paged out.
+
+func TestPaneAtTheCapOnCacheAloneStaysQuiet(t *testing.T) {
+	// The "issues" pane exactly as measured 2026-09-01 19:10.
+	w := NewWatcher(cfg())
+	s := live("issues")
+	s.PaneBytes = 6143 * MiB
+	s.PaneUnreclaimable = 628 * MiB
+	s.PaneLimit = 6144 * MiB
+
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", s)}), KindPaneNearCap)
+}
+
+func TestPaneWithUnreclaimablePastTheThresholdWarns(t *testing.T) {
+	// The same pane 40 minutes earlier, when /tmp was 95% full: anon 783 MB plus
+	// shmem 3641 MB, none of it reclaimable with swap disabled.
+	w := NewWatcher(cfg())
+	s := live("issues")
+	s.PaneBytes = 4627 * MiB
+	s.PaneUnreclaimable = 4424 * MiB
+	s.PaneLimit = 6144 * MiB
+
+	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", s)}), KindPaneNearCap)
+	if f.PaneUnreclaimable != 4424*MiB {
+		t.Errorf("want the unreclaimable figure carried into the finding, got %d", f.PaneUnreclaimable)
+	}
+	if f.PaneBytes != 4627*MiB {
+		t.Errorf("want memory.current carried too, so the reader can see the split, got %d", f.PaneBytes)
+	}
+}
+
+// A pane whose cache alone is huge must not warn even when current exceeds the
+// threshold by a wide margin.
+func TestCacheHeavyPaneWellOverTheThresholdStaysQuiet(t *testing.T) {
+	w := NewWatcher(cfg())
+	s := live("infra")
+	s.PaneBytes = 5 * GiB
+	s.PaneUnreclaimable = 400 * MiB
+	s.PaneLimit = 6 * GiB
+
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", s)}), KindPaneNearCap)
 }

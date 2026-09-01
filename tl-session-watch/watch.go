@@ -19,8 +19,20 @@ type Session struct {
 	ClaudeAlive bool
 	// PaneBytes and PaneLimit come from the pane scope's cgroup:
 	// memory.current and memory.max. PaneLimit is 0 when the pane is uncapped.
+	//
+	// PaneBytes is reported but never compared against a threshold. It rides up
+	// to the cap in any pane doing file I/O, because the cap makes the kernel
+	// reclaim cache rather than kill anything: measured 2026-09-01, one pane sat
+	// at 6143 MB of a 6144 MB cap with memory.events showing max=45450 and
+	// oom_kill=0.
 	PaneBytes uint64
 	PaneLimit uint64
+	// PaneUnreclaimable is anon + shmem, which is the memory that actually forces
+	// a kill. The user slice sets memory.swap.max=0 and cgroup limits are
+	// hierarchical, so neither can be paged out. In the pane above this read 628
+	// MB against the same 6144 MB cap; forty minutes earlier, with /tmp 95% full,
+	// it read 4424 MB and the pane genuinely was at risk.
+	PaneUnreclaimable uint64
 	// TopIsClaude says whether the highest-RSS process in the pane is a claude,
 	// which is the same ranking the kernel uses at the cap. It is the difference
 	// between the cap taking a build and the cap taking a conversation.
@@ -64,18 +76,20 @@ const (
 
 // Finding is one thing worth a journal line.
 type Finding struct {
-	Kind      Kind
-	User      string
-	Session   string
-	State     string
-	PaneBytes uint64
-	PaneLimit uint64
-	Before    int
-	After     int
+	Kind              Kind
+	User              string
+	Session           string
+	State             string
+	PaneBytes         uint64
+	PaneUnreclaimable uint64
+	PaneLimit         uint64
+	Before            int
+	After             int
 }
 
 type Config struct {
-	// PaneWarnBytes is where the pane pre-warning sits. Gated on the fattest
+	// PaneWarnBytes is where the pane pre-warning sits, compared against
+	// UNRECLAIMABLE memory rather than memory.current. Gated on the fattest
 	// process being a claude, which is what lets it sit well below the cap.
 	PaneWarnBytes uint64
 	// ConfirmTicks is how many consecutive ticks a stamp-with-no-claude must
@@ -198,16 +212,20 @@ func (w *Watcher) standing(cur Snapshot) []Finding {
 			w.clear(KindClaudeDied, key)
 		}
 
-		// An uncapped pane has nothing about to kill it, so a warning would name
-		// a risk that is not there.
-		if s.PaneLimit > 0 && s.PaneBytes >= w.cfg.PaneWarnBytes && s.TopIsClaude {
+		// Compared against unreclaimable memory, not memory.current: the cap
+		// makes the kernel reclaim cache before it kills anything, so current
+		// sitting at the ceiling is normal rather than dangerous. An uncapped
+		// pane has nothing about to kill it either, so a warning there would
+		// name a risk that is not present.
+		if s.PaneLimit > 0 && s.PaneUnreclaimable >= w.cfg.PaneWarnBytes && s.TopIsClaude {
 			if w.raise(KindPaneNearCap, key) {
 				out = append(out, Finding{
-					Kind:      KindPaneNearCap,
-					User:      cur.User,
-					Session:   name,
-					PaneBytes: s.PaneBytes,
-					PaneLimit: s.PaneLimit,
+					Kind:              KindPaneNearCap,
+					User:              cur.User,
+					Session:           name,
+					PaneBytes:         s.PaneBytes,
+					PaneUnreclaimable: s.PaneUnreclaimable,
+					PaneLimit:         s.PaneLimit,
 				})
 			}
 		} else {
