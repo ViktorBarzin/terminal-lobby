@@ -214,3 +214,26 @@ func TestTheUnitsToEnableAreNamed(t *testing.T) {
 		t.Error("clipboard-cleanup.timer is not enabled; the store is never pruned")
 	}
 }
+
+// The watcher is the whole point of the session-loss alerting: if it is not
+// enabled it does not come back after a reboot, and the first thing anyone
+// would notice is the SessionWatchSilent alert -- assuming that one is live.
+func TestSessionWatchIsEnabled(t *testing.T) {
+	for _, u := range Package.Enable {
+		if u == "tl-session-watch" {
+			return
+		}
+	}
+	t.Error("tl-session-watch is not enabled; nothing reports a lost session")
+}
+
+// It must be a plain service, never a timer. The comparison is between
+// consecutive looks, so a process relaunched every 30 seconds starts blind and
+// either reports nothing or reports every session twice.
+func TestSessionWatchIsNotATimer(t *testing.T) {
+	for _, u := range Package.Enable {
+		if strings.HasPrefix(u, "tl-session-watch") && strings.HasSuffix(u, ".timer") {
+			t.Fatalf("tl-session-watch must be a service, not %q: a timer loses the previous snapshot", u)
+		}
+	}
+}
