@@ -24,8 +24,8 @@ export const StateDot: Component<{
     <span
       class={cls()}
       style={props.size ? { width: `${props.size}px`, height: `${props.size}px`, "flex-basis": `${props.size}px` } : undefined}
-      aria-label={props.title !== false ? stateLabel(props.state) : undefined}
-      title={props.title !== false ? stateLabel(props.state) : undefined}
+      aria-label={props.title !== false ? stateLabel(props.state, props.unseen) : undefined}
+      title={props.title !== false ? stateLabel(props.state, props.unseen) : undefined}
     />
   );
 };

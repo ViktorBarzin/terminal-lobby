@@ -84,6 +84,15 @@ export const Sidebar: Component<{
   // Alt-hold numbered chips: name -> "1".."9","0" for the first ten sidebar
   // cards, in the same flat paint order Alt+1..0 attaches. Empty while Alt is
   // not held (or the layer is disabled), so cards render no chip.
+  /**
+   * Which sessions finished since you last looked. This is the set the app-icon
+   * badge counts, so the list must be able to point at its members — before
+   * this the card hardcoded `state === "done"`, every finished session drew the
+   * unread treatment, and the number named a set nothing could show.
+   */
+  const unseenOf = (sn: { name: string; state?: string }): boolean =>
+    props.notifications?.isUnseen(sn) ?? false;
+
   const badgeMap = createMemo<Map<string, string>>(() => {
     const m = new Map<string, string>();
     if (!props.altActive?.()) return m;
@@ -218,6 +227,7 @@ export const Sidebar: Component<{
         <For each={visibleGroups()}>
           {(g) => (
             <ProjectGroup
+              isUnseen={unseenOf}
               store={store}
               group={g}
               tick={tick}
@@ -257,6 +267,7 @@ export const Sidebar: Component<{
                 <For each={store.model().foreign}>
                   {(s) => (
                     <SessionCard
+                      isUnseen={unseenOf}
                       store={store}
                       session={s}
                       groupName=""

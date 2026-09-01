@@ -32,6 +32,8 @@ export const ProjectGroup: Component<{
   tick: Accessor<number>;
   /** Alt-hold chip label lookup, threaded down to each session card. */
   badge?: (name: string) => string | null;
+  /** finished since you last looked (see Sidebar.unseenOf). */
+  isUnseen?: (s: { name: string; state?: string }) => boolean;
   /** confirm seam, threaded down to each session card (tests inject it). */
   confirm?: (message: string) => boolean;
   /** the roamed `sidebar.showLastActive` pref, threaded down to each card. */
@@ -320,6 +322,7 @@ export const ProjectGroup: Component<{
           <For each={props.group.sessions}>
             {(s) => (
               <SessionCard
+                isUnseen={props.isUnseen}
                 store={props.store}
                 session={s}
                 groupName={isUngrouped() ? "" : props.group.name}

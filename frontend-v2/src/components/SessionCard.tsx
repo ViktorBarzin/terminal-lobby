@@ -41,6 +41,8 @@ export const SessionCard: Component<{
   tick: Accessor<number>;
   /** Alt-hold chip label for this card ("1".."9","0"), or null when inactive. */
   badge?: (name: string) => string | null;
+  /** finished since you last looked (see Sidebar.unseenOf). */
+  isUnseen?: (s: { name: string; state?: string }) => boolean;
   /** confirm seam (window.confirm by default; injectable for tests). */
   confirm?: (message: string) => boolean;
   /** The roamed `sidebar.showLastActive` pref. Absent means hidden — the safe
@@ -49,6 +51,14 @@ export const SessionCard: Component<{
   showLastActive?: Accessor<boolean>;
 }> = (props) => {
   const s = () => props.session;
+  /**
+   * Finished since you last looked at it. The card used to answer this with
+   * `state === "done"`, so every finished session wore the unread treatment and
+   * the dimmed "seen" dot in sidebar.css was unreachable — the app-icon badge
+   * counted a set the list had no way to point at. The real answer comes from
+   * the visit store, via Sidebar.
+   */
+  const unseen = (): boolean => props.isUnseen?.(s()) ?? false;
   const foreign = () => !!s().owner && s().owner !== props.store.me();
 
   // --- Watch mode ---------------------------------------------------------
@@ -608,6 +618,7 @@ export const SessionCard: Component<{
         "tl-card-swiping": swipeDx() !== 0,
         "tl-card-lifted": lifted(),
         "tl-card-active": isActive(),
+        "tl-card-unseen": unseen(),
         "tl-card-foreign": foreign(),
         "tl-drop-above": dropEdge() === "above" || dropFromTouch() === "above",
         "tl-drop-below": dropEdge() === "below" || dropFromTouch() === "below",
@@ -618,7 +629,7 @@ export const SessionCard: Component<{
       aria-label={
         `session ${label()}` +
         (s().tool ? ", " + TOOL_LABELS[s().tool!] : "") +
-        (s().state ? ", " + stateLabel(s().state) : "")
+        (s().state ? ", " + stateLabel(s().state, unseen()) : "")
       }
       onClick={activate}
       onKeyDown={onKey}
@@ -645,7 +656,7 @@ export const SessionCard: Component<{
           </span>
         )}
       </Show>
-      <StateDot state={s().state} unseen={s().state === "done"} />
+      <StateDot state={s().state} unseen={unseen()} />
       <ToolIcon tool={s().tool} />
       <Show
         when={!editing()}
