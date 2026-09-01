@@ -139,4 +139,3 @@ func TestRenderTextfileIsStableAcrossRuns(t *testing.T) {
 		t.Fatalf("want sessions in name order, got a=%d b=%d c=%d", ai, bi, ci)
 	}
 }
-

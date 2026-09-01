@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // The comparison half of tl-session-watch, kept free of the box so it can be
 // driven tick by tick in a test. Everything that touches tmux, cgroups or the
@@ -28,12 +31,20 @@ type Session struct {
 type Snapshot struct {
 	User   string
 	BootID string
+	// Taken is when this snapshot was read, which is what a tombstone's age is
+	// measured against.
+	Taken time.Time
 	// Sessions is what tmux reports, keyed by name.
 	Sessions map[string]Session
-	// Manifest is the set of names in /var/lib/tmux-persist/<user>.tsv. A kill
-	// through the lobby calls tmux-persist-forget, so a row that outlives its
-	// session means nobody ended that session on purpose.
-	Manifest map[string]bool
+	// Tombstones maps a session name to the epoch of its most recent deliberate
+	// kill, from /var/lib/tmux-persist/<user>.forgotten.tsv.
+	//
+	// This, not the manifest, is what records intent. tmux-persist-forget appends
+	// a tombstone; it does NOT remove the manifest row, which only goes at the
+	// next 5-minute save. An earlier version of this watcher tested for an
+	// orphaned manifest row and therefore called every deliberate kill a death
+	// for up to five minutes.
+	Tombstones map[string]int64
 }
 
 type Kind string
@@ -74,6 +85,12 @@ type Config struct {
 	// SkipPrefixes names sessions that are not conversations, so losing one
 	// costs nothing a person would miss.
 	SkipPrefixes []string
+	// TombstoneGrace is how recent a tombstone must be to explain the
+	// disappearance we are looking at. The file is append-only and never pruned,
+	// so a name killed weeks ago still has a row: without an age bound, a session
+	// that reused that name and then genuinely died would be written off as a
+	// deliberate kill.
+	TombstoneGrace time.Duration
 }
 
 type Watcher struct {
@@ -91,6 +108,9 @@ type Watcher struct {
 func NewWatcher(cfg Config) *Watcher {
 	if cfg.ConfirmTicks < 1 {
 		cfg.ConfirmTicks = 1
+	}
+	if cfg.TombstoneGrace <= 0 {
+		cfg.TombstoneGrace = 90 * time.Second
 	}
 	return &Watcher{
 		cfg:    cfg,
@@ -128,9 +148,10 @@ func (w *Watcher) Tick(snaps []Snapshot) []Finding {
 	return out
 }
 
-// vanished reports sessions present last tick and absent now, split by whether
-// their manifest row went with them.
+// vanished reports sessions present last tick and absent now, split by whether a
+// recent tombstone explains the disappearance.
 func (w *Watcher) vanished(prev, cur Snapshot) []Finding {
+	cutoff := cur.Taken.Add(-w.cfg.TombstoneGrace).Unix()
 	var out []Finding
 	for name, was := range prev.Sessions {
 		if w.skip(name) {
@@ -139,9 +160,9 @@ func (w *Watcher) vanished(prev, cur Snapshot) []Finding {
 		if _, still := cur.Sessions[name]; still {
 			continue
 		}
-		kind := KindSessionKilled
-		if cur.Manifest[name] {
-			kind = KindSessionDied
+		kind := KindSessionDied
+		if ts, ok := cur.Tombstones[name]; ok && ts >= cutoff {
+			kind = KindSessionKilled
 		}
 		out = append(out, Finding{
 			Kind:    kind,

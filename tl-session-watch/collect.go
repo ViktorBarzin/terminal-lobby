@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Reading the box. The parsers here are separated from the calls that produce
@@ -29,7 +30,11 @@ var (
 	cgroupRoot    = "/sys/fs/cgroup"
 	procRoot      = "/proc"
 	userMap       = "/etc/ttyd-user-map"
-	manifestFn    = func(user string) string { return "/var/lib/tmux-persist/" + user + ".tsv" }
+	// The TOMBSTONE file, not the manifest. tmux-persist-forget appends here on a
+	// deliberate kill and leaves the manifest row alone until the next 5-minute
+	// save, so an orphaned manifest row cannot tell a kill from a death in the
+	// window that matters.
+	tombstonesFn = func(user string) string { return "/var/lib/tmux-persist/" + user + ".forgotten.tsv" }
 )
 
 // parseUserMap takes the OS users out of /etc/ttyd-user-map, whose rows are
@@ -96,20 +101,22 @@ func parsePaneList(in string) map[string][]int {
 	return out
 }
 
-// parseManifest takes the session names out of a tmux-persist manifest, whose
-// rows are name, cwd, claude session uuid.
-func parseManifest(in string) map[string]bool {
-	out := map[string]bool{}
+// parseTombstones reads /var/lib/tmux-persist/<user>.forgotten.tsv, whose rows
+// are `<session>\t<epoch>`, into name -> most recent kill epoch. The file is
+// append-only, so a name can appear several times and the newest row wins.
+func parseTombstones(in string) map[string]int64 {
+	out := map[string]int64{}
 	for _, line := range strings.Split(in, "\n") {
-		if line == "" {
+		i := strings.LastIndex(line, "\t")
+		if i < 1 {
 			continue
 		}
-		name := line
-		if i := strings.Index(line, "\t"); i >= 0 {
-			name = line[:i]
+		ts, err := strconv.ParseInt(strings.TrimSpace(line[i+1:]), 10, 64)
+		if err != nil {
+			continue
 		}
-		if name != "" {
-			out[name] = true
+		if name := line[:i]; ts > out[name] {
+			out[name] = ts
 		}
 	}
 	return out
@@ -168,10 +175,11 @@ func Collect(users []string, bootID string) []Snapshot {
 
 func collectUser(user, bootID string) Snapshot {
 	snap := Snapshot{
-		User:     user,
-		BootID:   bootID,
-		Sessions: map[string]Session{},
-		Manifest: map[string]bool{},
+		User:       user,
+		BootID:     bootID,
+		Taken:      time.Now(),
+		Sessions:   map[string]Session{},
+		Tombstones: map[string]int64{},
 	}
 
 	sessOut, err := asUser(user, tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{@claude_state}")
@@ -192,8 +200,8 @@ func collectUser(user, bootID string) Snapshot {
 		}
 	}
 
-	if raw, err := readManifest(user); err == nil {
-		snap.Manifest = parseManifest(raw)
+	if raw, err := readTombstones(user); err == nil {
+		snap.Tombstones = parseTombstones(raw)
 	}
 	return snap
 }
@@ -382,14 +390,13 @@ func asUser(target, bin string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// readManifest reads the root-owned 0600 manifest, which is why this unit runs
-// as root rather than as wizard like the rest of the lobby's services. The
-// alternative was a new line in /etc/sudoers.d/ttyd-users, which is per-box
+// readTombstones reads the root-owned 0600 tombstone file, which is why this
+// unit runs as root rather than as wizard like the rest of the lobby's services.
+// The alternative was a new line in /etc/sudoers.d/ttyd-users, which is per-box
 // identity data the package deliberately does not ship and which is maintained
-// by hand; a hardened unit that needs no grant is the smaller surface of the
-// two. The path is a symlink into snapshots/<user>/, so it is read, not walked.
-func readManifest(user string) (string, error) {
-	raw, err := os.ReadFile(manifestFn(user))
+// by hand; a hardened unit that needs no grant is the smaller surface of the two.
+func readTombstones(user string) (string, error) {
+	raw, err := os.ReadFile(tombstonesFn(user))
 	return string(raw), err
 }
 
