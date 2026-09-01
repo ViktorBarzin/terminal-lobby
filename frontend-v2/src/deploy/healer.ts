@@ -117,6 +117,9 @@ export interface DeployHealerDeps {
   log?: (...args: unknown[]) => void;
   /** default: the telemetry `track`. */
   emit?: (event: "app.reloaded" | "app.update_failed", attrs: TlAttrs) => void;
+  /** Called after every evaluation with whether an update is waiting that this
+   *  page is not running — the Build row of the connection status panel. */
+  onUpdatePending?: (pending: boolean) => void;
 }
 
 export interface DeployHealer {
@@ -324,6 +327,10 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
       storageAvailable: !!storage,
       uptimeMs: now() - bootAt,
     });
+    // A deferred or given-up update is a real one this page is not running, and
+    // a tab on old JavaScript against a new server looks exactly like a broken
+    // connection — which is why the status panel gets a row for it (ADR-0016).
+    deps.onUpdatePending?.(plan === "defer" || plan === "give-up");
     if (plan === "reload") applyUpdate(served, why);
     // "defer" — a real update is waiting for the next open; nothing is shown.
     // "none" / "give-up" — nothing to do (give-up was already reported at boot).
