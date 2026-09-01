@@ -16,13 +16,18 @@
  * states that are asking for attention.
  *
  * WHO SETS IT. Two writers, deliberately, because the badge's whole value is
- * being right while the app is CLOSED:
- *   - this module, from the poll, whenever the lobby is open. It has the visit
- *     store, so it knows what you have already seen and is the accurate one.
- *   - sw.js, from the push payload's `badge`, when the app is not running. The
- *     server cannot know what you have seen, so it counts every awaiting and
- *     done session; that can read high until you next open the app, which
- *     corrects it on the first poll.
+ * being right while the app is CLOSED — and they must not disagree, which is
+ * what ADR-0015 is about:
+ *   - this module, from the poll, whenever a lobby window is on screen. It has
+ *     the visit store, so it knows what you have already looked at.
+ *   - sw.js, when no lobby is on screen. The server sends WHICH sessions are
+ *     awaiting or finished rather than a total, and the worker subtracts the
+ *     seen-done set store/visits.ts mirrors into IndexedDB, so it arrives at
+ *     the same number this module would. It defers to a visible page.
+ *
+ * With no stored record (a private window, cleared site data) the worker
+ * subtracts nothing and every finished session counts, until the app is next
+ * opened. That reads high; it does not jump.
  */
 
 /** Just enough of a session to count it. */

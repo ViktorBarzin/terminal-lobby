@@ -235,10 +235,13 @@ func waitingList(states map[string]string) *waitList {
 // icon, and deliberately the same set this sender alerts on, so the badge and
 // the notifications can never disagree about what is outstanding.
 //
-// The server cannot know which finished sessions the user has already looked
-// at — "seen" lives in the browser's visit store — so this can read high until
-// the app is next opened, when notify/appbadge.ts repaints it exactly. Counting
-// high is the right direction to be wrong in: it points at real work.
+// It is the FALLBACK total, not the number a current client draws. "Seen" lives
+// in the browser's visit store, so a total counted every finished session and any
+// push reset the icon upward; waitingList sends the same set by name and lets the
+// device subtract what it has shown (ADR-0015). This total is what a worker
+// installed before that change draws, and what any device draws when the name
+// list would exceed the payload cap. Counting high is the right direction to be
+// wrong in: it points at real work.
 func waitingCount(states map[string]string) int {
 	n := 0
 	for _, st := range states {

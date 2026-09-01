@@ -82,13 +82,13 @@ function stashPendingSession(session, tapped) {
 // Paint the app-icon badge — the count of sessions waiting for the user, drawn
 // on the installed app's icon the way an unread count is.
 //
-// The worker is the ONLY writer while the app is closed, which is the case the
-// badge exists for. It uses the count the SERVER put in the payload, because a
-// worker cannot see the session list: pushsender.go counts every awaiting and
-// done session for that user. The server cannot know which finished sessions
-// the user already looked at, so the number can read high until the app is
-// opened, at which point notify/appbadge.ts repaints it from the poll and the
-// visit store, and it becomes exact.
+// The worker is the writer while no lobby is on screen, which is the case the
+// badge exists for. It does NOT trust a server-side total: the server cannot
+// know which finished sessions the user has already looked at, so a total
+// counted every one of them and any push reset the icon upward. It takes the
+// NAMED set from the payload and subtracts what this device has shown
+// (badgeFromWaiting, over the IndexedDB store/visits.ts mirrors), arriving at
+// the number notify/appbadge.ts would have drawn. See ADR-0015.
 //
 // Best-effort and silent, like the page's copy: the Badging API is absent on
 // most browsers and REJECTS where it exists but the app is not installed.
