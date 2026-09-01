@@ -77,6 +77,16 @@ export interface NotificationSystemOptions {
   notifyPrefs: Accessor<{ onDone: boolean; onAwaiting: boolean }>;
   /** true until the first /sessions poll lands (so the seed isn't the pre-poll empty). */
   loading: Accessor<boolean>;
+  /**
+   * How many polls have RETURNED a list (store.polls). `loading` cannot stand in
+   * for this: it goes false even when /sessions rejected, so a failed first poll
+   * looks the same as an empty account. Zero here means the list is not an
+   * answer yet and nothing may be derived from it.
+   *
+   * It also ticks on an unchanged payload, which is what lets the badge repaint
+   * every poll instead of only when a session actually changes.
+   */
+  polls?: Accessor<number>;
   /** surface a message to the app's toast stack. */
   toast: ToastFn;
   /** switch the app to a session (SW tap / boot stash / constructor click). */
@@ -285,26 +295,42 @@ export function createNotificationSystem(
   };
   if (hasWin) window.addEventListener("tl:session-renamed", onRenamed);
   const badger = createFaviconBadger();
+
+  /**
+   * The visit store and the app icon, driven by POLLS rather than by changes to
+   * the list. Two reasons they cannot ride the title/favicon effect below.
+   *
+   * `polls() === 0` is the only honest test for "the list is an answer". The
+   * previous gate read `loading`, which goes false even when /sessions rejected,
+   * so opening the app on a dead link folded an EMPTY list into the visit store
+   * (deleting every seen record) and then cleared a badge that was correctly
+   * showing outstanding work.
+   *
+   * And reading `polls` makes this run on EVERY poll, not only when the payload
+   * differs. `setSessions(reconcile(...))` deliberately writes nothing when a
+   * poll is unchanged, so a badge painted too high by a push used to stand until
+   * some unrelated field moved — measured at zero repaints across 35 s of live
+   * polling. Repainting the same number costs nothing.
+   */
   createEffect(() => {
+    if ((opts.polls?.() ?? 1) === 0) return; // nothing known yet
     const list = opts.sessions();
     const active = opts.selected();
-    const att = attention();
-    visits.revision(); // repaint when an out-of-band stamp changes the set
+    visits.revision(); // re-run when an out-of-band stamp changes the set
     // Fold this poll in BEFORE painting: the session on screen is seen by the
     // time its badge would be drawn. Stamping inside the effect is safe —
     // `revision` only bumps when the unseen set actually changes, so this
     // settles after one extra pass instead of looping.
     visits.observe(list, active);
+    applyAppBadge(waitingCount(list, isUnseen));
+  });
+
+  createEffect(() => {
+    const list = opts.sessions();
+    const active = opts.selected();
+    const att = attention();
+    visits.revision(); // repaint when an out-of-band stamp changes the set
     badger.apply(faviconKind(list, att.bell, isUnseen));
-    // Same set, third surface: the app icon carries the count while the lobby is
-    // shut. Painted from the poll (not from the push) whenever a window is open,
-    // because only the page knows what you have already looked at.
-    //
-    // Not before the first poll, though: `list` is empty until then, and
-    // painting it would CLEAR the count sw.js drew from the push — wiping the
-    // badge for real outstanding work in the second before the lobby knows what
-    // exists. The push-time count stands until the page can better it.
-    if (!opts.loading()) applyAppBadge(waitingCount(list, isUnseen));
     if (hasDoc) {
       const user = opts.osUser();
       document.title = composeTitle({
