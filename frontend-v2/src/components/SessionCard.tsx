@@ -23,10 +23,8 @@ import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
 import { lensTarget } from "../lib/act-as";
 import { SWIPE_MIN_PX } from "../mobile/swipe";
 import { dropSide, edgeScroll } from "../mobile/reorder";
+import { hasFinePointer } from "../mobile/pointer";
 import { ACT_AS } from "../lib/config";
-
-const isCoarse = (): boolean =>
-  typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 
 /**
  * A thin session row (inventory Cat.2 "Session card"): state dot + name (left),
@@ -209,7 +207,12 @@ export const SessionCard: Component<{
   };
 
   // ---- drag reorder ----
-  const draggable = () => !foreign() && !isCoarse();
+  // Armed when a mouse, trackpad or stylus is present — NOT when the primary
+  // pointer happens to be fine. On a touchscreen laptop the primary pointer is
+  // coarse while the person drags with a mouse, and the old test left that
+  // machine unable to reorder at all: no native drag, and onPointerDown ignores
+  // a mouse. A phone still answers no here and keeps the touch path.
+  const draggable = () => !foreign() && hasFinePointer();
   const onDragStart = (e: DragEvent) => {
     if (!draggable()) return;
     releaseHold = props.store.hold();

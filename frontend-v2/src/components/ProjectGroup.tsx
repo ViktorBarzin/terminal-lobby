@@ -15,9 +15,7 @@ import { createDismissableMenu } from "./menu";
 import { track } from "../telemetry/track";
 import { SessionCard } from "./SessionCard";
 import { StateDot } from "./StateDot";
-
-const isCoarse = (): boolean =>
-  typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+import { hasFinePointer } from "../mobile/pointer";
 
 /**
  * One sidebar group — a project or the Ungrouped section (inventory Cat.2/3):
@@ -177,7 +175,8 @@ export const ProjectGroup: Component<{
   const moveDown = () => moveBy(1);
 
   // ---- session drop target (append into this group) + header drag reorder ----
-  const headerDraggable = () => !isCoarse();
+  // Same rule as a session card: a mouse is present, so native drag is usable.
+  const headerDraggable = () => hasFinePointer();
   // A drag lives in the DOM node being dragged, so the poll must not rebuild
   // the group set underneath it — the same hold the add box, the menu and a
   // card drag take. Without it a poll mid-drag detaches the source (the browser
