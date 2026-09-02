@@ -121,3 +121,39 @@ blank page there for two days. The evidence that the new chunk is safe is a byte
 comparison, not a device — nobody has opened `?native=1` on the iPad, and there
 is no instrument here that can. Until someone does, the flag stays off and
 term.html stays.
+
+## Amendment — 2026-09-02: the floor gained a runtime check, and one it lacked
+
+The section above describes the evidence as a byte comparison. That was accurate
+for syntax and incomplete for the rest, because `build.target` governs only what
+the engine can parse. A method the engine never shipped parses fine and throws
+where it is called, which is the failure mode `baseline-polyfills.ts` exists for.
+
+Two things changed on 2026-09-02.
+
+**The runtime-API guard in `scripts/test_frontend_compat.py` had not been
+checking anything since 2026-08-28.** It read `api in html` while its fixture had
+moved to returning `(path, [(label, code), …])`, so it asked whether a list of
+tuples contained a string. That is False for every API, so the guard passed
+unconditionally for five days, including through this port. The bundle did reach
+`AbortSignal.timeout` and `URL.canParse` in that window; both were already
+polyfilled, so nothing shipped broken. The guard now searches each chunk by
+label, and two further tests keep it honest: one feeds it a fake chunk and
+asserts it fires, one asserts the shipped bundle is a non-empty haystack.
+
+**xterm reaches `OffscreenCanvas`, which arrived in Safari 16.4.** Bundling xterm
+put 330 KB of third-party code inside the floor for the first time, so all 88
+chunks were swept. xterm's character-width measurer constructs one and survives
+the floor because upstream wraps it in `try`/`catch` and falls back to measuring
+in the DOM. That fallback is upstream's choice and could change on a version
+bump, so `frontend-v2/test/xterm.baseline.test.ts` opens a real terminal in
+jsdom — which also has no `OffscreenCanvas` — and asserts that written text
+round-trips. Removing the fallback from the installed xterm makes it fail, so the
+test does detect the regression it is there for.
+
+Both guards were also run against the SPA extracted from the released
+`v0.25.0` .deb, rather than only a local build.
+
+What has not changed: nobody has opened `?native=1` on the iPad, and there is
+still no instrument here that can. The guards are stronger; they are not a
+device. The flag stays off.
