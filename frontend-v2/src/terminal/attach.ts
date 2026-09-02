@@ -35,6 +35,25 @@ import {
   type LadderEvent,
   type LadderState,
 } from "./reconnect";
+import {
+  backpressureSignal,
+  beginProbe,
+  decide as decideLiveness,
+  idleWatch,
+  LIVENESS_DEFAULTS,
+  noteTyped,
+  probeFrame,
+  reachabilitySignal,
+  reanchor,
+  settleProbe,
+  watchSocket,
+  type Watch,
+} from "./liveness";
+import {
+  decide as decideBattery,
+  HIDDEN_SUSPEND_MS,
+  type BatteryState,
+} from "./battery";
 
 export interface AttachDeps {
   /**
@@ -62,6 +81,8 @@ export interface AttachDeps {
   makeSocket?: (url: string, protocol: string) => WebSocket;
   setTimer?: (fn: () => void, ms: number) => number;
   clearTimer?: (id: number) => void;
+  /** Injected so the watchdog's arithmetic is drivable without a real clock. */
+  now?: () => number;
 }
 
 export interface Attachment {
@@ -89,6 +110,7 @@ export function attach(deps: AttachDeps): Attachment {
     deps.makeSocket ?? ((url: string, protocol: string) => new WebSocket(url, protocol));
   const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms) as unknown as number);
   const clearTimer = deps.clearTimer ?? ((id: number) => clearTimeout(id));
+  const clock = deps.now ?? (() => Date.now());
 
   let state: LadderState = initialLadder({
     online: typeof navigator === "undefined" ? true : navigator.onLine !== false,
@@ -159,6 +181,9 @@ export function attach(deps: AttachDeps): Attachment {
 
   /** Drop the current socket without letting its handlers reach the ladder. */
   function detach(): void {
+    if (probeTimer !== null) clearTimer(probeTimer);
+    probeTimer = null;
+    watch = idleWatch();
     const s = socket;
     socket = null;
     if (!s) return;
@@ -207,11 +232,22 @@ export function attach(deps: AttachDeps): Attachment {
       const size = deps.size();
       s.send(handshakeMessage({ token, cols: size.cols, rows: size.rows }));
       dispatch({ type: "opened" });
+      // The watchdog only ever judges an OPEN socket, so it starts here and is
+      // anchored to this moment rather than to the attempt that preceded it.
+      watch = watchSocket(clock());
+      void tickLiveness();
     };
     s.onmessage = (ev: MessageEvent) => {
       if (gen !== liveGen) return;
       const frame = decodeServerFrame(ev.data);
-      if (frame && frame.type === "output") deps.write(frame.payload);
+      if (!frame) return;
+      // Only an OUTPUT frame proves the pty answered. The title and prefs frames
+      // arrive once per connect and would clear an echo watch the pty never
+      // satisfied — term.html calls noteEchoSeen from the output case alone.
+      if (frame.type === "output") {
+        lastInboundAt = clock();
+        deps.write(frame.payload);
+      }
     };
     s.onerror = () => {
       /* a close always follows; the ladder reacts to that */
@@ -223,11 +259,149 @@ export function attach(deps: AttachDeps): Attachment {
     };
   }
 
+  // ---- the liveness watchdog ----------------------------------------------
+  // A black-holed socket stays readyState OPEN forever, so nothing arrives to
+  // react to. liveness.ts decides; this arms one timer for whatever it says is
+  // next, and runs the two independent probes when it asks for a reading.
+  let watch: Watch = idleWatch();
+  let lastInboundAt: number | null = null;
+  let probeTimer: number | null = null;
+
+  const armProbe = (dueInMs: number): void => {
+    if (probeTimer !== null) clearTimer(probeTimer);
+    probeTimer = null;
+    if (!Number.isFinite(dueInMs)) return; // nothing is being watched
+    probeTimer = setTimer(() => {
+      probeTimer = null;
+      void tickLiveness();
+    }, Math.max(0, dueInMs));
+  };
+
+  async function tickLiveness(): Promise<void> {
+    if (disposed) return;
+    const s = socket;
+    const decision = decideLiveness({
+      now: clock(),
+      lastInboundAt,
+      socketState:
+        !s || s.readyState !== WebSocket.OPEN
+          ? "closed"
+          : "open",
+      visible: typeof document === "undefined" ? true : !document.hidden,
+      batterySuspended: state.phase === "suspended",
+      watch,
+    });
+
+    if (decision.action === "declare-dead") {
+      watch = idleWatch();
+      dispatch({ type: "presumed-dead", gen: liveGen });
+      return;
+    }
+    if (decision.action === "wait") {
+      armProbe(decision.dueInMs);
+      return;
+    }
+
+    // A reading, on two signals that fail independently: can the origin still
+    // answer at all, and does a byte actually leave this socket's buffer.
+    const gen = liveGen;
+    watch = beginProbe(watch, clock());
+    const before = s ? s.bufferedAmount : 0;
+    let responded = false;
+    let status: number | undefined;
+    try {
+      const res = await f(tokenUrl(deps.base, deps.args), {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: AbortSignal.timeout(LIVENESS_DEFAULTS.fetchTimeoutMs),
+      });
+      responded = true;
+      status = res.status;
+    } catch {
+      responded = false;
+    }
+    try {
+      s?.send(probeFrame());
+    } catch {
+      /* the drain check below reads the same failure as backpressure */
+    }
+    await new Promise((r) => setTimer(() => r(undefined), LIVENESS_DEFAULTS.drainMs));
+    if (disposed) return;
+    const after = socket ? socket.bufferedAmount : before;
+
+    watch = settleProbe(
+      watch,
+      {
+        reachability: reachabilitySignal({ responded, status }),
+        backpressure: backpressureSignal(before, after),
+        // The socket this probe was judging may already have been replaced.
+        superseded: gen !== liveGen,
+        stillVisible: typeof document === "undefined" ? true : !document.hidden,
+      },
+      LIVENESS_DEFAULTS,
+      clock(),
+    );
+    void tickLiveness();
+  }
+
+  // ---- the battery saver ---------------------------------------------------
+  // A hidden tab holding a socket keeps the radio warm for nobody. battery.ts
+  // decides; this owns the countdown and the visibility listeners.
+  let hiddenSince: number | null = null;
+  let graceTimer: number | null = null;
+
+  const batteryState = (): BatteryState => ({
+    hidden: typeof document === "undefined" ? false : document.hidden,
+    msHidden: hiddenSince === null ? null : clock() - hiddenSince,
+    suspended: state.phase === "suspended",
+  });
+
+  const onBattery = (event: Parameters<typeof decideBattery>[1]): void => {
+    const { action } = decideBattery(batteryState(), event);
+    if (action === "suspend") dispatch({ type: "suspend" });
+    else if (action === "resume") dispatch({ type: "resume", why: String(event) });
+  };
+
+  const armGrace = (): void => {
+    if (graceTimer !== null) clearTimer(graceTimer);
+    graceTimer = setTimer(() => {
+      graceTimer = null;
+      onBattery("grace-elapsed");
+    }, HIDDEN_SUSPEND_MS);
+  };
+
+  const onVisibility = (): void => {
+    const hidden = typeof document !== "undefined" && document.hidden;
+    if (hidden) {
+      hiddenSince = clock();
+      armGrace();
+      onBattery("hidden");
+      return;
+    }
+    if (graceTimer !== null) clearTimer(graceTimer);
+    graceTimer = null;
+    hiddenSince = null;
+    onBattery("visible");
+    // Coming back is when a socket most often turns out to have died while we
+    // were away, so the watchdog re-anchors AND takes a reading now rather than
+    // waiting out a full interval on a terminal that is already frozen.
+    watch = reanchor(watch, clock());
+    void tickLiveness();
+  };
+
   const onOnline = (): void => dispatch({ type: "network", online: true });
   const onOffline = (): void => dispatch({ type: "network", online: false });
   if (typeof window !== "undefined") {
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
+    document.addEventListener("visibilitychange", onVisibility);
+    // A tab opened into the background boots hidden and no visibilitychange
+    // ever fires for it, so the countdown has to be armed here too.
+    if (typeof document !== "undefined" && document.hidden) {
+      hiddenSince = clock();
+      armGrace();
+      onBattery("boot");
+    }
   }
 
   dispatch({ type: "start" });
@@ -236,6 +410,9 @@ export function attach(deps: AttachDeps): Attachment {
     send(data: string): void {
       if (!socket || socket.readyState !== WebSocket.OPEN) return;
       socket.send(encodeInput(data));
+      // A keystroke that produces no output within the grace is worth probing
+      // early — the cheapest evidence a socket has stopped carrying anything.
+      watch = noteTyped(watch, clock(), lastInboundAt);
     },
     resize(): void {
       if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -249,11 +426,14 @@ export function attach(deps: AttachDeps): Attachment {
       disposed = true;
       if (retryTimer !== null) clearTimer(retryTimer);
       if (stableTimer !== null) clearTimer(stableTimer);
-      retryTimer = stableTimer = null;
+      if (probeTimer !== null) clearTimer(probeTimer);
+      if (graceTimer !== null) clearTimer(graceTimer);
+      retryTimer = stableTimer = probeTimer = graceTimer = null;
       detach();
       if (typeof window !== "undefined") {
         window.removeEventListener("online", onOnline);
         window.removeEventListener("offline", onOffline);
+        document.removeEventListener("visibilitychange", onVisibility);
       }
     },
   };

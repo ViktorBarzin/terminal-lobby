@@ -169,8 +169,12 @@ describe("attaching a terminal", () => {
     await flush();
     FakeSocket.made[0]!.open();
     FakeSocket.made[0]!.drop();
-    expect(h.timers.length).toBe(1);
-    h.runTimer();
+    // The ladder's first rung, identified by its delay rather than by counting
+    // every timer — the liveness watchdog arms one of its own on open, and this
+    // test is about the retry.
+    const retry = h.timers.find((t) => t.ms > 0 && t.ms <= 2000);
+    expect(retry, "a retry is armed on the ladder's first rung").toBeTruthy();
+    h.runTimer(retry!.id);
     await flush();
     expect(FakeSocket.made).toHaveLength(2);
     a.dispose();
@@ -235,6 +239,45 @@ describe("attaching a terminal", () => {
     // and it is inert afterwards: a late drop must not resurrect anything
     FakeSocket.made[0]!.drop();
     expect(h.timers).toHaveLength(0);
+  });
+
+  /**
+   * The watchdog only judges an OPEN socket, so it starts when one opens and
+   * stops when it goes. Without the stop, a probe timer outlives its socket and
+   * fires against nothing.
+   */
+  it("starts the liveness watchdog on open and drops it with the socket", async () => {
+    FakeSocket.made = [];
+    const h = harness();
+    const a = attach(h.deps);
+    await flush();
+    const beforeOpen = h.timers.length;
+    FakeSocket.made[0]!.open();
+    const probe = h.timers.find((t) => t.ms >= 20_000);
+    expect(probe, "a probe is armed once the socket is open").toBeTruthy();
+    expect(h.timers.length).toBeGreaterThan(beforeOpen);
+    a.dispose();
+    expect(h.timers).toHaveLength(0);
+  });
+
+  /**
+   * A hidden tab holding a socket keeps the radio warm for nobody, and a tab
+   * opened into the BACKGROUND never fires visibilitychange — term.html arms the
+   * countdown at boot for exactly that case, so this must too.
+   */
+  it("arms the battery countdown for a tab that boots hidden", async () => {
+    FakeSocket.made = [];
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    try {
+      const h = harness();
+      const a = attach(h.deps);
+      await flush();
+      const grace = h.timers.find((t) => t.ms === 60_000);
+      expect(grace, "the 60s hidden countdown is armed at boot").toBeTruthy();
+      a.dispose();
+    } finally {
+      hidden.mockRestore();
+    }
   });
 
   it("reports phase changes so the shell's badge can follow them", async () => {
