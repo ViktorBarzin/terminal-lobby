@@ -72,17 +72,32 @@ and a session with no terminal on screen all land there. Reporting "everything
 is fine" on the strength of channels that have not spoken is the failure this
 panel exists to remove; so is painting red because one has not.
 
-### Scoping is what lets one badge sit in two places
+### One indicator at a time, scoped to the surface it sits on
 
 The session bar carries all five channels. The sidebar header carries the three
 a list screen can honestly report. Without that rule, a badge above a list of
 sessions would go red for a dead socket belonging to a session not on screen —
 naming the wrong problem on the one surface that cannot show the right one.
 
+**Amended 2026-09-02.** The first cut of this had them both on screen at once,
+and kept `term.html`'s own pill beside them. Measured: one dropped socket, three
+indicators — the pill saying "Reconnecting… (attempt 7)", the session bar saying
+"Reconnecting" 40px above it, and the sidebar's badge, which cannot see a
+terminal, sitting green. Two identical statements and a contradiction. So:
+
+- the sidebar's badge stands down whenever a session bar is on screen, and
+  exists for the screens without one (the phone's list, the desktop empty
+  state) — `sessionBarOnScreen()` in `components/lobby.logic.ts`;
+- the pill defers when framed, speaking only when it has something the badge
+  cannot say (keystrokes held for replay). Standalone `term.html` keeps it in
+  full, since no badge surrounds it there;
+- the badge carries the retry attempt the pill used to show, so a climbing
+  ladder still reads differently from a stuck one.
+
 The badge shows a dot always and a word only when something is wrong.
-"Reconnecting", "Offline", "Update ready" — a small vocabulary about the client,
-rather than the transport words the old badge showed (`open`, `no transcript`),
-which described a mechanism instead of answering a question.
+"Reconnecting 7", "Offline", "Update ready" — a small vocabulary about the
+client, rather than the transport words the old badge showed (`open`,
+`no transcript`), which described a mechanism instead of answering a question.
 
 ### The check reads; the repairs are separate taps
 
