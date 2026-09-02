@@ -106,6 +106,24 @@ describe("the badge", () => {
     cleanup();
   });
 
+  /**
+   * The badge is the ONLY connection indicator on a session screen now: the
+   * terminal's pill defers to it and the sidebar's stands down. So the attempt
+   * count has to survive here, or a climbing ladder and a stuck one look the
+   * same.
+   */
+  it("shows the retry attempt, which the terminal's pill used to carry", () => {
+    const retrying: Channel[] = [
+      { id: "terminal", state: "degraded", detail: "reconnecting, attempt 7", count: 7 },
+      ...ALL_FINE.filter((c) => c.id !== "terminal"),
+    ];
+    const { container } = render(() => (
+      <StatusDot channels={() => retrying} only={SESSION_CHANNELS} onOpen={() => {}} />
+    ));
+    expect(container.querySelector(".tl-status-dot-word")?.textContent).toBe("Reconnecting 7");
+    cleanup();
+  });
+
   it("is inert rather than a dead button when there is nowhere to go", () => {
     const { container } = render(() => (
       <StatusDot channels={() => ALL_FINE} only={SESSION_CHANNELS} />

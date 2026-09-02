@@ -41,6 +41,15 @@ export interface Channel {
   state: ChannelState;
   /** The short phrase the row shows after its label. Always present. */
   detail: string;
+  /**
+   * A number the BADGE may show beside its word — today only the terminal's
+   * retry attempt. It exists because the badge is the single connection
+   * indicator on a session screen: the terminal's own pill defers to it, so the
+   * one thing the pill showed that a bare "Reconnecting" cannot is a climbing
+   * attempt count, which is how a reader tells a ladder that is working from
+   * one that is stuck. Absent on a first connect, which has nothing to count.
+   */
+  count?: number;
 }
 
 /**
@@ -141,13 +150,16 @@ function problems(channels: readonly Channel[]): Channel[] {
 export function badgeWord(channels: readonly Channel[]): string | null {
   const w = worst(channels);
   if (w === "working" || w === "unknown") return null;
-  if (w === "down") return "Offline";
+  const bad = problems(channels);
   // A stale build is degraded, but "Reconnecting" would be a lie about it: the
   // link is fine and the page is old. It only gets to speak when it is the
   // whole complaint — a real connection problem outranks an update.
-  const degraded = problems(channels);
-  if (degraded.every((c) => c.id === "build")) return "Update ready";
-  return "Reconnecting";
+  if (bad.every((c) => c.id === "build")) return "Update ready";
+  if (w === "down") return "Offline";
+  // The count comes from the channel the word is ABOUT — the first degraded
+  // connection in row order — not from whichever channel happens to carry one.
+  const lead = bad.find((c) => c.state === "degraded" && c.id !== "build");
+  return lead?.count ? `Reconnecting ${lead.count}` : "Reconnecting";
 }
 
 /**
@@ -244,6 +256,7 @@ export function terminalChannel(report: TerminalReport | null): Channel {
         id: "terminal",
         state: "degraded",
         detail: report.attempt > 1 ? `reconnecting, attempt ${report.attempt}` : "connecting",
+        ...(report.attempt > 1 ? { count: report.attempt } : {}),
       };
     // Battery saver closed the socket on purpose and the next visibility change
     // brings it back. Painting that red would report a fault the app caused

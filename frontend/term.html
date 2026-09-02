@@ -8180,7 +8180,11 @@ ${w.join(`
         }
         function heldRepaintPill() {
             const pill = document.getElementById('conn-pill');
-            if (!pill || pill.classList.contains('hidden')) return;
+            if (!pill) return;
+            // Framed, the pill starts HIDDEN and the first held key is exactly
+            // what should bring it back — so the hidden check, which was right
+            // when the pill was always up during a drop, must not apply there.
+            if (!isFramed && pill.classList.contains('hidden')) return;
             try { paintConnPill(connAttemptShown); } catch (e) { /* ladder not wired yet */ }
         }
         // Words, but only occasionally: a burst of typing is one event to the
@@ -9832,11 +9836,26 @@ ${w.join(`
             connAttemptShown = attempt;
             reportConn(navigator.onLine === false ? 'offline' : 'connecting', attempt);
             const held = heldCount();
-            connPill.textContent =
-                (navigator.onLine === false ? 'You are offline'
-                : attempt <= 1 ? 'Connecting…'
-                : 'Reconnecting… (attempt ' + attempt + ')')
-                + (held ? ' · ' + held + ' held' : '');
+            // >>> tl-pill-defers
+            // FRAMED, THIS PILL IS THE SECOND VOICE. The lobby's badge sits
+            // ~40px above it and already says "Reconnecting 7" about this exact
+            // socket, so painting the same sentence here was one dropped
+            // connection announced twice (measured 2026-09-02: three connection
+            // indicators on one screen, two of them identical).
+            //
+            // It speaks only when it has something the badge cannot say: keys
+            // held for replay, which is the reassurance that what you typed
+            // while disconnected is not lost. Standalone — a deep-linked ?arg=
+            // tab with no lobby around it — there is no badge, so the pill keeps
+            // its full text and is the only indicator there is.
+            if (isFramed && !held) { connPill.classList.add('hidden'); return; }
+            connPill.textContent = isFramed
+                ? held + (held === 1 ? ' key held' : ' keys held')
+                : ((navigator.onLine === false ? 'You are offline'
+                    : attempt <= 1 ? 'Connecting…'
+                    : 'Reconnecting… (attempt ' + attempt + ')')
+                   + (held ? ' · ' + held + ' held' : ''));
+            // <<< tl-pill-defers
             connPill.classList.toggle('offline', navigator.onLine === false);
             connPill.classList.remove('hidden');
         }

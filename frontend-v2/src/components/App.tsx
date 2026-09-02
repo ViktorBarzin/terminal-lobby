@@ -39,6 +39,7 @@ import { createPaletteController, type PaletteAction } from "../keybindings/pale
 import { createRunAppCommand } from "../keybindings/commands";
 import { refocusTerminal } from "../keybindings/refocus";
 import { flatSessionOrder } from "../keybindings/navigation.logic";
+import { sessionBarOnScreen } from "./lobby.logic";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutsHelp, createHelpController } from "./ShortcutsHelp";
 import { createNotificationSystem } from "../notify/notifications";
@@ -385,6 +386,11 @@ export const App: Component = () => {
   const [collapsed, setCollapsed] = createSignal(
     isMobileFlip() ? !!readInitialSelection() : readSidebarCollapsed(),
   );
+  /** Is a session bar — and so its connection badge — on screen? The sidebar's
+   *  own badge reads this and stands down (rule + tests in lobby.logic.ts). */
+  const barOnScreen = () =>
+    sessionBarOnScreen({ selected: store.selected() !== null, flip: flip(), collapsed: collapsed() });
+
   const toggleSidebar = () => {
     const next = !collapsed();
     track("sidebar.toggled", { "tl.to": next ? "collapsed" : "expanded" });
@@ -769,10 +775,18 @@ export const App: Component = () => {
           availableCommands={cmdAvail}
           altActive={engine.altActive}
           notifications={notifications}
-          // Scoped to what a list screen can honestly report (ADR-0016). On a
-          // phone this IS the whole viewport, so without it the surface the app
-          // spends most of its time on has no status at all.
-          status={{ channels: status.channels, onOpen: () => openSettings("network") }}
+          // ONE connection indicator at a time. This one exists for the screens
+          // that have no session bar — the phone's list, which is the whole
+          // viewport, and the desktop empty state — and it stands down whenever
+          // the session bar's badge is on screen. Two dots 40px apart, scoped
+          // differently, meant a dropped terminal showed amber in the bar and
+          // green up here at the same time: individually correct, together a
+          // contradiction (measured 2026-09-02).
+          status={
+            barOnScreen()
+              ? undefined
+              : { channels: status.channels, onOpen: () => openSettings("network") }
+          }
           // The phone folds the shell bar (and with it the gear) into the
           // session bar, which only exists once a session is open. Without this
           // the sidebar's own screen has no route to Settings at all.

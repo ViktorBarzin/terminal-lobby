@@ -85,22 +85,8 @@ body {
   text-overflow: ellipsis;
   max-width: 40vw;
 }
-.tl-conn {
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-.tl-conn[data-status="open"] {
-  color: var(--state-done);
-}
-.tl-conn[data-status="reconnecting"],
-.tl-conn[data-status="connecting"] {
-  color: var(--state-running);
-}
-.tl-conn[data-status="closed"] {
-  color: var(--danger);
-}
+/* `.tl-conn` — the text view's old SSE word badge ("open", "no transcript") —
+   is gone with the markup that used it. StatusDot replaced it on both views. */
 
 /* ---- Connection status (ADR-0016) --------------------------------------
    The badge, in the session bar and the sidebar header. Dot always, word only
