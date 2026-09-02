@@ -13,6 +13,13 @@ import type { TitleSession } from "../src/notify/title";
  * the URL it was last showing, so the tap was discarded and the user landed back
  * where they already were.
  */
+const tracked = vi.hoisted(() => ({ events: [] as { name: string; attrs?: Record<string, unknown> }[] }));
+vi.mock("../src/telemetry/track", () => ({
+  track: (name: string, attrs?: Record<string, unknown>) => {
+    tracked.events.push({ name, attrs });
+  },
+}));
+
 vi.mock("../src/notify/favicon", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/notify/favicon")>();
   return { ...actual, createFaviconBadger: () => ({ apply: () => {} }) };
@@ -47,7 +54,10 @@ function fakeIDB(record: unknown) {
   };
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  tracked.events.length = 0;
+});
 afterEach(() => {
   localStorage.clear();
   Reflect.deleteProperty(globalThis as object, "indexedDB");
@@ -114,6 +124,117 @@ describe("cold-launch landing", () => {
 
   it("does nothing when there is no stash at all — a plain icon launch", async () => {
     const activated = await coldLaunch({ stash: undefined, restoredAt: "trip-casia" });
+    expect(activated).toEqual([]);
+  });
+});
+
+/**
+ * Whether the tap routed used to be invisible, which is why four fixes in a row
+ * were guesses: a rejected stash and no stash at all looked identical from the
+ * journal. Each branch now says which it was, so the next iOS report is
+ * answerable without a device to drive.
+ */
+describe("cold-launch landing — reports what it decided", () => {
+  const reasons = () =>
+    tracked.events.filter((e) => e.name === "notify.stash_read").map((e) => e.attrs?.["tl.reason"]);
+
+  it("acted", async () => {
+    await coldLaunch({ stash: fresh("issues"), restoredAt: "trip-casia" });
+    expect(reasons()).toEqual(["acted"]);
+    expect(tracked.events.some((e) => e.name === "notify.clicked")).toBe(true);
+  });
+
+  it("absent — a plain icon launch, or a write that never landed", async () => {
+    await coldLaunch({ stash: undefined, restoredAt: "trip-casia" });
+    expect(reasons()).toEqual(["absent"]);
+  });
+
+  it("stale — the age gate threw the tap away", async () => {
+    const old = { session: "issues", ts: Date.now() - 31 * 60 * 1000, tapped: false };
+    await coldLaunch({ stash: old, restoredAt: "trip-casia" });
+    expect(reasons()).toEqual(["stale"]);
+  });
+
+  it("already — nothing to do", async () => {
+    await coldLaunch({ stash: fresh("issues"), restoredAt: "issues" });
+    expect(reasons()).toEqual(["already"]);
+  });
+});
+
+/**
+ * The failure the journal found, 2026-09-02, and the one four earlier fixes
+ * could not have covered.
+ *
+ * On iOS, tapping a notification for an ALREADY-RUNNING PWA foregrounds it
+ * without firing notificationclick and without reloading. The warm path has no
+ * event; the cold path has no boot. Measured on Viktor's phone: taps produced
+ * neither notify.clicked nor notify.stash_read while the app was plainly alive
+ * (terminal.softkey throughout, no app.loaded). So the record has to be re-read
+ * when the document comes back to the foreground.
+ */
+describe("foreground landing — a resident PWA that iOS merely brought forward", () => {
+  /** Boot with nothing waiting, then have a push arrive, then foreground. */
+  async function residentThenTapped(opts: { stash: unknown; showing: string | null }) {
+    Object.defineProperty(globalThis, "indexedDB", {
+      value: fakeIDB(undefined), // nothing waiting at boot
+      configurable: true,
+      writable: true,
+    });
+    const activated: string[] = [];
+    const [sessions] = createSignal<TitleSession[]>([]);
+    const [selected] = createSignal<string | null>(opts.showing);
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      createNotificationSystem({
+        sessions,
+        selected,
+        osUser: () => "wizard",
+        notifyPrefs: () => ({ onDone: true, onAwaiting: true }),
+        loading: () => false,
+        polls: () => 1,
+        toast: () => {},
+        onActivateSession: (n) => activated.push(n),
+      });
+    });
+    await new Promise((r) => setTimeout(r, 40));
+
+    // A push lands while the app sits in the background: sw.js writes the record.
+    Object.defineProperty(globalThis, "indexedDB", {
+      value: fakeIDB(opts.stash),
+      configurable: true,
+      writable: true,
+    });
+    // iOS brings the app forward. No notificationclick, no reload — just this.
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    Object.defineProperty(document, "hasFocus", { value: () => true, configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await new Promise((r) => setTimeout(r, 60));
+    dispose();
+    return activated;
+  }
+
+  it("lands on the notified session when merely foregrounded", async () => {
+    const activated = await residentThenTapped({
+      stash: fresh("issues"),
+      showing: "trip-casia",
+    });
+    expect(activated).toEqual(["issues"]);
+  });
+
+  it("stays put when nothing is waiting — an ordinary return to the app", async () => {
+    const activated = await residentThenTapped({ stash: undefined, showing: "trip-casia" });
+    expect(activated).toEqual([]);
+  });
+
+  it("stays put for a record too old to be a tap", async () => {
+    const stale = { session: "issues", ts: Date.now() - 31 * 60 * 1000, tapped: false };
+    const activated = await residentThenTapped({ stash: stale, showing: "trip-casia" });
+    expect(activated).toEqual([]);
+  });
+
+  it("does nothing when it is already showing the notified session", async () => {
+    const activated = await residentThenTapped({ stash: fresh("issues"), showing: "issues" });
     expect(activated).toEqual([]);
   });
 });

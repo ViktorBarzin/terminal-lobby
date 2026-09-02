@@ -47,6 +47,7 @@ import { fireNotification } from "./fire";
 import { notifyOptedIn, setNotifyOptIn } from "./opt-in";
 import {
   readAndClearPendingSession,
+  type PendingNotif,
   registerServiceWorker,
   stashIsActionable,
 } from "../pwa/register";
@@ -244,14 +245,67 @@ export function createNotificationSystem(
   // The trade-off, stated: deliberately opening a deep link to session B within
   // that window of a push about session A lands on A. One tap corrects it, and
   // the stash is consumed, so it cannot happen twice.
-  onMount(async () => {
-    if (lens) return;
-    const pending = await readAndClearPendingSession();
-    if (!(await stashIsActionable(pending))) return;
-    const session = pending!.session;
-    if (opts.selected() === session) return; // already where the tap wanted
+  //
+  // Every branch reports. This chain has broken four times, on a platform with
+  // no instrument on this network, and each fix was a guess because a rejected
+  // tap looked exactly like no tap at all. `notify.stash_read` plus the worker's
+  // `notify.stash_written` make the whole path answerable from the journal:
+  // no written → the record never survived; written but `stale` → the age gate;
+  // written and nothing read → boot never ran; `acted` → it worked.
+  //
+  // Called at BOOT and again on every return to the foreground. The second
+  // caller is the one that matters on iOS, and it is why four earlier fixes all
+  // missed. Measured on Viktor's phone, 2026-09-02: tapping a notification for
+  // an already-running PWA FOREGROUNDS it without firing notificationclick and
+  // without reloading it. So the warm path has no event to act on, the cold path
+  // has no boot to run in, and the app simply comes to the front on whatever it
+  // was already showing.
+  //
+  // The journal is what settled it: his taps produced neither notify.clicked nor
+  // notify.stash_read while the app was demonstrably alive — terminal.softkey
+  // events throughout the window and not one app.loaded among them. The record
+  // sw.js writes at push time was the only trace of the tap, and nothing was
+  // re-reading it after mount.
+  //
+  // Same trade-off as at boot, and the same guard: foregrounding by tapping the
+  // app ICON within the fresh-receipt window lands on the notified session
+  // instead. A push had just arrived, so that is a defensible place to be, and
+  // stashIsActionable rejects an older receipt whose banner is still on screen.
+  const landOnStashedTapWith = async (pending: PendingNotif): Promise<void> => {
+    const reason = (r: string): void => void track("notify.stash_read", { "tl.reason": r });
+    if (!(await stashIsActionable(pending))) {
+      reason("stale"); // too old, or its banner is still on screen
+      return;
+    }
+    const session = pending.session;
+    if (opts.selected() === session) {
+      reason("already"); // the app is already where the tap wanted
+      return;
+    }
+    reason("acted");
     track("notify.clicked", { "tl.session": session });
     opts.onActivateSession(session);
+  };
+
+  /** Read the record and act on it, if there is one. */
+  const landOnStashedTap = async (): Promise<void> => {
+    if (lens) return;
+    const pending = await readAndClearPendingSession();
+    if (!pending) return; // nothing waiting; not worth an event on every focus
+    await landOnStashedTapWith(pending);
+  };
+
+  onMount(async () => {
+    if (lens) return;
+    // Boot reports `absent` where the foreground path stays quiet: at boot it
+    // distinguishes "the write never landed" from "no tap", which is the
+    // question the worker's notify.stash_written is paired with.
+    const peek = await readAndClearPendingSession();
+    if (!peek) {
+      track("notify.stash_read", { "tl.reason": "absent" });
+      return;
+    }
+    await landOnStashedTapWith(peek);
   });
 
   // Self-heal the background subscription every load (the desktop-silent fix):
@@ -399,6 +453,10 @@ export function createNotificationSystem(
   const onVisibility = (): void => {
     if (!hasDoc || document.hidden) return;
     onLook();
+    // A tap that iOS turned into a plain foreground, with no notificationclick
+    // and no reload, leaves its only trace in the stash. This is where a
+    // resident PWA finds it.
+    void landOnStashedTap();
     // Re-confirm on return-to-foreground (throttled): a long-lived tab whose
     // endpoint the server pruned would otherwise stay silent forever, believing
     // push still covers it.

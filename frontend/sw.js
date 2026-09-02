@@ -187,6 +187,64 @@ function paintBadge(count) {
     }
 }
 
+// Report one fact the page can never see: did the tap record survive being
+// written?
+//
+// This exists because the iOS cold-launch chain had no instrument and no trace.
+// A killed PWA fires no notificationclick, so the tapped session reaches the app
+// only through stashPendingSession — and if that write fails, every downstream
+// fix is pointless and nothing anywhere says so. IndexedDB inside a service
+// worker is exactly where a silent failure is plausible.
+//
+// A worker MAY fetch() from a push handler (that is a network request, not a
+// navigation intercept — see the header). credentials:'same-origin' carries the
+// ingress identity header, so this authenticates like the page does.
+//
+// Best-effort to the point of indifference: any failure resolves, because a
+// missing telemetry line must never cost a notification.
+function reportStash(session, ok) {
+    try {
+        return fetch('/api/sessions/telemetry', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                client: 'sw',
+                build: 'sw',
+                events: [{
+                    name: 'notify.stash_written',
+                    attrs: { 'tl.session': session, 'tl.kind': ok ? 'ok' : 'fail' }
+                }]
+            })
+        }).then(() => {}).catch(() => {});
+    } catch (e) {
+        return Promise.resolve();
+    }
+}
+
+// Did the record actually land? stashPendingSession resolves on success AND on
+// every failure it swallows, so it cannot answer this itself. Read the value
+// back: that is the only claim worth reporting.
+function verifyStash(session) {
+    return new Promise((resolve) => {
+        let req;
+        try { req = indexedDB.open('tl-notif', 1); } catch (e) { resolve(false); return; }
+        req.onupgradeneeded = () => { try { req.result.createObjectStore('pending'); } catch (e) {} };
+        req.onerror = () => resolve(false);
+        req.onsuccess = () => {
+            const db = req.result;
+            try {
+                const tx = db.transaction('pending', 'readonly');
+                const get = tx.objectStore('pending').get('last');
+                const done = (v) => { try { db.close(); } catch (e) {} resolve(v); };
+                tx.oncomplete = () => done(!!(get.result && get.result.session === session));
+                tx.onerror = () => done(false);
+                tx.onabort = () => done(false);
+            } catch (e) { try { db.close(); } catch (e2) {} resolve(false); }
+        };
+    });
+}
+
 self.addEventListener('push', (event) => {
     let data = {};
     try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
@@ -204,7 +262,15 @@ self.addEventListener('push', (event) => {
         // or delay showNotification — kick both off and allSettled so a stalled
         // or aborted stash can't hold up (or reject away) the notification.
         const tasks = [self.registration.showNotification(title, options)];
-        if (data.session) tasks.push(stashPendingSession(data.session, false));
+        if (data.session) {
+            // Chain the report onto the write so it records the real outcome,
+            // and keep BOTH off showNotification's path.
+            tasks.push(
+                stashPendingSession(data.session, false)
+                    .then(() => verifyStash(data.session))
+                    .then((ok) => reportStash(data.session, ok))
+            );
+        }
         // Same rule as the stash: the badge is a courtesy and must never gate or
         // delay showNotification (iOS revokes permission if a push shows nothing).
         // showNotification was CALLED on the line above, so its promise is
