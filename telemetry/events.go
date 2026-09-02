@@ -33,7 +33,7 @@ var knownEvents = map[string]bool{
 	// held it, how many events it seeded from, and how many the server still had
 	// to send. The pair is what says whether the client-side transcript cache is
 	// earning its keep in the wild rather than in a test.
-	"text.open":        true, // tl.cache, tl.cached, tl.fetched
+	"text.open": true, // tl.cache, tl.cached, tl.fetched
 	// Answering a blocking AskUserQuestion from the text view. The failure
 	// carries WHERE the sequence stopped and WHY, never what the pane held:
 	// a dialog can quote anything the session was working on.
@@ -41,11 +41,11 @@ var knownEvents = map[string]bool{
 	// tl.source, tl.expect_len, tl.pane_read
 	"text.answer_failed": true,
 	"text.answer_sent":   true, // tl.multi, tl.questions, tl.steps
-	"session.detached": true,
-	"session.renamed":  true,
-	"session.moved":    true, // between projects / reordered (tl.from, tl.to)
-	"session.killed":   true,
-	"session.restored": true, // tmux-persist restore (tl.count)
+	"session.detached":   true,
+	"session.renamed":    true,
+	"session.moved":      true, // between projects / reordered (tl.from, tl.to)
+	"session.killed":     true,
+	"session.restored":   true, // tmux-persist restore (tl.count)
 
 	// -- skills & plugins (skills-api) --------------------------------------
 	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)
@@ -132,6 +132,13 @@ var knownEvents = map[string]bool{
 	"notify.push_unsubscribed": true,
 	"notify.shown":             true,
 	"notify.clicked":           true,
+	// The iOS cold-launch chain, which has no instrument on this network and had
+	// no trace either. A killed PWA fires no notificationclick, so the tapped
+	// session travels only through the record sw.js writes at push time — and
+	// every step of that was silent, so four fixes in a row were guesses. These
+	// two make it answerable from the journal after the fact.
+	"notify.stash_written": true, // sw.js wrote, or failed to write, the tap record (tl.kind=ok|fail)
+	"notify.stash_read":    true, // boot read it, and what it decided (tl.reason)
 
 	// -- the Claude conversation (session-events) --------------------------
 	"claude.prompt_sent":   true,

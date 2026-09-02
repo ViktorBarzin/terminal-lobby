@@ -13,6 +13,13 @@ import type { TitleSession } from "../src/notify/title";
  * the URL it was last showing, so the tap was discarded and the user landed back
  * where they already were.
  */
+const tracked = vi.hoisted(() => ({ events: [] as { name: string; attrs?: Record<string, unknown> }[] }));
+vi.mock("../src/telemetry/track", () => ({
+  track: (name: string, attrs?: Record<string, unknown>) => {
+    tracked.events.push({ name, attrs });
+  },
+}));
+
 vi.mock("../src/notify/favicon", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/notify/favicon")>();
   return { ...actual, createFaviconBadger: () => ({ apply: () => {} }) };
@@ -47,7 +54,10 @@ function fakeIDB(record: unknown) {
   };
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  tracked.events.length = 0;
+});
 afterEach(() => {
   localStorage.clear();
   Reflect.deleteProperty(globalThis as object, "indexedDB");
@@ -115,5 +125,38 @@ describe("cold-launch landing", () => {
   it("does nothing when there is no stash at all — a plain icon launch", async () => {
     const activated = await coldLaunch({ stash: undefined, restoredAt: "trip-casia" });
     expect(activated).toEqual([]);
+  });
+});
+
+/**
+ * Whether the tap routed used to be invisible, which is why four fixes in a row
+ * were guesses: a rejected stash and no stash at all looked identical from the
+ * journal. Each branch now says which it was, so the next iOS report is
+ * answerable without a device to drive.
+ */
+describe("cold-launch landing — reports what it decided", () => {
+  const reasons = () =>
+    tracked.events.filter((e) => e.name === "notify.stash_read").map((e) => e.attrs?.["tl.reason"]);
+
+  it("acted", async () => {
+    await coldLaunch({ stash: fresh("issues"), restoredAt: "trip-casia" });
+    expect(reasons()).toEqual(["acted"]);
+    expect(tracked.events.some((e) => e.name === "notify.clicked")).toBe(true);
+  });
+
+  it("absent — a plain icon launch, or a write that never landed", async () => {
+    await coldLaunch({ stash: undefined, restoredAt: "trip-casia" });
+    expect(reasons()).toEqual(["absent"]);
+  });
+
+  it("stale — the age gate threw the tap away", async () => {
+    const old = { session: "issues", ts: Date.now() - 31 * 60 * 1000, tapped: false };
+    await coldLaunch({ stash: old, restoredAt: "trip-casia" });
+    expect(reasons()).toEqual(["stale"]);
+  });
+
+  it("already — nothing to do", async () => {
+    await coldLaunch({ stash: fresh("issues"), restoredAt: "issues" });
+    expect(reasons()).toEqual(["already"]);
   });
 });
