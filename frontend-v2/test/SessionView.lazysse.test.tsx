@@ -35,9 +35,6 @@ const segments = (root: HTMLElement): HTMLButtonElement[] =>
 const dots = (root: HTMLElement): boolean[] =>
   segments(root).map((b) => !!b.querySelector(".tl-activity-dot"));
 
-const conn = (root: HTMLElement): HTMLElement | null =>
-  root.querySelector<HTMLElement>(".tl-conn");
-
 const mode = (root: HTMLElement): string | null =>
   root.querySelector(".tl-session-view")?.getAttribute("data-mode") ?? null;
 
@@ -129,13 +126,30 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
     expect(eventSources).toHaveLength(1);
   });
 
-  it("badges the first open of Text as connecting, not as a failure", () => {
-    const { container } = render(() => <SessionView session="qa-lazy" />);
-    fireEvent.click(segments(container)[0]!); // [Text] — the badge's own view
-    // The badge appears with the connection it just triggered, not with the
-    // vocabulary of a broken one.
-    expect(conn(container)?.getAttribute("data-status")).toBe("connecting");
-    expect(conn(container)?.textContent).toBe("connecting");
+  it("reports the first open of Text as connecting, not as a failure", () => {
+    const published: (string | null)[] = [];
+    const { container } = render(() => (
+      <SessionView
+        session="qa-lazy"
+        status={{
+          channels: () => [],
+          onOpen: () => {},
+          onTranscript: (s) => void published.push(s),
+          onFrameConn: () => {},
+          askConn: () => {},
+          retryConn: () => {},
+        }}
+      />
+    ));
+    // Before Text: nothing has asked the stream to open, so the view says
+    // NOTHING about it rather than publishing the `connecting` initial value —
+    // which is what made a terminal-only session look broken (c494629).
+    expect(published.every((s) => s === null)).toBe(true);
+
+    fireEvent.click(segments(container)[0]!); // [Text] opens the stream
+    // Now it reports the connection it just triggered, not the vocabulary of a
+    // broken one.
+    expect(published[published.length - 1]).toBe("connecting");
   });
 
   it("unmounts cleanly when the stream was never opened", () => {

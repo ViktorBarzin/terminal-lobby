@@ -44,20 +44,6 @@ import { StatusDot } from "./StatusDot";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 
 /**
- * The stream badge's wording. Every status but one reads fine as-is; a session
- * with no Claude transcript is not a broken connection, so it must not borrow
- * the vocabulary of one (it keeps the base muted-grey `.tl-conn` styling — the
- * colour overrides in app.css only cover the connection states).
- */
-const connLabel = (s: SseStatus): string =>
-  s === "no-transcript" ? "no transcript" : s;
-
-const connTitle = (s: SseStatus): string =>
-  s === "no-transcript"
-    ? "no Claude transcript for this session — it streams as soon as one starts"
-    : `stream: ${s}`;
-
-/**
  * The per-session two-view surface (text + terminal), extracted from the old
  * top-level App so the lobby shell can mount ONE of these for the selected
  * session and remount it when the selection changes. Both views stay mounted
@@ -663,13 +649,7 @@ export const SessionView: Component<{
             — which left the terminal, the one thing in front of you, reporting
             nothing at all. It now shows the worst of every channel this surface
             can honestly report, and opens the panel that says which. */}
-        <Show when={props.status} fallback={
-          <Show when={mode() === "text"}>
-            <span class="tl-conn" data-status={store.status()} title={connTitle(store.status())}>
-              {connLabel(store.status())}
-            </span>
-          </Show>
-        }>
+        <Show when={props.status}>
           {(s) => (
             <StatusDot
               class="tl-conn-badge"

@@ -80,6 +80,33 @@ describe("the badge's word", () => {
   it("is silent for an unknown-only set", () => {
     expect(badgeWord([ch("terminal", "unknown")])).toBeNull();
   });
+
+  /**
+   * The badge is now the ONLY connection indicator on a session screen — the
+   * terminal's own pill defers to it — so it has to carry the attempt number
+   * the pill used to show. Without it, "Reconnecting" sits there unchanging and
+   * a reader cannot tell a ladder that is climbing from one that is stuck.
+   */
+  it("carries the retry attempt when the channel counts one", () => {
+    expect(badgeWord([{ ...ch("terminal", "degraded"), count: 7 }])).toBe("Reconnecting 7");
+  });
+
+  it("says just Reconnecting on a first connect, which has no attempt to show", () => {
+    expect(badgeWord([ch("terminal", "degraded")])).toBe("Reconnecting");
+  });
+
+  it("takes the count from the channel the word is about, not another", () => {
+    expect(
+      badgeWord([
+        { ...ch("terminal", "degraded"), count: 4 },
+        { ...ch("build", "degraded"), count: 99 },
+      ]),
+    ).toBe("Reconnecting 4");
+  });
+
+  it("does not count an Offline badge", () => {
+    expect(badgeWord([{ ...ch("terminal", "down"), count: 9 }])).toBe("Offline");
+  });
 });
 
 describe("the panel's verdict", () => {
@@ -172,6 +199,12 @@ describe("the terminal channel", () => {
     const c = terminalChannel({ state: "connecting", attempt: 3 });
     expect(c.state).toBe("degraded");
     expect(c.detail).toBe("reconnecting, attempt 3");
+    // The badge reads this, now that the terminal's own pill defers to it.
+    expect(c.count).toBe(3);
+  });
+
+  it("carries no count on a first connect", () => {
+    expect(terminalChannel({ state: "connecting", attempt: 1 }).count).toBeUndefined();
   });
 
   it("does not say attempt 1 for a first connect", () => {

@@ -520,3 +520,26 @@ export function countStates(sessions: Session[]): StateCounts {
   }
   return c;
 }
+
+/**
+ * Is a session bar — and with it the connection badge it carries — on screen?
+ *
+ * The sidebar's own badge reads this and stands down when it is true, so the
+ * two are never up together. They are scoped differently (the sidebar cannot
+ * honestly report a terminal), which meant a dropped socket showed amber in the
+ * session bar and green in the sidebar header at the same time: each correct on
+ * its own, together a contradiction (Viktor, 2026-09-02).
+ *
+ * The condition is the one SessionView is handed as `visible`: a session
+ * selected, and on a phone the session side of the flip showing rather than the
+ * list.
+ */
+export function sessionBarOnScreen(o: {
+  selected: boolean;
+  /** phone layout: the sidebar and the session are alternate screens. */
+  flip: boolean;
+  /** phone layout only: the list is collapsed away, so the session is showing. */
+  collapsed: boolean;
+}): boolean {
+  return o.selected && (!o.flip || o.collapsed);
+}

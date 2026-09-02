@@ -43,7 +43,29 @@ const eventSources: FakeSource[] = [];
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 const conn = (root: HTMLElement): HTMLElement | null =>
-  root.querySelector<HTMLElement>(".tl-conn");
+  root.querySelector<HTMLElement>(".tl-conn-badge");
+
+/**
+ * The status wiring a mounted view is handed, with the transcript statuses it
+ * publishes recorded. That publication IS the contract now: the bar's badge
+ * shows the worst of every channel rather than this one stream, so what this
+ * view says about its stream is what the rest of the app reacts to.
+ */
+function statusProbe() {
+  const transcript: (string | null)[] = [];
+  return {
+    transcript,
+    last: () => transcript[transcript.length - 1] ?? null,
+    props: {
+      channels: () => [],
+      onOpen: () => {},
+      onTranscript: (s: string | null) => void transcript.push(s),
+      onFrameConn: () => {},
+      askConn: () => {},
+      retryConn: () => {},
+    },
+  };
+}
 
 const segments = (root: HTMLElement): HTMLButtonElement[] =>
   Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"));
@@ -184,60 +206,80 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   });
 
   /**
-   * QA #5: `.tl-conn` reports the TEXT view's SSE transcript stream, and it was
-   * the session bar's only status badge in either view. On the Terminal view —
-   * the v1 default, with the Text view deferred — a plain shell session
-   * therefore sat under a permanent "no transcript" readout about a view the
-   * user cannot use, and said nothing at all about the live terminal. The badge
-   * belongs to the view it describes.
+   * QA #5 REVERSED, deliberately. The old `.tl-conn` badge reported the TEXT
+   * view's SSE stream and only that, so it was hidden on the Terminal view —
+   * where it would have read as the terminal's status — which left the terminal
+   * itself reporting nothing at all. The badge now shows the worst of every
+   * channel the surface can honestly report (ADR-0016), so it belongs on BOTH
+   * views. The old badge's markup is gone with the behaviour.
    */
-  it("shows the transcript badge on the Text view only", () => {
-    const { container } = render(() => <SessionView session="qa-vs" />);
+  it("shows one badge, on both views", () => {
+    const probe = statusProbe();
+    const { container } = render(() => <SessionView session="qa-vs" status={probe.props} />);
     expect(mode(container)).toBe("terminal");
-    expect(conn(container)).toBeNull();
+    expect(container.querySelectorAll(".tl-conn-badge")).toHaveLength(1);
 
     fireEvent.click(segments(container)[0]!); // [Text]
-    expect(conn(container)).not.toBeNull();
+    expect(container.querySelectorAll(".tl-conn-badge")).toHaveLength(1);
 
     fireEvent.click(segments(container)[1]!); // [Terminal]
+    expect(container.querySelectorAll(".tl-conn-badge")).toHaveLength(1);
+  });
+
+  it("draws no badge at all where the shell supplies no status", () => {
+    const { container } = render(() => <SessionView session="qa-vs" />);
     expect(conn(container)).toBeNull();
   });
 
-  // A plain shell session (no Claude, hence no transcript registered with
-  // session-events) reads as such in the Text view's badge. It used to sit on
-  // RECONNECTING forever while the client hammered a permanent 404.
-  it("badges a session with no transcript as such, not as a failing connection", async () => {
+  /**
+   * A plain shell session — no Claude, so no transcript registered with
+   * session-events — must not read as a broken connection. It used to sit on
+   * RECONNECTING forever while the client hammered a permanent 404; what the
+   * view publishes is now what decides that, and `no-transcript` maps to
+   * working (status.ts).
+   */
+  it("publishes a missing transcript as such, not as a failing connection", async () => {
     const origFetch = g.fetch;
     g.fetch = async () => new Response(null, { status: 404 });
     try {
-      const { container } = render(() => <SessionView session="qa-vs" />);
-      fireEvent.click(segments(container)[0]!); // [Text] — the badge's own view
-      expect(conn(container)?.textContent).toBe("connecting");
+      const probe = statusProbe();
+      const { container } = render(() => <SessionView session="qa-vs" status={probe.props} />);
+      fireEvent.click(segments(container)[0]!); // [Text] opens the stream
+      expect(probe.last()).toBe("connecting");
 
       eventSources[0]!.onerror?.(null); // the 404 the browser reports opaquely
       await flush();
 
-      expect(conn(container)?.getAttribute("data-status")).toBe("no-transcript");
-      expect(conn(container)?.textContent).toBe("no transcript");
-      expect(conn(container)?.getAttribute("title")).toContain("no Claude transcript");
+      expect(probe.last()).toBe("no-transcript");
     } finally {
       g.fetch = origFetch;
     }
   });
 
-  it("still says reconnecting when the stream is merely unreachable", async () => {
+  it("still publishes reconnecting when the stream is merely unreachable", async () => {
     const origFetch = g.fetch;
     g.fetch = async () => new Response(null, { status: 502 });
     try {
-      const { container } = render(() => <SessionView session="qa-vs" />);
-      fireEvent.click(segments(container)[0]!); // [Text] — the badge's own view
+      const probe = statusProbe();
+      const { container } = render(() => <SessionView session="qa-vs" status={probe.props} />);
+      fireEvent.click(segments(container)[0]!); // [Text] opens the stream
       eventSources[0]!.onerror?.(null);
       await flush();
-      expect(conn(container)?.getAttribute("data-status")).toBe("reconnecting");
-      expect(conn(container)?.textContent).toBe("reconnecting");
+      expect(probe.last()).toBe("reconnecting");
     } finally {
       g.fetch = origFetch;
     }
+  });
+
+  /**
+   * The lazy-connect half of the same contract: before Text is shown nothing
+   * has asked the stream to open, and publishing its `connecting` initial value
+   * made a terminal-only session report a transcript in trouble (c494629).
+   */
+  it("publishes nothing about a stream it has not opened", () => {
+    const probe = statusProbe();
+    render(() => <SessionView session="qa-vs" status={probe.props} />);
+    expect(probe.transcript.every((s) => s === null)).toBe(true);
   });
 
   // Attaching a live session resizes ITS tmux window to whatever the iframe
