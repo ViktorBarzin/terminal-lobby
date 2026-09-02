@@ -69,7 +69,7 @@ plan were both entirely internal until now.
 | Check | Passive state **and** an active check | Passive alone cannot answer "is push broken?" — a subscription looks healthy right up until nothing arrives |
 | Scope | Connections plus build version | A tab on old JavaScript against a new server looks exactly like a broken connection |
 | Home | First group of Settings → Network | A second rail page called "Connection" splits one mental model across two adjacent entries |
-| Badge | Session bar **and** sidebar header | The mobile list screen is the whole viewport and would otherwise have no status at all |
+| Badge | Session bar, **or** sidebar header — never both (amended, see below) | The mobile list screen is the whole viewport and would otherwise have no status at all |
 | Wording | Dot always, word when wrong | An always-on "Connected" spends bar width on the state that is true 99% of the time |
 | Push | Read state, send nothing | `/push/test` fans out to every device; a diagnostic that buzzes the phone in your pocket is one you stop running |
 | States | Three, plus a neutral `unknown` | Two states collapse "wait" and "act", which is the one distinction a frozen terminal needs |
@@ -194,6 +194,43 @@ All three are now covered by tests. The first two were pure-model bugs a unit
 test would have caught had it been written to the right rule; the tests as
 written encoded the same assumption the code did, which is why opening the page
 was what found them.
+
+## Amendment, 2026-09-02: one indicator at a time
+
+Viktor, on the shipped version: *"we show too many indicators when something is
+connected or not."* He was right, and two of the three were added by this work.
+
+Measured on one screen during a single dropped socket:
+
+| Indicator | Said | Where |
+|---|---|---|
+| Terminal pill | "Reconnecting… (attempt 7)" | inside the iframe |
+| Session bar badge | "Reconnecting" | 40px above it |
+| Sidebar header badge | ● green | top-left |
+
+Two identical statements, and a contradiction: the sidebar's badge is scoped to
+the three channels a list screen can answer for, so it knew nothing about the
+terminal and stayed green while the other two went amber. Each was correct
+alone. Together they read as a system that cannot agree with itself.
+
+The rule now is that exactly one connection indicator is on screen at a time:
+
+- the **sidebar badge** stands down whenever a session bar is on screen, and
+  covers the screens without one — the phone's list, which is the whole
+  viewport, and the desktop empty state;
+- the **pill** defers when framed, speaking only when it has something the badge
+  cannot say (keystrokes held for replay). Standalone `term.html` is unchanged;
+- the **badge** carries the retry attempt the pill used to show, so a climbing
+  ladder still reads differently from a stuck one.
+
+`.tl-conn`, the text view's old SSE word badge, is deleted with the same change.
+It had been unreachable since the badge replaced it.
+
+One thing worth recording for whoever revisits this: held keystrokes are already
+drawn as `.tl-held` glyphs in the terminal at the cursor, so the pill's count is
+a fallback for characters past the last visible row rather than the only place
+that reassurance appears. If the exception ever looks like more trouble than it
+is worth, suppressing the pill outright loses less than it seems to.
 
 ## What this does not do
 
