@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
@@ -270,6 +271,10 @@ func TestPushSenderActivityGateSuppressesAgentBounces(t *testing.T) {
 	}
 
 	// User types again (T=200) → the next completion pushes again.
+	//
+	// The done→running tick below is also what clears the "one outstanding
+	// notification per session" flag: submitting to a session is the
+	// engagement that lets it ring again.
 	stub.setAct(map[string]int64{"main": 200})
 	stub.set(map[string]string{"main": stateRunning})
 	sender.tick()
@@ -663,5 +668,108 @@ func TestPushPayloadCarriesTheNamedSet(t *testing.T) {
 	}
 	if !reflect.DeepEqual(wait["d"], []any{"two"}) {
 		t.Fatalf("waiting.d = %v, want [two]", wait["d"])
+	}
+}
+
+// ONE NOTIFICATION PER THREAD (Viktor, 2026-09-02: "I'd like 1 notification per
+// thread at most"). A session that has already rung and has not been engaged
+// with says nothing new by ringing again — the sidebar marks it unread and the
+// app icon counts it. The notification reports a CHANGE.
+func TestPushSenderOneOutstandingNotificationPerSession(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	// No client attached, so there is NO activity reading — the case that used
+	// to fail open and ring on every single turn boundary.
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if rec.hit("/d") != 1 {
+		t.Fatalf("first completion: got %d, want 1", rec.hit("/d"))
+	}
+
+	// It finishes twice more with nobody engaging. Silent both times.
+	for i := 0; i < 2; i++ {
+		stub.set(map[string]string{"main": stateAwaiting})
+		sender.tick()
+		stub.set(map[string]string{"main": stateDone})
+		sender.tick()
+	}
+	if got := rec.hit("/d"); got != 1 {
+		t.Fatalf("unengaged session rang again: got %d, want still 1", got)
+	}
+
+	// Submitting to it is engagement: the next completion may ring.
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if got := rec.hit("/d"); got != 2 {
+		t.Fatalf("after engaging: got %d, want 2", got)
+	}
+}
+
+// A session finishing while the person is typing into it does not ring: they
+// are watching it. The activity gate cannot express this, because typing is
+// what ARMS a push — so the fastest turns were exactly the ones interrupting.
+func TestPushSenderSkipsASessionYouAreSittingAt(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+	now := time.Now()
+	sender.now = func() time.Time { return now }
+
+	// Typed five seconds ago: they are right there.
+	stub.set(map[string]string{"main": stateRunning})
+	stub.setAct(map[string]int64{"main": now.Add(-5 * time.Second).Unix()})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if got := rec.hit("/d"); got != 0 {
+		t.Fatalf("rang about the session under their hands: got %d, want 0", got)
+	}
+
+	// Ten minutes later, same session finishes again. They have wandered off.
+	now = now.Add(10 * time.Minute)
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	if got := rec.hit("/d"); got != 1 {
+		t.Fatalf("after they left: got %d, want 1", got)
+	}
+}
+
+// The throttle decides on its own inputs, so the two rules can be read without
+// a tmux or a push server.
+func TestThrottledReasons(t *testing.T) {
+	now := time.Now()
+	p := &pushSender{
+		seenAct:     map[string]map[string]int64{"u": {"warm": now.Add(-2 * time.Second).Unix(), "cold": now.Add(-time.Hour).Unix()}},
+		outstanding: map[string]map[string]bool{"u": {"rung": true}},
+	}
+	for _, tc := range []struct{ name, session, want string }{
+		{"typing right now", "warm", "at-keyboard"},
+		{"long since touched", "cold", ""},
+		{"already has a notification", "rung", "already-notified"},
+		{"never seen at all", "fresh", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := p.throttled("u", tc.session, now); got != tc.want {
+				t.Fatalf("throttled(%s) = %q, want %q", tc.session, got, tc.want)
+			}
+		})
 	}
 }
