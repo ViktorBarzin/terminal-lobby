@@ -280,6 +280,60 @@ describe("attaching a terminal", () => {
     }
   });
 
+  /**
+   * A read-only viewer must not type into someone else's session — and must not
+   * have keys HELD either, because a hold is a promise to replay and read-only
+   * attach can never deliver it. term.html drops at the top of sendInput, above
+   * the branch that would have offered them; this drops at the same place.
+   */
+  it("drops a watcher's keystrokes without sending or holding them", async () => {
+    FakeSocket.made = [];
+    const verdicts: string[] = [];
+    const h = harness({ watch: () => true, onHeld: (_s, v) => void verdicts.push(v) });
+    const a = attach(h.deps);
+    await flush();
+    const s = FakeSocket.made[0]!;
+    s.open();
+    const afterHandshake = s.sent.length;
+    a.send("rm -rf /");
+    expect(s.sent).toHaveLength(afterHandshake); // nothing reached the pty
+    expect(verdicts).toEqual(["refused:watching"]);
+    a.dispose();
+  });
+
+  /**
+   * Typing into a gap is the case offline typing exists for: the keystrokes are
+   * held, drawn, and replayed when a socket comes back — rather than vanishing
+   * into a terminal that looked alive.
+   */
+  it("holds what was typed while the socket was down, and replays it on reconnect", async () => {
+    FakeSocket.made = [];
+    const h = harness();
+    const a = attach(h.deps);
+    await flush();
+    const first = FakeSocket.made[0]!;
+    first.open();
+    first.drop(); // the socket is gone; the ladder is climbing
+
+    a.send("echo hi");
+    expect(FakeSocket.made).toHaveLength(1); // nowhere to send it
+
+    const retry = h.timers.find((t) => t.ms > 0 && t.ms <= 2000);
+    h.runTimer(retry!.id);
+    await flush();
+    const second = FakeSocket.made[1]!;
+    second.open();
+    // Nothing replays on `open` alone: ttyd drops what arrives before the
+    // process is spawned, so the hold waits for the first OUTPUT frame, which is
+    // the only proof there is a pty to receive it.
+    expect(second.sent.slice(1)).toHaveLength(0);
+
+    second.onmessage?.({ data: new TextEncoder().encode("0ready").buffer } as MessageEvent);
+    const replayed = second.sent.slice(1).map((b) => new TextDecoder().decode(b as Uint8Array));
+    expect(replayed.join("")).toContain("echo hi");
+    a.dispose();
+  });
+
   it("reports phase changes so the shell's badge can follow them", async () => {
     FakeSocket.made = [];
     const h = harness();

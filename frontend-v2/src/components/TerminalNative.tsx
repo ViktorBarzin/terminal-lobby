@@ -34,6 +34,13 @@ export const TerminalNative: Component<{
   args: string;
   /** Phase changes, for the shell's connection badge (ADR-0016). */
   onConn?: (report: TerminalReport) => void;
+  /**
+   * This client attached read-only and the SERVER agreed. Passed down so the
+   * one input choke point in attach.ts can drop a watcher's keystrokes — the
+   * page cannot grant itself write access, but it can stop pretending the keys
+   * went somewhere.
+   */
+  watch?: () => boolean;
   /** Hands the caller a way to retry, for the panel's Reconnect button. */
   onReady?: (control: { reconnect: () => void }) => void;
 }> = (props) => {
@@ -86,6 +93,7 @@ export const TerminalNative: Component<{
         write: (bytes) => term.write(bytes),
         size: () => ({ cols: term.cols, rows: term.rows }),
         onPhase: (phase, attempt) => props.onConn?.(report(phase, attempt)),
+        watch: () => props.watch?.() === true,
       });
       const a = attachment;
       term.onData((data) => a.send(data));

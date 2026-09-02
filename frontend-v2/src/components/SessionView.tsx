@@ -943,6 +943,7 @@ export const SessionView: Component<{
                 owner: props.owner || undefined,
                 watch: watch(),
               })}
+              watch={watch}
               onConn={(r) => onScreen() && props.status?.onFrameConn(r)}
               onReady={(control) => (frameRetry = control.reconnect)}
             />
