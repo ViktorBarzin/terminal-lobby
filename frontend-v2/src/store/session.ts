@@ -53,6 +53,12 @@ export interface SessionStore {
    *  store closed. Callers that construct with `autoStart: false` own the
    *  moment of the first connect (see the option). */
   start: () => void;
+  /**
+   * Has `start()` been called? Distinguishes a stream nobody has asked to open
+   * from one that is trying to open, which `status` alone cannot: it reads
+   * `connecting` in both cases, because that is its initial value.
+   */
+  started: Accessor<boolean>;
   /** Resolve a permission request. Returns true on the backend's 204. */
   resolvePermission: (
     reqId: string,
@@ -477,8 +483,17 @@ export function createSessionStore(
     },
   });
 
-  /** has the stream been opened, and has it been closed for good? */
-  let started = false;
+  /**
+   * Has the stream been opened, and has it been closed for good?
+   *
+   * `started` is a signal rather than a plain flag because the connection
+   * status panel has to tell "this stream has not been asked to open" from
+   * "this stream is trying and failing". Both were `connecting` from the
+   * outside — the status signal's initial value — so a terminal-only session
+   * reported its transcript as reconnecting forever, about a stream nobody had
+   * asked for (ADR-0016).
+   */
+  const [started, setStarted] = createSignal(false);
   let closed = false;
 
   /**
@@ -514,8 +529,8 @@ export function createSessionStore(
     // the guard that carries weight: SseClient.start() clears the client's own
     // `stopped` flag, so an effect flushing after disposal would otherwise
     // re-open a stream the view that owned it no longer exists to read.
-    if (started || closed) return;
-    started = true;
+    if (started() || closed) return;
+    setStarted(true);
     // With nothing stored there is nothing to wait for, and the stream opens
     // exactly as it always did — synchronously, in this tick.
     if (!cache.enabled) {
@@ -751,6 +766,7 @@ export function createSessionStore(
     events,
     status,
     start,
+    started,
     resolvePermission,
     send,
     interrupt,
