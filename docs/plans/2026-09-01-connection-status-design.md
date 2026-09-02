@@ -218,19 +218,22 @@ The rule now is that exactly one connection indicator is on screen at a time:
 - the **sidebar badge** stands down whenever a session bar is on screen, and
   covers the screens without one — the phone's list, which is the whole
   viewport, and the desktop empty state;
-- the **pill** defers when framed, speaking only when it has something the badge
-  cannot say (keystrokes held for replay). Standalone `term.html` is unchanged;
+- the **pill** does not speak when framed. Standalone `term.html` is unchanged;
 - the **badge** carries the retry attempt the pill used to show, so a climbing
   ladder still reads differently from a stuck one.
 
 `.tl-conn`, the text view's old SSE word badge, is deleted with the same change.
 It had been unreachable since the badge replaced it.
 
-One thing worth recording for whoever revisits this: held keystrokes are already
-drawn as `.tl-held` glyphs in the terminal at the cursor, so the pill's count is
-a fallback for characters past the last visible row rather than the only place
-that reassurance appears. If the exception ever looks like more trouble than it
-is worth, suppressing the pill outright loses less than it seems to.
+The first cut of this kept one exception: the pill would still appear to report
+keystrokes **held** during a drop, which the badge cannot say. That exception is
+gone. Held keys are drawn as `.tl-held` glyphs in the terminal itself, at the
+cursor, showing the actual characters — the pill's count was a fallback for
+characters past the last visible row, so a third copy of a reassurance already
+on screen twice. It was also the only branch of the change that could not be
+exercised: reproducing held keys requires a socket that connects and then drops
+with input arriving in between, which the available harnesses could not stage.
+Carrying an unverifiable branch to duplicate an existing signal is a poor trade.
 
 ## What this does not do
 
