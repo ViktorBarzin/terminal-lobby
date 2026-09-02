@@ -25,23 +25,34 @@ vi.mock("../src/notify/favicon", async (importOriginal) => {
   return { ...actual, createFaviconBadger: () => ({ apply: () => {} }) };
 });
 
-/** Just enough IndexedDB for readAndClearPendingSession. */
+/**
+ * Just enough IndexedDB for the stash. The store is now keyed PER SESSION and
+ * read with getAll(), so the fake keeps a map rather than one slot.
+ */
 function fakeIDB(record: unknown) {
-  let stored = record;
+  const rows = new Map<string, unknown>();
+  if (record) {
+    const r = record as { session?: string };
+    rows.set(r.session || "last", record);
+    rows.set("last", record);
+  }
   return {
     open: () => {
       const req: Record<string, unknown> = {};
-      const get: Record<string, unknown> = {};
       const store = {
-        get: () => {
-          get.result = stored;
-          queueMicrotask(() => (get.onsuccess as (() => void) | undefined)?.());
-          return get;
+        get: (k: string) => {
+          const g: Record<string, unknown> = { result: rows.get(k) };
+          queueMicrotask(() => (g.onsuccess as (() => void) | undefined)?.());
+          return g;
         },
-        delete: () => {
-          stored = undefined;
+        getAll: () => {
+          const g: Record<string, unknown> = {};
+          // De-duplicated by the reader, so mirroring `last` is harmless.
+          g.result = [...new Set(rows.values())];
+          return g;
         },
-        put: () => {},
+        put: (v: unknown, k: string) => rows.set(k, v),
+        delete: (k: string) => rows.delete(k),
       };
       const tx: Record<string, unknown> = { objectStore: () => store };
       req.result = { transaction: () => tx, close: () => {}, createObjectStore: () => {} };
