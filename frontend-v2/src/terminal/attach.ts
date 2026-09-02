@@ -18,6 +18,7 @@
  */
 
 import {
+  decideInput,
   decodeServerFrame,
   encodeInput,
   encodeResize,
@@ -54,6 +55,7 @@ import {
   HIDDEN_SUSPEND_MS,
   type BatteryState,
 } from "./battery";
+import { EMPTY_HELD, flush as flushHeld, offer as offerHeld, type HeldState, type HeldVerdict } from "./held";
 
 export interface AttachDeps {
   /**
@@ -76,6 +78,17 @@ export interface AttachDeps {
   size(): TerminalSize;
   /** Report a phase change so the shell's status badge can show it. */
   onPhase(phase: LadderState["phase"], attempt: number): void;
+  /**
+   * This client attached READ-ONLY and the server agreed. Only the server's
+   * answer belongs here: the flag is a request, resolved downgrade-only by
+   * tmux-api, and the page cannot grant itself write access by lying.
+   */
+  watch?: () => boolean;
+  /**
+   * What is being held for replay changed, or a keystroke was refused. The
+   * component draws the glyphs and says why; this file only decides.
+   */
+  onHeld?: (held: HeldState, verdict: HeldVerdict) => void;
   /** Injected in tests. */
   fetch?: typeof fetch;
   makeSocket?: (url: string, protocol: string) => WebSocket;
@@ -111,6 +124,7 @@ export function attach(deps: AttachDeps): Attachment {
   const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms) as unknown as number);
   const clearTimer = deps.clearTimer ?? ((id: number) => clearTimeout(id));
   const clock = deps.now ?? (() => Date.now());
+  const watching = (): boolean => deps.watch?.() === true;
 
   let state: LadderState = initialLadder({
     online: typeof navigator === "undefined" ? true : navigator.onLine !== false,
@@ -236,6 +250,14 @@ export function attach(deps: AttachDeps): Attachment {
       // anchored to this moment rather than to the attempt that preceded it.
       watch = watchSocket(clock());
       void tickLiveness();
+      // The replay does NOT go out here. ttyd drops what arrives before the
+      // process is spawned, and the socket being open is not that proof — the
+      // first OUTPUT frame is, which is the same reason wire.ts says the
+      // explicit resize waits for it. Flushing on `open` silently lost
+      // everything typed into the gap, which is the one thing the hold exists to
+      // prevent (caught by typing into a dead socket and watching it not come
+      // back).
+      spawned = false;
     };
     s.onmessage = (ev: MessageEvent) => {
       if (gen !== liveGen) return;
@@ -247,6 +269,26 @@ export function attach(deps: AttachDeps): Attachment {
       if (frame.type === "output") {
         lastInboundAt = clock();
         deps.write(frame.payload);
+        if (!spawned) {
+          spawned = true;
+          // Now there is a process to receive it. The text goes however old it
+          // is — it has been on screen the whole time — while a committed Enter
+          // only goes inside the window where the prompt is still the one it was
+          // typed at.
+          if (held.text) {
+            const replay = flushHeld(held, clock());
+            held = replay.state;
+            for (const chunk of replay.sends) s.send(encodeInput(chunk));
+            deps.onHeld?.(held, "held");
+          }
+          // The pty learns its size only once it exists, which is why this is
+          // here and not in the handshake.
+          try {
+            s.send(encodeResize(deps.size()));
+          } catch {
+            /* the socket went between the frame and this; the ladder has it */
+          }
+        }
       }
     };
     s.onerror = () => {
@@ -265,6 +307,10 @@ export function attach(deps: AttachDeps): Attachment {
   // next, and runs the two independent probes when it asks for a reading.
   let watch: Watch = idleWatch();
   let lastInboundAt: number | null = null;
+  /** Typed while the socket was down, waiting for one to come back. */
+  let held: HeldState = EMPTY_HELD;
+  /** Has THIS socket produced output yet — the only proof ttyd spawned a pty. */
+  let spawned = false;
   let probeTimer: number | null = null;
 
   const armProbe = (dueInMs: number): void => {
@@ -408,8 +454,28 @@ export function attach(deps: AttachDeps): Attachment {
 
   return {
     send(data: string): void {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      socket.send(encodeInput(data));
+      // ONE choke point for every pty-bound string, which is what lets the
+      // watch-mode drop cover the keyboard, paste, the soft keys and the compose
+      // mirror at once — and what makes a future input path inherit it.
+      const decision = decideInput(data, { watch: watching() });
+      if (decision.action === "nudge") {
+        deps.onHeld?.(held, "refused:watching");
+        return;
+      }
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        // No socket: the keystroke is held rather than lost, and the component
+        // draws it so the person can see their typing is still there.
+        const result = offerHeld(held, data, {
+          watching: watching(),
+          hasConnectedOnce: state.hasConnectedOnce,
+          suspended: state.phase === "suspended",
+          now: clock(),
+        });
+        held = result.state;
+        deps.onHeld?.(held, result.verdict);
+        return;
+      }
+      socket.send(decision.frame);
       // A keystroke that produces no output within the grace is worth probing
       // early — the cheapest evidence a socket has stopped carrying anything.
       watch = noteTyped(watch, clock(), lastInboundAt);
