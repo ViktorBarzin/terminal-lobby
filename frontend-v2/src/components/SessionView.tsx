@@ -216,7 +216,16 @@ export const SessionView: Component<{
   // The transcript stream this view owns, published to the shared status model
   // (and withdrawn when the view goes off screen, so the badge never reports a
   // stream belonging to a session nobody is reading).
-  createEffect(() => props.status?.onTranscript(onScreen() ? store.status() : null));
+  // A stream nobody has asked to open is NOT a stream in trouble. The store's
+  // first connect is deferred until the Text view is shown, and `status` reads
+  // `connecting` until then — its initial value — so publishing it unguarded
+  // made a terminal-only session report "The transcript stream is reconnecting"
+  // forever and painted the badge amber over a session that was working
+  // perfectly (Viktor, 2026-09-02). Null reads as `unknown`, which colours
+  // nothing and says "not open".
+  createEffect(() =>
+    props.status?.onTranscript(onScreen() && store.started() ? store.status() : null),
+  );
   /** Why the pty controls are inert, or "" when they are not. Watching at all
    *  makes them inert — a read-only tmux client drops what it is sent — so this
    *  answers for an ordinary Watch too, not only for a lens. */
