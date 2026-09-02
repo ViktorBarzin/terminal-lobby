@@ -139,6 +139,12 @@ var knownEvents = map[string]bool{
 	// two make it answerable from the journal after the fact.
 	"notify.stash_written": true, // sw.js wrote, or failed to write, the tap record (tl.kind=ok|fail)
 	"notify.stash_read":    true, // boot read it, and what it decided (tl.reason)
+	// Whether the app-icon count could actually be DRAWN. iOS may not expose the
+	// Badging API inside a service worker at all, in which case the badge can
+	// never be painted while the app is shut — which is the one case it exists
+	// for. Reported rather than guessed at (tl.kind=ok|unsupported|failed,
+	// tl.count).
+	"notify.badge_set": true,
 
 	// -- the Claude conversation (session-events) --------------------------
 	"claude.prompt_sent":   true,

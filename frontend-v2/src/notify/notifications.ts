@@ -394,6 +394,19 @@ export function createNotificationSystem(
   // fired for a rename made in THIS tab: one from a second tab, the phone, or a
   // shell looked like a session vanishing and a stranger arriving, so the visit
   // was pruned and work you had already read came back unread.
+  // Report whether the icon could actually be drawn, ONCE per distinct outcome.
+  // The paint is best-effort and silent, which also meant nobody could tell a
+  // drawn badge from a missing API — and on iOS that is the whole question,
+  // since the Badging API may not exist inside a service worker, where the
+  // badge matters most. Deduped because this runs on every poll.
+  let lastBadgeReport = "";
+  const reportBadge = (kind: "ok" | "unsupported" | "failed", count: number): void => {
+    const key = kind + ":" + (count > 0 ? "n" : "0");
+    if (key === lastBadgeReport) return;
+    lastBadgeReport = key;
+    track("notify.badge_set", { "tl.kind": kind, "tl.count": count });
+  };
+
   const badger = createFaviconBadger();
 
   /**
@@ -422,7 +435,7 @@ export function createNotificationSystem(
     // `revision` only bumps when the unseen set actually changes, so this
     // settles after one extra pass instead of looping.
     visits.observe(list, active);
-    applyAppBadge(waitingCount(list, isUnseen, opts.osUser()));
+    applyAppBadge(waitingCount(list, isUnseen, opts.osUser()), undefined, reportBadge);
   });
 
   createEffect(() => {

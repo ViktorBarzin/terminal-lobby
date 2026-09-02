@@ -113,6 +113,9 @@ export type TlEvent =
   // The iOS cold-launch chain. sw.js reports notify.stash_written itself (it
   // cannot reach this batcher), and the page reports what boot decided.
   | "notify.stash_read"
+  // Whether the app-icon count could be drawn at all (iOS may not expose the
+  // Badging API inside a service worker).
+  | "notify.badge_set"
   // the conversation
   | "claude.prompt_sent"
   | "claude.cancelled";
