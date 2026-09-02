@@ -457,7 +457,7 @@ describe("createDeployHealer — the stamp endpoint", () => {
     // Three were observed in flight at once on the old 5s timer. Dropping the
     // second outright is wrong too: the checks that matter are event-driven, so
     // one arriving mid-flight has to run AFTER, not vanish.
-    let release: (() => void) | null = null;
+    let release!: () => void;
     const gate = new Promise<void>((r) => {
       release = r;
     });
@@ -477,7 +477,7 @@ describe("createDeployHealer — the stamp endpoint", () => {
     const first = h.healer.checkNow();
     const second = h.healer.checkNow();
     expect(calls).toBe(1); // the second did not start a fetch of its own
-    release?.();
+    release();
     await Promise.all([first, second]);
     expect(peak).toBe(1); // never two at once
     expect(calls).toBe(2); // …but the coalesced one did eventually run

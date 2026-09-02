@@ -28,12 +28,13 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
+import type { ComponentProps } from "solid-js";
 import { Composer } from "../src/components/Composer";
 
 const noop = () => {};
 const sent = async (): Promise<boolean> => true;
 
-const mount = (props: Record<string, unknown> = {}) =>
+const mount = (props: Partial<ComponentProps<typeof Composer>> = {}) =>
   render(() => (
     <Composer
       working={false}
@@ -41,7 +42,7 @@ const mount = (props: Record<string, unknown> = {}) =>
       onSend={sent}
       onStop={noop}
       onResolve={noop}
-      {...(props as never)}
+      {...props}
     />
   ));
 

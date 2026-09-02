@@ -38,7 +38,7 @@ const lines = (): string[] => termHtml.split("\n");
 function coarseBlock(src: string[]): { start: number; end: number } {
   const start = src.findIndex((l) => /^\s*if \(isCoarsePointer\) \{/.test(l));
   expect(start, "if (isCoarsePointer) { block").toBeGreaterThan(-1);
-  const indent = src[start].match(/^(\s*)/)![1];
+  const indent = /^(\s*)/.exec(src[start] ?? "")?.[1] ?? "";
   const end = src.findIndex(
     (l, i) => i > start && l === indent + "}",
   );
@@ -50,8 +50,8 @@ function coarseBlock(src: string[]): { start: number; end: number } {
 function iifeDeclarations(src: string[]): Map<string, number> {
   const decls = new Map<string, number>();
   src.forEach((line, i) => {
-    const m = line.match(/^ {8}(?:let|const)\s+([A-Za-z_$][\w$]*)/);
-    if (m && !decls.has(m[1])) decls.set(m[1], i + 1);
+    const name = line.match(/^ {8}(?:let|const)\s+([A-Za-z_$][\w$]*)/)?.[1];
+    if (name && !decls.has(name)) decls.set(name, i + 1);
   });
   return decls;
 }
@@ -67,9 +67,10 @@ function statementLevelAssignments(
   const found = new Map<string, number>();
   for (let n = block.start + 1; n < block.end; n++) {
     const line = src[n - 1];
+    if (line === undefined) continue;
     if (/^ {12}(?:let|const|var|return|if|for|while)\b/.test(line)) continue;
-    const m = line.match(/^ {12}([A-Za-z_$][\w$]*)\s*=(?!=)/);
-    if (m && !found.has(m[1])) found.set(m[1], n);
+    const name = line.match(/^ {12}([A-Za-z_$][\w$]*)\s*=(?!=)/)?.[1];
+    if (name && !found.has(name)) found.set(name, n);
   }
   return found;
 }

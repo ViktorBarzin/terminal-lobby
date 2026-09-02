@@ -14,7 +14,18 @@
 import { describe, it, expect } from "vitest";
 import { buildProbes } from "../src/diagnostics/probes";
 import { runCheck } from "../src/diagnostics/check";
+import type { CheckOutcome } from "../src/diagnostics/check";
 import type { ProbeDeps } from "../src/diagnostics/probes";
+
+/**
+ * The one row a single-probe check must produce. Asserting the count here is
+ * what lets the cases below be about the row's CONTENTS — destructuring gave
+ * them a `CheckOutcome | undefined` and every field access was unchecked.
+ */
+const onlyRow = (rows: CheckOutcome[]): CheckOutcome => {
+  expect(rows).toHaveLength(1);
+  return rows[0]!;
+};
 
 /** A fetch that records what it was asked for and answers 200. */
 function recordingFetch(ok = true) {
@@ -45,19 +56,22 @@ describe("what the probes actually request", () => {
       () => {},
     );
     expect(urls).toHaveLength(1);
+    const url = urls[0]!;
     // The exact prefix is apiUrl's business; what matters is that the probe
     // went through it rather than hand-rolling a root-relative path.
-    expect(urls[0]).not.toBe("/health");
-    expect(urls[0]).toMatch(/\/health$/);
-    expect(urls[0].length).toBeGreaterThan("/health".length);
+    expect(url).not.toBe("/health");
+    expect(url).toMatch(/\/health$/);
+    expect(url.length).toBeGreaterThan("/health".length);
   });
 
   it("reports the API as down when health does not answer", async () => {
     const { f } = recordingFetch(false);
     const probes = buildProbes(deps({ fetch: f }));
-    const [row] = await runCheck(
-      probes.filter((p) => p.id === "sessions"),
-      () => {},
+    const row = onlyRow(
+      await runCheck(
+        probes.filter((p) => p.id === "sessions"),
+        () => {},
+      ),
     );
     expect(row.state).toBe("down");
     expect(row.detail).toBe("the API is not answering");
@@ -66,9 +80,11 @@ describe("what the probes actually request", () => {
   it("keeps the poll's own verdict when the API is answering", async () => {
     const { f } = recordingFetch();
     const probes = buildProbes(deps({ fetch: f }));
-    const [row] = await runCheck(
-      probes.filter((p) => p.id === "sessions"),
-      () => {},
+    const row = onlyRow(
+      await runCheck(
+        probes.filter((p) => p.id === "sessions"),
+        () => {},
+      ),
     );
     expect(row.state).toBe("working");
   });
@@ -86,9 +102,11 @@ describe("what the probes actually request", () => {
         sessionsReport: () => ({ failures: 9, lastOkMs: 120_000, downMs: 120_000 }),
       }),
     );
-    const [row] = await runCheck(
-      probes.filter((p) => p.id === "sessions"),
-      () => {},
+    const row = onlyRow(
+      await runCheck(
+        probes.filter((p) => p.id === "sessions"),
+        () => {},
+      ),
     );
     expect(row.detail).toContain("but the API is answering");
   });

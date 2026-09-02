@@ -10,8 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck:src": "tsc --noEmit -p tsconfig.src.json"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

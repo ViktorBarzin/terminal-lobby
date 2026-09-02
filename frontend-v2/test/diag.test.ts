@@ -576,8 +576,8 @@ describe("engine gaps", () => {
 
   /** A scope with everything, which each case then takes one thing away from. */
   const complete = () => ({
-    AbortSignal: { timeout: (ms: number) => new AbortController().signal },
-    URL: { canParse: (u: string) => true },
+    AbortSignal: { timeout: (_ms: number) => new AbortController().signal },
+    URL: { canParse: (_u: string) => true },
     RegExp,
   });
 
@@ -606,7 +606,7 @@ describe("engine gaps", () => {
       if (typeof pattern === "string" && /\(\?<[=!]/.test(pattern)) {
         throw new SyntaxError("invalid group specifier name");
       }
-      return new (Native as never)(pattern as never, flags as never);
+      return new Native(pattern, flags);
     } as unknown as RegExpConstructor;
     expect(probe(scope)).toEqual(["RegExp lookbehind"]);
   });

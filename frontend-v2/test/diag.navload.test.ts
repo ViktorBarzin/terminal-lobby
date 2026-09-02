@@ -12,7 +12,7 @@
  * This models exactly that: the navigation entry reports 0 while `load` is
  * dispatching and a real value once the task queue turns over.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runInNewContext } from "node:vm";

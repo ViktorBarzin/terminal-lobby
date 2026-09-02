@@ -17,13 +17,14 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render } from "@solidjs/testing-library";
+import type { ComponentProps } from "solid-js";
 import { Composer } from "../src/components/Composer";
 
 const noop = () => {};
 const sent = async (): Promise<boolean> => true;
 const attach = async () => [];
 
-const mount = (props: Record<string, unknown> = {}) =>
+const mount = (props: Partial<ComponentProps<typeof Composer>> = {}) =>
   render(() => (
     <Composer
       working={false}
@@ -32,7 +33,7 @@ const mount = (props: Record<string, unknown> = {}) =>
       onStop={noop}
       onResolve={noop}
       onAttach={attach}
-      {...(props as never)}
+      {...props}
     />
   ));
 
