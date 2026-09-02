@@ -1,4 +1,5 @@
 import { onCleanup, onMount, type Component } from "solid-js";
+import { ownWhile } from "../lib/ownwhile";
 // xterm ships its own stylesheet and WILL NOT LAY OUT WITHOUT IT: the rows get
 // no positioning, so the terminal renders as a narrow column of overlapping
 // glyphs. It looks like a sizing bug and it is a missing import. Vite folds it
@@ -43,6 +44,13 @@ export const TerminalNative: Component<{
   watch?: () => boolean;
   /** Hands the caller a way to retry, for the panel's Reconnect button. */
   onReady?: (control: { reconnect: () => void }) => void;
+  /**
+   * FALSE for a secondary terminal. The window-level bridges below are named
+   * globals, so two mounted terminals would fight over them and the soft keys,
+   * paste and focus handback would start driving the wrong pty — the same
+   * reason TerminalView takes this flag.
+   */
+  ownsBridges?: boolean;
 }> = (props) => {
   let host: HTMLDivElement | undefined;
   let attachment: Attachment | null = null;
@@ -120,6 +128,31 @@ export const TerminalNative: Component<{
       const w = window as unknown as Record<string, unknown>;
       const previous = w[THEME_LIVE_GLOBAL];
       w[THEME_LIVE_GLOBAL] = live;
+
+      // THE SAME BRIDGES TerminalView installs, pointing at this terminal
+      // instead of at an iframe. Everything upstream — paste, the soft keys, a
+      // dropped file, the composer's "send to terminal" — already calls these
+      // globals, so the native path inherits all of it without any caller
+      // knowing which terminal it is talking to. Each returns a boolean because
+      // the callers treat false as "no terminal took this".
+      const owns = (): boolean => props.ownsBridges !== false;
+      ownWhile(owns, "__tlSendToTerminal", (bytes: string) => {
+        a.send(bytes);
+        return true;
+      });
+      ownWhile(owns, "__tlPasteToTerminal", (text: string) => {
+        a.send(text);
+        return true;
+      });
+      ownWhile(owns, "__tlFocusTerminal", () => {
+        term.focus();
+        return true;
+      });
+      ownWhile(owns, "__tlRefitTerminal", () => {
+        fit.fit();
+        a.resize();
+        return true;
+      });
 
       onCleanup(() => {
         ro.disconnect();
