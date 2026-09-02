@@ -244,12 +244,31 @@ export function createNotificationSystem(
   // The trade-off, stated: deliberately opening a deep link to session B within
   // that window of a push about session A lands on A. One tap corrects it, and
   // the stash is consumed, so it cannot happen twice.
+  //
+  // Every branch reports. This chain has broken four times, on a platform with
+  // no instrument on this network, and each fix was a guess because a rejected
+  // tap looked exactly like no tap at all. `notify.stash_read` plus the worker's
+  // `notify.stash_written` make the whole path answerable from the journal:
+  // no written → the record never survived; written but `stale` → the age gate;
+  // written and nothing read → boot never ran; `acted` → it worked.
   onMount(async () => {
     if (lens) return;
     const pending = await readAndClearPendingSession();
-    if (!(await stashIsActionable(pending))) return;
-    const session = pending!.session;
-    if (opts.selected() === session) return; // already where the tap wanted
+    const reason = (r: string): void => void track("notify.stash_read", { "tl.reason": r });
+    if (!pending) {
+      reason("absent"); // a plain icon launch, or the write never landed
+      return;
+    }
+    if (!(await stashIsActionable(pending))) {
+      reason("stale"); // too old, or its banner is still on screen
+      return;
+    }
+    const session = pending.session;
+    if (opts.selected() === session) {
+      reason("already"); // the app is already where the tap wanted
+      return;
+    }
+    reason("acted");
     track("notify.clicked", { "tl.session": session });
     opts.onActivateSession(session);
   });
