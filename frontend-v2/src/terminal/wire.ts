@@ -309,8 +309,15 @@ export type ServerFrame =
  */
 export function decodeServerFrame(data: unknown): ServerFrame | null {
   let view: Uint8Array;
-  if (data instanceof ArrayBuffer) {
-    view = new Uint8Array(data);
+  // Branded rather than `instanceof`: an ArrayBuffer built in another realm —
+  // a test environment, a second document — fails `instanceof` and would fall
+  // through to `return null`, which is the silent-and-total failure this
+  // function's own contract warns about two paragraphs up. A browser page has
+  // one realm and would never hit it; a test asserting the REAL socket payload
+  // shape does, and a test that has to avoid the production path is not
+  // testing the production path.
+  if (Object.prototype.toString.call(data) === "[object ArrayBuffer]") {
+    view = new Uint8Array(data as ArrayBuffer);
   } else if (ArrayBuffer.isView(data)) {
     view = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   } else {

@@ -252,6 +252,13 @@ src/
                          yields — xterm right-trims rows, so a drag into trailing
                          whitespace otherwise sends SIGINT with a highlight on
                          screen (ADR-0003)
+    attach.ts            The one IMPURE module here: it owns the socket, the
+                         timers and nothing else. Every edge decision it takes it
+                         asks reconnect.ts for — an event goes into reduce(), and
+                         this carries out the actions that come back. The
+                         generation check on each socket handler is what stops an
+                         abandoned attempt's close from knocking its replacement
+                         off the ladder
     theme.ts             The app's CSS custom properties mapped to an xterm
                          ITheme, plus the two re-read triggers a component owes
                          it (an explicit pick, and an OS light/dark flip while the
@@ -322,6 +329,14 @@ src/
     ProjectGroup.tsx     One project group header + its cards (DnD, menu)
     SessionCard.tsx      One session row: dot, tool mark, timer, inline rename
     StateDot.tsx         Claude state dot (running / awaiting / done)
+    TerminalNative.tsx   The terminal rendered by this app instead of by the
+                         ttyd iframe, behind `?native=1`. Mounts xterm (a lazy
+                         import, so it lands in its own immutable chunk), wires
+                         terminal/attach.ts to it, and reports the ladder's phase
+                         into the connection badge. Attaches, reconnects, resizes
+                         and types; paste, soft keys, selection, pinch-zoom and
+                         sixel still belong to term.html, which stays the shipped
+                         terminal until parity is proven
     StatusDot.tsx        The connection badge (ADR-0016). Dot always, a word
                          only when something is wrong. One component in two
                          places, each SCOPED to the channels its surface can

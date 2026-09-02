@@ -1913,6 +1913,17 @@ label.tl-set-row-label {
   border: 0;
   display: block;
 }
+/* The app-rendered terminal fills its pane the way the iframe does. xterm's
+   FitAddon measures this box to choose cols/rows, so a box with no height
+   measures as one row and the pty is told the terminal is one row tall. */
+.tl-terminal-native {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--terminal-bg);
+}
 /* Instant themed panel over the iframe during a session (re)load — hides the
    blank/re-boot flash; JS sets opacity 1 (no transition) on navigate and fades
    it out on tl-terminal-ready (or the 1800ms fallback). */
