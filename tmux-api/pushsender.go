@@ -109,6 +109,85 @@ type pushSender struct {
 	// user-activity gate (see tick).
 	seenAct   map[string]map[string]int64
 	pushedAct map[string]map[string]int64
+	// outstanding marks the sessions that have a notification the person has
+	// not engaged with yet — the "one per thread" memory. Cleared when the
+	// session goes back to running.
+	outstanding map[string]map[string]bool
+	// now is the clock, injectable so the throttle can be tested without
+	// sleeping for a quarter of an hour. Nil means time.Now.
+	now func() time.Time
+}
+
+// clock reads the sender's clock, defaulting to the real one.
+func (p *pushSender) clock() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
+}
+
+// stillAtTheKeyboard is how recently typing into a session means the person is
+// sitting in front of it.
+//
+// A notification about the thing already on their screen is pure noise, and the
+// activity gate cannot express this on its own: typing is what ARMS a push, so
+// without this the fastest turns — the ones finishing while they watch — are
+// exactly the ones that ring.
+const stillAtTheKeyboard = 60 * time.Second
+
+// throttled says whether a push for this user/session should be suppressed, and
+// why. Pure apart from the clock, so both rules are testable without a tmux.
+//
+// ONE OUTSTANDING NOTIFICATION PER SESSION (Viktor, 2026-09-02: "I'd like 1
+// notification per thread at most"). A session that has already rung and has
+// not been engaged with since says nothing new by ringing again — the sidebar
+// marks it unread and the app icon counts it, which is what a standing state is
+// for. The notification's job is to report a CHANGE.
+//
+// This also closes a leak that produced most of the volume. The activity gate,
+// userTypedSinceLastPush, FAILS OPEN when a session has no client-activity
+// reading — and a session nobody is attached to has none (driven.go: absent
+// rather than zero). So every background session rang on every single turn
+// boundary, unthrottled. Measured before this: 14.3 pushes an hour, 100 of 146
+// of them completions.
+//
+// A suppressed push does NOT consume the activity credit: markPushed is skipped,
+// so nothing is silenced beyond this one edge.
+func (p *pushSender) throttled(u, name string, now time.Time) string {
+	if act, ok := p.seenAct[u][name]; ok && act > 0 {
+		if now.Sub(time.Unix(act, 0)) < stillAtTheKeyboard {
+			return "at-keyboard"
+		}
+	}
+	if p.outstanding[u][name] {
+		return "already-notified"
+	}
+	return ""
+}
+
+// markSent records that this session now has a notification outstanding.
+func (p *pushSender) markSent(u, name string, now time.Time) {
+	if p.outstanding == nil {
+		p.outstanding = map[string]map[string]bool{}
+	}
+	m := p.outstanding[u]
+	if m == nil {
+		m = map[string]bool{}
+		p.outstanding[u] = m
+	}
+	m[name] = true
+}
+
+// clearOutstanding forgets a session's notification once the person has engaged
+// with it, so the next completion may ring again.
+//
+// Engagement is the session going back to RUNNING: something was submitted to
+// it, which only happens deliberately. Using "typed" instead would never clear
+// a session with no attached client, which is the case that leaked.
+func (p *pushSender) clearOutstanding(u, name string) {
+	if m := p.outstanding[u]; m != nil {
+		delete(m, name)
+	}
 }
 
 // newPushHTTPClient builds the *http.Client every Web Push send shares (both
@@ -315,14 +394,25 @@ func (p *pushSender) tick() {
 		np := p.notifyPrefsFor(u)   // one prefs read per user per tick
 		badge := waitingCount(cur)  // one icon count per user per tick
 		waiting := waitingList(cur) // and the same set by name, for the device to filter
+		now := p.clock()
 		for name, st := range cur {
 			was := prev[name] // "" when the session was absent last poll
+			// Back to running means something was submitted to this session,
+			// which is the engagement that lets it ring again.
+			if st == stateRunning && was != stateRunning {
+				p.clearOutstanding(u, name)
+			}
 			switch {
 			case st == stateAwaiting && was != stateAwaiting:
 				// running→awaiting (and any non-awaiting→awaiting, incl. a
 				// newly-appeared already-awaiting session — unchanged edge).
 				if np.onAwaiting && p.userTypedSinceLastPush(u, name) {
+					if why := p.throttled(u, name, now); why != "" {
+						log.Printf("push sender: held %s for %s (session=%s, %s)", kindAwaiting, u, name, why)
+						break
+					}
 					p.markPushed(u, name)
+					p.markSent(u, name, now)
 					p.notify(u, name, kindAwaiting, badge, waiting)
 				}
 			case st == stateDone && was == stateRunning:
@@ -330,7 +420,12 @@ func (p *pushSender) tick() {
 				// (was=="") or any non-running→done stays silent, so a
 				// SessionStart hook stamping "done" never fires.
 				if np.onDone && p.userTypedSinceLastPush(u, name) {
+					if why := p.throttled(u, name, now); why != "" {
+						log.Printf("push sender: held %s for %s (session=%s, %s)", kindDone, u, name, why)
+						break
+					}
 					p.markPushed(u, name)
+					p.markSent(u, name, now)
 					p.notify(u, name, kindDone, badge, waiting)
 				}
 			}
