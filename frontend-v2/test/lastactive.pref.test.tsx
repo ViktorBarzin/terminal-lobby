@@ -61,7 +61,10 @@ describe("sidebar.showLastActive — the roamed pref", () => {
       sidebar: { somethingElse: "kept" },
       session: { reopenLast: true, newCommand: "claude" },
     };
-    const next = { ...PREF_DEFAULTS, sidebar: { showLastActive: true } };
+    const next = {
+      ...PREF_DEFAULTS,
+      sidebar: { ...PREF_DEFAULTS.sidebar, showLastActive: true },
+    };
     const doc = composeDoc(raw, next) as Record<string, any>;
     expect(doc.sidebar.showLastActive).toBe(true);
     // The vanilla page's keys survive, including an unknown subkey of the

@@ -2,6 +2,16 @@ import { describe, it, expect, vi } from "vitest";
 import { CHECK_TIMEOUT_MS, runCheck, type CheckProbe, type CheckOutcome } from "../src/diagnostics/check";
 import type { Channel, ChannelId } from "../src/diagnostics/status";
 
+/**
+ * The one row a single-probe check must produce. Asserting the count here is
+ * what lets the cases below be about the row's CONTENTS — destructuring gave
+ * them a `CheckOutcome | undefined` and every field access was unchecked.
+ */
+const onlyRow = (rows: CheckOutcome[]): CheckOutcome => {
+  expect(rows).toHaveLength(1);
+  return rows[0]!;
+};
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function probe(
@@ -50,7 +60,7 @@ describe("run check", () => {
   });
 
   it("times each row, so a slow-but-working channel is visible as slow", async () => {
-    const [row] = await runCheck([probe("sessions", 40)], () => {});
+    const row = onlyRow(await runCheck([probe("sessions", 40)], () => {}));
     expect(row.ms).toBeGreaterThanOrEqual(30);
     expect(row.ms).toBeLessThan(500);
   });
@@ -77,7 +87,7 @@ describe("run check", () => {
       timeoutDetail: "not reporting",
       run: () => new Promise<Channel>(() => {}),
     };
-    const [row] = await runCheck([hang], () => {}, { timeoutMs: 30 });
+    const row = onlyRow(await runCheck([hang], () => {}, { timeoutMs: 30 }));
     expect(row.state).toBe("unknown");
     expect(row.detail).toBe("not reporting");
   });
@@ -110,7 +120,7 @@ describe("run check", () => {
 
   it("reports a probe that rejects with something that is not an Error", async () => {
     const boom: CheckProbe = { id: "build", run: () => Promise.reject("weird") };
-    const [row] = await runCheck([boom], () => {});
+    const row = onlyRow(await runCheck([boom], () => {}));
     expect(row.state).toBe("down");
     expect(row.detail).toBeTruthy();
   });

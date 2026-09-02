@@ -332,7 +332,7 @@ describe("coming back to the tab", () => {
    * never echoes (a sudo password, read -s, a gpg passphrase).
    */
   it("spends an echo deadline that elapsed while a probe was in flight", () => {
-    let watch = noteTyped(watchSocket(T0), T0);
+    let watch = noteTyped(watchSocket(T0), T0, null);
     watch = beginProbe(watch, T0 + 100); // deadline has NOT passed yet
     expect(watch.typedAt).not.toBeNull();
     // ...it passes while the probe is settling, and settling spends it.

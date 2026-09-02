@@ -13,7 +13,7 @@
  * The backend is injected because jsdom has no IndexedDB, and the policy — what
  * to keep, what to evict, where to resume — is what needs testing.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { Event } from "../src/types/events";
 import {
   MAX_CACHED_SESSIONS,

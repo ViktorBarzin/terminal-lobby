@@ -1,7 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { runInNewContext } from "node:vm";
 import { createTracker, MAX_BUFFER } from "../src/telemetry/track";
 
 describe("createTracker", () => {

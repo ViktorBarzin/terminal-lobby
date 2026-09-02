@@ -21,7 +21,7 @@
  * at the moment of typing, so a pinch afterwards grows the text inside a box
  * that stays where it was. That is the 13px, and it grows with the scale.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { Composer } from "../src/components/Composer";

@@ -12,7 +12,7 @@ import type { LobbyStore } from "../src/store/lobby";
  * sidebar.css could not occur. The app-icon badge counts the real set, so the
  * two disagreed and the number named something the sidebar could not point at.
  */
-const session = (name: string, state = "done"): Session => ({
+const session = (name: string, state: Session["state"] = "done"): Session => ({
   name,
   attached: 0,
   lastActivity: 0,
@@ -75,7 +75,7 @@ describe("SessionCard — the unread marker", () => {
   });
 
   it("never marks a running or awaiting session, whatever the predicate says", () => {
-    for (const st of ["running", "awaiting"]) {
+    for (const st of ["running", "awaiting"] as const) {
       const { container, unmount } = renderCard(session("a", st), true);
       expect(container.querySelectorAll(".tl-state-unseen")).toHaveLength(0);
       unmount();

@@ -162,7 +162,7 @@ describe("the Right now panel", () => {
     ));
     const fixes = container.querySelectorAll(".tl-rightnow-fix");
     expect(fixes).toHaveLength(1);
-    expect(fixes[0].textContent).toBe("Reconnect");
+    expect(fixes[0]!.textContent).toBe("Reconnect");
     cleanup();
   });
 

@@ -44,6 +44,8 @@ class FakeApi implements LobbyApi {
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
   puts: Layout[] = [];
+  prewarms: string[] = [];
+  releases: string[] = [];
   putError = false;
   async whoami() {
     return this.whoamiVal;
@@ -68,6 +70,12 @@ class FakeApi implements LobbyApi {
   }
   async setSessionTitle() {
     throw new ApiError(404, "no");
+  }
+  async prewarm(dir: string) {
+    this.prewarms.push(dir);
+  }
+  async releasePrewarm(dir: string) {
+    this.releases.push(dir);
   }
   async restoreSessions() {}
   async listSnapshots() {

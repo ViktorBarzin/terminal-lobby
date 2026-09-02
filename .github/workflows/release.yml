@@ -63,10 +63,11 @@ jobs:
           set -euo pipefail
           cd frontend-v2
           npm ci --include=dev --no-audit --no-fund
-          # typecheck:src, not typecheck: the base config also covers test/,
-          # where 21 pre-existing errors live. Gating on those would block every
-          # release until they are cleared; gating on src is honest and real.
-          npm run typecheck:src
+          # src AND test. This used to run a src-only config because test/ held
+          # 45 errors that would have blocked every release; they were cleared
+          # 2026-09-02 and the second config went with them, so there is one
+          # answer to "does this typecheck" again.
+          npm run typecheck
           npm run test
 
       - name: test (python)

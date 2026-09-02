@@ -42,7 +42,6 @@ const ev = (id: number, over: Partial<Event> = {}): Event => ({
 });
 
 const frame = (e: Event) => JSON.stringify(e);
-const tick = () => new Promise((r) => setTimeout(r, 0));
 
 // ---- the URL contract -------------------------------------------------------
 
@@ -249,7 +248,7 @@ describe("the store", () => {
     // than the cut at 7, so paging from events[0] would skip 4..6 for good.
     h.src().emit("back", frame(ev(9)));
     h.src().emit("back", frame(ev(7)));
-    h.src().emit("back", frame(ev(3), { kind: "user" }));
+    h.src().emit("back", frame(ev(3, { kind: "user" })));
     h.src().emit("ready", { cursor: 7 });
     await settle();
     const calls: string[] = [];

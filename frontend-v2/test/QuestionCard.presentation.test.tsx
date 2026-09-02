@@ -24,8 +24,10 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
+import type { ComponentProps } from "solid-js";
 import { QuestionCard } from "../src/components/QuestionCard";
 import type { Question } from "../src/components/canonicalize";
+import type { DraftAnswer } from "../src/components/answer.logic";
 
 const one: Question[] = [
   {
@@ -52,13 +54,13 @@ const two: Question[] = [
   },
 ];
 
-const mount = (props: Record<string, unknown> = {}) =>
+const mount = (props: Partial<ComponentProps<typeof QuestionCard>> = {}) =>
   render(() => (
     <QuestionCard
       questions={one}
       onSend={async () => {}}
       onChat={() => {}}
-      {...(props as never)}
+      {...props}
     />
   ));
 
@@ -93,7 +95,7 @@ describe("<QuestionCard> — one question submits", () => {
   });
 
   it("sends the answer straight from the one screen", async () => {
-    const onSend = vi.fn(async () => {});
+    const onSend = vi.fn(async (_answers: DraftAnswer[]) => {});
     const { container } = mount({ onSend });
     fireEvent.click(rows(container)[0]!);
     fireEvent.click(container.querySelector(".tl-qcard-send")!);
