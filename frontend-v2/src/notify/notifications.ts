@@ -222,17 +222,36 @@ export function createNotificationSystem(
   });
   onCleanup(() => sw.dispose());
 
-  // Boot landing: if iOS cold-launched a KILLED PWA at start_url (no hash, no
-  // notificationclick), the SW stashed the tapped session — consume it and land
-  // there, but only when fresh and nothing else is already selected.
+  // Boot landing: iOS cold-launches a KILLED PWA without firing
+  // notificationclick, so the tapped session arrives only as the stash sw.js
+  // wrote at push time. Consume it and land there.
+  //
+  // It used to defer to any selection the URL already carried, which sounded
+  // careful and was the bug Viktor reported on 2026-09-02: an installed PWA does
+  // NOT reliably come back on start_url. iOS restores it at the URL it was last
+  // showing, so `selected()` was the session he had been reading BEFORE the
+  // notification, the stash was discarded, and the tap landed him back where he
+  // already was. Reproduced: notification for `issues`, restored at
+  // `trip-casia`, landed on `trip-casia`.
+  //
+  // So the stash wins. `stashIsActionable` is the only authority on whether it
+  // is worth acting on, and it is already tight — a push-time receipt counts for
+  // two minutes, an older one only once its banner has gone, which on iOS means
+  // it was tapped or dismissed. The tap is why the app is opening; a restored
+  // URL is not intent. This also makes the cold path agree with the warm one,
+  // where the postMessage switch has always overridden whatever was on screen.
+  //
+  // The trade-off, stated: deliberately opening a deep link to session B within
+  // that window of a push about session A lands on A. One tap corrects it, and
+  // the stash is consumed, so it cannot happen twice.
   onMount(async () => {
     if (lens) return;
     const pending = await readAndClearPendingSession();
-    if ((await stashIsActionable(pending)) && opts.selected() == null) {
-      const session = pending!.session;
-      track("notify.clicked", { "tl.session": session });
-      opts.onActivateSession(session);
-    }
+    if (!(await stashIsActionable(pending))) return;
+    const session = pending!.session;
+    if (opts.selected() === session) return; // already where the tap wanted
+    track("notify.clicked", { "tl.session": session });
+    opts.onActivateSession(session);
   });
 
   // Self-heal the background subscription every load (the desktop-silent fix):
