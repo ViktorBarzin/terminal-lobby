@@ -213,6 +213,49 @@ src/
     probes.ts            The five probes themselves. All read-only — /health and
                          GET /push-subscriptions are the only server calls, and
                          nothing is ever sent to a device
+  terminal/              The terminal's own logic, lifted out of frontend/term.html
+                         ahead of replacing the ttyd iframe with a native xterm
+                         component. Every module here is PURE — no DOM, no xterm
+                         import, no fetch, no timers it owns — so the rules can be
+                         tested without a socket or a browser, which is the whole
+                         reason they were extracted rather than moved. term.html
+                         remains the source of truth until the port lands; where a
+                         module knowingly differs, the divergence is argued in a
+                         comment at the site
+    reconnect.ts         The backoff ladder as a reducer: attempts, generations
+                         (so a late /token or session answer cannot install a
+                         socket nobody is waiting for), the 30s proof that only
+                         resets the ladder once a connection has held, and the
+                         manual Reconnect tap, which fires from ANY phase
+    liveness.ts          The half-open-socket watchdog. A black-holed socket
+                         stays readyState OPEN forever, so this probes on two
+                         independent signals rather than waiting for a close that
+                         never comes — and a settling probe consumes any pending
+                         request, or a tab-return fires a second probe on top of
+                         the first
+    battery.ts           Hidden-tab suspend and resume: when to take the socket
+                         down on purpose, and the guard that a VISIBLE tab is
+                         never suspended by a timer queued before it was shown
+    held.ts              Offline typing — what happens to a keystroke while the
+                         socket is down, as a reducer over the verdicts term.html
+                         names (held, popped, closed, reopened). Rendering the
+                         glyphs stays with the component; only the decisions live
+                         here
+    wire.ts              The ttyd frame format, bytes in and bytes out, with the
+                         input choke point that drops a watcher's keystrokes
+                         before they reach the pty. Red-line class: its tests
+                         assert actual byte layouts
+    font.ts              Font-step arithmetic and pinch-scale classification, DOM
+                         free
+    selection.ts         What copy does with a selection, and why Ctrl+C must be
+                         gated on the selection RANGE rather than on the text it
+                         yields — xterm right-trims rows, so a drag into trailing
+                         whitespace otherwise sends SIGINT with a highlight on
+                         screen (ADR-0003)
+    theme.ts             The app's CSS custom properties mapped to an xterm
+                         ITheme, plus the two re-read triggers a component owes
+                         it (an explicit pick, and an OS light/dark flip while the
+                         stored theme is "system")
   sse/client.ts          Resumable SSE client (Last-Event-ID, backoff+jitter,
                          instant-retry on visible/online) — DOM-free, testable.
                          Resyncs when `ready` names a log it was not reading:
