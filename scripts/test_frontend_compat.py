@@ -337,13 +337,33 @@ POLYFILLED = {"AbortSignal.timeout", "URL.canParse"}
 POLYFILL_MARKER = "tlPolyfills"
 
 
-def test_spa_post_baseline_apis_are_all_polyfilled(spa: tuple[str, str]) -> None:
-    path, html = spa
-    reachable = [api for api in POST_BASELINE_APIS if api in html]
+def _reach(pieces: list[tuple[str, str]], needle: str) -> list[str]:
+    """Which pieces contain `needle`, by label — empty when none do."""
+    return [label for label, code in pieces if needle in code]
+
+
+def test_spa_post_baseline_apis_are_all_polyfilled(
+    spa: tuple[str, list[tuple[str, str]]],
+) -> None:
+    path, pieces = spa
+    # `pieces` is a LIST OF (label, code). It has to be searched piece by piece.
+    # Writing `api in pieces` asks whether the list CONTAINS that string as an
+    # element, which no list of tuples ever does — so the guard passed
+    # unconditionally from the day the fixture started returning chunks
+    # (2026-08-28, when viteSingleFile was dropped) until 2026-09-02, while the
+    # bundle really did reach AbortSignal.timeout and URL.canParse. This is the
+    # guard that exists BECAUSE AbortSignal.timeout blanked the iPad's session
+    # list, so a vacuous version of it is worse than none: it reads as coverage.
+    # test_the_api_guard_can_actually_fire below is what keeps it honest.
+    reachable = {api: _reach(pieces, api) for api in POST_BASELINE_APIS}
+    reachable = {api: where for api, where in reachable.items() if where}
     unguarded = sorted(api for api in reachable if api not in POLYFILLED)
     assert not unguarded, (
         "the built SPA can reach "
-        + ", ".join(f"{api} ({POST_BASELINE_APIS[api]})" for api in unguarded)
+        + ", ".join(
+            f"{api} ({POST_BASELINE_APIS[api]}, in {', '.join(reachable[api][:3])})"
+            for api in unguarded
+        )
         + f", which {BASELINE} (iPadOS 15.8) does not have. A missing method parses "
         f"fine and throws at the call, so this does not show up as a broken build — "
         f"it shows up as one feature dying on one device. Either add it to "
@@ -351,11 +371,41 @@ def test_spa_post_baseline_apis_are_all_polyfilled(spa: tuple[str, str]) -> None
         f"something the baseline has. ({os.path.basename(path)})"
     )
     if reachable:
-        assert POLYFILL_MARKER in html, (
-            f"{os.path.basename(path)} reaches {', '.join(reachable)} but does not "
-            f"carry the polyfill install — baseline-polyfills.ts was dropped from the "
-            f"bundle, or index.tsx stopped importing it first."
+        assert _reach(pieces, POLYFILL_MARKER), (
+            f"{os.path.basename(path)} reaches {', '.join(sorted(reachable))} but "
+            f"does not carry the polyfill install — baseline-polyfills.ts was dropped "
+            f"from the bundle, or index.tsx stopped importing it first."
         )
+
+
+def test_the_api_guard_can_actually_fire() -> None:
+    """The guard above must be able to FAIL, which for five days it could not.
+
+    A guard that cannot fail is indistinguishable from a passing one, and this
+    particular guard is the only automated thing standing between a
+    post-baseline method call and a device nobody here can test.
+    """
+    pieces = [("fake-chunk.js", "const x = await Object.groupBy(rows, f);")]
+    assert _reach(pieces, "Object.groupBy") == ["fake-chunk.js"]
+    assert _reach(pieces, "AbortSignal.timeout") == []
+    # And the shape that broke it: searching the list itself finds nothing.
+    assert "Object.groupBy" not in pieces
+
+
+def test_the_shipped_bundle_really_does_reach_a_polyfilled_api(
+    spa: tuple[str, list[tuple[str, str]]],
+) -> None:
+    """Proves the guard is looking at real bytes, not an empty haystack.
+
+    The lobby reads AbortSignal.timeout on the way into every request, so if a
+    search over the shipped pieces cannot find it, the search is broken again
+    rather than the bundle being clean.
+    """
+    _, pieces = spa
+    assert _reach(pieces, "AbortSignal.timeout"), (
+        "no piece of the shipped SPA mentions AbortSignal.timeout, which every "
+        "lobby request goes through — the fixture is not returning the bundle"
+    )
 
 
 # The pattern is load-bearing in both directions: it has to keep catching the
