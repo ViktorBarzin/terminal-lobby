@@ -92,7 +92,11 @@ func allowFrom(buckets map[string]*intakeBucket, osUser string, want, perMinute 
 
 // clientKinds are the surfaces allowed to report, so tl.client stays a small
 // known set rather than whatever a caller invents.
-var clientKinds = map[string]bool{"lobby-vanilla": true, "lobby-v2": true, "term": true}
+// "sw" is the service worker. It reports the one thing the page cannot observe:
+// whether the tap record survived being written, in a context where IndexedDB is
+// known to be unreliable. A worker fetch carries the ingress identity header, so
+// it authenticates exactly as the page does.
+var clientKinds = map[string]bool{"lobby-vanilla": true, "lobby-v2": true, "term": true, "sw": true}
 
 type intakeEvent struct {
 	Name  string         `json:"name"`
