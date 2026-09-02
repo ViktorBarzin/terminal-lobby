@@ -102,6 +102,161 @@ body {
   color: var(--danger);
 }
 
+/* ---- Connection status (ADR-0016) --------------------------------------
+   The badge, in the session bar and the sidebar header. Dot always, word only
+   when something is wrong: healthy is the state nearly all the time and does
+   not earn text in a bar that is already tight on a phone.
+
+   The four states reuse the tokens the session cards already carry, so a
+   reader who has learned what amber means on a card does not learn it twice.
+   `unknown` is deliberately the quietest thing on screen — a channel that has
+   not reported must not draw the eye, because it is not news. */
+.tl-status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  cursor: pointer;
+  /* A 20px control is under every touch-target guideline, so the dot keeps its
+     size and the button grows around it. */
+  min-height: 32px;
+  min-width: 32px;
+  justify-content: center;
+}
+.tl-status-dot:hover:not(:disabled) {
+  border-color: var(--border);
+}
+.tl-status-dot:disabled,
+.tl-status-dot.is-flat {
+  cursor: default;
+}
+.tl-status-dot-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+.tl-status-dot[data-status="working"] .tl-status-dot-mark {
+  background: var(--state-done);
+}
+.tl-status-dot[data-status="degraded"] .tl-status-dot-mark {
+  background: var(--state-running);
+  /* The pulse says "still trying", which is the whole difference between
+     degraded and down: one is a reason to wait, the other to act. */
+  animation: tl-status-pulse 1.6s ease-in-out infinite;
+}
+.tl-status-dot[data-status="down"] .tl-status-dot-mark {
+  background: var(--danger);
+}
+.tl-status-dot[data-status="unknown"] .tl-status-dot-mark {
+  background: none;
+  border: 1px solid var(--border);
+}
+.tl-status-dot-word {
+  white-space: nowrap;
+}
+.tl-status-dot[data-status="degraded"] .tl-status-dot-word {
+  color: var(--state-running);
+}
+.tl-status-dot[data-status="down"] .tl-status-dot-word {
+  color: var(--danger);
+}
+@keyframes tl-status-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-status-dot[data-status="degraded"] .tl-status-dot-mark {
+    animation: none;
+  }
+}
+.tl-sidebar-status {
+  margin-left: auto;
+}
+
+/* The Right now group on the Network page. */
+.tl-rightnow-verdict {
+  margin: 0 0 10px;
+  font-size: calc(15px * var(--tl-text-scale, 1));
+  color: var(--text-primary);
+}
+.tl-rightnow-verdict[data-status="down"] {
+  color: var(--danger);
+}
+.tl-rightnow-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tl-rightnow-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: calc(13px * var(--tl-text-scale, 1));
+}
+.tl-rightnow-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+.tl-rightnow-row[data-status="working"] .tl-rightnow-mark {
+  background: var(--state-done);
+}
+.tl-rightnow-row[data-status="degraded"] .tl-rightnow-mark {
+  background: var(--state-running);
+}
+.tl-rightnow-row[data-status="down"] .tl-rightnow-mark {
+  background: var(--danger);
+}
+.tl-rightnow-row[data-status="unknown"] .tl-rightnow-mark {
+  background: none;
+  border: 1px solid var(--border);
+}
+.tl-rightnow-name {
+  flex: none;
+  min-width: 8.5em;
+}
+.tl-rightnow-detail {
+  color: var(--text-muted);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tl-rightnow-history {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+.tl-rightnow-ms {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.tl-rightnow-fix {
+  flex: none;
+}
+/* A phone has no room for a row this wide; the label keeps the top line and
+   everything that describes it wraps underneath. */
+@media (max-width: 480px) {
+  .tl-rightnow-row {
+    flex-wrap: wrap;
+  }
+  .tl-rightnow-detail {
+    flex-basis: 100%;
+    padding-left: 16px;
+  }
+}
+
 /* ---- View switch ------------------------------------------------------- */
 .tl-viewswitch {
   display: inline-flex;

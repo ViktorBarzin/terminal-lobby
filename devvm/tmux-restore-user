@@ -12,6 +12,8 @@
 #
 # Usage (the bare form predates the picker and still means "restore now"):
 #     tmux-restore-user <user>                       blanket restore
+#     tmux-restore-user <user> open                  everything the picker needs
+#                                                    to open, in one call
 #     tmux-restore-user <user> list                  snapshot series
 #     tmux-restore-user <user> show <ts>             one snapshot, resolved
 #     tmux-restore-user <user> select <ts> <name>... restore chosen rows
@@ -52,6 +54,9 @@ action="${2:-restore}"
 case "$action" in
   restore)
     exec "$TMUX_PERSIST" restore "$u"
+    ;;
+  open)
+    exec "$TMUX_PERSIST" picker "$u"
     ;;
   list)
     exec "$TMUX_PERSIST" snapshots "$u"

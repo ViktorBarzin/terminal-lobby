@@ -157,6 +157,18 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
   // What a restore would do, above what is already running.
   const split = createMemo(() => orderRows(rows()));
 
+  const showRows = (ts: string, got: SnapshotRow[]): void => {
+    setSelectedTS(ts);
+    setRows(got);
+    setChecked(new Set(got.filter((r) => r.default).map((r) => r.name)));
+    const missing = got.filter((r) => r.action !== "skip").length;
+    setStatus(
+      missing
+        ? `${missing} of ${got.length} not running`
+        : "Everything in this snapshot is already running",
+    );
+  };
+
   const loadRows = async (ts: string): Promise<void> => {
     setSelectedTS(ts);
     setRows([]);
@@ -169,14 +181,7 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
       setStatus(`Could not load that snapshot: ${(e as Error).message}`);
       return;
     }
-    setRows(got);
-    setChecked(new Set(got.filter((r) => r.default).map((r) => r.name)));
-    const missing = got.filter((r) => r.action !== "skip").length;
-    setStatus(
-      missing
-        ? `${missing} of ${got.length} not running`
-        : "Everything in this snapshot is already running",
-    );
+    showRows(ts, got);
   };
 
   void (async () => {
@@ -186,6 +191,14 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
       const newest = l.snapshots[0];
       if (!newest) {
         setStatus("No session snapshots saved yet");
+        return;
+      }
+      // The list arrives with the newest snapshot already resolved, so opening
+      // the picker is one request rather than two that cannot overlap — the
+      // second used to need the first's answer to know what to ask for. A
+      // server that predates that still sends the list alone; then we ask.
+      if (l.rows && l.newestTs === newest.ts) {
+        showRows(newest.ts, l.rows);
         return;
       }
       await loadRows(newest.ts); // newest, per the design

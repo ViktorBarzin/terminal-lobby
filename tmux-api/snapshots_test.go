@@ -339,3 +339,151 @@ func TestSnapshotRowsCarryTheirDestinationProject(t *testing.T) {
 		t.Fatalf("row %q: project %q, want \"\" — nothing places it", rows[1].Name, rows[1].Project)
 	}
 }
+
+// --- the picker's one call -----------------------------------------------------
+// GET /snapshots answers the whole open: the series, the live count behind the
+// deltas, and the newest snapshot already resolved. Two sequential calls (and
+// two sudo/bash/tmux round trips) were ~295 ms of server work before the picker
+// could show anything.
+
+func TestParsePickerSections(t *testing.T) {
+	out := strings.Join([]string{
+		"#live\t9",
+		"#snapshots",
+		"20260814T130500\t9\tnewest",
+		"20260814T125000\t18\t-",
+		"#rows\t20260814T130500",
+		"T3\t/home/wizard/code\t-\tmissing\tnew\tT3\ton\t-",
+		"ux\t/home/wizard\t-\tlive_same\tskip\tux\toff\t-",
+		"",
+	}, "\n")
+
+	got, ok := parsePicker(out)
+	if !ok {
+		t.Fatalf("well-formed picker output was rejected")
+	}
+	if got.live != 9 {
+		t.Fatalf("live count: got %d, want 9", got.live)
+	}
+	if got.rowsTS != "20260814T130500" {
+		t.Fatalf("row section timestamp: got %q", got.rowsTS)
+	}
+	snaps := parseSnapshotList(got.series, got.live)
+	if len(snaps) != 2 || !snaps[0].Newest || snaps[1].DeltaVsLive != 9 {
+		t.Fatalf("series section parsed wrong: %+v", snaps)
+	}
+	rows := parseSnapshotRows(got.rows)
+	if len(rows) != 2 || rows[0].Name != "T3" || rows[1].Action != "skip" {
+		t.Fatalf("row section parsed wrong: %+v", rows)
+	}
+}
+
+// A user with no snapshots yet: the series is empty and there is nothing to
+// resolve, which is a valid answer and not a failure to fall back from.
+func TestParsePickerWithNoSnapshots(t *testing.T) {
+	got, ok := parsePicker("#live\t0\n#snapshots\n")
+	if !ok {
+		t.Fatalf("an empty series should still parse")
+	}
+	if got.rowsTS != "" || got.rows != "" {
+		t.Fatalf("nothing to resolve, yet rows came back: %+v", got)
+	}
+}
+
+// Anything that is not the picker's own format is refused, so the handler can
+// fall back rather than serve a payload it half-understood.
+func TestParsePickerRejectsForeignOutput(t *testing.T) {
+	for _, bad := range []string{
+		"",
+		"20260814T130500\t9\tnewest\n",        // the old `list` output
+		"tmux-restore-user: unknown action\n", // an older wrapper
+	} {
+		if _, ok := parsePicker(bad); ok {
+			t.Fatalf("parsePicker accepted %q", bad)
+		}
+	}
+}
+
+// The handler asks the wrapper ONCE, with `open`, and never touches tmux: the
+// live count rides along in the payload. That mattered under load — the tmux
+// path also takes the shared /proc snapshot lock and stamps @last_drive, all
+// for one integer.
+func TestSnapshotsOpensInOneCall(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osSelf+"\n")
+	sudoArgv := withSudoStub(t, `printf '#live\t2\n#snapshots\n20260814T130500\t5\tnewest\n#rows\t20260814T130500\nT3\t/home/wizard\t-\tmissing\tnew\tT3\ton\t-\n'`)
+	tmuxArgv := withTmuxStub(t, "exit 0")
+
+	rec := httptest.NewRecorder()
+	handleSnapshots(rec, sessionReq(http.MethodGet, "/snapshots", "", "alice"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (%q)", rec.Code, rec.Body.String())
+	}
+	want := "-n\n" + restoreWrapper + "\n" + osSelf + "\nopen\n"
+	if got := recordedArgv(t, sudoArgv); got != want {
+		t.Fatalf("wrapper invocation:\ngot  %q\nwant %q", got, want)
+	}
+	if got := recordedArgv(t, tmuxArgv); got != "" {
+		t.Fatalf("opening the picker still shelled out to tmux: %q", got)
+	}
+
+	var body SnapshotList
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v (%q)", err, rec.Body.String())
+	}
+	if len(body.Snapshots) != 1 || body.Snapshots[0].DeltaVsLive != 3 {
+		t.Fatalf("delta should be 5 saved minus 2 live: %+v", body.Snapshots)
+	}
+	if body.NewestTS != "20260814T130500" {
+		t.Fatalf("newest ts: got %q", body.NewestTS)
+	}
+	if len(body.Rows) != 1 || body.Rows[0].Name != "T3" {
+		t.Fatalf("the newest snapshot should come back resolved: %+v", body.Rows)
+	}
+}
+
+// An older wrapper on the box does not know `open`. The list still has to
+// arrive — the picker then fetches the rows itself, as it always did.
+func TestSnapshotsFallsBackToListWhenOpenIsUnknown(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osSelf+"\n")
+	sudoArgv := withSudoStub(t, `case "$4" in
+  open) echo "tmux-restore-user: unknown action 'open'" >&2; exit 2 ;;
+  *) printf '20260814T125000\t18\tnewest\n' ;;
+esac`)
+	withTmuxStub(t, "exit 1") // no live sessions
+
+	rec := httptest.NewRecorder()
+	handleSnapshots(rec, sessionReq(http.MethodGet, "/snapshots", "", "alice"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (%q)", rec.Code, rec.Body.String())
+	}
+	argv := recordedArgv(t, sudoArgv)
+	if !strings.Contains(argv, "\nopen\n") || !strings.Contains(argv, "\nlist\n") {
+		t.Fatalf("expected an `open` attempt then a `list` fallback, got %q", argv)
+	}
+	var body SnapshotList
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not JSON: %v", err)
+	}
+	if len(body.Snapshots) != 1 || body.Snapshots[0].Count != 18 {
+		t.Fatalf("the series should still arrive: %+v", body.Snapshots)
+	}
+	if len(body.Rows) != 0 || body.NewestTS != "" {
+		t.Fatalf("the fallback has no rows to offer: %+v", body)
+	}
+}
+
+// Both paths failing is a real failure, not an empty picker.
+func TestSnapshotsFailsWhenBothPathsFail(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osSelf+"\n")
+	withSudoStub(t, "exit 2")
+	withTmuxStub(t, "exit 1")
+
+	rec := httptest.NewRecorder()
+	handleSnapshots(rec, sessionReq(http.MethodGet, "/snapshots", "", "alice"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("got %d, want 500", rec.Code)
+	}
+}

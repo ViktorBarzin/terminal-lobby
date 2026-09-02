@@ -46,6 +46,9 @@ import type { TitleSession } from "../notify/title";
 import { createGalleryStore } from "../store/gallery";
 import { Gallery } from "./Gallery";
 import { createDeployHealer } from "../deploy/healer";
+import { createStatusStore, type ConnectionControl } from "../diagnostics/status-store";
+import { buildProbes } from "../diagnostics/probes";
+import { worst, type SseStatus, type TerminalReport } from "../diagnostics/status";
 import { createDockStore } from "../store/dock";
 import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
 import { installSwipe } from "../mobile/swipe";
@@ -118,6 +121,15 @@ export const App: Component = () => {
 
   // Ahead of the lobby store, which reads the roamed session ordering out of it.
   const prefs = createPrefsStore();
+
+  // Connection status (ADR-0016). Created before its providers so each can push
+  // into it as it comes up; every channel starts `unknown`, which paints
+  // nothing and claims nothing.
+  const status = createStatusStore();
+  /** The selected session's transcript stream, forwarded up by SessionView.
+   *  Null when no session is open, which is `unknown` rather than a fault. */
+  const [sessionStatus, setSessionStatus] = createSignal<SseStatus | null>(null);
+  createEffect(() => status.setTranscript(sessionStatus()));
 
   const store = createLobbyStore({
     initialSelected: readInitialSelection(),
@@ -221,6 +233,108 @@ export const App: Component = () => {
   });
   onCleanup(() => notifications.dispose());
 
+  // ---- connection status providers (ADR-0016) -----------------------------
+  // Each of these already knew its own health and had nowhere to say it. The
+  // effects read signals the providers were already writing, so nothing new is
+  // polled and no channel is asked a question it was not already answering.
+  //
+  // The session list is the odd one: it is request/response, not a connection,
+  // so its channel is fed by the poll's own bookkeeping rather than by an
+  // open/closed edge. The effect re-runs whenever a poll returns or fails,
+  // which is also the fastest anything could honestly change.
+  createEffect(() => status.setSessions(store.pollHealth()));
+  createEffect(() =>
+    status.setNotifications({
+      permission: notifications.permission(),
+      // "checking" is the boot state, and it is exactly `unknown`: nothing is
+      // known yet, and claiming either answer would be a guess.
+      device: notifications.deviceState() === "checking" ? "unsupported" : (
+        notifications.deviceState() as Exclude<
+          ReturnType<typeof notifications.deviceState>,
+          "checking"
+        >
+      ),
+      // Only Run check asks the server; the passive readout does not, because
+      // it would mean a request per repaint for an answer that changes rarely.
+      server: "unknown",
+    }),
+  );
+  /** Ask the terminal frame on screen to re-report its socket. Replaced by
+   *  whichever TerminalView is mounted; a no-op when none is. */
+  let askTerminalConn: () => void = () => {};
+  /** Retry the terminal socket. Only ever called from the Reconnect button. */
+  let retryTerminalConn: () => void = () => {};
+  /** Waiting for the frame's answer to one `tl-conn-ask`. */
+  let awaitingConn: ((r: TerminalReport | null) => void) | null = null;
+
+  const onFrameConn = (report: TerminalReport | null): void => {
+    status.setTerminal(report);
+    const waiting = awaitingConn;
+    awaitingConn = null;
+    waiting?.(report);
+  };
+
+  /**
+   * What the Right now panel is handed. The repairs are here rather than in the
+   * panel because this is where the things being repaired live — and each is a
+   * separate tap, never something the check does on its own.
+   */
+  const connControl: ConnectionControl = {
+    channels: status.channels,
+    log: status.log,
+    lastCheck: status.lastCheck,
+    checkedAt: status.checkedAt,
+    checking: status.checking,
+    bootedAt: status.bootedAt,
+    worstNow: () => worst(status.channels()),
+    runCheck: async () => {
+      await status.check(
+        buildProbes({
+          askTerminal: (signal) =>
+            new Promise<TerminalReport | null>((resolve) => {
+              // The check's own 5s cap is what ends this if the frame never
+              // answers; aborting resolves early so nothing is left waiting.
+              signal.addEventListener("abort", () => {
+                awaitingConn = null;
+                resolve(null);
+              });
+              awaitingConn = resolve;
+              askTerminalConn();
+            }),
+          transcriptStatus: () => sessionStatus(),
+          sessionsReport: () => store.pollHealth(),
+          updateReady: () =>
+            status.channels().find((c) => c.id === "build")?.state === "degraded",
+        }),
+      );
+    },
+    repairLabel: (id) => {
+      const c = status.channels().find((x) => x.id === id);
+      if (!c || c.state === "working") return null;
+      // Notifications are the one row whose `unknown` is still actionable: not
+      // set up is not a fault (so it never colours the badge), but it is exactly
+      // the state a Turn on button exists for. A browser-level refusal is the
+      // exception — script cannot undo it, so offering a button would be a lie
+      // and the row says "blocked by the browser" instead.
+      if (id === "notifications") {
+        return notifications.permission() === "denied" ? null : "Turn on";
+      }
+      if (c.state === "unknown") return null;
+      if (id === "terminal") return "Reconnect";
+      if (id === "sessions") return "Refresh";
+      if (id === "build") return "Reload";
+      // The transcript stream's own ladder is always running when it is not
+      // open, so there is nothing here a person could usefully press.
+      return null;
+    },
+    repair: async (id) => {
+      if (id === "terminal") retryTerminalConn();
+      else if (id === "sessions") await store.refresh();
+      else if (id === "build") window.location.reload();
+      else if (id === "notifications") await notifications.toggleBell();
+    },
+  };
+
   // ---- session image gallery (pillar #2 — inventory Cat.8) ----------------
   // The gallery is per-session but lives at the shell level so gallery.open
   // (palette action / 🖼 button / forwarded chord) opens it over any view. It
@@ -240,6 +354,7 @@ export const App: Component = () => {
   // onFrameBuildStale → healer.onBuildStale (the TOP-owned reload contract).
   const healer = createDeployHealer({
     hasAttachedTerminal: () => store.selected() !== null,
+    onUpdatePending: (pending) => status.setBuild({ updateReady: pending }),
   });
   onCleanup(() => healer.dispose());
 
@@ -654,6 +769,10 @@ export const App: Component = () => {
           availableCommands={cmdAvail}
           altActive={engine.altActive}
           notifications={notifications}
+          // Scoped to what a list screen can honestly report (ADR-0016). On a
+          // phone this IS the whole viewport, so without it the surface the app
+          // spends most of its time on has no status at all.
+          status={{ channels: status.channels, onOpen: () => openSettings("network") }}
           // The phone folds the shell bar (and with it the gear) into the
           // session bar, which only exists once a session is open. Without this
           // the sidebar's own screen has no route to Settings at all.
@@ -723,6 +842,14 @@ export const App: Component = () => {
                           ),
                         }))
                     }
+                    status={{
+                      channels: status.channels,
+                      onOpen: () => openSettings("network"),
+                      onTranscript: setSessionStatus,
+                      onFrameConn,
+                      askConn: (ask) => (askTerminalConn = ask),
+                      retryConn: (retry) => (retryTerminalConn = retry),
+                    }}
                     onSwitchSession={(n, owner) => store.select(n, owner)}
                     visible={shown() && (!flip() || collapsed())}
                     leading={
@@ -803,6 +930,7 @@ export const App: Component = () => {
             altLabel: engine.altLabel,
           }}
           notifications={notifications}
+          connection={connControl}
           actAs={actAsControl()}
           skills={skills}
           skillSessions={skillSessions}

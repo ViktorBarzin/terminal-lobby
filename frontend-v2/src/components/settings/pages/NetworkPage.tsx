@@ -24,6 +24,8 @@ import {
 } from "../../../diagnostics/network";
 import { diagnosticsWanted } from "../../../telemetry/diag";
 import { Group, Row, Segmented } from "../controls";
+import { RightNow } from "../RightNow";
+import type { ConnectionControl } from "../../../diagnostics/status-store";
 
 /** What each bucket is called on screen. Feature names rather than endpoints,
  *  because the breakdown exists to be acted on. */
@@ -52,7 +54,7 @@ const TIER_LABEL: Record<TierPreference, string> = {
  * a fieldset buried inside it: the tier is a setting, and everything below it
  * is a readout.
  */
-export const NetworkPage: Component = () => {
+export const NetworkPage: Component<{ connection?: ConnectionControl }> = (props) => {
   // Which period the breakdown is scoped to, and which network narrows it
   // further. One selection drives the whole section: there is no control fixed
   // to a period nobody picked.
@@ -131,6 +133,12 @@ export const NetworkPage: Component = () => {
 
   return (
     <>
+      {/* Live health first. Someone opening this page mid-problem is asking
+          "is it connected?", and the tier and the byte counters below cannot
+          answer that — they describe the link, not whether it is carrying
+          anything (ADR-0016). */}
+      <Show when={props.connection}>{(conn) => <RightNow conn={conn()} />}</Show>
+
       <Group title="This connection">
         <Row
           label="Experience"

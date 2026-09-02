@@ -36,7 +36,7 @@ func main() {
 		interval = flag.Duration("interval", 30*time.Second,
 			"how often to look. The floor on how fast a pane can be seen approaching its cap.")
 		paneWarn = flag.Uint64("pane-warn-bytes", 3*GiB,
-			"warn when a pane holds at least this much AND its largest process is a claude")
+			"warn when a pane's UNRECLAIMABLE memory (anon + shmem) reaches this AND its largest process is a claude. Not memory.current, which rides up to the cap on reclaimable cache in any pane doing file I/O")
 		confirm = flag.Int("confirm-ticks", 2,
 			"consecutive ticks a stamp-with-no-claude must hold before it counts as a death")
 		textfile = flag.String("textfile", "/var/lib/node_exporter/textfile/tl_panes.prom",

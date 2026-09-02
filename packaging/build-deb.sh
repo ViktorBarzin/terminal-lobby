@@ -53,7 +53,14 @@ done
 # npm ci installs exactly the committed lockfile. --include=dev because the
 # build tool lives in devDependencies and CI may export NODE_ENV=production.
 echo "==> building the lobby"
-(cd frontend-v2 && npm ci --include=dev --no-audit --no-fund && npm run build)
+# TL_BUILD is what vite substitutes for the __TL_BUILD__ define. Without it the
+# SPA compiled the LITERAL placeholder into its bundle and every lobby
+# diagnostics record reported `tl.build: "__TL_BUILD__"` — measured at 100 of
+# 100 records over 12h. tl.build is the correlation attribute that says WHICH
+# BUILD a client was running when something broke (ADR-0008), so the SPA's half
+# of the diagnostics could not be attributed to a release at all. term.html was
+# unaffected because tl-stamp stamps it below, with this same $COMMIT.
+(cd frontend-v2 && npm ci --include=dev --no-audit --no-fund && TL_BUILD="$COMMIT" npm run build)
 
 # Stamping happens here, at build time, so the identity a client compares is
 # fixed when the artefact is built rather than when someone installs it.
@@ -83,6 +90,17 @@ for surface in "$STAGE/share/index.html" "$STAGE/share/term.html"; do
     exit 1
   fi
 done
+
+# The emitted CHUNKS need the same guard. The loop above covers the two surfaces
+# tl-stamp writes, and a placeholder that vite compiled INTO the bundle is not on
+# either of them — which is how __TL_BUILD__ shipped to every lobby client and
+# was read back as a literal build fingerprint. `__TL_` is our own namespace, so
+# any match here is ours and is a real leak.
+if grep -rlE '__TL_[A-Z_]*__' "$CHUNKS" >/dev/null 2>&1; then
+  echo "build: a lobby chunk still carries a placeholder" >&2
+  grep -rhoE '__TL_[A-Z_]*__' "$CHUNKS" | sort -u >&2
+  exit 1
+fi
 
 # The meta tag is the one leg that depends on the build tool: if vite stops
 # copying the head through verbatim, the page can never self-update.

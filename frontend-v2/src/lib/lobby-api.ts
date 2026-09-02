@@ -279,7 +279,9 @@ export async function restoreSessions(sel?: RestoreSelection): Promise<void> {
 }
 
 /** GET /api/snapshots → the caller's snapshot series, newest first, annotated
- *  against what is running now. */
+ *  against what is running now, and — from a server that supports it — the
+ *  newest snapshot's rows already resolved, so opening the picker is one
+ *  request instead of two that cannot overlap. */
 export async function listSnapshots(): Promise<SnapshotList> {
   return json<SnapshotList>("/snapshots", { cache: "no-store" });
 }
