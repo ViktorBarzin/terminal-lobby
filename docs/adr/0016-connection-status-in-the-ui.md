@@ -88,9 +88,11 @@ terminal, sitting green. Two identical statements and a contradiction. So:
 - the sidebar's badge stands down whenever a session bar is on screen, and
   exists for the screens without one (the phone's list, the desktop empty
   state) — `sessionBarOnScreen()` in `components/lobby.logic.ts`;
-- the pill defers when framed, speaking only when it has something the badge
-  cannot say (keystrokes held for replay). Standalone `term.html` keeps it in
-  full, since no badge surrounds it there;
+- the pill does not speak when framed at all. It briefly kept an exception for
+  keystrokes held during a drop; held keys are already drawn as `.tl-held`
+  glyphs in the terminal at the cursor, so the pill's count was a third copy of
+  something on screen twice, and the one branch that could not be exercised.
+  Standalone `term.html` keeps the pill in full, since no badge surrounds it;
 - the badge carries the retry attempt the pill used to show, so a climbing
   ladder still reads differently from a stuck one.
 
