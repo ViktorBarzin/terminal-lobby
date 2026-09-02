@@ -34,6 +34,7 @@ func Line(f Finding) string {
 	if f.PaneLimit > 0 {
 		fields = append(fields,
 			"pane_bytes="+strconv.FormatUint(f.PaneBytes, 10),
+			"pane_unreclaimable="+strconv.FormatUint(f.PaneUnreclaimable, 10),
 			"pane_limit="+strconv.FormatUint(f.PaneLimit, 10),
 		)
 	}
@@ -79,6 +80,17 @@ func renderTextfile(snaps []Snapshot) string {
 	each(snaps, func(user string, s Session) {
 		fmt.Fprintf(&b, "tl_pane_memory_bytes{user=%s,session=%s} %d\n",
 			metricValue(user), metricValue(s.Name), s.PaneBytes)
+	})
+
+	// The number the pre-warning actually compares. Kept separate from
+	// memory.current because current rides up to the cap in any pane doing file
+	// I/O — the cap reclaims cache rather than killing — so only this one says
+	// how close a kill is.
+	b.WriteString("# HELP tl_pane_unreclaimable_bytes Pane memory that the cap cannot reclaim (anon + shmem), which is what forces a kill.\n")
+	b.WriteString("# TYPE tl_pane_unreclaimable_bytes gauge\n")
+	each(snaps, func(user string, s Session) {
+		fmt.Fprintf(&b, "tl_pane_unreclaimable_bytes{user=%s,session=%s} %d\n",
+			metricValue(user), metricValue(s.Name), s.PaneUnreclaimable)
 	})
 
 	b.WriteString("# HELP tl_pane_memory_max_bytes The pane cgroup's memory cap, 0 when uncapped.\n")

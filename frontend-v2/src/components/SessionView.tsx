@@ -40,6 +40,8 @@ import { uploadBlob, uploadField } from "../clipboard/upload";
 import { attachmentKind } from "../lib/attachments";
 import type { ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
+import { StatusDot } from "./StatusDot";
+import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 
 /**
  * The stream badge's wording. Every status but one reads fine as-is; a session
@@ -145,6 +147,19 @@ export const SessionView: Component<{
    *  shell's keybinding context can refuse to switch session out from under an
    *  unsaved edit (the preview store is per-session and dies with this view). */
   onPreviewState?: (state: { open: boolean; dirty: boolean }) => void;
+  /** The connection status this bar's badge shows, and the way to open the
+   *  panel behind it. Absent in tests and in the dock, where the badge is not
+   *  drawn at all (ADR-0016). */
+  status?: {
+    channels: () => readonly Channel[];
+    onOpen: () => void;
+    /** publish this view's transcript stream status UP to the shared model. */
+    onTranscript: (s: SseStatus | null) => void;
+    /** the frame's socket, and the two ways to talk to it. */
+    onFrameConn: (r: TerminalReport | null) => void;
+    askConn: (ask: () => void) => void;
+    retryConn: (retry: () => void) => void;
+  };
 }> = (props) => {
   const session = props.session;
   const store = createSessionStore(session, {
@@ -171,6 +186,46 @@ export const SessionView: Component<{
    * mount, or a hidden session would answer for the visible one.
    */
   const onScreen = () => props.visible !== false;
+
+  // The terminal frame's two levers, captured on mount and published UP only
+  // while this view is the one on screen. Every visited session stays mounted,
+  // so the shell must be talking to the frame a person is actually looking at
+  // — registering at mount would leave it holding whichever mounted last.
+  let frameAsk: () => void = () => {};
+  let frameRetry: () => void = () => {};
+  createEffect(() => {
+    if (!props.status) return;
+    if (!onScreen()) {
+      // Leaving the screen withdraws this view's terminal from the model, the
+      // same way the transcript below withdraws its stream. Without it, going
+      // from one session to another read as a DROP — the outgoing frame's
+      // `working` falling to the incoming frame's `connecting` — and the panel
+      // reported "dropped once" about two sockets that were both fine.
+      props.status.onFrameConn(null);
+      return;
+    }
+    props.status.askConn(() => frameAsk());
+    props.status.retryConn(() => frameRetry());
+    // Coming BACK needs an ask. The frame sends one message per real change, so
+    // a terminal that was already open when this view left the screen will not
+    // volunteer anything on return — and the row would sit on "not reporting"
+    // above a working terminal. Harmless before the frame has mounted: the ask
+    // is a no-op then, and the socket reports as it connects anyway.
+    frameAsk();
+  });
+  // The transcript stream this view owns, published to the shared status model
+  // (and withdrawn when the view goes off screen, so the badge never reports a
+  // stream belonging to a session nobody is reading).
+  // A stream nobody has asked to open is NOT a stream in trouble. The store's
+  // first connect is deferred until the Text view is shown, and `status` reads
+  // `connecting` until then — its initial value — so publishing it unguarded
+  // made a terminal-only session report "The transcript stream is reconnecting"
+  // forever and painted the badge amber over a session that was working
+  // perfectly (Viktor, 2026-09-02). Null reads as `unknown`, which colours
+  // nothing and says "not open".
+  createEffect(() =>
+    props.status?.onTranscript(onScreen() && store.started() ? store.status() : null),
+  );
   /** Why the pty controls are inert, or "" when they are not. Watching at all
    *  makes them inert — a read-only tmux client drops what it is sent — so this
    *  answers for an ordinary Watch too, not only for a lens. */
@@ -602,21 +657,27 @@ export const SessionView: Component<{
             </Show>
           </span>
         </Show>
-        {/* The TEXT view's status, and only its. It reports the SSE transcript
-            stream that feeds that view — on the Terminal view (v1's default,
-            with the text view deferred) it was the bar's ONLY badge, so a plain
-            shell session read as a permanent "no transcript" about a view it
-            cannot use, while saying nothing about the live terminal in front of
-            it. A status for a surface you are not looking at is worse than no
-            status: it reads as the terminal's. */}
-        <Show when={mode() === "text"}>
-          <span
-            class="tl-conn"
-            data-status={store.status()}
-            title={connTitle(store.status())}
-          >
-            {connLabel(store.status())}
-          </span>
+        {/* THE badge, on both views (ADR-0016). It used to be the text view's
+            SSE status and only that, hidden on the Terminal view because a
+            status for a surface you are not looking at reads as the terminal's
+            — which left the terminal, the one thing in front of you, reporting
+            nothing at all. It now shows the worst of every channel this surface
+            can honestly report, and opens the panel that says which. */}
+        <Show when={props.status} fallback={
+          <Show when={mode() === "text"}>
+            <span class="tl-conn" data-status={store.status()} title={connTitle(store.status())}>
+              {connLabel(store.status())}
+            </span>
+          </Show>
+        }>
+          {(s) => (
+            <StatusDot
+              class="tl-conn-badge"
+              channels={s().channels}
+              only={SESSION_CHANNELS}
+              onOpen={s().onOpen}
+            />
+          )}
         </Show>
         <span class="tl-session-bar-spacer" />
         {/* Terminal controls, in the order the vanilla page's floating cluster
@@ -867,6 +928,13 @@ export const SessionView: Component<{
             onFrameAlt={props.onFrameAlt}
             onFrameAttention={onAttention}
             onFrameBuildStale={props.onFrameBuildStale}
+            // Only the session ON SCREEN speaks for the terminal channel. Every
+            // visited session stays mounted, so without this guard a hidden
+            // tab's frame would keep overwriting the badge for the one being
+            // looked at.
+            onFrameConn={(r) => onScreen() && props.status?.onFrameConn(r)}
+            askConn={(ask) => (frameAsk = ask)}
+            retryConn={(retry) => (frameRetry = retry)}
           />
         </section>
       </main>

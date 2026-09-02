@@ -952,6 +952,16 @@ globalThis.tlDiag = (function () {
       emit("diag.incident", a, true);
     }
 
+    /**
+     * One finished Run check (ADR-0016). Urgent for the same reason a dropped
+     * connection is: the person who pressed the button is having a problem, and
+     * HTTP still works when a WebSocket does not — so this record is the one
+     * most likely to arrive when the tab is about to be closed in frustration.
+     */
+    function selfcheck(attrs) {
+      emit("diag.selfcheck", attrs && typeof attrs === "object" ? attrs : {}, true);
+    }
+
     // ---- lifecycle --------------------------------------------------------
     function boot(context) {
       if (!enabled) return;
@@ -1035,6 +1045,7 @@ globalThis.tlDiag = (function () {
       onException: onException,
       ring: pushRing,
       incident: incident,
+      selfcheck: selfcheck,
       // introspection, for tests and for a console when something looks wrong
       buffered: function () {
         return buffer.length;

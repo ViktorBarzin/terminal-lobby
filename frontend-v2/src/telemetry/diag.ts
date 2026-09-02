@@ -22,6 +22,8 @@ export interface Diagnostics {
   ids(): { tab: string; device: string };
   ring(event: Record<string, string | number | boolean | null>): void;
   incident(kind: string, attrs?: Record<string, unknown>): void;
+  /** one finished Run check — a per-channel verdict and how long it took. */
+  selfcheck(attrs: Record<string, string | number>): void;
   onRender(ms: number): void;
   onException(err: unknown, kind: string): void;
   flush(): void;
@@ -59,6 +61,7 @@ const inert: Diagnostics = {
   ids: () => ({ tab: "", device: "" }),
   ring: () => {},
   incident: () => {},
+  selfcheck: () => {},
   onRender: () => {},
   onException: () => {},
   flush: () => {},

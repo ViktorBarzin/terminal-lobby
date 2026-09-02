@@ -23,6 +23,7 @@ import { SessionsPage } from "./settings/pages/SessionsPage";
 import { KeyboardPage, type KeybindingsControl } from "./settings/pages/KeyboardPage";
 import { NotificationsPage } from "./settings/pages/NotificationsPage";
 import { NetworkPage } from "./settings/pages/NetworkPage";
+import type { ConnectionControl } from "../diagnostics/status-store";
 import { PrivacyPage } from "./settings/pages/PrivacyPage";
 import { ActAsPage, type ActAsControl } from "./settings/pages/ActAsPage";
 import { SkillsPage } from "./settings/pages/SkillsPage";
@@ -84,6 +85,9 @@ export const SettingsPanel: Component<{
   keybindings?: KeybindingsControl;
   /** the PWA notification system (per-device readouts + test actions). */
   notifications?: NotificationSystem;
+  /** live connection status + Run check, for the Network page's Right now
+   *  group (ADR-0016). Optional: without it the page is the readout it was. */
+  connection?: ConnectionControl;
   /** the admin act-as picker. Supplied only when the CALLER administers this
    *  box; absent for everyone else, so the page does not render at all. */
   actAs?: ActAsControl;
@@ -286,7 +290,7 @@ export const SettingsPanel: Component<{
                 <NotificationsPage prefs={props.prefs} notifications={props.notifications} />
               </Match>
               <Match when={current() === "network"}>
-                <NetworkPage />
+                <NetworkPage connection={props.connection} />
               </Match>
               <Match when={current() === "privacy"}>
                 <PrivacyPage confirm={props.confirm} onCleared={props.onCleared} />

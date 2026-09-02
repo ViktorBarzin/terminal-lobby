@@ -186,15 +186,21 @@ func TestNilDiagEmitterIsSafe(t *testing.T) {
 }
 
 // The catalog and the ADR's vocabulary table are edited in the same commit;
-// this asserts the records the ADR names actually exist.
+// this asserts the records the ADRs name actually exist. Grouped by the ADR
+// that introduced each, so a failure says which document to look in.
 func TestDiagCatalogCoversTheADRVocabulary(t *testing.T) {
-	for _, name := range []string{
-		"perf.rollup", "app.alive", "app.died", "conn.opened", "conn.dropped",
-		"term.stall", "app.exception", "api.slow", "api.served", "api.rollup",
-		"term.ready", "app.context", "diag.incident",
+	for adr, names := range map[string][]string{
+		"0008-client-diagnostics": {
+			"perf.rollup", "app.alive", "app.died", "conn.opened", "conn.dropped",
+			"term.stall", "app.exception", "api.slow", "api.served", "api.rollup",
+			"term.ready", "app.context", "diag.incident",
+		},
+		"0016-connection-status-in-the-ui": {"diag.selfcheck"},
 	} {
-		if !IsKnownDiag(name) {
-			t.Errorf("%s is in the ADR vocabulary table but not the catalog", name)
+		for _, name := range names {
+			if !IsKnownDiag(name) {
+				t.Errorf("%s is in ADR-%s's vocabulary table but not the catalog", name, adr)
+			}
 		}
 	}
 }

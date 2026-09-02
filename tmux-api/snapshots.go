@@ -90,6 +90,14 @@ type SnapshotList struct {
 	// PerSessionMB is the estimate behind the warning, so the copy the user
 	// reads and the number the server measured cannot drift apart.
 	PerSessionMB int `json:"perSessionMb"`
+	// NewestTS names the snapshot Rows was resolved from — the one the picker
+	// opens on. Empty when this box's tmux-persist predates the one-call open,
+	// or when the user has no snapshots yet.
+	NewestTS string `json:"newestTs,omitempty"`
+	// Rows is that snapshot already resolved against live state, so the picker
+	// renders from THIS response instead of waiting on a second round trip.
+	// Absent means "ask for it", which is what the picker did before.
+	Rows []SnapshotRow `json:"rows,omitempty"`
 }
 
 // perSessionMB is measured from the 2026-08-14 OOM dump: claude 305-334 MB,
@@ -121,8 +129,66 @@ func memAvailableMB() int {
 	return -1
 }
 
-// handleSnapshots (GET /snapshots) lists the caller's snapshot series, newest
-// first, annotated with how each compares to what is running now.
+// picker is the wrapper's `open` output, split into the sections the existing
+// parsers already understand.
+type picker struct {
+	live   int
+	series string
+	rowsTS string
+	rows   string
+}
+
+// parsePicker splits `tmux-restore-user <user> open`. Returns false for
+// anything that is not that format — an older wrapper answering "unknown
+// action", or the plain `list` output — so the caller falls back rather than
+// serving half an answer. Section headers start with '#', which no snapshot
+// timestamp and no addressable session name can.
+func parsePicker(out string) (picker, bool) {
+	var p picker
+	var series, rows []string
+	seenLive, seenSeries, inRows := false, false, false
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "#live\t"):
+			n, err := strconv.Atoi(strings.TrimPrefix(line, "#live\t"))
+			if err != nil {
+				return picker{}, false
+			}
+			p.live, seenLive = n, true
+		case line == "#snapshots":
+			seenSeries = true
+		case strings.HasPrefix(line, "#rows\t"):
+			p.rowsTS, inRows = strings.TrimPrefix(line, "#rows\t"), true
+		case line == "":
+			continue
+		case strings.HasPrefix(line, "#"):
+			return picker{}, false
+		case inRows:
+			rows = append(rows, line)
+		case seenSeries:
+			series = append(series, line)
+		default:
+			return picker{}, false // a row before any section header
+		}
+	}
+	if !seenLive || !seenSeries {
+		return picker{}, false
+	}
+	p.series = strings.Join(series, "\n")
+	p.rows = strings.Join(rows, "\n")
+	return p, true
+}
+
+// handleSnapshots (GET /snapshots) answers everything the restore picker needs
+// to open: the caller's snapshot series newest first, annotated with how each
+// compares to what is running now, plus the newest snapshot already resolved.
+//
+// One call. It used to take two — this list, then GET /snapshots/{ts} for the
+// rows — which could not overlap, since the second needs the first's answer to
+// know which snapshot to ask for. Each was its own sudo, bash, user-map parse
+// and tmux round trip: ~295 ms of server work on an idle box on 2026-09-01,
+// and 1.9-48 s in the log when the box was short of memory, which is when
+// people restore sessions.
 func handleSnapshots(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
@@ -132,23 +198,44 @@ func handleSnapshots(w http.ResponseWriter, r *http.Request) {
 	if osUser == "" {
 		return
 	}
-	out, err := persistCmd(osUser, "list").Output()
-	if err != nil {
-		log.Printf("snapshots list for %s failed: %v", osUser, err)
-		http.Error(w, "could not read snapshots", http.StatusInternalServerError)
-		return
-	}
 
-	liveCount := len(userSessions(osUser))
-	body := SnapshotList{
-		Snapshots:      parseSnapshotList(string(out), liveCount),
-		MemAvailableMB: memAvailableMB(),
-		PerSessionMB:   perSessionMB,
+	body := SnapshotList{MemAvailableMB: memAvailableMB(), PerSessionMB: perSessionMB}
+	if p, ok := openPicker(osUser); ok {
+		body.Snapshots = parseSnapshotList(p.series, p.live)
+		if p.rowsTS != "" {
+			body.NewestTS = p.rowsTS
+			body.Rows = annotateRowProjects(osUser, parseSnapshotRows(p.rows))
+		}
+	} else {
+		// A box whose tmux-persist or wrapper predates `open`. The series alone
+		// still opens the picker; it fetches the rows itself, as it used to.
+		out, err := persistCmd(osUser, "list").Output()
+		if err != nil {
+			log.Printf("snapshots list for %s failed: %v", osUser, err)
+			http.Error(w, "could not read snapshots", http.StatusInternalServerError)
+			return
+		}
+		body.Snapshots = parseSnapshotList(string(out), len(userSessions(osUser)))
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// openPicker runs the one-call open. A failure is reported rather than logged
+// as fatal: the caller has a working older path to fall back to.
+func openPicker(osUser string) (picker, bool) {
+	out, err := persistCmd(osUser, "open").Output()
+	if err != nil {
+		log.Printf("snapshots open for %s failed, falling back to list: %v", osUser, err)
+		return picker{}, false
+	}
+	p, ok := parsePicker(string(out))
+	if !ok {
+		log.Printf("snapshots open for %s returned an unrecognised format, falling back to list", osUser)
+	}
+	return p, ok
 }
 
 // parseSnapshotList turns the wrapper's TSV into the picker's list. Split out

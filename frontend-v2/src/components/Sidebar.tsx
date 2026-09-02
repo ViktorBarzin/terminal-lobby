@@ -22,6 +22,8 @@ import { RestorePicker } from "./RestorePicker";
 import { SkillsIcon } from "./Icons";
 import { BellIcon } from "./BellIcon";
 import type { NotificationSystem } from "../notify/notifications";
+import { StatusDot } from "./StatusDot";
+import { LOBBY_CHANNELS, type Channel } from "../diagnostics/status";
 
 /**
  * The lobby sidebar (inventory Cat.2/3): identity + new-session row, the ordered
@@ -60,6 +62,9 @@ export const Sidebar: Component<{
    *  away the shell bar that carries it on a desktop, so the sidebar's own
    *  screen needs a route back to your own lobby. */
   actAsChip?: JSX.Element;
+  /** The connection badge in the header (ADR-0016), scoped to the channels a
+   *  list screen can honestly report. Optional so a test can mount without it. */
+  status?: { channels: () => readonly Channel[]; onOpen: () => void };
 }> = (props) => {
   const store = props.store;
 
@@ -157,6 +162,16 @@ export const Sidebar: Component<{
       <div class="tl-sidebar-head">
         <div class="tl-sidebar-head-row">
           <h1 class="tl-sidebar-title">tmux sessions</h1>
+          <Show when={props.status}>
+            {(s) => (
+              <StatusDot
+                class="tl-sidebar-status"
+                channels={s().channels}
+                only={LOBBY_CHANNELS}
+                onOpen={s().onOpen}
+              />
+            )}
+          </Show>
           <OrderMenu
             order={order}
             onPick={(next) => props.prefs.setPref({ sidebar: { order: next } })}
