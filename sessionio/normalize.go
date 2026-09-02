@@ -183,6 +183,22 @@ func (n *Normalizer) Record(rec Record) []Event {
 		return out
 	}
 
+	// The harness writes its own bookkeeping as user-role records too — a
+	// background task finishing, the caveat that precedes a slash command, the
+	// command's captured output. None of it is a prompt, so it renders as a
+	// muted status line inside whatever turn is open and opens none of its own
+	// (see harness.go). A shape with nothing worth reading earns no row.
+	if role == "user" {
+		if line, ok := harnessRow(blockText(blocks)); ok {
+			if line == "" {
+				return nil
+			}
+			e := n.emit(KindState, at)
+			e.Body = line
+			return []Event{e}
+		}
+	}
+
 	// Loading a skill injects the WHOLE SKILL.md as an isMeta user record, and
 	// it rendered as an enormous message nobody wrote — 312 of them across this
 	// box's transcripts, median 3,125 characters (see skill.go). The load is
@@ -232,7 +248,7 @@ func (n *Normalizer) Record(rec Record) []Event {
 				}
 			}
 			e := n.emit(k, at)
-			e.Body = body
+			e.Body = plainText(body)
 			out = append(out, e)
 		case "thinking":
 			// A thinking block whose text is empty has nothing to render, and
@@ -249,7 +265,7 @@ func (n *Normalizer) Record(rec Record) []Event {
 				break
 			}
 			e := n.emit(KindThinking, at)
-			e.Body = bl.Thinking
+			e.Body = plainText(bl.Thinking)
 			out = append(out, e)
 		case "tool_use":
 			e := n.emit(KindToolUse, at)
@@ -259,13 +275,13 @@ func (n *Normalizer) Record(rec Record) []Event {
 		case "tool_result":
 			e := n.emit(KindToolResult, at)
 			e.ToolID, e.IsError = bl.ToolUseID, bl.IsError
-			body, cut := capText(decodeToolResult(bl.Content))
+			body, cut := capText(plainText(decodeToolResult(bl.Content)))
 			e.Body = body
 			// The structured result is where the stdout/stderr split and the
 			// diff live, so an oversized one is PRUNED down to those parts
 			// rather than dropped whole (see pruneResult).
 			res, pruned := pruneResult(rec.ToolUseResult)
-			e.Result = res
+			e.Result = plainResult(res)
 			e.Truncated = cut || pruned
 			out = append(out, e)
 		}

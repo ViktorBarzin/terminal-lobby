@@ -489,6 +489,16 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           // reading that repeats: a dialog sits on screen for as long as nobody
           // answers it, and a row per reading would bury the conversation.
           if (meta === "asking") break;
+          // A background task finishing is delivered THROUGH the queue, so the
+          // queue reports enqueueing a wall of XML — 2,140 of them across this
+          // box's transcripts, the single most common artifact in the text view
+          // (measured 2026-09-02). queuedPrompts() already keeps them out of
+          // the queue list for the same reason; this keeps them out of the
+          // transcript. Nothing is lost: the notification also arrives as its
+          // own record, which renders as one muted line (415 of the 419
+          // measured), and the event still flows so the queue list stays in
+          // step.
+          if (meta === "queued" && isHarnessNotice(e.body ?? "")) break;
           add({
             kind: "meta",
             key: `meta-${e.id}`,
