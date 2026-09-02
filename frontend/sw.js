@@ -187,13 +187,41 @@ async function badgeIfHidden(count) {
 }
 
 function paintBadge(count) {
+    // Report the outcome. This is the one place the answer matters and the one
+    // place nobody could see it: iOS may not expose the Badging API inside a
+    // service worker at all, and the worker is the only writer while the app is
+    // shut — which is the case the badge exists for. `unsupported` from here is
+    // the finding, not a failure to handle.
+    let kind = 'ok';
     try {
         const nav = self.navigator;
-        if (!nav) return Promise.resolve();
-        const done = count > 0
-            ? (nav.setAppBadge && nav.setAppBadge(count))
-            : (nav.clearAppBadge && nav.clearAppBadge());
-        return Promise.resolve(done).catch(() => {});
+        if (!nav || !nav.setAppBadge || !nav.clearAppBadge) {
+            return reportBadge('unsupported', count);
+        }
+        const done = count > 0 ? nav.setAppBadge(count) : nav.clearAppBadge();
+        return Promise.resolve(done)
+            .then(() => reportBadge('ok', count))
+            .catch(() => reportBadge('failed', count));
+    } catch (e) {
+        kind = 'failed';
+        return reportBadge(kind, count);
+    }
+}
+
+// One telemetry line for whether the icon could be drawn. Same intake and the
+// same indifference to failure as reportStash.
+function reportBadge(kind, count) {
+    try {
+        return fetch('/api/sessions/telemetry', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                client: 'sw',
+                build: 'sw',
+                events: [{ name: 'notify.badge_set', attrs: { 'tl.kind': kind, 'tl.count': count } }]
+            })
+        }).then(() => {}).catch(() => {});
     } catch (e) {
         return Promise.resolve();
     }

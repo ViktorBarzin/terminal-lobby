@@ -112,3 +112,65 @@ describe("applyAppBadge", () => {
     expect(() => applyAppBadge(1, nav)).not.toThrow();
   });
 });
+
+/**
+ * Whether the icon could actually be DRAWN.
+ *
+ * The paint has always been best-effort and silent, which also meant nobody
+ * could tell a drawn badge from an absent API. On iOS that is the whole
+ * question: the Badging API may not be exposed inside a service worker, and the
+ * worker is the only writer while the app is shut — the one case the badge
+ * exists for. So every outcome is now reported.
+ */
+describe("applyAppBadge — reporting the outcome", () => {
+  it("reports ok once the paint resolves", async () => {
+    const seen: [string, number][] = [];
+    const nav = {
+      setAppBadge: async () => {},
+      clearAppBadge: async () => {},
+    } as unknown as BadgingNavigator;
+    applyAppBadge(3, nav, (k, n) => seen.push([k, n]));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(seen).toEqual([["ok", 3]]);
+  });
+
+  it("reports unsupported where the API is missing — the iOS worker suspicion", () => {
+    const seen: string[] = [];
+    applyAppBadge(3, {} as BadgingNavigator, (k) => seen.push(k));
+    expect(seen).toEqual(["unsupported"]);
+  });
+
+  it("reports failed when the paint rejects — not installed, or permission-gated", async () => {
+    const seen: string[] = [];
+    const nav = {
+      setAppBadge: () => Promise.reject(new Error("not installed")),
+      clearAppBadge: async () => {},
+    } as unknown as BadgingNavigator;
+    applyAppBadge(2, nav, (k) => seen.push(k));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(seen).toEqual(["failed"]);
+  });
+
+  it("reports failed when reading the API throws outright", () => {
+    // `failed` rather than `unsupported`: something is there and it blew up,
+    // which is a different finding from the API being absent.
+    const seen: string[] = [];
+    const nav = {
+      get setAppBadge(): never {
+        throw new Error("blocked");
+      },
+    } as unknown as BadgingNavigator;
+    applyAppBadge(1, nav, (k) => seen.push(k));
+    expect(seen).toEqual(["failed"]);
+  });
+
+  it("still paints without a reporter", () => {
+    const calls: number[] = [];
+    const nav = {
+      setAppBadge: async (n: number) => calls.push(n),
+      clearAppBadge: async () => {},
+    } as unknown as BadgingNavigator;
+    expect(() => applyAppBadge(4, nav)).not.toThrow();
+    expect(calls).toEqual([4]);
+  });
+});

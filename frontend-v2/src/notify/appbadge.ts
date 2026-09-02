@@ -94,15 +94,33 @@ export function waitingCount<S extends BadgeSession>(
  *
  * Zero clears rather than draws a "0" — an empty badge is the absence of one.
  */
-export function applyAppBadge(count: number, nav?: BadgingNavigator): void {
+export function applyAppBadge(
+  count: number,
+  nav?: BadgingNavigator,
+  report?: (kind: "ok" | "unsupported" | "failed", count: number) => void,
+): void {
   const target = nav ?? (typeof navigator !== "undefined" ? (navigator as BadgingNavigator) : null);
-  if (!target) return;
+  // `report` exists because the paint is best-effort and silent, which also
+  // meant nobody could tell a drawn badge from an absent API. On iOS that is
+  // the whole question: the Badging API may not be exposed inside a service
+  // worker, and the worker is the only writer while the app is shut — the one
+  // case the badge exists for.
   try {
-    const done = count > 0 ? target.setAppBadge?.(count) : target.clearAppBadge?.();
-    void done?.catch?.(() => {
-      /* not installed, or permission-gated (iOS) */
-    });
+    // Inside the try: reading these can itself throw on a hostile or
+    // permission-gated navigator, and a missing badge must never take the
+    // caller down with it.
+    if (!target || !target.setAppBadge || !target.clearAppBadge) {
+      report?.("unsupported", count);
+      return;
+    }
+    const done = count > 0 ? target.setAppBadge(count) : target.clearAppBadge();
+    void done
+      ?.then?.(() => report?.("ok", count))
+      ?.catch?.(() => {
+        // Not installed, or permission-gated (iOS).
+        report?.("failed", count);
+      });
   } catch {
-    /* no Badging API here */
+    report?.("failed", count);
   }
 }
