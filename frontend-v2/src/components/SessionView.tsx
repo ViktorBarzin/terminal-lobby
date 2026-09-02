@@ -943,6 +943,11 @@ export const SessionView: Component<{
                 owner: props.owner || undefined,
                 watch: watch(),
               })}
+              watch={watch}
+              // The bridges follow the session on screen, exactly as they do
+              // for the iframe: they are named globals, and a hidden session
+              // owning them would take the soft keys and paste with it.
+              ownsBridges={onScreen()}
               onConn={(r) => onScreen() && props.status?.onFrameConn(r)}
               onReady={(control) => (frameRetry = control.reconnect)}
             />
