@@ -47,9 +47,16 @@ function urlB64ToUint8Array(base64url) {
 // the notification), so it saves the session here; the page reads+consumes it at
 // boot to land on the right session. Best-effort: never blocks or breaks
 // showNotification (iOS revokes notification permission if a push shows nothing).
-// Contract with index.html: db 'tl-notif', store 'pending', key 'last', value
-// { session, ts, tapped }. Only real awaiting/done pushes carry a session; the
-// session-less /push/test payload is skipped so a test push never stashes.
+// Contract with pwa/register.ts: db 'tl-notif', store 'pending', ONE RECORD PER
+// SESSION keyed by the session name, value { session, ts, tapped }. It was a
+// single 'last' slot, and with several notifications outstanding each push
+// overwrote the one before it — so tapping the oldest banner routed to the
+// newest push's session, or did nothing when that was the session already on
+// screen. Measured on Viktor's phone 2026-09-02: three pushes inside 80 s, a
+// tap, and a read of `already` because the slot held the session he was on.
+// 'last' is still written so a page from an older deploy keeps working.
+// Only real awaiting/done pushes carry a session; the session-less /push/test
+// payload is skipped so a test push never stashes.
 //
 // `tapped` says WHICH of the two writers left the record, and boot trusts them
 // differently. A push-time write (tapped:false) is a GUESS — the user may never
@@ -67,7 +74,12 @@ function stashPendingSession(session, tapped) {
             const db = req.result;
             try {
                 const tx = db.transaction('pending', 'readwrite');
-                tx.objectStore('pending').put({ session, ts: Date.now(), tapped: !!tapped }, 'last');
+                const rec = { session, ts: Date.now(), tapped: !!tapped };
+                const store = tx.objectStore('pending');
+                // Per-session, so concurrent notifications cannot erase each
+                // other, plus the legacy slot for an older page.
+                store.put(rec, session);
+                store.put(rec, 'last');
                 // Resolve on complete/error/ABORT: a transaction can abort with
                 // no preceding error (storage pressure, forced close), and an
                 // unhandled abort would leave this Promise pending forever.
@@ -235,7 +247,7 @@ function verifyStash(session) {
             const db = req.result;
             try {
                 const tx = db.transaction('pending', 'readonly');
-                const get = tx.objectStore('pending').get('last');
+                const get = tx.objectStore('pending').get(session);
                 const done = (v) => { try { db.close(); } catch (e) {} resolve(v); };
                 tx.oncomplete = () => done(!!(get.result && get.result.session === session));
                 tx.onerror = () => done(false);

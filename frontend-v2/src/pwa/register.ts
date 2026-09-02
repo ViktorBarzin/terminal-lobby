@@ -20,7 +20,20 @@
  */
 import { NAME_RE } from "../types/lobby";
 
-/** The stash the SW writes: db 'tl-notif' v1, store 'pending', key 'last'. */
+/**
+ * The stash the SW writes: db 'tl-notif' v1, store 'pending'.
+ *
+ * ONE RECORD PER SESSION, keyed by the session name. It was a single 'last'
+ * slot, and with several notifications outstanding each push overwrote the one
+ * before it — so tapping the oldest banner routed to the newest push's session,
+ * or, when that happened to be the session already on screen, did nothing at
+ * all. Measured on Viktor's phone 2026-09-02: pushes for issues, cache-omages
+ * and ux landed within 80 s, he tapped one, and the read came back `already`
+ * because the slot held `ux` and `ux` was what he was looking at.
+ *
+ * `last` is still written by sw.js and still read here, so a page and a worker
+ * from different deploys keep working.
+ */
 export interface PendingNotif {
   session: string;
   ts: number;
@@ -82,6 +95,203 @@ export async function stashIsActionable(
   } catch {
     return false;
   }
+}
+
+/** The key the legacy single-slot record lives under. */
+const LEGACY_KEY = "last";
+
+/**
+ * Every tap record the worker has written, newest first. Does not consume them:
+ * which one was tapped cannot be decided until the notifications are inspected,
+ * so the caller deletes the one it acts on (and prunes the rest).
+ */
+export function readPendingSessions(): Promise<PendingNotif[]> {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === "undefined") {
+      resolve([]);
+      return;
+    }
+    let req: IDBOpenDBRequest;
+    try {
+      req = indexedDB.open("tl-notif", 1);
+    } catch {
+      resolve([]);
+      return;
+    }
+    req.onupgradeneeded = () => {
+      try {
+        req.result.createObjectStore("pending");
+      } catch {
+        /* already exists */
+      }
+    };
+    req.onerror = () => resolve([]);
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        const tx = db.transaction("pending", "readonly");
+        const all = tx.objectStore("pending").getAll();
+        const done = (v: PendingNotif[]) => {
+          try {
+            db.close();
+          } catch {
+            /* closed */
+          }
+          resolve(v);
+        };
+        tx.oncomplete = () => {
+          const rows = (all.result as PendingNotif[]) || [];
+          // De-duplicate: the legacy `last` slot mirrors one of the per-session
+          // records, so the same tap must not be counted twice.
+          const bySession = new Map<string, PendingNotif>();
+          for (const r of rows) {
+            if (!r || typeof r.session !== "string") continue;
+            const prev = bySession.get(r.session);
+            if (!prev || (r.ts ?? 0) > (prev.ts ?? 0)) bySession.set(r.session, r);
+          }
+          done([...bySession.values()].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)));
+        };
+        tx.onerror = () => done([]);
+        tx.onabort = () => done([]);
+      } catch {
+        try {
+          db.close();
+        } catch {
+          /* closed */
+        }
+        resolve([]);
+      }
+    };
+  });
+}
+
+/**
+ * Drop records by session name, plus the legacy slot when it mirrors one of
+ * them. Best-effort: a record left behind is re-evaluated next time and its
+ * notification will by then be gone, which the age gate handles.
+ */
+export function clearPendingSessions(sessions: readonly string[]): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === "undefined" || sessions.length === 0) {
+      resolve();
+      return;
+    }
+    let req: IDBOpenDBRequest;
+    try {
+      req = indexedDB.open("tl-notif", 1);
+    } catch {
+      resolve();
+      return;
+    }
+    req.onupgradeneeded = () => {
+      try {
+        req.result.createObjectStore("pending");
+      } catch {
+        /* already exists */
+      }
+    };
+    req.onerror = () => resolve();
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        const tx = db.transaction("pending", "readwrite");
+        const store = tx.objectStore("pending");
+        for (const s of sessions) {
+          try {
+            store.delete(s);
+          } catch {
+            /* best-effort */
+          }
+        }
+        try {
+          store.delete(LEGACY_KEY);
+        } catch {
+          /* best-effort */
+        }
+        const done = () => {
+          try {
+            db.close();
+          } catch {
+            /* closed */
+          }
+          resolve();
+        };
+        tx.oncomplete = done;
+        tx.onerror = done;
+        tx.onabort = done;
+      } catch {
+        try {
+          db.close();
+        } catch {
+          /* closed */
+        }
+        resolve();
+      }
+    };
+  });
+}
+
+/**
+ * Which of the outstanding tap records was the one the user actually tapped?
+ *
+ * On iOS nothing tells us. There is no notificationclick for an installed app,
+ * and being brought to the foreground carries no argument. What iOS DOES do is
+ * clear the notification that was tapped and leave the others alone — so the
+ * record whose banner has GONE is the tap, and the ones still on screen are not.
+ * That is the same inference `stashIsActionable` already makes for a single aged
+ * receipt, applied across all of them.
+ *
+ * Order of preference:
+ *   1. a record sw.js marked `tapped` (its openWindow branch saw a real click)
+ *   2. the newest record whose notification is no longer displayed
+ *   3. nothing — every banner is still there, so this is an icon launch
+ *
+ * `displayed` returning null means the registration could not be read. Falling
+ * back to the newest FRESH receipt keeps the behaviour that shipped before this
+ * was per-session, rather than regressing to no routing at all.
+ *
+ * Records past STASH_MAX_AGE_MS are ignored outright, and returning null must
+ * always be safe: a launch the user did not ask to be redirected must not be.
+ */
+export async function pickTappedSession(
+  records: readonly PendingNotif[],
+  opts: {
+    now?: number;
+    displayed?: (tag: string) => Promise<number | null>;
+  } = {},
+): Promise<PendingNotif | null> {
+  const now = opts.now ?? Date.now();
+  const displayed = opts.displayed ?? displayedForTag;
+  const live = records.filter((r) => {
+    if (!r || typeof r.session !== "string" || !NAME_RE.test(r.session)) return false;
+    if (typeof r.ts !== "number") return false;
+    const age = now - r.ts;
+    return age >= 0 && age <= STASH_MAX_AGE_MS;
+  });
+  if (live.length === 0) return null;
+
+  // A real click beats every inference.
+  const clicked = live.filter((r) => r.tapped).sort((a, b) => b.ts - a.ts);
+  if (clicked.length > 0) return clicked[0]!;
+
+  const gone: PendingNotif[] = [];
+  let unknown = false;
+  for (const r of live) {
+    let count: number | null;
+    try {
+      count = await displayed("tl-" + r.session);
+    } catch {
+      count = null;
+    }
+    if (count === null) unknown = true;
+    else if (count === 0) gone.push(r);
+  }
+  if (gone.length > 0) return gone.sort((a, b) => b.ts - a.ts)[0]!;
+  if (unknown) {
+    const fresh = live.filter((r) => now - r.ts < PENDING_NOTIF_TTL_MS).sort((a, b) => b.ts - a.ts);
+    return fresh[0] ?? null;
+  }
+  return null; // every banner still on screen: an icon launch, not a tap
 }
 
 /**

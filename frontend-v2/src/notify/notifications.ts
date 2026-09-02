@@ -46,7 +46,9 @@ import {
 import { fireNotification } from "./fire";
 import { notifyOptedIn, setNotifyOptIn } from "./opt-in";
 import {
-  readAndClearPendingSession,
+  readPendingSessions,
+  clearPendingSessions,
+  pickTappedSession,
   type PendingNotif,
   registerServiceWorker,
   stashIsActionable,
@@ -271,13 +273,27 @@ export function createNotificationSystem(
   // app ICON within the fresh-receipt window lands on the notified session
   // instead. A push had just arrived, so that is a defensible place to be, and
   // stashIsActionable rejects an older receipt whose banner is still on screen.
-  const landOnStashedTapWith = async (pending: PendingNotif): Promise<void> => {
+  const landOnStashedTapWith = async (records: readonly PendingNotif[]): Promise<void> => {
     const reason = (r: string): void => void track("notify.stash_read", { "tl.reason": r });
-    if (!(await stashIsActionable(pending))) {
-      reason("stale"); // too old, or its banner is still on screen
+    // Which of them was tapped is decided by which banner has GONE — iOS clears
+    // the one you tapped and leaves the rest. A single slot could not tell them
+    // apart, and with three pushes inside a minute it routinely held a session
+    // Viktor was already looking at, so his tap read `already` and did nothing.
+    const pick = await pickTappedSession(records);
+    if (!pick) {
+      // Two different diagnoses, and telling them apart is the whole point of
+      // reporting: every record past its window is `stale`, while live records
+      // whose banners are all still on screen mean the app was opened by its
+      // icon rather than by a tap.
+      const stale: string[] = [];
+      for (const r of records) if (!(await stashIsActionable(r))) stale.push(r.session);
+      reason(stale.length === records.length ? "stale" : "untapped");
+      if (stale.length) void clearPendingSessions(stale);
       return;
     }
-    const session = pending.session;
+    const session = pick.session;
+    // Consume the one acted on (and the legacy slot) so it cannot replay.
+    void clearPendingSessions([session]);
     if (opts.selected() === session) {
       reason("already"); // the app is already where the tap wanted
       return;
@@ -290,9 +306,9 @@ export function createNotificationSystem(
   /** Read the record and act on it, if there is one. */
   const landOnStashedTap = async (): Promise<void> => {
     if (lens) return;
-    const pending = await readAndClearPendingSession();
-    if (!pending) return; // nothing waiting; not worth an event on every focus
-    await landOnStashedTapWith(pending);
+    const records = await readPendingSessions();
+    if (records.length === 0) return; // nothing waiting; no event on every focus
+    await landOnStashedTapWith(records);
   };
 
   onMount(async () => {
@@ -300,12 +316,12 @@ export function createNotificationSystem(
     // Boot reports `absent` where the foreground path stays quiet: at boot it
     // distinguishes "the write never landed" from "no tap", which is the
     // question the worker's notify.stash_written is paired with.
-    const peek = await readAndClearPendingSession();
-    if (!peek) {
+    const records = await readPendingSessions();
+    if (records.length === 0) {
       track("notify.stash_read", { "tl.reason": "absent" });
       return;
     }
-    await landOnStashedTapWith(peek);
+    await landOnStashedTapWith(records);
   });
 
   // Self-heal the background subscription every load (the desktop-silent fix):
