@@ -215,13 +215,22 @@ export default defineConfig({
     // 2026-08-16 SPA promotion until 2026-08-18.
     // Guarded by scripts/test_frontend_compat.py, which scripts/deploy-v2.sh runs.
     target: "safari15",
-    // xterm stays EXTERNAL per the deploy decision (design §2, decision #7):
-    // it must never be bundled into the no-store single-file blob (that would
-    // re-download xterm on every deploy/stale-heal). The terminal view is a
-    // ttyd iframe today so nothing imports xterm — this is a guard-rail that
-    // fails the build loud if a future xterm import tries to land in the bundle.
+    // xterm USED to be external here, on the deploy decision that it must never
+    // land in the no-store single-file blob — every deploy would have
+    // re-downloaded it. That build shape is gone: viteSingleFile was removed
+    // (see the plugins note above) and the lobby now ships as an HTML shell plus
+    // content-hashed chunks that clipboard-upload answers `immutable`
+    // (clipboard-upload/main.go handleHashedAsset, whose own comment cites this
+    // as what stopped the terminal page costing ~474 KB after every deploy).
+    //
+    // So a lazily-imported xterm is one more immutable chunk that only changes
+    // when xterm changes. Measured before removing the guard: 330 KB (83 KB
+    // gzipped) in its own chunk, against 946 KB vendored into term.html today —
+    // and esbuild's safari15 and esnext output for that chunk are byte
+    // identical, so nothing needs lowering for the iPadOS 15.8 floor that
+    // scripts/vendor-xterm.py exists to protect. The npm ESM build has none of
+    // the class static blocks that made the CDN's CJS build unparseable there.
     rollupOptions: {
-      external: [/^@xterm\//, /^xterm(\/|$)/],
       output: {
         // One flat directory of content-hashed names: that is exactly what
         // clipboard-upload's /assets/ handler accepts (a single segment, no

@@ -41,6 +41,8 @@ import { attachmentKind } from "../lib/attachments";
 import type { ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 import { StatusDot } from "./StatusDot";
+import { TerminalNative } from "./TerminalNative";
+import { terminalFrameArgs } from "../lib/terminal-url";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 
 /**
@@ -171,6 +173,17 @@ export const SessionView: Component<{
    * paste, the terminal bridge — is claimed against this rather than against
    * mount, or a hidden session would answer for the visible one.
    */
+  /** `?native=1` — the app-rendered terminal instead of the ttyd iframe. Read
+   *  once, because swapping the terminal under a live session mid-render would
+   *  tear down a pty connection someone is using. */
+  const nativeTerminal = (): boolean => {
+    try {
+      return new URLSearchParams(location.search).has("native");
+    } catch {
+      return false;
+    }
+  };
+
   const onScreen = () => props.visible !== false;
 
   // The terminal frame's two levers, captured on mount and published UP only
@@ -892,7 +905,14 @@ export const SessionView: Component<{
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
-          <TerminalView
+          {/* `?native=1` swaps the ttyd iframe for the terminal this app renders
+              itself. Off by default and read once per tab: the native path
+              attaches, reconnects, resizes and types, and does not yet carry
+              paste, the soft keys, selection/copy, pinch-zoom or sixel — so it
+              is a thing to measure against the iframe, not a thing to default
+              anyone onto. The iframe stays the shipped terminal until parity is
+              proven, on a real iPad among other places. */}
+          <Show when={nativeTerminal()} fallback={<TerminalView
             session={session}
             owner={props.owner}
             active={mode() === "terminal" && onScreen()}
@@ -915,7 +935,18 @@ export const SessionView: Component<{
             onFrameConn={(r) => onScreen() && props.status?.onFrameConn(r)}
             askConn={(ask) => (frameAsk = ask)}
             retryConn={(retry) => (frameRetry = retry)}
-          />
+          />}>
+            <TerminalNative
+              args={terminalFrameArgs(session, {
+                cmd: props.creating ? props.newCommand?.() : undefined,
+                dir: props.dir || undefined,
+                owner: props.owner || undefined,
+                watch: watch(),
+              })}
+              onConn={(r) => onScreen() && props.status?.onFrameConn(r)}
+              onReady={(control) => (frameRetry = control.reconnect)}
+            />
+          </Show>
         </section>
       </main>
 
