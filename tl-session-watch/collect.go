@@ -35,7 +35,39 @@ var (
 	// save, so an orphaned manifest row cannot tell a kill from a death in the
 	// window that matters.
 	tombstonesFn = func(user string) string { return "/var/lib/tmux-persist/" + user + ".forgotten.tsv" }
+	// The other half of the intent record, for the ending the tombstone cannot
+	// see. A tombstone is written by tmux-api's DELETE handler, so it covers a
+	// kill from the lobby and from t3-sync, which goes through the same
+	// endpoint. It does not cover a user typing /exit: claude ends, its pane
+	// exits, the session closes, and tmux-api is never involved. That read as a
+	// death and paged, which is what this file fixes (2026-09-03).
+	//
+	// /run/user/<uid> rather than a shared directory: systemd already creates it
+	// mode 0700 owned by the user, so the SessionEnd hook can write there with
+	// no sudo grant, one user cannot forge a record that silences another user's
+	// alert, and root — which is what this watcher runs as — can still read it.
+	// It is tmpfs, so the records do not survive a reboot, which is correct:
+	// after a reboot every session is gone and the rebooted branch handles it.
+	cleanExitsFn = func(uid int) string {
+		return "/run/user/" + strconv.Itoa(uid) + "/tl-clean-exit.tsv"
+	}
 )
+
+// mergeIntent combines the two records of a deliberate ending into one map of
+// name -> most recent epoch. Both files are append-only and a name can be
+// reused, so the freshest record per name is the one that gets to explain a
+// disappearance.
+func mergeIntent(tombstones, cleanExits map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(tombstones)+len(cleanExits))
+	for _, src := range []map[string]int64{tombstones, cleanExits} {
+		for name, ts := range src {
+			if ts > out[name] {
+				out[name] = ts
+			}
+		}
+	}
+	return out
+}
 
 // parseUserMap takes the OS users out of /etc/ttyd-user-map, whose rows are
 // <authentik_user>=<os_user>. Two identities may map to one account, so the
@@ -200,9 +232,14 @@ func collectUser(user, bootID string) Snapshot {
 		}
 	}
 
+	var tombstones, cleanExits map[string]int64
 	if raw, err := readTombstones(user); err == nil {
-		snap.Tombstones = parseTombstones(raw)
+		tombstones = parseTombstones(raw)
 	}
+	if raw, err := readCleanExits(user); err == nil {
+		cleanExits = parseTombstones(raw)
+	}
+	snap.Tombstones = mergeIntent(tombstones, cleanExits)
 	return snap
 }
 
@@ -424,6 +461,23 @@ func asUser(target, bin string, args ...string) (string, error) {
 // by hand; a hardened unit that needs no grant is the smaller surface of the two.
 func readTombstones(user string) (string, error) {
 	raw, err := os.ReadFile(tombstonesFn(user))
+	return string(raw), err
+}
+
+// readCleanExits reads the user-owned clean-exit file, in the same
+// `<session>\t<epoch>` rows as the tombstone file so both share a parser. A
+// user who has never exited a session cleanly has no file, and a missing file
+// is an ordinary state rather than an error the caller should log.
+func readCleanExits(userName string) (string, error) {
+	u, err := user.Lookup(userName)
+	if err != nil {
+		return "", err
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return "", err
+	}
+	raw, err := os.ReadFile(cleanExitsFn(uid))
 	return string(raw), err
 }
 

@@ -357,3 +357,53 @@ func TestPaneFactsCarriesUnreclaimableSeparately(t *testing.T) {
 		t.Errorf("want unreclaimable 628MB, got %d", got.PaneUnreclaimable>>20)
 	}
 }
+
+func TestMergeIntentTakesBothSources(t *testing.T) {
+	// A deliberate ending is recorded in one of two places depending on how it
+	// happened: the lobby's DELETE writes a tombstone, and a clean /exit writes
+	// a clean-exit row. The watcher must not care which.
+	got := mergeIntent(
+		map[string]int64{"killed-in-lobby": 100},
+		map[string]int64{"exited-cleanly": 200})
+	want := map[string]int64{"killed-in-lobby": 100, "exited-cleanly": 200}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeIntentKeepsTheNewestRecordPerName(t *testing.T) {
+	// Both files are append-only and a name can be reused, so the freshest
+	// record is the one that decides whether the ending was recent enough to
+	// explain a disappearance.
+	got := mergeIntent(
+		map[string]int64{"f1": 5000, "immich": 9000},
+		map[string]int64{"f1": 7000, "immich": 1000})
+	want := map[string]int64{"f1": 7000, "immich": 9000}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeIntentSurvivesEitherSideBeingAbsent(t *testing.T) {
+	// A user who has never had a session killed has no tombstone file, and one
+	// who has never exited cleanly has no clean-exit file. Reading a missing
+	// file yields nil, which must not panic or erase the other source.
+	if got := mergeIntent(nil, map[string]int64{"f1": 1}); !reflect.DeepEqual(got, map[string]int64{"f1": 1}) {
+		t.Fatalf("nil tombstones: got %v", got)
+	}
+	if got := mergeIntent(map[string]int64{"f1": 1}, nil); !reflect.DeepEqual(got, map[string]int64{"f1": 1}) {
+		t.Fatalf("nil clean exits: got %v", got)
+	}
+	if got := mergeIntent(nil, nil); len(got) != 0 {
+		t.Fatalf("both nil: got %v", got)
+	}
+}
+
+func TestCleanExitsPathIsUnderThePerUserRuntimeDir(t *testing.T) {
+	// /run/user/<uid> is mode 0700 and owned by the user, so the hook can write
+	// there without a sudo grant and no other user can forge a record. Root,
+	// which is what the watcher runs as, can still read it.
+	if got := cleanExitsFn(1002); got != "/run/user/1002/tl-clean-exit.tsv" {
+		t.Fatalf("got %q", got)
+	}
+}
