@@ -47,6 +47,42 @@ awaiting)
     ;;
 clear)
     tmux set-option -u -t "$TMUX_PANE" @claude_state >/dev/null 2>&1 || true
+    # Record that this ending was DELIBERATE, so tl-session-watch does not
+    # report it as a lost session (2026-09-03).
+    #
+    # Why it is needed: the watcher calls a vanished session a death unless
+    # something says otherwise, and the only thing that said otherwise was a
+    # tmux-persist tombstone. tmux-api's DELETE handler writes one, which
+    # covers a kill from the lobby and from t3-sync, since that goes through
+    # the same endpoint. Nothing wrote one when a user simply typed /exit:
+    # claude ends, its pane exits, the session closes, and tmux-api never
+    # hears about it. That paged emo at 08:25 on 2026-09-03 for tidying up.
+    #
+    # Why this is safe as a death signal: SessionEnd is a hook, and a hook
+    # cannot run when the process is SIGKILLed or OOM-killed. So the record
+    # exists exactly when the ending was orderly, and the deaths worth
+    # alerting on still have nothing to explain them.
+    #
+    # /run/user/<uid>: systemd already owns it, mode 0700 as this user, so no
+    # sudo grant is needed and no other user can forge a row that silences an
+    # alert. Best-effort throughout — this hook must never fail a session exit.
+    ce_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    if [ -d "$ce_dir" ]; then
+        ce_sess="$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null || true)"
+        # Same `<session>\t<epoch>` rows as the tombstone file, so the watcher
+        # parses both with one function. Only the empty name is rejected: a
+        # separator inside the name would corrupt the row, and neither can get
+        # there — tmux rejects newlines in session names, and every name the
+        # lobby creates passes tmux-api's sessionNameRe (alnum, '_' and '-').
+        # An earlier version also tried to reject tabs and newlines with
+        # *"$(printf '\n')"*, which is a trap: command substitution strips the
+        # trailing newline, so the pattern collapsed to *""* and matched every
+        # name, silently writing nothing at all.
+        if [ -n "$ce_sess" ]; then
+            printf '%s\t%s\n' "$ce_sess" "$(date -u +%s)" \
+                >> "$ce_dir/tl-clean-exit.tsv" 2>/dev/null || true
+        fi
+    fi
     ;;
 notify)
     # Notifications are not all "awaiting input". BLOCKED asks — permission
