@@ -247,11 +247,23 @@ src/
                          assert actual byte layouts
     font.ts              Font-step arithmetic and pinch-scale classification, DOM
                          free
+    fit.ts               Whether xterm may be re-fitted to its host right now.
+                         A CSS-hidden session's host measures 0x0, and fitting
+                         into that drags the real tmux window down to 13
+                         columns, so a zero-size fit is skipped and recorded as
+                         OWED, then replayed when the view comes back
     selection.ts         What copy does with a selection, and why Ctrl+C must be
                          gated on the selection RANGE rather than on the text it
                          yields — xterm right-trims rows, so a drag into trailing
                          whitespace otherwise sends SIGINT with a highlight on
                          screen (ADR-0003)
+    dragselect.ts        Plain-drag text selection inside a pane that is
+                         reporting mouse events. Wiring `term.onBinary` is what
+                         turns reporting on, and xterm then selects only when
+                         Shift, or Option on a Mac, is held; so a plain left
+                         press over `.xterm-screen` is swallowed at document
+                         capture and re-dispatched as a clone carrying that
+                         modifier. Pure: pointer facts in, actions out
     attach.ts            The one IMPURE module here: it owns the socket, the
                          timers and nothing else. Every edge decision it takes it
                          asks reconnect.ts for — an event goes into reduce(), and
@@ -333,10 +345,20 @@ src/
                          ttyd iframe, behind `?native=1`. Mounts xterm (a lazy
                          import, so it lands in its own immutable chunk), wires
                          terminal/attach.ts to it, and reports the ladder's phase
-                         into the connection badge. Attaches, reconnects, resizes
-                         and types; paste, soft keys, selection, pinch-zoom and
-                         sixel still belong to term.html, which stays the shipped
-                         terminal until parity is proven
+                         into the connection badge. Attaches, reconnects, types,
+                         pastes through `term.paste`, reports the mouse, fits
+                         through the guard, says why a keystroke was refused,
+                         and takes the forwarded soft-keyboard height off its
+                         own host (`__tlKeyboardOffset`). The rest of that
+                         viewport work is still term.html's: its `syncViewport`
+                         also reads the page's own visualViewport and subtracts
+                         the toolbar and compose-bar heights, and none of that
+                         is ported. Nor are the compose mirror, selection, touch
+                         scroll, pinch-zoom, links, the bell or the held-key
+                         overlay, so term.html stays the shipped terminal until
+                         parity is proven. Sixel is not on that list: it was
+                         deprecated in the same change (ADR-0004), so it is
+                         nobody's to port
     StatusDot.tsx        The connection badge (ADR-0016). Dot always, a word
                          only when something is wrong. One component in two
                          places, each SCOPED to the channels its surface can
