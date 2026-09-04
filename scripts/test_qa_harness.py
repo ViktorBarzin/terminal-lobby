@@ -441,7 +441,7 @@ def test_deny_response_is_identifiable(guard):
 # serve them from the unauthenticated table however public the Go file looks.
 
 # module.ingress_assets in infra/stacks/terminal/main.tf, auth = "none". The
-# same ten are live: `kubectl get ingress terminal-assets -n terminal`.
+# same eleven are live: `kubectl get ingress terminal-assets -n terminal`.
 PROD_PUBLIC_CARVE_OUT = frozenset({
     "/manifest.webmanifest",
     "/icon-192.png",
@@ -453,6 +453,12 @@ PROD_PUBLIC_CARVE_OUT = frozenset({
     "/fonts/JetBrainsMono-Italic.woff2",
     "/fonts/JetBrainsMono-BoldItalic.woff2",
     "/fonts/dm-sans-latin-wght-normal.woff2",
+    # Added to the carve-out 2026-09-04, infra 0b70bd82. Verified against the
+    # live host after the apply: GET /fonts/tl-symbols.woff2 answers 200 with
+    # 16,924 bytes unauthenticated, the same as its five siblings, where before
+    # it answered 302 to Authentik. This test is what noticed the harness had
+    # stopped mirroring production, which is the job it was written for.
+    "/fonts/tl-symbols.woff2",
 })
 
 
