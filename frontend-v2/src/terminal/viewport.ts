@@ -33,12 +33,12 @@
  *     the other way and `max(own, forwarded)` collapses to `own` for that
  *     property. Nothing here writes it.
  *   - term.html's `tbH` term, the soft-key toolbar coming out of the terminal,
- *     is `--sk-h` inside `.tl-views` margin-bottom (app.css:2356-2372,
+ *     is `--sk-h` inside `.tl-views` margin-bottom (app.css:2370-2386,
  *     published at mobile/viewport.ts:267). The container the host fills is
  *     already toolbar-free and safe-area-free.
  *   - term.html's `cbH` term has no analogue. `#compose-bar` is that page's own
  *     fixed mobile input surface; in this app the composer belongs to the TEXT
- *     view, inside a sibling `.tl-view` (SessionView.tsx:866-901). Nothing
+ *     view, inside a sibling `.tl-view` (SessionView.tsx:872-908). Nothing
  *     sits over the terminal's box, so there is nothing to subtract.
  *   - both of the page's gates are already in TerminalNative:1153,
  *     `window.visualViewport && coarsePointer`.
@@ -135,14 +135,14 @@
  * host sits inside a `.tl-view`, `position: absolute; inset: 0` within
  * `.tl-views.tl-kb-inline` (app.css:1110-1120), which has the toolbar and the
  * safe area out of its bottom already and deliberately leaves the keyboard IN
- * (app.css:2361-2372), so what the caller needs is how much of THAT box the
+ * (app.css:2375-2386), so what the caller needs is how much of THAT box the
  * keyboard covers.
  *
  * An absolute `vv.height` written onto the host would miss that box by
  * `--sk-h + --safe-b + the session bar - offsetTop`. Four terms, not the two an
  * earlier draft of this header named and called exact. `.tl-views` is the flex
- * remainder BELOW `.tl-session-bar` (SessionView.tsx:604 and :866,
- * sidebar.css:776-790), so the bar's height is out of the box as well, and
+ * remainder BELOW `.tl-session-bar` (SessionView.tsx:610 and :872,
+ * sidebar.css:804-818), so the bar's height is out of the box as well, and
  * `vv.height` has already taken the pan off itself. Three of the four are the
  * container chain. The fourth, `offsetTop`, is where this module and the page's
  * formula genuinely disagree, which the divergence block below settles against
@@ -166,11 +166,11 @@
  * `own` is the number that composes with THIS app's layout, and the check is
  * two edges meeting:
  *   the container's bottom edge is `layout - --sk-h - --safe-b`
- *     (app.css:2370-2372), and `#root` is `height: var(--app-vh)`, which is
+ *     (app.css:2384-2386), and `#root` is `height: var(--app-vh)`, which is
  *     `window.innerHeight` (app.css:30-34, mobile/viewport.ts:276), so the box
  *     is layout-anchored;
  *   the toolbar is fixed at `bottom: calc(var(--kb-offset) + var(--safe-b))`
- *     (app.css:2224), so its top edge is
+ *     (app.css:2238), so its top edge is
  *     `layout - --kb-offset - --safe-b - --sk-h`;
  *   `--kb-offset` is the shell's `keyboardOffset(...)` (mobile/viewport.ts:244),
  *     which carries `offsetTop` exactly as `own` does.
@@ -182,7 +182,7 @@
  * ONE CONSEQUENCE OF THE SEED THAT NOTHING UNDER test/ CAN SETTLE. Writing a
  * shrink moves the host's bottom edge up, and natively that box is the tap
  * target's own ancestor, where term.html shrank its `#terminal` inside an
- * iframe that stayed put. That is the shape of the bug app.css:2361-2369
+ * iframe that stayed put. That is the shape of the bug app.css:2375-2383
  * records against the CONTAINER version: a tap below ~54% of the screen blurred
  * the field and flashed the keyboard shut (measured 390x844, dated 2026-08-17
  * at term.html:8406-8411). Shrinking the HOST is what the shipped page already
@@ -409,7 +409,7 @@ export function keyboardReserve(
  *
  * The one place that knows the host's height is RELATIVE: the container has the
  * toolbar and the safe area out of it already and the keyboard still in
- * (app.css:2370-2372), so the reserve is a shrink off it. Relative is also what
+ * (app.css:2384-2386), so the reserve is a shrink off it. Relative is also what
  * lets the box keep tracking `window.innerHeight` between writes, which matters
  * because the reduction above writes once per distinct reserve where the page
  * rewrote an absolute pixel height every call: the container chain resolves to

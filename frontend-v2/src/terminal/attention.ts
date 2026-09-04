@@ -105,7 +105,7 @@
  *           rather than a line added to a listener that already exists.
  *   view    `!(mode() === "terminal" && onScreen())`, which is the expression
  *           the iframe branch already passes as TerminalView's `active` prop
- *           (SessionView.tsx:912) and posts down as `tl-view`
+ *           (SessionView.tsx:919) and posts down as `tl-view`
  *           (TerminalView.tsx:266-275). Both halves carry weight: the text view
  *           showing over the terminal, and this session's whole slot being
  *           CSS-hidden behind another session. A Solid effect on `active` fires

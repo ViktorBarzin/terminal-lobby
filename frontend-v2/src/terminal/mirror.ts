@@ -230,11 +230,11 @@ export type MirrorEvent =
    *                  action IS this event, gated on `mirrorEmitting`.
    *   :6828, :9388   the soft-key row and the SPA's `tl-input` bridge. Both
    *                  become `__tlSendToTerminal` (`TerminalNative.tsx:1089`),
-   *                  called by `SessionView.tsx:465-471` for the soft keys and
+   *                  called by `SessionView.tsx:471-477` for the soft keys and
    *                  the Text view's send-to-terminal.
    *   :8922, :8963,  path-sends: three upload paths, the gallery's "Insert
    *   :9004, :9126,  path into terminal", and saved paths. All five are
-   *   :9689          `SessionView.tsx:499`, so they arrive through that same
+   *   :9689          `SessionView.tsx:505`, so they arrive through that same
    *                  bridge.
    *   :10293         a fresh socket attach, in `attach.ts`.
    *
