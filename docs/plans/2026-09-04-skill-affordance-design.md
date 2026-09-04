@@ -267,9 +267,11 @@ on a tool's name. A `skill` type joins the list.
 
 ## Ordered plan
 
+All eight landed on 2026-09-04 (`34f7d9d`, `905fb0e`, `ad9f7b7`, `d1b170b`).
+
 1. **The dev proxy mirrors the ingress.** Ten prefixes in
    `frontend-v2/vite.config.ts`, with the measurement in a comment. Everything
-   below is verified through it, so it goes first. *(done on the branch)*
+   below is verified through it, so it went first.
 2. **`store.commands` distinguishes a failure from an empty catalogue**, and the
    menu grows the footer row. Test-first: a failing fetch, a 200 that is not
    JSON, and a user with no skills are three different outcomes.
