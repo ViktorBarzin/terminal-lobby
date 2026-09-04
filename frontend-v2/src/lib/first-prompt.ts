@@ -1,4 +1,5 @@
 import { promptUrl } from "./config";
+import { fetchWithDeadline } from "./http";
 
 /**
  * Delivering the first prompt of a session the composer just created.
@@ -77,7 +78,7 @@ export interface DeliverFirstPromptOptions {
   gapMs?: number;
   /** injectable for tests; defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
-  /** injectable for tests; defaults to window.fetch. */
+  /** injectable for tests; defaults to a deadlined same-origin fetch. */
   fetchImpl?: typeof fetch;
 }
 
@@ -132,7 +133,12 @@ export async function deliverFirstPrompt(
   if (lines.length === 0) return true;
 
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const fetchImpl = o.fetchImpl ?? fetch;
+  // Deadlined like every other request the lobby makes: a phone whose radio
+  // drops a socket without an RST leaves a bare fetch pending forever, and this
+  // one is awaited by a routine nobody is watching. The default comfortably
+  // clears the server's own hold (session-events PromptReadyWait, 4s).
+  const fetchImpl =
+    o.fetchImpl ?? ((input, init) => fetchWithDeadline(String(input), init ?? undefined));
   const ladder = o.ladder ?? FIRST_PROMPT_LADDER;
   const gapMs = o.gapMs ?? LINE_GAP_MS;
 
