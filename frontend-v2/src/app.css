@@ -1640,6 +1640,19 @@ label.tl-set-row-label {
   }
 }
 
+/* ---- the new-session pane ----------------------------------------------
+   Mirrors .tl-session-view: a bar that does not scroll, then the content. The
+   bar has to sit OUTSIDE the padded column below, or it would be inset from
+   the edges while the session view's runs full width, which is the difference
+   you would see when moving between them. */
+.tl-new-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
 /* ---- the new-session composer ------------------------------------------ */
 /* Nothing selected is not an empty state: it is where a session is started, so
    the composer owns the pane. A prompt wants the width, and on a phone this is
@@ -1658,22 +1671,6 @@ label.tl-set-row-label {
   padding: 16px clamp(12px, 6vw, 80px);
   overflow-y: auto;
 }
-.tl-new-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  max-width: 860px;
-  margin: 0 auto;
-}
-.tl-new-title {
-  margin: 0;
-  font-size: calc(14px * var(--tl-text-scale, 1));
-  font-weight: 600;
-  color: var(--text-muted);
-}
-/* A shell's name box: one line, no autosize, the same surface as the prompt
-   field it replaces so the box does not change shape when the command does. */
 .tl-new-name {
   height: 40px;
   resize: none;
@@ -1718,8 +1715,14 @@ label.tl-set-row-label {
        live on this screen because the viewport sync is installed at the SHELL
        rather than per session, which App.tsx did deliberately so the list
        screen would have it too. --safe-b keeps Send off the home indicator. */
-    justify-content: flex-end;
+    /* The BOX is pushed down, not the whole column: justify-content would
+       take the header with it and park it above the box at the bottom, which
+       is the opposite of the session view and of what a header is. */
+    justify-content: flex-start;
     padding-bottom: calc(12px + var(--kb-offset, 0px) + var(--safe-b, 0px));
+  }
+  .tl-new-composer > .tl-composer-box {
+    margin-top: auto;
   }
   .tl-new-composer .tl-composer-bar {
     flex-wrap: wrap;
