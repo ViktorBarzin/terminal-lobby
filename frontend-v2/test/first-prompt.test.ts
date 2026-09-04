@@ -7,23 +7,21 @@
  * either way, and text injected into the gap is gone with no error anywhere.
  */
 import { describe, it, expect, vi } from "vitest";
-import {
-  claudeIsUp,
-  deliverFirstPrompt,
-  CLAUDE_TITLE_GLYPHS,
-  FIRST_PROMPT_LADDER,
-} from "../src/lib/first-prompt";
+import { deliverFirstPrompt, FIRST_PROMPT_LADDER } from "../src/lib/first-prompt";
 
-/** A fetch that answers each call from a script, recording the bodies sent. */
+/** A fetch that answers each call from a script, recording what was sent. */
 function scripted(statuses: readonly number[]) {
   const sent: string[] = [];
+  const waited: boolean[] = [];
   let i = 0;
   const fetchImpl = (async (_url: string, init?: RequestInit) => {
-    sent.push(JSON.parse(String(init?.body)).text as string);
+    const body = JSON.parse(String(init?.body)) as { text: string; awaitReady: boolean };
+    sent.push(body.text);
+    waited.push(body.awaitReady);
     const status = statuses[Math.min(i++, statuses.length - 1)] ?? 204;
     return new Response(null, { status });
   }) as unknown as typeof fetch;
-  return { fetchImpl, sent, calls: () => i };
+  return { fetchImpl, sent, waited, calls: () => i };
 }
 
 /** Every wait resolves at once, and every duration is recorded in order. */
@@ -41,63 +39,41 @@ const deliver = (
   deliverFirstPrompt({
     session: "k7m2q9x4tp0z",
     lines: ["do the thing"],
-    settleMs: 750,
     gapMs: 250,
     ...o,
   });
 
-describe("claudeIsUp", () => {
-  it("accepts every glyph Claude Code uses for that position", () => {
-    for (const g of [...CLAUDE_TITLE_GLYPHS]) {
-      expect(claudeIsUp(`${g} Claude Code`)).toBe(true);
-    }
-  });
-
-  it("rejects what the pane title reads before Claude has drawn anything", () => {
-    // Measured through a real boot: the shell's leftover title stands for the
-    // first ~1.4s, and it is the exact window where an injected prompt is lost.
-    expect(claudeIsUp("devvm")).toBe(false);
-    expect(claudeIsUp("wizard@devvm: ~/code")).toBe(false);
-    expect(claudeIsUp("")).toBe(false);
-    expect(claudeIsUp(undefined)).toBe(false);
-  });
-
-  it("wants the glyph at the HEAD, not anywhere in the line", () => {
-    expect(claudeIsUp("Fixing the · separator")).toBe(false);
-    expect(claudeIsUp("* Claude Code")).toBe(false);
-  });
-});
-
 describe("deliverFirstPrompt", () => {
-  it("waits for Claude before sending, not just for tmux", async () => {
-    // The whole point: rung 1 finds a reachable session whose Claude is still
-    // booting. Sending there would return 204 and deliver nothing.
+  it("asks the server to wait for the pane, rather than guessing from here", async () => {
+    // The whole point. Nothing about a pane's input line reaches the browser,
+    // so the wait is asked for and session-events answers 503 until the pane
+    // can take the text. Two rungs of "not yet", then it lands.
+    const f = scripted([503, 503, 204]);
+    const c = fastClock();
+    expect(await deliver({ ...f, ...c, awaitReady: true })).toBe(true);
+    expect(f.sent).toEqual(["do the thing", "do the thing", "do the thing"]);
+    expect(f.waited).toEqual([true, true, true]);
+    expect(c.waited).toEqual([700, 1600, 3000]);
+  });
+
+  it("does not ask a command that draws no prompt to wait for one", async () => {
+    // The check watches for Claude's `❯`. Asking where nothing will draw one
+    // would spend every rung waiting and then give up with the text unsent.
     const f = scripted([204]);
     const c = fastClock();
-    let up = false;
-    const done = deliver({
-      ...f,
-      sleep: async (ms) => {
-        await c.sleep(ms);
-        if (c.waited.filter((w) => FIRST_PROMPT_LADDER.includes(w)).length >= 3) up = true;
-      },
-      ready: () => up,
-    });
-    expect(await done).toBe(true);
-    expect(f.sent).toEqual(["do the thing"]);
-    // Three rungs went by unsent, and the settle ran once before the send.
-    expect(c.waited).toEqual([700, 1600, 3000, 750]);
+    expect(await deliver({ ...f, ...c })).toBe(true);
+    expect(f.waited).toEqual([false]);
   });
 
-  it("settles once, however many lines follow", async () => {
+  it("waits between two lines but does not wait twice for the pane", async () => {
     const f = scripted([204, 204]);
     const c = fastClock();
     expect(
-      await deliver({ ...f, ...c, lines: ["/model sonnet", "do the thing"], ready: () => true }),
+      await deliver({ ...f, ...c, lines: ["/model sonnet", "do the thing"], awaitReady: true }),
     ).toBe(true);
     expect(f.sent).toEqual(["/model sonnet", "do the thing"]);
-    // rung, settle, then the gap between the two lines — no second settle.
-    expect(c.waited).toEqual([700, 750, 250]);
+    // One rung, then the gap between the two lines.
+    expect(c.waited).toEqual([700, 250]);
   });
 
   it("resumes at the line that did not land, never re-sending one that did", async () => {
@@ -106,7 +82,7 @@ describe("deliverFirstPrompt", () => {
     const f = scripted([204, 502, 204]);
     const c = fastClock();
     expect(
-      await deliver({ ...f, ...c, lines: ["/model sonnet", "do the thing"], ready: () => true }),
+      await deliver({ ...f, ...c, lines: ["/model sonnet", "do the thing"], awaitReady: true }),
     ).toBe(true);
     expect(f.sent).toEqual(["/model sonnet", "do the thing", "do the thing"]);
   });
@@ -116,21 +92,21 @@ describe("deliverFirstPrompt", () => {
     // cannot find fails inside `tmux send-keys` and surfaces as a bad gateway.
     const f = scripted([502, 502, 204]);
     const c = fastClock();
-    expect(await deliver({ ...f, ...c, ready: () => true })).toBe(true);
+    expect(await deliver({ ...f, ...c })).toBe(true);
     expect(f.calls()).toBe(3);
   });
 
   it("treats a 404 as not-yet too, for a proxy that answers before the route", async () => {
     const f = scripted([404, 204]);
     const c = fastClock();
-    expect(await deliver({ ...f, ...c, ready: () => true })).toBe(true);
+    expect(await deliver({ ...f, ...c })).toBe(true);
     expect(f.calls()).toBe(2);
   });
 
   it("gives up at once on a status that will not get better", async () => {
     const f = scripted([403]);
     const c = fastClock();
-    expect(await deliver({ ...f, ...c, ready: () => true })).toBe(false);
+    expect(await deliver({ ...f, ...c })).toBe(false);
     expect(f.calls()).toBe(1);
   });
 
@@ -142,25 +118,24 @@ describe("deliverFirstPrompt", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
     const c = fastClock();
-    expect(await deliver({ fetchImpl, ...c, ready: () => true })).toBe(true);
+    expect(await deliver({ fetchImpl, ...c })).toBe(true);
     expect(calls).toBe(2);
   });
 
-  it("sends on the last rung even if the gate never opened", async () => {
-    // CLAUDE_CODE_DISABLE_TERMINAL_TITLE means no title is ever written, so the
-    // glyph never arrives. The gate is there to deliver EARLY; the ladder
-    // running out is the backstop, and by then Claude has had 11s to boot.
-    const f = scripted([204]);
+  it("stops asking for the wait on the last rung, so the text still goes", async () => {
+    // A pane that has not drawn a prompt in 11s is one that never will — a
+    // Claude that crashed at launch. Better sent there than dropped.
+    const f = scripted([503, 503, 503, 204]);
     const c = fastClock();
-    expect(await deliver({ ...f, ...c, ready: () => false })).toBe(true);
-    expect(f.sent).toEqual(["do the thing"]);
-    expect(c.waited).toEqual([...FIRST_PROMPT_LADDER, 750]);
+    expect(await deliver({ ...f, ...c, awaitReady: true })).toBe(true);
+    expect(f.waited).toEqual([true, true, true, false]);
+    expect(c.waited).toEqual([...FIRST_PROMPT_LADDER]);
   });
 
   it("reports failure when every rung is spent unreachable", async () => {
     const f = scripted([502]);
     const c = fastClock();
-    expect(await deliver({ ...f, ...c, ready: () => true })).toBe(false);
+    expect(await deliver({ ...f, ...c })).toBe(false);
     expect(f.calls()).toBe(FIRST_PROMPT_LADDER.length);
   });
 
@@ -168,7 +143,7 @@ describe("deliverFirstPrompt", () => {
     // An empty box is a real instruction: it makes a session and asks nothing.
     const f = scripted([204]);
     const c = fastClock();
-    expect(await deliver({ ...f, ...c, lines: ["", ""], ready: () => true })).toBe(true);
+    expect(await deliver({ ...f, ...c, lines: ["", ""] })).toBe(true);
     expect(f.calls()).toBe(0);
     expect(c.waited).toEqual([]);
   });
@@ -177,9 +152,7 @@ describe("deliverFirstPrompt", () => {
     // `modelCommandFor("default")` is null and arrives here as "".
     const f = scripted([204]);
     const c = fastClock();
-    expect(await deliver({ ...f, ...c, lines: ["", "do the thing"], ready: () => true })).toBe(
-      true,
-    );
+    expect(await deliver({ ...f, ...c, lines: ["", "do the thing"] })).toBe(true);
     expect(f.sent).toEqual(["do the thing"]);
   });
 
@@ -190,7 +163,7 @@ describe("deliverFirstPrompt", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
     const c = fastClock();
-    await deliver({ fetchImpl, ...c, session: "k7m2q9x4tp0z", ready: () => true });
+    await deliver({ fetchImpl, ...c, session: "k7m2q9x4tp0z" });
     expect(seen[0]).toContain("/prompt/k7m2q9x4tp0z");
   });
 
@@ -206,9 +179,7 @@ describe("deliverFirstPrompt", () => {
       session: "abc",
       lines: ["hi"],
       ladder: [5],
-      settleMs: 0,
       gapMs: 0,
-      ready: () => true,
       fetchImpl: f.fetchImpl,
     }).then(spy);
     expect(spy).not.toHaveBeenCalled();

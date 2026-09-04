@@ -87,14 +87,12 @@ interface Mounted {
  * test/first-prompt.test.ts, where the timing is the subject.
  */
 interface Wire {
-  delivered: { session: string; lines: readonly string[] }[];
+  delivered: { session: string; lines: readonly string[]; awaitReady: boolean }[];
   uploads: { files: readonly File[]; session: string }[];
   /** What each upload answers with, in order; the last answer repeats. */
   chips: DraftAttachment[][];
   /** What each delivery answers with, in order; the last answer repeats. */
   results: boolean[];
-  /** The readiness gate the last delivery was handed, to exercise directly. */
-  lastReady?: () => boolean;
 }
 
 function mount(
@@ -128,8 +126,11 @@ function mount(
           return wire.chips[i] ?? [];
         }}
         deliver={async (o) => {
-          wire.delivered.push({ session: o.session, lines: o.lines });
-          wire.lastReady = o.ready;
+          wire.delivered.push({
+            session: o.session,
+            lines: o.lines,
+            awaitReady: o.awaitReady ?? false,
+          });
           const i = Math.min(wire.delivered.length - 1, wire.results.length - 1);
           return wire.results[i] ?? true;
         }}
@@ -151,15 +152,6 @@ const pickFile = (c: HTMLElement, ...files: File[]): void => {
 const aFile = (name: string, type = "image/png"): File =>
   new File([new Uint8Array([1, 2, 3])], name, { type });
 
-/** A poll row for a session that exists, wearing the pane title given. */
-const row = (name: string, paneTitle: string): Session => ({
-  name,
-  attached: 1,
-  lastActivity: 1,
-  created: 1,
-  state: "done",
-  pane_title: paneTitle,
-});
 
 const field = (c: HTMLElement) =>
   c.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt for a new session"]');
@@ -542,6 +534,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     expect(w.delivered[0]).toEqual({
       session: created(api),
       lines: ["Fix the deploy\nit 500s on the second push"],
+      awaitReady: true,
     });
     m.store.dispose();
   });
@@ -636,29 +629,23 @@ describe("<NewSessionComposer> — the first prompt", () => {
     m.store.dispose();
   });
 
-  it("waits for Claude's own pane title before it sends", async () => {
+  it("asks the server to wait for Claude's pane before injecting", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
-    await waitFor(() => expect(w.delivered.length).toBe(1));
 
-    const id = created(api);
-    // Nothing polled yet, and a session whose shell title still stands: both
-    // are the window where an injected prompt is dropped with no error.
-    expect(w.lastReady!()).toBe(false);
-    api.sessionsVal = [row(id, "devvm")];
-    await m.store.refresh();
-    expect(w.lastReady!()).toBe(false);
-    api.sessionsVal = [row(id, "✳ Claude Code")];
-    await m.store.refresh();
-    expect(w.lastReady!()).toBe(true);
+    // A session tmux has just made takes send-keys seconds before the Claude in
+    // it reads any, and that window loses the prompt with every layer reporting
+    // success. session-events holds the injection until the pane can take it.
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]!.awaitReady).toBe(true);
     m.store.dispose();
   });
 
-  it("asks only that codex EXISTS, since it raises no readiness signal", async () => {
+  it("does not ask codex to wait for a prompt character it never draws", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
@@ -666,13 +653,9 @@ describe("<NewSessionComposer> — the first prompt", () => {
     fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "codex" } });
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
-    await waitFor(() => expect(w.delivered.length).toBe(1));
 
-    const id = created(api);
-    expect(w.lastReady!()).toBe(false);
-    api.sessionsVal = [row(id, "devvm")];
-    await m.store.refresh();
-    expect(w.lastReady!()).toBe(true);
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]!.awaitReady).toBe(false);
     m.store.dispose();
   });
 });

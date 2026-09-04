@@ -361,40 +361,50 @@ the model back off the status line:
 
 This is not specific to the model line — the first prompt would go the same way,
 and the plan's ladder would have spent its first rung at 700ms, taken the 204,
-and stopped. So delivery waits for a readiness signal as well as walking the
+and stopped. So delivery waits for the pane to be ready as well as walking the
 ladder.
 
-The signal is the pane title, which is the only thing about a pane's inside that
-reaches the browser. Sampled through a boot on a quiet box:
+**The wait is the bridge's, reused.** `sessionio.AwaitInputReady` already solves
+exactly this: it watches the pane draw Claude's own `❯` and then hold still for
+300ms, and `t3-bridge` has called it after a resurrection since 2026-08-16, for
+the same silent half-landing failure. `POST /prompt` gains an `awaitReady` flag
+that runs it and answers 503 rather than injecting, so the check stays where the
+evidence is. Nothing about a pane's input line reaches the browser, so anything
+written on that side could only have been a proxy for it.
 
-| moment | `pane_title` | `@claude_state` |
+Sampled through a boot on a quiet box, which is why:
+
+| moment | pane | `@claude_state` |
 |---|---|---|
-| 0.0s | `devvm` (the shell's own) | unset |
-| 1.15s | `devvm` | `done` |
-| 1.46s | `✳ Claude Code` | `done` |
-| 1.89s | `✳ Claude Code` | `done`, input accepted |
+| 0.0s | the shell's title still, nothing drawn | unset |
+| 1.15s | nothing drawn | `done` |
+| 1.46s | title now `✳ Claude Code` | `done` |
+| 1.60s | `❯` drawn, still repainting | `done` |
+| 1.89s | settled; input accepted | `done` |
 
-`@claude_state` is set before Claude can read anything, so it is not the signal.
-The glyph is necessary and slightly early, which `CLAUDE_SETTLE_MS` covers, and
-it never arrives at all under `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` — so the
-ladder's last rung sends regardless, and the gate is what makes the common case
-fast rather than what makes it correct.
+`@claude_state` is set 750ms before Claude can read anything, and the title 400ms
+before, so neither is the signal on its own. The drawn-and-settled prompt is.
 
 A missing session answers **502**, not 404: `POST /prompt` runs no registry
-lookup, so the failure happens inside `tmux send-keys`. Both are treated as "not
-yet".
+lookup, so the failure happens inside `tmux send-keys`. 503, 502 and 404 all mean
+"come back".
 
 ```mermaid
 flowchart TD
     C["create: id minted, attach starts"] --> U["upload held files into id"]
     U --> L{"rung: 700 / 1600 / 3000 / 6000ms"}
-    L --> R{"pane title carries a glyph?"}
-    R -->|no, and rungs left| L
-    R -->|yes, or last rung| S["settle, then send /model, then the prompt"]
-    S -->|502 or 404| L
-    S -->|204| D["delivered"]
-    L -->|spent| P["park the text in the session's own composer"]
+    L --> S["POST /prompt, awaitReady"]
+    S -->|"503 pane not ready<br/>502 no session"| L
+    S -->|204| D["delivered: /model, then the prompt"]
+    L -->|"last rung: no wait asked"| F["send anyway"]
+    F -->|fails| P["park the text in the session's own composer"]
 ```
+
+The `awaitReady` flag is off for every other caller. A session someone is looking
+at is ready by definition, and the check costs a `capture-pane` per tick. It is
+also asked for only when the command is Claude: the check watches for `❯`, so
+asking where nothing draws one would spend every rung waiting and give up with
+the text unsent.
 
 ### Two smaller departures
 
@@ -405,9 +415,10 @@ written into the NEW session's draft, which is the field the person is now
 looking at, with a toast saying where it went.
 
 **The pre-warm slot is not what makes the first attempt succeed.** It removes
-the boot wait, so a claimed slot passes the readiness gate on the first rung. A
-cold create — Ungrouped, or a pool miss — passes it on the second or third, which
-is what the gate exists for.
+the boot wait, so a claimed slot is ready the moment the first rung asks. A cold
+create — Ungrouped, or a pool miss — is ready inside the first rung's own wait,
+which is what the server-side hold buys over a browser-side check: measured end
+to end against a real Claude, the prompt landed on rung one.
 
 Verification before this is called done: drive the real lobby at
 `terminal.viktorbarzin.me`, create a session from the composer, and read back a

@@ -176,9 +176,11 @@ src/
                          moment ago. A session tmux has made is reachable
                          seconds before the Claude in it is ready to read
                          anything, and POST /prompt answers 204 either way — so
-                         this waits for a readiness signal (the pane title's
-                         own glyph) as well as walking the 700/1600/3000/6000
-                         ladder, and resumes at the line that did not land
+                         each attempt asks session-events to HOLD until the pane
+                         can take it (503 while it cannot), on top of the
+                         700/1600/3000/6000 ladder, resuming at the line that
+                         did not land. The last rung asks for no hold, so a pane
+                         that never draws a prompt still gets the text
     new-commands.ts      Which new-session commands this box can actually run:
                          GET /new-commands is tmux-user-attach --probe run in
                          the session's own login shell, so a key with nothing
