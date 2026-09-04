@@ -139,6 +139,30 @@
  * bypasses onData with pre-baked bytes (:6823); and a reattach or session
  * switch (:10294).
  *
+ * AND ONE THING MUST NOT, which is the same exclusion as the `isTrusted` test
+ * arriving by the other route. With mouse reporting on, a wheel this module
+ * asked for comes back as pty-bound input INSIDE the dispatch: xterm's
+ * `bindMouse` consults the custom wheel handler, gets true for the untrusted
+ * synthetic, and `coreMouseService.triggerMouseEvent` routes the report through
+ * `_coreService.triggerDataEvent`, because only DEFAULT encoding takes
+ * `triggerBinaryEvent` and DECSET 1006 selects SGR. So `term.onData` fires
+ * SYNCHRONOUSLY inside `dispatchEvent`, and the two interrupt sites downstream
+ * of it are the coast cancelling itself. Measured against the installed
+ * @xterm/xterm 6.0.0: one untrusted `deltaMode: 1` wheel after
+ * `\x1b[?1000h\x1b[?1006h` yields `onData ["\x1b[<64;…M"]` and no `onBinary`.
+ *
+ * term.html does not need the exclusion, and the reason is why it belongs in
+ * the component rather than here. Its `cancelScrollMomentum` clears
+ * `momentumRAF` alone (:6129-6130); the coast's velocity, distance and anchor
+ * are `let`s inside `startScrollMomentum` that it never touches, and `step`
+ * re-arms `momentumRAF` on the line after `feedScroll` (:6167), so re-entered
+ * from inside `step` the cancel is a NO-OP. This port moved that motion state
+ * into `TouchScrollState.coast`, where `interrupt` destroys it. A pure reducer
+ * cannot see the re-entrancy that tells the two cases apart; the component can,
+ * which is what `TerminalNative`'s `emittingWheel` and `cancelCoast` are. So
+ * `interrupt` here stays what the page's cancel is, and the component owes it
+ * the same filtering it already owes on `isTrusted`.
+ *
  * What the component must read for `TouchScrollWorld`. Every field FRESH at the
  * moment of the event, because that is when term.html reads it, and then WHERE
  * the page reads each, because two of the five it reads at the lift alone and a

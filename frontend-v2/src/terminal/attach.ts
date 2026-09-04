@@ -80,6 +80,34 @@ export interface AttachDeps {
   /** Report a phase change so the shell's status badge can show it. */
   onPhase(phase: LadderState["phase"], attempt: number): void;
   /**
+   * A socket just opened. ONCE per attach, which `onPhase("open")` is NOT.
+   *
+   * term.html puts two calls inside `ws.onopen` and on no other path to an
+   * open connection: `mirrorLineReset()` at :10293 and
+   * `cancelScrollMomentum()` at :10294. Neither is among its other nine
+   * `mirrorLineReset` sites (:6828, :7301, :8342, :8922, :8963, :9004, :9126,
+   * :9388, :9689), and neither is in `reportConnNow` (:9822-9824). So the page
+   * has a once-per-socket signal that this file did not, and a caller that
+   * hung such work off the phase instead ran it again on two other routes:
+   *
+   *   - THE ASK. `reportNow` below calls `deps.onPhase(askedPhase(), …)`
+   *     directly, bypassing `dispatch` and its change test, and `askedPhase()`
+   *     answers "open" for an open socket. Two things ask: the ADR-0016
+   *     panel's Run check (App.tsx:304), and SessionView every time a session
+   *     comes back on screen (SessionView.tsx:248, inside an effect gated on
+   *     `onScreen()`). The second is the frequent one, since it is ordinary
+   *     navigation rather than a deliberate check.
+   *   - THE STABILITY PROOF. `dispatch` counts an attempt-count change as a
+   *     phase change, and reconnect.ts's `proved-stable` returns `attempts: 0`
+   *     with the phase still "open" (:238) where `startAttempt` had bumped it
+   *     to 1 (:446). So `onPhase("open")` fires a second time
+   *     `STABLE_AFTER_MS` (30 s) after every socket opens.
+   *
+   * Both of those are correct for a badge, which is what `onPhase` is for.
+   * Neither is a new pty input line.
+   */
+  onAttach?: () => void;
+  /**
    * This client attached READ-ONLY and the server agreed. Only the server's
    * answer belongs here: the flag is a request, resolved downgrade-only by
    * tmux-api, and the page cannot grant itself write access by lying.
@@ -343,6 +371,11 @@ export function attach(deps: AttachDeps): Attachment {
       if (gen !== liveGen) return;
       const size = deps.size();
       s.send(handshakeMessage({ token, cols: size.cols, rows: size.rows }));
+      // BEFORE the phase goes out, which is term.html's order: :10293-10294 sit
+      // above `reportConn('open', 0)` at :10296. It matters for the offline-Enter
+      // flow, where the mirror's baseline has to be dropped before the hold is
+      // replayed, and the replay is downstream of this whole handler.
+      deps.onAttach?.();
       dispatch({ type: "opened" });
       // The watchdog only ever judges an OPEN socket, so it starts here and is
       // anchored to this moment rather than to the attempt that preceded it.
