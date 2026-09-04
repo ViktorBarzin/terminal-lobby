@@ -459,6 +459,10 @@ export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
  * The live row. It names the call actually in flight and ticks its own timer —
  * the transcript records a tool_use the moment Claude emits it, so this is
  * specific without a second data source (design decision 6).
+ *
+ * A turn can be open with nothing running, because Claude asked the reader
+ * something and stopped. That row says so instead, and its clock counts the
+ * wait rather than the turn (see WorkingRow.waiting).
  */
 export const WorkingRowView: Component<{ row: WorkingRow; now: number }> = (props) => {
   const elapsed = () => {
@@ -467,10 +471,14 @@ export const WorkingRowView: Component<{ row: WorkingRow; now: number }> = (prop
     return formatDuration(props.now - from);
   };
   return (
-    <div class="tl-row tl-row-working" aria-live="polite">
+    <div
+      class="tl-row tl-row-working"
+      data-waiting={props.row.waiting ? "true" : undefined}
+      aria-live="polite"
+    >
       <span class="tl-working-dot" />
       <span class="tl-working-text">
-        <Show when={props.row.toolLabel} fallback="Working…">
+        <Show when={props.row.toolLabel} fallback={props.row.waiting ? "Waiting for you" : "Working…"}>
           <span class="tl-working-tool">{props.row.tool}</span>
           <span class="tl-working-label">{props.row.toolLabel}</span>
         </Show>

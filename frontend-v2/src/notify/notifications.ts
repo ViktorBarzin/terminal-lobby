@@ -51,6 +51,7 @@ import {
   pickTappedSession,
   type PendingNotif,
   registerServiceWorker,
+  stashExpired,
   stashIsActionable,
 } from "../pwa/register";
 import {
@@ -288,7 +289,23 @@ export function createNotificationSystem(
       const stale: string[] = [];
       for (const r of records) if (!(await stashIsActionable(r))) stale.push(r.session);
       reason(stale.length === records.length ? "stale" : "untapped");
-      if (stale.length) void clearPendingSessions(stale);
+      // Forget only what is genuinely finished with. This used to delete every
+      // record the actionable test refused, which includes the ones whose
+      // banner is STILL ON SCREEN — the reader had not tapped them yet. So
+      // opening the app by its icon, or just switching back to it, erased the
+      // record behind every notification still sitting in the shade, and the
+      // tap that came minutes later found nothing and went nowhere.
+      //
+      // The numbers say that is the common case, not an edge. Over 72 hours on
+      // the deployed build only 30 of 237 stash reads routed; 44 came back
+      // `absent`, and 16 of those had a record written less than 15 minutes
+      // earlier, so their window had not run out. Pushes for one session are a
+      // median of 956 s apart and Viktor answers them minutes later, while the
+      // unconditional window is 120 s, so nearly every real tap lands in the
+      // range this was clearing. The 2026-09-02 check passed because it tapped
+      // within seconds: 21 of its 27 routed reads were under that 120 s.
+      const spent = records.filter((r) => stashExpired(r)).map((r) => r.session);
+      if (spent.length) void clearPendingSessions(spent);
       return;
     }
     const session = pick.session;
