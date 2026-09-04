@@ -34,6 +34,7 @@ func withAutoTitleTracker(t *testing.T) {
 // tmux stub running `script`, and a capturing emitter.
 func autoTitleFixture(t *testing.T, script string) (argvFile string, rec *recorder) {
 	t.Helper()
+	actAs(t, "wizard") // these tests act as the owner of the sessions they build
 	withAutoTitleTracker(t)
 	swapTitleStore(t)
 	return withTmuxStub(t, script), withTelemetry(t)

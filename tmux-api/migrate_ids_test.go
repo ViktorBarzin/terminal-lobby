@@ -25,6 +25,7 @@ func swapMigrationMarker(t *testing.T) string {
 // migration test cannot write to /var/lib.
 func migrationStores(t *testing.T) {
 	t.Helper()
+	actAs(t, "wizard") // these tests act as the owner of the sessions they migrate
 	swapTitleStore(t)
 	swapAssignmentStore(t)
 	swapProjectStore(t)

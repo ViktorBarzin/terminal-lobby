@@ -39,6 +39,23 @@ func TestHandleRestoreRequiresAuth(t *testing.T) {
 // assignment. Deaths OUTSIDE the API never reach killSession, so the crash /
 // OOM recovery the feature exists for is untouched.
 
+// actAs makes `osUser` the user this process counts as, for the length of one
+// test.
+//
+// It matters because tmuxCmd only runs tmuxBinary DIRECTLY when the target user
+// is the current one; for anyone else it shells out to `sudo -n -u <osUser>`,
+// which a stub installed by withTmuxStub never sees. A test that hardcodes an
+// owner therefore only exercises what it means to on a box whose login happens
+// to match that name, or one where sudo to that name succeeds. Both are true on
+// the devvm and neither is true on a CI runner, so such a test passes locally
+// and fails in CI having never run the code it names.
+func actAs(t *testing.T, osUser string) {
+	t.Helper()
+	old := selfUser
+	selfUser = osUser
+	t.Cleanup(func() { selfUser = old })
+}
+
 // withSudoStub swaps sudoBinary for a shell stub that appends its argv — one
 // arg per line — to a file, then runs `script`. Returns the argv file path; a
 // missing file means sudo was never invoked. Mirrors withTmuxStub.
