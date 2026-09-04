@@ -13,29 +13,45 @@ authenticates and names the user works.
 **Session**:
 One tmux session belonging to one OS user, listed in the sidebar and
 rendered in the terminal pane. Usually runs a Claude Code conversation, but
-may be a plain shell. Carries a **name** and, optionally, a **title**.
+may be a plain shell. Carries a **name**, which nobody reads, and a
+**title**, which is what everybody reads.
 _Avoid_: terminal, tab, thread
 
 **Name** (of a session):
-The tmux session name: `^[a-zA-Z0-9_-]{1,32}$`. The identity everything is
-keyed by — tmux targets, URL segments, store keys, the session-images
-directory, the `?arg=` attach contract, the push tag. **Derived from the
-title, never typed directly**, and re-derived whenever the title changes.
+The tmux session name: an opaque 12-character id, minted by the browser when
+the session is created and **never changed afterwards**. The identity
+everything is keyed by — tmux targets, URL segments, store keys, the
+session-images directory, the `?arg=` attach contract, the push tag — and
+nothing a person is expected to read, which is what lets it stop moving.
 Unique within one OS user's tmux server, so a cross-user reference needs
-the owner too.
-_Avoid_: slug in anything a user reads (it is the right word in code)
+the owner too. Sessions predating the migration carried human names derived
+from their titles; ADR-0019 has why that ended.
+_Avoid_: slug (nothing is slugged any more), label, and any surface that
+shows a name where it could show a **title**
 
 **Title**:
-The arbitrary display text a person chose for a session — spaces,
-punctuation, emoji, any script, up to 64 characters. What every surface
-shows: sidebar cards, the tab title, the command palette, the dock, push
-bodies, confirmations. Stored on the session itself (the `@title` tmux
-option), so everyone who can see the session sees the same title, and a
-durable copy re-stamps it after a restore. Optional — a session without one
-shows its **name**, which is where every session predating the feature
-sits. Clearing the title returns a session to showing its name.
+The display text for a session — spaces, punctuation, emoji, any script, up
+to 64 characters. The only name a session has that anyone reads, and what
+every surface shows: sidebar cards, the tab title, the command palette, the
+dock, push bodies, confirmations. Usually a **summary** the lobby adopted
+rather than text a person typed, and a person may replace it at any time.
+Stored on the session itself (the `@title` tmux option), so everyone who can
+see the session sees the same title, and a durable copy re-stamps it after a
+restore. Clearing it hands the session back to the summary. A session with
+no title yet shows the first line of the prompt it was created with, or
+`New session`.
 _Avoid_: label, nickname, display name; and do not confuse with **pane
 title**, which is whatever is running in the pane describing itself.
+
+**Summary**:
+Claude Code's own one-line description of what a conversation is about, which
+it writes into its terminal title and which therefore arrives as the
+session's **pane title** with a `✳ ` prefix. The lobby adopts the first one
+that appears as the session's **title** and then leaves it alone, so a
+summary that drifts as the conversation moves does not move the title. Not
+present for a plain shell, and reads `Claude Code` before the first prompt.
+_Avoid_: auto-title, generated name (the thing it becomes is simply the
+**title**)
 
 **Project**:
 A first-class, server-owned object with a stable **id**, a **name**, an
