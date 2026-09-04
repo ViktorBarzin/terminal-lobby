@@ -183,7 +183,7 @@ describe("the value that lands on the host", () => {
    * absolute `vv.height - ...` because its terminal fills a whole iframe; here
    * `.tl-views.tl-kb-inline` has already taken the toolbar and the safe area
    * out of the container and deliberately left the keyboard IN
-   * (app.css:2370-2372), so the number that belongs on the host is how much of
+   * (app.css:2446-2448), so the number that belongs on the host is how much of
    * THAT box the keyboard covers.
    */
   it("shrinks the container by the reserve", () => {
@@ -583,10 +583,10 @@ describe("a panned visual viewport", () => {
    *
    * The arithmetic, from the CSS pinned in the parity block below:
    *   the container's bottom edge is `layout - --sk-h - --safe-b`
-   *     (app.css:2370-2372, and `#root` is `height: var(--app-vh)` =
+   *     (app.css:2446-2448, and `#root` is `height: var(--app-vh)` =
    *     `window.innerHeight`, app.css:30-34);
    *   the toolbar's top edge is `layout - --kb-offset - --safe-b - --sk-h`
-   *     (app.css:2224, `bottom: calc(var(--kb-offset) + var(--safe-b))`);
+   *     (app.css:2300, `bottom: calc(var(--kb-offset) + var(--safe-b))`);
    *   `--kb-offset` is the shell's `keyboardOffset(...)` (mobile/viewport.ts:244),
    *     which carries `offsetTop` the same way `own` does.
    * So a shrink of `own` puts the host's bottom edge exactly on the toolbar's

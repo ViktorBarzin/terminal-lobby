@@ -229,16 +229,16 @@ export type MirrorEvent =
    *                  action IS this event, gated on `mirrorEmitting`.
    *   :6828, :9388   the soft-key row and the SPA's `tl-input` bridge. Both
    *                  become `__tlSendToTerminal` (TerminalNative's `send`),
-   *                  called by `SessionView.tsx:471-477` for the soft keys and
+   *                  called by `SessionView.tsx:515-521` for the soft keys and
    *                  the Text view's send-to-terminal.
    *   :8922, :8963,  path-sends: three upload paths, the gallery's "Insert
    *   :9004, :9126,  path into terminal", and saved paths. All five are
-   *   :9689          `SessionView.tsx:505`, so they arrive through that same
+   *   :9689          `SessionView.tsx:554`, so they arrive through that same
    *                  bridge.
    *   :10293         a fresh socket attach, in `attach.ts`.
    *
    * The bridge is the load-bearing one: it calls the attachment's `send`
-   * directly (`attach.ts:578`), so xterm's onData never sees those bytes and
+   * directly (`attach.ts:612`), so xterm's onData never sees those bytes and
    * the `:8342` hook cannot cover them. One hook there covers seven of
    * term.html's nine sites; without it a soft arrow or Esc tap silently
    * desyncs the field from the pty line it claims to mirror, which is the

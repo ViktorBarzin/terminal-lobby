@@ -94,7 +94,7 @@ export interface AttachDeps {
    *     directly, bypassing `dispatch` and its change test, and `askedPhase()`
    *     answers "open" for an open socket. Two things ask: the ADR-0016
    *     panel's Run check (App.tsx:304), and SessionView every time a session
-   *     comes back on screen (SessionView.tsx:248, inside an effect gated on
+   *     comes back on screen (SessionView.tsx:292, inside an effect gated on
    *     `onScreen()`). The second is the frequent one, since it is ordinary
    *     navigation rather than a deliberate check.
    *   - THE STABILITY PROOF. `dispatch` counts an attempt-count change as a

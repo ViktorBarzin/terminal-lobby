@@ -1216,14 +1216,14 @@ export const TerminalNative: Component<{
       // keeps every visited session mounted and CSS-hides the rest
       // (store/keepalive.ts, App.tsx:835-842), and inside a visible session it
       // keeps this terminal mounted behind the TEXT view as well
-      // (SessionView.tsx:937). Either way the host is `display: none`
+      // (SessionView.tsx:957). Either way the host is `display: none`
       // (app.css:1121-1123), so it measures 0x0 and the fit above refuses it.
       // That makes "the boot fit found a box" the same question as "is this
       // terminal on screen", answered by measuring rather than by guessing.
       //
       // `ownsBridges` is NOT that question: SessionView deliberately keeps it
       // true while the text view shows, because that is the pty the composer's
-      // send-to-terminal means (SessionView.tsx:949-952), and text is the
+      // send-to-terminal means (SessionView.tsx:1004-1007), and text is the
       // default view on a coarse pointer. Focusing on it would take the soft
       // keyboard off the composer.
       //
@@ -1240,7 +1240,7 @@ export const TerminalNative: Component<{
       // branch does not, so a mode switch from text to terminal still leaves
       // this unfocused. NOT for want of the prop: SessionView passes the same
       // `active={mode() === "terminal" && onScreen()}` to both branches
-      // (SessionView.tsx:919 and :966), and this component's only reader of it
+      // (SessionView.tsx:975 and :1022), and this component's only reader of it
       // is the attention module's `view` gate (`viewHidden`). Closing the gap
       // is an effect here, not a prop upstream.
       if (bootFitted && !typingElsewhere()) term.focus();
@@ -2741,7 +2741,7 @@ export const TerminalNative: Component<{
        * Text into this terminal, however it arrived. The Paste button, the
        * soft keys and the palette reach `__tlPasteToTerminal` below, which
        * SessionView hands the clipboard text the LOBBY read
-       * (SessionView.tsx:543-550); a Ctrl/Cmd-V or a long-press Paste reaches
+       * (SessionView.tsx:592-599); a Ctrl/Cmd-V or a long-press Paste reaches
        * the event listener under it.
        *
        * term.paste, NOT a raw send: it wraps the text in bracketed paste when
@@ -3200,7 +3200,7 @@ export const TerminalNative: Component<{
       {/* WHAT SIZE THE PINCH HAS REACHED, which is term.html's `#font-pill`
           (:1041-1053). `.tl-size-pill` is this app's own pill and the TEXT
           view's pinch already draws the same sentence with it
-          (TextView.tsx:377-381), so the two gestures read identically instead
+          (TextView.tsx:426-430), so the two gestures read identically instead
           of through two stylesheets.
 
           WHERE IT LANDS. The class is `position: absolute` (app.css) and every
