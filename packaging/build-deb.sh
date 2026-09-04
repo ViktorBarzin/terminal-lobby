@@ -125,12 +125,33 @@ done
 # The fixture audits the page AND every assets/*.js beside it, so the gate needs
 # the shipping layout, not just the page: TL_SPA points at a directory where the
 # stamped index.html sits next to the chunks that ship with it.
+#
+# NO SELECTOR. This is the only automated run of that file anywhere in the repo,
+# so anything a selector deselects is checked nowhere at all. It used to say
+# `-k spa`, which kept four test functions, 13 parameterized cases, and dropped
+# the rest: 13 selected against 32 deselected of the 45 the file holds today.
+# Among the dropped was the one check that proves the CSS guard found real CSS
+# rather than falling back to the small inline #tl-shell block. Staging this
+# directory with every assets/*.js and no assets/*.css PASSED `-k spa` 13 of 13
+# and FAILED under the whole file, on exactly that check (measured 2026-09-04).
+# Running everything cost 5.5s against 4.7s.
+#
+# WHAT THIS GATE STILL DOES NOT SEE. It audits the SPA from the staged bytes,
+# and the term.html checks in that file read frontend/term.html, the PRE-STAMP
+# source. release/stamp.go inlines frontend/diag.js into the shipped page, so
+# the .deb carries about 59 KB that no floor guard reads. Aiming the guard at
+# the stamped page is not the fix as it stands: diag.js:98 builds a lookbehind
+# inside a STRING, which is not a parse-time error and which the suite already
+# documents as the reason that pattern is kept off the SPA, so it would block
+# every release on a harmless construct. Closing it wants the esbuild
+# differential rather than the regex.
+# test_the_release_gate_runs_this_whole_file asserts this line stays unnarrowed.
 if [ -f scripts/test_frontend_compat.py ]; then
   GATE="$BUILD/gate"
   rm -rf "$GATE" && mkdir -p "$GATE/assets"
   cp "$STAGE/share/index.html" "$GATE/index.html"
   cp -a "$CHUNKS/." "$GATE/assets/"
-  TL_SPA="$GATE/index.html" python3 -m pytest scripts/test_frontend_compat.py -k spa -q
+  TL_SPA="$GATE/index.html" python3 -m pytest scripts/test_frontend_compat.py -q
 fi
 
 # --- devvm helper scripts and units, PWA surface, webfonts -----------------

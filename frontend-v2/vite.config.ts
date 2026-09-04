@@ -213,7 +213,10 @@ export default defineConfig({
     // that iPad rendered a blank page — tab title, nothing else, and no telemetry,
     // since a page that cannot parse cannot report that it could not — from the
     // 2026-08-16 SPA promotion until 2026-08-18.
-    // Guarded by scripts/test_frontend_compat.py, which scripts/deploy-v2.sh runs.
+    // Guarded by scripts/test_frontend_compat.py, which packaging/build-deb.sh
+    // runs over the staged bytes. It used to name scripts/deploy-v2.sh, which
+    // was removed with the dev tier on 2026-08-16, so the guard read as
+    // unattended for as long as the citation stood.
     target: "safari15",
     // xterm USED to be external here, on the deploy decision that it must never
     // land in the no-store single-file blob — every deploy would have
