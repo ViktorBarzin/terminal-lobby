@@ -19,7 +19,7 @@ describe("sessionLabel", () => {
 describe("tab title", () => {
   const base = { osUser: "wizard", baseTitle: "Terminal", attentionSession: null };
 
-  it("shows the title, not the slug", () => {
+  it("shows the title, not the name", () => {
     const got = composeTitle({
       ...base,
       sessions: [

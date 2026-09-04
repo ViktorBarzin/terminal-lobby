@@ -357,17 +357,6 @@ export function addSessionToGroup(layout: Layout, name: string, group: string): 
   return moveSession(layout, name, group);
 }
 
-export function renameSessionInLayout(layout: Layout, oldName: string, newName: string): Layout {
-  const relabel = (list: string[]) => list.map((s) => (s === oldName ? newName : s));
-  const l: Layout = {
-    ...layout,
-    projects: layout.projects.map((p) => ({ ...p, sessions: relabel(p.sessions) })),
-    ungrouped: relabel(layout.ungrouped),
-  };
-  if (l.dock?.session === oldName) l.dock = { ...l.dock, session: newName };
-  return l;
-}
-
 export function removeSessionFromLayout(layout: Layout, name: string): Layout {
   return stripEverywhere(layout, name);
 }

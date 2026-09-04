@@ -12,7 +12,6 @@ import {
   moveSessionToAnchor,
   removeSessionFromLayout,
   renameProject,
-  renameSessionInLayout,
   reorderGroups,
   sameLayout,
   stabilizeModel,
@@ -39,7 +38,7 @@ import {
   type Whoami,
 } from "../types/lobby";
 import { track } from "../telemetry/track";
-import { cleanTitle, nameForTitle } from "../lib/slug";
+import { cleanTitle } from "../lib/title";
 import { newSessionId } from "../lib/session-id";
 import { hideDockedSession } from "./dock.logic";
 
@@ -96,10 +95,12 @@ export interface LobbyStore {
    *  poll can't rebuild the list under them. Returns a release function. */
   hold(): () => void;
   select(name: string, owner?: string): void;
-  create(name: string, group: string): Promise<boolean>;
+  /** Create a session: the text becomes its TITLE, its name is a minted id. */
+  create(title: string, group: string): Promise<boolean>;
   /** write or clear layout.dock (the Ctrl+J scratch shell); undefined un-docks. */
   setDock(next: DockState | undefined): Promise<boolean>;
-  rename(oldName: string, newName: string): Promise<boolean>;
+  /** Retitle a session. The name never moves (ADR-0019). */
+  rename(name: string, title: string): Promise<boolean>;
   kill(name: string): Promise<void>;
   /** Move into `group`; with an anchor, immediately above/below that card. */
   move(name: string, group: string, anchor?: DropAnchor): Promise<void>;
@@ -123,9 +124,9 @@ export interface LobbyStore {
 export type NotifyKind = "info" | "error" | "warning" | "success";
 
 export interface LobbyStoreOptions {
-  /** Fired when the user ACTIVATES a session (not on a rename's re-select).
-   *  Fires even if the name is unchanged — re-tapping the attached session is
-   *  how a phone gets back to its terminal. */
+  /** Fired when the user ACTIVATES a session. Fires even if the name is
+   *  unchanged — re-tapping the attached session is how a phone gets back to
+   *  its terminal. */
   onActivate?: (session: SelectedSession) => void;
   api?: LobbyApi;
   pollMs?: number;
@@ -335,31 +336,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return new Set<string>(mergedSessions().map((s) => s.name));
   }
 
-  /**
-   * Follow the selected session when it was RENAMED somewhere else.
-   *
-   * Retitling renames, so this is no longer a rare event: a second tab, or the
-   * phone, can have a session selected when the desktop retitles it. Left
-   * alone, that tab keeps a name nothing answers to, and its terminal iframe
-   * still points at `?arg=<old name>` — where ttyd's `tmux new-session -A`
-   * would happily bring the old name back as an empty session on the next
-   * reconnect.
-   *
-   * tmux's session id is the only thing that survives a rename, so it is what
-   * identifies "the same session under a new name". Matching on anything else
-   * (creation time, position) would eventually follow the wrong one.
-   */
-  function followRenamedSelection(prev: readonly Session[], next: readonly Session[]): void {
-    const sel = selected();
-    if (!sel || sel.owner) return; // foreign sessions are not ours to follow
-    if (next.some((s) => s.name === sel.name)) return; // still there
-    const id = prev.find((s) => s.name === sel.name)?.id;
-    if (!id) return; // never saw an id for it — a server that predates the field
-    const moved = next.find((s) => s.id === id);
-    if (!moved) return; // genuinely gone, not renamed
-    applySelection(moved.name, undefined);
-  }
-
   /** Stamp state transitions and prune dead sessions (vanilla trackStateChanges). */
   function trackStates(next: Session[]): void {
     const live = new Set(next.map((s) => s.name));
@@ -426,7 +402,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       // Reconcile by name rather than replace: a re-parsed but unchanged
       // payload must write nothing, or every memo downstream recomputes and
       // <For> re-creates every group and card (taking open menus with it).
-      followRenamedSelection(sessions, sRes.value);
       setSessions(reconcile(sRes.value, { key: "name" }));
       // After setSessions, so a reader waking on `polls` sees the new list.
       setPolls((n) => n + 1);
@@ -738,60 +713,27 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   }
 
   /**
-   * Retitle a session: set its display title and move its name to match.
+   * Retitle a session: set the text everyone reads.
    *
-   * The name follows the title so `tmux ls` stays legible from a shell. Most
-   * retitles do not move it — "Deploy the thing" and "Deploy the thing 🚀"
-   * derive the same name — and that case is worth protecting, because a name
-   * change re-navigates the terminal iframe.
-   *
-   * A collision is rejected rather than suffixed. The person is editing a
-   * title, so a name they never typed appearing underneath would be harder to
-   * make sense of than being told the name is taken — which they can see,
-   * because the rename box shows the derived name as they type.
+   * Only the title moves. The name is an opaque id fixed at creation
+   * (ADR-0019), so nothing downstream is keyed by anything this touches: no
+   * layout to mirror, no per-browser record to carry, and no re-navigation of
+   * the terminal iframe. Two sessions may end up reading the same, which is
+   * fine now that no name is derived from the text.
    */
-  async function rename(oldName: string, title: string): Promise<boolean> {
+  async function rename(name: string, title: string): Promise<boolean> {
     const t = cleanTitle(title);
     if (t === "") {
-      // An empty title clears back to the name rather than renaming to nothing.
-      return clearTitle(oldName);
-    }
-    const taken = takenNames();
-    taken.delete(oldName); // keeping your own name is not a collision
-    const n = nameForTitle(t, taken);
-    if (taken.has(n)) {
-      showToast(`"${n}" is taken`);
-      return false;
+      // An empty title hands the session back to its summary.
+      return clearTitle(name);
     }
     try {
-      await api.retitleSession(oldName, n, t);
+      await api.setSessionTitle(name, t);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) showToast(`"${n}" is taken`);
-      else if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
       else showToast("Rename failed");
       return false;
     }
-    if (n === oldName) {
-      // Title-only: nothing downstream is keyed by a name that did not move,
-      // so a refresh is the whole update — and the terminal is left alone.
-      await refresh();
-      return true;
-    }
-    // The backend already renamed the server layout; mirror locally for an
-    // instant repaint, then reconcile.
-    applyLocalLayout(renameSessionInLayout(layout(), oldName, n));
-    setPending((p) => p.map((s) => (s.name === oldName ? { ...s, name: n } : s)));
-    // Per-browser records keyed by the name have to follow it too, or the next
-    // poll prunes the old name as dead and a completion the user already saw
-    // comes back as an unseen tick. Announced rather than called: the visit
-    // store belongs to the notification system, which is built after this one.
-    window.dispatchEvent(
-      new CustomEvent("tl:session-renamed", { detail: { from: oldName, to: n } }),
-    );
-    // applySelection, NOT select: renaming the session you are attached to must
-    // keep the selection pointing at the new name without counting as "the user
-    // asked to open this", which on a phone would flip them out of the list.
-    if (selected()?.name === oldName) applySelection(n, selected()?.owner);
     await refresh();
     return true;
   }

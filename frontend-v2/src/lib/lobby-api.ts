@@ -178,36 +178,12 @@ export async function killSession(name: string): Promise<void> {
 }
 
 /**
- * PATCH /api/sessions/{name} {title, name} — 204/404/409(taken)/400(invalid).
- *
- * The retitle. Rename and stamp travel together so they cannot half-apply,
- * leaving a session renamed but holding its old title or titled under a name
- * the rename never reached. `newName` is derived here (lib/slug.ts) rather than
- * server-side, because a create has to be able to pick a name with no server
- * involved at all, and both sides run the same slug rules.
- *
- * A 409 means the derived name is taken; the session keeps its old title.
- */
-export async function retitleSession(
-  oldName: string,
-  newName: string,
-  title: string,
-): Promise<void> {
-  const res = await req(`/sessions/${encodeURIComponent(oldName)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: newName, title }),
-  });
-  if (!res.ok) throw new ApiError(res.status, `retitle HTTP ${res.status}`);
-}
-
-/**
  * POST /api/sessions/{name}/title {title} — 204/404/400.
  *
- * A title with no rename. Two callers: stamping a title onto a session the
- * lobby has just created (creation reaches no server, so this is the first the
- * API hears of it), and clearing a title back to nothing so the card shows the
- * session's name again.
+ * Every retitle, because a name never moves (ADR-0019). Three callers: stamping
+ * a title onto a session the lobby has just created (creation reaches no
+ * server, so this is the first the API hears of it), editing one from a card,
+ * and clearing one back to nothing so the session takes the next summary.
  */
 export async function setSessionTitle(name: string, title: string): Promise<void> {
   const res = await req(`/sessions/${encodeURIComponent(name)}/title`, {
@@ -301,7 +277,6 @@ export interface LobbyApi {
   getLayout(): Promise<Layout>;
   putLayout(layout: Layout): Promise<void>;
   killSession(name: string): Promise<void>;
-  retitleSession(oldName: string, newName: string, title: string): Promise<void>;
   setSessionTitle(name: string, title: string): Promise<void>;
   restoreSessions(sel?: RestoreSelection): Promise<void>;
   listSnapshots(): Promise<SnapshotList>;
@@ -316,7 +291,6 @@ export const lobbyApi: LobbyApi = {
   getLayout,
   putLayout,
   killSession,
-  retitleSession,
   setSessionTitle,
   restoreSessions,
   listSnapshots,

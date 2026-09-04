@@ -1,28 +1,28 @@
-// Package slug derives a tmux session NAME from a display TITLE.
+// Package slug derives a tmux session NAME from a display TITLE, and
+// normalizes the TITLE itself.
 //
-// A session carries two strings. The TITLE is arbitrary text a person chose —
-// spaces, punctuation, emoji, any script — and is what every surface shows. The
-// NAME is the identity everything else is keyed by: a tmux target, a URL
-// segment, a directory component under /var/lib/clipboard-store, a key in the
-// layout / project / share stores, and a positional ?arg= value that reaches a
-// sudo'd attach script. Widening that second string would reopen every one of
-// those; deriving it from the first does not.
+// The two halves have different consumers, and after ADR-0019 they no longer
+// belong to the same story:
 //
-// The same derivation exists in TypeScript (frontend-v2/src/lib/slug.ts),
-// because creating a session involves no server call at all — the browser picks
-// the name and ttyd's `tmux new-session -A` brings the session into being — and
-// that path deliberately still works while tmux-api is down. vectors.json is
-// read by both test suites so the two cannot drift apart unnoticed.
+//   - CleanTitle / MaxTitleRunes normalize the arbitrary text a person typed —
+//     spaces, punctuation, emoji, any script — before it is stored and shown.
+//     tmux-api runs this on every title that reaches it. Its mirror is
+//     frontend-v2/src/lib/title.ts.
 //
-// t3-bridge's Slug() was the first version of this and now calls in here, so Go
-// has one implementation rather than two. Its case-preserving behaviour is the
-// one thing that changed: the name is a normalized identifier now, not the
-// human's chosen text, so it lowercases.
+//   - FromTitle / Free / MaxNameLen derive a tmux session name. The LOBBY
+//     stopped using these: a lobby session's name is a minted 12-character id
+//     that never changes, so nothing is derived from a title any more.
+//     t3-bridge still names a bridged session after its working directory
+//     (main.go's Slug, resurrect.go's free-name walk), which is what keeps this
+//     half alive.
+//
+// vectors.json pins the derivation. It used to be read by both this package's
+// tests and the frontend's; the TypeScript side lost its copy of FromTitle with
+// the lobby's use of it, so the file is a Go-only fixture now.
 package slug
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -72,9 +72,8 @@ func CleanTitle(title string) string {
 // FromTitle derives the tmux session name for a title.
 //
 // Returns "" when nothing usable survives — a CJK or emoji-only title, or no
-// title at all. The caller supplies its own fallback, because what makes sense
-// differs: the lobby wants Fallback (session-N against the live set) and
-// t3-bridge wants its own placeholder.
+// title at all. The caller supplies its own fallback; t3-bridge, the one
+// consumer left, uses its own placeholder.
 func FromTitle(title string) string {
 	clean := strings.ToLower(CleanTitle(title))
 
@@ -125,23 +124,11 @@ func nameRune(r rune) bool {
 	return r == '_' || r == '-'
 }
 
-// Fallback names a session whose title yielded nothing usable: the first
-// session-N not already taken.
-func Fallback(taken map[string]bool) string {
-	for n := 1; ; n++ {
-		name := "session-" + strconv.Itoa(n)
-		if !taken[name] {
-			return name
-		}
-	}
-}
-
 // Free returns base, or the first free base-N variant.
 //
 // This is the suffix walk t3-bridge uses when a resurrection finds its name
-// taken. The lobby does NOT use it: a retitle whose name is taken is rejected
-// so the person can pick a different title, rather than being given a name they
-// never asked for.
+// taken. The lobby has no use for it: its names are minted ids, and a collision
+// there is answered by minting another rather than by suffixing.
 //
 // The suffix has to fit the same budget, so a base at the limit is cut to make
 // room. Ten variants is the ceiling before it gives up and returns the last

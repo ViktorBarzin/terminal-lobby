@@ -296,25 +296,6 @@
   padding: 4px 10px 8px;
   flex: 0 0 auto;
 }
-/* Wraps the title box and the derived-name hint below it. The row itself is a
-   flex row, so the wrapper takes the growth the input used to. */
-.tl-new-input-wrap {
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-/* The tmux name a title will become — see .tl-card-rename-hint. */
-.tl-new-input-hint {
-  font-size: 11px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  color: var(--text-muted);
-  padding: 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .tl-new-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -586,19 +567,10 @@
 .tl-card-foreign .tl-card-name {
   font-style: italic;
 }
-/* The rename box plus the derived-name hint under it. Column so the hint sits
-   below the input without widening the row it lives in. */
-.tl-card-rename-wrap {
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
 .tl-card-rename {
   flex: 1 1 auto;
   min-width: 0;
-  /* The row refuses selection; the box you are typing a name into cannot. */
+  /* The row refuses selection; the box you are typing a title into cannot. */
   -webkit-user-select: text;
   user-select: text;
   font: inherit;
@@ -608,18 +580,6 @@
   border: 1px solid var(--accent);
   border-radius: 5px;
   padding: 1px 5px;
-}
-/* The tmux name a title will become. The one place the slug is visible, and
-   what makes "that name is taken" mean something. Muted and small: it is a
-   consequence of what you typed, not a second thing to fill in. */
-.tl-card-rename-hint {
-  font-size: 11px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  color: var(--text-muted);
-  padding: 0 6px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .tl-card-owner {
   font-size: 10px;

@@ -7,12 +7,17 @@ package main
 // (owner, name) refs, the share store's grants, the image directory under
 // /var/lib/clipboard-store, the killed-assignment memory, and the titles store.
 //
-// Only the layout followed a rename before session titles. That was a
-// reasonable place to stop while renaming was a rare, deliberate act — but
-// deriving names from titles makes renaming the ordinary consequence of
-// retitling, so the gaps stop being edge cases: a retitle would drop a session
-// out of every other member's sidebar, revoke its guests without telling
-// either side, and strand its pictures.
+// Only the layout followed a rename before session titles, which was a
+// reasonable place to stop while renaming was a rare, deliberate act. Deriving
+// names from titles briefly made it the ordinary consequence of retitling, and
+// the gaps stopped being edge cases: a retitle would drop a session out of
+// every other member's sidebar, revoke its guests without telling either side,
+// and strand its pictures.
+//
+// ADR-0019 made a session's name a minted id that never moves, so renaming is
+// a rare, deliberate act again. Two callers are left, and both need all six
+// stores carried: the one-time migration that gives every pre-ADR session an id
+// (migrate_ids.go), and POST /sessions/{name}/rename.
 //
 // Everything here is best-effort and logged rather than fatal. The tmux rename
 // has already landed by the time any of this runs, so returning an error would

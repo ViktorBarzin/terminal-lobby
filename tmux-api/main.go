@@ -731,10 +731,6 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) == 1 && r.Method == http.MethodPatch {
-		retitleSession(w, r, osUser, name)
-		return
-	}
 	if len(parts) == 1 {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -868,61 +864,17 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// retitleSession is PATCH /sessions/{name} — the lobby's retitle.
+// setSessionTitle is POST /sessions/{name}/title — every retitle there is.
 //
-// One call, because the two halves must not half-apply: a session renamed but
-// left holding its old title, or titled under a name the rename never reached,
-// are both states nothing else in the system knows how to read. The name comes
-// from the CLIENT rather than being derived here, because the browser has
-// already derived it (it needs a name to build the attach URL before any
-// server is involved) and both sides run the same slug package against the
-// same vectors.
+// A session's name is an opaque id fixed at creation (ADR-0019), so a title
+// never moves anything else: no rename, no stores to carry, and no
+// re-navigation of the terminal iframe for the person who typed it. PATCH
+// /sessions/{name} used to carry a rename alongside the stamp and was retired
+// with the derivation that produced the new name.
 //
-// A name that has not moved skips the rename entirely. That is what keeps
-// adding an emoji to a title from reloading someone's terminal: the iframe
-// re-navigates on a name change, and most retitles do not produce one.
-func retitleSession(w http.ResponseWriter, r *http.Request, osUser, oldName string) {
-	var body struct {
-		Name  string `json:"name"`
-		Title string `json:"title"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-	newName := strings.TrimSpace(body.Name)
-	if !sessionNameRe.MatchString(newName) {
-		http.Error(w, "invalid new name", http.StatusBadRequest)
-		return
-	}
-	title := slug.CleanTitle(body.Title)
-
-	if newName != oldName {
-		// Rename FIRST. A 409 here has to leave the title alone as well as the
-		// name — stamping before renaming would retitle a session the caller
-		// was told they had not changed.
-		if !renameTmuxSession(w, osUser, oldName, newName) {
-			return
-		}
-		carryRenameAcrossStores(osUser, oldName, newName)
-		events.Emit("session.renamed", osUser, telemetry.Attrs{
-			"tl.from": oldName, "tl.to": newName, "tl.client": "retitle",
-		})
-	}
-	if !stampTitle(w, osUser, newName, title) {
-		return
-	}
-	sessionsCacheInstance.invalidate(osUser)
-	events.Emit("session.retitled", osUser, telemetry.Attrs{
-		"tl.session": newName, "tl.client": "api",
-	})
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// setSessionTitle is POST /sessions/{name}/title — a title without a rename.
-// Two callers: the lobby stamping a title onto a session it has just created
-// (creation reaches no server, so this is the first the API hears of it), and
-// clearing a title back to nothing.
+// Three callers: the lobby stamping a title onto a session it has just created
+// (creation reaches no server, so this is the first the API hears of it),
+// editing one from a card, and clearing a title back to nothing.
 func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string) {
 	var body struct {
 		Title string `json:"title"`
