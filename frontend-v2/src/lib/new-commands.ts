@@ -32,6 +32,28 @@ export const COMMAND_LABELS: Record<NewCommand, string> = {
 };
 
 /**
+ * The same commands as a PHRASE, for the new-session composer.
+ *
+ * Separate from COMMAND_LABELS on purpose. A settings row already sits under a
+ * heading that says what it sets, so "Claude" is right there. The composer's
+ * controls have no heading: they are a row of bare values, and "code" beside
+ * "Claude" beside "Opus" says nothing about which is the project, which is the
+ * command and which is the model. Reading the row as a sentence is what tells
+ * you — "in code · run Claude · Opus model" — so the noun travels with the
+ * value instead of being implied by a label that is not on screen.
+ *
+ * Lowercase verbs: these are fragments of one line, not headings.
+ */
+export const COMMAND_PHRASES: Record<NewCommand, string> = {
+  claude: "run Claude",
+  codex: "run Codex",
+  // Already a noun phrase, and "run plain shell" reads worse than the thing
+  // it describes.
+  shell: "plain shell",
+  default: "run the default",
+};
+
+/**
  * Can this key run?
  *
  * A key the server said nothing about is treated as runnable. Every failure on

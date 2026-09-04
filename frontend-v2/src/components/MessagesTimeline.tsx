@@ -41,6 +41,7 @@ import {
   QuestionRowView,
   ThinkingRowView,
   TodoRowView,
+  SkillRowView,
   ToolRowView,
   TurnFoldRowView,
   WorkingRowView,
@@ -398,6 +399,10 @@ export const MessagesTimeline: Component<{
       case "thinking":
         return <ThinkingRowView row={row} />;
       case "tool":
+        // A skill load is not a tool call the reader wants to open; it is a
+        // marker saying which skill is now in force. Its own card, keyed on the
+        // item type so nothing here branches on a tool's name.
+        if (row.itemType === "skill") return <SkillRowView row={row} />;
         return <ToolRowView row={row} onOpenPreview={props.onOpenPreview} onLoadFull={props.onLoadFull} renderChild={renderLeaf} />;
       case "todo":
         return <TodoRowView row={row} />;
@@ -436,6 +441,9 @@ export const MessagesTimeline: Component<{
       case "thinking":
         return <ThinkingRowView row={row() as ThinkingRow} />;
       case "tool":
+        if ((row() as ToolRow).itemType === "skill") {
+          return <SkillRowView row={row() as ToolRow} />;
+        }
         return (
           <ToolRowView
             row={row() as ToolRow}

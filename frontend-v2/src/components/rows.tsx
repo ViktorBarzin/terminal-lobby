@@ -35,6 +35,7 @@ export const ITEM_GLYPH: Record<ItemType, string> = {
   todo: "☑",
   question: "?",
   plan: "▤",
+  skill: "⌘",
   dynamic_tool_call: "•",
 };
 
@@ -49,6 +50,7 @@ export const ITEM_NOUN: Record<ItemType, string> = {
   todo: "Todo",
   question: "Question",
   plan: "Plan",
+  skill: "Skill",
   dynamic_tool_call: "Tool",
 };
 
@@ -64,6 +66,25 @@ export function formatDuration(ms: number | undefined): string {
 export function formatTokens(n: number): string {
   if (n < 1000) return String(n);
   return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+}
+
+/**
+ * 16.6 kB. What a collapsed skill body says about its own size.
+ *
+ * kB rather than KiB: these are character counts of prose, and the point is a
+ * sense of scale, not an exact figure. The loads on this box run 3.1 kB median
+ * to 23.3 kB, so one decimal below 10 and none above is all the precision the
+ * number carries.
+ */
+export function formatBytes(n: number): string {
+  if (n < 1000) return `${n} B`;
+  const k = n / 1000;
+  return `${k.toFixed(k < 10 ? 1 : 0)} kB`;
+}
+
+/** 15:38 — a wall clock, in the reader's own locale and zone. */
+export function clockTime(atMs: number): string {
+  return new Date(atMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +177,49 @@ const CommandOutputView: Component<{
     </Show>
   );
 };
+
+/**
+ * A skill load, marked as one.
+ *
+ * Viktor asked for a skill to be visibly a skill (2026-09-04) and for the card
+ * to carry the name and nothing else. It is deliberately NOT expandable: the
+ * body it stands in for is a median 3.1 kB and up to 23.3 kB of prose the reader
+ * never wrote, and the Skills overlay renders SKILL.md properly for anyone who
+ * does want to read one.
+ *
+ * One card for two records. `deriveRows` folds the `meta:skill` event's size
+ * onto the `Skill` call, so the size here is what was collapsed — and it is
+ * absent when the call FAILED, since no body is injected for a skill whose name
+ * does not resolve.
+ */
+export const SkillRowView: Component<{ row: ToolRow }> = (props) => (
+  <div
+    class="tl-row tl-row-skill"
+    data-eid={props.row.id}
+    data-failed={props.row.isError ? "true" : undefined}
+  >
+    <span class="tl-skill-kind">
+      <span class="tl-skill-glyph" aria-hidden="true">
+        {ITEM_GLYPH.skill}
+      </span>
+      skill
+    </span>
+    <span class="tl-skill-title" title={props.row.detail || undefined}>
+      {props.row.label || "a skill"}
+    </span>
+    <span class="tl-skill-meta">
+      <Show when={props.row.isError}>
+        <span class="tl-skill-failed">did not load</span>
+      </Show>
+      <Show when={!props.row.isError && props.row.bytes}>
+        <span>{formatBytes(props.row.bytes!)} collapsed</span>
+      </Show>
+      <Show when={props.row.at}>
+        <span>{clockTime(props.row.at!)}</span>
+      </Show>
+    </span>
+  </div>
+);
 
 export const ToolRowView: Component<{
   row: ToolRow;
