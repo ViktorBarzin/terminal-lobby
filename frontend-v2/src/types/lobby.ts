@@ -110,8 +110,11 @@ export interface Whoami {
 export const LAYOUT_VERSION = 1;
 
 /** Session name charset (tmux-api sessionNameRe). Shared client-side validation.
- *  This is the NAME — the identifier — not the title: a person types a title and
- *  `lib/slug.ts` derives something matching this from it. */
+ *  This is the NAME — the identifier — not the title. `lib/session-id.ts` mints
+ *  one for every session the lobby creates, and a 12-character id satisfies this
+ *  unchanged, which is why nothing that validates a name had to move for
+ *  ADR-0019. Names from before ids, and shells someone named by hand, also live
+ *  in here. */
 export const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 
 /**

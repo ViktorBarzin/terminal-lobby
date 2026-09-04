@@ -140,6 +140,13 @@ src/
                          against the shared slug/vectors.json — the browser has
                          to derive a name unaided, since creating a session
                          reaches no server at all
+    session-id.ts        Mints a session's NAME: 12 characters of lowercase
+                         Crockford base32 from crypto.getRandomValues, and the
+                         test that says a name is one of ours. The name is an
+                         opaque id that never moves (ADR-0019), minted here
+                         because creating a session reaches no server. Mirrored
+                         by tmux-api/sessionid.go, which the one-time migration
+                         reads to tell a migrated session from a named one
     file-api.ts          file-api client (list/read/write; maps 404/413/400).
                          contentUrl() re-exports the resolver below, so a read
                          of a clipboard-store path goes to clipboard-upload

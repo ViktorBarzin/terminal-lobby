@@ -40,6 +40,7 @@ import {
 } from "../types/lobby";
 import { track } from "../telemetry/track";
 import { cleanTitle, nameForTitle } from "../lib/slug";
+import { newSessionId } from "../lib/session-id";
 import { hideDockedSession } from "./dock.logic";
 
 export interface SelectedSession {
@@ -610,16 +611,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
   }
 
-  /**
-   * Create a session from a TITLE the person typed.
-   *
-   * The name is derived here rather than asked for: creation reaches no server
-   * at all — the session comes into being when the terminal iframe attaches and
-   * ttyd runs `tmux new-session -A` — so the browser has to pick a name before
-   * anything else can. tmux-api derives the same name from the same title
-   * (both run the shared slug vectors), it just never gets the chance to on
-   * this path.
-   */
   // Routed through the store, like every other server call a component makes,
   // rather than reaching for the module singleton — which is also what lets a
   // test observe them.
@@ -631,18 +622,38 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     await api.releasePrewarm(dir);
   }
 
+  /**
+   * A session id that no live or pending session already holds.
+   *
+   * A 60-bit id colliding is not an event anyone will see, and `tmux
+   * new-session -A` would attach the second create to the FIRST session's
+   * conversation if one ever did. The check is one set lookup against the last
+   * poll, and a fresh mint is the whole retry.
+   */
+  function freshSessionName(): string {
+    const taken = takenNames();
+    let n = newSessionId();
+    for (let i = 0; i < 8 && taken.has(n); i++) n = newSessionId();
+    return n;
+  }
+
+  /**
+   * Create a session, giving it a fresh id for a name.
+   *
+   * The name is minted here rather than asked for: creation reaches no server
+   * at all — the session comes into being when the terminal iframe attaches and
+   * ttyd runs `tmux new-session -A` — so the browser has to have a name before
+   * anything else can. It is an opaque id and it never changes (ADR-0019);
+   * what the person typed becomes the session's TITLE, which is the only part
+   * of a session anyone reads.
+   */
   async function create(title: string, group: string): Promise<boolean> {
     const t = cleanTitle(title);
     if (t === "") {
       showToast("Give the session a name");
       return false;
     }
-    const taken = takenNames();
-    const n = nameForTitle(t, taken);
-    if (taken.has(n)) {
-      showToast(`"${n}" already exists`);
-      return false;
-    }
+    const n = freshSessionName();
     // Creation is a lobby-only act: tmux-api never sees it, so this is the only
     // record of it.
     track("session.created", { "tl.session": n, "tl.to": group || "ungrouped" });
@@ -651,9 +662,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       ...p,
       {
         name: n,
-        // Carry the title on the optimistic card so it reads correctly in the
-        // second before the server has been told about it.
-        ...(t !== n ? { title: t } : {}),
+        // Carry the title on the optimistic card. The name is an id, so
+        // without this the card reads as twelve random characters for the
+        // second before the server has been told about the session.
+        title: t,
         owner: me(),
         attached: 0,
         lastActivity: nowSec,
@@ -669,17 +681,16 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (!saved) {
       // The layout PUT is the only record a create makes, so a write that did
       // not land created nothing. Keeping the optimistic card would strand a
-      // phantom the poll can never resolve — and pending names count as taken,
-      // so it would burn the name too. Selecting still happens: attaching the
-      // terminal is what actually brings the session into being, and that path
-      // is unaffected when it is only the layout endpoint that is down.
+      // phantom the poll can never resolve. Selecting still happens: attaching
+      // the terminal is what actually brings the session into being, and that
+      // path is unaffected when it is only the layout endpoint that is down.
       setPending((p) => p.filter((s) => s.name !== n));
     }
     select(n);
     // Stamping the title needs the session to EXIST, and only the iframe's
     // attach creates it. The refresh burst is already the "has it appeared
     // yet" poll, so the stamp rides along with it.
-    if (t !== n) void stampTitleWhenAlive(n, t);
+    void stampTitleWhenAlive(n, t);
     quickRefreshBurst();
     return saved;
   }

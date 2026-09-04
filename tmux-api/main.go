@@ -284,6 +284,15 @@ func main() {
 		log.Printf("seeded global project store from per-user layouts")
 	}
 
+	// One-shot, in the background: every session that was already running when
+	// ids shipped carries a name a person chose, and a name stopped being the
+	// thing anyone reads (ADR-0019). This renames them to ids, keeping each old
+	// name as the session's @title. In a goroutine because it forks tmux once
+	// per user and the listener must not wait on that — nothing serves worse
+	// for the migration having not finished yet, and the lobby's five-second
+	// poll picks up each new name as it lands.
+	go migrateSessionNamesToIDs(mappedOSUsers(), userSessions)
+
 	// Localhost token the devvm attach path uses to record a shared attach's
 	// client tty (for kick-on-revoke). Non-fatal if it can't be set up.
 	if err := ensureInternalToken(); err != nil {
