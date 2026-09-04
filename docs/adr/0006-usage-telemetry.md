@@ -100,7 +100,7 @@ who it is, and a tab cannot attribute an event to another user.
 
 | Source | Events |
 |---|---|
-| `tmux-api` | session kill/rename/restore, session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe |
+| `tmux-api` | session kill/rename/retitle/restore, the auto-title rule (`session.autonamed`), session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe |
 | `clipboard-upload` | image upload, gallery list, `show-image` registration, non-image transfers |
 | `file-api` | file preview, file save (by extension) |
 | `session-events` | prompt sent, cancel, SSE stream open/close |

@@ -39,7 +39,10 @@ Stored on the session itself (the `@title` tmux option), so everyone who can
 see the session sees the same title, and a durable copy re-stamps it after a
 restore. Clearing it hands the session back to the summary. A session with
 no title yet shows the first line of the prompt it was created with, or
-`New session`.
+`New session` — except where a question has to name ONE session and the
+answer cannot be taken back, such as a kill confirmation, which falls back
+to the **name** instead: `New session` reads the same for every untitled
+session, and the id is the only thing that tells them apart.
 _Avoid_: label, nickname, display name; and do not confuse with **pane
 title**, which is whatever is running in the pane describing itself.
 
@@ -198,22 +201,27 @@ _Avoid_: screenshots (images need not come from pastes)
 
 **Attachment**:
 A file carried by one message in the **Text view** — a photo or a
-document, uploaded when it is attached and referenced by its absolute
-path in the prompt, which is what Claude reads. Up to 25MB it joins the
-session's store directory under a `file-` prefix and rides the same
-30-day grace as **Session images**; larger, it stays a 7-day transfer
-ephemeron in /tmp and carries no chip. Before sending it is a removable
-chip in the composer's **tray**; after sending it is drawn where its
-path stands in the message. An attachment whose bytes nothing can serve
-— another user's store, outside the caller's home, swept — shows its
-path instead.
+document, referenced by its absolute path in the prompt, which is what
+Claude reads. Up to 25MB it joins the session's store directory under a
+`file-` prefix and rides the same 30-day grace as **Session images**;
+larger, it stays a 7-day transfer ephemeron in /tmp and carries no chip.
+Before sending it is a removable chip in the composer's **tray**; after
+sending it is drawn where its path stands in the message. An attachment
+whose bytes nothing can serve — another user's store, outside the
+caller's home, swept — shows its path instead.
+The upload happens when the file is attached in a live **Composer**, and
+on send in the **New-session composer**, which has no session to upload
+into until Enter creates one.
 _Avoid_: upload (names the act, not the thing), image (a document is
 one too)
 
 **Tray**:
 The strip of pending Attachments above the composer's input, with the
 unsent message text its other half. Both persist per (session, browser)
-so a reload or an evicted tab does not lose a half-written message.
+so a reload or an evicted tab does not lose a half-written message. In
+the **New-session composer** only the text persists: its files are still
+`File` objects in the tab, which JSON cannot carry, so a reloaded tab
+shows the prose with an empty tray.
 _Avoid_: attachment bar, dropzone (the drop target is the whole window)
 
 ### Skills
@@ -279,6 +287,41 @@ marketplace, so it is less final than a skill **delete**.
 _Avoid_: remove, delete
 
 ### The text view
+
+**Prompt field**:
+The surface a prompt is written on: multi-line, Enter to send and Shift+Enter
+for a newline, `/` and `@` completion, an attachment **tray**, and an unsent
+draft kept per browser. One component, mounted by both composers.
+_Avoid_: input box, message box
+
+**Composer**:
+The prompt field for a LIVE Session, with the things that only mean something
+once there is a session to talk to around it — the permission panel, the
+prompts Claude has queued, the permission-mode chip, the context meter and
+Stop.
+_Avoid_: chat box, prompt bar
+
+**New-session composer**:
+The prompt field for a session that does not exist yet, shown wherever nothing
+is selected and on a phone as the landing view. You type what you want to do,
+press Enter, and the session is created with your text as its first prompt.
+Three choices sit under it: which **project** it lands in, which command runs,
+and which model. Choosing a plain shell turns it back into a name box, because
+a shell has no prompt to receive.
+_Avoid_: create row, new-session form, session wizard
+
+**First prompt**:
+What the **New-session composer** sends to a session it has just created: the
+model line, when one was picked, and then the message itself. It waits for the
+session to be READY rather than merely reachable — a session tmux has made
+accepts input for seconds before the Claude in its pane is ready to read any,
+and text sent into that window is dropped with `POST /prompt` still answering
+204. The wait happens server-side, where the evidence is: `POST /prompt` takes
+an `awaitReady` flag and holds the injection until the pane draws Claude's own
+prompt character and holds still, answering 503 until then. The retry ladder
+carries the retries, and its last rung asks for no wait, so a pane that never
+draws one still gets the text.
+_Avoid_: initial message, seed prompt
 
 **Text view**:
 The structured rendering of a Session, read from its Claude Code transcript

@@ -288,7 +288,7 @@ describe("touch ergonomics — sized for a finger, phone or tablet", () => {
     // Safari zooms when a focused field is under 16px and does not zoom back
     // out, which on the phone layout leaves a list you have to pan sideways.
     const block = touchBlock();
-    for (const sel of [".tl-new-input", ".tl-new-cmd", ".tl-add-input", ".tl-card-rename"]) {
+    for (const sel of [".tl-new-cmd", ".tl-add-input", ".tl-card-rename"]) {
       expect(block, sel).toContain(sel);
     }
     expect(block).toMatch(/font-size:\s*16px/);

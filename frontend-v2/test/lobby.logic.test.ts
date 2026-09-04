@@ -13,10 +13,10 @@ import {
   moveGroup,
   moveSession,
   moveSessionToAnchor,
+  opensOnContent,
   relativeTime,
   removeSessionFromLayout,
   renameProject,
-  renameSessionInLayout,
   reorderGroups,
   sameLayout,
   stabilizeModel,
@@ -492,18 +492,11 @@ describe("project CRUD", () => {
 });
 
 describe("session CRUD in layout", () => {
-  it("addSessionToGroup then rename then remove", () => {
+  it("addSessionToGroup then remove", () => {
     let l = addSessionToGroup(emptyLayout(), "sess", "");
     expect(l.ungrouped).toEqual(["sess"]);
-    l = renameSessionInLayout(l, "sess", "sess2");
-    expect(l.ungrouped).toEqual(["sess2"]);
-    l = removeSessionFromLayout(l, "sess2");
+    l = removeSessionFromLayout(l, "sess");
     expect(l.ungrouped).toEqual([]);
-  });
-
-  it("rename follows the dock session too", () => {
-    const l = layout({ dock: { session: "d", visible: true } });
-    expect(renameSessionInLayout(l, "d", "d2").dock!.session).toBe("d2");
   });
 });
 
@@ -608,5 +601,29 @@ describe("sameLayout", () => {
   it("treats an absent optional as equal to an absent optional", () => {
     const a: Layout = { version: 1, projects: [{ name: "p", sessions: [] }], ungrouped: [], ungroupedIndex: 0 };
     expect(sameLayout(a, JSON.parse(JSON.stringify(a)) as Layout)).toBe(true);
+  });
+});
+
+/**
+ * Which pane the app opens on.
+ *
+ * The change worth pinning is that a phone with NO session in the URL stops
+ * landing on the session list: nothing selected is the new-session composer
+ * now, so a phone opens ready to type (docs/plans/2026-09-04-prompt-first-
+ * sessions-design.md).
+ */
+describe("opensOnContent", () => {
+  it("opens a phone on the content pane, session in the URL or not", () => {
+    expect(opensOnContent({ flip: true, hasSelection: true, savedCollapse: false })).toBe(true);
+    expect(opensOnContent({ flip: true, hasSelection: false, savedCollapse: false })).toBe(true);
+    // The desktop collapse is a width preference, and a phone has no width to
+    // prefer — honouring it here would decide which screen the app opens on.
+    expect(opensOnContent({ flip: true, hasSelection: false, savedCollapse: true })).toBe(true);
+  });
+
+  it("leaves a desktop on whatever the user last set", () => {
+    expect(opensOnContent({ flip: false, hasSelection: true, savedCollapse: true })).toBe(true);
+    expect(opensOnContent({ flip: false, hasSelection: true, savedCollapse: false })).toBe(false);
+    expect(opensOnContent({ flip: false, hasSelection: false, savedCollapse: false })).toBe(false);
   });
 });

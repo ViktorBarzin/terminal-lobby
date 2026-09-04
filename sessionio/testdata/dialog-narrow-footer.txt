@@ -1,0 +1,38 @@
+
+  Revised size behind your parity bar: about 2,700 lines
+  of term.html, not 800. The big items are the compose
+  mirror 433, links 355, pinch 210, bell 175, touch scroll
+  166, two-finger tap 143, drag-selection reclaim 135.
+
+  Step 1 is unchanged and I'd add the constructor options,
+  onHeld and askConn to it. But two things want your call
+  before I go.
+──────────────────────────────────────────────────────────
+←  ☐ Gesture scope  ☐ CSS floor  ✔ Submit  →
+
+│ At 2,700 lines, does the parity bar still include the
+│ low-value gesture rows? Two-finger tap hides the
+│ soft-key toolbar (143 lines), three-finger swipe cycles
+│ sessions on coarse Android only (105), and both need a
+│ shared multi-touch registration module first (113). That
+│ is 361 lines for two gestures.
+
+❯ 1. Drop all three (Recommended)
+     361 lines out. Touch scroll, pinch-zoom and the
+     compose mirror stay, since those are how you scroll,
+     size and type. The two gestures are conveniences you
+     can ask for later if you miss them.
+  2. Keep everything, full parity
+     Port all 2,700 lines including both gestures. Nothing
+     about today's terminal changes for you, at the cost
+     of the longest path to the flip.
+  3. Keep two-finger tap, drop the swipe
+     The toolbar hide is the one you would notice on a
+     tablet; session cycling has a UI equivalent. Costs
+     the multi-touch module regardless, so 256 lines.
+  4. Type something.
+──────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to
+cancel

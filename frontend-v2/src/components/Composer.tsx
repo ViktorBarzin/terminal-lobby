@@ -1,63 +1,44 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  Show,
-  onCleanup,
-  onMount,
-  type Component,
-} from "solid-js";
+import { For, Show, type Component } from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import { MAX_QUEUED_SHOWN, type PendingPermission } from "./timeline.logic";
 import { PermissionPanel } from "./PermissionPanel";
-import {
-  composeMessage,
-  completionFor,
-  mergeCommands,
-  scrollTopFor,
-  modeLabel,
-  BUILTIN_COMMANDS,
-  type Completion,
-  type CompletionItem,
-  type SlashCommand,
-} from "./compose.logic";
-import { clearDraft, loadDraft, saveDraft, type DraftAttachment } from "../store/drafts";
-import { contentUrlFor, storedDisplayName } from "../lib/attachments";
-import { FileTextIcon, PaperclipIcon } from "./Icons";
+import { modeLabel, type SlashCommand } from "./compose.logic";
+import type { DraftAttachment } from "../store/drafts";
 import { ContextMeter } from "./ContextMeter";
 import type { ContextState } from "./context.logic";
+import { PromptField, type PromptFieldSinks } from "./PromptField";
 
 /**
- * Prompt composer with the permission panel docked above it. Send is always
- * offered; Stop joins it while a turn is in flight (Stop = inject ESC/Ctrl-C
- * into the pty). Sending mid-turn QUEUES the prompt — Claude Code queues typed
- * input itself, and the queued chips above the field are its own records of
- * having done so. Enter sends, Shift+Enter inserts a newline. When a permission is pending and the input is
+ * The LIVE session's composer: everything that only means something once there
+ * is a session to talk to, docked around the shared writing surface.
+ *
+ * Above the field: the permission panel, and Claude's own records of prompts it
+ * has queued. On the bar: the permission-mode chip, the context meter and Stop.
+ * The field itself, the attachment tray, `/` and `@` completion, drafts, ↑
+ * history and the Enter/Shift+Enter contract are `PromptField`, shared with the
+ * new-session composer.
+ *
+ * Send is always offered; Stop joins it while a turn is in flight (Stop =
+ * inject ESC/Ctrl-C into the pty). Sending mid-turn QUEUES the prompt — Claude
+ * Code queues typed input itself, and the queued chips above the field are its
+ * own records of having done so. When a permission is pending and the input is
  * empty, 1 approves / 2 denies (T3 number-key affordance).
  *
  * Sending goes through ONE route on every device: `onSend` (the session control
- * channel, session-events /prompt). See submit() for why the coarse-pointer
- * fork through the terminal iframe was removed.
- * The mobile input attributes (autocapitalize off, autocorrect/spellcheck on,
- * enterkeyhint send) restore QuickType / swipe typing and are harmless on
- * desktop.
+ * channel, session-events /prompt). It used to fork on `sendToTerminal` for a
+ * coarse pointer and post the bytes into the terminal IFRAME instead — and in
+ * Text mode that iframe has not attached yet, because the attach is
+ * deliberately lazy. sendBytesToFrame returns false with no contentWindow and
+ * nothing upstream looked at the result, so the field was cleared and the
+ * message went nowhere: typing on a phone, pressing send, and watching the text
+ * vanish. The control channel needs no attached iframe, is the same path the
+ * desktop has always used, and reports whether it landed.
  */
 /** What a caller outside the composer may put into the message being written. */
-export interface ComposerSinks {
-  /** Add attachments to the tray (a window drop, a gallery tile). */
-  add: (items: DraftAttachment[]) => void;
-  /** Insert text at the caret (a clipboard paste that is not an image). */
-  insertText: (text: string) => void;
-  /** Put the caret in the message field — what "Chat about this" does with a
-   *  question the reader would rather answer in their own words. */
-  focus: () => void;
-}
+export type ComposerSinks = PromptFieldSinks;
 
 export const Composer: Component<{
-  /** The text view's pinch size. Read only to re-measure the field when it
-   *  changes — the height is written in px, so the text would otherwise outgrow
-   *  a box that stays where it was. */
+  /** The text view's pinch size, forwarded to the field. */
   textSize?: number;
   /** A turn is in flight, so there is something to Stop. NOT a reason to
    *  withhold Send: it is derived from the transcript and lags the pane, and a
@@ -75,8 +56,8 @@ export const Composer: Component<{
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Forward raw pty bytes to the live terminal iframe. No longer used for
-   *  SENDING (see submit) — kept for callers that hand bytes to the pty for
-   *  other reasons, e.g. answering a prompt the transcript cannot express. */
+   *  SENDING — kept for callers that hand bytes to the pty for other reasons,
+   *  e.g. answering a prompt the transcript cannot express. */
   sendToTerminal?: (bytes: string) => void;
   /** Prompts already sent in this session, oldest first (↑ recalls them). */
   history?: string[];
@@ -112,425 +93,19 @@ export const Composer: Component<{
   onOpenPreview?: (path: string) => void;
   /** Watching: the controls that type are inert, and so is attaching. */
   inertReason?: string;
-  /**
-   * Hand the caller the two sinks a message can be filled from OUTSIDE this
-   * component.
-   *
-   * The draft's state belongs here, with the persistence that backs it — but the
-   * gestures do not: a drag-and-drop lands on the WINDOW, and the Paste button,
-   * the ⌘V chord and the command palette all run in the session view
-   * (clipboard/attach.ts, clipboard/paste-into-terminal.ts). Rather than hoisting
-   * the state up past the thing that owns it, the view is handed these on mount.
-   */
+  /** Hand the caller the sinks a message can be filled from OUTSIDE this
+   *  component (a window drop, a gallery tile, a paste). */
   register?: (api: ComposerSinks) => void;
 }> = (props) => {
-  let ta: HTMLTextAreaElement | undefined;
-  let fileInput: HTMLInputElement | undefined;
-  const [draft, setDraft] = createSignal("");
-  const [tray, setTray] = createSignal<DraftAttachment[]>([]);
-  const [attaching, setAttaching] = createSignal(false);
-  const [caret, setCaret] = createSignal(0);
-  const [paths, setPaths] = createSignal<string[]>([]);
-  const [picked, setPicked] = createSignal(0);
-  let menuEl: HTMLDivElement | undefined;
-
   /**
-   * Follow the selection with the scroller.
-   *
-   * The menu shows about four rows of a catalogue that runs to 148, so arrowing
-   * down without this picked rows nobody could see after the fourth press.
-   * Measured against the CONTAINER rather than with scrollIntoView, which also
-   * scrolls ancestors — this app is laid out against a mobile viewport the
-   * platform already drags around on its own.
-   *
-   * Re-runs on the completion as well as on the index: typing re-filters the
-   * list and resets the selection to the first row, which has to bring the
-   * scroller back to the top with it.
+   * 1 approves the oldest pending permission, 2 denies it — but only on an
+   * empty field, and only when there IS one, so the digits stay typable.
    */
-  createEffect(() => {
-    completion();
-    const i = picked();
-    const menu = menuEl;
-    if (!menu) return;
-    const item = menu.children[i] as HTMLElement | undefined;
-    if (!item) return;
-    const top =
-      item.getBoundingClientRect().top -
-      menu.getBoundingClientRect().top +
-      menu.scrollTop;
-    menu.scrollTop = scrollTopFor(top, item.offsetHeight, menu.scrollTop, menu.clientHeight);
-  });
-  /** Where ↑ has walked to in history; -1 is "not browsing". */
-  const [histAt, setHistAt] = createSignal(-1);
-
-  /**
-   * Make the field as tall as its text.
-   *
-   * `scrollHeight` covers content and padding but NOT the border, and
-   * everything here is border-box (app.css:5) — so writing it straight back as
-   * a height leaves the content box short by exactly the borders, and a single
-   * line is sliced along its middle. Measured before this: a 24px line in a
-   * 42px field with 40px of client height.
-   *
-   * Re-measured whenever the pinch size changes as well as on input: the height
-   * is written in px at the moment of typing, so without that the text grows
-   * inside a box that stays where it was.
-   */
-  const autosize = () => {
-    if (!ta) return;
-    ta.style.height = "auto";
-    const chrome = ta.offsetHeight - ta.clientHeight; // borders, under border-box
-    ta.style.height = Math.min(ta.scrollHeight + chrome, 200) + "px";
-  };
-
-  const sync = () => {
-    if (!ta) return;
-    setDraft(ta.value);
-    setCaret(ta.selectionStart ?? ta.value.length);
-    autosize();
-  };
-
-  const clear = () => {
-    if (!ta) return;
-    ta.value = "";
-    setDraft("");
-    setTray([]);
-    setHistAt(-1);
-    autosize();
-    if (props.session) clearDraft(props.session);
-  };
-
-  // ---- the unsent draft: restored on mount, saved on every change ----------
-  // Restored on MOUNT rather than in an effect keyed on the session: this
-  // component is remounted per session (SessionView is), so a reactive restore
-  // would only ever fire once anyway, and doing it here keeps it from racing the
-  // first keystroke.
-  onMount(() => {
-    const key = props.session;
-    if (!key) return;
-    const saved = loadDraft(key);
-    if (!saved) return;
-    setTray(saved.attachments);
-    if (saved.text && ta) {
-      ta.value = saved.text;
-      setDraft(saved.text);
-      autosize();
-    }
-  });
-
-  /**
-   * Keep the field's height derived, not pinned.
-   *
-   * autosize writes a px height, and it used to run only on input, on clear,
-   * and on mount when a draft was restored — so an untouched field kept
-   * whatever the single measurement at mount produced. Clicking it called
-   * sync(), which called autosize, which is why touching it "resized it
-   * correctly": the click was the second measurement.
-   *
-   * Three things that decide a line's height can arrive after that first
-   * measurement, so all three re-derive it:
-   *   - the pinch scale, which reaches this field through a custom property on
-   *     an ancestor;
-   *   - the webfont, whose metrics differ from the fallback it replaces;
-   *   - the field's own WIDTH, which decides how many lines the text wraps to,
-   *     and changes when the sidebar collapses or the phone rotates.
-   *
-   * Width only from the observer: autosize writes the height, so watching the
-   * height would chase itself.
-   */
-  createEffect(() => {
-    props.textSize;
-    autosize();
-  });
-
-  onMount(() => {
-    autosize();
-    // The font swap changes the metrics under a height already written in px.
-    void (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready
-      ?.then(() => autosize())
-      .catch(() => {});
-    if (!ta || typeof ResizeObserver === "undefined") return;
-    let lastWidth = -1;
-    const ro = new ResizeObserver(() => {
-      const w = ta ? ta.clientWidth : 0;
-      if (w === lastWidth) return; // our own height write, not a real change
-      lastWidth = w;
-      autosize();
-    });
-    ro.observe(ta);
-    onCleanup(() => ro.disconnect());
-  });
-
-  createEffect(() => {
-    const key = props.session;
-    if (!key) return;
-    // Both halves are read reactively so either one changing persists the pair.
-    const text = draft();
-    const attachments = tray();
-    saveDraft(key, { text, attachments, at: Date.now() });
-  });
-
-  // ---- attaching -----------------------------------------------------------
-  const attach = async (files: File[]): Promise<void> => {
-    if (!files.length || !props.onAttach) return;
-    setAttaching(true);
-    try {
-      // De-duplicated by path in addToTray: attaching the same file twice would
-      // ask Claude to read it twice and give the tray two identical chips.
-      addToTray(await props.onAttach(files));
-    } finally {
-      setAttaching(false);
-    }
-  };
-
-  const addToTray = (items: DraftAttachment[]): void => {
-    if (!items.length) return;
-    setTray((current) => {
-      const have = new Set(current.map((a) => a.path));
-      return [...current, ...items.filter((a) => !have.has(a.path))];
-    });
-  };
-  /**
-   * Insert text at the caret — what a paste read OUTSIDE this component does to
-   * the message being written. Same splice the completion menu performs, so a
-   * paste behaves like typing: the caret lands after the inserted text and the
-   * rest of the message survives.
-   */
-  const insertText = (text: string): void => {
-    if (!ta || !text) return;
-    const at = ta.selectionStart ?? ta.value.length;
-    const end = ta.selectionEnd ?? at;
-    ta.value = ta.value.slice(0, at) + text + ta.value.slice(end);
-    const pos = at + text.length;
-    ta.setSelectionRange(pos, pos);
-    sync();
-    ta.focus();
-  };
-
-  onMount(() =>
-    props.register?.({ add: addToTray, insertText, focus: () => ta?.focus() }),
-  );
-
-  const removeAt = (path: string): void => {
-    setTray((current) => current.filter((a) => a.path !== path));
-  };
-
-  /** What `/` or `@` at the caret is currently offering. */
-  // Built-ins plus what this session actually has. Merged in a memo so a
-  // catalogue that arrives after the first keystroke shows up in the menu the
-  // reader is already looking at.
-  const catalogue = createMemo<SlashCommand[]>(() =>
-    mergeCommands(BUILTIN_COMMANDS, props.commands ?? []),
-  );
-  const completion = createMemo<Completion | null>(() =>
-    completionFor(draft(), caret(), paths(), catalogue()),
-  );
-
-  // `@` completes against the real filesystem, so the listing is fetched for
-  // whichever directory the token names.
-  // A sentinel no directory can equal, so the first refresh always fetches.
-  // Escaped, NOT a literal NUL byte: a raw one makes this whole file read as
-  // binary, and every grep over the tree silently skips it.
-  let lastDir = "\0";
-  const refreshPaths = async () => {
-    const c = completion();
-    if (!c || c.trigger !== "@" || !props.onListDir) return;
-    if (c.dir === lastDir) return;
-    lastDir = c.dir;
-    setPaths(await props.onListDir(c.dir));
-  };
-
-  const applyCompletion = (item: CompletionItem) => {
-    const c = completion();
-    if (!ta || !c) return;
-    const value = item.value;
-    const before = draft().slice(0, c.start);
-    const after = draft().slice(caret());
-    // A directory keeps the menu open so the next segment can be picked.
-    const suffix = value.endsWith("/") ? "" : " ";
-    ta.value = before + value + suffix + after;
-    const pos = before.length + value.length + suffix.length;
-    ta.setSelectionRange(pos, pos);
-    setPicked(0);
-    sync();
-    void refreshPaths();
-    ta.focus();
-  };
-
-  /**
-   * Send the composed message.
-   *
-   * ONE route: the session's control channel (`onSend` → session-events
-   * /prompt), which drives tmux server-side. It used to fork on
-   * `sendToTerminal` for a coarse pointer and post the bytes into the terminal
-   * IFRAME instead — and in Text mode that iframe has not attached yet, because
-   * the attach is deliberately lazy. sendBytesToFrame returns false with no
-   * contentWindow and nothing upstream looked at the result, so the field was
-   * cleared and the message went nowhere: typing on a phone, pressing send, and
-   * watching the text vanish. The control channel needs no attached iframe, is
-   * the same path the desktop has always used, and reports whether it landed.
-   *
-   * The field is cleared optimistically because it has to feel instant, and the
-   * text is put BACK if the send did not land — so a failure (a 5xx, an
-   * unreachable box) can never destroy what was typed. Only a field the user has
-   * not since typed into is restored.
-   */
-  const submit = () => {
-    const raw = ta?.value ?? "";
-    const held = tray();
-    // The TRAY counts too: attachments with no prose is a valid message, so the
-    // old `if (!t) return` would have swallowed a photo sent on its own.
-    const message = composeMessage(raw, held.map((a) => a.path));
-    if (!message) return;
-    clear();
-    void props.onSend(message).then((ok) => {
-      if (ok || !ta || ta.value !== "") return;
-      // A refusal restores BOTH halves. The text already had this guarantee; an
-      // attachment needs it more, because re-attaching means finding the file
-      // again.
-      ta.value = raw;
-      setDraft(raw);
-      setTray(held);
-      autosize();
-    });
-  };
-
-  const onKeyDown = (e: KeyboardEvent) => {
-    const empty = (ta?.value ?? "") === "";
-    const c = completion();
-
-    // The completion menu owns the arrows and Enter while it is open.
-    if (c && c.items.length > 0) {
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        const n = c.items.length;
-        setPicked((p) => (e.key === "ArrowDown" ? (p + 1) % n : (p - 1 + n) % n));
-        return;
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault();
-        applyCompletion(c.items[picked()] ?? c.items[0]!);
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setPaths([]);
-        setCaret(-1); // closes the menu until the next keystroke
-        return;
-      }
-    }
-
-    // Number-key permission affordance (only when not mid-typing).
-    if (empty && props.pending.length > 0 && (e.key === "1" || e.key === "2")) {
-      const p = props.pending[0];
-      if (p) {
-        e.preventDefault();
-        props.onResolve(p.reqId, e.key === "1" ? "allow" : "deny");
-        return;
-      }
-    }
-
-    // ↑ from an empty field walks back through this session's prompts.
-    const hist = props.history ?? [];
-    if (e.key === "ArrowUp" && hist.length > 0 && (empty || histAt() >= 0)) {
-      e.preventDefault();
-      const next = histAt() < 0 ? hist.length - 1 : Math.max(0, histAt() - 1);
-      setHistAt(next);
-      if (ta) {
-        ta.value = hist[next] ?? "";
-        sync();
-      }
-      return;
-    }
-    if (e.key === "ArrowDown" && histAt() >= 0) {
-      e.preventDefault();
-      const next = histAt() + 1;
-      if (next >= hist.length) {
-        setHistAt(-1);
-        clear();
-      } else {
-        setHistAt(next);
-        if (ta) {
-          ta.value = hist[next] ?? "";
-          sync();
-        }
-      }
-      return;
-    }
-
-    // Shift+Tab cycles the permission mode, as it does in the CLI.
-    if (e.key === "Tab" && e.shiftKey && props.onCycleMode) {
-      e.preventDefault();
-      props.onCycleMode();
-      return;
-    }
-
-    // `isComposing` excludes the Enter an IME sends to COMMIT a candidate
-    // (Japanese/Chinese/Korean, and WebKit/iOS autocomplete): that keystroke
-    // belongs to the input method, not to us, and submitting on it sends a
-    // half-composed message and wipes the field.
-    if (e.key === "Enter" && e.shiftKey) {
-      // A deliberate soft newline: let the resulting insertLineBreak through.
-      allowLineBreak = true;
-      return;
-    }
-    if (e.key === "Enter" && !e.isComposing) {
-      e.preventDefault();
-      submit();
-    }
-  };
-
-  /**
-   * The phone keyboard's blue send/return key.
-   *
-   * Enter on a textarea is a line break, and which events a mobile keyboard
-   * fires for that key varies — with an IME or autocorrect committing a
-   * candidate, the keydown can arrive as a composition keystroke and be skipped
-   * (correctly) by the Enter handler below, leaving the message unsent. The
-   * `beforeinput` event is unambiguous: inputType "insertLineBreak" IS that key,
-   * it arrives before anything is inserted, and cancelling it keeps the newline
-   * out of the field. Shift+Enter still reaches the field as a soft newline,
-   * because that produces the same inputType only when the handler lets it
-   * through — hence the shift check kept in onKeyDown, and the flag below.
-   */
-  let allowLineBreak = false;
-  const onBeforeInput = (e: InputEvent) => {
-    if (e.inputType !== "insertLineBreak") return;
-    if (allowLineBreak) {
-      allowLineBreak = false;
-      return;
-    }
-    e.preventDefault();
-    submit();
-  };
-
-  /**
-   * iOS: take focus during the GESTURE, not on the click.
-   *
-   * `body.has-soft-keys .tl-views` grows its bottom margin by the keyboard
-   * height the moment visualViewport reports it, and the composer is the bottom
-   * child of that column — so between touchstart and the click, the field moves
-   * up by roughly the keyboard's height. The click then lands on whatever is now
-   * under the finger (the timeline), iOS reads that as a tap outside the input,
-   * and the keyboard that had just started opening closes again. Tapping a
-   * keyboard-height ABOVE the field was the only way to hit it.
-   *
-   * Focusing here — inside the user gesture, before any layout change — means
-   * the field already holds focus when that stray click arrives, so there is
-   * nothing left to steal. preventDefault stops the browser's own
-   * focus-on-click, which is what would otherwise blur it.
-   *
-   * Only when the field is NOT already focused: taking the gesture over on every
-   * touch would break placing the caret inside existing text.
-   */
-  const onPointerDown = (e: PointerEvent) => {
-    // Only a finger or a pen. Naming the types to ACT on rather than the one to
-    // skip means an event with no pointerType at all (an older browser, a
-    // synthetic event) leaves the mouse path untouched instead of hijacking it.
-    if (!ta || (e.pointerType !== "touch" && e.pointerType !== "pen")) return;
-    if (document.activeElement === ta) return;
-    e.preventDefault();
-    ta.focus();
+  const onEmptyDigit = (digit: string): boolean => {
+    const p = props.pending[0];
+    if (!p) return false;
+    props.onResolve(p.reqId, digit === "1" ? "allow" : "deny");
+    return true;
   };
 
   return (
@@ -555,150 +130,27 @@ export const Composer: Component<{
           </Show>
         </div>
       </Show>
-      {/* The attachment tray (decision 1). Above the input so the field stays
-          prose; each chip opens the file preview, and × removes it. Nothing here
-          is destructive — the file is already in the store and listed in the 🖼
-          gallery, so removing a chip drops a reference, never an upload. */}
-      <Show when={tray().length > 0}>
-        <div class="tl-tray" aria-label="Attachments">
-          <For each={tray()}>
-            {(item) => (
-              <div class="tl-tray-item" data-kind={item.kind}>
-                <button
-                  type="button"
-                  class="tl-tray-open"
-                  title={item.path}
-                  aria-label={`Open ${storedDisplayName(item.name)}`}
-                  onClick={() => props.onOpenPreview?.(item.path)}
-                >
-                  <Show
-                    when={item.kind === "image" && contentUrlFor(item.path, props.me ?? "")}
-                    fallback={
-                      <>
-                        <FileTextIcon />
-                        <span class="tl-tray-name">{storedDisplayName(item.name)}</span>
-                      </>
-                    }
-                  >
-                    <img
-                      src={contentUrlFor(item.path, props.me ?? "")!}
-                      alt={storedDisplayName(item.name)}
-                      loading="lazy"
-                    />
-                  </Show>
-                </button>
-                <button
-                  type="button"
-                  class="tl-tray-remove"
-                  aria-label={`Remove ${storedDisplayName(item.name)}`}
-                  onClick={() => removeAt(item.path)}
-                >
-                  ×
-                </button>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-      <Show when={completion() && completion()!.items.length > 0}>
-        <div class="tl-complete" role="listbox" ref={menuEl}>
-          <For each={completion()!.items}>
-            {(item, i) => (
-              <button
-                type="button"
-                class="tl-complete-item"
-                role="option"
-                aria-selected={i() === picked()}
-                data-picked={i() === picked() ? "true" : undefined}
-                onClick={() => applyCompletion(item)}
-                title={item.description}
-              >
-                <span class="tl-complete-name">{item.value}</span>
-                <Show when={item.description}>
-                  <span class="tl-complete-desc">{item.description}</span>
-                </Show>
-              </button>
-            )}
-          </For>
-        </div>
-      </Show>
-      {/* Field and controls in ONE surface. They were two: a bordered field
-          with an unbordered bar loose underneath it, which read as an input
-          that had lost its buttons. The border and the fill live here now and
-          the field goes transparent, so the whole thing is one control. */}
-      <div class="tl-composer-box">
-      <div class="tl-composer-row">
-        <textarea
-          ref={ta}
-          class="tl-composer-input"
-          rows={1}
-          placeholder="Message…"
-          title="Enter to send · Shift+Enter for a newline"
-          autocapitalize="off"
-          autocorrect="on"
-          spellcheck={true}
-          enterkeyhint="send"
-          aria-label="Message to send to the session"
-          onInput={() => {
-            sync();
-            setPicked(0);
-            void refreshPaths();
-          }}
-          onKeyDown={onKeyDown}
-          onBeforeInput={onBeforeInput}
-          onPointerDown={onPointerDown}
-          onClick={sync}
-        />
-      </div>
-      {/* The controls, on their own bar. They used to share the row with the
-          field, which left the field 92.8px of a 343.2px row once a turn
-          started and Stop appeared — 27%, for the thing the composer is for.
-          With the context meter present it fell to 26px and the row overflowed
-          its own width by 20px.
-
-          Two groups. The left one may scroll and give up width; the right one
-          never shrinks, so the controls that must stay reachable always are.
-          Send is the last child of it, permanently: today it jumps 71px left
-          the moment a turn starts, because Stop is inserted after it. */}
-      <div class="tl-composer-bar">
-        <div class="tl-bar-left">
-          <Show when={props.onAttach}>
-            {/* Present on EVERY device, which is the point: the soft-key row
-                carries Copy and Paste only, so a phone had no file picker in either
-                view — and the text view is the default view on a coarse pointer.
-                `capture` is deliberately absent so iOS offers Photo Library / Take
-                Photo / Choose File rather than jumping straight to the camera. */}
-            <input
-              ref={fileInput}
-              type="file"
-              multiple
-              hidden
-              aria-hidden="true"
-              onChange={(e) => {
-                const el = e.currentTarget;
-                const files = [...(el.files ?? [])];
-                el.value = ""; // let the same file be picked again
-                void attach(files);
-              }}
-            />
-            <button
-              type="button"
-              class="tl-attach-btn"
-              aria-label="Attach an image or file"
-              // What it TAKES and where it goes. A paperclip on its own was the
-              // only wordless control on this bar, and its purpose lived in a
-              // title, which a phone has no way to show.
-              title={
-                props.inertReason ||
-                "Attach an image or file — images join this session's gallery"
-              }
-              disabled={!!props.inertReason || attaching()}
-              onClick={() => fileInput?.click()}
-            >
-              <PaperclipIcon />
-              <span class="tl-attach-label">{attaching() ? "Attaching…" : "Attach"}</span>
-            </button>
-          </Show>
+      <PromptField
+        textSize={props.textSize}
+        onSend={props.onSend}
+        label="Message to send to the session"
+        history={props.history}
+        onListDir={props.onListDir}
+        commands={props.commands}
+        draftKey={props.session}
+        me={props.me}
+        onAttach={props.onAttach}
+        onOpenPreview={props.onOpenPreview}
+        inertReason={props.inertReason}
+        onCycleMode={props.onCycleMode}
+        onEmptyDigit={onEmptyDigit}
+        register={props.register}
+        sendTitle={
+          props.asking
+            ? "Send — this will dismiss the question Claude is asking, and it will ask again"
+            : undefined
+        }
+        leftExtra={
           <Show when={props.mode && props.onCycleMode}>
             <button
               type="button"
@@ -712,43 +164,18 @@ export const Composer: Component<{
               {modeLabel(props.mode ?? "")}
             </button>
           </Show>
-        </div>
-        <div class="tl-bar-right">
-          <Show when={props.context}>
-            {(ctx) => <ContextMeter state={ctx()} />}
-          </Show>
-          <Show when={props.working}>
-            <button type="button" class="tl-stop" onClick={() => props.onStop()}>
-              Stop
-            </button>
-          </Show>
-          {/* Send is always here; Stop JOINS it while there is a turn to stop.
-              Stop used to REPLACE it, which is the browser half of a turn gate
-              the server gave up on 2026-08-15 — mid-turn sends queue in Claude,
-              and Enter has been doing exactly that all along. What the swap cost
-              was the phone, where there is no Enter key to fall back on.
-
-              Rendering Send unconditionally also fixes a second, worse case.
-              `working` comes from the transcript, which lags the pane: measured
-              live, a session whose real state was `done` showed Stop in 98 of 100
-              samples over 300s (and kept doing so after a reload), and 17-22% of
-              sessions disagreed with their state at any moment. A finished
-              session could therefore offer no way to send at all. */}
-          <button
-            type="button"
-            class="tl-send"
-            onClick={submit}
-            title={
-              props.asking
-                ? "Send — this will dismiss the question Claude is asking, and it will ask again"
-                : undefined
-            }
-          >
-            Send
-          </button>
-        </div>
-      </div>
-      </div>
+        }
+        rightExtra={
+          <>
+            <Show when={props.context}>{(ctx) => <ContextMeter state={ctx()} />}</Show>
+            <Show when={props.working}>
+              <button type="button" class="tl-stop" onClick={() => props.onStop()}>
+                Stop
+              </button>
+            </Show>
+          </>
+        }
+      />
     </div>
   );
 };

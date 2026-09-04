@@ -186,6 +186,10 @@ var Package = Manifest{
 		{Src: "devvm/tmux-restore-user", Dest: "/usr/local/bin/tmux-restore-user", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-persist-forget", Dest: "/usr/local/bin/tmux-persist-forget", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/show-image", Dest: "/usr/local/bin/show-image", Mode: 0o755, Unmanaged: true},
+		// `tmux ls` with the title beside the id, for a shell. A command and
+		// not the shell alias ADR-0019 first described: an alias misses
+		// `ssh box tls`, scripts, and anyone on a shell it was not written for.
+		{Src: "devvm/tls", Dest: "/usr/local/bin/tls", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/claude-tmux-state", Dest: "/usr/local/bin/claude-tmux-state", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/claude-se-hook", Dest: "/usr/local/bin/claude-se-hook", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/clipboard-store-clean", Dest: "/usr/local/bin/clipboard-store-clean", Mode: 0o755},

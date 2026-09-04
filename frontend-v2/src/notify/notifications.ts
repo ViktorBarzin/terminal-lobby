@@ -51,6 +51,7 @@ import {
   pickTappedSession,
   type PendingNotif,
   registerServiceWorker,
+  stashExpired,
   stashIsActionable,
 } from "../pwa/register";
 import {
@@ -288,7 +289,23 @@ export function createNotificationSystem(
       const stale: string[] = [];
       for (const r of records) if (!(await stashIsActionable(r))) stale.push(r.session);
       reason(stale.length === records.length ? "stale" : "untapped");
-      if (stale.length) void clearPendingSessions(stale);
+      // Forget only what is genuinely finished with. This used to delete every
+      // record the actionable test refused, which includes the ones whose
+      // banner is STILL ON SCREEN — the reader had not tapped them yet. So
+      // opening the app by its icon, or just switching back to it, erased the
+      // record behind every notification still sitting in the shade, and the
+      // tap that came minutes later found nothing and went nowhere.
+      //
+      // The numbers say that is the common case, not an edge. Over 72 hours on
+      // the deployed build only 30 of 237 stash reads routed; 44 came back
+      // `absent`, and 16 of those had a record written less than 15 minutes
+      // earlier, so their window had not run out. Pushes for one session are a
+      // median of 956 s apart and Viktor answers them minutes later, while the
+      // unconditional window is 120 s, so nearly every real tap lands in the
+      // range this was clearing. The 2026-09-02 check passed because it tapped
+      // within seconds: 21 of its 27 routed reads were under that 120 s.
+      const spent = records.filter((r) => stashExpired(r)).map((r) => r.session);
+      if (spent.length) void clearPendingSessions(spent);
       return;
     }
     const session = pick.session;
@@ -385,15 +402,13 @@ export function createNotificationSystem(
   // which is exactly what a visit is made of.
   const visits = createVisitStore();
   const isUnseen = opts.isUnseen ?? ((s: TitleSession) => visits.isUnseen(s));
-  // Retitling a session renames it, so visit records keyed by the old name have
-  // to move or the next poll prunes them as dead — and a completion the user
-  // already saw returns as an unseen tick. The lobby store announces the rename
-  // rather than calling in, because it is built before this system is.
-  // The visit store keys by tmux session id now, so a rename carries itself and
-  // the `tl:session-renamed` listener that used to patch it is gone. It only ever
-  // fired for a rename made in THIS tab: one from a second tab, the phone, or a
-  // shell looked like a session vanishing and a stranger arriving, so the visit
-  // was pruned and work you had already read came back unread.
+  // Visit records are keyed by tmux's session id, so a rename carries itself.
+  // A `tl:session-renamed` listener used to patch them by name, and it only
+  // ever fired for a rename made in THIS tab: one from a second tab, the phone,
+  // or a shell looked like a session vanishing and a stranger arriving, so the
+  // visit was pruned and work you had already read came back unread. Nothing
+  // renames a lobby session any more (ADR-0019), and the id keying covers the
+  // migration and the restore path's collision rename.
   // Report whether the icon could actually be drawn, ONCE per distinct outcome.
   // The paint is best-effort and silent, which also meant nobody could tell a
   // drawn badge from a missing API — and on iOS that is the whole question,

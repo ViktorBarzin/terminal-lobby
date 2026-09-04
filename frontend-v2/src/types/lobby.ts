@@ -1,3 +1,5 @@
+import { isSessionId } from "../lib/session-id";
+
 /**
  * Lobby wire types — mirror the tmux-api Go shapes EXACTLY (tmux-api/main.go
  * `Session`, tmux-api/layout.go `Layout`/`Project`/`DockState`). Field names are
@@ -23,9 +25,11 @@ export type SessionTool = "claude" | "codex" | "shell";
 export interface Session {
   name: string;
   /** tmux's own session id ($0, $1, …). The ONE identifier that survives a
-   *  rename, which is how a tab whose selected session was retitled elsewhere
-   *  follows it instead of holding a name whose attach would create a fresh
-   *  empty session. Absent from a server that predates it. */
+   *  rename, which is what `store/visits.ts` keys read/unread records by: a
+   *  session renamed by the one-time id migration, or by restore's collision
+   *  path, keeps work the user had already read marked as read. It does NOT
+   *  survive a tmux server restart, which is why it is not the session's name.
+   *  Absent from a server that predates it. */
   id?: string;
   /** The display title a person chose — arbitrary text, up to 64 code points,
    *  from the session's @title option. Absent means the session has no title
@@ -110,20 +114,69 @@ export interface Whoami {
 export const LAYOUT_VERSION = 1;
 
 /** Session name charset (tmux-api sessionNameRe). Shared client-side validation.
- *  This is the NAME — the identifier — not the title: a person types a title and
- *  `lib/slug.ts` derives something matching this from it. */
+ *  This is the NAME — the identifier — not the title. `lib/session-id.ts` mints
+ *  one for every session the lobby creates, and a 12-character id satisfies this
+ *  unchanged, which is why nothing that validates a name had to move for
+ *  ADR-0019. Names from before ids, and shells someone named by hand, also live
+ *  in here. */
 export const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 
+/** What an untitled session with a minted id reads as. */
+export const NEW_SESSION_LABEL = "New session";
+
 /**
- * What to SHOW for a session: its title when it has one, otherwise its name.
+ * What to SHOW for a session: its title, or what stands in for one.
  *
  * Every user-facing surface goes through this — cards, the tab title, the
  * command palette, the dock, push bodies, confirmations, aria-labels. The name
  * still travels underneath as the identifier; it is only the display that
  * changes.
+ *
+ * With no title, what shows depends on whether the name says anything. A
+ * minted id (ADR-0019) does not, so `New session` is shown instead: it is the
+ * honest description of a session whose summary has not landed yet, and twelve
+ * random characters are worse than saying nothing. A name that was never
+ * minted here still reads — sessions from before the migration, a shell
+ * somebody named by hand, and t3-bridge's cwd-derived names.
+ *
+ * The line a session was created with is NOT read here. The store fills it into
+ * `title` as the poll lands (store/prompt-line.ts), so every surface that shows
+ * a title shows it, and this stays a pure function of the wire shape.
  */
 export function sessionLabel(s: Pick<Session, "name" | "title">): string {
+  if (s.title && s.title.length > 0) return s.title;
+  return isSessionId(s.name) ? NEW_SESSION_LABEL : s.name;
+}
+
+/**
+ * What a CONFIRMATION calls a session — a kill prompt, anything where the
+ * answer is irreversible and the question has to name one session and not
+ * another.
+ *
+ * `sessionLabel` answers `New session` for every untitled minted id, so
+ * `Kill session "New session"?` cannot tell two of them apart. The id is the
+ * only thing that can, and this is also where it becomes readable at all: a
+ * name is invisible everywhere else now (ADR-0019's last consequence).
+ */
+export function sessionConfirmLabel(s: Pick<Session, "name" | "title">): string {
   return s.title && s.title.length > 0 ? s.title : s.name;
+}
+
+/**
+ * What a rename box OPENS on: the session's own title, and "" when it has none.
+ *
+ * Not `sessionLabel`. Offering `New session` for editing invites someone to
+ * save the placeholder as a real title, and stamping a title is what stops
+ * Claude's summary from ever landing (tmux-api/autotitle.go). An empty box says
+ * the same thing honestly, and typing nothing into it changes nothing.
+ */
+export function sessionTitleDraft(s: Pick<Session, "name" | "title"> | undefined): string {
+  if (!s) return "";
+  if (s.title && s.title.length > 0) return s.title;
+  // No title. A minted id says nothing, so the box opens empty; a name from
+  // before ids — or one t3-bridge derived from a directory — is what the card
+  // reads, so it is a fair thing to start editing.
+  return isSessionId(s.name) ? "" : s.name;
 }
 
 export function emptyLayout(): Layout {

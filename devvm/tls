@@ -1,0 +1,16 @@
+#!/bin/sh
+# tls — `tmux ls`, readable again.
+#
+# A session's name is an opaque id now (docs/adr/0019-a-session-name-is-an-id-
+# not-a-label.md), so `tmux ls` from a shell reads as a machine listing. The
+# thing a person recognises is the @title Claude Code's own conversation summary
+# lands in, and this prints it beside the id.
+#
+# Shipped as a COMMAND rather than the shell alias the ADR first described: an
+# alias reaches only interactive shells whose rc file was sourced, and misses
+# `ssh box tls`, scripts, and anyone whose shell is not the one the alias was
+# written for. Plain `tmux ls` still works and still shows ids.
+#
+# Every argument is passed through, so `tls -f '#{session_attached}'` and the
+# rest of tmux's own filtering still work.
+exec tmux list-sessions -F '#{session_name}  #{@title}' "$@"

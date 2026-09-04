@@ -71,9 +71,30 @@ async function displayedForTag(tag: string): Promise<number | null> {
 }
 
 /**
+ * Is this record finished with, whatever happens next? Malformed, or past the
+ * outer window and so no longer evidence of anything. Deleting one of these
+ * costs nothing.
+ *
+ * It is deliberately much narrower than "not actionable". A receipt whose
+ * banner is still on screen is not actionable YET and is not finished with
+ * either: the reader has not tapped it, and will. Treating the two the same is
+ * what made a plain icon launch erase every notification still in the shade,
+ * so the tap that came afterwards had nothing to route on (see the prune in
+ * notify/notifications.ts).
+ */
+export function stashExpired(rec: PendingNotif | null, now = Date.now()): boolean {
+  if (!rec || typeof rec.session !== "string" || !NAME_RE.test(rec.session)) return true;
+  if (typeof rec.ts !== "number") return true;
+  const age = now - rec.ts;
+  return age < 0 || age > STASH_MAX_AGE_MS;
+}
+
+/**
  * Is a stashed record still worth landing the launch on? Conservative on every
  * unknown: an unreadable registration must never become a jump the user did not
  * ask for. `now`/`openNotifications` are injectable for tests only.
+ *
+ * False here does NOT mean the record is spent. Use `stashExpired` for that.
  */
 export async function stashIsActionable(
   rec: PendingNotif | null,
@@ -82,10 +103,10 @@ export async function stashIsActionable(
     openNotifications?: (tag: string) => Promise<number | null>;
   } = {},
 ): Promise<boolean> {
-  if (!rec || typeof rec.session !== "string" || !NAME_RE.test(rec.session)) return false;
-  if (typeof rec.ts !== "number") return false;
-  const age = (opts.now ?? Date.now()) - rec.ts;
-  if (age < 0 || age > STASH_MAX_AGE_MS) return false;
+  const now = opts.now ?? Date.now();
+  if (stashExpired(rec, now)) return false;
+  if (!rec) return false;
+  const age = now - rec.ts;
   if (rec.tapped) return true; // an actual click routed here
   if (age < PENDING_NOTIF_TTL_MS) return true; // fresh receipt (the iOS tap window)
   // Older receipt: land only if its banner is gone (tapped or dismissed).

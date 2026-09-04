@@ -135,11 +135,19 @@ src/
                          lookbehind on every render, and lookbehind is Safari
                          16.4 — so on iPadOS 15.8 it is dropped and the message
                          still renders, minus tables/task lists/strikethrough
-    slug.ts              Display TITLE → tmux session NAME: romanize, lowercase,
-                         collapse, cap at 32. Mirrors Go's terminal-lobby/slug
-                         against the shared slug/vectors.json — the browser has
-                         to derive a name unaided, since creating a session
-                         reaches no server at all
+    title.ts             Normalizes a display TITLE: control characters to a
+                         space, whitespace runs collapsed, capped at 64 code
+                         points. Mirrors Go's slug.CleanTitle, which tmux-api
+                         runs on every title it stores. It used to derive a
+                         session NAME from the title too; ADR-0019 ended that
+                         and session-id.ts mints the name instead
+    session-id.ts        Mints a session's NAME: 12 characters of lowercase
+                         Crockford base32 from crypto.getRandomValues, and the
+                         test that says a name is one of ours. The name is an
+                         opaque id that never moves (ADR-0019), minted here
+                         because creating a session reaches no server. Mirrored
+                         by tmux-api/sessionid.go, which the one-time migration
+                         reads to tell a migrated session from a named one
     file-api.ts          file-api client (list/read/write; maps 404/413/400).
                          contentUrl() re-exports the resolver below, so a read
                          of a clipboard-store path goes to clipboard-upload
@@ -159,6 +167,20 @@ src/
                          plus lensTarget(), the one answer for "whose account
                          is this tab looking at": it makes a session open
                          WATCHING and namespaces the Watch choice per target
+    models.ts            Which model a new session starts on. Applied as
+                         `/model <name>` down the prompt channel rather than as
+                         a launch flag: a per-model command key would miss the
+                         pre-warm pool and give up Claude's ~2.4s boot on every
+                         model but the default
+    first-prompt.ts      Delivering the FIRST prompt of a session created a
+                         moment ago. A session tmux has made is reachable
+                         seconds before the Claude in it is ready to read
+                         anything, and POST /prompt answers 204 either way — so
+                         each attempt asks session-events to HOLD until the pane
+                         can take it (503 while it cannot), on top of the
+                         700/1600/3000/6000 ladder, resuming at the line that
+                         did not land. The last rung asks for no hold, so a pane
+                         that never draws a prompt still gets the text
     new-commands.ts      Which new-session commands this box can actually run:
                          GET /new-commands is tmux-user-attach --probe run in
                          the session's own login shell, so a key with nothing
@@ -313,6 +335,11 @@ src/
     drafts.ts            Per-browser composer drafts (tl:session-drafts:v1): the
                          unsent text AND its attachment tray, pruned to the live
                          session list the way visits.ts prunes
+    prompt-line.ts       Per-browser first-lines (tl:session-prompt-line:v1):
+                         what a card reads between being created and Claude's
+                         summary landing. Deliberately not stamped as @title —
+                         the auto-title rule only fires while @title is unset,
+                         so stamping it would freeze the placeholder in place
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
     device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
                          terminal flow control (tl-flow-control — the iframe
@@ -366,7 +393,13 @@ src/
                          sidebar header the three a list screen can answer for.
                          Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
-    CreateSessionRow.tsx New-session input + the Claude/Codex/shell picker
+    NewSessionComposer.tsx
+                         The new-session composer: a prompt field plus the three
+                         choices a create makes — project, command, model. What
+                         you type becomes the session's first prompt; the name
+                         is a minted id and the title is Claude's own summary of
+                         the conversation. Choosing `shell` turns it back into a
+                         name box, because a shell has no prompt to receive
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
@@ -390,7 +423,14 @@ src/
                          document chip, or the path when nothing can serve it —
                          and MessageSegments, which substitutes in place
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
-    Composer.tsx         Prompt input + Send↔Stop morph + mobile submit split
+    Composer.tsx         The LIVE session's composer: the permission panel,
+                         queued-prompt chips, the mode chip, the context meter
+                         and Stop, docked around PromptField
+    PromptField.tsx      The writing surface both composers share: multi-line
+                         with Enter to send and Shift+Enter for a newline, `/`
+                         and `@` completion, the attachment tray, the unsent
+                         draft, ↑ history, and the mobile input attributes that
+                         restore QuickType and swipe typing
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
                          staleness in settled turns, category breakdown).
                          Nothing runs the command — no reading, no chip
@@ -547,6 +587,11 @@ src/
     drop.ts              PURE drag-payload detection
     upload.ts            clipboard-upload client + field routing
     attach.ts            The DOM glue (window listeners + drop overlay)
+    attach-files.ts      Upload files into a session's store and hand back the
+                         tray chips. Shared by the two composers, which do it at
+                         different moments: the live one when a file is picked,
+                         the new-session one after the create, because until
+                         then there is no session to own the file
   deploy/
     healer.logic.ts      PURE self-update kernel (ADR-0007)
     healer.ts            Its controller: poll own served bytes, TOP-owned reload

@@ -64,7 +64,7 @@ describe("coercePrefs — validate-or-default", () => {
     });
     expect(p).toEqual({
       fontSize: 18,
-      session: { newCommand: "codex" },
+      session: { newCommand: "codex", newProject: "", newModel: "default" },
       notify: { onDone: false, onAwaiting: true },
       // Absent from the input, so these take their defaults. This assertion is
       // exhaustive on purpose: a new pref has to show up here.
@@ -99,7 +99,12 @@ describe("composeDoc — write-back preserves unknown keys", () => {
     expect(doc.gestures).toEqual({ keyRepeat: false, wheelSmooth: true, wheelSpeed: 1 });
     expect(doc.links).toEqual({ copyChip: true });
     // unknown subkey preserved, known subkey updated
-    expect(doc.session).toEqual({ reopenLast: false, newCommand: "codex" });
+    expect(doc.session).toEqual({
+      reopenLast: false,
+      newCommand: "codex",
+      newProject: "",
+      newModel: "default",
+    });
     // known fields written
     expect(doc.fontSize).toBe(FONT_SIZE_DEFAULT);
     expect(doc.notify).toEqual({ onDone: true, onAwaiting: true });
@@ -331,5 +336,51 @@ describe("createPrefsStore — persistence + local-wins adoption", () => {
       store.dispose();
       dispose();
     });
+  });
+});
+
+/**
+ * The composer's two remembered choices, roamed beside `session.newCommand`.
+ *
+ * Both are about the NEXT session rather than the one on screen, and both
+ * follow a person across devices for the same reason the command does: the
+ * project they are working in and the model they prefer do not change when
+ * they pick up a phone.
+ */
+describe("the composer's roamed choices", () => {
+  it("defaults to no project and the box's own model", () => {
+    expect(PREF_DEFAULTS.session.newProject).toBe("");
+    expect(PREF_DEFAULTS.session.newModel).toBe("default");
+  });
+
+  it("keeps a project name verbatim — a project is named by a person", () => {
+    const p = coercePrefs({ session: { newProject: "code", newModel: "sonnet" } });
+    expect(p.session.newProject).toBe("code");
+    expect(p.session.newModel).toBe("sonnet");
+  });
+
+  it("rejects a model it does not offer, rather than sending /model garbage", () => {
+    expect(coercePrefs({ session: { newModel: "gpt-5" } }).session.newModel).toBe("default");
+    expect(coercePrefs({ session: { newProject: 7 } }).session.newProject).toBe("");
+  });
+
+  it("writes both back into the shared doc without dropping unknown subkeys", () => {
+    const doc = composeDoc(
+      { session: { reopenLast: false } },
+      coercePrefs({ session: { newProject: "tripit", newModel: "haiku" } }),
+    ) as { session: Record<string, unknown> };
+    expect(doc.session.reopenLast).toBe(false);
+    expect(doc.session.newProject).toBe("tripit");
+    expect(doc.session.newModel).toBe("haiku");
+  });
+
+  it("reports each as its own changed path", () => {
+    const prev = coercePrefs({});
+    expect(
+      changedPrefPaths(prev, applyPatch(prev, { session: { newProject: "code" } })),
+    ).toEqual([["session.newProject", "code"]]);
+    expect(
+      changedPrefPaths(prev, applyPatch(prev, { session: { newModel: "opus" } })),
+    ).toEqual([["session.newModel", "opus"]]);
   });
 });
