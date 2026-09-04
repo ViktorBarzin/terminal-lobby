@@ -4,9 +4,8 @@ import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { Sidebar } from "../src/components/Sidebar";
 import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
-import { createPrefsStore, PREFS_KEY, type PrefsStore } from "../src/store/prefs";
+import { createPrefsStore, type PrefsStore } from "../src/store/prefs";
 import { emptyLayout, type Layout, type Session, type Whoami } from "../src/types/lobby";
-import { isSessionId } from "../src/lib/session-id";
 
 const sess = (name: string, over: Partial<Session> = {}): Session => ({
   name,
@@ -70,6 +69,7 @@ function mount(
     confirm?: (message: string) => boolean;
     notifications?: Parameters<typeof Sidebar>[0]["notifications"];
     onReload?: () => void;
+    onNewSession?: (group?: string) => void;
   } = {},
 ) {
   let store!: LobbyStore;
@@ -88,6 +88,7 @@ function mount(
         confirm={over.confirm}
         notifications={over.notifications}
         onReload={over.onReload}
+        onNewSession={over.onNewSession}
       />
     );
   });
@@ -264,21 +265,17 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
-  it("creates a session from the new-session row (PUTs the layout)", async () => {
+  // The sidebar has no create box of its own any more: a prompt needs more room
+  // than a sidebar row has, so both routes here ask the shell for the composer.
+  it("routes New session to the composer, with no project preselected", async () => {
     const api = new FakeApi();
-    const { getByPlaceholderText, store } = mount(api);
+    const opened: (string | undefined)[] = [];
+    const { getByLabelText, store } = mount(api, { onNewSession: (g) => opened.push(g) });
     await store.refresh();
 
-    const input = getByPlaceholderText("new session…") as HTMLInputElement;
-    fireEvent.input(input, { target: { value: "fresh" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    // The typed text is the TITLE now; the name is a minted id (ADR-0019).
-    await waitFor(() => expect(store.selected()).not.toBeNull());
-    expect(api.puts.length).toBe(1);
-    const id = api.puts[0]!.ungrouped[0]!;
-    expect(isSessionId(id)).toBe(true);
-    expect(store.selected()?.name).toBe(id);
+    fireEvent.click(getByLabelText("New session"));
+    expect(opened).toEqual([undefined]);
+    expect(api.puts.length).toBe(0); // nothing is created until a prompt is sent
     store.dispose();
   });
 
@@ -379,36 +376,8 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
-  it("binds the create-row command dropdown to the roamed pref", async () => {
-    const api = new FakeApi();
-    const { getByLabelText, store, prefs } = mount(api);
-    await store.refresh();
-
-    const select = getByLabelText("Command for new session") as HTMLSelectElement;
-    expect(select.value).toBe("claude");
-    fireEvent.change(select, { target: { value: "shell" } });
-    expect(prefs.prefs().session.newCommand).toBe("shell");
-    store.dispose();
-  });
-
-  it("reflects the roamed pref in the dropdown, showing 'default' as claude", async () => {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "codex" } }));
-    const api = new FakeApi();
-    const first = mount(api);
-    await first.store.refresh();
-    expect((first.getByLabelText("Command for new session") as HTMLSelectElement).value).toBe("codex");
-    first.store.dispose();
-    first.unmount();
-
-    // 'default' is a valid backing value for launcher accounts: show claude
-    // without overwriting the pref.
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "default" } }));
-    const second = mount(api);
-    await second.store.refresh();
-    expect((second.getByLabelText("Command for new session") as HTMLSelectElement).value).toBe("claude");
-    expect(second.prefs.prefs().session.newCommand).toBe("default");
-    second.store.dispose();
-  });
+  // The command dropdown moved to the composer with the box it belonged to;
+  // its five availability cases live in test/NewSessionComposer.test.tsx.
 
   it("lists foreign sessions under Shared with me", async () => {
     const api = new FakeApi();
@@ -461,25 +430,10 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
-  it("keeps a half-typed in-project session name across three polls", async () => {
-    const api = new FakeApi();
-    api.sessionsVal = [sess("inwork")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["inwork"] }] };
-    const { container, getByLabelText, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
-
-    fireEvent.click(getByLabelText("New session in project"));
-    await waitFor(() => expect(container.querySelector(".tl-add-input")).not.toBeNull());
-    const input = container.querySelector(".tl-add-input") as HTMLInputElement;
-    fireEvent.input(input, { target: { value: "qa-halftyped" } });
-
-    await poll(api, store);
-
-    expect(container.querySelector(".tl-add-input")).toBe(input);
-    expect(input.value).toBe("qa-halftyped");
-    store.dispose();
-  });
+  // "keeps a half-typed in-project session name across three polls" went with
+  // the inline box inside a group. There is no half-typed name in the sidebar
+  // to protect from a poll any more: the `+` opens the composer, which lives in
+  // the content pane and holds its text in the draft store.
 
   it("releases the poll hold when the menu closes", async () => {
     const api = new FakeApi();

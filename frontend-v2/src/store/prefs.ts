@@ -7,6 +7,7 @@ import {
 import { apiUrl, PREFS_PATH } from "../lib/config";
 import { track } from "../telemetry/track";
 import { fetchWithDeadline } from "../lib/http";
+import { isNewModel, type NewModel } from "../lib/models";
 
 /**
  * Roamed preferences — the whole-document, last-writer-wins store that mirrors
@@ -67,7 +68,14 @@ export interface Prefs {
    * belong to the terminal page and survive every write from here.
    */
   gestures: { wheelSmooth: boolean; wheelSpeed: WheelSpeed };
-  session: { newCommand: NewCommand };
+  /**
+   * What the new-session composer starts with. `newCommand` is which tool runs
+   * (it is also the one the terminal attach reads); `newProject` is the project
+   * a create lands in, "" for Ungrouped; `newModel` is the model injected as
+   * `/model <name>` ahead of the first prompt (lib/models.ts). All three roam,
+   * because none of them changes when a person picks up a different device.
+   */
+  session: { newCommand: NewCommand; newProject: string; newModel: NewModel };
   notify: { onDone: boolean; onAwaiting: boolean };
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
    *  each card — OFF by default, and deliberately not the running session's
@@ -122,7 +130,7 @@ export const PREF_DEFAULTS: Prefs = {
   fontWeightBold: "700", // the real JBM 700 face
   links: { copyChip: true },
   gestures: { wheelSmooth: true, wheelSpeed: 1 },
-  session: { newCommand: DEFAULT_NEW_COMMAND },
+  session: { newCommand: DEFAULT_NEW_COMMAND, newProject: "", newModel: "default" },
   notify: { onDone: true, onAwaiting: true },
   sidebar: { showLastActive: false, order: DEFAULT_SESSION_ORDER },
 };
@@ -207,6 +215,12 @@ export function coercePrefs(raw: unknown): Prefs {
       newCommand: isNewCommand(session.newCommand)
         ? session.newCommand
         : DEFAULT_NEW_COMMAND,
+      // A project is named by a person, so anything is a legal name; only the
+      // TYPE is checked. A name whose project has since been deleted resolves
+      // to Ungrouped in the composer rather than being rewritten here, so
+      // recreating the project brings the choice back.
+      newProject: typeof session.newProject === "string" ? session.newProject : "",
+      newModel: isNewModel(session.newModel) ? session.newModel : "default",
     },
     notify: {
       onDone: typeof notify.onDone === "boolean" ? notify.onDone : true,
@@ -259,7 +273,12 @@ export function composeDoc(
       wheelSmooth: prefs.gestures.wheelSmooth,
       wheelSpeed: prefs.gestures.wheelSpeed,
     },
-    session: { ...session, newCommand: prefs.session.newCommand },
+    session: {
+      ...session,
+      newCommand: prefs.session.newCommand,
+      newProject: prefs.session.newProject,
+      newModel: prefs.session.newModel,
+    },
     notify: {
       ...notify,
       onDone: prefs.notify.onDone,
@@ -320,6 +339,8 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("gestures.wheelSmooth", prev.gestures.wheelSmooth, next.gestures.wheelSmooth);
   diff("gestures.wheelSpeed", prev.gestures.wheelSpeed, next.gestures.wheelSpeed);
   diff("session.newCommand", prev.session.newCommand, next.session.newCommand);
+  diff("session.newProject", prev.session.newProject, next.session.newProject);
+  diff("session.newModel", prev.session.newModel, next.session.newModel);
   diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
   diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
   diff(

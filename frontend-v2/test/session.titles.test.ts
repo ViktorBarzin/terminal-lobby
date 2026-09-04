@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { sessionLabel } from "../src/types/lobby";
+import { NEW_SESSION_LABEL, sessionLabel } from "../src/types/lobby";
 import { composeTitle } from "../src/notify/title";
 import { createVisitStore, STATES_KEY, VISITS_KEY } from "../src/store/visits";
 
@@ -13,6 +13,26 @@ describe("sessionLabel", () => {
   it("falls back to the name — where every pre-title session sits", () => {
     expect(sessionLabel({ name: "work" })).toBe("work");
     expect(sessionLabel({ name: "work", title: "" })).toBe("work");
+  });
+
+  // An id says nothing, so showing it is worse than saying nothing at all.
+  // This is the fallback a session sits on between being created with an empty
+  // box and Claude's summary landing, and the one a shell never leaves.
+  it("says New session rather than showing a minted id", () => {
+    expect(sessionLabel({ name: "k7m2q9x4tp0v" })).toBe(NEW_SESSION_LABEL);
+    expect(sessionLabel({ name: "k7m2q9x4tp0v", title: "" })).toBe(NEW_SESSION_LABEL);
+    expect(sessionLabel({ name: "k7m2q9x4tp0v", title: "Fix the deploy" })).toBe(
+      "Fix the deploy",
+    );
+  });
+
+  // Names that were never minted here keep reading: sessions from before the
+  // migration, a shell somebody named by hand, and t3-bridge's cwd-derived
+  // names, which are still being minted today.
+  it("keeps a readable name readable", () => {
+    for (const name of ["work", "deploy-the-thing", "shell-2", "ny-reibursment"]) {
+      expect(sessionLabel({ name })).toBe(name);
+    }
   });
 });
 

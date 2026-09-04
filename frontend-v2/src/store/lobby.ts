@@ -38,14 +38,34 @@ import {
   type Whoami,
 } from "../types/lobby";
 import { track } from "../telemetry/track";
-import { cleanTitle } from "../lib/title";
+import { cleanTitle, firstPromptLine } from "../lib/title";
 import { newSessionId } from "../lib/session-id";
+import {
+  forgetPromptLine,
+  promptLineFor,
+  prunePromptLines,
+  rememberPromptLine,
+} from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
 
 export interface SelectedSession {
   name: string;
   owner?: string;
 }
+
+/**
+ * What the text a session is created with MEANS.
+ *
+ * `prompt` — the composer's normal case. The text is the first thing Claude is
+ * asked, and the session's title will be Claude's own summary of the
+ * conversation a few seconds later (tmux-api/autotitle.go). The first line is
+ * remembered locally to fill the gap and is deliberately NOT stamped, because
+ * the auto-title rule only fires while `@title` is unset.
+ *
+ * `name` — the `shell` case. A plain shell has no conversation to summarise, so
+ * nothing is ever coming and the typed text is stamped as the title.
+ */
+export type CreateKind = "prompt" | "name";
 
 export interface LobbyStore {
   whoami: Accessor<Whoami | null>;
@@ -95,8 +115,14 @@ export interface LobbyStore {
    *  poll can't rebuild the list under them. Returns a release function. */
   hold(): () => void;
   select(name: string, owner?: string): void;
-  /** Create a session: the text becomes its TITLE, its name is a minted id. */
-  create(title: string, group: string): Promise<boolean>;
+  /** Point the app at no session, which is what shows the new-session composer. */
+  deselect(): void;
+  /**
+   * Create a session and return the id it was given. See the function's own
+   * doc for what `kind` decides; the id is what a caller needs in order to send
+   * the first prompt, upload attachments into its bucket, or link to it.
+   */
+  create(text: string, group: string, kind?: CreateKind): Promise<string>;
   /** write or clear layout.dock (the Ctrl+J scratch shell); undefined un-docks. */
   setDock(next: DockState | undefined): Promise<boolean>;
   /** Retitle a session. The name never moves (ADR-0019). */
@@ -358,6 +384,29 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (dirty) persistStates(states);
   }
 
+  /**
+   * Fill in the line a session was created with, for the ones with no title yet.
+   *
+   * A session's title arrives from Claude's summary seconds after the first
+   * prompt, and its name says nothing (ADR-0019), so between the two the card
+   * would read `New session`. The line the person typed is more recognisable
+   * than that, so it stands in — as a `title` on the client's copy only, which
+   * is what puts it on every surface that shows one without a second lookup.
+   *
+   * A real title arriving is the end of it: the record is dropped, so the
+   * summary is never second-guessed and nothing lingers in storage.
+   */
+  function withPromptLines(list: Session[]): Session[] {
+    return list.map((s) => {
+      if (s.title) {
+        forgetPromptLine(s.name);
+        return s;
+      }
+      const line = promptLineFor(s.name);
+      return line ? { ...s, title: line } : s;
+    });
+  }
+
   /** What one load did to the poll's backoff ladder. */
   type LoadOutcome = "ok" | "failed" | "skipped";
 
@@ -398,15 +447,17 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (seq < appliedSeq) return outcome; // a newer answer already landed
     appliedSeq = seq;
     if (sRes.status === "fulfilled") {
-      trackStates(sRes.value);
+      const list = withPromptLines(sRes.value);
+      trackStates(list);
       // Reconcile by name rather than replace: a re-parsed but unchanged
       // payload must write nothing, or every memo downstream recomputes and
       // <For> re-creates every group and card (taking open menus with it).
-      setSessions(reconcile(sRes.value, { key: "name" }));
+      setSessions(reconcile(list, { key: "name" }));
       // After setSessions, so a reader waking on `polls` sees the new list.
       setPolls((n) => n + 1);
       // drop optimistic pending that the server now knows about
       const known = new Set(sRes.value.map((s) => s.name));
+      prunePromptLines(sRes.value.map((s) => s.name));
       const stillPending = pending().filter((p) => !known.has(p.name));
       if (stillPending.length !== pending().length) setPending(stillPending);
       setLoadError(null);
@@ -580,6 +631,20 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     opts.onActivate?.({ name, ...(owner ? { owner } : {}) });
   }
 
+  /**
+   * Point the app at no session.
+   *
+   * Nothing selected is what shows the new-session composer, so this is how
+   * every "new session" route gets there: the sidebar's button, the per-project
+   * `+`, Alt+Shift+N and the palette. The session the user was in stays mounted
+   * and hidden (store/keepalive.ts), so coming back to it costs nothing.
+   */
+  function deselect(): void {
+    if (selected() === null) return;
+    setSelected(null);
+    updateHash(null);
+  }
+
   function quickRefreshBurst(): void {
     for (const ms of [700, 1600, 3000]) {
       burstTimers.push(setTimeout(() => void refresh(), ms));
@@ -618,16 +683,23 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * The name is minted here rather than asked for: creation reaches no server
    * at all — the session comes into being when the terminal iframe attaches and
    * ttyd runs `tmux new-session -A` — so the browser has to have a name before
-   * anything else can. It is an opaque id and it never changes (ADR-0019);
-   * what the person typed becomes the session's TITLE, which is the only part
-   * of a session anyone reads.
+   * anything else can. It is an opaque id and it never changes (ADR-0019).
+   *
+   * Nothing is refused. An empty box is a real instruction — it makes a session
+   * with no prompt, which reads `New session` until a summary arrives — and two
+   * sessions may carry the same text, because nothing is derived from it.
+   *
+   * What happens to the text depends on `kind`; see CreateKind. Returns the id
+   * the session was given, which is what the caller needs to send the first
+   * prompt. A layout write that fails is toasted and drops the optimistic card,
+   * but the session itself is still started by the attach.
    */
-  async function create(title: string, group: string): Promise<boolean> {
-    const t = cleanTitle(title);
-    if (t === "") {
-      showToast("Give the session a name");
-      return false;
-    }
+  async function create(
+    text: string,
+    group: string,
+    kind: CreateKind = "prompt",
+  ): Promise<string> {
+    const t = kind === "name" ? cleanTitle(text) : firstPromptLine(text);
     const n = freshSessionName();
     // Creation is a lobby-only act: tmux-api never sees it, so this is the only
     // record of it.
@@ -652,6 +724,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
         state: "",
       },
     ]);
+    // The line the card reads until Claude's summary lands. Persisted rather
+    // than left on the optimistic card, which the first poll that knows the
+    // session removes — several seconds before any summary.
+    if (kind === "prompt") rememberPromptLine(n, t);
     const saved = await saveLayout(addSessionToGroup(layout(), n, group));
     if (!saved) {
       // The layout PUT is the only record a create makes, so a write that did
@@ -665,9 +741,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // Stamping the title needs the session to EXIST, and only the iframe's
     // attach creates it. The refresh burst is already the "has it appeared
     // yet" poll, so the stamp rides along with it.
-    void stampTitleWhenAlive(n, t);
+    //
+    // Only for a NAME. Stamping a prompt's first line would set `@title`, and
+    // the auto-title rule fires only while `@title` is unset — the placeholder
+    // would become permanent and Claude's summary would never reach the card.
+    if (kind === "name" && t !== "") void stampTitleWhenAlive(n, t);
     quickRefreshBurst();
-    return saved;
+    return n;
   }
 
   /**
@@ -701,6 +781,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * a running session to something arbitrary.
    */
   async function clearTitle(name: string): Promise<boolean> {
+    // Clearing hands the session back to its summary, so the placeholder goes
+    // too — leaving it would put the prompt line straight back on the card.
+    forgetPromptLine(name);
     try {
       await api.setSessionTitle(name, "");
     } catch (e) {
@@ -952,6 +1035,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     refresh,
     hold,
     select,
+    deselect,
     create,
     setDock,
     rename,

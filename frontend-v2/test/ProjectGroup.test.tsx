@@ -73,14 +73,20 @@ class FakeApi implements LobbyApi {
  * the point: deriveSidebar builds fresh RenderGroup objects on every recompute,
  * so any poll that recomputes the model re-creates every header node.
  */
-function mount(api: LobbyApi) {
+function mount(api: LobbyApi, onNewSession?: (group: string) => void) {
   let store!: LobbyStore;
   const [tick] = createSignal(0);
   const utils = render(() => {
     store = createLobbyStore({ api, autoStart: false, syncHash: false });
     const groups = () =>
       store.model().groups.filter((g) => g.kind === "project" || g.sessions.length > 0);
-    return <For each={groups()}>{(g) => <ProjectGroup store={store} group={g} tick={tick} />}</For>;
+    return (
+      <For each={groups()}>
+        {(g) => (
+          <ProjectGroup store={store} group={g} tick={tick} onNewSession={onNewSession} />
+        )}
+      </For>
+    );
   });
   return { ...utils, store: store! };
 }
@@ -413,18 +419,17 @@ describe("<ProjectGroup> ⋯ move with an empty Ungrouped", () => {
 });
 
 /**
- * Speculative pre-warming. Opening the create box is the earliest moment a
- * session's directory is known, and it is seconds ahead of the name being
- * typed — long enough to cover most of Claude's ~2.4s boot, which is 89% of
- * what creating a session used to cost.
+ * The `+` on a group header.
  *
- * The behaviour worth pinning is not "does it call the endpoint" but WHEN it
- * hands the slot back, because both mistakes are silent: releasing after a
- * successful create races the attach and loses the benefit exactly when it
- * matters, and never releasing leaves ~530MB per abandoned box.
+ * It used to open a name box inside the group and own the speculative pre-warm
+ * that went with it. Both moved to the new-session composer, which needs the
+ * room a prompt takes and warms the directory its own project selector is
+ * showing (test/NewSessionComposer.test.tsx). What is left here is the route:
+ * the composer opens preset to THIS project, and the group opens with it so the
+ * card that arrives is on screen rather than inside something still collapsed.
  */
-describe("<ProjectGroup> speculative pre-warm", () => {
-  const withDir = (api: FakeApi): void => {
+describe("<ProjectGroup> — the + routes to the composer", () => {
+  const withProject = (api: FakeApi): void => {
     api.sessionsVal = [];
     api.layoutVal = {
       ...emptyLayout(),
@@ -435,88 +440,31 @@ describe("<ProjectGroup> speculative pre-warm", () => {
   const addButton = (root: Element): HTMLElement =>
     root.querySelector<HTMLElement>('button[aria-label="New session in project"]')!;
 
-  const addInputEl = (root: Element): HTMLInputElement =>
-    root.querySelector<HTMLInputElement>(".tl-group-add-input, .tl-new-input, input")!;
-
-  it("warms the project's dir as soon as the create box opens", async () => {
+  it("asks for the composer, preset to this project", async () => {
     const api = new FakeApi();
-    withDir(api);
-    const { container, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(headers(container).length).toBe(1));
-
-    expect(api.prewarmed).toEqual([]);
-    addButton(container).click();
-    await waitFor(() => expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]));
-    store.dispose();
-  });
-
-  it("asks once, however many times the box is opened", async () => {
-    // beginAdd also fires on re-click while already adding; a second slot for
-    // the same dir would be refused server-side, but the request is pointless.
-    const api = new FakeApi();
-    withDir(api);
-    const { container, store } = mount(api);
+    withProject(api);
+    const opened: (string | undefined)[] = [];
+    const { container, store } = mount(api, (g) => opened.push(g));
     await store.refresh();
     await waitFor(() => expect(headers(container).length).toBe(1));
 
     addButton(container).click();
-    addButton(container).click();
-    addButton(container).click();
-    await waitFor(() => expect(api.prewarmed.length).toBe(1));
+    expect(opened).toEqual(["alpha"]);
+    // The group opens, so the new card is not created into something collapsed.
+    expect(store.collapse.isCollapsed("alpha")).toBe(false);
     store.dispose();
   });
 
-  it("does not warm a project with no dir, since that would warm $HOME", async () => {
+  it("warms nothing itself — the composer owns the slot now", async () => {
     const api = new FakeApi();
-    api.sessionsVal = [];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "alpha", sessions: [] }] };
-    const { container, store } = mount(api);
+    withProject(api);
+    const { container, store } = mount(api, () => {});
     await store.refresh();
     await waitFor(() => expect(headers(container).length).toBe(1));
 
     addButton(container).click();
     await Promise.resolve();
     expect(api.prewarmed).toEqual([]);
-    store.dispose();
-  });
-
-  it("hands the slot back when the box closes with nothing typed", async () => {
-    const api = new FakeApi();
-    withDir(api);
-    const { container, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(headers(container).length).toBe(1));
-
-    addButton(container).click();
-    await waitFor(() => expect(api.prewarmed.length).toBe(1));
-
-    // Committing an empty box is the cancel path.
-    const input = addInputEl(container);
-    input.value = "";
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    await waitFor(() => expect(api.released).toEqual(["/home/wizard/code/alpha"]));
-    store.dispose();
-  });
-
-  it("KEEPS the slot after a successful create, for the attach to claim", async () => {
-    // The regression this guards: create() only STARTS the attach — the iframe
-    // still has to connect and reach ttyd — so releasing here reliably wins the
-    // race and the create falls back to a cold start.
-    const api = new FakeApi();
-    withDir(api);
-    const { container, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(headers(container).length).toBe(1));
-
-    addButton(container).click();
-    await waitFor(() => expect(api.prewarmed.length).toBe(1));
-
-    const input = addInputEl(container);
-    input.value = "newsession";
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-
-    await waitFor(() => expect(api.puts.length).toBeGreaterThan(0));
     expect(api.released).toEqual([]);
     store.dispose();
   });

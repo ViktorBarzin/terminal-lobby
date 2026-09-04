@@ -24,6 +24,7 @@ import {
   type Selected,
 } from "../store/keepalive";
 import { Sidebar } from "./Sidebar";
+import { NewSessionComposer } from "./NewSessionComposer";
 import { SessionView } from "./SessionView";
 import { SettingsPanel, type PageId } from "./SettingsPanel";
 import { openerAction } from "./settings/rail";
@@ -39,7 +40,7 @@ import { createPaletteController, type PaletteAction } from "../keybindings/pale
 import { createRunAppCommand } from "../keybindings/commands";
 import { refocusTerminal } from "../keybindings/refocus";
 import { flatSessionOrder } from "../keybindings/navigation.logic";
-import { sessionBarOnScreen } from "./lobby.logic";
+import { opensOnContent, sessionBarOnScreen } from "./lobby.logic";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutsHelp, createHelpController } from "./ShortcutsHelp";
 import { createNotificationSystem } from "../notify/notifications";
@@ -378,13 +379,18 @@ export const App: Component = () => {
   // `collapsed` is re-read under the phone query as a VIEW, not a width:
   // false = BROWSING (the session list owns the screen), true = TERMINAL.
   const flip = createMobileFlip();
-  // Boot: a phone starts on the list unless the URL already names a session —
-  // a deep link goes straight to the terminal with no flash of the list. The
-  // persisted desktop collapse is deliberately ignored here: it is a width
-  // preference for a device with room for both, and honouring it on a phone
-  // would open the app into a terminal the user did not ask for.
+  // Boot: a phone opens on the content pane either way — the terminal when the
+  // URL names a session, the new-session composer when it does not, so a fresh
+  // phone opens ready to type rather than on a list of what already exists. The
+  // list is one control away in the composer's header. The persisted desktop
+  // collapse is deliberately ignored here: it is a width preference for a
+  // device with room for both.
   const [collapsed, setCollapsed] = createSignal(
-    isMobileFlip() ? !!readInitialSelection() : readSidebarCollapsed(),
+    opensOnContent({
+      flip: isMobileFlip(),
+      hasSelection: !!readInitialSelection(),
+      savedCollapse: readSidebarCollapsed(),
+    }),
   );
   /** Is a session bar — and so its connection badge — on screen? The sidebar's
    *  own badge reads this and stands down (rule + tests in lobby.logic.ts). */
@@ -474,12 +480,48 @@ export const App: Component = () => {
   );
 
   const selectedName = createMemo(() => store.selected()?.name ?? null);
-  // Nothing selected (killed, or the last session closed) => walk back to the
-  // list. Without this the phone shows an empty terminal pane whose only exit
-  // is the back control, and the user has no session to go back to.
-  createEffect(() => {
-    if (flip() && selectedName() === null) setCollapsed(false);
+  // Nothing selected — killed, the last session closed, or "new session" asked
+  // for — shows the composer rather than an empty pane, on every device. The
+  // phone used to be walked back to the list here, because the alternative was
+  // a blank terminal whose only exit was the back control; the composer is a
+  // screen with somewhere to go, and its header carries the route to the list.
+  /**
+   * Which project the composer creates into.
+   *
+   * The roamed `session.newProject` preference by default, so the next session
+   * lands where the last one did. The `+` on a sidebar group overrides it for
+   * one create by setting the preset; picking from the composer's own selector
+   * writes the preference, because that is a deliberate choice about where work
+   * goes rather than a shortcut for one session.
+   *
+   * A remembered project that no longer exists resolves to Ungrouped, and the
+   * preference is left alone — recreating the project brings the choice back.
+   */
+  const [presetProject, setPresetProject] = createSignal<string | null>(null);
+  const composerProject = createMemo(() => {
+    const want = presetProject() ?? prefs.prefs().session.newProject;
+    return want && store.layout().projects.some((p) => p.name === want) ? want : "";
   });
+  /**
+   * Show the composer, optionally preset to a project.
+   *
+   * Nothing selected IS the composer, so every route here deselects first. The
+   * session that was open stays mounted and hidden (store/keepalive.ts), so
+   * going back to it costs nothing.
+   */
+  const openComposer = (group?: string): void => {
+    // A `+` on a group means THAT project; the plain route means the default,
+    // so it clears the override rather than inheriting whichever group was
+    // last opened from. Picking in the composer's own selector writes the
+    // preference, so the default it falls back to is still the last choice.
+    setPresetProject(group ?? null);
+    store.deselect();
+    if (flip()) setCollapsed(true); // the composer lives in the content pane
+    // The composer mounts on the deselect above, so the focus request has to
+    // wait for it — a listener that is not there yet hears nothing.
+    queueMicrotask(() => window.dispatchEvent(new CustomEvent("tl:focus-new-session")));
+  };
+
   // What this box can actually start. Fetched once — it changes when somebody
   // installs something, not while a page is open — and it costs a login shell
   // on the server, so it is not something to poll.
@@ -636,10 +678,7 @@ export const App: Component = () => {
     // The app icon counts awaiting plus unread-finished; Alt+Shift+U walks the
     // second half the way Alt+Shift+Enter walks the first.
     isUnseen: (sn) => notifications.isUnseen(sn),
-    focusNewSession: () => {
-      if (collapsed()) toggleSidebar(); // the box lives in the sidebar
-      window.dispatchEvent(new CustomEvent("tl:focus-new-session"));
-    },
+    focusNewSession: () => openComposer(),
     notify,
     openGallery: () => void gallery.open(),
     pasteToTerminal: () => window.__tlDoPaste?.() ?? false,
@@ -772,7 +811,7 @@ export const App: Component = () => {
         <Sidebar
           store={store}
           prefs={prefs}
-          availableCommands={cmdAvail}
+          onNewSession={openComposer}
           altActive={engine.altActive}
           notifications={notifications}
           // ONE connection indicator at a time. This one exists for the screens
@@ -823,10 +862,31 @@ export const App: Component = () => {
         </div>
 
         <div class="tl-shell-body" ref={(el) => installSessionSwipe(el)}>
+          {/* Nothing selected is not an empty state any more: it is where a
+              session is started. On a phone it is also the LANDING view, so its
+              header carries the one control that gets to the list. */}
           <Show when={!selectedName()}>
-            <div class="tl-shell-empty tl-muted">
-              Select a session from the sidebar, or create one to begin.
-            </div>
+            <NewSessionComposer
+              store={store}
+              prefs={prefs}
+              available={cmdAvail}
+              project={composerProject}
+              onProject={(name) => {
+                setPresetProject(name);
+                prefs.setPref({ session: { newProject: name } });
+              }}
+              leading={
+                <Show when={flip()}>
+                  <button
+                    class="tl-icon-btn tl-back-btn"
+                    aria-label="Back to sessions"
+                    onClick={() => setCollapsed(false)}
+                  >
+                    ‹<span class="tl-btn-label">Sessions</span>
+                  </button>
+                </Show>
+              }
+            />
           </Show>
           {/* Every session opened in this tab stays mounted, and the one being
               read is the one not hidden. The slots are appended and never

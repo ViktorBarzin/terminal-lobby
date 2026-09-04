@@ -1617,6 +1617,49 @@ label.tl-set-row-label {
   }
 }
 
+/* ---- the new-session composer ------------------------------------------ */
+/* Nothing selected is not an empty state: it is where a session is started, so
+   the composer owns the pane. A prompt wants the width, and on a phone this is
+   the LANDING view — the first thing the app shows. Centred rather than pinned
+   to the bottom, because nothing is above it to read. */
+.tl-new-composer {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px clamp(12px, 6vw, 80px);
+  overflow-y: auto;
+}
+.tl-new-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+}
+.tl-new-title {
+  margin: 0;
+  font-size: calc(14px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  color: var(--text-muted);
+}
+/* A shell's name box: one line, no autosize, the same surface as the prompt
+   field it replaces so the box does not change shape when the command does. */
+.tl-new-name {
+  height: 40px;
+  resize: none;
+}
+/* The box centres itself with `margin: 0 auto`, and an auto cross-axis margin
+   turns OFF a flex item's stretch — so without this it shrank to fit its own
+   content and sat 385px wide in a 1180px pane, measured at 1440x900. */
+.tl-new-composer > .tl-composer-box {
+  width: 100%;
+}
+
 /* ---- composer + permission panel -------------------------------------- */
 .tl-composer {
   flex: 0 0 auto;

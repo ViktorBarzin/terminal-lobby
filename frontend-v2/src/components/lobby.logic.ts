@@ -532,3 +532,28 @@ export function sessionBarOnScreen(o: {
 }): boolean {
   return o.selected && (!o.flip || o.collapsed);
 }
+
+/**
+ * Which pane the app opens on: true = the content pane, false = the list.
+ *
+ * A phone shows one view at a time, and `collapsed` is that choice rather than
+ * a width. It now opens on the content pane either way — the terminal when the
+ * URL names a session, the new-session composer when it does not — so a fresh
+ * phone opens ready to type rather than on a list of what already exists. The
+ * list is one control away in the composer's header.
+ *
+ * `hasSelection` is deliberately ignored on a phone. It used to decide: with no
+ * session in the URL the phone landed on the list, because the alternative was
+ * a blank terminal pane whose only exit was the back control. The composer is a
+ * screen with somewhere to go, so that reason is gone.
+ *
+ * The saved collapse is honoured only off a phone, where it means what it was
+ * written to mean: a width preference for a device with room for both panes.
+ */
+export function opensOnContent(o: {
+  flip: boolean;
+  hasSelection: boolean;
+  savedCollapse: boolean;
+}): boolean {
+  return o.flip ? true : o.savedCollapse;
+}
