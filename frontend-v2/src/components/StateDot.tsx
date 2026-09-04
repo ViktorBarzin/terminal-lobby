@@ -1,5 +1,6 @@
 import { type Component } from "solid-js";
 import { stateLabel } from "./lobby.logic";
+import type { BackgroundWork } from "../types/lobby";
 
 /**
  * Claude state dot (inventory Cat.1 "Claude state dots"): running pulses,
@@ -13,6 +14,10 @@ export const StateDot: Component<{
   unseen?: boolean;
   size?: number;
   title?: boolean;
+  /** What a running session is still waiting on, so the tooltip and the screen
+   *  reader can say WHY it is working. The dot itself does not change: a
+   *  session held by background work is running, not a fourth state. */
+  bg?: BackgroundWork;
 }> = (props) => {
   const cls = () => {
     const parts = ["tl-state-dot"];
@@ -24,8 +29,8 @@ export const StateDot: Component<{
     <span
       class={cls()}
       style={props.size ? { width: `${props.size}px`, height: `${props.size}px`, "flex-basis": `${props.size}px` } : undefined}
-      aria-label={props.title !== false ? stateLabel(props.state, props.unseen) : undefined}
-      title={props.title !== false ? stateLabel(props.state, props.unseen) : undefined}
+      aria-label={props.title !== false ? stateLabel(props.state, props.unseen, props.bg) : undefined}
+      title={props.title !== false ? stateLabel(props.state, props.unseen, props.bg) : undefined}
     />
   );
 };

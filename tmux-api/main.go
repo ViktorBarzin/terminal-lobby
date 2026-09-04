@@ -61,12 +61,20 @@ const (
 		"#{session_attached}" + listSep + "#{session_activity}" + listSep +
 		"#{session_created}" + listSep + "#{" + lastDriveOption + "}" + listSep +
 		"#{@claude_state}" + listSep +
+		"#{" + sessionBackgroundOption + "}" + listSep +
 		"#{pane_pid}" + listSep + "#{pane_current_command}" + listSep +
 		"#{" + sessionTitleOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 11
+	listFields = 12
+
+	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
+	// goes immediately after @claude_state and BEFORE pane_title, because
+	// pane_title is application-controlled text and has to stay last: SplitN
+	// gives the final field whatever separators are left over, which is the
+	// only thing protecting the row from a title that contains one.
+	bgColumn = 7
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service, t3-sync and anything
@@ -75,6 +83,12 @@ const (
 	// title someone chose — the titles store (titles.go) is what carries a
 	// title across a restore.
 	sessionTitleOption = sessionio.OptionTitle
+
+	// sessionBackgroundOption holds the session's outstanding background work
+	// as `<kind>:<id>` tokens, written by the same hook script as
+	// @claude_state. It rides the list format rather than costing a second
+	// tmux call, exactly as @claude_state does.
+	sessionBackgroundOption = sessionio.OptionBackground
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
@@ -187,9 +201,58 @@ type Session struct {
 	// The lobby renders it as a brand mark beside the state dot. Empty when
 	// the /proc scan failed (no mark) — omitempty keeps the old wire shape.
 	Tool string `json:"tool,omitempty"`
+	// Background is the session's OUTSTANDING WORK, counted by kind. Present
+	// only when there is some, so a session that backgrounded nothing serves
+	// the object it always did.
+	//
+	// It is what stops State reading "done" the moment the main turn ends: a
+	// background agent, a workflow or a background command keeps producing
+	// output long after Stop fires, and the session will speak again with
+	// nobody prompting it. State stays "running" for as long as this is
+	// non-nil, which every consumer of State already handles.
+	Background *Background `json:"bg,omitempty"`
 	// PanePID is the session's active-pane process — internal input to
 	// the claude-liveness backstop (proc.go), never serialized.
 	PanePID int `json:"-"`
+}
+
+// Background counts what a session is waiting on, by kind, so the sidebar can
+// tell a 30-second command from a 30-minute workflow rather than showing one
+// undifferentiated number.
+type Background struct {
+	Agents    int `json:"agents,omitempty"`
+	Commands  int `json:"commands,omitempty"`
+	Workflows int `json:"workflows,omitempty"`
+}
+
+// parseBackground reads the hook's `<kind>:<id>` tokens (sessionio.OptionBackground).
+// nil means nothing is outstanding, which is the overwhelmingly common case and
+// the one the wire shape is optimised for.
+//
+// A token whose kind this does not know counts as nothing. The hook validates
+// every id before writing it, so an unrecognised shape came from somewhere else,
+// and treating it as work would hold the session at "running" with no event able
+// to retire it.
+func parseBackground(tokens string) *Background {
+	var b Background
+	for _, tok := range strings.Fields(tokens) {
+		kind, id, ok := strings.Cut(tok, ":")
+		if !ok || id == "" {
+			continue
+		}
+		switch kind {
+		case "a":
+			b.Agents++
+		case "b":
+			b.Commands++
+		case "w":
+			b.Workflows++
+		}
+	}
+	if b == (Background{}) {
+		return nil
+	}
+	return &b
 }
 
 // Claude state values as stamped into @claude_state by the hook script.
@@ -695,7 +758,7 @@ func parseSessions(out []byte) []Session {
 		if !knownStates[state] {
 			state = ""
 		}
-		panePID, _ := strconv.Atoi(parts[7])
+		panePID, _ := strconv.Atoi(parts[8])
 		sessions = append(sessions, Session{
 			ID:           parts[0],
 			Name:         parts[1],
@@ -704,10 +767,11 @@ func parseSessions(out []byte) []Session {
 			LastDrive:    lastDrive,
 			Created:      created,
 			State:        state,
+			Background:   parseBackground(parts[7]),
 			PanePID:      panePID,
-			Command:      parts[8],
-			Title:        parts[9],
-			PaneTitle:    parts[10],
+			Command:      parts[9],
+			Title:        parts[10],
+			PaneTitle:    parts[11],
 		})
 	}
 	return sessions

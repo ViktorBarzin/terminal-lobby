@@ -958,6 +958,7 @@ export const App: Component = () => {
                     driven={() =>
                       store.sessions.some((s) => s.name === k.name && s.driven === true)
                     }
+                    background={() => store.sessions.find((s) => s.name === k.name)?.bg}
                     creating={shown() && selectedIsCreating()}
                     dir={shown() ? selectedDir() : undefined}
                     newCommand={newCommand}

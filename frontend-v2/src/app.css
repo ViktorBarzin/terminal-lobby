@@ -1184,6 +1184,20 @@ label.tl-set-row-label {
 }
 /* The size a pinch has reached, while it is being made. Mirrors the terminal's
    own #font-pill: it appears on the claim and fades when the fingers lift. */
+/* Between the timeline and the composer: what the session is still doing after
+   the transcript has gone quiet. Sits in the flow rather than floating, because
+   it is a statement about the conversation and not a transient. */
+.tl-bg-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  /* Inside .tl-textview, so it follows the pinch with the transcript and the
+     composer rather than sitting at native size beside them. */
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-subtle, var(--border-strong));
+}
 .tl-size-pill {
   position: absolute;
   top: 12px;

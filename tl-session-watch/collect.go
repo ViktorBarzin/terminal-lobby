@@ -94,20 +94,36 @@ func parseUserMap(in string) []string {
 	return out
 }
 
-// parseSessionList reads `name<TAB>@claude_state` rows. tmux rejects newlines in
-// session names but not tabs, so the field comes off the last separator.
+// parseSessionList reads `name<TAB>@claude_state<TAB>@claude_bg` rows. tmux
+// rejects newlines in session names but not tabs, so the two option fields come
+// off the LAST two separators and whatever precedes them is the name.
+//
+// A row with only one separator is read as the older `name<TAB>state` shape
+// rather than dropped. Dropping it would be the worst possible failure here:
+// this watcher's job is noticing sessions that went away, and a session missing
+// from a snapshot reads as a death.
 func parseSessionList(in string) map[string]Session {
 	out := map[string]Session{}
 	for _, line := range strings.Split(in, "\n") {
 		if line == "" {
 			continue
 		}
-		i := strings.LastIndex(line, "\t")
-		if i < 0 {
+		last := strings.LastIndex(line, "\t")
+		if last < 0 {
 			continue
 		}
-		name := line[:i]
-		out[name] = Session{Name: name, ClaudeState: line[i+1:]}
+		prev := strings.LastIndex(line[:last], "\t")
+		if prev < 0 {
+			name := line[:last]
+			out[name] = Session{Name: name, ClaudeState: line[last+1:]}
+			continue
+		}
+		name := line[:prev]
+		out[name] = Session{
+			Name:        name,
+			ClaudeState: line[prev+1 : last],
+			Background:  line[last+1:],
+		}
 	}
 	return out
 }
@@ -214,7 +230,8 @@ func collectUser(user, bootID string) Snapshot {
 		Tombstones: map[string]int64{},
 	}
 
-	sessOut, err := asUser(user, tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{@claude_state}")
+	sessOut, err := asUser(user, tmuxBinary, "list-sessions", "-F",
+		"#{session_name}\t#{@claude_state}\t#{@claude_bg}")
 	if err != nil {
 		// No server, or no sessions. Either way there is nothing to compare.
 		return snap

@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           for mod in release telemetry skillscan authuser sessionio slug \
                      tmux-api clipboard-upload session-events file-api skills-api \
-                     t3-bridge t3-sync; do
+                     t3-bridge t3-sync tl-session-watch; do
             [ -f "$mod/go.mod" ] || continue
             echo "==> $mod"
             (cd "$mod" && go vet ./... && go test ./...)

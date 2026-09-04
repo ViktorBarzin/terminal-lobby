@@ -1,13 +1,21 @@
 #!/bin/sh
 # claude-tmux-state — Claude Code hook that stamps the current tmux
 # session with @claude_state so the terminal-lobby sidebar can show a
-# per-session indicator (ADR-0001). Wired org-wide via
-# /etc/claude-code/managed-settings.json (infra repo):
+# per-session indicator (ADR-0001), and with @claude_bg so that indicator
+# survives the main turn ending while background work is still running
+# (docs/plans/2026-09-04-background-work-session-state-design.md).
+#
+# Wired org-wide via /etc/claude-code/managed-settings.json (infra repo):
 #
 #   UserPromptSubmit / PreToolUse / PostToolUse  -> running
 #   Stop / SessionStart                          -> done
 #   SessionEnd                                   -> clear (unset)
 #   Notification                                 -> notify (classified below)
+#
+# The argv word is the COARSE mode; three events share "running" and two share
+# "done", so the fine branch reads `hook_event_name` off the payload. A payload
+# without that field falls back to the argv word alone, which is exactly the
+# behaviour this script had before 2026-09-04.
 #
 # Contract with the hook runner:
 #   - MUST stay silent: stdout of several hook events is injected into
@@ -15,6 +23,9 @@
 #   - MUST exit 0: a non-zero PreToolUse exit blocks the tool call.
 #   - No-ops outside tmux ($TMUX unset) — t3-serve and headless Claude
 #     instances run these same org-wide hooks.
+#   - No jq, no forks that are not tmux: PostToolUse fires on every tool call
+#     in every session on the box. Field extraction is shell parameter
+#     expansion, which costs nothing.
 set -u
 
 [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || exit 0
@@ -38,15 +49,12 @@ stamp() {
     fi
 }
 
-case "$mode" in
-running|done)
-    stamp "$mode"
-    ;;
-awaiting)
-    stamp awaiting
-    ;;
-clear)
+# ---- SessionEnd -----------------------------------------------------------
+# Handled before stdin is read: it needs nothing off the wire, and it is the
+# one event where the pane may already be going away.
+if [ "$mode" = clear ]; then
     tmux set-option -u -t "$TMUX_PANE" @claude_state >/dev/null 2>&1 || true
+    tmux set-option -u -t "$TMUX_PANE" @claude_bg >/dev/null 2>&1 || true
     # Record that this ending was DELIBERATE, so tl-session-watch does not
     # report it as a lost session (2026-09-03).
     #
@@ -83,29 +91,224 @@ clear)
                 >> "$ce_dir/tl-clean-exit.tsv" 2>/dev/null || true
         fi
     fi
-    ;;
-notify)
-    # Notifications are not all "awaiting input". BLOCKED asks — permission
-    # / approval dialogs and "needs your input" — always stamp awaiting
-    # (amber): the turn cannot proceed without the user. The IDLE-REMINDER
-    # wording ("waiting for your input") is different: after a COMPLETED
-    # turn it is just Claude politely idling, and stamping awaiting there
-    # repainted every finished session amber ~a minute after it went green
-    # (Viktor: "the nub is yellow-ish when the agent is completed"). So the
-    # idle wording — and any other unrecognized wording — promotes ONLY
-    # from running (Claude stopped mid-turn: genuinely blocked); a done
-    # session STAYS done (green). Matching stays case-insensitive since
-    # Claude's phrasing drifts between versions.
-    msg="$(cat 2>/dev/null || true)"
-    msg_lc="$(printf '%s' "$msg" | tr '[:upper:]' '[:lower:]')"
+    exit 0
+fi
+
+payload="$(cat 2>/dev/null || true)"
+
+# ---- Reading the payload --------------------------------------------------
+# Both helpers write their answer to $jv rather than echoing it: a command
+# substitution is a fork, and these run on the hot path.
+
+jv=""
+
+# json_field extracts a string field's value. Hook payloads are compact JSON
+# with no whitespace ("agent_id":"a1cbb…"), verified against claude 2.1.260 on
+# 2026-09-04, which is what lets parameter expansion do this without jq.
+json_field() {
+    jv=""
+    case "$payload" in
+    *"\"$1\":\""*)
+        jv="${payload#*\"$1\":\"}"
+        jv="${jv%%\"*}"
+        ;;
+    esac
+}
+
+# json_tag extracts the text of an XML element inside the payload. The harness
+# writes its bookkeeping as markup in the prompt, and <task-id> is the one
+# thing that says WHICH background task just reported (sessionio/harness.go
+# renders the same markup for the Text view).
+json_tag() {
+    jv=""
+    case "$payload" in
+    *"<$1>"*)
+        jv="${payload#*<$1>}"
+        jv="${jv%%</$1>*}"
+        ;;
+    esac
+}
+
+# An id that is not [A-Za-z0-9_-] is rejected rather than stored: it lands in a
+# tmux option value and is later matched as a shell pattern, so the charset is
+# the whole of its validation.
+id_ok() {
+    case "$1" in
+    "" | *[!A-Za-z0-9_-]*) return 1 ;;
+    esac
+    return 0
+}
+
+# ---- The outstanding-work set ---------------------------------------------
+# @claude_bg holds space-separated `<kind>:<id>` tokens: `a` an agent, `b` a
+# background command, `w` a workflow. Empty means the session owes nothing and
+# Stop may finish it.
+
+bg=""
+bg_read() { bg="$(tmux show-option -qv -t "$TMUX_PANE" @claude_bg 2>/dev/null || true)"; }
+
+bg_write() {
+    if [ -z "$1" ]; then
+        tmux set-option -u -t "$TMUX_PANE" @claude_bg >/dev/null 2>&1 || true
+    else
+        tmux set-option -t "$TMUX_PANE" @claude_bg "$1" >/dev/null 2>&1 || true
+    fi
+}
+
+# bg_add is a no-op for an id already present, so a re-fired hook cannot double
+# count. The cap is not an expiry — there is deliberately none (2026-09-04) —
+# it bounds an option value that nothing else bounds; 64 is far past any real
+# turn, where the count is single digits.
+bg_add() {
+    bg_read
+    case " $bg " in *" $1 "*) return 0 ;; esac
+    n=0
+    for t in $bg; do n=$((n + 1)); done
+    [ "$n" -ge 64 ] && return 0
+    if [ -z "$bg" ]; then bg_write "$1"; else bg_write "$bg $1"; fi
+}
+
+# bg_del retires one id whatever kind it was recorded as: a task-notification
+# names the id and nothing else.
+bg_del() {
+    bg_read
+    [ -n "$bg" ] || return 0
+    kept=""
+    for t in $bg; do
+        case "$t" in *":$1") continue ;; esac
+        if [ -z "$kept" ]; then kept="$t"; else kept="$kept $t"; fi
+    done
+    [ "$kept" != "$bg" ] && bg_write "$kept"
+    return 0
+}
+
+# record_launch adds the task a PostToolUse just started, if it started one.
+# Three tools, three field names, all carrying the id that the eventual
+# task-notification will name:
+#
+#   Agent (background)  tool_response.agentId,           status async_launched
+#   Workflow            tool_response.taskId,            status async_launched
+#   Bash run_in_background  tool_response.backgroundTaskId
+record_launch() {
+    case "$payload" in
+    *'"status":"async_launched"'*)
+        json_field agentId
+        if id_ok "$jv"; then
+            bg_add "a:$jv"
+            return 0
+        fi
+        json_field taskId
+        id_ok "$jv" && bg_add "w:$jv"
+        return 0
+        ;;
+    esac
+    case "$payload" in
+    *'"backgroundTaskId":"'*)
+        json_field backgroundTaskId
+        id_ok "$jv" && bg_add "b:$jv"
+        ;;
+    esac
+}
+
+# ---- Notification ---------------------------------------------------------
+# Notifications are not all "awaiting input". BLOCKED asks — permission /
+# approval dialogs and "needs your input" — always stamp awaiting (amber): the
+# turn cannot proceed without the user, and that is true whether the block is
+# the main thread's or a background agent's. The IDLE-REMINDER wording
+# ("waiting for your input") is different: after a COMPLETED turn it is just
+# Claude politely idling, and stamping awaiting there repainted every finished
+# session amber ~a minute after it went green (Viktor: "the nub is yellow-ish
+# when the agent is completed"). So the idle wording — and any other
+# unrecognized wording — promotes ONLY from a session that is genuinely
+# mid-turn: state running AND nothing outstanding. A session held at running by
+# background work is not mid-turn, and a done session stays done. Matching
+# stays case-insensitive since Claude's phrasing drifts between versions.
+handle_notify() {
+    msg_lc="$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')"
     case "$msg_lc" in
-    *permission*|*approval*|*"needs your input"*)
+    *permission* | *approval* | *"needs your input"*)
         stamp awaiting
         ;;
     *)
         cur="$(tmux show-option -qv -t "$TMUX_PANE" @claude_state 2>/dev/null || true)"
-        [ "$cur" = "running" ] && stamp awaiting
+        [ "$cur" = "running" ] || return 0
+        bg_read
+        [ -n "$bg" ] && return 0
+        stamp awaiting
         ;;
+    esac
+}
+
+# ---- Dispatch -------------------------------------------------------------
+
+json_field hook_event_name
+event="$jv"
+json_field agent_id
+agent="$jv"
+
+case "$event" in
+UserPromptSubmit)
+    # A completing background task re-enters the session as a synthetic prompt
+    # carrying its own markup. That retires one id. Anything else is a person
+    # typing, which re-derives the set from nothing: with no expiry on an id,
+    # interacting with a session is what unsticks one whose set went stale
+    # (decided 2026-09-04). The accepted cost is that a prompt sent while a
+    # long workflow is genuinely running reports done early.
+    case "$payload" in
+    *'"prompt":"<task-notification>'*)
+        json_tag task-id
+        id_ok "$jv" && bg_del "$jv"
+        ;;
+    *)
+        bg_write ""
+        ;;
+    esac
+    stamp running
+    ;;
+PreToolUse)
+    # A subagent's own tool calls reach THIS session's hooks carrying agent_id
+    # (measured 2026-09-04). Stamping on them made the dot alternate between
+    # done and running for as long as a background agent worked, which is why
+    # the wrong colour was intermittent rather than constant.
+    [ -n "$agent" ] && exit 0
+    stamp running
+    ;;
+PostToolUse)
+    [ -n "$agent" ] && exit 0
+    record_launch
+    stamp running
+    ;;
+Stop)
+    # Stop is the main thread stopping talking, not the end of the turn's work.
+    bg_read
+    if [ -n "$bg" ]; then stamp running; else stamp done; fi
+    ;;
+SessionStart)
+    # A fresh claude owes nothing, whatever the option survived from the
+    # process that died in this session.
+    bg_write ""
+    stamp done
+    ;;
+Notification)
+    handle_notify
+    ;;
+"")
+    # No hook_event_name: a harness older than this script, or an event fired
+    # by something else. Fall back to the argv word alone, which is what this
+    # script did before background work was tracked.
+    case "$mode" in
+    running | done) stamp "$mode" ;;
+    awaiting) stamp awaiting ;;
+    notify) handle_notify ;;
+    esac
+    ;;
+*)
+    # A wired event this script has no rule for. Honour the argv word so a
+    # future infra change cannot silently stop the indicator working.
+    case "$mode" in
+    running | done) stamp "$mode" ;;
+    awaiting) stamp awaiting ;;
+    notify) handle_notify ;;
     esac
     ;;
 esac
