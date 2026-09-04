@@ -1828,7 +1828,7 @@ describe("the connection ask (term.html:9822-9873)", () => {
  * toolbar and compose-bar heights, is pass 2.
  *
  * The shrink cannot come from the container: `.tl-views.tl-kb-inline`
- * deliberately leaves the keyboard out of that reservation (app.css:2309-2318)
+ * deliberately leaves the keyboard out of that reservation (app.css:2437-2448)
  * because shrinking it moved the terminal out from under the tap that had just
  * opened the keyboard.
  *
@@ -4151,7 +4151,7 @@ describe("the compose mirror (term.html:7077-7509)", () => {
    * coming back on screen leave the field alone there. Hanging the reset off
    * `onPhase("open")` did not: `reportNow` re-fires that phase for the SAME
    * socket, and SessionView asks on every return to the screen
-   * (SessionView.tsx:248, inside an effect gated on `onScreen()`), so the field
+   * (SessionView.tsx:292, inside an effect gated on `onScreen()`), so the field
    * was blanked mid-word by ordinary navigation. mirror.ts:56-63 says what
    * goes with such a write: a live QuickType or Gboard suggestion.
    *
