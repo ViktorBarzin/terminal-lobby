@@ -16,6 +16,15 @@ import (
 // replaced by the skill's NAME rather than dropped outright.
 const skillMarker = "Base directory for this skill:"
 
+// The Skill tool's own result. This is the signal that catches EVERY load.
+//
+// Measured across 409 transcripts on 2026-09-04: 340 bodies carry skillMarker
+// and 24 do not, which rendered in full at a median of 16,584 characters —
+// 248,757 in total, 14 of them workflow-authoring. A bundled skill lives nowhere
+// under ~/.claude/skills, so it has no base directory to name, and the marker
+// cannot see it. The receipt is written for all 364.
+const skillReceiptPrefix = "Launching skill: "
+
 // skillLoad returns the name of the skill this record is loading, and whether
 // it is one at all.
 //
@@ -50,6 +59,36 @@ func skillLoad(text string) (string, bool) {
 		}
 	}
 	return name, true
+}
+
+// skillReceipt returns the skill this tool result is launching.
+//
+// Anchored at the start, so prose that happens to contain the phrase is not a
+// receipt, and neither is the error a Skill call returns for a name that does
+// not resolve.
+func skillReceipt(text string) (string, bool) {
+	if !strings.HasPrefix(text, skillReceiptPrefix) {
+		return "", false
+	}
+	name := strings.TrimSpace(text[len(skillReceiptPrefix):])
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+// blockTextLen is how much text a record actually carries: the sum of its text
+// blocks, without the separator blockText inserts between them. This is the size
+// a collapsed skill body reports, so it has to be the body's own length rather
+// than the length of the joined form.
+func blockTextLen(blocks []Block) int64 {
+	var n int64
+	for _, bl := range blocks {
+		if bl.Type == "text" {
+			n += int64(len(bl.Text))
+		}
+	}
+	return n
 }
 
 // blockText is every text block in a record, joined — a record can split its

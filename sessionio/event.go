@@ -87,6 +87,10 @@ type Event struct {
 	// Truncated says Body and/or Result were capped for the wire (see
 	// MaxInlineResult). The full payload is fetched on demand by ToolID.
 	Truncated bool `json:"truncated,omitempty"`
+	// Bytes is how much text a MetaSkill event stands in for: the length of the
+	// SKILL.md body that was collapsed to this one line. On the wire so the card
+	// can say what it is hiding — median 3.1 kB across 340 loads, up to 23.3 kB.
+	Bytes int64 `json:"bytes,omitempty"`
 	// Context is the `/context` reading on a MetaContext event. It carries the
 	// headline and the category table only — the record it comes from also
 	// holds per-tool, per-agent, per-memory and per-skill tables, which are
