@@ -165,9 +165,17 @@ type publicAsset struct {
 // is impossible by construction. A whitelisted path whose file isn't
 // installed degrades to a clean 404 (how /icon-512-maskable.png rode the
 // whitelist one task ahead of M.9 shipping the artwork).
-// fonts/tl-symbols.woff2 is deliberately NOT listed: the page embeds it as a
-// data: URI and never fetches it by URL. Icons + manifest may change with a
-// deploy (1h cache); the fonts are versioned by content, not path (7d).
+// fonts/tl-symbols.woff2 IS listed now, and the reason it was not is worth
+// keeping because it was correct until 2026-09-04. term.html embeds that face
+// as a data: URI and never fetches it by URL, so serving it was pure surface.
+// The app-rendered terminal declares it in theme/theme.css instead and asks for
+// it by URL, and while this path 404ed the face loaded with status "error" and
+// Claude Code's spinner glyphs fell through to whatever font the client
+// happened to have. On the machine that reported the problem, that was a
+// replacement box. Inlining 17 KB as base64 on every deploy costs more than one
+// request the browser keeps for a week.
+// Icons + manifest may change with a deploy (1h cache); the fonts are versioned
+// by content, not path (7d).
 // sw.js (the push service worker) is served no-cache: the browser re-fetches
 // the worker bytes on every update check, so a deploy must never be masked
 // by a cached copy.
@@ -203,6 +211,7 @@ var publicAssets = map[string]publicAsset{
 	"/fonts/JetBrainsMono-Italic.woff2":      {"fonts/JetBrainsMono-Italic.woff2", "font/woff2", "public,max-age=604800"},
 	"/fonts/JetBrainsMono-BoldItalic.woff2":  {"fonts/JetBrainsMono-BoldItalic.woff2", "font/woff2", "public,max-age=604800"},
 	"/fonts/dm-sans-latin-wght-normal.woff2": {"fonts/dm-sans-latin-wght-normal.woff2", "font/woff2", "public,max-age=604800"},
+	"/fonts/tl-symbols.woff2":                {"fonts/tl-symbols.woff2", "font/woff2", "public,max-age=604800"},
 }
 
 // assetDir resolves the on-disk root the whitelist reads from.

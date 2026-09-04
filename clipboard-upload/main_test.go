@@ -27,9 +27,11 @@ import (
 // fonts/. icon-512-maskable.png is deliberately ABSENT — the whitelisted-
 // but-not-installed scenario (it rode the whitelist one task ahead of M.9
 // shipping the file, and a fresh host sees the same shape) must 404
-// cleanly. tl-symbols.woff2 IS installed (deploy.sh ships every repo
-// woff2) but must never be served: the page embeds it as a data: URI, and
-// it is not in the public whitelist.
+// cleanly. tl-symbols.woff2 is installed AND served since 2026-09-04: it used
+// to be excluded because term.html embeds that face as a data: URI, and the
+// app-rendered terminal declares it in theme/theme.css and fetches it by URL
+// instead, so excluding it left Claude Code's spinner glyphs on whatever font
+// the client happened to have.
 func fixtureAssetDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -43,7 +45,7 @@ func fixtureAssetDir(t *testing.T) string {
 		"fonts/JetBrainsMono-Italic.woff2":      "woff2-italic",
 		"fonts/JetBrainsMono-BoldItalic.woff2":  "woff2-bolditalic",
 		"fonts/dm-sans-latin-wght-normal.woff2": "woff2-dmsans",
-		"fonts/tl-symbols.woff2":                "woff2-symbols-NEVER-SERVED",
+		"fonts/tl-symbols.woff2":                "woff2-symbols",
 	}
 	for name, content := range files {
 		p := filepath.Join(dir, name)
@@ -87,6 +89,11 @@ func TestPublicAssetsServedWithoutAuth(t *testing.T) {
 		{"/fonts/JetBrainsMono-Italic.woff2", "font/woff2", "public,max-age=604800", "woff2-italic"},
 		{"/fonts/JetBrainsMono-BoldItalic.woff2", "font/woff2", "public,max-age=604800", "woff2-bolditalic"},
 		{"/fonts/dm-sans-latin-wght-normal.woff2", "font/woff2", "public,max-age=604800", "woff2-dmsans"},
+		// The symbol fallback face. Served since 2026-09-04, because the
+		// app-rendered terminal fetches it by URL where term.html embeds it as
+		// a data: URI, and a 404 here puts Claude Code's spinner glyphs on
+		// whatever font the client happens to have.
+		{"/fonts/tl-symbols.woff2", "font/woff2", "public,max-age=604800", "woff2-symbols"},
 		{"/sw.js", "application/javascript", "no-cache", "sw-js-bytes"},
 	}
 	for _, c := range cases {
@@ -322,7 +329,6 @@ func TestPublicAssetsTraversalAndNonWhitelisted404(t *testing.T) {
 		"/fonts/../../etc/passwd",
 		"/fonts/%2e%2e/%2e%2e/etc/passwd",
 		"/fonts/JetBrainsMono-Regular.woff2/../../../etc/passwd",
-		"/fonts/tl-symbols.woff2", // installed but data-URI-embedded: not public
 		"/fonts/",
 		"/fonts/does-not-exist.woff2",
 		"/icon-512.png.bak",
