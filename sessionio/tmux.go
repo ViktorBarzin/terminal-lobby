@@ -28,6 +28,20 @@ const (
 	OptionTranscript = "@claude_transcript"
 	// OptionState holds running/awaiting/done (ADR-0001).
 	OptionState = "@claude_state"
+	// OptionBackground holds the session's OUTSTANDING WORK: space-separated
+	// `<kind>:<id>` tokens for background tasks the main thread launched and
+	// that have not reported back, kind being `a` (agent), `b` (background
+	// command) or `w` (workflow). Written by the same hook script as
+	// OptionState, which adds a token when a launch returns `async_launched`
+	// and removes it when that id's task-notification arrives.
+	//
+	// It exists because Stop is not the end of a turn's work: it fires the
+	// moment the main thread stops talking, while a background agent it
+	// launched keeps going (measured 2026-09-04 — Stop 2m16s before the agent
+	// finished). A session with a non-empty set stays StateRunning, which is
+	// what every consumer of OptionState already reads correctly. Design:
+	// docs/plans/2026-09-04-background-work-session-state-design.md.
+	OptionBackground = "@claude_bg"
 	// OptionThread holds the T3 thread id a session is mirrored into. Written
 	// by the syncer at adoption; dies with the session, which is deliberate —
 	// a resurrected session re-derives it from the durable Index instead.
@@ -154,12 +168,21 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 // would grow a state dot in the sidebar for a plain shell. The stamp write is
 // best-effort: the interrupt already landed, so a failure here must not fail
 // the cancel, but it silently re-creates the latch, so it is logged.
+//
+// OptionBackground goes with it, for the same reason and by the same right: an
+// interrupt ends the turn, and a task the interrupted turn launched will never
+// report back into it. Left behind, the id holds the session at StateRunning
+// with no hook able to retire it, which is the one way a set with no expiry can
+// latch (docs/plans/2026-09-04-background-work-session-state-design.md).
 func (in *Injector) Cancel(osUser, session string) error {
 	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-c").Run(); err != nil {
 		return err
 	}
 	if in.State(osUser, session) == "" {
 		return nil
+	}
+	if err := in.Command(osUser, "set-option", "-u", "-t", exactPane(session), OptionBackground).Run(); err != nil {
+		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionBackground, err)
 	}
 	if err := in.Command(osUser, "set-option", "-t", exactPane(session), OptionState, StateDone).Run(); err != nil {
 		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionState, err)
