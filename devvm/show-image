@@ -1,9 +1,28 @@
 #!/bin/sh
-# Show an image to the human at the terminal. Inside tmux, renders in a
-# temporary split pane via viu (sixel; Enter closes) — Claude Code's Bash
-# tool captures stdout, so running bare `viu` from a tool call prints
-# garbage instead; this helper targets the real pane tty via tmux.
-# Outside tmux, plain viu.
+# Put an image in front of whoever is at the terminal, without drawing it in
+# the terminal. Two audiences, two channels:
+#
+#   - the people attached to the session get a line on the tmux status line,
+#     which tmux writes from outside the pane;
+#   - the caller gets the library path on stdout.
+#
+# The split is the point. The usual caller is an agent's Bash tool, which
+# CAPTURES stdout, so a printed line reaches the agent and never the person at
+# the terminal. That capture is also why bare `viu` was never the way to do
+# this: `viu frontend/icon-192.png` into a pipe wrote 32 KB of escape sequences
+# opening with a DA1 query (ESC [ c), so the caller collects garbage and the
+# terminal answers a question nobody is listening for.
+#
+# Nothing renders inline any more, for any client. The temporary split pane
+# running `viu` (sixel) came out on 2026-09-04 with the sixel flow
+# (docs/adr/0004-sixel-images-in-the-terminal.md), and it came out for
+# everyone: a human on a real sixel-capable terminal inside tmux loses the
+# inline picture as well, not only a lobby client. What carries an image now is
+# the per-session image library (docs/adr/0005-session-image-store.md), which
+# the notice points at.
+#
+# Outside tmux, plain viu: no $TMUX means a human at a real terminal rather
+# than the web one, and viu falls back to half-blocks where sixel is missing.
 # Usage: show-image <image-file>
 
 if [ "$#" -ne 1 ]; then
@@ -15,8 +34,9 @@ if [ ! -f "$1" ] || [ ! -r "$1" ]; then
     exit 1
 fi
 
-# Absolute path: the split pane and the gallery registration below both
-# run without this shell's cwd. realpath is present on the devvm; the
+# Absolute path: the gallery registration below runs without this shell's
+# cwd, and /register refuses a relative one outright
+# (clipboard-upload/main.go:578-581). realpath is present on the devvm; the
 # case fallback keeps the script POSIX-portable.
 if command -v realpath >/dev/null 2>&1; then
     img=$(realpath "$1")
@@ -28,25 +48,86 @@ else
 fi
 
 if [ -n "$TMUX" ]; then
-    # -e passes the path out-of-band as an env var, so it survives spaces
-    # and quotes: tmux putenvs the value verbatim and the pane's /bin/sh
-    # only ever expands "$IMG" inside double quotes. The pane shell is
-    # dash, whose `read` has no -n/-s — hence plain `read x` + Enter.
-    # A split pane, not display-popup: tmux 3.4 popups don't pass sixel
-    # through (empty box).
-    tmux split-window -l 15 -e "IMG=$img" 'viu -h 12 "$IMG"; printf "\n[Enter closes]"; read x' || exit 1
-    # Persist what was shown into the per-session gallery store
-    # (docs/adr/0005-session-image-store.md) — unless it already lives
-    # there. Fire-and-forget: the backgrounded subshell with all output
-    # dropped means a dead or slow clipboard-upload service can never
-    # break or delay rendering.
+    # Resolved once: the POST files the image under this session and the
+    # notice below has to find the clients attached to it.
+    session=$(tmux display -p '#S')
+
+    # Persist the image into the per-session store
+    # (docs/adr/0005-session-image-store.md), unless it already lives there.
+    #
+    # This call used to be fire-and-forget in a backgrounded subshell with all
+    # output dropped, so that a dead or slow clipboard-upload could never
+    # break or delay the rendering. Rendering is gone, the registration IS the
+    # job, and the reply is the ONLY place the stored name exists (the server
+    # stamps it, clipboard-upload/main.go:617), so it is synchronous now: a
+    # failed POST means there is nothing to look at or to point anyone at, and
+    # saying so beats a status-line notice about an image that was never
+    # filed. `-m 5` still bounds the wait, as it did.
     case "$img" in
-        /var/lib/clipboard-store/*) ;;
-        *) (curl -s -m 5 -X POST http://127.0.0.1:7683/register \
+        /var/lib/clipboard-store/*)
+            # Already stored, so there is nothing to copy: /register answers
+            # such a path unchanged (main.go:604-608) and the path itself says
+            # which session directory serves it, which need not be this one.
+            stored=$img
+            ;;
+        *)
+            reply=$(curl -sS -m 5 -X POST http://127.0.0.1:7683/register \
                 -F "user=$(id -un)" \
-                -F "session=$(tmux display -p '#S')" \
-                -F "path=$img" >/dev/null 2>&1 &) ;;
+                -F "session=$session" \
+                -F "path=$img" 2>&1) || {
+                printf 'show-image: could not reach the image store: %s\n' "$reply" >&2
+                exit 1
+            }
+            # {"path":"…"} on success (writePath, main.go:1060); anything else
+            # is one of /register's plain-text refusals, worth showing whole.
+            stored=$(printf '%s' "$reply" |
+                sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+            if [ -z "$stored" ]; then
+                printf 'show-image: the image store refused it: %s\n' "$reply" >&2
+                exit 1
+            fi
+            ;;
     esac
+
+    # The channel that reaches the human. tmux draws a message over the status
+    # line of a client, from outside that client's pane, so the caller's stdout
+    # capture cannot swallow it. With two clients attached to one session the
+    # notice landed on the status row of both while stdout stayed one line.
+    #
+    # One -c per attached client, because a session can have several at once, a
+    # lobby tab and an SSH attach, and with two attached a bare
+    # display-message reached only the more recently attached one. The name in
+    # the notice is the basename the caller passed rather than the stamped
+    # store name, since that is the one the person recognises; the stamped name
+    # goes to stdout for the agent.
+    #
+    # -l keeps tmux from reading the message as a FORMAT: a filename may hold a
+    # `#`, and without -l "probe#S.png" came out as "probeshowimg-probe.png".
+    # No -N: the notice arrives while somebody may be typing, and with -d 4000
+    # alone the first key press dismisses it AND still reaches the shell, while
+    # -d 4000 -N holds the notice up and swallows that key. Nothing here is
+    # silenced, because nothing ordinary writes to stderr: a detached session
+    # lists no clients and exits 0, and display-message to a client that has
+    # gone exits 0 too, so the one thing that would surface is a session tmux
+    # cannot find, which the caller should see. (All measured on tmux 3.4.)
+    notice="show-image: ${img##*/} is in this session's image library (🖼 in the lobby)"
+    tmux list-clients -t "$session" -F '#{client_name}' |
+    while read -r client; do
+        tmux display-message -c "$client" -d 4000 -l "$notice"
+    done
+
+    # /clipboard/img/<session>/<name> is how the lobby fetches a stored image
+    # (frontend-v2/src/lib/config.ts, clipboardImgUrl), and the store path's
+    # last two components are exactly that session and name.
+    name=${stored##*/}
+    dir=${stored%/*}
+    # No host: this box cannot know which origin the browser came through, and
+    # the lobby addresses every API with a site-relative path for the same
+    # reason. A deployment that wants a clickable link names itself in
+    # TL_LOBBY_URL (e.g. https://terminal.example.com).
+    base=${TL_LOBBY_URL:-}
+    printf '%s is in this session library: %s/clipboard/img/%s/%s\n' \
+        "$name" "${base%/}" "${dir##*/}" "$name"
 else
     exec viu "$img"
 fi

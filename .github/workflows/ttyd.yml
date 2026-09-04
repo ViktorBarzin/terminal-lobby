@@ -58,9 +58,13 @@ jobs:
             # with "failed to load evlib_uv". Found on a fresh VM, 2026-08-29.
             printf 'Depends: libwebsockets19t64 | libwebsockets19, libwebsockets-evlib-uv, libjson-c5 | libjson-c\n'
             printf 'Description: ttyd 1.7.7 with the devvm patches\n'
-            printf ' Forwards the browser pixel size to the pty so tmux re-emits sixel,\n'
-            printf ' honours the client PAUSE opcode so flow control works, and serves the\n'
+            printf ' Honours the client PAUSE opcode so flow control works, and serves the\n'
             printf ' custom index with an ETag so boots revalidate instead of re-downloading.\n'
+            # Worth saying in the package itself: this is the upgrade after
+            # which sixel stops rendering, and dpkg is where someone will look.
+            printf ' The pixel-size forwarding that let tmux re-emit sixel was removed on\n'
+            printf ' 2026-09-04 when the sixel flow was deprecated (ADR-0004); images are\n'
+            printf ' viewed in the session library instead.\n'
           } > "$TREE/DEBIAN/control"
           # A ttyd upgrade must restart what runs it; the lobby package does not
           # own this binary and cannot notice it moved.
