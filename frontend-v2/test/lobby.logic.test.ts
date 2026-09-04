@@ -16,7 +16,6 @@ import {
   relativeTime,
   removeSessionFromLayout,
   renameProject,
-  renameSessionInLayout,
   reorderGroups,
   sameLayout,
   stabilizeModel,
@@ -492,18 +491,11 @@ describe("project CRUD", () => {
 });
 
 describe("session CRUD in layout", () => {
-  it("addSessionToGroup then rename then remove", () => {
+  it("addSessionToGroup then remove", () => {
     let l = addSessionToGroup(emptyLayout(), "sess", "");
     expect(l.ungrouped).toEqual(["sess"]);
-    l = renameSessionInLayout(l, "sess", "sess2");
-    expect(l.ungrouped).toEqual(["sess2"]);
-    l = removeSessionFromLayout(l, "sess2");
+    l = removeSessionFromLayout(l, "sess");
     expect(l.ungrouped).toEqual([]);
-  });
-
-  it("rename follows the dock session too", () => {
-    const l = layout({ dock: { session: "d", visible: true } });
-    expect(renameSessionInLayout(l, "d", "d2").dock!.session).toBe("d2");
   });
 });
 

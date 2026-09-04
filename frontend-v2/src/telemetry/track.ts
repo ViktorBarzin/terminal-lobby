@@ -44,7 +44,6 @@ export type TlEvent =
   | "text.answer_sent"
   | "text.answer_failed"
   | "session.detached"
-  | "session.renamed"
   | "session.moved"
   | "session.killed"
   | "session.restored"

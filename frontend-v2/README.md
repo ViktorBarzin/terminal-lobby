@@ -135,11 +135,12 @@ src/
                          lookbehind on every render, and lookbehind is Safari
                          16.4 — so on iPadOS 15.8 it is dropped and the message
                          still renders, minus tables/task lists/strikethrough
-    slug.ts              Display TITLE → tmux session NAME: romanize, lowercase,
-                         collapse, cap at 32. Mirrors Go's terminal-lobby/slug
-                         against the shared slug/vectors.json — the browser has
-                         to derive a name unaided, since creating a session
-                         reaches no server at all
+    title.ts             Normalizes a display TITLE: control characters to a
+                         space, whitespace runs collapsed, capped at 64 code
+                         points. Mirrors Go's slug.CleanTitle, which tmux-api
+                         runs on every title it stores. It used to derive a
+                         session NAME from the title too; ADR-0019 ended that
+                         and session-id.ts mints the name instead
     session-id.ts        Mints a session's NAME: 12 characters of lowercase
                          Crockford base32 from crypto.getRandomValues, and the
                          test that says a name is one of ours. The name is an

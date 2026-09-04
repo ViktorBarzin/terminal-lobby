@@ -23,9 +23,11 @@ export type SessionTool = "claude" | "codex" | "shell";
 export interface Session {
   name: string;
   /** tmux's own session id ($0, $1, …). The ONE identifier that survives a
-   *  rename, which is how a tab whose selected session was retitled elsewhere
-   *  follows it instead of holding a name whose attach would create a fresh
-   *  empty session. Absent from a server that predates it. */
+   *  rename, which is what `store/visits.ts` keys read/unread records by: a
+   *  session renamed by the one-time id migration, or by restore's collision
+   *  path, keeps work the user had already read marked as read. It does NOT
+   *  survive a tmux server restart, which is why it is not the session's name.
+   *  Absent from a server that predates it. */
   id?: string;
   /** The display title a person chose — arbitrary text, up to 64 code points,
    *  from the session's @title option. Absent means the session has no title

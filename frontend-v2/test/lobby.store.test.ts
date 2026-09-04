@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { createRoot } from "solid-js";
 import { createLobbyStore, type LobbyStore, type LobbyStoreOptions } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
-import { renameSessionInLayout } from "../src/components/lobby.logic";
 import { emptyLayout, NAME_RE, type Layout, type Session, type Whoami } from "../src/types/lobby";
 import { isSessionId } from "../src/lib/session-id";
 
@@ -57,20 +56,8 @@ class FakeApi implements LobbyApi {
     this.kills.push(n);
     this.sessionsVal = this.sessionsVal.filter((s) => s.name !== n);
   }
-  retitles: [string, string, string][] = [];
   titles: [string, string][] = [];
-  retitleError = 0;
   titleError = 0;
-  async retitleSession(o: string, n: string, title: string) {
-    if (this.retitleError) throw new ApiError(this.retitleError, "x");
-    this.retitles.push([o, n, title]);
-    // Mirror the backend: rename the tmux session, carry the layout, stamp the
-    // title. One call, so a test cannot observe a half-applied retitle.
-    this.sessionsVal = this.sessionsVal.map((s) =>
-      s.name === o ? { ...s, name: n, title } : s,
-    );
-    if (o !== n) this.layoutVal = renameSessionInLayout(this.layoutVal, o, n);
-  }
   async setSessionTitle(name: string, title: string) {
     if (this.titleError) throw new ApiError(this.titleError, "x");
     this.titles.push([name, title]);
@@ -291,7 +278,10 @@ describe("lobby store", () => {
     }
   });
 
-  it("rename: retitles, moves the name to match, and mirrors the layout", async () => {
+  it("rename: sets the title and leaves the name where it is", async () => {
+    // The name is an id now (ADR-0019). A retitle is one POST /title and
+    // nothing else moves: no rename, no layout mirror, no re-navigation of the
+    // terminal iframe.
     const api = new FakeApi();
     api.sessionsVal = [sess("a")];
     api.layoutVal = { ...emptyLayout(), ungrouped: ["a"] };
@@ -299,31 +289,38 @@ describe("lobby store", () => {
       await store.refresh();
       const ok = await store.rename("a", "Fix the parser");
       expect(ok).toBe(true);
-      expect(api.retitles).toEqual([["a", "fix-the-parser", "Fix the parser"]]);
-      expect(store.layout().ungrouped).toContain("fix-the-parser");
-      expect(names(store)).toContain("fix-the-parser");
-      expect(names(store)).not.toContain("a");
+      expect(api.titles).toEqual([["a", "Fix the parser"]]);
+      expect(store.layout().ungrouped).toEqual(["a"]);
+      expect(names(store)).toEqual(["a"]);
     });
   });
 
-  it("rename: a title whose name does not move never renames", async () => {
-    // The whole point of comparing derived names: a name change re-navigates
-    // the terminal iframe, and most retitles do not change one.
+  it("rename: a title another session already carries is not a collision", async () => {
+    // Two sessions may read the same, because nothing is derived from the
+    // title any more. The old code refused this to protect a derived name.
     const api = new FakeApi();
-    api.sessionsVal = [sess("deploy-the-thing")];
-    api.layoutVal = { ...emptyLayout(), ungrouped: ["deploy-the-thing"] };
+    api.sessionsVal = [sess("a"), { ...sess("b"), title: "Taken" }];
     await withStore(api, async (store) => {
       await store.refresh();
-      const ok = await store.rename("deploy-the-thing", "Deploy the thing \u{1F680}");
+      const ok = await store.rename("a", "Taken");
       expect(ok).toBe(true);
-      expect(api.retitles).toEqual([
-        ["deploy-the-thing", "deploy-the-thing", "Deploy the thing \u{1F680}"],
-      ]);
-      expect(store.layout().ungrouped).toContain("deploy-the-thing");
+      expect(store.toast()).toBeNull();
+      expect(api.titles).toEqual([["a", "Taken"]]);
+      expect(names(store)).toEqual(["a", "b"]);
     });
   });
 
-  it("rename: an empty title clears back to the session's name", async () => {
+  it("rename: normalizes the title before it goes out", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [sess("a")];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      expect(await store.rename("a", "  Fix\tthe\nparser  ")).toBe(true);
+      expect(api.titles).toEqual([["a", "Fix the parser"]]);
+    });
+  });
+
+  it("rename: an empty title clears the title, handing the session back", async () => {
     const api = new FakeApi();
     api.sessionsVal = [{ ...sess("a"), title: "Something" }];
     await withStore(api, async (store) => {
@@ -331,42 +328,25 @@ describe("lobby store", () => {
       const ok = await store.rename("a", "   ");
       expect(ok).toBe(true);
       expect(api.titles).toEqual([["a", ""]]);
-      expect(api.retitles).toHaveLength(0); // clearing must never rename
+      expect(names(store)).toEqual(["a"]); // the name never moves
     });
   });
 
-  it("rename: rejects a title deriving a name another session holds", async () => {
-    const api = new FakeApi();
-    api.sessionsVal = [sess("a"), sess("taken")];
-    await withStore(api, async (store) => {
-      await store.refresh();
-      const ok = await store.rename("a", "Taken");
-      expect(ok).toBe(false);
-      expect(store.toast()).toMatch(/taken/i);
-      expect(api.retitles).toHaveLength(0); // caught before the call
-    });
-  });
-
-  it("rename: surfaces a server-side 409 as well", async () => {
-    // The client guard reads the last poll, so a session created elsewhere
-    // since then still has to be handled from the response.
+  it("rename: surfaces a 404 as the session being gone", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("a")];
-    api.retitleError = 409;
+    api.titleError = 404;
     await withStore(api, async (store) => {
       await store.refresh();
-      const ok = await store.rename("a", "Taken elsewhere");
-      expect(ok).toBe(false);
-      expect(store.toast()).toMatch(/taken/i);
+      expect(await store.rename("a", "Too late")).toBe(false);
+      expect(store.toast()).toMatch(/no longer exists/i);
     });
   });
 
-  it("follows the selected session when it is renamed elsewhere", async () => {
-    // Retitling renames, so a second tab (or the phone) can be sitting on a
-    // session the desktop just retitled. Left alone that tab holds a name
-    // nothing answers to, and its terminal iframe still points at
-    // ?arg=<old name> — where ttyd's `tmux new-session -A` would bring the old
-    // name back as an EMPTY session on the next reconnect.
+  it("keeps the selection on a session the poll stopped returning", async () => {
+    // Nothing renames, so a name vanishing from the poll means the session is
+    // gone rather than moved. The store used to chase it by tmux session id;
+    // there is nothing left to chase.
     const api = new FakeApi();
     api.sessionsVal = [{ ...sess("a"), id: "$3" }];
     await withStore(api, async (store) => {
@@ -374,40 +354,9 @@ describe("lobby store", () => {
       store.select("a");
       expect(store.selected()?.name).toBe("a");
 
-      // Someone else retitled it: same session id, new name.
-      api.sessionsVal = [{ ...sess("fix-the-parser"), id: "$3", title: "Fix the parser" }];
+      api.sessionsVal = [{ ...sess("b"), id: "$3" }];
       await store.refresh();
 
-      expect(store.selected()?.name).toBe("fix-the-parser");
-    });
-  });
-
-  it("does not follow a DIFFERENT session that merely took the slot", async () => {
-    const api = new FakeApi();
-    api.sessionsVal = [{ ...sess("a"), id: "$3" }];
-    await withStore(api, async (store) => {
-      await store.refresh();
-      store.select("a");
-
-      // "a" is gone and something else exists. A different id means a
-      // different session, and following it would attach the wrong one.
-      api.sessionsVal = [{ ...sess("b"), id: "$9" }];
-      await store.refresh();
-
-      expect(store.selected()?.name).toBe("a");
-    });
-  });
-
-  it("leaves the selection alone when the server sends no session ids", async () => {
-    // A tmux-api that predates the field: nothing to follow by, so the old
-    // behaviour stands rather than guessing.
-    const api = new FakeApi();
-    api.sessionsVal = [sess("a")];
-    await withStore(api, async (store) => {
-      await store.refresh();
-      store.select("a");
-      api.sessionsVal = [sess("renamed")];
-      await store.refresh();
       expect(store.selected()?.name).toBe("a");
     });
   });
@@ -853,7 +802,7 @@ describe("lobby store", () => {
       );
     });
 
-    it("does NOT fire when a rename re-points the selection", async () => {
+    it("does NOT fire when a session is retitled", async () => {
       const api = new FakeApi();
       api.sessionsVal = [sess("old")];
       const activated: string[] = [];
@@ -864,10 +813,9 @@ describe("lobby store", () => {
           store.select("old");
           activated.length = 0;
           await store.rename("old", "new");
-          // The selection follows the rename so the user keeps the session they
-          // were on — but they are already looking at it. Treating this as an
-          // activation would yank a phone off the list mid-rename.
-          expect(store.selected()?.name).toBe("new");
+          // The person is already looking at the session they just retitled.
+          // Counting that as an activation would yank a phone off the list.
+          expect(store.selected()?.name).toBe("old");
           expect(activated).toEqual([]);
         },
         { onActivate: (s) => activated.push(s.name) },

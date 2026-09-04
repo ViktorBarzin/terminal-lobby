@@ -385,15 +385,13 @@ export function createNotificationSystem(
   // which is exactly what a visit is made of.
   const visits = createVisitStore();
   const isUnseen = opts.isUnseen ?? ((s: TitleSession) => visits.isUnseen(s));
-  // Retitling a session renames it, so visit records keyed by the old name have
-  // to move or the next poll prunes them as dead — and a completion the user
-  // already saw returns as an unseen tick. The lobby store announces the rename
-  // rather than calling in, because it is built before this system is.
-  // The visit store keys by tmux session id now, so a rename carries itself and
-  // the `tl:session-renamed` listener that used to patch it is gone. It only ever
-  // fired for a rename made in THIS tab: one from a second tab, the phone, or a
-  // shell looked like a session vanishing and a stranger arriving, so the visit
-  // was pruned and work you had already read came back unread.
+  // Visit records are keyed by tmux's session id, so a rename carries itself.
+  // A `tl:session-renamed` listener used to patch them by name, and it only
+  // ever fired for a rename made in THIS tab: one from a second tab, the phone,
+  // or a shell looked like a session vanishing and a stranger arriving, so the
+  // visit was pruned and work you had already read came back unread. Nothing
+  // renames a lobby session any more (ADR-0019), and the id keying covers the
+  // migration and the restore path's collision rename.
   // Report whether the icon could actually be drawn, ONCE per distinct outcome.
   // The paint is best-effort and silent, which also meant nobody could tell a
   // drawn badge from a missing API — and on iOS that is the whole question,
