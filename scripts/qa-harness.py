@@ -201,6 +201,11 @@ ASSET_PATHS = (
     "/fonts/JetBrainsMono-Italic.woff2",
     "/fonts/JetBrainsMono-BoldItalic.woff2",
     "/fonts/dm-sans-latin-wght-normal.woff2",
+    # The symbol fallback face. Added to the ingress carve-out on 2026-09-04
+    # (infra stacks/terminal/main.tf) because the app-rendered terminal asks for
+    # it by URL where term.html embeds it as a data: URI. This proxy 404ed it
+    # until that landed, correctly, and would now be the one diverging.
+    "/fonts/tl-symbols.woff2",
 )
 
 # The two build stamps, and the reason they are not in the tuple above: the
