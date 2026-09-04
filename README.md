@@ -129,16 +129,26 @@ restores — see `docs/adr/0002-layout-store-in-tmux-api.md` for why
 that beats tmux options or localStorage.
 
 **Claude state dots** show what the Claude conversation inside each
-session is doing: pulsing accent = *running* (turn in flight), amber =
-*awaiting your input* (permission ask / question), green = *completed*
-(turn done). No dot = no live Claude (plain shell, or Claude exited).
-The browser tab title gains an `(N●)` badge while anything awaits
-input. State comes from org-wide Claude Code hooks stamping
-`@claude_state` on the tmux session (`devvm/claude-tmux-state`;
+session is doing: pulsing accent = *running* (working, and it will
+produce more output), amber = *awaiting your input* (permission ask /
+question), green = *completed* (finished, ready for the next prompt).
+No dot = no live Claude (plain shell, or Claude exited). The browser tab
+title gains an `(N●)` badge while anything awaits input. State comes
+from org-wide Claude Code hooks stamping `@claude_state` on the tmux
+session (`devvm/claude-tmux-state`;
 `docs/adr/0001-claude-state-via-hooks.md` — the pane title is a static
 summary, so hooks it is). Claudes started before the hooks were
 installed show no dot until their next restart/resume; worst-case
 display lag is ~10 s (5 s API cache + 5 s poll).
+
+*Running* is not the same as "a turn is in flight". A session that
+launched a background agent, a workflow or a background command keeps
+that dot until the work reports back, because it will speak again with
+nobody prompting it, and the card names what it is waiting on ("2
+agents", "1 workflow"). The outstanding task ids live in a second
+option, `@claude_bg`, written by the same hooks; nothing expires them,
+so typing into a session is what re-derives one whose set went stale.
+Design: `docs/plans/2026-09-04-background-work-session-state-design.md`.
 
 ## Documentation
 
