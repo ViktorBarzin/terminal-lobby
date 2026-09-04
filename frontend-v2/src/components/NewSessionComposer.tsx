@@ -18,7 +18,12 @@ import {
   NEW_SESSION_COMMANDS as COMMANDS,
   type CommandAvailability,
 } from "../lib/new-commands";
-import { MODEL_LABELS, modelCommandFor, NEW_SESSION_MODELS, type NewModel } from "../lib/models";
+import {
+  MODEL_LABELS,
+  modelCommandFor,
+  NEW_SESSION_MODELS,
+  type NewModel,
+} from "../lib/models";
 import { PromptField } from "./PromptField";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt } from "../lib/first-prompt";
@@ -153,7 +158,9 @@ export const NewSessionComposer: Component<{
   const registerFocus = (fn: () => void): void => void (focusField = fn);
   let focusField: () => void = () => nameEl?.focus();
   window.addEventListener("tl:focus-new-session", onFocusReq);
-  onCleanup(() => window.removeEventListener("tl:focus-new-session", onFocusReq));
+  onCleanup(() =>
+    window.removeEventListener("tl:focus-new-session", onFocusReq),
+  );
 
   // ---- files with nowhere to go yet ---------------------------------------
   // Held, not uploaded. There is no session to upload INTO until Enter is
@@ -194,7 +201,10 @@ export const NewSessionComposer: Component<{
    * it: everything it needs is read out of props first, and it reports through
    * the toaster rather than back into a field that is no longer on screen.
    */
-  const submit = async (text: string, tray: readonly DraftAttachment[]): Promise<boolean> => {
+  const submit = async (
+    text: string,
+    tray: readonly DraftAttachment[],
+  ): Promise<boolean> => {
     handedOff = true; // and never warmed again: the create's own layout write re-runs the effect
     warmedDir = null; // claimed by the attach; not ours to hand back
     const shell = naming();
@@ -242,58 +252,66 @@ export const NewSessionComposer: Component<{
   };
 
   return (
-    <div class="tl-new-composer">
-      <div class="tl-new-head">
+    <div class="tl-new-view">
+      {/* The SAME bar the session view carries, not a lookalike: same class,
+          so it keeps the same height, border, background and every phone rule
+          already written for it — the label exemption on the back control, the
+          overflow guard, the flex-none children. A header that reads
+          differently on the two screens makes the row jump when you move
+          between them, and this is the one screen you arrive on. */}
+      <div class="tl-session-bar">
         {props.leading}
-        <h2 class="tl-new-title">New session</h2>
+        <span class="tl-session">New session</span>
       </div>
-      <Show
-        when={!naming()}
-        fallback={
-          <div class="tl-composer-box">
-            <div class="tl-composer-row">
-              <input
-                ref={nameEl}
-                class="tl-composer-input tl-new-name"
-                placeholder="Name this shell…"
-                aria-label="Name for the new session"
-                maxlength={MAX_TITLE_RUNES}
-                value={name()}
-                autofocus={!isCoarsePointer()}
-                onInput={(e) => setName(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitName();
-                }}
-              />
-            </div>
-            <div class="tl-composer-bar">
-              <div class="tl-bar-left">{controls()}</div>
-              <div class="tl-bar-right">
-                <button type="button" class="tl-send" onClick={submitName}>
-                  Send
-                </button>
+      <div class="tl-new-composer">
+        <Show
+          when={!naming()}
+          fallback={
+            <div class="tl-composer-box">
+              <div class="tl-composer-row">
+                <input
+                  ref={nameEl}
+                  class="tl-composer-input tl-new-name"
+                  placeholder="Name this shell…"
+                  aria-label="Name for the new session"
+                  maxlength={MAX_TITLE_RUNES}
+                  value={name()}
+                  autofocus={!isCoarsePointer()}
+                  onInput={(e) => setName(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitName();
+                  }}
+                />
+              </div>
+              <div class="tl-composer-bar">
+                <div class="tl-bar-left">{controls()}</div>
+                <div class="tl-bar-right">
+                  <button type="button" class="tl-send" onClick={submitName}>
+                    Send
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        }
-      >
-        <PromptField
-          onSend={submit}
-          onAttach={holdFiles}
-          pendingAttachments
-          label="Prompt for a new session"
-          allowEmpty
-          placeholder="What do you want to do?"
-          hint="Enter to start the session · Shift+Enter for a newline"
-          draftKey={NEW_SESSION_DRAFT_KEY}
-          // A desktop lands here ready to type. A coarse pointer deliberately
-          // does not: this is the phone's LANDING view, and focusing it would
-          // throw a keyboard over the screen before anyone asked for one.
-          autofocus={!isCoarsePointer()}
-          register={(api) => registerFocus(api.focus)}
-          leftExtra={controls()}
-        />
-      </Show>
+          }
+        >
+          <PromptField
+            onSend={submit}
+            onAttach={holdFiles}
+            pendingAttachments
+            label="Prompt for a new session"
+            allowEmpty
+            placeholder="What do you want to do?"
+            hint="Enter to start the session · Shift+Enter for a newline"
+            draftKey={NEW_SESSION_DRAFT_KEY}
+            // A desktop lands here ready to type. A coarse pointer deliberately
+            // does not: this is the phone's LANDING view, and focusing it would
+            // throw a keyboard over the screen before anyone asked for one.
+            autofocus={!isCoarsePointer()}
+            register={(api) => registerFocus(api.focus)}
+            leftExtra={controls()}
+          />
+        </Show>
+      </div>
     </div>
   );
 
@@ -308,7 +326,9 @@ export const NewSessionComposer: Component<{
           onChange={(e) => props.onProject(e.currentTarget.value)}
         >
           <option value="">Ungrouped</option>
-          <For each={projects()}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+          <For each={projects()}>
+            {(p) => <option value={p.name}>{p.name}</option>}
+          </For>
         </select>
         <select
           class="tl-new-cmd"
@@ -337,7 +357,9 @@ export const NewSessionComposer: Component<{
             aria-label="Model for new session"
             value={model()}
             onChange={(e) =>
-              props.prefs.setPref({ session: { newModel: e.currentTarget.value as NewModel } })
+              props.prefs.setPref({
+                session: { newModel: e.currentTarget.value as NewModel },
+              })
             }
           >
             <For each={NEW_SESSION_MODELS}>
@@ -382,9 +404,16 @@ async function sendFirstPrompt(o: {
   const attached = await o.upload(o.files, o.session, {
     notify: (message, kind) => void showToast(message, kind, 8000),
   });
-  const prompt = composeMessage(o.text, attached.map((a) => a.path));
+  const prompt = composeMessage(
+    o.text,
+    attached.map((a) => a.path),
+  );
   const lines = [o.modelLine, prompt].filter((l): l is string => !!l);
-  const ok = await o.deliver({ session: o.session, lines, awaitReady: o.claude });
+  const ok = await o.deliver({
+    session: o.session,
+    lines,
+    awaitReady: o.claude,
+  });
   if (ok || lines.length === 0) return;
   // The session exists and is what the person is now looking at, so the text
   // goes into ITS composer — the field in front of them — rather than back into
@@ -392,5 +421,9 @@ async function sendFirstPrompt(o: {
   // parkDraft, not saveDraft: that composer is already mounted and has already
   // read storage, so it has to be TOLD (store/drafts.ts).
   parkDraft(o.session, { text: prompt, attachments: attached, at: Date.now() });
-  showToast("Couldn't send the first prompt — it is waiting in the composer", "error", 8000);
+  showToast(
+    "Couldn't send the first prompt — it is waiting in the composer",
+    "error",
+    8000,
+  );
 }
