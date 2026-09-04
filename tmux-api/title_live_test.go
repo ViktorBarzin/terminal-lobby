@@ -112,31 +112,33 @@ func TestTitleRoundTripsThroughRealTmux(t *testing.T) {
 		t.Errorf("the prefix sibling was stamped too: %q", sib.Title)
 	}
 
-	// Retitle: rename and stamp together, against a live server.
+	// Retitling again against a live server: only the title moves. The name is
+	// an id now (ADR-0019), so the session the second title lands on has to be
+	// the same one under the same name.
 	rec = httptest.NewRecorder()
-	handleSessionByName(rec, sessionReq(http.MethodPatch, "/sessions/deploy-the-thing",
-		`{"name":"fix-the-parser","title":`+mustJSON(t, "Fix the parser")+`}`, "authself"))
+	handleSessionByName(rec, sessionReq(http.MethodPost, "/sessions/deploy-the-thing/title",
+		`{"title":`+mustJSON(t, "Fix the parser")+`}`, "authself"))
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("PATCH: %d (%s)", rec.Code, rec.Body)
+		t.Fatalf("second POST title: %d (%s)", rec.Code, rec.Body)
 	}
 	sessions = liveSessions(t, osSelf)
-	moved := findSession(t, sessions, "fix-the-parser")
+	moved := findSession(t, sessions, "deploy-the-thing")
 	if moved.Title != "Fix the parser" {
 		t.Errorf("after the retitle, title = %q", moved.Title)
 	}
-	// The session id proves it is the SAME session, renamed — not a new one.
+	// The session id proves it is the SAME session, not one tmux recreated.
 	if moved.ID != got.ID {
-		t.Errorf("session id changed across the rename: %q → %q", got.ID, moved.ID)
+		t.Errorf("session id changed across the retitle: %q → %q", got.ID, moved.ID)
 	}
 
-	// Clearing puts it back to showing its name.
+	// Clearing hands the session back to whatever summary lands next.
 	rec = httptest.NewRecorder()
-	handleSessionByName(rec, sessionReq(http.MethodPost, "/sessions/fix-the-parser/title",
+	handleSessionByName(rec, sessionReq(http.MethodPost, "/sessions/deploy-the-thing/title",
 		`{"title":""}`, "authself"))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("clearing: %d (%s)", rec.Code, rec.Body)
 	}
-	if cleared := findSession(t, liveSessions(t, osSelf), "fix-the-parser"); cleared.Title != "" {
+	if cleared := findSession(t, liveSessions(t, osSelf), "deploy-the-thing"); cleared.Title != "" {
 		t.Errorf("a cleared title reads back %q", cleared.Title)
 	}
 }

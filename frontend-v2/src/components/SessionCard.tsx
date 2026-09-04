@@ -6,8 +6,8 @@ import {
   type Accessor,
   type Component,
 } from "solid-js";
-import { sessionLabel, type Session } from "../types/lobby";
-import { cleanTitle, MAX_TITLE_RUNES, nameForTitle } from "../lib/slug";
+import { sessionConfirmLabel, sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
+import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
 import { formatWorking, relativeTime, stateLabel } from "./lobby.logic";
 import { createDismissableMenu } from "./menu";
@@ -69,7 +69,13 @@ export const SessionCard: Component<{
   /** Hover text. The pane's own title first (what is running in there), then
    *  the tmux name — which is otherwise invisible now that cards show titles,
    *  and is what someone working in a shell needs to map a card to `tmux ls`. */
-  const titleAttr = () => s().pane_title || s().name;
+  const titleAttr = () => (s().pane_title ? `${s().name} · ${s().pane_title}` : s().name);
+
+  /** What the rename box opens on: the session's own title, "" when it has
+   *  none. Never `label()` — offering `New session` for editing invites saving
+   *  the placeholder as a real title, and a stamped title is what stops
+   *  Claude's summary from ever landing (tmux-api/autotitle.go). */
+  const titleDraft = () => sessionTitleDraft(s());
 
   /** The user this tab is acting as, "" in an ordinary tab. It decides that a
    *  session here opens WATCHING, and which namespace the choice is kept under
@@ -170,15 +176,11 @@ export const SessionCard: Component<{
   const commitRename = async () => {
     const next = inputEl?.value ?? "";
     endRename();
-    // The box edits the TITLE. An empty one clears back to the session's name,
-    // which store.rename handles — so unlike before, "" is a real instruction
-    // rather than a no-op.
-    if (next !== label()) await props.store.rename(s().name, next);
+    // The box edits the TITLE, and only the title — the name is an id that
+    // never moves (ADR-0019). An empty one clears it, handing the session back
+    // to whatever summary lands next.
+    if (next !== titleDraft()) await props.store.rename(s().name, next);
   };
-
-  /** What the derived name will be, shown under the box as the person types. */
-  const [draft, setDraft] = createSignal("");
-  const derivedName = () => nameForTitle(cleanTitle(draft()), new Set());
 
   // ---- actions ----
   // Killing is unrecoverable, so it confirms here exactly as every sibling path
@@ -186,7 +188,9 @@ export const SessionCard: Component<{
   const kill = async () => {
     menu.close();
     const ask = props.confirm ?? ((m: string) => window.confirm(m));
-    if (!ask(`Kill session "${label()}"?`)) return;
+    // Named by its id when it has no title: killing cannot be undone, and
+    // `Kill session "New session"?` reads the same for every untitled session.
+    if (!ask(`Kill session "${sessionConfirmLabel(s())}"?`)) return;
     await props.store.kill(s().name);
   };
   const moveTo = async (group: string) => {
@@ -664,32 +668,20 @@ export const SessionCard: Component<{
       <Show
         when={!editing()}
         fallback={
-          <span class="tl-card-rename-wrap">
-            <input
-              ref={inputEl}
-              class="tl-card-rename"
-              value={label()}
-              maxlength={MAX_TITLE_RUNES}
-              onClick={(e) => e.stopPropagation()}
-              onDblClick={(e) => e.stopPropagation()}
-              onInput={(e) => setDraft(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === "Enter") void commitRename();
-                else if (e.key === "Escape") endRename();
-              }}
-              onBlur={endRename}
-            />
-            {/* The derived name, shown only while it differs from what was
-                typed — otherwise it is the same string twice. This is the one
-                place the slug is visible, and it is what makes a "that name is
-                taken" message make sense. */}
-            <Show when={derivedName() !== draft() && draft() !== ""}>
-              <span class="tl-card-rename-hint" aria-hidden="true">
-                {derivedName()}
-              </span>
-            </Show>
-          </span>
+          <input
+            ref={inputEl}
+            class="tl-card-rename"
+            value={titleDraft()}
+            maxlength={MAX_TITLE_RUNES}
+            onClick={(e) => e.stopPropagation()}
+            onDblClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") void commitRename();
+              else if (e.key === "Escape") endRename();
+            }}
+            onBlur={endRename}
+          />
         }
       >
         <span class="tl-card-name" title={titleAttr()}>

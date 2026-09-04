@@ -54,6 +54,33 @@ describe("<MessagesTimeline> (smoke)", () => {
     expect(getByText("on it")).toBeInTheDocument();
   });
 
+  // The same indicator, over a turn that is open because Claude STOPPED and
+  // asked something. It used to read "Working…" here with a running clock, over
+  // a session where nothing was running and the answer card was docked below
+  // asking the reader to choose (Viktor, 2026-09-04).
+  it("says it is waiting, not working, while a question has no answer", () => {
+    const events: Event[] = [
+      ev({ id: 1, kind: "user", body: "start" }),
+      ev({
+        id: 2,
+        kind: "tool_use",
+        tool: "AskUserQuestion",
+        toolId: "q1",
+        body: JSON.stringify({
+          questions: [
+            { question: "Which one?", header: "Pick", multiSelect: false, options: [{ label: "A" }] },
+          ],
+        }),
+      }),
+    ];
+    const { getByText, queryByText, container } = render(() => <MessagesTimeline events={events} />);
+    expect(getByText("Waiting for you")).toBeInTheDocument();
+    expect(queryByText("Working…")).toBeNull();
+    // The dot holds still and takes the awaiting colour; a pulse is what says
+    // work is happening.
+    expect(container.querySelector('.tl-row-working[data-waiting="true"]')).not.toBeNull();
+  });
+
   it("renders an empty state with no events", () => {
     const { getByText } = render(() => <MessagesTimeline events={[]} />);
     expect(getByText(/No messages yet/)).toBeInTheDocument();

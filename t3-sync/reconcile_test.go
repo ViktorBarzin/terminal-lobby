@@ -402,3 +402,54 @@ func TestPlanIgnoresANoticeForASessionWithoutAClaude(t *testing.T) {
 		t.Fatalf("ArchiveThread = %v, want nothing: the session is still there", p.ArchiveThread)
 	}
 }
+
+// tmux-api renames every session that predates ids, once, on the release that
+// ships them (ADR-0019, tmux-api/migrate_ids.go). The @t3_thread option rides
+// the rename, so the session is not re-adopted and nothing else writes the
+// index — the recorded name would simply stay wrong, and threadForSession
+// would stop finding the thread for every pre-migration session's kill notice.
+func TestPlanFollowsASessionRenamedUnderItsBinding(t *testing.T) {
+	h := newHarness(t)
+	h.bind(reconcileClaudeA, "authentik", "/home/wizard/code/terminal-lobby", "t-1")
+	// The session now answers to a minted id, carrying its thread stamp with it.
+	h.startClaude("k7m2q9x4tp0v", "/home/wizard/code/terminal-lobby", reconcileClaudeA)
+	if err := h.tmux.SetOption("wizard", "k7m2q9x4tp0v", sessionio.OptionThread, "t-1"); err != nil {
+		t.Fatalf("stamp the thread: %v", err)
+	}
+
+	p := h.plan(t, Snapshot{Threads: []Thread{{ID: "t-1", Title: "k7m2q9x4tp0v"}}})
+	if len(p.Rebind) != 1 || p.Rebind[0] != (Rebind{ClaudeID: reconcileClaudeA, TmuxName: "k7m2q9x4tp0v"}) {
+		t.Fatalf("Rebind = %+v, want the binding moved onto the new name", p.Rebind)
+	}
+	if len(p.Adopt) != 0 {
+		t.Errorf("re-adopted a session that only changed name: %+v", p.Adopt)
+	}
+
+	if err := h.reconciler.Apply(context.Background(), p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	all, err := h.index.All()
+	if err != nil {
+		t.Fatalf("read the index: %v", err)
+	}
+	if got := all[reconcileClaudeA].TmuxName; got != "k7m2q9x4tp0v" {
+		t.Fatalf("binding names %q, want the id", got)
+	}
+	// Which is the whole point: a kill notice can find the thread again.
+	if id, ok := threadForSession(all, "k7m2q9x4tp0v"); !ok || id != "t-1" {
+		t.Fatalf("threadForSession = (%q, %v), want t-1", id, ok)
+	}
+}
+
+// A name that has not moved writes nothing: this runs on a five-second ticker
+// and the steady state must stay an empty plan.
+func TestPlanDoesNotRebindASessionThatKeptItsName(t *testing.T) {
+	h := newHarness(t)
+	h.startClaude("k7m2q9x4tp0v", "/home/wizard/code/terminal-lobby", reconcileClaudeA)
+	h.bind(reconcileClaudeA, "k7m2q9x4tp0v", "/home/wizard/code/terminal-lobby", "t-1")
+
+	p := h.plan(t, Snapshot{Threads: []Thread{{ID: "t-1", Title: "k7m2q9x4tp0v"}}})
+	if !p.Empty() {
+		t.Fatalf("Plan = %+v, want nothing to do", p)
+	}
+}

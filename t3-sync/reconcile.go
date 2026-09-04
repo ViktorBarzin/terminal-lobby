@@ -73,6 +73,8 @@ type Plan struct {
 	// WarmUp are threads that exist and were never warmed, so the bridge has
 	// never been spawned for them and their history has never replayed.
 	WarmUp []WarmUp
+	// Rebind are bindings whose recorded tmux name is no longer the session's.
+	Rebind []Rebind
 
 	// notices are the kill notices this plan consumed. Apply hands back the
 	// ones it could not act on, so a kill dispatched while t3-serve was down is
@@ -93,11 +95,18 @@ type WarmUp struct {
 	TmuxName string
 }
 
+// Rebind moves a binding onto the name its session now has.
+type Rebind struct {
+	ClaudeID string
+	TmuxName string
+}
+
 // Empty reports whether the plan would change nothing — the steady state, and
 // what almost every pass should produce.
 func (p Plan) Empty() bool {
 	return len(p.Adopt) == 0 && len(p.Rename) == 0 && len(p.ArchiveThread) == 0 &&
-		len(p.KillSession) == 0 && len(p.PruneBinding) == 0 && len(p.WarmUp) == 0
+		len(p.KillSession) == 0 && len(p.PruneBinding) == 0 && len(p.WarmUp) == 0 &&
+		len(p.Rebind) == 0
 }
 
 // Plan computes the pass without changing anything.
@@ -135,6 +144,19 @@ func (r *Reconciler) Plan(ctx context.Context, snap Snapshot) (Plan, error) {
 	var p Plan
 	for _, c := range candidates {
 		binding := bindings[c.ClaudeID]
+		// The index records the tmux name, and it is the only way a kill notice
+		// finds its thread (threadForSession) — the notice carries a name and
+		// nothing else. Nothing renames a session now that a name is an opaque
+		// id fixed at creation (ADR-0019), with one exception: tmux-api renames
+		// every session that predates ids, once, on the release that ships them
+		// (tmux-api/migrate_ids.go). The @t3_thread option survives that, so
+		// the session is not re-adopted and nothing else writes the index — the
+		// name would simply stay wrong, and every pre-migration thread would
+		// stop being archived when its session was killed. This is also the
+		// restore path's <name>-<HHMM> collision rename, which had the same gap.
+		if binding.TmuxName != "" && binding.TmuxName != c.TmuxName {
+			p.Rebind = append(p.Rebind, Rebind{ClaudeID: c.ClaudeID, TmuxName: c.TmuxName})
+		}
 		threadID := c.ThreadID
 		if threadID == "" {
 			threadID = binding.ThreadID
@@ -393,6 +415,26 @@ func (r *Reconciler) Apply(ctx context.Context, p Plan) error {
 		log.Printf("session %s killed: its thread was deleted in t3", name)
 	}
 
+	if len(p.Rebind) > 0 {
+		if err := r.Bindings.Update(func(all map[string]sessionio.Binding) error {
+			for _, rb := range p.Rebind {
+				b, ok := all[rb.ClaudeID]
+				if !ok {
+					continue // pruned under us; nothing to move
+				}
+				b.TmuxName = rb.TmuxName
+				all[rb.ClaudeID] = b
+			}
+			return nil
+		}); err != nil {
+			failures = append(failures, fmt.Errorf("rebind %d entries: %w", len(p.Rebind), err))
+		} else {
+			for _, rb := range p.Rebind {
+				log.Printf("binding for %s now names session %s", rb.ClaudeID, rb.TmuxName)
+			}
+		}
+	}
+
 	if len(p.PruneBinding) > 0 {
 		if err := r.Bindings.Update(func(all map[string]sessionio.Binding) error {
 			for _, claudeID := range p.PruneBinding {
@@ -461,6 +503,9 @@ func (r *Reconciler) logPlan(p Plan) {
 	}
 	for _, w := range p.WarmUp {
 		log.Printf("dry run: would warm up thread %s for %s", w.ThreadID, w.TmuxName)
+	}
+	for _, rb := range p.Rebind {
+		log.Printf("dry run: would point the binding for %s at session %s", rb.ClaudeID, rb.TmuxName)
 	}
 }
 

@@ -44,25 +44,34 @@ THE GUARD
 ---------
 Agents share this box with wizard's live work and with bob/carol. The guard
 is here, in the proxy, rather than in an agent's brief, so it holds regardless of
-how any brief is read. Reads are unrestricted; mutations must name a `qa-*`
-session. Blocked requests get 403 + a body starting "qa-harness guard:" so an
-agent can tell a guard rejection from an application bug.
+how any brief is read. Reads are unrestricted; a mutation must name a session
+this run OWNS. Blocked requests get 403 + a body starting "qa-harness guard:" so
+an agent can tell a guard rejection from an application bug.
+
+A session is this run's when it is `qa-*`, or when this run created it — which
+is the case naming an id made necessary. The composer mints a 12-character id in
+the browser and attaches `?arg=<id>` (ADR-0019), so an agent driving the primary
+new-session flow cannot produce a `qa-*` name at all. The attach is therefore
+allowed for a minted id that is NOT currently a live session, since attaching is
+what brings it into being, and the guard remembers it from then on.
 
 Blocked (403):
-  1. DELETE /sessions/<name>            unless name is qa-*
-  2. POST   /sessions/<name>/rename     unless BOTH old and new are qa-*
-  3. any mutation of /shares, /shares/* (grants other OS users real access)
-  4. POST /projects with a non-qa name; PUT/DELETE of a project this run
+  1. DELETE /sessions/<name>            unless the run owns name
+  2. POST   /sessions/<name>/title      unless the run owns name
+  3. POST   /sessions/<name>/rename     unless the run owns it and the new
+                                        name is qa-*
+  4. any mutation of /shares, /shares/* (grants other OS users real access)
+  5. POST /projects with a non-qa name; PUT/DELETE of a project this run
      did not create
-  5. POST /prompt/<s>, /cancel/<s>,
-     /keys/<s>, /answer-text/<s>        unless s is qa-*
-  6. POST /files/write                  unless the NORMALISED path is under
+  6. POST /prompt/<s>, /cancel/<s>,
+     /keys/<s>, /answer-text/<s>        unless the run owns s
+  7. POST /files/write                  unless the NORMALISED path is under
                                         --scratch (see THE SCRATCH below)
-  7. WS upgrade whose first ?arg= is not qa-*   (a ttyd attach is WRITABLE:
-     `tmux new-session -A` would both create the session and hand the agent a
-     live keyboard into it)
-  8. DELETE /push-subscriptions         (would unsubscribe real devices)
-  9. POST /restore, but only when the reaper is disarmed — see below
+  8. WS upgrade whose first ?arg= is neither owned nor a free minted id
+     (a ttyd attach is WRITABLE: `tmux new-session -A` would both create the
+     session and hand the agent a live keyboard into it)
+  9. DELETE /push-subscriptions         (would unsubscribe real devices)
+ 10. POST /restore, but only when the reaper is disarmed — see below
 
 POST /restore is the one mutation that cannot be scoped by name: it shells
 `tmux-persist restore <osUser>`, which recreates EVERY session in that user's
@@ -159,13 +168,30 @@ ASSET_PATHS = (
 # "qa-" with nothing after it are all non-qa.
 QA_NAME = re.compile(r"^qa-[A-Za-z0-9_-]{1,29}$")
 
+# The shape the lobby mints for a session name (ADR-0019): 12 characters of
+# Crockford base32, no i/l/o/u. Mirrors frontend-v2/src/lib/session-id.ts and
+# tmux-api/sessionid.go, which have to agree with each other anyway.
+#
+# Why the harness needs it: naming left the create path entirely. The composer
+# mints an id in the BROWSER and navigates the iframe to ?arg=<id>, so a QA
+# agent driving the primary new-session flow cannot produce a qa-* name however
+# much it wants to — the guard's own namespace stopped being reachable through
+# the UI. A minted id that no session currently holds cannot be somebody's real
+# session either: attaching is what brings it into being.
+MINTED_NAME = re.compile(r"^[0-9a-hjkmnp-tv-z]{12}$")
+
 RE_SESSION = re.compile(r"^sessions/([^/]+)$")
 RE_RENAME = re.compile(r"^sessions/([^/]+)/rename$")
+RE_TITLE = re.compile(r"^sessions/([^/]+)/title$")
 RE_PROJECT_ID = re.compile(r"^projects/([^/]+)")
 
 
 def is_qa(name: str) -> bool:
     return bool(QA_NAME.match(name or ""))
+
+
+def is_minted(name: str) -> bool:
+    return bool(MINTED_NAME.match(name or ""))
 
 
 def tmux_session_names() -> Optional[list[str]]:
@@ -229,25 +255,37 @@ def default_scratch() -> str:
     return os.path.join(FILE_API_HOME_BASE, proxy_os_user(), "qa-harness-scratch")
 
 
-def sessions_to_reap(before: list[str], after: list[str]) -> list[str]:
+def sessions_to_reap(before: list[str], after: list[str],
+                     own: Optional[set[str]] = None) -> list[str]:
     """Sessions a /restore brought back that were not there before it, minus the
-    qa-* ones (area 7 restoring a qa-* session it killed is the point)."""
-    return sorted(set(after) - set(before) - {n for n in after if is_qa(n)})
+    ones this run owns — area 7 restoring a session it killed is the point, and
+    a session it created through the composer carries a minted id rather than a
+    qa-* name (ADR-0019), so the id has to be spared the same way."""
+    mine = {n for n in after if is_qa(n)} | (own or set())
+    return sorted(set(after) - set(before) - mine)
 
 
 class Guard:
-    """Decides which mutations are allowed. Pure except for the set of project
-    ids this run created, which it tracks so a project the fleet made can also
-    be edited and deleted by it."""
+    """Decides which mutations are allowed. Pure except for what this run
+    created — the project ids and the sessions — which it tracks so the fleet
+    can drive, retitle and kill its own work and nothing else."""
 
     def __init__(self, scratch: str, *, can_reap: bool = False) -> None:
         self.scratch = os.path.normpath(scratch).rstrip("/") + "/"
         self.own_projects: set[str] = set()
+        # Sessions this run brought into being: every minted id it was allowed
+        # to attach. `qa-*` is still a namespace and needs no record; an id does,
+        # because there is nothing in the string that says whose it is.
+        self.own_sessions: set[str] = set()
         self.blocked: list[str] = []
         # Armed at startup once the proxy has proved it can undo a /restore.
         # Default off: a Guard that has not proved it refuses.
         self.can_reap = can_reap
         self.reaped: list[str] = []
+
+    def may_drive(self, name: str) -> bool:
+        """Whether this run may type into, retitle or kill `name`."""
+        return is_qa(name) or name in self.own_sessions
 
     def record_project(self, body: bytes, response: bytes) -> None:
         """After a permitted POST /projects, remember the new id."""
@@ -263,13 +301,21 @@ class Guard:
         m = RE_SESSION.match(tail)
         if m and method == "DELETE":
             name = unquote(m.group(1))
-            if not is_qa(name):
-                return f"refusing to kill {name!r} — only qa-* sessions may be killed"
+            if not self.may_drive(name):
+                return (f"refusing to kill {name!r} — only qa-* sessions and the ones "
+                        f"this run created may be killed")
+
+        m = RE_TITLE.match(tail)
+        if m and method == "POST":
+            name = unquote(m.group(1))
+            if not self.may_drive(name):
+                return (f"refusing to retitle {name!r} — a title is the only readable "
+                        f"thing about a session, and this one is not ours")
 
         m = RE_RENAME.match(tail)
         if m and method == "POST":
             old = unquote(m.group(1))
-            if not is_qa(old):
+            if not self.may_drive(old):
                 return f"refusing to rename {old!r} — only qa-* sessions may be renamed"
             new = ""
             try:
@@ -313,9 +359,10 @@ class Guard:
         m = re.match(r"^/(prompt|cancel|keys|answer-text)/([^/]+)", path)
         if m and method == "POST":
             verb, session = m.group(1), unquote(m.group(2))
-            if not is_qa(session):
+            if not self.may_drive(session):
                 return (f"refusing to {verb} session {session!r} — that would type "
-                        f"into a live Claude; only qa-* sessions accept input")
+                        f"into a live Claude; only qa-* sessions and the ones this "
+                        f"run created accept input")
         return None
 
     def check_files(self, method: str, path: str, body: bytes) -> Optional[str]:
@@ -357,15 +404,41 @@ class Guard:
                 f"127.0.0.1:7688 directly if that is what you mean.")
 
     def check_ws(self, query) -> Optional[str]:
+        """Which terminal attaches are allowed.
+
+        An attach is writable and CREATES the session if it does not exist, so
+        the rule has to cover both. Three ways through:
+
+          - a `qa-*` name, the original namespace;
+          - a session this run already created, so a reconnect works;
+          - a minted id (ADR-0019) that no session currently holds, which is
+            what the new-session composer produces. It cannot be somebody's real
+            session: a name that is not live is a name this attach is about to
+            bring into being.
+
+        The liveness check is what makes the third safe, so an unreadable tmux
+        refuses rather than guesses.
+        """
         args = query.getall("arg", [])
         if not args:
             return None  # no session named; ttyd falls back to its unit default
         session = args[0]
-        if not is_qa(session):
-            return (f"refusing a terminal attach to {session!r} — a ttyd attach is "
-                    f"writable and would create-or-drive a real session; only qa-* "
-                    f"sessions may be attached")
-        return None
+        if self.may_drive(session):
+            return None
+        if is_minted(session):
+            live = tmux_session_names()
+            if live is None:
+                return (f"refusing a terminal attach to {session!r} — cannot read the "
+                        f"tmux session list, so cannot tell a new session from a real one")
+            if session not in live:
+                self.own_sessions.add(session)
+                return None
+            return (f"refusing a terminal attach to {session!r} — that id is already a "
+                    f"live session and this run did not create it")
+        return (f"refusing a terminal attach to {session!r} — a ttyd attach is "
+                f"writable and would create-or-drive a real session; only qa-* "
+                f"sessions, ones this run created, and fresh minted ids may be "
+                f"attached")
 
     def deny(self, reason: str, where: str) -> web.Response:
         self.blocked.append(f"{where}: {reason}")
@@ -504,10 +577,10 @@ def build_app(args: argparse.Namespace) -> web.Application:
         if brought_back:
             log(f"restore brought back {len(brought_back)} session(s): "
                 f"{', '.join(brought_back)}")
-        for name in sessions_to_reap(before, after):
+        for name in sessions_to_reap(before, after, guard.own_sessions):
             killed = await asyncio.to_thread(tmux_kill_session, name)
             guard.reaped.append(name if killed else f"{name} (KILL FAILED)")
-            log(f"restore resurrected {name!r} (not qa-*) → "
+            log(f"restore resurrected {name!r} (not ours) → "
                 f"{'reaped' if killed else 'KILL FAILED, still live'}")
         return resp
 

@@ -69,9 +69,10 @@ func genSubKeys(t *testing.T) pushKeys {
 // snapshot never aliases what the next tick reads (aliasing would erase the
 // very transition the edge detector looks for).
 type stubStater struct {
-	mu  sync.Mutex
-	m   map[string]string
-	act map[string]int64
+	mu     sync.Mutex
+	m      map[string]string
+	titles map[string]string
+	act    map[string]int64
 }
 
 func (s *stubStater) set(m map[string]string) {
@@ -80,18 +81,28 @@ func (s *stubStater) set(m map[string]string) {
 	s.m = m
 }
 
-func (s *stubStater) read(string) (map[string]string, map[string]int64) {
+func (s *stubStater) setTitles(m map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.titles = m
+}
+
+func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := make(map[string]string, len(s.m))
 	for k, v := range s.m {
 		cp[k] = v
 	}
+	titles := make(map[string]string, len(s.titles))
+	for k, v := range s.titles {
+		titles[k] = v
+	}
 	act := make(map[string]int64, len(s.act))
 	for k, v := range s.act {
 		act[k] = v
 	}
-	return cp, act
+	return cp, titles, act
 }
 
 func (s *stubStater) setAct(m map[string]int64) {
@@ -342,14 +353,16 @@ func TestPushSenderIgnoresUsersWithoutSubs(t *testing.T) {
 // background notifications silently, so pin it.
 func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("worktree", 3, nil), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 3, nil), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
-		"title":   "worktree needs input",
+		// The LABEL is what a person reads; the name is the address the tap
+		// lands on.
+		"title":   "Worktree cleanup needs input",
 		"body":    "Claude is awaiting your input.",
-		"tag":     "tl-worktree",
-		"session": "worktree",
+		"tag":     "tl-k7m2q9x4tp0v",
+		"session": "k7m2q9x4tp0v",
 		"badge":   float64(3),
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -364,21 +377,21 @@ func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 // renotify).
 func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildDonePayload("worktree", 1, nil), &got); err != nil {
+	if err := json.Unmarshal(buildDonePayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
-		"title":   "worktree finished",
+		"title":   "Worktree cleanup finished",
 		"body":    "Claude finished its turn.",
-		"tag":     "tl-worktree",
-		"session": "worktree",
+		"tag":     "tl-k7m2q9x4tp0v",
+		"session": "k7m2q9x4tp0v",
 		"badge":   float64(1),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("done payload shape drift:\n got %v\nwant %v", got, want)
 	}
 	var aw map[string]any
-	_ = json.Unmarshal(buildPushPayload("worktree", 1, nil), &aw)
+	_ = json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil), &aw)
 	if got["tag"] != aw["tag"] {
 		t.Fatalf("done tag %q != awaiting tag %q — coalescing would break", got["tag"], aw["tag"])
 	}
@@ -562,7 +575,7 @@ func TestPushSenderUsesSharedClient(t *testing.T) {
 // stale count on the user's home screen.
 func TestPushPayloadCarriesZeroBadge(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("worktree", 0, nil), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 0, nil), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	if _, ok := got["badge"]; !ok {
@@ -656,7 +669,7 @@ func TestWaitingListReturnsNilPastTheCap(t *testing.T) {
 func TestPushPayloadCarriesTheNamedSet(t *testing.T) {
 	var got map[string]any
 	w := waitingList(map[string]string{"one": stateAwaiting, "two": stateDone})
-	if err := json.Unmarshal(buildPushPayload("one", 2, w), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("One", "one", 2, w), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	wait, ok := got["waiting"].(map[string]any)
@@ -771,5 +784,47 @@ func TestThrottledReasons(t *testing.T) {
 				t.Fatalf("throttled(%s) = %q, want %q", tc.session, got, tc.want)
 			}
 		})
+	}
+}
+
+// A push body says which session it is about, and a session name stopped being
+// readable when it became an opaque id (ADR-0019). The title is what every
+// other surface shows, so it is what the phone reads too.
+func TestPushLabel(t *testing.T) {
+	cases := []struct {
+		name    string
+		session string
+		title   string
+		want    string
+	}{
+		{"a titled session reads its title", "k7m2q9x4tp0v", "Tashkent trip planning", "Tashkent trip planning"},
+		{"an untitled one falls back to the name", "k7m2q9x4tp0v", "", "k7m2q9x4tp0v"},
+		{"whitespace is not a title", "k7m2q9x4tp0v", "   ", "k7m2q9x4tp0v"},
+		{"a name from before ids still reads", "authentik", "", "authentik"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := pushLabel(c.session, c.title); got != c.want {
+				t.Errorf("pushLabel(%q, %q) = %q, want %q", c.session, c.title, got, c.want)
+			}
+		})
+	}
+}
+
+// The sender reads titles off the same list build it reads states from, so a
+// title stamped by the auto-title rule is on the very next push.
+func TestStatesAndTitles(t *testing.T) {
+	states, titles := statesAndTitles([]Session{
+		{Name: "k7m2q9x4tp0v", State: stateAwaiting, Title: "Tashkent trip planning"},
+		{Name: "q4m8vwx2rt5n", State: stateRunning},
+	})
+	if states["k7m2q9x4tp0v"] != stateAwaiting || states["q4m8vwx2rt5n"] != stateRunning {
+		t.Errorf("states = %v", states)
+	}
+	if titles["k7m2q9x4tp0v"] != "Tashkent trip planning" {
+		t.Errorf("titles = %v, want the summary", titles)
+	}
+	if _, ok := titles["q4m8vwx2rt5n"]; ok {
+		t.Errorf("an untitled session is in the titles map: %v", titles)
 	}
 }

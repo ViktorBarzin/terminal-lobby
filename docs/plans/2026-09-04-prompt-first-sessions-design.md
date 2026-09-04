@@ -68,7 +68,7 @@ We read its output rather than starting a second one.
 | existing sessions | migrated to ids in the same change | one identity model, not two |
 | the composer's controls | project selector, command, model | project selector inline, as in T3 |
 | how the model is applied | `/model <name>` injected before the prompt | no change to the `?arg=` contract, and the pre-warm pool still applies |
-| prompt delivery | retry ladder, 700/1600/3000/6000ms | the pattern `stampTitleWhenAlive` already uses |
+| prompt delivery | retry ladder, 700/1600/3000/6000ms, gated on a readiness signal | the pattern `stampTitleWhenAlive` already uses; the gate is what the ladder alone could not do — see Sequencing |
 | attachments | held in the browser, uploaded into the new session's bucket on send | nothing is uploaded until a session exists to own it |
 | title drift | frozen at the first summary | you can find a session by remembering what it was called |
 | who writes the title | `tmux-api`, server-side | one writer, and it works with every tab closed |
@@ -90,6 +90,8 @@ sequenceDiagram
     C->>C: id = base32(12)
     C->>T: attach ?arg=id
     Note over C,T: claims the slot, 9ms
+    A-->>C: pane_title carries a glyph
+    Note over C,A: Claude is ready, not just reachable
     C->>S: /prompt "/model sonnet"
     C->>S: /prompt "your text"
     Note over C: card shows your first line
@@ -130,11 +132,13 @@ person reads is lost: `authentik` keeps reading `authentik`, now as a title.
 >[!CAUTION]
 > **`tmux ls` stops being readable.** This is the main cost of the decision,
 > and it is the property the 2026-08-16 title design was protecting. A `tls`
-> alias goes into `infra/playbooks/devvm.yml` for every user; plain `tmux ls`
-> still works and still shows ids.
+> command ships in the Debian package at `/usr/local/bin/tls` (`devvm/tls`), so
+> it arrives with the release rather than needing a separate infra change; plain
+> `tmux ls` still works and still shows ids. A command rather than a shell
+> alias, which would reach only interactive shells whose rc file was sourced.
 
 ```sh
-alias tls="tmux ls -F '#{session_name}  #{@title}'"
+tmux list-sessions -F '#{session_name}  #{@title}'   # what tls runs
 ```
 
 ```
@@ -175,8 +179,9 @@ org default from `managed-settings.json`, and `tmux-user-attach:241` pools only
 the bare `claude` key — a `claude-haiku` command key would bypass the pre-warm
 pool and give up its head start. So the model is applied by injecting
 `/model <name>` down the existing `POST /prompt` path before the prompt itself.
-This needs verifying against the real CLI: `/model sonnet` must set the model
-rather than open the picker.
+Verified against Claude Code 2.1.260 on 2026-09-04: it sets the model, and does
+not open the picker. See Sequencing for the readings and for the account default
+it writes alongside.
 
 **Choosing `shell`** turns the box back into a name box. A shell has no prompt to
 receive, and it is the case where someone most likely wanted to name the thing.
@@ -252,16 +257,25 @@ Making the name immutable retires the machinery that existed to move it:
 
 | goes away | why |
 |---|---|
-| `slug/slug.go`, `slug.ts`, `vectors.json`, the transliteration table | no name is ever derived from a title again |
+| `frontend-v2/src/lib/slug.ts` and the TypeScript half of `vectors.json` | the lobby derives no name from a title again |
 | `nameForTitle`, `fallbackName`, `session-N` | the id is the name |
 | the collision toast and the derived-name hint under the box | there is no box and no collision |
-| `followRenamedSelection` | nothing renames, so nothing to follow |
 | `rename_cascade.go` at its lobby call sites | kept for the migration and for restore's collision path |
 | `PATCH /sessions/{name}`'s rename half | retitle becomes `POST /sessions/{name}/title` for everyone |
 
-The phantom-session hazard goes with them. A browser tab holding a stale name
-could previously reconnect through `tmux new-session -A` and create that name as
-a fresh empty session; with no renames there is no stale name to hold.
+**The Go `slug` package stays, split.** `CleanTitle` normalizes every title
+tmux-api stores, and `FromTitle` / `Free` / `MaxNameLen` still name a bridged
+session after its working directory (`t3-bridge/resurrect.go`). Only `Fallback`
+and its `session-N` walk lost every caller. `vectors.json` becomes a Go-only
+fixture.
+
+`followRenamedSelection` stays too, and the phantom-session hazard narrows
+rather than going. A browser tab holding a stale name reconnects through
+`tmux new-session -A` and creates that name as a fresh empty session — and the
+migration is exactly one mass rename of live sessions, which is the moment that
+can happen. Following the selection by tmux session id, which a rename does not
+change, is what carries an open tab across it. After the migration it has
+nothing to do.
 
 ## What this does not do
 
@@ -273,18 +287,22 @@ a fresh empty session; with no renames there is no stale name to hold.
 > before this ships.
 
 >[!NOTE]
-> **T3 thread titles lag by seconds.** `t3-sync/adopt.go:71` titles a mirrored
-> thread from `@title`, falling back to the tmux name. A session adopted in the
-> few seconds before its summary lands would take an id as its thread title.
-> Either adoption waits for a title, or the syncer pushes a thread retitle when
-> `@title` first appears; the second is closer to what memory records as
-> decision 7's "title regeneration renames via tmux-api".
+> **T3 thread titles lag by seconds, and heal themselves.** `t3-sync/adopt.go`
+> titles a mirrored thread from `@title`, falling back to the tmux name, so a
+> session adopted in the few seconds before its summary lands takes an id as its
+> thread title. It does not stay that way: `Candidates` re-reads `@title` every
+> pass and `Reconciler.Plan` queues a `Rename` whenever the thread's title and
+> the candidate's disagree, so the next pass retitles the thread to Claude's
+> summary. That is the second of the two options this note weighed, and it was
+> already in place — no adoption delay is needed.
 
->[!IMPORTANT]
-> **`/model <name>` is unverified against the CLI.** It may open the picker
-> rather than set the model directly. If it does, the model picker either falls
-> back to new command keys — losing the pre-warm head start for every model but
-> the default — or comes out of the composer.
+>[!NOTE]
+> **`/model <name>` sets the model.** Checked on Claude Code 2.1.260 for
+> `sonnet`, `haiku` and `opus` through the same injection path the browser
+> reaches, so the picker ships as designed. It also saves the choice as the
+> account's default for new sessions; `managed-settings.json` pins Opus 5 here
+> and that applies on restart, so the next session is unaffected. A future
+> release could change either behaviour, and the status line is where to look.
 
 >[!WARNING]
 > **`CLAUDE_CODE_DISABLE_TERMINAL_TITLE` turns the whole feature off.** Claude
@@ -311,6 +329,109 @@ One branch, landing together. Phase order inside it:
 3. `PromptField` extraction, then `NewSessionComposer` with its three controls.
 4. Prompt delivery, model injection, attachment upload-on-send.
 5. The `tmux-api` auto-title rule and `session.autonamed`.
+
+Built in that order, with the auto-title rule (5) brought forward ahead of the
+composer (3) so the composer could be written against a title that already
+arrives on its own. What follows records where the built thing differs from the
+plan above.
+
+### `/model` sets the model, and saves a default with it
+
+Verified against Claude Code 2.1.260 on 2026-09-04, injected through the exact
+`sessionio.Injector.Prompt` sequence the browser reaches (`send-keys C-e C-u`,
+`set-buffer`, `paste-buffer -p`, `Enter`):
+
+| sent | status line | picker |
+|---|---|---|
+| `/model sonnet` | `opus-5` → `sonnet-5` | none |
+| `/model haiku` | `sonnet-5` → `haiku-4` | none |
+| `/model opus` | `haiku-4` → `opus-5` | none |
+
+So the picker ships. Two things came with it. The command answers *"Set model to
+Sonnet 5 and saved as your default for new sessions"*, so it writes the
+account's own default as well as this session's model; on this box
+`managed-settings.json` pins Opus 5 and that applies on restart, so what the
+NEXT session starts on is unchanged. And `pane_title` stays `✳ Claude Code`
+across all three, so the model line does not disturb the auto-title rule.
+
+### Reachable is not ready, and nothing says so
+
+The plan expected a 404 to mean "not yet". What is there instead is quieter. A
+session tmux has created accepts `send-keys` immediately, while the Claude in
+its pane takes another ~2s to draw its input, and text injected into that gap is
+dropped: `POST /prompt` returns 204, tmux exits 0, and nothing reaches the
+conversation.
+
+Measured by injecting `/model sonnet` at fixed offsets from creation, reading
+the model back off the status line:
+
+| injected at | landed |
+|---|---|
+| creation + 0s | no |
+| creation + 1s | no |
+| creation + 2s | yes |
+| creation + 3s | yes |
+
+This is not specific to the model line — the first prompt would go the same way,
+and the plan's ladder would have spent its first rung at 700ms, taken the 204,
+and stopped. So delivery waits for the pane to be ready as well as walking the
+ladder.
+
+**The wait is the bridge's, reused.** `sessionio.AwaitInputReady` already solves
+exactly this: it watches the pane draw Claude's own `❯` and then hold still for
+300ms, and `t3-bridge` has called it after a resurrection since 2026-08-16, for
+the same silent half-landing failure. `POST /prompt` gains an `awaitReady` flag
+that runs it and answers 503 rather than injecting, so the check stays where the
+evidence is. Nothing about a pane's input line reaches the browser, so anything
+written on that side could only have been a proxy for it.
+
+Sampled through a boot on a quiet box, which is why:
+
+| moment | pane | `@claude_state` |
+|---|---|---|
+| 0.0s | the shell's title still, nothing drawn | unset |
+| 1.15s | nothing drawn | `done` |
+| 1.46s | title now `✳ Claude Code` | `done` |
+| 1.60s | `❯` drawn, still repainting | `done` |
+| 1.89s | settled; input accepted | `done` |
+
+`@claude_state` is set 750ms before Claude can read anything, and the title 400ms
+before, so neither is the signal on its own. The drawn-and-settled prompt is.
+
+A missing session answers **502**, not 404: `POST /prompt` runs no registry
+lookup, so the failure happens inside `tmux send-keys`. 503, 502 and 404 all mean
+"come back".
+
+```mermaid
+flowchart TD
+    C["create: id minted, attach starts"] --> U["upload held files into id"]
+    U --> L{"rung: 700 / 1600 / 3000 / 6000ms"}
+    L --> S["POST /prompt, awaitReady"]
+    S -->|"503 pane not ready<br/>502 no session"| L
+    S -->|204| D["delivered: /model, then the prompt"]
+    L -->|"last rung: no wait asked"| F["send anyway"]
+    F -->|fails| P["park the text in the session's own composer"]
+```
+
+The `awaitReady` flag is off for every other caller. A session someone is looking
+at is ready by definition, and the check costs a `capture-pane` per tick. It is
+also asked for only when the command is Claude: the check watches for `❯`, so
+asking where nothing draws one would spend every rung waiting and give up with
+the text unsent.
+
+### Two smaller departures
+
+**A failed delivery parks the text rather than restoring the field.** The plan
+said to put the text back in the box. By then there is no box: `store.create`
+selects the session, and selecting unmounts the composer. So the message is
+written into the NEW session's draft, which is the field the person is now
+looking at, with a toast saying where it went.
+
+**The pre-warm slot is not what makes the first attempt succeed.** It removes
+the boot wait, so a claimed slot is ready the moment the first rung asks. A cold
+create — Ungrouped, or a pool miss — is ready inside the first rung's own wait,
+which is what the server-side hold buys over a browser-side check: measured end
+to end against a real Claude, the prompt landed on rung one.
 
 Verification before this is called done: drive the real lobby at
 `terminal.viktorbarzin.me`, create a session from the composer, and read back a

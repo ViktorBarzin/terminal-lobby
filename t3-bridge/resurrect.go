@@ -273,12 +273,15 @@ func resurrectShellSafe(r rune) bool {
 
 // Slug turns a T3 thread title into a tmux session name.
 //
-// The derivation itself lives in terminal-lobby/slug, shared with tmux-api and
-// mirrored in the lobby's TypeScript, so a title names the same session
-// whichever surface it was typed on. What stays here is the bridge's own
-// fallback: a title with nothing usable in it still has to become a session,
-// and "claude" reads better in `tmux ls` than session-N does for a thread that
-// came from T3.
+// The derivation itself lives in terminal-lobby/slug. The bridge is the only
+// caller left: ADR-0019 made a lobby session's name a minted id, so the lobby
+// derives nothing from a title any more and its TypeScript mirror of this is
+// gone. tmux-api still uses that package, but only for CleanTitle — the other
+// half, the one that normalizes a title rather than deriving a name.
+//
+// What stays here is the bridge's own fallback: a title with nothing usable in
+// it still has to become a session, and "claude" reads better than an empty
+// name for a thread that came from T3.
 //
 // Slugs are lowercase now. Decision 7's "one name, tmux wins" was about not
 // losing the phrasing a human chose — and that phrasing now travels as the

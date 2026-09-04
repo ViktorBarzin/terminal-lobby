@@ -95,6 +95,41 @@ func blankDialogLine(line string) bool {
 	return strings.TrimSpace(stripDialogBorder(line)) == ""
 }
 
+// footerAt reports the line the select widget's footer starts on, or -1 when
+// the pane is not showing one.
+//
+// The footer is a single logical line and the terminal wraps it. It runs to 60
+// characters, so any pane narrower than that puts "Esc to cancel" on the line
+// below — a phone, or a narrow split. Matching one line at a time missed those
+// entirely: ParseDialog returned nil, no answer card docked, and the Text view
+// drew "Working…" with a running clock over a session that was stopped waiting
+// for an answer. Measured 2026-09-04 on a live 58x16 pane.
+//
+// Three lines is the whole range that matters. 60 characters wrap into at most
+// three at any width somebody could actually read a dialog in, and joining more
+// only widens the chance of reading two unrelated lines as a footer.
+func footerAt(lines []string) int {
+	const wrap = 3
+	for i := len(lines) - 1; i >= 0; i-- {
+		for n := 1; n <= wrap && i+n <= len(lines); n++ {
+			if reFooter.MatchString(joinWrapped(lines[i : i+n])) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// joinWrapped puts wrapped pane lines back together. The terminal breaks on a
+// word boundary and tmux strips the space that break consumed, so it goes back.
+func joinWrapped(lines []string) string {
+	parts := make([]string, 0, len(lines))
+	for _, l := range lines {
+		parts = append(parts, strings.TrimSpace(l))
+	}
+	return strings.Join(parts, " ")
+}
+
 // ParseDialog reads a blocking AskUserQuestion off the visible pane, or returns
 // nil when the pane is not showing one.
 //
@@ -110,13 +145,7 @@ func ParseDialog(pane string) *Dialog {
 
 	// Work from the footer up: it is the bottom of the dialog, and anything
 	// below it belongs to the composer.
-	end := -1
-	for i := len(lines) - 1; i >= 0; i-- {
-		if reFooter.MatchString(lines[i]) {
-			end = i
-			break
-		}
-	}
+	end := footerAt(lines)
 	if end < 0 {
 		return nil
 	}

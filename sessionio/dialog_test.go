@@ -2,6 +2,7 @@ package sessionio
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -202,5 +203,40 @@ func TestParseDialogStopsTheQuestionAtTheBlankAboveIt(t *testing.T) {
 	}
 	if q.Header != "Font" {
 		t.Fatalf("header = %q — swallowed into the question", q.Header)
+	}
+}
+
+// A pane narrow enough to wrap the widget's own footer. The footer is 60
+// characters and tmux breaks it at the pane width, so on this 58x16 capture
+// "Esc to cancel" lands on the line below. Matching it one line at a time found
+// nothing, ParseDialog returned nil, and the whole dialog went unread: no answer
+// card docked, and the Text view drew "Working…" with a running clock over a
+// session that was stopped waiting for an answer. Captured live off the soxket
+// pane on 2026-09-04, which is the session that was showing it.
+func TestParseDialogReadsAFooterThePaneWrapped(t *testing.T) {
+	d := ParseDialog(fixture(t, "dialog-narrow-footer.txt"))
+	if d == nil {
+		t.Fatal("a dialog whose footer wrapped was not recognised")
+	}
+	if len(d.Questions) != 1 {
+		t.Fatalf("questions = %+v, want the one on screen", d.Questions)
+	}
+	if len(d.Headers) != 2 || d.Headers[0] != "Gesture scope" {
+		t.Fatalf("headers = %q, want both entries off the tab bar", d.Headers)
+	}
+	q := d.Questions[0]
+	if !strings.HasPrefix(q.Question, "At 2,700 lines, does the parity bar") {
+		t.Fatalf("question = %q, want the prose above the options", q.Question)
+	}
+	if len(q.Options) != 3 {
+		t.Fatalf("options = %+v, want the three the caller offered", q.Options)
+	}
+	if q.Options[0].Label != "Drop all three (Recommended)" {
+		t.Fatalf("first option = %q", q.Options[0].Label)
+	}
+	// The other question of the pair is off screen, which the reader has to be
+	// told rather than shown a card that answers half the call.
+	if d.Count != 2 || !d.Partial {
+		t.Fatalf("count=%d partial=%v, want 2 and true", d.Count, d.Partial)
 	}
 }

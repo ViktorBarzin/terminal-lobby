@@ -43,9 +43,20 @@ var knownEvents = map[string]bool{
 	"text.answer_sent":   true, // tl.multi, tl.questions, tl.steps
 	"session.detached":   true,
 	"session.renamed":    true,
-	"session.moved":      true, // between projects / reordered (tl.from, tl.to)
-	"session.killed":     true,
-	"session.restored":   true, // tmux-persist restore (tl.count)
+	// A title someone chose, replacing whatever the session had. Emitted
+	// server-side at POST /sessions/{n}/title, so tl.client says which surface
+	// asked. One arriving soon after a session.autonamed is how a rejected
+	// auto-title is counted — the event has existed since titles shipped and
+	// was missing from this catalog, which meant Emit dropped every one.
+	"session.retitled": true,
+	// The auto-title rule (tmux-api/autotitle.go) taking Claude Code's own
+	// conversation summary as the session's title, or running out of window
+	// without one. tl.session, tl.delay_ms since creation, tl.outcome =
+	// titled|gave_up.
+	"session.autonamed": true,
+	"session.moved":     true, // between projects / reordered (tl.from, tl.to)
+	"session.killed":    true,
+	"session.restored":  true, // tmux-persist restore (tl.count)
 
 	// -- skills & plugins (skills-api) --------------------------------------
 	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)

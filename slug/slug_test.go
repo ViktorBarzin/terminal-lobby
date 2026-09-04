@@ -8,9 +8,10 @@ import (
 	"unicode/utf8"
 )
 
-// vectors.json is shared with frontend-v2/test/slug.test.ts. Both suites read
-// it, so a Go/TypeScript divergence fails here or there rather than in
-// production, where it would create or rename the wrong session.
+// vectors.json pins FromTitle's output. It used to be read by the frontend's
+// suite too, so a Go/TypeScript divergence failed here or there; the browser
+// stopped deriving names with ADR-0019 and this is the only reader left.
+// t3-bridge is what FromTitle still serves.
 type vectorFile struct {
 	Cases []struct {
 		Title string `json:"title"`
@@ -121,27 +122,6 @@ func TestCleanTitleIsIdempotent(t *testing.T) {
 		once := CleanTitle(in)
 		if twice := CleanTitle(once); twice != once {
 			t.Errorf("CleanTitle(%q) = %q, but cleaning that gives %q", in, once, twice)
-		}
-	}
-}
-
-func TestFallbackSkipsTakenNames(t *testing.T) {
-	cases := []struct {
-		taken []string
-		want  string
-	}{
-		{nil, "session-1"},
-		{[]string{"session-1"}, "session-2"},
-		{[]string{"session-1", "session-2", "session-4"}, "session-3"},
-		{[]string{"unrelated"}, "session-1"},
-	}
-	for _, c := range cases {
-		taken := map[string]bool{}
-		for _, n := range c.taken {
-			taken[n] = true
-		}
-		if got := Fallback(taken); got != c.want {
-			t.Errorf("Fallback(%v) = %q, want %q", c.taken, got, c.want)
 		}
 	}
 }

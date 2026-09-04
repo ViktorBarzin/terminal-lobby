@@ -46,14 +46,16 @@ const (
 // client-activity (user keystroke) time per session. Abstracted so the
 // sender's transition logic is testable without a live tmux server.
 type sessionStater interface {
-	// read returns the session name→state map, and the session name → unix
-	// time of the newest input from any tmux client attached to it. Sessions
-	// with no attached client are simply absent from the second map — the
-	// sender remembers the max it has ever seen.
+	// read returns the session name→state map, the session name→display title
+	// map (absent for a session nobody and nothing has titled), and the session
+	// name → unix time of the newest input from any tmux client attached to it.
+	// Sessions with no attached client are simply absent from the last map —
+	// the sender remembers the max it has ever seen.
 	//
-	// One method rather than two because both come out of the same tmux reads,
-	// and asking separately forked `list-clients` twice per user per tick.
-	read(osUser string) (states map[string]string, activity map[string]int64)
+	// One method rather than three because all three come out of the same tmux
+	// reads, and asking separately forked `list-clients` twice per user per
+	// tick.
+	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64)
 }
 
 // prefsLoader reads a user's raw roamed prefs document. *prefsStore satisfies
@@ -69,13 +71,25 @@ type prefsLoader interface {
 // claude — so the server-side edge rule matches the browser's.
 type liveStater struct{}
 
-func (liveStater) read(osUser string) (map[string]string, map[string]int64) {
+func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64) {
 	sessions, activity := userSessionsAndActivity(osUser)
-	m := make(map[string]string, len(sessions))
+	states, titles := statesAndTitles(sessions)
+	return states, titles, activity
+}
+
+// statesAndTitles splits a parsed session list into the two maps the sender
+// diffs and reads wording from. A session nobody has titled is simply absent
+// from the second map, which is what pushLabel's fallback is for.
+func statesAndTitles(sessions []Session) (map[string]string, map[string]string) {
+	states := make(map[string]string, len(sessions))
+	titles := make(map[string]string, len(sessions))
 	for _, s := range sessions {
-		m[s.Name] = s.State
+		states[s.Name] = s.State
+		if s.Title != "" {
+			titles[s.Name] = s.Title
+		}
 	}
-	return m, activity
+	return states, titles
 }
 
 // vapidConfig is the VAPID keypair + subject the sender signs pushes with.
@@ -331,6 +345,26 @@ func waitingCount(states map[string]string) int {
 	return n
 }
 
+// pushLabel is what a notification CALLS a session: its title, or the session
+// name when nothing has titled it.
+//
+// A name stopped being readable when it became an opaque id (ADR-0019), so a
+// body composed from one reads `k7m2q9x4tp0v needs input` on the phone. The
+// title is what every other surface shows (frontend-v2/src/types/lobby.ts,
+// sessionLabel), and this is the server-side half of the same rule. The name is
+// still what `session` and the tag carry: those are addresses, and tapping the
+// notification has to land on the right session.
+//
+// The name remains the fallback rather than "New session": a push that cannot
+// say which session it is about is worse than one naming an id, and an
+// untitled session is exactly the case where a phone has nothing else to go on.
+func pushLabel(session, title string) string {
+	if t := strings.TrimSpace(title); t != "" {
+		return t
+	}
+	return session
+}
+
 // marshalPayload builds the SW payload for one session. Both wordings share
 // the tag `tl-<session>`: coalescing is by tag only (sw.js omits renotify),
 // so a later awaiting push REPLACES a finished one for the same session
@@ -347,16 +381,17 @@ func marshalPayload(title, body, session string, badge int, waiting *waitList) [
 	return b
 }
 
-// buildPushPayload is the running→awaiting "needs input" wording.
-func buildPushPayload(session string, badge int, waiting *waitList) []byte {
-	return marshalPayload(session+" needs input", "Claude is awaiting your input.", session, badge, waiting)
+// buildPushPayload is the running→awaiting "needs input" wording. `label` is
+// what the person reads (pushLabel); `session` is the address.
+func buildPushPayload(label, session string, badge int, waiting *waitList) []byte {
+	return marshalPayload(label+" needs input", "Claude is awaiting your input.", session, badge, waiting)
 }
 
 // buildDonePayload is the running→done "finished" wording — the first-class
 // notification for a turn completing. Same tag as the awaiting payload (see
 // marshalPayload): a subsequent awaiting alert supersedes it.
-func buildDonePayload(session string, badge int, waiting *waitList) []byte {
-	return marshalPayload(session+" finished", "Claude finished its turn.", session, badge, waiting)
+func buildDonePayload(label, session string, badge int, waiting *waitList) []byte {
+	return marshalPayload(label+" finished", "Claude finished its turn.", session, badge, waiting)
 }
 
 // tick runs one poll cycle: for every subscribed user, diff the current
@@ -385,7 +420,7 @@ func (p *pushSender) tick() {
 	for _, u := range users {
 		seen[u] = true
 		prev := p.last[u]
-		cur, act := p.stater.read(u)
+		cur, titles, act := p.stater.read(u)
 		p.last[u] = cur
 		p.observeActivity(u, act)
 		if prev == nil {
@@ -413,7 +448,7 @@ func (p *pushSender) tick() {
 					}
 					p.markPushed(u, name)
 					p.markSent(u, name, now)
-					p.notify(u, name, kindAwaiting, badge, waiting)
+					p.notify(u, name, titles[name], kindAwaiting, badge, waiting)
 				}
 			case st == stateDone && was == stateRunning:
 				// running→done ONLY. A session first seen already done
@@ -426,7 +461,7 @@ func (p *pushSender) tick() {
 					}
 					p.markPushed(u, name)
 					p.markSent(u, name, now)
-					p.notify(u, name, kindDone, badge, waiting)
+					p.notify(u, name, titles[name], kindDone, badge, waiting)
 				}
 			}
 		}
@@ -488,12 +523,13 @@ func (p *pushSender) markPushed(u, name string) {
 // notify builds the payload for `session` of the given kind and fans it out
 // to the user's devices. The wording comes from the kind; the tag is shared
 // across kinds so a later push for the same session coalesces (send()).
-func (p *pushSender) notify(osUser, session, kind string, badge int, waiting *waitList) {
+func (p *pushSender) notify(osUser, session, title, kind string, badge int, waiting *waitList) {
+	label := pushLabel(session, title)
 	var payload []byte
 	if kind == kindDone {
-		payload = buildDonePayload(session, badge, waiting)
+		payload = buildDonePayload(label, session, badge, waiting)
 	} else {
-		payload = buildPushPayload(session, badge, waiting)
+		payload = buildPushPayload(label, session, badge, waiting)
 	}
 	p.send(osUser, session, payload, kind)
 }

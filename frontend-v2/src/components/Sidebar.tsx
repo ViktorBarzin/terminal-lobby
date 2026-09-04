@@ -16,7 +16,6 @@ import { isGroupVisible } from "./lobby.logic";
 import { OrderMenu } from "./OrderMenu";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
-import { CreateSessionRow } from "./CreateSessionRow";
 import { badgeLabel, flatSessionOrder } from "../keybindings/navigation.logic";
 import { RestorePicker } from "./RestorePicker";
 import { SkillsIcon } from "./Icons";
@@ -26,19 +25,20 @@ import { StatusDot } from "./StatusDot";
 import { LOBBY_CHANNELS, type Channel } from "../diagnostics/status";
 
 /**
- * The lobby sidebar (inventory Cat.2/3): identity + new-session row, the ordered
+ * The lobby sidebar (inventory Cat.2/3): identity + a route to the new-session
+ * composer, the ordered
  * project/Ungrouped groups, a read-only Shared-with-me section for foreign
  * sessions, and the New-project / Restore footer. It is a pure view over the
  * store's derived model; all mutation goes back through the store.
  */
 export const Sidebar: Component<{
   store: LobbyStore;
-  /** roamed prefs — the create row's command dropdown is one of its knobs. */
+  /** roamed prefs — the session-list order and the last-active line. */
   prefs: PrefsStore;
-  /** which new-session commands this box can actually run, for greying out the
-   *  ones with nothing installed behind them. Optional: absent means no opinion
-   *  and the row offers everything, which is what it did before. */
-  availableCommands?: () => Record<string, boolean>;
+  /** Show the new-session composer, optionally preset to a project ("" is
+   *  Ungrouped). The sidebar has no create box of its own any more: its button
+   *  and every group's `+` route here. Optional so a test can mount without it. */
+  onNewSession?: (group?: string) => void;
   /** true while Alt is held (engine): overlays numbered chips on the first 10 cards. */
   altActive?: Accessor<boolean>;
   /** confirm seam for the destructive card actions (tests inject it). */
@@ -218,11 +218,19 @@ export const Sidebar: Component<{
         </Show>
       </div>
 
-      <CreateSessionRow
-        store={store}
-        prefs={props.prefs}
-        available={props.availableCommands}
-      />
+      {/* The create box moved out of the sidebar and became the composer, which
+          needs the room: it takes a prompt, not a name. This is the route to
+          it, and the `+` on each group is the same route with that project
+          preselected. */}
+      <div class="tl-new-row">
+        <button
+          class="tl-new-btn tl-new-full"
+          aria-label="New session"
+          onClick={() => props.onNewSession?.()}
+        >
+          + New session
+        </button>
+      </div>
 
       <div class="tl-sidebar-scroll">
         <Show when={store.loadError()}>
@@ -249,6 +257,7 @@ export const Sidebar: Component<{
               badge={badge}
               confirm={props.confirm}
               showLastActive={showLastActive}
+              onNewSession={props.onNewSession}
             />
           )}
         </For>
