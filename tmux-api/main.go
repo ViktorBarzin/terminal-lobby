@@ -574,6 +574,13 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
 	}
+	// A session's name is an opaque id, so a title is the only readable thing
+	// about it — and nobody types one any more. Claude Code's own conversation
+	// summary arrives in the pane title a few seconds after the first prompt,
+	// and this is where it becomes the session's title (autotitle.go). Runs
+	// AFTER clearDeadStates, so a claude that died at launch leaves its session
+	// untitled rather than taking whatever the dead pane last wrote.
+	autoTitleSessions(osUser, sessions, time.Now())
 	return sessions, activity
 }
 
