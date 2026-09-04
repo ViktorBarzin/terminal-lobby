@@ -8,13 +8,21 @@ session is created after"*.
 
 Today the sidebar's create row refuses an empty box. `store.create` toasts
 *"Give the session a name"* and stops (`frontend-v2/src/store/lobby.ts:637`), so
-naming is the first thing the lobby asks of you and it happens before you have
-done any work worth naming.
+a name has to be chosen before the session exists, which is before there is any
+work to name it after.
 
 This replaces it with a composer. You type what you want to do, press Enter, and
 the session is created and given your text as its first prompt. The name stops
 being something a person chooses at all: it becomes an opaque id, and the title
 comes from Claude Code's own summary of the conversation a few seconds later.
+
+```stats
+12 | characters in a session id
+7 | name validators it satisfies unchanged
+78% | of creates go to a named project
+~2.4s | Claude boot, mostly paid by pre-warm
+6 | stores that stop having to follow a rename
+```
 
 ## The summariser already ran
 
@@ -46,8 +54,8 @@ setting, described as *"Whether /rename updates the terminal tab title"* and
 defaulting on, which ties the pane title to Claude's session name and its
 generated summary.
 
-So the smaller model this feature wanted is already running, in the same pane,
-for free. We read its output instead of running a second one.
+So a summariser is already running, in the same pane, with no call of our own.
+We read its output rather than starting a second one.
 
 ## What we decided
 
@@ -118,8 +126,11 @@ no validator change.
 the existing cascade. Its old name is stamped as its `@title`, so nothing a
 person reads is lost: `authentik` keeps reading `authentik`, now as a title.
 
-**`tmux ls`.** Once every name is an id, a bare `tmux ls` is a machine listing.
-A `tls` alias goes into `infra/playbooks/devvm.yml` for every user:
+>[!CAUTION]
+> **`tmux ls` stops being readable.** This is the main cost of the decision,
+> and it is the property the 2026-08-16 title design was protecting. A `tls`
+> alias goes into `infra/playbooks/devvm.yml` for every user; plain `tmux ls`
+> still works and still shows ids.
 
 ```sh
 alias tls="tmux ls -F '#{session_name}  #{@title}'"
@@ -203,23 +214,23 @@ for each session where
 Stamping `@title` is what stops the rule firing again, so the title freezes at
 the first summary and later drift is ignored. No separate marker is needed.
 Clearing a title by hand unsets `@title` and lets the rule run once more, which
-makes "clear" mean "go back to auto" — the only sensible meaning now that a bare
-name is unreadable.
+makes "clear" mean "go back to auto", which is the meaning that fits now that a
+bare name is unreadable.
 
 The ~2 minute window is what stops the rule watching forever. A Claude that
 crashed at launch, a plain shell, or a pane title still reading `✳ Claude Code`
-leaves the session untitled, which is exactly what every pre-title session
-already is, and it stays renameable by hand.
+leaves the session untitled, which is what every pre-title session already is,
+and it stays renameable by hand.
 
 **Between create and the first summary** the card shows the first line of your
-prompt. You typed it seconds earlier, so it is the most recognisable thing
-available, and Claude's summary replaces it when it lands. A session started with
+prompt. You typed it seconds earlier, so it is likely the most recognisable
+thing available, and Claude's summary replaces it when it lands. A session started with
 an empty box and no prompt reads `New session` until a summary appears.
 
 **Telemetry.** One new event, `session.autonamed`, carrying `tl.session`,
 `tl.delay_ms` and `tl.outcome` (`titled` | `gave_up`). The existing
 `session.retitled` with a user client tag, arriving within about ten minutes of
-an autoname, is the honest signal that a summary was bad.
+an autoname, is the signal that a summary was rejected.
 
 ## What this deletes
 
@@ -240,23 +251,26 @@ a fresh empty session; with no renames there is no stale name to hold.
 
 ## What this does not do
 
-**iOS is unverified.** There is no instrument for iOS or Safari on this box. The
-phone layout will be exercised on the shared Android emulator, which has real
-touch and a real soft keyboard; the iPad and iPhone behaviour of the composer,
-particularly the soft-keyboard reserve, will not have been driven before this
-ships.
+>[!WARNING]
+> **iOS is unverified.** There is no instrument for iOS or Safari on this box.
+> The phone layout will be exercised on the shared Android emulator, which has
+> real touch and a real soft keyboard; the iPad and iPhone behaviour of the
+> composer, particularly the soft-keyboard reserve, will not have been driven
+> before this ships.
 
-**T3 thread titles lag by seconds.** `t3-sync/adopt.go:71` titles a mirrored
-thread from `@title`, falling back to the tmux name. A session adopted in the few
-seconds before its summary lands would take an id as its thread title. Either
-adoption waits for a title, or the syncer pushes a thread retitle when `@title`
-first appears; the second is closer to what memory records as decision 7's
-"title regeneration renames via tmux-api".
+>[!NOTE]
+> **T3 thread titles lag by seconds.** `t3-sync/adopt.go:71` titles a mirrored
+> thread from `@title`, falling back to the tmux name. A session adopted in the
+> few seconds before its summary lands would take an id as its thread title.
+> Either adoption waits for a title, or the syncer pushes a thread retitle when
+> `@title` first appears; the second is closer to what memory records as
+> decision 7's "title regeneration renames via tmux-api".
 
-**`/model <name>` is unverified against the CLI.** It may open the picker rather
-than set the model directly. If it does, the model picker either falls back to
-new command keys — losing the pre-warm head start for every model but the
-default — or comes out of the composer.
+>[!IMPORTANT]
+> **`/model <name>` is unverified against the CLI.** It may open the picker
+> rather than set the model directly. If it does, the model picker either falls
+> back to new command keys — losing the pre-warm head start for every model but
+> the default — or comes out of the composer.
 
 **The pane title's update cadence is not fully characterised.** ADR-0001 calls
 the `✳` title "a static summary", and this design only reads it once, so the
