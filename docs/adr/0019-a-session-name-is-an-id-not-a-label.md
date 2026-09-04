@@ -53,20 +53,32 @@ identity model, not two.
 
 ## Consequences
 
-- `tmux ls` from a shell becomes a machine listing. A `tls` alias
-  (`tmux ls -F '#{session_name}  #{@title}'`) ships in
-  `infra/playbooks/devvm.yml` for every user, and plain `tmux ls` still works.
-  This is the main cost of the decision, and it is the property the 2026-08-16
-  design was protecting.
-- The machinery that existed to move a name retires: the `slug` package and its
-  Go/TypeScript mirror with `vectors.json`, `nameForTitle`, `fallbackName`,
-  `session-N`, the collision toast, the derived-name hint, and
-  `followRenamedSelection`. `rename_cascade.go` stays for the migration and for
-  restore's collision path.
+- `tmux ls` from a shell becomes a machine listing. A `tls` command
+  (`tmux ls -F '#{session_name}  #{@title}'`) ships in the Debian package at
+  `/usr/local/bin/tls`, and plain `tmux ls` still works. A command rather than
+  the shell alias first proposed here: an alias reaches only interactive shells
+  whose rc file was sourced, and misses `ssh box tls`, scripts, and anyone whose
+  shell is not the one it was written for. This is the main cost of the
+  decision, and it is the property the 2026-08-16 design was protecting.
+- The machinery that existed to move a name retires: `nameForTitle`,
+  `fallbackName`, `session-N`, the collision toast, and the derived-name hint.
+  `rename_cascade.go` stays for the migration and for restore's collision path.
+- The `slug` package SPLITS rather than retiring. Its title-normalizing half
+  (`CleanTitle`) is what tmux-api runs on every title it stores; its
+  name-deriving half (`FromTitle`, `Free`, `MaxNameLen`) keeps one caller in
+  t3-bridge, which still names a bridged session after its working directory.
+  What went is the lobby's copy: `frontend-v2/src/lib/slug.ts` and the
+  TypeScript half of the `vectors.json` cross-check, which is a Go-only fixture
+  now. Whether t3-bridge should mint ids too is a question this ADR leaves open.
 - Retitling becomes `POST /sessions/{name}/title` for every caller. The rename
   half of `PATCH /sessions/{name}` has no callers left.
-- The phantom-session trap closes rather than being defended against: with no
-  renames, there is no stale name for a reconnecting tab to hold.
+- The phantom-session trap narrows but does not close. With no renames there is
+  no stale name for a reconnecting tab to hold — except across the migration
+  itself, which renames every live session at once. A tab open at that moment
+  holds the old name in its iframe's `?arg=`, and ttyd re-runs
+  `tmux new-session -A` on every reconnect, so `followRenamedSelection` stays:
+  it moves the selection onto the new name by tmux session id, which is the one
+  thing a rename does not change. It has nothing to do after the migration.
 - A session id appears in URLs, push tags, log lines and the image store path.
   None of those were readable before either, but the id is now what someone
   quotes when reporting a problem, so it is worth showing in the UI somewhere

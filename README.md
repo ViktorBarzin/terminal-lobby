@@ -24,10 +24,10 @@ proxy in front instead and set `TL_TRUST_FORWARDED_USER=1`.
 
 It listens on 7681 unless `TL_PORT` says otherwise, and a host that assigns the
 port itself can set `PORT`, so the image runs on a container platform without
-being configured for one. Claude Code is in the image, so the new session row's
-default works and signs you in on first run; Codex is not, so that option needs
-a command of your own. `docs/deployment.md` has the rest of the container's
-settings.
+being configured for one. Claude Code is in the image, so the new-session
+composer's default command works and signs you in on first run; Codex is not, so
+that option needs a command of your own. `docs/deployment.md` has the rest of
+the container's settings.
 
 ## Install on a machine
 

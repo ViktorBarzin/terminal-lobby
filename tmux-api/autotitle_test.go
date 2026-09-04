@@ -78,40 +78,42 @@ func attrsOf(t *testing.T, ev map[string]any) map[string]any {
 // title can arrive wearing any of them.
 func TestStripTitleGlyph(t *testing.T) {
 	cases := []struct {
-		name string
-		in   string
-		want string
+		name  string
+		in    string
+		want  string
+		glyph bool
 	}{
-		{"middle dot", "· Tashkent trip planning", "Tashkent trip planning"},
-		{"four teardrop-spoked asterisk", "✢ Tashkent trip planning", "Tashkent trip planning"},
-		{"eight-spoked asterisk", "✳ Tashkent trip planning", "Tashkent trip planning"},
-		{"six-pointed black star", "✶ Tashkent trip planning", "Tashkent trip planning"},
-		{"open-centre asterisk", "✻ Tashkent trip planning", "Tashkent trip planning"},
-		{"heavy teardrop-spoked asterisk", "✽ Tashkent trip planning", "Tashkent trip planning"},
+		{"middle dot", "· Tashkent trip planning", "Tashkent trip planning", true},
+		{"four teardrop-spoked asterisk", "✢ Tashkent trip planning", "Tashkent trip planning", true},
+		{"eight-spoked asterisk", "✳ Tashkent trip planning", "Tashkent trip planning", true},
+		{"six-pointed black star", "✶ Tashkent trip planning", "Tashkent trip planning", true},
+		{"open-centre asterisk", "✻ Tashkent trip planning", "Tashkent trip planning", true},
+		{"heavy teardrop-spoked asterisk", "✽ Tashkent trip planning", "Tashkent trip planning", true},
 
-		{"no prefix at all", "Session naming optional", "Session naming optional"},
-		{"the no-summary sentinel", "✳ Claude Code", "Claude Code"},
-		{"the sentinel under another glyph", "✻ Claude Code", "Claude Code"},
+		{"no prefix at all", "Session naming optional", "Session naming optional", false},
+		{"the no-summary sentinel", "✳ Claude Code", "Claude Code", true},
+		{"the sentinel under another glyph", "✻ Claude Code", "Claude Code", true},
 
 		// The glyph is a PREFIX. A summary that happens to contain one keeps
 		// every character of it.
-		{"a glyph later in the string", "Fix the ✳ rendering", "Fix the ✳ rendering"},
-		{"a glyph at the end", "Rendering of ✽", "Rendering of ✽"},
-		{"a glyph both leading and later", "✳ Fix the ✳ rendering", "Fix the ✳ rendering"},
+		{"a glyph later in the string", "Fix the ✳ rendering", "Fix the ✳ rendering", false},
+		{"a glyph at the end", "Rendering of ✽", "Rendering of ✽", false},
+		{"a glyph both leading and later", "✳ Fix the ✳ rendering", "Fix the ✳ rendering", true},
 
-		{"no space after the glyph", "✳Tashkent", "Tashkent"},
-		{"several spaces after the glyph", "✳   Tashkent", "Tashkent"},
-		{"the glyph alone", "✳", ""},
-		{"the glyph and a space", "✳ ", ""},
-		{"empty", "", ""},
-		{"a shell's own pane title", "devvm", "devvm"},
-		{"an asterisk is not one of the glyphs", "* not a spinner", "* not a spinner"},
-		{"surrounding whitespace", "  Tashkent  ", "Tashkent"},
+		{"no space after the glyph", "✳Tashkent", "Tashkent", true},
+		{"several spaces after the glyph", "✳   Tashkent", "Tashkent", true},
+		{"the glyph alone", "✳", "", true},
+		{"the glyph and a space", "✳ ", "", true},
+		{"empty", "", "", false},
+		{"a shell's own pane title", "devvm", "devvm", false},
+		{"an asterisk is not one of the glyphs", "* not a spinner", "* not a spinner", false},
+		{"surrounding whitespace", "  Tashkent  ", "Tashkent", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := stripTitleGlyph(c.in); got != c.want {
-				t.Errorf("stripTitleGlyph(%q) = %q, want %q", c.in, got, c.want)
+			got, glyph := stripTitleGlyph(c.in)
+			if got != c.want || glyph != c.glyph {
+				t.Errorf("stripTitleGlyph(%q) = (%q, %v), want (%q, %v)", c.in, got, glyph, c.want, c.glyph)
 			}
 		})
 	}
@@ -465,5 +467,138 @@ func TestAutoTitleEventsAreInTheCatalog(t *testing.T) {
 		if !telemetry.IsKnown(name) {
 			t.Errorf("%s is not in telemetry/events.go, so Emit drops it", name)
 		}
+	}
+}
+
+// A pre-warm claim is a rename, and a rename does not touch session_created.
+// The standing pool slot for a directory is refilled rather than recreated, so
+// it has no TTL at all — measured on 2026-09-04, the slot for
+// /home/wizard/code read session_created 4h33m in the past. Dating the window
+// from that would have every pooled create born expired.
+func TestAutoTitleDatesAClaimedPreWarmSlotFromWhenItAppeared(t *testing.T) {
+	now := time.Now()
+	argv, rec := autoTitleFixture(t, "exit 0")
+
+	// A poll with the slot still standing under its own name, which is what
+	// makes the next poll able to tell a new name from an old one.
+	slot := claudeSession("__terminal_lobby_prewarmed_pool_slot__home_wizard_code",
+		"✳ Claude Code", 4*time.Hour+33*time.Minute, now)
+	slot.State = stateDone
+	autoTitleSessions("wizard", []Session{slot}, now)
+
+	// The claim: the slot is renamed to the minted id, carrying the slot's
+	// creation time with it.
+	claimed := claudeSession("k7m2q9x4tpz3", "✳ Claude Code", 4*time.Hour+33*time.Minute, now)
+	autoTitleSessions("wizard", []Session{claimed}, now.Add(2*time.Second))
+	if evs := autonamed(t, rec); len(evs) != 0 {
+		t.Fatalf("gave up on a session that had just been claimed: %v", rec.lines)
+	}
+
+	// Claude's summary lands a few seconds later, well inside the window the
+	// claim started.
+	summarised := []Session{claudeSession("k7m2q9x4tpz3", "✳ Tashkent trip planning",
+		4*time.Hour+33*time.Minute+12*time.Second, now)}
+	autoTitleSessions("wizard", summarised, now.Add(14*time.Second))
+
+	if got := recordedArgv(t, argv); !strings.Contains(got, "Tashkent trip planning") {
+		t.Errorf("never stamped the claimed slot's summary:\n%s", got)
+	}
+	if summarised[0].Title != "Tashkent trip planning" {
+		t.Errorf("Title = %q, want the summary", summarised[0].Title)
+	}
+	evs := autonamed(t, rec)
+	if len(evs) != 1 || attrsOf(t, evs[0])["tl.outcome"] != autoTitleTitled {
+		t.Fatalf("events = %v, want one titled outcome", rec.lines)
+	}
+	// Measured from the claim, not from the slot's creation four hours ago.
+	if ms, ok := attrsOf(t, evs[0])["tl.delay_ms"].(float64); !ok || ms > 60000 {
+		t.Errorf("tl.delay_ms = %v, want the seconds since the claim", attrsOf(t, evs[0])["tl.delay_ms"])
+	}
+}
+
+// The window still runs out for a claimed slot: it is a window, not an
+// exemption.
+func TestAutoTitleGivesUpOnAClaimedSlotThatNeverSummarises(t *testing.T) {
+	now := time.Now()
+	_, rec := autoTitleFixture(t, "exit 0")
+
+	slot := claudeSession("__terminal_lobby_prewarmed_pool_slot__home_wizard_code",
+		"✳ Claude Code", 4*time.Hour, now)
+	autoTitleSessions("wizard", []Session{slot}, now)
+
+	claimed := []Session{claudeSession("k7m2q9x4tpz3", "✳ Claude Code", 4*time.Hour, now)}
+	autoTitleSessions("wizard", claimed, now.Add(time.Second))
+	autoTitleSessions("wizard", claimed, now.Add(autoTitleWindow+time.Minute))
+
+	evs := autonamed(t, rec)
+	if len(evs) != 1 || attrsOf(t, evs[0])["tl.outcome"] != autoTitleGaveUp {
+		t.Fatalf("events = %v, want one gave_up outcome", rec.lines)
+	}
+}
+
+// @claude_state is stamped ~300ms before Claude writes its first title, so a
+// poll can land on a live Claude whose pane title is still the shell's. On this
+// box that is the hostname. Stamping it would freeze the session's title as
+// `devvm` for the rest of its life, because stamping is what stops the rule.
+func TestAutoTitleWaitsForTheGlyphNotJustForTheSentinel(t *testing.T) {
+	now := time.Now()
+	argv, rec := autoTitleFixture(t, "exit 0")
+
+	booting := []Session{claudeSession("k7m2q9x4tpz3", "devvm", 1200*time.Millisecond, now)}
+	autoTitleSessions("wizard", booting, now)
+
+	if got := recordedArgv(t, argv); got != "" {
+		t.Fatalf("stamped the shell's own pane title:\n%s", got)
+	}
+	if booting[0].Title != "" {
+		t.Fatalf("Title = %q, want none until Claude writes one", booting[0].Title)
+	}
+	if evs := autonamed(t, rec); len(evs) != 0 {
+		t.Fatalf("reported an outcome mid-boot: %v", rec.lines)
+	}
+
+	// And the real summary still lands.
+	settled := []Session{claudeSession("k7m2q9x4tpz3", "✳ Tashkent trip planning", 12*time.Second, now)}
+	autoTitleSessions("wizard", settled, now.Add(11*time.Second))
+	if settled[0].Title != "Tashkent trip planning" {
+		t.Errorf("Title = %q, want the summary", settled[0].Title)
+	}
+	if got := recordedArgv(t, argv); !strings.Contains(got, "Tashkent trip planning") {
+		t.Errorf("never stamped the summary:\n%s", got)
+	}
+}
+
+// paneTitleSummary is the whole "is there a summary here" test. Only a leading
+// glyph makes a pane title one.
+func TestPaneTitleSummary(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+		ok   bool
+	}{
+		{"a summary", "✳ Tashkent trip planning", "Tashkent trip planning", true},
+		{"under another glyph", "✽ Tashkent trip planning", "Tashkent trip planning", true},
+		{"no space after the glyph", "✳Tashkent", "Tashkent", true},
+
+		{"the no-summary sentinel", "✳ Claude Code", "", false},
+		{"the sentinel under another glyph", "✻ Claude Code", "", false},
+		{"the shell's own pane title", "devvm", "", false},
+		{"a bare hostname that looks like prose", "wizard@devvm: ~/code", "", false},
+		{"empty", "", "", false},
+		{"the glyph alone", "✳", "", false},
+		{"the glyph and whitespace", "✳    ", "", false},
+		{"a glyph that is not leading", "Fix the ✳ rendering", "", false},
+
+		// The title someone would have to type to be mistaken for Claude.
+		{"a person's title starting with a glyph", "✳ my own title", "my own title", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := paneTitleSummary(c.in)
+			if got != c.want || ok != c.ok {
+				t.Errorf("paneTitleSummary(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.ok)
+			}
+		})
 	}
 }

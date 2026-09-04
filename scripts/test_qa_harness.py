@@ -185,6 +185,14 @@ def test_reap_never_touches_a_session_that_was_already_live():
     assert qa.sessions_to_reap(["main", "deploy"], ["main", "deploy"]) == []
 
 
+def test_reap_leaves_a_resurrected_session_this_run_created_alone():
+    """The composer's sessions carry a minted id, not a qa-* name, so the qa-*
+    exemption alone would have the reaper kill the fleet's own work."""
+    assert qa.sessions_to_reap(["main"], ["main", "k7m2q9x4tp0v"],
+                               {"k7m2q9x4tp0v"}) == []
+    assert qa.sessions_to_reap(["main"], ["main", "k7m2q9x4tp0v"], set()) == ["k7m2q9x4tp0v"]
+
+
 def test_reap_ignores_sessions_that_vanished():
     assert qa.sessions_to_reap(["main", "gone"], ["main"]) == []
 
@@ -337,6 +345,77 @@ def test_attach_checks_the_first_arg_only(guard):
 def test_attach_with_no_arg_allowed(guard):
     """No ?arg= means ttyd's unit default, which is not a targeted attach."""
     assert guard.check_ws(FakeQuery([])) is None
+
+
+# --- minted ids: the only names the new-session composer can produce -------
+# Naming left the create path entirely (ADR-0019): the browser mints a
+# 12-character id and navigates the iframe to ?arg=<id>, so a QA agent driving
+# the primary new-session flow cannot produce a qa-* name at all. The guard
+# admits an id that is not already a live session — attaching is what brings it
+# into being — and remembers it, so the same run may drive and kill it.
+
+@pytest.mark.parametrize("name", ["k7m2q9x4tp0v", "00000000000a", "zzzzzzzzzzzz"])
+def test_minted_ids_recognised(name):
+    assert qa.is_minted(name)
+
+
+@pytest.mark.parametrize("name", [
+    "k7m2q9x4tp0", "k7m2q9x4tp0vv", "K7M2Q9X4TP0V", "k7m2q9x4tpiv",
+    "k7m2q9x4tplv", "k7m2q9x4tpov", "k7m2q9x4tpuv", "authentik", "qa-timeline", "",
+])
+def test_non_minted_names_rejected(name):
+    assert not qa.is_minted(name)
+
+
+def test_attach_to_a_fresh_minted_id_allowed(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: ["main", "authentik"])
+    assert guard.check_ws(FakeQuery(["k7m2q9x4tp0v"])) is None
+    assert "k7m2q9x4tp0v" in guard.own_sessions
+
+
+def test_attach_to_a_minted_id_someone_else_is_using_blocked(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: ["k7m2q9x4tp0v"])
+    reason = guard.check_ws(FakeQuery(["k7m2q9x4tp0v"]))
+    assert reason and "already a live session" in reason
+    assert guard.own_sessions == set()
+
+
+def test_attach_to_a_minted_id_blocked_when_tmux_is_unreadable(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: None)
+    reason = guard.check_ws(FakeQuery(["k7m2q9x4tp0v"]))
+    assert reason and "cannot read" in reason
+
+
+def test_reattaching_to_our_own_session_allowed(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: [])
+    assert guard.check_ws(FakeQuery(["k7m2q9x4tp0v"])) is None
+    # It is live now, and reconnecting must still work.
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: ["k7m2q9x4tp0v"])
+    assert guard.check_ws(FakeQuery(["k7m2q9x4tp0v"])) is None
+
+
+def test_our_own_session_may_be_prompted_titled_and_killed(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: [])
+    guard.check_ws(FakeQuery(["k7m2q9x4tp0v"]))
+    assert guard.check_events("POST", "/prompt/k7m2q9x4tp0v") is None
+    assert guard.check_tmux_api("POST", "sessions/k7m2q9x4tp0v/title",
+                                body(title="Fix the deploy")) is None
+    assert guard.check_tmux_api("DELETE", "sessions/k7m2q9x4tp0v", b"") is None
+
+
+def test_a_minted_id_this_run_did_not_create_is_still_off_limits(guard):
+    assert guard.check_events("POST", "/prompt/q4m8vwx2rt5n") is not None
+    assert guard.check_tmux_api("DELETE", "sessions/q4m8vwx2rt5n", b"") is not None
+
+
+def test_retitling_a_real_session_blocked(guard):
+    reason = guard.check_tmux_api("POST", "sessions/authentik/title", body(title="mine now"))
+    assert reason and "not ours" in reason
+
+
+def test_retitling_a_qa_session_allowed(guard):
+    assert guard.check_tmux_api("POST", "sessions/qa-timeline/title",
+                                body(title="Timeline sweep")) is None
 
 
 # --- bookkeeping ----------------------------------------------------------

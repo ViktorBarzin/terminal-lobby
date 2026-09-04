@@ -24,7 +24,7 @@ viewer's platform):
 | `Alt+Shift+Enter` | Jump to the next session **awaiting input** (amber dot) |
 | `Alt+Shift+U` | Jump to the next **unread** session (finished since you last looked) |
 | `Alt+Shift+S` | Toggle the sidebar (fullscreen terminal ⇄ lobby) |
-| `Alt+Shift+N` | New session (focus the name box) |
+| `Alt+Shift+N` | New session (focus the prompt composer) |
 | `Alt+Shift+W` / `Alt+Shift+R` | Kill / rename the current session |
 | `Alt+Shift+Backspace` | Kill the **attached** session — from anywhere, even mid-type (always on) |
 | `Ctrl+Shift+K` | Command palette (fuzzy session + action search) |
@@ -50,8 +50,15 @@ Backspace or Delete (a confirm guards it). Like `/`, these are plain keys, so
 they only fire when the sidebar has focus, never while you're typing in a
 terminal. From inside a session — where those keys belong to the shell — use
 `Alt+Shift+Backspace` (in the table above), which kills the attached session
-from anywhere. Rename a session by **double-clicking** its name (single click
+from anywhere. Rename a session by **double-clicking** its card (single click
 just selects), or from the card's `⋯` menu.
+
+Renaming edits the session's **title**, which is the only thing anyone reads.
+Its name is an opaque id, minted when the session was created, and it never
+moves (ADR-0019). Titles normally arrive on their own — Claude Code writes a
+summary of the conversation and the lobby stamps it as the title a few seconds
+after the first prompt — so the box is for overriding one, and leaving it empty
+hands the session back to whatever summary lands next.
 
 ## Session image gallery
 

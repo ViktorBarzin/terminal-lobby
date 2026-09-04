@@ -14,6 +14,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   PROMPT_LINES_KEY,
+  PROMPT_LINE_GRACE_MS,
   forgetPromptLine,
   promptLineFor,
   prunePromptLines,
@@ -69,11 +70,27 @@ describe("the prompt-line store", () => {
   it("prunes to the live list, and treats an EMPTY list as no information", () => {
     rememberPromptLine("aaaaaaaaaaaa", "one");
     rememberPromptLine("bbbbbbbbbbbb", "two");
+    const past = Date.now() + PROMPT_LINE_GRACE_MS + 1;
     // A poll in flight, or a briefly unreachable tmux, must not wipe the device.
-    prunePromptLines([]);
+    prunePromptLines([], past);
     expect(promptLineFor("aaaaaaaaaaaa")).toBe("one");
+    prunePromptLines(["aaaaaaaaaaaa"], past);
+    expect(promptLineFor("aaaaaaaaaaaa")).toBe("one");
+    expect(promptLineFor("bbbbbbbbbbbb")).toBeNull();
+  });
+
+  it("keeps a line the poll cannot know about yet", () => {
+    // A session does not exist server-side until the iframe attaches and ttyd
+    // runs `tmux new-session -A`, and GET /sessions answers from a 5-second
+    // cache — so the create burst's own polls report a list without it. Pruning
+    // against that would delete the line the card is there to show.
+    rememberPromptLine("aaaaaaaaaaaa", "one");
+    rememberPromptLine("bbbbbbbbbbbb", "just created");
     prunePromptLines(["aaaaaaaaaaaa"]);
-    expect(promptLineFor("aaaaaaaaaaaa")).toBe("one");
+    expect(promptLineFor("bbbbbbbbbbbb")).toBe("just created");
+
+    // And it does go, once it is old enough to have been a session by now.
+    prunePromptLines(["aaaaaaaaaaaa"], Date.now() + PROMPT_LINE_GRACE_MS + 1);
     expect(promptLineFor("bbbbbbbbbbbb")).toBeNull();
   });
 

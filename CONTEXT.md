@@ -39,7 +39,10 @@ Stored on the session itself (the `@title` tmux option), so everyone who can
 see the session sees the same title, and a durable copy re-stamps it after a
 restore. Clearing it hands the session back to the summary. A session with
 no title yet shows the first line of the prompt it was created with, or
-`New session`.
+`New session` — except where a question has to name ONE session and the
+answer cannot be taken back, such as a kill confirmation, which falls back
+to the **name** instead: `New session` reads the same for every untitled
+session, and the id is the only thing that tells them apart.
 _Avoid_: label, nickname, display name; and do not confuse with **pane
 title**, which is whatever is running in the pane describing itself.
 

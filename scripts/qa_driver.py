@@ -68,6 +68,28 @@ HARNESS = os.environ.get("QA_HARNESS", "http://127.0.0.1:7998")
 ARTIFACTS = Path(os.environ.get("QA_ARTIFACTS", "/tmp/qa-run"))
 QA_NAME = re.compile(r"^qa-[A-Za-z0-9_-]{1,29}$")
 
+# What the lobby mints for a session name (ADR-0019): 12 characters of
+# Crockford base32, no i/l/o/u. Mirrors frontend-v2/src/lib/session-id.ts.
+#
+# Naming left the create path entirely, so the composer produces one of these
+# and never a qa-* name. The harness guard admits a minted id that is not
+# already a live session, which is what lets an agent drive the real
+# new-session flow; this is the same shape, for the helpers below.
+MINTED_NAME = re.compile(r"^[0-9a-hjkmnp-tv-z]{12}$")
+MINTED_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
+
+
+def new_session_id() -> str:
+    """A fresh session id, the way the browser mints one."""
+    import secrets
+
+    return "".join(secrets.choice(MINTED_ALPHABET) for _ in range(12))
+
+
+def is_own_name(name: str) -> bool:
+    """Names this harness may attach to: the qa-* namespace, or a minted id."""
+    return bool(QA_NAME.match(name) or MINTED_NAME.match(name))
+
 SEVERITIES = ("critical", "high", "medium", "low")
 
 # The devvm has 32 cores but shares ~10 GB of free RAM with everyone's real
@@ -281,12 +303,17 @@ class QaAgent:
         tmux-api has no create endpoint — a session is born from
         `tmux new-session -A` on the ttyd attach. So this drives the real path:
         open /term.html?arg=<name> in a background tab and wait for tmux-api to
-        report it. The harness guard rejects a non-qa name, so assert it here
-        with a clearer message than a 403 body.
+        report it.
+
+        The name may be `qa-*` or a minted id (`new_session_id()`), which is
+        what the new-session composer produces — the guard admits an id that is
+        not already a live session. Anything else the guard refuses, so assert
+        it here with a clearer message than a 403 body.
         """
-        if not QA_NAME.match(name):
+        if not is_own_name(name):
             raise ValueError(
-                f"{name!r} is not a qa-* name; the harness guard will refuse it")
+                f"{name!r} is neither a qa-* name nor a minted id; the harness "
+                f"guard will refuse it (see new_session_id())")
         page = self._context.new_page()
         page.goto(f"/term.html?arg={name}", wait_until="load")
         deadline = time.time() + timeout

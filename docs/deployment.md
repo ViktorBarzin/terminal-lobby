@@ -150,8 +150,8 @@ inside the container is refused at startup rather than at nginx's bind.
 Mount a volume at `/home/dev` to keep sessions, projects and files across a
 restart; everything the lobby writes is under that home.
 
-The image carries tmux, git, a shell and Claude Code, so the new session row's
-default runs. Claude is a pinned binary at `/usr/local/bin/claude` rather than a
+The image carries tmux, git, a shell and Claude Code, so the new-session
+composer's default command runs. Claude is a pinned binary at `/usr/local/bin/claude` rather than a
 `claude.ai/install.sh` install, because that installer puts everything under
 `$HOME` and the quickstart mounts a volume over `/home/dev` — an install there
 would disappear the first time anyone followed the README. Credentials and

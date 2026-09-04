@@ -132,11 +132,13 @@ person reads is lost: `authentik` keeps reading `authentik`, now as a title.
 >[!CAUTION]
 > **`tmux ls` stops being readable.** This is the main cost of the decision,
 > and it is the property the 2026-08-16 title design was protecting. A `tls`
-> alias goes into `infra/playbooks/devvm.yml` for every user; plain `tmux ls`
-> still works and still shows ids.
+> command ships in the Debian package at `/usr/local/bin/tls` (`devvm/tls`), so
+> it arrives with the release rather than needing a separate infra change; plain
+> `tmux ls` still works and still shows ids. A command rather than a shell
+> alias, which would reach only interactive shells whose rc file was sourced.
 
 ```sh
-alias tls="tmux ls -F '#{session_name}  #{@title}'"
+tmux list-sessions -F '#{session_name}  #{@title}'   # what tls runs
 ```
 
 ```
@@ -255,16 +257,25 @@ Making the name immutable retires the machinery that existed to move it:
 
 | goes away | why |
 |---|---|
-| `slug/slug.go`, `slug.ts`, `vectors.json`, the transliteration table | no name is ever derived from a title again |
+| `frontend-v2/src/lib/slug.ts` and the TypeScript half of `vectors.json` | the lobby derives no name from a title again |
 | `nameForTitle`, `fallbackName`, `session-N` | the id is the name |
 | the collision toast and the derived-name hint under the box | there is no box and no collision |
-| `followRenamedSelection` | nothing renames, so nothing to follow |
 | `rename_cascade.go` at its lobby call sites | kept for the migration and for restore's collision path |
 | `PATCH /sessions/{name}`'s rename half | retitle becomes `POST /sessions/{name}/title` for everyone |
 
-The phantom-session hazard goes with them. A browser tab holding a stale name
-could previously reconnect through `tmux new-session -A` and create that name as
-a fresh empty session; with no renames there is no stale name to hold.
+**The Go `slug` package stays, split.** `CleanTitle` normalizes every title
+tmux-api stores, and `FromTitle` / `Free` / `MaxNameLen` still name a bridged
+session after its working directory (`t3-bridge/resurrect.go`). Only `Fallback`
+and its `session-N` walk lost every caller. `vectors.json` becomes a Go-only
+fixture.
+
+`followRenamedSelection` stays too, and the phantom-session hazard narrows
+rather than going. A browser tab holding a stale name reconnects through
+`tmux new-session -A` and creates that name as a fresh empty session — and the
+migration is exactly one mass rename of live sessions, which is the moment that
+can happen. Following the selection by tmux session id, which a rename does not
+change, is what carries an open tab across it. After the migration it has
+nothing to do.
 
 ## What this does not do
 
@@ -276,12 +287,14 @@ a fresh empty session; with no renames there is no stale name to hold.
 > before this ships.
 
 >[!NOTE]
-> **T3 thread titles lag by seconds.** `t3-sync/adopt.go:71` titles a mirrored
-> thread from `@title`, falling back to the tmux name. A session adopted in the
-> few seconds before its summary lands would take an id as its thread title.
-> Either adoption waits for a title, or the syncer pushes a thread retitle when
-> `@title` first appears; the second is closer to what memory records as
-> decision 7's "title regeneration renames via tmux-api".
+> **T3 thread titles lag by seconds, and heal themselves.** `t3-sync/adopt.go`
+> titles a mirrored thread from `@title`, falling back to the tmux name, so a
+> session adopted in the few seconds before its summary lands takes an id as its
+> thread title. It does not stay that way: `Candidates` re-reads `@title` every
+> pass and `Reconciler.Plan` queues a `Rename` whenever the thread's title and
+> the candidate's disagree, so the next pass retitles the thread to Claude's
+> summary. That is the second of the two options this note weighed, and it was
+> already in place — no adoption delay is needed.
 
 >[!NOTE]
 > **`/model <name>` sets the model.** Checked on Claude Code 2.1.260 for

@@ -362,6 +362,38 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return new Set<string>(mergedSessions().map((s) => s.name));
   }
 
+  /**
+   * Move the selection to a session that was renamed under it.
+   *
+   * Nothing renames any more — a name is an opaque id fixed at creation
+   * (ADR-0019) — with ONE exception, and it is the one this exists for.
+   * tmux-api's migration renames every session that predates ids, once, on the
+   * release that ships them (tmux-api/migrate_ids.go). A tab open at that
+   * moment holds a name that is about to stop existing, and it holds it in the
+   * iframe's `?arg=`: ttyd spawns a fresh `tmux new-session -A -s <name>` per
+   * websocket, so the next reconnect would CREATE the old name as an empty
+   * session and leave the person looking at a blank shell while their
+   * conversation ran on under the id.
+   *
+   * tmux's session id is the only thing that survives a rename, so it is what
+   * identifies "the same session under a new name". Matching on anything else
+   * (creation time, position) would eventually follow the wrong one.
+   *
+   * Re-selecting is also what drops the stale mount: App prunes a kept
+   * SessionView whose name has left the session list, and the selection moving
+   * is what makes that effect run (components/App.tsx, prune).
+   */
+  function followRenamedSelection(prev: readonly Session[], next: readonly Session[]): void {
+    const sel = selected();
+    if (!sel || sel.owner) return; // foreign sessions are not ours to follow
+    if (next.some((s) => s.name === sel.name)) return; // still there
+    const id = prev.find((s) => s.name === sel.name)?.id;
+    if (!id) return; // never saw an id for it — a server that predates the field
+    const moved = next.find((s) => s.id === id);
+    if (!moved) return; // genuinely gone, not renamed
+    applySelection(moved.name, undefined);
+  }
+
   /** Stamp state transitions and prune dead sessions (vanilla trackStateChanges). */
   function trackStates(next: Session[]): void {
     const live = new Set(next.map((s) => s.name));
@@ -449,6 +481,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (sRes.status === "fulfilled") {
       const list = withPromptLines(sRes.value);
       trackStates(list);
+      // Before setSessions, which is what makes `sessions` the OLD list here.
+      followRenamedSelection(sessions, sRes.value);
       // Reconcile by name rather than replace: a re-parsed but unchanged
       // payload must write nothing, or every memo downstream recomputes and
       // <For> re-creates every group and card (taking open menus with it).
@@ -457,8 +491,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       setPolls((n) => n + 1);
       // drop optimistic pending that the server now knows about
       const known = new Set(sRes.value.map((s) => s.name));
-      prunePromptLines(sRes.value.map((s) => s.name));
       const stillPending = pending().filter((p) => !known.has(p.name));
+      // Pending names count as live. A create's session does not exist
+      // server-side until the iframe attaches and ttyd runs tmux-user-attach,
+      // and GET /sessions is behind a 5-second cache, so the burst polls at
+      // 700/1600/3000ms routinely report a list without it — pruning against
+      // that alone would delete the prompt line the card is there to show.
+      prunePromptLines([...known, ...stillPending.map((p) => p.name)]);
       if (stillPending.length !== pending().length) setPending(stillPending);
       setLoadError(null);
     } else {

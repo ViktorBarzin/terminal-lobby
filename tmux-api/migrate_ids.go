@@ -42,6 +42,31 @@ var sessionIDMarkerPath = "/var/lib/tmux-api/session-ids-migrated"
 // its migration.
 const migrateRenameAttempts = 4
 
+// reservedNamePrefixes are names that MEAN something to another service, so
+// renaming them changes behaviour rather than just changing a label.
+//
+// Machine-made sessions are excluded from T3 mirroring purely by name
+// (t3-sync/main.go DefaultIgnorePrefixes, applied in Adopter.Candidates). Give
+// a `qa-…` harness session or a `tlp-t…` e2e session an id and t3-sync stops
+// recognising it: a real T3 thread gets created and warmed for a session that
+// exists to be thrown away. They are short-lived and nobody reads their names,
+// so leaving them alone costs nothing.
+//
+// Kept in step with t3-sync by hand, which is the same arrangement
+// tmux-user-attach's pool-slot prefix already has with prewarm.go — there is no
+// shared package these two agree through.
+var reservedNamePrefixes = []string{"qa-", "t3e2e-", "tlp-t", poolSlotPrefix}
+
+// reservedName reports whether a name belongs to something other than a person.
+func reservedName(name string) bool {
+	for _, p := range reservedNamePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // migrateSessionNamesToIDs runs the pass for every user and returns how many
 // sessions it renamed. `list` supplies each user's sessions (userSessions in
 // production, a fixture in tests).
@@ -92,6 +117,9 @@ func migrateUserSessionNames(osUser string, sessions []Session) (renamed, failed
 	for _, s := range sessions {
 		if isMintedName(s.Name) {
 			continue // already done, on an earlier run or at creation
+		}
+		if reservedName(s.Name) {
+			continue // the name is what another service recognises it by
 		}
 		if migrateOneSessionName(osUser, s) {
 			renamed++
