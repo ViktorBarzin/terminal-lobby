@@ -196,9 +196,13 @@ session with any is *running* rather than *completed*, because it will
 produce more output without anyone prompting it, and the sidebar names
 what it is waiting on ("2 agents", "1 workflow"). Kept as the set of
 task ids in the session's `@claude_bg` option: a launch that returns
-`async_launched` adds one, and that id's task-notification removes it.
-Nothing expires, so a person typing into the session is what re-derives
-it — the same recovery path a stale **Session state** has. Only the main
+`async_launched` adds one, and it is removed either by that id's
+task-notification or, at the end of any turn, by no longer appearing in
+the harness's own list of live tasks. The second path is the load-bearing
+one: a notification for a task that finished mid-turn is absorbed into
+that turn and never arrives as a prompt. Nothing expires, so a person
+typing into the session also re-derives it — the same recovery path a
+stale **Session state** has. Only the main
 thread's own launches count: a subagent's background tasks report back
 to the subagent, so counting one would leave an id nothing can retire.
 _Avoid_: pending tasks, background jobs (both read as shell job control),
