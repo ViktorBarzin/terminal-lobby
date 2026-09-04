@@ -43,6 +43,25 @@ merge to master
 `svu` computes the next semver from conventional commit messages. Versions must
 be monotonic because the box tracks latest with no pin.
 
+Monotonic under **dpkg's** ordering, which is stricter than it looks.
+`ttyd-devvm` was versioned `1.7.7+<short sha>`, and that scheme does not sort: a
+version is split into alternating non-digit and digit runs, the non-digit run is
+compared first, and end-of-string sorts below a letter. So `1.7.7+02cbf4b` is
+*below* `1.7.7+c76b116`, and once c76b116 was published every later build whose
+sha began with a digit was unreachable. Measured on 2026-09-04, four were:
+`apt-cache policy` named c76b116 as the candidate while the sixel-less binary
+sat in the same registry.
+
+The scheme is now `1.7.7+git<commit date>.<sha>`, Debian's snapshot convention.
+`git` beats every hex lead on the first non-digit run, which clears the ceiling,
+and the date that follows is compared numerically, so a commit from a later
+minute sorts higher whatever its sha is. The date comes from the commit rather
+than the clock, so one commit still yields one version. An epoch
+(`1:1.7.7+...`) was the alternative and does less: it lifts the whole package
+above the ceiling but leaves the ordering inside the epoch just as unsortable,
+so it would need a sortable suffix anyway, and then the epoch is a prefix every
+later version has to carry. `dpkg --compare-versions A gt B` is the check.
+
 Two things about the bootstrap, both learned by running it rather than by
 reading: `svu` does **not** skip a non-semver tag — given this repo's
 `v-vanilla-final` it stops with "invalid semantic version" — so the workflow
@@ -78,6 +97,11 @@ apt-mark unhold terminal-lobby
 A unit restarts only when its own bytes changed. This is the rule the three
 deploy scripts hand-maintained, now enforced from the manifest.
 
+A `ttyd-devvm` upgrade is the one restart that does not come from this package:
+its own `postinst` restarts `ttyd`, at the same cost as the row below.
+`tl-reconcile` installs both packages, so that restart lands in the same
+reconcile as a lobby upgrade.
+
 | Unit | Restarting it costs |
 |---|---|
 | `ttyd` | every attached terminal's WebSocket (tmux sessions survive; browsers reconnect) |
@@ -107,7 +131,9 @@ dpkg-deb -c out/terminal-lobby_0.0.0-dev_amd64.deb
 `ttyd-devvm` and `viu` derive their versions from their inputs, so re-running
 either on an unchanged commit re-uploads an identical artefact and the registry
 answers 409. Both treat that as "already published"; any other status still
-fails the job.
+fails the job. `ttyd-devvm`'s inputs are the upstream tag plus the commit's own
+date and sha, and `--date=format:` renders the offset stored in the commit
+object, so the version does not move with the builder's timezone either.
 
 The main release is different, and deliberately not made idempotent: re-running
 it on a commit that already released will fail at the tag push, because the tag
