@@ -294,6 +294,30 @@ describe("<NewSessionComposer> — the project it creates in", () => {
     m.store.dispose();
   });
 
+  // The sidebar's + preselects a project for ONE create. Creating into it has
+  // to record the choice, or "the next session lands where the last one did"
+  // is only true for people who touch the dropdown — and the dropdown is the
+  // step the composer exists to remove. Viktor, 2026-09-04: "I just created one
+  // new session and it was put in the ungrouped section."
+  it("remembers a project the sidebar's + chose, so the NEXT create lands there", async () => {
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+    await m.store.refresh();
+
+    m.setPreset("beta");
+    await waitFor(() => expect(pick(m.container, "Project for new session").value).toBe("beta"));
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+    await waitFor(() => expect(api.puts.length).toBe(1));
+    expect(api.puts[0]!.projects.find((p) => p.name === "beta")!.sessions).toHaveLength(1);
+
+    // The create is what makes it the last one, so the preference follows it.
+    await waitFor(() => expect(m.prefs.prefs().session.newProject).toBe("beta"));
+    m.store.dispose();
+  });
+
   it("follows the project the sidebar's + preselected", async () => {
     const api = new FakeApi();
     withProjects(api);

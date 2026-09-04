@@ -81,7 +81,9 @@ export const NewSessionComposer: Component<{
    *  which is what lets the sidebar's `+` override the roamed preference for a
    *  single create without overwriting it. */
   project: Accessor<string>;
-  /** The user picked a project. */
+  /** Where the next session should go, by the caller's reckoning: fired when
+   *  somebody picks in the selector AND after a create lands, since both are
+   *  what make a project "the last one". The caller decides what to persist. */
   onProject: (name: string) => void;
   /** A control for the header — on a phone, the route to the session list. */
   leading?: JSX.Element;
@@ -211,7 +213,14 @@ export const NewSessionComposer: Component<{
     const deliver = props.deliver ?? deliverFirstPrompt;
     const upload = props.upload ?? uploadAttachments;
 
-    const id = await store.create(text, props.project(), shell ? "name" : "prompt");
+    const project = props.project();
+    const id = await store.create(text, project, shell ? "name" : "prompt");
+    // Creating into a project is what MAKES it the last one, so it is recorded
+    // here rather than only when somebody opens the dropdown. Without this the
+    // preference is written on one path only — a deliberate pick — and the
+    // composer exists to remove that step, so the common route never wrote it
+    // and every session landed in Ungrouped however many had gone elsewhere.
+    props.onProject(project);
     // A shell has no conversation to prompt: the text was its NAME.
     if (shell) return true;
     void sendFirstPrompt({
