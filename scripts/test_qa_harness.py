@@ -433,6 +433,49 @@ def test_deny_response_is_identifiable(guard):
     assert resp.text.startswith("qa-harness guard:")
 
 
+# --- which paths are public, and which only look it -----------------------
+#
+# clipboard-upload's publicAssets table holds thirteen paths; the prod ingress
+# carve-out holds ten. The three in the table and not the carve-out (term.html
+# and the two build stamps) are authed in production, so the harness must not
+# serve them from the unauthenticated table however public the Go file looks.
+
+# module.ingress_assets in infra/stacks/terminal/main.tf, auth = "none". The
+# same ten are live: `kubectl get ingress terminal-assets -n terminal`.
+PROD_PUBLIC_CARVE_OUT = frozenset({
+    "/manifest.webmanifest",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/icon-512-maskable.png",
+    "/sw.js",
+    "/fonts/JetBrainsMono-Regular.woff2",
+    "/fonts/JetBrainsMono-Bold.woff2",
+    "/fonts/JetBrainsMono-Italic.woff2",
+    "/fonts/JetBrainsMono-BoldItalic.woff2",
+    "/fonts/dm-sans-latin-wght-normal.woff2",
+})
+
+
+def test_public_assets_are_exactly_the_prod_carve_out():
+    """Measured against the live site 2026-09-04: GET /sw.js answers 200
+    unauthenticated, while /term.html, /build-id and /term-build-id answer 302
+    to Authentik. A path added here that production gates would let the fleet
+    load something anonymously that a real browser cannot, and the divergence
+    would read as an app bug in whichever sweep hit it."""
+    assert set(qa.ASSET_PATHS) == PROD_PUBLIC_CARVE_OUT
+
+
+@pytest.mark.parametrize("path", ["/build-id", "/term-build-id"])
+def test_the_build_stamps_are_authed_not_public(path):
+    """The two stamps the self-update healer polls (ADR-0007's 2026-08-28
+    amendment). clipboard-upload serves both, which is what makes the mistake
+    tempting; production answers both with a 302 to Authentik."""
+    assert path in qa.STAMP_PATHS
+    assert path not in qa.ASSET_PATHS, (
+        f"{path} is authed in production (302 to Authentik, measured "
+        f"2026-09-04), so it cannot ride the unauthenticated asset table")
+
+
 # ==========================================================================
 # Proxy-level tests.
 #
@@ -444,15 +487,17 @@ def test_deny_response_is_identifiable(guard):
 # ==========================================================================
 
 @pytest.fixture(autouse=True)
-def _never_touch_the_live_tmux_api(monkeypatch):
-    """:7684 is wizard's real tmux-api. A unit test must never reach it."""
+def _never_touch_the_live_backends(monkeypatch):
+    """:7684 and :7683 are wizard's real tmux-api and clipboard-upload. A unit
+    test must never reach either; one that needs an upstream starts its own."""
     monkeypatch.setattr(qa, "TMUX_API", "http://127.0.0.1:1")
+    monkeypatch.setattr(qa, "CLIPBOARD", "http://127.0.0.1:1")
 
 
 def harness_args(**over) -> argparse.Namespace:
     defaults = dict(port=0, user="qa-tester", ttyd_port=0,
                     scratch="/tmp/qa-scratch", permission_shim=False,
-                    no_restore=True, quiet=True)
+                    stamp_shim=False, no_restore=True, quiet=True)
     defaults.update(over)
     return argparse.Namespace(**defaults)
 
@@ -593,6 +638,61 @@ async def test_restore_refused_when_the_live_set_cannot_be_read(monkeypatch):
         assert forwarded == []
     finally:
         await api.close()
+
+
+# --- the build stamps, on the wire ----------------------------------------
+
+async def start_fake_origin(label: str):
+    """Answers any path with its own label, so a test can tell WHICH upstream a
+    path reached, and records the identity it arrived with."""
+    seen: list[tuple[str, str | None]] = []
+
+    async def any_path(request):
+        seen.append((request.path, request.headers.get("X-Authentik-Username")))
+        return web.Response(status=200, text=f"{label}:{request.path}")
+
+    app = web.Application()
+    app.router.add_route("*", "/{tail:.*}", any_path)
+    server = TestServer(app)
+    await server.start_server()
+    return server, seen
+
+
+@pytest.mark.asyncio
+async def test_the_stamps_reach_ttyd_by_default():
+    """Faithful to the ingress, which routes neither stamp to clipboard-upload:
+    both land on the catch-all and 404 from ttyd, in production and here. Authed
+    on the way, because the catch-all carries authentik-forward-auth."""
+    ttyd, seen = await start_fake_origin("ttyd")
+    try:
+        async with TestClient(TestServer(
+                qa.build_app(harness_args(ttyd_port=ttyd.port)))) as client:
+            for path in qa.STAMP_PATHS:
+                resp = await client.get(path)
+                assert await resp.text() == f"ttyd:{path}"
+    finally:
+        await ttyd.close()
+    assert seen == [(p, "qa-tester") for p in qa.STAMP_PATHS]
+
+
+@pytest.mark.asyncio
+async def test_stamp_shim_serves_them_from_clipboard_upload(monkeypatch):
+    """--stamp-shim is the only way to exercise the healer's STAMP path here,
+    since the origin under test answers the real stamp nowhere else."""
+    ttyd, ttyd_seen = await start_fake_origin("ttyd")
+    clip, clip_seen = await start_fake_origin("clipboard")
+    monkeypatch.setattr(qa, "CLIPBOARD", f"http://127.0.0.1:{clip.port}")
+    try:
+        async with TestClient(TestServer(qa.build_app(
+                harness_args(ttyd_port=ttyd.port, stamp_shim=True)))) as client:
+            for path in qa.STAMP_PATHS:
+                resp = await client.get(path)
+                assert await resp.text() == f"clipboard:{path}"
+    finally:
+        await clip.close()
+        await ttyd.close()
+    assert ttyd_seen == []
+    assert clip_seen == [(p, "qa-tester") for p in qa.STAMP_PATHS]
 
 
 # ==========================================================================
