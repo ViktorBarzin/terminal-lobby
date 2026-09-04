@@ -1,5 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
+
+/**
+ * The terminal is scenery here, and since the flip (2026-09-04) the scenery is
+ * expensive: a bare URL mounts the terminal the app renders itself, which boots
+ * a real xterm, and xterm's `CoreBrowserService` calls `matchMedia`, which
+ * jsdom does not ship. So `term.open()` rejects and Vitest fails the FILE on
+ * the unhandled rejection while every assertion in it passes.
+ *
+ * Stubbed rather than sent to `?native=0`, so these tests keep mounting the
+ * branch a person actually gets. What the real component does is
+ * TerminalNative.wiring.test.tsx, which brings its own `matchMedia`.
+ */
+vi.mock("../src/components/TerminalNative", () => ({
+  TerminalNative: () => <div class="tl-terminal-native" />,
+}));
+
 import { SessionView } from "../src/components/SessionView";
 
 /**

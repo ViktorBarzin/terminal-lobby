@@ -28,6 +28,15 @@ vi.mock("../src/lib/file-api", async (importOriginal) => {
  * the text view is showing has to mark the segment you are NOT looking at. The
  * signal rides the terminal iframe's `tl-attention` postMessage, so these tests
  * drive that message rather than the latch directly.
+ *
+ * Every mount here is pinned to `?native=0` (the `beforeEach` below), because
+ * the iframe is what these tests talk to: `tl-attention` and `tl-view` are
+ * postMessages, and the attach assertions read `/term.html?arg=…` off the
+ * frame's own navigation. Since the flip (2026-09-04) a bare URL gets the
+ * terminal the app renders itself, which reaches the same latch through
+ * `onAttention` instead, and that side is SessionView.native.test.tsx. The iframe
+ * stays shipped as the way back for a release, so its bridge stays tested; the
+ * flag is how a tab selects it now.
  */
 
 const g = globalThis as unknown as { EventSource?: unknown; fetch?: unknown };
@@ -92,6 +101,8 @@ function fromFrame(root: HTMLElement, data: unknown): void {
 describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   let origES: unknown;
   beforeEach(() => {
+    // The iframe branch, deliberately. See the file's own note above.
+    window.history.replaceState({}, "", "/?native=0");
     origES = g.EventSource;
     eventSources.length = 0;
     g.EventSource = class {

@@ -41,6 +41,11 @@ import type { ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 import { StatusDot } from "./StatusDot";
 import { TerminalNative } from "./TerminalNative";
+import {
+  DEFAULT_TERMINAL_RENDERER,
+  terminalRenderer,
+  type TerminalRenderer,
+} from "../store/device-prefs";
 import { terminalFrameArgs } from "../lib/terminal-url";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 import type { BackgroundWork } from "../types/lobby";
@@ -52,9 +57,9 @@ const NATIVE_NO = ["0", "false", "no", "off"];
 /**
  * Which terminal a URL asks for, or null when it does not say.
  *
- * PRESENCE was the whole test until now (`.has("native")`), so `?native=0`
+ * PRESENCE was the whole test until pass 1 (`.has("native")`), so `?native=0`
  * turned native ON and the flag had no way to say no. That matters because the
- * same flag is the escape hatch in the other direction once native is the
+ * same flag is the escape hatch in the other direction now that native is the
  * default: the de-iframe plan asks for "a URL override that works in both
  * directions" (docs/plans/2026-09-04-native-terminal-de-iframe-design.md).
  *
@@ -71,6 +76,34 @@ export function nativeFromSearch(search: string): boolean | null {
   if (NATIVE_YES.includes(value)) return true;
   if (NATIVE_NO.includes(value)) return false;
   return null;
+}
+
+/**
+ * WHICH TERMINAL to mount, from the two things that get a say and the default
+ * behind them.
+ *
+ * The order is the whole point, so it is written here rather than spread over
+ * the call site:
+ *
+ *   1. **An explicit `?native` in the URL wins.** One tab, one answer, and it
+ *      leaves the stored setting alone, so `?native=0` is a look at the iframe
+ *      without giving native up on that device, and `?native=1` is the same
+ *      trick in reverse for a device whose setting says iframe.
+ *   2. **Then this device's stored choice** (`store/device-prefs.ts`). It is
+ *      the only say an installed app has: `manifest.webmanifest` sets
+ *      `"start_url": "/"`, so a launch from the home-screen icon carries no
+ *      query at all and step 1 cannot speak for it.
+ *   3. **Then `DEFAULT_TERMINAL_RENDERER`**, which is native as of the flip.
+ *      `term.html` is still installed and is what steps 1 and 2 select when
+ *      they say iframe.
+ */
+export function wantsNativeTerminal(
+  search: string,
+  stored: TerminalRenderer | null,
+): boolean {
+  const asked = nativeFromSearch(search);
+  if (asked !== null) return asked;
+  return (stored ?? DEFAULT_TERMINAL_RENDERER) === "native";
 }
 
 /**
@@ -206,16 +239,27 @@ export const SessionView: Component<{
    * paste, the terminal bridge — is claimed against this rather than against
    * mount, or a hidden session would answer for the visible one.
    */
-  /** `?native=1` — the app-rendered terminal instead of the ttyd iframe. Read
-   *  once, because swapping the terminal under a live session mid-render would
-   *  tear down a pty connection someone is using. A URL that does not say
-   *  leaves the iframe, which is still the shipped terminal; the flip to native
-   *  by default is its own change (the de-iframe plan's "the flip"). */
+  /**
+   * The terminal the app renders itself, rather than the ttyd iframe. Native
+   * unless the URL or this device says otherwise. `wantsNativeTerminal` above
+   * carries the order they are asked in.
+   *
+   * READ ONCE, which is why this is a plain function over `location` and
+   * `localStorage` and not a signal: swapping the terminal under a live session
+   * mid-render would tear down a pty connection someone is using. So flipping
+   * the setting reaches the NEXT session this tab opens, and the ones already
+   * open keep the terminal they booted with, since every visited session stays
+   * mounted (`store/keepalive.ts`), until the tab is reloaded. The settings
+   * control says so rather than appearing to act at once.
+   */
   const nativeTerminal = (): boolean => {
     try {
-      return nativeFromSearch(location.search) ?? false;
+      return wantsNativeTerminal(location.search, terminalRenderer());
     } catch {
-      return false;
+      // Only `location` can throw from in here; `terminalRenderer` answers
+      // `null` rather than throwing when storage is refused. With nothing
+      // readable the answer is the default.
+      return true;
     }
   };
 
@@ -497,9 +541,14 @@ export const SessionView: Component<{
   // Paste path + full-screen drop-target: an image paste/drop uploads to the
   // per-session clipboard store and the returned path is typed into the pty via
   // the tl-input bridge (window.__tlSendToTerminal); non-image drops ride /tmp.
-  // Scoped to the mounted session (there IS a pty to send to). Pastes/drops that
-  // land inside the terminal iframe are handled by the ttyd page's own listeners
-  // (a separate document); this covers the SPA chrome (text mode, gallery).
+  // Scoped to the mounted session (there IS a pty to send to). On the iframe
+  // branch this covers the SPA chrome only (text mode, gallery), because a
+  // paste that lands inside the frame belongs to the ttyd page's listeners, in a
+  // separate document this one cannot see. On the native branch there is no
+  // boundary left, so the same document listener sees every paste: it takes the
+  // image and passes text through (clipboard/attach.ts `onPaste`), and
+  // TerminalNative's own host listener, lower down the capture path, is what
+  // then puts the text on the pty.
   const image = installImageClipboard({
     session: () => session,
     sendToPty: (t) => window.__tlSendToTerminal?.(t) ?? false,
@@ -906,13 +955,20 @@ export const SessionView: Component<{
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
-          {/* `?native=1` swaps the ttyd iframe for the terminal this app renders
-              itself. Off by default and read once per tab: the native path
-              attaches, reconnects, resizes and types, and does not yet carry
-              paste, the soft keys, selection/copy, pinch-zoom or sixel — so it
-              is a thing to measure against the iframe, not a thing to default
-              anyone onto. The iframe stays the shipped terminal until parity is
-              proven, on a real iPad among other places. */}
+          {/* The terminal this app renders itself is the one you get, and the
+              ttyd iframe below is the fallback rather than the default
+              (`wantsNativeTerminal`: the URL flag first, then this device's
+              setting, then native).
+
+              What that flip does NOT claim is parity. Clickable links, the
+              held-input overlay, flow-control accounting, OSC 52 clipboard and
+              live A−/A+ font resizing are still term.html's alone, and sixel is
+              gone from both terminals on purpose (the de-iframe plan supersedes
+              ADR-0004). The iframe stays installed for one
+              release as the way back, reachable per tab with `?native=0` and
+              per device from Settings → Terminal, which is the only route an
+              installed PWA has: `start_url` is `/`, so a home-screen launch
+              arrives with no query string to carry a flag. */}
           <Show when={nativeTerminal()} fallback={<TerminalView
             session={session}
             owner={props.owner}

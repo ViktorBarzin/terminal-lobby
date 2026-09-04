@@ -2,12 +2,16 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  DEFAULT_TERMINAL_RENDERER,
   FLOW_KILL_KEY,
   GESTURES_KILL_KEY,
+  TERMINAL_RENDERER_KEY,
   clearLocalData,
   flowControlWanted,
   gesturesEnabled,
   setFlowControlEnabled,
+  setTerminalRenderer,
+  terminalRenderer,
 } from "../src/store/device-prefs";
 
 beforeEach(() => localStorage.clear());
@@ -111,6 +115,100 @@ describe("the gestures master kill", () => {
     await clearLocalData({ alsoRoamed: false, reload: () => {} });
     expect(localStorage.getItem(GESTURES_KILL_KEY)).toBeNull();
     expect(gesturesEnabled()).toBe(true);
+  });
+});
+
+/**
+ * WHICH TERMINAL this browser renders, which is the escape hatch the flip
+ * (2026-09-04) rests on.
+ *
+ * The reason it is a stored setting and not just a URL flag is
+ * `manifest.webmanifest`: `start_url` is `/`, so an app launched from a
+ * home-screen icon opens with no query string and `?native=0` cannot reach it.
+ * On an installed PWA this key is the only way back to the iframe, so the tests
+ * here are about it surviving and about it never guessing.
+ */
+describe("which terminal this device renders", () => {
+  it("has no answer until this browser gives one", () => {
+    // null, not "native": the absence is what lets the app's default apply,
+    // and a reader that saw "native" here could not tell a choice from a
+    // default (SessionView's precedence needs the difference).
+    expect(terminalRenderer()).toBeNull();
+  });
+
+  it("defaults to the terminal the app renders itself", () => {
+    // The flip. This constant IS the default, since SessionView's
+    // `wantsNativeTerminal` falls back to it, so flipping back is this line.
+    expect(DEFAULT_TERMINAL_RENDERER).toBe("native");
+  });
+
+  it.each(["iframe", "native"] as const)("stores %s and reads it back", (choice) => {
+    setTerminalRenderer(choice);
+    expect(localStorage.getItem(TERMINAL_RENDERER_KEY)).toBe(choice);
+    expect(terminalRenderer()).toBe(choice);
+  });
+
+  it("writes 'native' out rather than deleting the key", () => {
+    // Flow control above means "on" by ABSENCE, because its reader only looks
+    // for "off". This one has two real values, and an explicit "native" has to
+    // outlive the default moving: someone who chose it should keep it.
+    setTerminalRenderer("iframe");
+    setTerminalRenderer("native");
+    expect(localStorage.getItem(TERMINAL_RENDERER_KEY)).toBe("native");
+    expect(terminalRenderer()).toBe("native");
+  });
+
+  it("survives the page going away, being plain localStorage", () => {
+    setTerminalRenderer("iframe");
+    // The read is not cached anywhere: every call goes back to storage, which
+    // is what makes a reload, and a PWA cold launch, find the same answer.
+    expect(terminalRenderer()).toBe("iframe");
+    expect(terminalRenderer()).toBe("iframe");
+  });
+
+  it("treats a value it does not understand as no choice at all", () => {
+    // A key written by a later version, or by hand. Picking a terminal from a
+    // string nobody here can interpret is worse than letting the default stand.
+    for (const v of ["", "IFRAME", "ttyd", "1", "true", "xterm"]) {
+      localStorage.setItem(TERMINAL_RENDERER_KEY, v);
+      expect(terminalRenderer(), v).toBeNull();
+    }
+  });
+
+  it("answers null when storage throws, rather than throwing at the caller", () => {
+    // A browser that refuses storage cannot carry a choice, so it gets the
+    // default. SessionView calls this while rendering; an exception escaping
+    // here would take the session view with it.
+    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    try {
+      expect(terminalRenderer()).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("swallows a refused write, leaving the default standing", () => {
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    try {
+      expect(() => setTerminalRenderer("iframe")).not.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(terminalRenderer()).toBeNull();
+  });
+
+  it("is wiped by clear-local-data, back to the default", async () => {
+    // The `tl-` prefix is deliberate: Clear local data covers it, so a device
+    // parked on the iframe returns to the default rather than keeping a choice
+    // nobody can remember making.
+    setTerminalRenderer("iframe");
+    await clearLocalData({ alsoRoamed: false, reload: () => {} });
+    expect(localStorage.getItem(TERMINAL_RENDERER_KEY)).toBeNull();
+    expect(terminalRenderer()).toBeNull();
   });
 });
 
