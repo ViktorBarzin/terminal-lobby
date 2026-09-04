@@ -1,6 +1,6 @@
 # A session is not done while its background work is running
 
-**Status:** designed 2026-09-04, awaiting confirmation before implementation.
+**Status:** shipped 2026-09-04 in v0.28.3, verified on the box.
 **Owner:** wizard. **Repos touched:** terminal-lobby only.
 
 The sidebar's state dot goes green the moment the main Claude turn ends, even
@@ -187,30 +187,54 @@ starting design.
 - Whether a `Workflow` launch's `PostToolUse` `tool_response` carries `taskId` in
   the same shape a completed run records in the transcript. The transcript
   evidence is real (`{"status":"async_launched","taskId":"wy71p4jz3","taskType":"local_workflow"}`
-  from a run on 2026-09-02); the hook-payload form of it has not been observed
-  directly and is confirmed as the first step of implementation.
+  from a run on 2026-09-02); the hook-payload form has still not been observed
+  directly, so the workflow fixture in the test carries the transcript shape and
+  the `w:` kind is the one path not confirmed against a live payload. Agents and
+  background commands are both confirmed live.
 - Whether agents running inside a `Workflow` fire `PostToolUse` with `agent_id`
   in the hosting session. If they do not, nothing changes; if they do, they are
   filtered by the same `agent_id` rule.
 
-## How this is verified
+## How it was verified
 
-Two levels, both required before the change is called done.
+**In CI**, `sessionio/hookscript_test.go` runs the real script against a real
+tmux server, firing the payloads recorded on 2026-09-04 as the hook runner does
+— one argv word, the payload on stdin. Eleven cases, including the two defects
+and the silence the hook runner requires on stdout. The fixtures are recorded
+rather than written, so a payload-shape change fails there instead of reaching
+the box. `tl-session-watch` joined the release workflow's Go loop at the same
+time; its tests had never run in CI.
 
-1. **A repo test around a real claude.** The scratch harness built during this
-   design becomes a test: a `claude` in its own `tmux -L` server, a `settings.json`
-   pointing every event at the hook, a prompt that launches one background agent
-   and one background command, and assertions on `@claude_state` and `@claude_bg`
-   sampled over time. The failing assertion today is the one at t+4s, where the
-   option reads `done` and should read `running`. The hook has no tests at
-   present and ships `Unmanaged` in `release/manifest.go`.
-2. **Driving the real lobby.** `terminal.viktorbarzin.me` in a browser, a session
-   with a background agent running, a screenshot of the card reading
-   `Working · 1 agent`, read back rather than assumed.
+**On the box**, against a real `claude` 2.1.260 and the installed hook, with the
+scratch server keeping every lobby session out of it:
 
-Recorded payloads from the 2026-09-04 run are kept with the test as fixtures, so
-a payload-shape change fails the test here rather than reaching the box and
-leaving sessions latched at *Working*.
+```
+elapsed   state     @claude_bg
++0s       done      <empty>
++5s       running   a:a9152b596780a40d5   ← agent launched
++101s     running   a:a9152b596780a40d5   ← Stop fired around +10s
++122s     running   <empty>               ← task-notification retired it
++127s     done
+```
+
+117 seconds where the old script read *Done*.
+
+**In the deployed lobby**, three live sessions at once, read back from the DOM
+and from a screenshot: `Notificati… 2 commands 0:56`, `Book downloa… 1 command`
+(on an *awaiting* dot, since a blocked ask outranks), `YouTube video … 4 co…`.
+The Text view strip read *Still working in the background: 2 commands* between
+the timeline and the composer. Driving it needed the identity header supplied
+locally, because `terminal.viktorbarzin.me` is behind Authentik and no
+automated client passes it; everything served was the installed package's own
+files and the live services on the box.
+
+That pass found one defect the tests could not: the label ellipsised to
+`2 com…` in the 260px sidebar, because it shrank in step with the session name.
+The name gives up the room now — it already truncates, and a half-shown title
+still identifies a session.
+
+**Not verified:** a `Workflow` launch end to end. Its `w:` path is covered by a
+fixture carrying the transcript shape, not by a live payload.
 
 ## Vocabulary
 

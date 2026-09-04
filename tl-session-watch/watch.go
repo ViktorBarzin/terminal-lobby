@@ -12,6 +12,16 @@ import (
 // Session is one tmux session as one tick saw it.
 type Session struct {
 	Name string
+	// Background is the session's @claude_bg stamp: space-separated
+	// `<kind>:<id>` tokens for background work it launched that has not
+	// reported back (a=agent, b=command, w=workflow). Empty when it owes
+	// nothing, which is the ordinary case.
+	//
+	// Reported rather than acted on. It is what makes "running" mean two
+	// different things, so a finding that names a state reads better with it
+	// beside — and it is the only record of how long background work actually
+	// runs here, which is the number a future decision about an expiry needs.
+	Background string
 	// ClaudeState is the session's @claude_state stamp, empty when unset.
 	// SessionEnd clears it on an orderly exit and a SIGKILL cannot run that
 	// hook, so a stamp with no claude behind it is evidence of a death.
@@ -80,6 +90,7 @@ type Finding struct {
 	User              string
 	Session           string
 	State             string
+	Background        string
 	PaneBytes         uint64
 	PaneUnreclaimable uint64
 	PaneLimit         uint64
@@ -179,10 +190,11 @@ func (w *Watcher) vanished(prev, cur Snapshot) []Finding {
 			kind = KindSessionKilled
 		}
 		out = append(out, Finding{
-			Kind:    kind,
-			User:    cur.User,
-			Session: name,
-			State:   was.ClaudeState,
+			Kind:       kind,
+			User:       cur.User,
+			Session:    name,
+			State:      was.ClaudeState,
+			Background: was.Background,
 		})
 	}
 	return out
@@ -201,10 +213,11 @@ func (w *Watcher) standing(cur Snapshot) []Finding {
 			w.streak[key]++
 			if w.streak[key] >= w.cfg.ConfirmTicks && w.raise(KindClaudeDied, key) {
 				out = append(out, Finding{
-					Kind:    KindClaudeDied,
-					User:    cur.User,
-					Session: name,
-					State:   s.ClaudeState,
+					Kind:       KindClaudeDied,
+					User:       cur.User,
+					Session:    name,
+					State:      s.ClaudeState,
+					Background: s.Background,
 				})
 			}
 		} else {

@@ -9,7 +9,7 @@ import {
 import { sessionConfirmLabel, sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
-import { formatWorking, relativeTime, stateLabel } from "./lobby.logic";
+import { backgroundLabel, formatWorking, relativeTime, stateLabel } from "./lobby.logic";
 import { createDismissableMenu } from "./menu";
 import { StateDot } from "./StateDot";
 import {
@@ -636,7 +636,7 @@ export const SessionCard: Component<{
       aria-label={
         `session ${label()}` +
         (s().tool ? ", " + TOOL_LABELS[s().tool!] : "") +
-        (s().state ? ", " + stateLabel(s().state, unseen()) : "")
+        (s().state ? ", " + stateLabel(s().state, unseen(), s().bg) : "")
       }
       onClick={activate}
       onKeyDown={onKey}
@@ -663,7 +663,7 @@ export const SessionCard: Component<{
           </span>
         )}
       </Show>
-      <StateDot state={s().state} unseen={unseen()} />
+      <StateDot state={s().state} unseen={unseen()} bg={s().bg} />
       <ToolIcon tool={s().tool} />
       <Show
         when={!editing()}
@@ -711,6 +711,19 @@ export const SessionCard: Component<{
         >
           👁
         </span>
+      </Show>
+
+      {/* What the session is waiting on, when it is waiting on something. It
+          sits beside the timer rather than replacing it: the elapsed time is
+          how long the wait has been, and the kind is what decides whether it
+          is worth waiting — a background command is usually seconds, a
+          workflow can be half an hour. */}
+      <Show when={backgroundLabel(s().bg)}>
+        {(what) => (
+          <span class="tl-card-bg" title={`Still working: ${what()}`}>
+            {what()}
+          </span>
+        )}
       </Show>
 
       {/* Omitted entirely rather than rendered empty: the row is a flex

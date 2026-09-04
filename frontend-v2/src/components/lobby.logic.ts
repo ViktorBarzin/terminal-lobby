@@ -19,7 +19,7 @@
  *  - foreign sessions (owner ≠ me) are a separate Shared-with-me list, owner-major.
  *  - the dock session (hidden scratch shell) is never rendered and never touched.
  */
-import type { Layout, LayoutProject, Session } from "../types/lobby";
+import type { BackgroundWork, Layout, LayoutProject, Session } from "../types/lobby";
 
 export type GroupKind = "project" | "ungrouped";
 
@@ -480,10 +480,12 @@ export function formatWorking(ms: number): string {
  * as words. A colour and an opacity carry it for everyone else, and neither
  * survives being read aloud.
  */
-export function stateLabel(state: string | undefined, unseen = false): string {
+export function stateLabel(state: string | undefined, unseen = false, bg?: BackgroundWork): string {
   switch (state) {
-    case "running":
-      return "Working";
+    case "running": {
+      const what = backgroundLabel(bg);
+      return what ? `Working · ${what}` : "Working";
+    }
     case "awaiting":
       return "Awaiting input";
     case "done":
@@ -493,19 +495,44 @@ export function stateLabel(state: string | undefined, unseen = false): string {
   }
 }
 
+/**
+ * What a session is still waiting on, in words: "2 agents", "1 workflow",
+ * "2 agents, 1 command". Empty when it is waiting on nothing.
+ *
+ * Named by kind rather than totalled because the kinds are not comparable
+ * waits — a background command is usually seconds, a workflow can be half an
+ * hour — and knowing which one is running is what tells a reader whether to
+ * wait or go and do something else.
+ */
+export function backgroundLabel(bg: BackgroundWork | undefined): string {
+  if (!bg) return "";
+  const parts: string[] = [];
+  const add = (n: number | undefined, one: string, many: string) => {
+    if (n && n > 0) parts.push(`${n} ${n === 1 ? one : many}`);
+  };
+  add(bg.agents, "agent", "agents");
+  add(bg.workflows, "workflow", "workflows");
+  add(bg.commands, "command", "commands");
+  return parts.join(", ");
+}
+
 export interface StateCounts {
   running: number;
   awaiting: number;
   done: number;
+  /** Of the running ones, how many are held there by background work rather
+   *  than by a turn in flight. A subset of `running`, never a fourth state. */
+  background: number;
 }
 
 /** Count Claude states across a group (collapsed-header chips). */
 export function countStates(sessions: Session[]): StateCounts {
-  const c: StateCounts = { running: 0, awaiting: 0, done: 0 };
+  const c: StateCounts = { running: 0, awaiting: 0, done: 0, background: 0 };
   for (const s of sessions) {
     if (s.state === "running") c.running++;
     else if (s.state === "awaiting") c.awaiting++;
     else if (s.state === "done") c.done++;
+    if (backgroundLabel(s.bg)) c.background++;
   }
   return c;
 }
