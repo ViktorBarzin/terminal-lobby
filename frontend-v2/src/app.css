@@ -1643,8 +1643,10 @@ label.tl-set-row-label {
 /* ---- the new-session composer ------------------------------------------ */
 /* Nothing selected is not an empty state: it is where a session is started, so
    the composer owns the pane. A prompt wants the width, and on a phone this is
-   the LANDING view — the first thing the app shows. Centred rather than pinned
-   to the bottom, because nothing is above it to read. */
+   the LANDING view — the first thing the app shows. Centred on a desktop,
+   where there is room either side of it; pinned to the bottom on a phone, in
+   the coarse-pointer block below, because that is where a composer lives and
+   where the thumb already is. */
 .tl-new-composer {
   flex: 1 1 auto;
   min-width: 0;
@@ -1706,10 +1708,18 @@ label.tl-set-row-label {
    height it does not have. */
 @media (pointer: coarse) {
   .tl-new-composer {
-    /* The landing view. Centring left the box 354px down an otherwise empty
-       screen; on a phone the eye and the thumb both start at the top. */
-    justify-content: flex-start;
-    padding-top: 12px;
+    /* Pinned to the bottom, the way a chat composer is and the way T3 Code
+       puts it (Viktor, 2026-09-04: "let's make the canvas at the bottom
+       similarly to how it is for t3 code"). It started centred, which left the
+       box 354px down an otherwise empty screen; the top was better and the
+       bottom is where the thumb already is.
+       The keyboard is the whole difficulty with a bottom pin: without the
+       reservation below, opening it puts the composer behind it. --kb-offset is
+       live on this screen because the viewport sync is installed at the SHELL
+       rather than per session, which App.tsx did deliberately so the list
+       screen would have it too. --safe-b keeps Send off the home indicator. */
+    justify-content: flex-end;
+    padding-bottom: calc(12px + var(--kb-offset, 0px) + var(--safe-b, 0px));
   }
   .tl-new-composer .tl-composer-bar {
     flex-wrap: wrap;
