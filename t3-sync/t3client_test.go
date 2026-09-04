@@ -543,11 +543,21 @@ func TestSelfTestAcceptsAWorkingBridge(t *testing.T) {
 func TestSelfTestRejectsABrokenBridge(t *testing.T) {
 	cases := []struct {
 		name, script, want string
+		// orWant is a second acceptable substring, for a case whose failure has
+		// two spellings depending on which side of a race won.
+		orWant string
 	}{
 		{
 			name:   "exits without answering",
 			script: "exit 0\n",
 			want:   "control_response",
+			// The bridge exits immediately, so SelfTest either finishes writing
+			// the initialize request and then waits for an answer that never
+			// comes ("no control_response"), or loses the race and has the write
+			// itself fail on the closed pipe. Both say the bridge did not answer;
+			// which one appears depends on machine load, so the test passed alone
+			// and failed inside the full suite, where it blocked every release.
+			orWant: "broken pipe",
 		},
 		{
 			name: "answers a different request",
@@ -584,8 +594,9 @@ printf '{"type":"control_response","response":{"subtype":"error","request_id":"%
 			if err == nil {
 				t.Fatal("SelfTest passed a broken bridge")
 			}
-			if !strings.Contains(err.Error(), c.want) {
-				t.Errorf("error %q does not mention %q", err, c.want)
+			if !strings.Contains(err.Error(), c.want) &&
+				(c.orWant == "" || !strings.Contains(err.Error(), c.orWant)) {
+				t.Errorf("error %q mentions neither %q nor %q", err, c.want, c.orWant)
 			}
 		})
 	}
