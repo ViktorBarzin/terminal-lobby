@@ -198,22 +198,27 @@ _Avoid_: screenshots (images need not come from pastes)
 
 **Attachment**:
 A file carried by one message in the **Text view** — a photo or a
-document, uploaded when it is attached and referenced by its absolute
-path in the prompt, which is what Claude reads. Up to 25MB it joins the
-session's store directory under a `file-` prefix and rides the same
-30-day grace as **Session images**; larger, it stays a 7-day transfer
-ephemeron in /tmp and carries no chip. Before sending it is a removable
-chip in the composer's **tray**; after sending it is drawn where its
-path stands in the message. An attachment whose bytes nothing can serve
-— another user's store, outside the caller's home, swept — shows its
-path instead.
+document, referenced by its absolute path in the prompt, which is what
+Claude reads. Up to 25MB it joins the session's store directory under a
+`file-` prefix and rides the same 30-day grace as **Session images**;
+larger, it stays a 7-day transfer ephemeron in /tmp and carries no chip.
+Before sending it is a removable chip in the composer's **tray**; after
+sending it is drawn where its path stands in the message. An attachment
+whose bytes nothing can serve — another user's store, outside the
+caller's home, swept — shows its path instead.
+The upload happens when the file is attached in a live **Composer**, and
+on send in the **New-session composer**, which has no session to upload
+into until Enter creates one.
 _Avoid_: upload (names the act, not the thing), image (a document is
 one too)
 
 **Tray**:
 The strip of pending Attachments above the composer's input, with the
 unsent message text its other half. Both persist per (session, browser)
-so a reload or an evicted tab does not lose a half-written message.
+so a reload or an evicted tab does not lose a half-written message. In
+the **New-session composer** only the text persists: its files are still
+`File` objects in the tab, which JSON cannot carry, so a reloaded tab
+shows the prose with an empty tray.
 _Avoid_: attachment bar, dropzone (the drop target is the whole window)
 
 ### Skills
@@ -301,6 +306,17 @@ Three choices sit under it: which **project** it lands in, which command runs,
 and which model. Choosing a plain shell turns it back into a name box, because
 a shell has no prompt to receive.
 _Avoid_: create row, new-session form, session wizard
+
+**First prompt**:
+What the **New-session composer** sends to a session it has just created: the
+model line, when one was picked, and then the message itself. It waits for the
+session to be READY rather than merely reachable — a session tmux has made
+accepts input for seconds before the Claude in its pane is ready to read any,
+and text sent into that window is dropped with `POST /prompt` still answering
+204. The pane title's own glyph is the signal that Claude has drawn its UI, and
+the retry ladder underneath it is the backstop for a session that never raises
+one.
+_Avoid_: initial message, seed prompt
 
 **Text view**:
 The structured rendering of a Session, read from its Claude Code transcript
