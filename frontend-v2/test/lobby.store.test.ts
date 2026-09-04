@@ -3,7 +3,8 @@ import { createRoot } from "solid-js";
 import { createLobbyStore, type LobbyStore, type LobbyStoreOptions } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
 import { renameSessionInLayout } from "../src/components/lobby.logic";
-import { emptyLayout, type Layout, type Session, type Whoami } from "../src/types/lobby";
+import { emptyLayout, NAME_RE, type Layout, type Session, type Whoami } from "../src/types/lobby";
+import { isSessionId } from "../src/lib/session-id";
 
 const sess = (name: string, over: Partial<Session> = {}): Session => ({
   name,
@@ -177,44 +178,117 @@ describe("lobby store", () => {
     });
   });
 
-  it("create: validates, optimistically adds + selects, and PUTs the layout", async () => {
+  it("create: mints an id for the name, optimistically adds + selects, and PUTs the layout", async () => {
     const api = new FakeApi();
     await withStore(api, async (store) => {
       await store.refresh();
       const ok = await store.create("newsess", "");
       expect(ok).toBe(true);
       expect(api.puts).toHaveLength(1);
-      expect(api.puts[0]!.ungrouped).toContain("newsess");
-      expect(names(store)).toContain("newsess"); // optimistic pending card
-      expect(store.selected()?.name).toBe("newsess");
+      const id = api.puts[0]!.ungrouped[0]!;
+      expect(isSessionId(id)).toBe(true);
+      expect(names(store)).toEqual([id]); // optimistic pending card
+      expect(store.selected()?.name).toBe(id);
     });
   });
 
-  it("create: takes a title and derives the name from it", async () => {
+  it("create: keeps what you typed as the TITLE and stamps it once the session is up", async () => {
+    // The name is an id nobody reads (ADR-0019), so the typed text has to
+    // reach the card as a title or the card is twelve random characters.
+    vi.useFakeTimers();
     const api = new FakeApi();
     await withStore(api, async (store) => {
       await store.refresh();
       expect(await store.create("Deploy the thing \u{1F680}", "")).toBe(true);
-      expect(api.puts[0]!.ungrouped).toContain("deploy-the-thing");
-      expect(names(store)).toContain("deploy-the-thing");
+      const id = api.puts[0]!.ungrouped[0]!;
+      expect(isSessionId(id)).toBe(true);
+      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      expect(card?.title).toBe("Deploy the thing \u{1F680}");
+      // stampTitleWhenAlive's first rung, the same ladder the refresh burst uses
+      await vi.advanceTimersByTimeAsync(700);
+      expect(api.titles).toEqual([[id, "Deploy the thing \u{1F680}"]]);
     });
   });
 
-  it("create: rejects an empty title and a duplicate name without a PUT", async () => {
+  it("create: two sessions can carry the same title, because the name is not derived from it", async () => {
     const api = new FakeApi();
-    api.sessionsVal = [sess("dup")];
     await withStore(api, async (store) => {
       await store.refresh();
-      // Punctuation alone is no longer "an invalid name" — it is a title that
-      // derives nothing, which is only a problem when it is ALL there is.
+      expect(await store.create("dup", "")).toBe(true);
+      expect(await store.create("dup", "")).toBe(true);
+      const [a, b] = api.puts.at(-1)!.ungrouped;
+      expect(a).not.toBe(b);
+      expect(store.toast()).toBeNull();
+    });
+  });
+
+  it("the URL hash carries the id, and an owner beside it for a foreign session", async () => {
+    // The hash is how a session is reopened, shared and reported. It used to
+    // carry a readable name; it carries the id now, which is the string ADR-0019
+    // says people will be quoting when something goes wrong.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("theirs", { owner: "emo", access: "ro" })];
+    await withStore(
+      api,
+      async (store) => {
+        await store.refresh();
+        expect(await store.create("mine", "")).toBe(true);
+        const id = api.puts[0]!.ungrouped[0]!;
+        expect(window.location.hash).toBe("#" + id);
+        // Every consumer of the hash gates on NAME_RE before it selects.
+        expect(NAME_RE.test(window.location.hash.slice(1))).toBe(true);
+
+        store.select("theirs", "emo");
+        expect(window.location.hash).toBe("#theirs@emo");
+        // The `@` split has to survive the id: an id contains no `@`, so the
+        // owner half stays unambiguous however short or long the id is.
+        const [name, owner] = window.location.hash.slice(1).split("@");
+        expect(name).toBe("theirs");
+        expect(owner).toBe("emo");
+      },
+      { syncHash: true },
+    );
+  });
+
+  it("create: still refuses an empty box, without a PUT", async () => {
+    const api = new FakeApi();
+    await withStore(api, async (store) => {
+      await store.refresh();
       expect(await store.create("   ", "")).toBe(false);
-      expect(await store.create("dup", "")).toBe(false);
-      // …and a title that reads differently but derives a taken name is a
-      // duplicate too, since the name is what has to be unique.
-      expect(await store.create("Dup!", "")).toBe(false);
       expect(api.puts).toHaveLength(0);
       expect(store.toast()).toBeTruthy();
     });
+  });
+
+  it("create: never mints a name a live session already holds", async () => {
+    // 60 bits makes this unreachable in the field; forcing it is the only way
+    // to know the retry is wired, and attaching a create to somebody else's
+    // conversation is what it costs when it is not.
+    const api = new FakeApi();
+    const clash = "abcdefghjkmn";
+    api.sessionsVal = [sess(clash)];
+    let mint = 0;
+    const spy = vi
+      .spyOn(globalThis.crypto, "getRandomValues")
+      .mockImplementation(<T extends ArrayBufferView | null>(buf: T): T => {
+        // The low five bits pick the symbol, so 10..21 spells `clash` on the
+        // first mint and the next mint slides one symbol along.
+        const b = buf as unknown as Uint8Array;
+        for (let i = 0; i < b.length; i++) b[i] = 10 + i + mint;
+        mint++;
+        return buf;
+      });
+    try {
+      await withStore(api, async (store) => {
+        await store.refresh();
+        expect(await store.create("second", "")).toBe(true);
+        const id = api.puts[0]!.ungrouped[0]!;
+        expect(id).not.toBe(clash);
+        expect(isSessionId(id)).toBe(true);
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("rename: retitles, moves the name to match, and mirrors the layout", async () => {
@@ -442,9 +516,11 @@ describe("lobby store", () => {
     });
   });
 
-  it("create: a name left in the layout by a session that died outside the API is free again", async () => {
+  it("create: a layout entry left by a session that died outside the API cannot block a create", async () => {
     // The session is gone from tmux but its layout entry survives (removeSession
-    // runs only on an explicit UI kill), so the name must not stay burnt.
+    // runs only on an explicit UI kill). Names used to be reusable and this was
+    // about not burning one; ids are never reused, so what is left to protect is
+    // that the orphan neither blocks the create nor lands in the new group.
     const api = new FakeApi();
     api.sessionsVal = [];
     api.layoutVal = { ...emptyLayout(), projects: [{ name: "old", sessions: ["orphan"] }] };
@@ -453,8 +529,9 @@ describe("lobby store", () => {
       expect(await store.create("orphan", "")).toBe(true);
       expect(store.toast()).toBeNull();
       const put = api.puts.at(-1)!;
-      expect(put.ungrouped).toEqual(["orphan"]);
-      expect(put.projects[0]!.sessions).toEqual([]); // the stale ref is gone
+      expect(put.ungrouped).toHaveLength(1);
+      expect(isSessionId(put.ungrouped[0]!)).toBe(true);
+      expect(put.projects[0]!.sessions).toEqual(["orphan"]); // not ours to touch
     });
   });
 
@@ -960,20 +1037,19 @@ describe("lobby store", () => {
   it("create: a layout write that fails reports failure and leaves no phantom card", async () => {
     // The layout PUT is the only record a create makes (tmux-api never sees
     // it), so a failed write means nothing was created. Reporting success
-    // clears the input and strands an optimistic card that never resolves —
-    // and, because pending names count as taken, burns the name too.
+    // clears the input and strands an optimistic card that never resolves.
     const api = new FakeApi();
     api.putError = true;
     await withStore(api, async (store) => {
       await store.refresh();
       expect(await store.create("ghost", "")).toBe(false);
-      expect(names(store)).not.toContain("ghost");
+      expect(names(store)).toEqual([]);
       expect(store.toast()).toMatch(/layout/i);
 
-      // the name is not burnt: it is free again the moment the write can land
       api.putError = false;
       expect(await store.create("ghost", "")).toBe(true);
-      expect(names(store)).toContain("ghost");
+      expect(names(store)).toHaveLength(1);
+      expect(isSessionId(names(store)[0]!)).toBe(true);
     });
   });
 

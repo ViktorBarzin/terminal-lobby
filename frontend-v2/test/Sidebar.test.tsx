@@ -6,6 +6,7 @@ import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
 import { createPrefsStore, PREFS_KEY, type PrefsStore } from "../src/store/prefs";
 import { emptyLayout, type Layout, type Session, type Whoami } from "../src/types/lobby";
+import { isSessionId } from "../src/lib/session-id";
 
 const sess = (name: string, over: Partial<Session> = {}): Session => ({
   name,
@@ -275,9 +276,12 @@ describe("<Sidebar>", () => {
     fireEvent.input(input, { target: { value: "fresh" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    await waitFor(() => expect(store.selected()?.name).toBe("fresh"));
+    // The typed text is the TITLE now; the name is a minted id (ADR-0019).
+    await waitFor(() => expect(store.selected()).not.toBeNull());
     expect(api.puts.length).toBe(1);
-    expect(api.puts[0]!.ungrouped).toContain("fresh");
+    const id = api.puts[0]!.ungrouped[0]!;
+    expect(isSessionId(id)).toBe(true);
+    expect(store.selected()?.name).toBe(id);
     store.dispose();
   });
 
