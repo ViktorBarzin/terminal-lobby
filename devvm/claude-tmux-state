@@ -182,6 +182,63 @@ bg_del() {
     return 0
 }
 
+# bg_prune drops every outstanding id the harness no longer lists as a task.
+#
+# This is the only reliable drain. bg_del runs off a UserPromptSubmit carrying
+# <task-notification>, and that fires ONLY when the task finishes BETWEEN turns.
+# A task that finishes mid-turn has its notification absorbed into the running
+# turn: the transcript records `queue-operation` enqueue and then remove with
+# reason `absorbed_mid_turn`, no UserPromptSubmit fires at all, and the id used
+# to sit in @claude_bg for good — so the session read `running` with nothing
+# running, and handle_notify below also stopped promoting it to `awaiting`.
+#
+# Measured over 122 transcripts on 2026-09-04, how a completion reached the
+# session: background commands 258 as a prompt against 765 absorbed or silently
+# removed; agents 57 against 35; workflows 36 against 18. Of 56 tasks stopped
+# with the TaskStop tool, 42 never enqueued a notification at all.
+#
+# The Stop payload carries `background_tasks`, the harness's own live registry —
+# `{"id":…,"type":"shell"|"subagent","status":"running",…}` — and it is
+# authoritative: measured live the same day, a task that finished, and a task
+# stopped with TaskStop, both left the list at once. Stop is the only event that
+# carries the field, which is also the only event that has to decide.
+#
+# Two deliberate limits. A WORKFLOW is never pruned: the two kinds seen in a real
+# payload are "shell" and "subagent", and whether a running Workflow appears at
+# all is unmeasured, so pruning one would risk reporting done in the middle of a
+# half-hour run. And a payload with no `background_tasks` field prunes nothing,
+# so an older harness keeps the behaviour this script had before.
+#
+# The match is biased on purpose. `"id":"<id>"` can in principle hit something
+# outside the array, which KEEPS an id — the session stays running one turn
+# longer and the next Stop corrects it. Failing the other way would report a
+# session done while its work ran, which is the bug this whole option exists to
+# prevent.
+bg_prune() {
+    case "$payload" in
+    *'"background_tasks":['*) ;;
+    *) return 0 ;;
+    esac
+    bg_read
+    [ -n "$bg" ] || return 0
+    kept=""
+    for t in $bg; do
+        keep=0
+        case "$t" in
+        w:*) keep=1 ;;
+        *)
+            id="${t#*:}"
+            case "$payload" in *"\"id\":\"$id\""*) keep=1 ;; esac
+            ;;
+        esac
+        if [ "$keep" = 1 ]; then
+            if [ -z "$kept" ]; then kept="$t"; else kept="$kept $t"; fi
+        fi
+    done
+    [ "$kept" != "$bg" ] && bg_write "$kept"
+    return 0
+}
+
 # record_launch adds the task a PostToolUse just started, if it started one.
 # Three tools, three field names, all carrying the id that the eventual
 # task-notification will name:
@@ -280,6 +337,9 @@ PostToolUse)
     ;;
 Stop)
     # Stop is the main thread stopping talking, not the end of the turn's work.
+    # What the harness still lists decides; the accumulated set only carries the
+    # KIND of each id, which the payload does not give us for a workflow.
+    bg_prune
     bg_read
     if [ -n "$bg" ]; then stamp running; else stamp done; fi
     ;;

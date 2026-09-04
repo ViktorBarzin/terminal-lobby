@@ -146,8 +146,10 @@ launched a background agent, a workflow or a background command keeps
 that dot until the work reports back, because it will speak again with
 nobody prompting it, and the card names what it is waiting on ("2
 agents", "1 workflow"). The outstanding task ids live in a second
-option, `@claude_bg`, written by the same hooks; nothing expires them,
-so typing into a session is what re-derives one whose set went stale.
+option, `@claude_bg`, written by the same hooks. At the end of every turn
+the set is reconciled against the tasks the harness still reports live, so
+work that finished while Claude was mid-turn stops holding the dot;
+typing into a session re-derives it too.
 Design: `docs/plans/2026-09-04-background-work-session-state-design.md`.
 
 ## Documentation

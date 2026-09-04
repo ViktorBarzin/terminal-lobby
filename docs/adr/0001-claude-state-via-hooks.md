@@ -84,6 +84,26 @@ resulting state itself — see "Interrupts have no hook" below.
   and any event carrying `agent_id` is ignored. There is deliberately no
   expiry on an id — a human prompt clears the set, which is what makes
   typing into a session re-derive it, as it already was for `@claude_state`.
+
+  That drain alone was not enough, and `Stop` now PRUNES the set against
+  the harness's own registry (2026-09-04). A `<task-notification>` reaches
+  the session as a prompt only when the task finished BETWEEN turns; one
+  that finishes mid-turn is absorbed into the running turn — the transcript
+  records `queue-operation` enqueue then remove with reason
+  `absorbed_mid_turn` — and no `UserPromptSubmit` fires, so the id stayed
+  for good and the session read `running` with nothing running. Measured
+  over 122 transcripts: background commands reached the session as a prompt
+  258 times against 765 absorbed or silently removed, agents 57 against 35,
+  workflows 36 against 18; and of 56 tasks stopped with `TaskStop`, 42
+  never enqueued a notification at all. The `Stop` payload carries
+  `background_tasks`, the live list, and it is authoritative — a finished
+  task and a `TaskStop`ped one both leave it at once. It is the only event
+  that carries the field, and the only one that has to decide.
+
+  A workflow id is not pruned: the kinds seen in a real payload are
+  `shell` and `subagent`, and whether a running Workflow is listed at all
+  is unmeasured, so pruning one could report `done` mid-run. Workflows stay
+  on the notification drain until that is measured.
   `SubagentStart` and `SubagentStop` do fire and are accurate, and are
   deliberately unused: wiring them means an infra change reaching every
   headless Claude on the box. `TaskCreated` and `TaskCompleted` exist as
