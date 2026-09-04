@@ -28,9 +28,17 @@ type Dialog struct {
 	// Count is how many questions the call carries.
 	Count int `json:"count"`
 	// Partial says the pane cannot show the whole call — a multi-question
-	// dialog shows one question at a time, so an answer must be walked in the
-	// terminal (or wait for the transcript, which carries them all).
+	// dialog shows one question at a time, so the call is answered one question
+	// at a time, each drawn only once the one before it is answered.
 	Partial bool `json:"partial,omitempty"`
+	// Answered is how many of the call's questions the tab bar marks done: it
+	// draws `☒` for a question already answered and `☐` for one still open.
+	//
+	// This is the walk's only honest progress signal. A client that counted its
+	// own answers would drift the moment anything else moved the dialog on — a
+	// keystroke in the terminal, an Esc, a re-ask — whereas this is read from
+	// what the terminal is showing at the moment of the read.
+	Answered int `json:"answered,omitempty"`
 }
 
 // DialogQuestion mirrors one question of an AskUserQuestion call.
@@ -292,6 +300,7 @@ func ParseDialog(pane string) *Dialog {
 		if reTabBar.MatchString(line) {
 			d.Headers = tabHeaders(line)
 			d.Count = len(d.Headers)
+			d.Answered = tabAnswered(line)
 			d.Partial = d.Count > 1
 			break
 		}
@@ -343,6 +352,7 @@ func reviewScreen(lines []string) *Dialog {
 		Questions: []DialogQuestion{{Question: "Ready to submit your answers?"}},
 		Headers:   headers,
 		Count:     len(headers),
+		Answered:  tabAnswered(tabs),
 		Partial:   true,
 	}
 }
@@ -351,6 +361,15 @@ func reviewScreen(lines []string) *Dialog {
 // i.e. it sits inside the option list rather than above it.
 func numbered(lines []string, i int) bool {
 	return i > 0 && !reTabBar.MatchString(lines[i]) && strings.HasPrefix(lines[i], "  ")
+}
+
+// tabAnswered counts the questions a tab bar marks answered.
+//
+// `☒` is answered and `☐` is still open, and counting the glyph rather than
+// reading the header text means a header that happens to contain a box
+// character cannot shift the tally.
+func tabAnswered(line string) int {
+	return strings.Count(line, "☒")
 }
 
 // tabHeaders pulls the question headers out of a multi-question tab bar.
