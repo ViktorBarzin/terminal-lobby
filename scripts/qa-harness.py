@@ -59,7 +59,18 @@ production and not a harness gap. Adding the two paths to ASSET_PATHS would
 diverge twice at once: 200 from a service the ingress never asks, without the
 auth it does apply. --stamp-shim routes them to clipboard-upload authed, which
 is the only way to exercise the healer's STAMP path here, and what the default
-becomes if an IngressRoute for them ever lands. The healer itself still runs
+becomes if an IngressRoute for them ever lands.
+
+WHY the ingress sends them to ttyd, narrowed by the session that was landing
+prompt-first sessions alongside this: infra stacks/terminal/main.tf carries a
+carve-out routing ten PWA paths to clipboard-upload, and these two are not among
+them, so they fall through to the main ingress. release/manifest.go does install
+both files, so nothing is missing on the box. The fix is NOT two more entries in
+that carve-out, because it is auth = "none": only frontend-v2/src/deploy/
+healer.ts fetches /build-id, from a page that already holds a session, and the
+service worker never fetches it, which they checked because sw.js IS public and
+would have forced the opposite answer. So it wants an authed carve-out, which is
+an infra change and is reported rather than made here. The healer itself still runs
 without it: it latches the 404 and falls back to reading the page, which is
 exactly what the deployed site does today and what ADR-0007's amendment
 describes as self-update degrading rather than disappearing.
