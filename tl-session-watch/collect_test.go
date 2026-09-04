@@ -29,8 +29,9 @@ func TestParseUserMapIgnoresMalformedLines(t *testing.T) {
 
 func TestParseSessionList(t *testing.T) {
 	// tmux rejects newlines in session names but not tabs, so the split has to
-	// come off the LAST separator rather than the first.
-	in := "alerts\trunning\nclaude\t\nwith\tname\tdone\n"
+	// come off the LAST separators rather than the first. Two options now ride
+	// each row, so it is the last TWO.
+	in := "alerts\trunning\ta:a1 w:w1\nclaude\t\t\nwith\tname\tdone\t\n"
 	got := parseSessionList(in)
 
 	if len(got) != 3 {
@@ -39,11 +40,32 @@ func TestParseSessionList(t *testing.T) {
 	if got["alerts"].ClaudeState != "running" {
 		t.Errorf("alerts: want running, got %q", got["alerts"].ClaudeState)
 	}
+	if got["alerts"].Background != "a:a1 w:w1" {
+		t.Errorf("alerts: want the outstanding-work tokens, got %q", got["alerts"].Background)
+	}
 	if got["claude"].ClaudeState != "" {
 		t.Errorf("an unset stamp must read as empty, got %q", got["claude"].ClaudeState)
 	}
+	if got["claude"].Background != "" {
+		t.Errorf("an unset @claude_bg must read as empty, got %q", got["claude"].Background)
+	}
 	if s, ok := got["with\tname"]; !ok || s.ClaudeState != "done" {
 		t.Errorf("a tab in the name must stay in the name, got %+v", got)
+	}
+}
+
+// A row from a tmux that predates the second option carries one separator, and
+// the watcher's whole job is noticing sessions going away — so a shape it does
+// not recognise must still yield the session and its state rather than
+// vanishing, which would read as a death.
+func TestParseSessionListToleratesARowWithoutTheBackgroundField(t *testing.T) {
+	got := parseSessionList("alerts\trunning\n")
+
+	if len(got) != 1 {
+		t.Fatalf("want 1 session, got %d: %+v", len(got), got)
+	}
+	if got["alerts"].ClaudeState != "running" || got["alerts"].Background != "" {
+		t.Errorf("old-shape row: got %+v", got["alerts"])
 	}
 }
 

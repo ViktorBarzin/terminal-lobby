@@ -9,7 +9,22 @@ import (
 
 // row joins fields with the format separator, so fixtures stay readable even
 // though the real separator is an invisible control character.
-func row(fields ...string) string { return strings.Join(fields, listSep) }
+// row builds one list-sessions line from the fields in their historic order,
+// inserting an EMPTY outstanding-work column where the format now carries it.
+// Written this way so the twenty-odd existing rows keep saying what they were
+// written to say; rowBG is the same line with that column filled in.
+func row(fields ...string) string { return rowBG("", fields...) }
+
+func rowBG(bg string, fields ...string) string {
+	if len(fields) < bgColumn {
+		return strings.Join(fields, listSep)
+	}
+	out := make([]string, 0, len(fields)+1)
+	out = append(out, fields[:bgColumn]...)
+	out = append(out, bg)
+	out = append(out, fields[bgColumn:]...)
+	return strings.Join(out, listSep)
+}
 
 // /sessions rows carry TWO arbitrary-text fields: pane_title, which
 // applications set freely via OSC 2, and @title, the display title a person
@@ -120,6 +135,63 @@ func TestParseSessionsFields(t *testing.T) {
 				t.Fatalf("parseSessions(%q):\n got %+v\nwant %+v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// Outstanding background work holds a session at "running" past the Stop that
+// used to finish it, and the sidebar says WHICH kind so a reader can tell a
+// 30-second command from a 30-minute workflow. The kinds come from the hook's
+// `<kind>:<id>` tokens: a=agent, b=background command, w=workflow
+// (docs/plans/2026-09-04-background-work-session-state-design.md).
+func TestParseSessionsCountsOutstandingWorkByKind(t *testing.T) {
+	cases := []struct {
+		name, bg string
+		want     *Background
+	}{
+		{"nothing outstanding", "", nil},
+		{"one agent", "a:a1cbb47bebad51b9b", &Background{Agents: 1}},
+		{"two agents and a command", "a:a1 a:a2 b:bmm8ohp9u", &Background{Agents: 2, Commands: 1}},
+		{"a workflow", "w:wy71p4jz3", &Background{Workflows: 1}},
+		{"one of each", "a:a1 b:b1 w:w1", &Background{Agents: 1, Commands: 1, Workflows: 1}},
+		// The hook validates ids before it writes them, so a token in a shape
+		// this parser does not know came from somewhere else. Counting it as
+		// nothing keeps a corrupted option from holding a session at running
+		// with no way back.
+		{"an unrecognised token counts as nothing", "z:x nonsense", nil},
+		{"a known kind survives an unknown neighbour", "a:a1 z:x", &Background{Agents: 1}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseSessions([]byte(rowBG(tc.bg,
+				"$1", "work", "0", "10", "20", "", "running", "42", "claude", "", "") + "\n"))
+			if len(got) != 1 {
+				t.Fatalf("parseSessions gave %d rows, want 1", len(got))
+			}
+			if !reflect.DeepEqual(got[0].Background, tc.want) {
+				t.Fatalf("Background for %q = %+v, want %+v", tc.bg, got[0].Background, tc.want)
+			}
+		})
+	}
+}
+
+// The count rides the wire only when there is something to say, so a session
+// that backgrounded nothing serves the object it always did.
+func TestBackgroundCountJSONShape(t *testing.T) {
+	busy, err := json.Marshal(parseSessions([]byte(rowBG("a:a1 w:w1",
+		"$3", "work", "1", "10", "20", "", "running", "42", "claude", "", "") + "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(busy), `"bg":{"agents":1,"workflows":1}`) {
+		t.Fatalf("marshaled session missing the background count: %s", busy)
+	}
+	idle, err := json.Marshal(parseSessions([]byte(
+		row("$4", "calm", "0", "1", "2", "", "done", "9", "claude", "", "") + "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(idle), `"bg"`) {
+		t.Fatalf("a session with nothing outstanding must omit bg: %s", idle)
 	}
 }
 
