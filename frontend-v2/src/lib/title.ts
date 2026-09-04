@@ -55,3 +55,22 @@ export function cleanTitle(title: string): string {
   }
   return out;
 }
+
+/**
+ * The first line of a prompt, normalized as a title.
+ *
+ * What a card shows between the moment a session is created and the moment
+ * Claude's summary lands (store/prompt-line.ts). Leading blank lines are
+ * skipped rather than yielding nothing: a prompt pasted with a blank first line
+ * still has something recognisable in it.
+ *
+ * Empty for a prompt with nothing in it, which is the case that reads
+ * `New session` instead.
+ */
+export function firstPromptLine(prompt: string): string {
+  for (const line of prompt.split("\n")) {
+    const clean = cleanTitle(line);
+    if (clean) return clean;
+  }
+  return "";
+}

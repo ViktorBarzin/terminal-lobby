@@ -2,7 +2,16 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { createRoot } from "solid-js";
 import { createLobbyStore, type LobbyStore, type LobbyStoreOptions } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
-import { emptyLayout, NAME_RE, type Layout, type Session, type Whoami } from "../src/types/lobby";
+import {
+  emptyLayout,
+  NAME_RE,
+  NEW_SESSION_LABEL,
+  sessionLabel,
+  type Layout,
+  type Session,
+  type Whoami,
+} from "../src/types/lobby";
+import { promptLineFor } from "../src/store/prompt-line";
 import { isSessionId } from "../src/lib/session-id";
 
 const sess = (name: string, over: Partial<Session> = {}): Session => ({
@@ -169,31 +178,68 @@ describe("lobby store", () => {
     const api = new FakeApi();
     await withStore(api, async (store) => {
       await store.refresh();
-      const ok = await store.create("newsess", "");
-      expect(ok).toBe(true);
-      expect(api.puts).toHaveLength(1);
-      const id = api.puts[0]!.ungrouped[0]!;
+      const id = await store.create("newsess", "");
       expect(isSessionId(id)).toBe(true);
+      expect(api.puts).toHaveLength(1);
+      expect(api.puts[0]!.ungrouped).toEqual([id]);
       expect(names(store)).toEqual([id]); // optimistic pending card
       expect(store.selected()?.name).toBe(id);
     });
   });
 
-  it("create: keeps what you typed as the TITLE and stamps it once the session is up", async () => {
-    // The name is an id nobody reads (ADR-0019), so the typed text has to
-    // reach the card as a title or the card is twelve random characters.
+  it("create: a NAME is stamped as the title, because nothing will summarise a shell", async () => {
+    // Choosing `shell` in the composer turns the box back into a name box: a
+    // shell has no conversation, so no summary is ever coming and the typed
+    // text is the only title the session will get.
     vi.useFakeTimers();
     const api = new FakeApi();
     await withStore(api, async (store) => {
       await store.refresh();
-      expect(await store.create("Deploy the thing \u{1F680}", "")).toBe(true);
-      const id = api.puts[0]!.ungrouped[0]!;
+      const id = await store.create("scratch \u{1F680}", "", "name");
       expect(isSessionId(id)).toBe(true);
       const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
-      expect(card?.title).toBe("Deploy the thing \u{1F680}");
+      expect(card?.title).toBe("scratch \u{1F680}");
       // stampTitleWhenAlive's first rung, the same ladder the refresh burst uses
       await vi.advanceTimersByTimeAsync(700);
-      expect(api.titles).toEqual([[id, "Deploy the thing \u{1F680}"]]);
+      expect(api.titles).toEqual([[id, "scratch \u{1F680}"]]);
+    });
+  });
+
+  it("create: a PROMPT is never stamped, or the summary could never land", async () => {
+    // The auto-title rule only fires while @title is unset (tmux-api/autotitle.go),
+    // so stamping the prompt's first line would freeze the placeholder in place
+    // and Claude's own summary would never reach the card.
+    vi.useFakeTimers();
+    const api = new FakeApi();
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const id = await store.create("Fix the deploy\nit 500s on push", "");
+      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      // The card reads as the prompt's FIRST LINE while it waits.
+      expect(card?.title).toBe("Fix the deploy");
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(api.titles).toEqual([]);
+    });
+  });
+
+  it("create: the prompt's first line survives the poll, and the summary replaces it", async () => {
+    const api = new FakeApi();
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const id = await store.create("Fix the deploy", "");
+      // The server now knows the session, so the optimistic card is gone; the
+      // line has to come from somewhere that outlives it.
+      api.sessionsVal = [sess(id)];
+      api.layoutVal = { ...emptyLayout(), ungrouped: [id] };
+      await store.refresh();
+      expect(store.sessions.find((s) => s.name === id)?.title).toBe("Fix the deploy");
+
+      // tmux-api stamps Claude's summary, and it wins from here on.
+      api.sessionsVal = [sess(id, { title: "Deploy pipeline 500s" })];
+      await store.refresh();
+      expect(store.sessions.find((s) => s.name === id)?.title).toBe("Deploy pipeline 500s");
+      // ...and the placeholder is dropped rather than lingering in storage.
+      expect(promptLineFor(id)).toBeNull();
     });
   });
 
@@ -201,8 +247,8 @@ describe("lobby store", () => {
     const api = new FakeApi();
     await withStore(api, async (store) => {
       await store.refresh();
-      expect(await store.create("dup", "")).toBe(true);
-      expect(await store.create("dup", "")).toBe(true);
+      expect(isSessionId(await store.create("dup", ""))).toBe(true);
+      expect(isSessionId(await store.create("dup", ""))).toBe(true);
       const [a, b] = api.puts.at(-1)!.ungrouped;
       expect(a).not.toBe(b);
       expect(store.toast()).toBeNull();
@@ -219,8 +265,8 @@ describe("lobby store", () => {
       api,
       async (store) => {
         await store.refresh();
-        expect(await store.create("mine", "")).toBe(true);
-        const id = api.puts[0]!.ungrouped[0]!;
+        const id = await store.create("mine", "");
+        expect(isSessionId(id)).toBe(true);
         expect(window.location.hash).toBe("#" + id);
         // Every consumer of the hash gates on NAME_RE before it selects.
         expect(NAME_RE.test(window.location.hash.slice(1))).toBe(true);
@@ -237,13 +283,19 @@ describe("lobby store", () => {
     );
   });
 
-  it("create: still refuses an empty box, without a PUT", async () => {
+  it("create: an empty box creates a session, and it reads New session", async () => {
+    // Naming left the critical path entirely: pressing Enter on an empty
+    // composer is a real instruction, and the session it makes is titled by
+    // whatever Claude summarises it as.
     const api = new FakeApi();
     await withStore(api, async (store) => {
       await store.refresh();
-      expect(await store.create("   ", "")).toBe(false);
-      expect(api.puts).toHaveLength(0);
-      expect(store.toast()).toBeTruthy();
+      const id = await store.create("   ", "");
+      expect(isSessionId(id)).toBe(true);
+      expect(api.puts).toHaveLength(1);
+      expect(store.toast()).toBeNull();
+      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      expect(sessionLabel(card!)).toBe(NEW_SESSION_LABEL);
     });
   });
 
@@ -268,8 +320,7 @@ describe("lobby store", () => {
     try {
       await withStore(api, async (store) => {
         await store.refresh();
-        expect(await store.create("second", "")).toBe(true);
-        const id = api.puts[0]!.ungrouped[0]!;
+        const id = await store.create("second", "");
         expect(id).not.toBe(clash);
         expect(isSessionId(id)).toBe(true);
       });
@@ -475,7 +526,7 @@ describe("lobby store", () => {
     api.layoutVal = { ...emptyLayout(), projects: [{ name: "old", sessions: ["orphan"] }] };
     await withStore(api, async (store) => {
       await store.refresh();
-      expect(await store.create("orphan", "")).toBe(true);
+      expect(isSessionId(await store.create("orphan", ""))).toBe(true);
       expect(store.toast()).toBeNull();
       const put = api.puts.at(-1)!;
       expect(put.ungrouped).toHaveLength(1);
@@ -990,12 +1041,12 @@ describe("lobby store", () => {
     api.putError = true;
     await withStore(api, async (store) => {
       await store.refresh();
-      expect(await store.create("ghost", "")).toBe(false);
+      await store.create("ghost", "");
       expect(names(store)).toEqual([]);
       expect(store.toast()).toMatch(/layout/i);
 
       api.putError = false;
-      expect(await store.create("ghost", "")).toBe(true);
+      await store.create("ghost", "");
       expect(names(store)).toHaveLength(1);
       expect(isSessionId(names(store)[0]!)).toBe(true);
     });

@@ -36,35 +36,16 @@ export const ProjectGroup: Component<{
   confirm?: (message: string) => boolean;
   /** the roamed `sidebar.showLastActive` pref, threaded down to each card. */
   showLastActive?: Accessor<boolean>;
+  /** Show the new-session composer, preset to this project. The group used to
+   *  hold its own name box; a prompt needs more room than a sidebar row has. */
+  onNewSession?: (group: string) => void;
 }> = (props) => {
   const isUngrouped = () => props.group.kind === "ungrouped";
   const token = () => groupToken(props.group);
   const collapseKey = () => (isUngrouped() ? UNGROUPED_KEY : props.group.name);
   const collapsed = () => props.store.collapse.isCollapsed(collapseKey());
 
-  const [adding, setAdding] = createSignal(false);
   const [dragOver, setDragOver] = createSignal(false);
-  let addInput: HTMLInputElement | undefined;
-  // The half-typed name lives in the DOM node, so the poll must not rebuild the
-  // group while the box is open — the same hold rename and drag take.
-  let releaseAdd: (() => void) | null = null;
-  // The directory a slot was warmed for, so the same one is released. Held
-  // separately from the group because a group's dir could change under us while
-  // the box is open, and releasing a different directory would leave the warmed
-  // slot behind and collect one nobody asked about.
-  let warmedDir: string | null = null;
-  const endAdd = () => {
-    setAdding(false);
-    releaseAdd?.();
-    releaseAdd = null;
-    // Closing the box without creating means the guess was wrong. Hand the slot
-    // back rather than leaving ~530MB for the server's TTL to notice.
-    if (warmedDir !== null) {
-      void props.store.releasePrewarm(warmedDir);
-      warmedDir = null;
-    }
-  };
-  onCleanup(endAdd);
 
   // Bounds are measured in VISIBLE space. An empty Ungrouped keeps its slot in
   // the layout (the capture/reorder contract needs it) but renders nothing, so
@@ -95,52 +76,19 @@ export const ProjectGroup: Component<{
   };
 
   // ---- new session in this group ----
+  // The composer opens preset to this project, which is also what starts the
+  // speculative pre-warm: it owns the warmed slot now, because the directory it
+  // guesses on is the one showing in its own project selector.
+  //
+  // The group is expanded on the way, so the card that arrives is on screen
+  // rather than inside something the user then has to open.
   const beginAdd = (e: Event) => {
     e.stopPropagation();
     menu.close();
-    if (!adding()) releaseAdd = props.store.hold();
-    setAdding(true);
     props.store.collapse.expand(collapseKey());
-    queueMicrotask(() => addInput?.focus());
-    // Opening this box is the earliest moment a session's DIRECTORY is known —
-    // it is this project's — and it is seconds before the name is typed. Claude
-    // takes ~2.4s to boot, so starting one now means the attach can adopt a
-    // ready session with a ~9ms rename instead of waiting for it.
-    //
-    // Only when the project actually has a dir: without one the session would
-    // start in $HOME, and warming $HOME on every group's box would spend a slot
-    // on the one directory that is never specific to a project.
-    const dir = props.group.project?.dir;
-    if (dir && warmedDir === null) {
-      warmedDir = dir;
-      void props.store.prewarm(dir);
-    }
+    props.onNewSession?.(isUngrouped() ? "" : props.group.name);
     // Pairs with session.created to give the window the guess had to run in.
     track("session.create_opened", { "tl.to": isUngrouped() ? "ungrouped" : props.group.name });
-  };
-  const commitAdd = async () => {
-    const name = addInput?.value.trim() ?? "";
-    if (!name) {
-      endAdd();
-      return;
-    }
-    // Detach the slot from this box BEFORE awaiting. create() re-renders the
-    // sidebar, and that can unmount this input mid-await, firing
-    // onCleanup(endAdd) while we are suspended — which would hand back the very
-    // slot the attach is about to claim. create() only STARTS the attach (the
-    // iframe still has to connect and reach ttyd), so a release anywhere in
-    // this window reliably wins that race and the create falls back to a cold
-    // start: precisely the case pre-warming exists for.
-    const warmed = warmedDir;
-    warmedDir = null;
-    const ok = await props.store.create(name, isUngrouped() ? "" : props.group.name);
-    if (ok) {
-      endAdd();
-      return;
-    }
-    // Refused — a taken name, say. The box stays open holding the text, so
-    // re-arm the slot for the retry, or for the cancel that follows.
-    warmedDir = warmed;
   };
 
   // ---- project actions ----
@@ -347,18 +295,6 @@ export const ProjectGroup: Component<{
               />
             )}
           </For>
-          <Show when={adding()}>
-            <input
-              ref={addInput}
-              class="tl-add-input"
-              placeholder="new session name…"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void commitAdd();
-                else if (e.key === "Escape") endAdd();
-              }}
-              onBlur={endAdd}
-            />
-          </Show>
         </div>
       </Show>
     </div>

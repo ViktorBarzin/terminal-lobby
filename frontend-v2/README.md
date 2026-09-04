@@ -167,6 +167,11 @@ src/
                          plus lensTarget(), the one answer for "whose account
                          is this tab looking at": it makes a session open
                          WATCHING and namespaces the Watch choice per target
+    models.ts            Which model a new session starts on. Applied as
+                         `/model <name>` down the prompt channel rather than as
+                         a launch flag: a per-model command key would miss the
+                         pre-warm pool and give up Claude's ~2.4s boot on every
+                         model but the default
     new-commands.ts      Which new-session commands this box can actually run:
                          GET /new-commands is tmux-user-attach --probe run in
                          the session's own login shell, so a key with nothing
@@ -309,6 +314,11 @@ src/
     drafts.ts            Per-browser composer drafts (tl:session-drafts:v1): the
                          unsent text AND its attachment tray, pruned to the live
                          session list the way visits.ts prunes
+    prompt-line.ts       Per-browser first-lines (tl:session-prompt-line:v1):
+                         what a card reads between being created and Claude's
+                         summary landing. Deliberately not stamped as @title —
+                         the auto-title rule only fires while @title is unset,
+                         so stamping it would freeze the placeholder in place
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
     device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
                          terminal flow control (tl-flow-control — the iframe
@@ -352,7 +362,13 @@ src/
                          sidebar header the three a list screen can answer for.
                          Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
-    CreateSessionRow.tsx New-session input + the Claude/Codex/shell picker
+    NewSessionComposer.tsx
+                         The new-session composer: a prompt field plus the three
+                         choices a create makes — project, command, model. What
+                         you type becomes the session's first prompt; the name
+                         is a minted id and the title is Claude's own summary of
+                         the conversation. Choosing `shell` turns it back into a
+                         name box, because a shell has no prompt to receive
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
@@ -376,7 +392,14 @@ src/
                          document chip, or the path when nothing can serve it —
                          and MessageSegments, which substitutes in place
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
-    Composer.tsx         Prompt input + Send↔Stop morph + mobile submit split
+    Composer.tsx         The LIVE session's composer: the permission panel,
+                         queued-prompt chips, the mode chip, the context meter
+                         and Stop, docked around PromptField
+    PromptField.tsx      The writing surface both composers share: multi-line
+                         with Enter to send and Shift+Enter for a newline, `/`
+                         and `@` completion, the attachment tray, the unsent
+                         draft, ↑ history, and the mobile input attributes that
+                         restore QuickType and swipe typing
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
                          staleness in settled turns, category breakdown).
                          Nothing runs the command — no reading, no chip

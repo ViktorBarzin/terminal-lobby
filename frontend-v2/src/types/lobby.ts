@@ -1,3 +1,5 @@
+import { isSessionId } from "../lib/session-id";
+
 /**
  * Lobby wire types — mirror the tmux-api Go shapes EXACTLY (tmux-api/main.go
  * `Session`, tmux-api/layout.go `Layout`/`Project`/`DockState`). Field names are
@@ -119,16 +121,31 @@ export const LAYOUT_VERSION = 1;
  *  in here. */
 export const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 
+/** What an untitled session with a minted id reads as. */
+export const NEW_SESSION_LABEL = "New session";
+
 /**
- * What to SHOW for a session: its title when it has one, otherwise its name.
+ * What to SHOW for a session: its title, or what stands in for one.
  *
  * Every user-facing surface goes through this — cards, the tab title, the
  * command palette, the dock, push bodies, confirmations, aria-labels. The name
  * still travels underneath as the identifier; it is only the display that
  * changes.
+ *
+ * With no title, what shows depends on whether the name says anything. A
+ * minted id (ADR-0019) does not, so `New session` is shown instead: it is the
+ * honest description of a session whose summary has not landed yet, and twelve
+ * random characters are worse than saying nothing. A name that was never
+ * minted here still reads — sessions from before the migration, a shell
+ * somebody named by hand, and t3-bridge's cwd-derived names.
+ *
+ * The line a session was created with is NOT read here. The store fills it into
+ * `title` as the poll lands (store/prompt-line.ts), so every surface that shows
+ * a title shows it, and this stays a pure function of the wire shape.
  */
 export function sessionLabel(s: Pick<Session, "name" | "title">): string {
-  return s.title && s.title.length > 0 ? s.title : s.name;
+  if (s.title && s.title.length > 0) return s.title;
+  return isSessionId(s.name) ? NEW_SESSION_LABEL : s.name;
 }
 
 export function emptyLayout(): Layout {

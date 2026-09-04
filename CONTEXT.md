@@ -280,6 +280,28 @@ _Avoid_: remove, delete
 
 ### The text view
 
+**Prompt field**:
+The surface a prompt is written on: multi-line, Enter to send and Shift+Enter
+for a newline, `/` and `@` completion, an attachment **tray**, and an unsent
+draft kept per browser. One component, mounted by both composers.
+_Avoid_: input box, message box
+
+**Composer**:
+The prompt field for a LIVE Session, with the things that only mean something
+once there is a session to talk to around it — the permission panel, the
+prompts Claude has queued, the permission-mode chip, the context meter and
+Stop.
+_Avoid_: chat box, prompt bar
+
+**New-session composer**:
+The prompt field for a session that does not exist yet, shown wherever nothing
+is selected and on a phone as the landing view. You type what you want to do,
+press Enter, and the session is created with your text as its first prompt.
+Three choices sit under it: which **project** it lands in, which command runs,
+and which model. Choosing a plain shell turns it back into a name box, because
+a shell has no prompt to receive.
+_Avoid_: create row, new-session form, session wizard
+
 **Text view**:
 The structured rendering of a Session, read from its Claude Code transcript
 rather than its pty — the other of the two views the session bar switches

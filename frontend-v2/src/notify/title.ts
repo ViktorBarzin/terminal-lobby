@@ -18,6 +18,7 @@
  * green tick so both badges clear together. The bare default (every `done` is
  * unseen) is what a caller without a visit store gets.
  */
+import { sessionLabel } from "../types/lobby";
 
 export type TitleSession = {
   name: string;
@@ -76,14 +77,12 @@ export function composeTitle(p: TitleParts): string {
     unseenDone: p.sessions.filter(isUnseen).length,
   };
   const badge = titleBadge(counts);
-  // The tab speaks in titles like every other surface. Both the attention latch
-  // and the body look the session up so a titled one reads as its title; a
-  // session with no title, or one the poll has not caught up with, falls back
-  // to its name exactly as before.
-  const labelFor = (name: string): string => {
-    const s = p.sessions.find((x) => x.name === name);
-    return s?.title || name;
-  };
+  // The tab speaks in titles like every other surface, through the one function
+  // that decides what an untitled session reads as (types/lobby.ts). A session
+  // the poll has not caught up with is looked up as a bare name, which is
+  // exactly the shape sessionLabel takes.
+  const labelFor = (name: string): string =>
+    sessionLabel(p.sessions.find((x) => x.name === name) ?? { name });
   const attention = p.attentionSession ? "● " + labelFor(p.attentionSession) + " " : "";
   const active =
     p.activeSession != null
