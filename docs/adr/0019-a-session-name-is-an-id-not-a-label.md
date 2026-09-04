@@ -56,7 +56,7 @@ identity model, not two.
 - `tmux ls` from a shell becomes a machine listing. A `tls` alias
   (`tmux ls -F '#{session_name}  #{@title}'`) ships in
   `infra/playbooks/devvm.yml` for every user, and plain `tmux ls` still works.
-  This is the real cost of the decision, and it is the property the 2026-08-16
+  This is the main cost of the decision, and it is the property the 2026-08-16
   design was protecting.
 - The machinery that existed to move a name retires: the `slug` package and its
   Go/TypeScript mirror with `vectors.json`, `nameForTitle`, `fallbackName`,
