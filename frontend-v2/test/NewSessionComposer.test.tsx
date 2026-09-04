@@ -489,7 +489,10 @@ describe("<NewSessionComposer> — the command it runs", () => {
     await m.store.refresh();
     const sel = pick(m.container, "Command for new session");
     expect(option(sel, "codex").textContent).toMatch(/not installed/i);
-    expect(option(sel, "claude").textContent).toBe("Claude");
+    // The runnable one says what it does and nothing more: the composer's
+    // controls carry their own noun (COMMAND_PHRASES), and a suffix here would
+    // mean the box was offering something it cannot start.
+    expect(option(sel, "claude").textContent).toBe("run Claude");
     m.store.dispose();
   });
 
