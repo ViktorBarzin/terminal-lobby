@@ -41,15 +41,20 @@
  *     it had not. Both are the browser's and xterm's own behaviour, and xterm
  *     is mocked here, so the paste chord is pinned by the value the handler
  *     returns plus a pty capture on the deployed site.
- *   - links, pinch-to-zoom and the held-key overlay, none of which is wired
- *     into the component yet.
+ *   - whether a real two-finger pinch changes real glyph sizes. Section 19
+ *     drives both front ends and reads back the size xterm was ASKED for; the
+ *     cell metrics that would prove the screen changed need layout, and the
+ *     WebKit half has no instrument in this homelab at all.
+ *   - links and the held-key overlay, neither of which is wired into the
+ *     component yet.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { FONT_SIZE_KEY, PREFS_KEY } from "../src/store/prefs";
+import { FONT_SIZE_KEY, PREFS_DIRTY_KEY, PREFS_KEY } from "../src/store/prefs";
+import { FONT_READOUT_HIDE_MS } from "../src/terminal/font";
 import { toasts, type PushToast } from "../src/store/toast";
 import type { TerminalReport } from "../src/diagnostics/status";
 import { HELD_ENTER_MESSAGE, MIRROR_FIELD_ATTRIBUTES } from "../src/terminal/mirror";
@@ -454,6 +459,12 @@ interface Mounted {
   bar(): HTMLElement;
   /** Nothing mounted, which is what a fine pointer and `input.bar: off` give. */
   noMirror(): boolean;
+  /**
+   * The "Aa NNpx" readout a pinch draws, or null while none is on screen.
+   * Scoped to THIS render for the same reason `mirror()` is: a document query
+   * would find another mounted terminal's pill.
+   */
+  pill(): HTMLElement | null;
   unmount(): void;
 }
 
@@ -519,6 +530,7 @@ async function mount(
       return el;
     },
     noMirror: () => field() === null,
+    pill: () => r.container.querySelector<HTMLElement>(".tl-size-pill"),
     unmount: () => r.unmount(),
   };
 }
@@ -4578,5 +4590,739 @@ describe("attention (term.html:5676-5781)", () => {
     };
     output(m);
     expect(m.attention).toEqual(["output", "bell"]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 19. Two fingers set the font size (term.html:7758-7965)
+ * ------------------------------------------------------------------ */
+
+/**
+ * `terminal/font.ts` has held this gesture's whole arithmetic since pass 1 and
+ * had never been called: the classification, the 7%-per-step ladder, the
+ * page-scale gate and both front-end contracts were green against nothing. So
+ * what is checked here is the wiring — which listeners exist, on which node,
+ * with which options, what a decision is turned into, and which of the two
+ * front ends answered.
+ *
+ * WHAT THESE CANNOT REACH, and where it is settled instead. jsdom has no
+ * layout, no touch hardware, no GestureEvent and no vibration motor, so a real
+ * two-finger pinch changing real glyph sizes is a device claim and belongs on
+ * the shared Android emulator (Chromium) and a real iPad (WebKit, for which
+ * this homelab has no instrument at all). `navigator.vibrate` is faked here, so
+ * what is under test is that the call is made under the same rule term.html
+ * makes it under, not that anything buzzed. And `term.options.fontSize` is
+ * recorded by the fake rather than measured off a canvas: the cell metrics that
+ * would prove a size change are exactly what jsdom does not have.
+ */
+describe("pinch to font size (term.html:7758-7965)", () => {
+  /** Two fingers this far apart, along x, centred on the same y. */
+  const SPAN0 = 100;
+  /** The default size every case starts from (`PREF_DEFAULTS.fontSize`). */
+  const BASE = 15;
+
+  interface Finger {
+    id: number;
+    x: number;
+    y: number;
+    /** Overridden only by the off-surface case. */
+    target?: EventTarget;
+  }
+
+  /**
+   * One touch event for the PINCH recognizer, which reads three fields the
+   * touch scroller's `touchEvent` above does not: both coordinates, the
+   * `identifier` that ties a gesture to its two fingers, and the per-touch
+   * `target` the hit test reads.
+   *
+   * `cancelable` is the event's own flag and it carries the claim: font.ts
+   * refuses to consume a non-cancelable move, so the "native already owns this
+   * stream" arm can only be reached with one built `cancelable: false`.
+   */
+  function pinchEvent(
+    type: string,
+    fingers: readonly Finger[],
+    target: EventTarget,
+    cancelable = true,
+  ): Event {
+    const e = new Event(type, { bubbles: true, cancelable });
+    Object.defineProperty(e, "touches", {
+      value: fingers.map((f) => ({
+        identifier: f.id,
+        clientX: f.x,
+        clientY: f.y,
+        target: f.target ?? target,
+      })),
+    });
+    return e;
+  }
+
+  /** Two fingers `span` apart. */
+  const twoAt = (span: number, target?: EventTarget): Finger[] => [
+    { id: 1, x: 100, y: 200, target },
+    { id: 2, x: 100 + span, y: 200, target },
+  ];
+
+  const hostOf = (m: Mounted): HTMLElement => {
+    const el = m.term.host;
+    if (!el) throw new Error("the terminal was never opened");
+    return el;
+  };
+
+  /**
+   * A pinch: one finger down, a second landing `SPAN0` away — which is the
+   * event that arms the gesture — then one two-finger move per span given.
+   *
+   * The move events come back so a case can read `defaultPrevented` off them,
+   * because on the Chromium front end that consumption IS the claim.
+   */
+  function pinch(
+    m: Mounted,
+    spans: readonly number[],
+    opts: { cancelable?: boolean; span0?: number; onSurface?: boolean } = {},
+  ): Event[] {
+    const host = hostOf(m);
+    const target = opts.onSurface === false ? document.body : host;
+    const first = twoAt(0, target)[0];
+    if (!first) throw new Error("unreachable");
+    host.dispatchEvent(pinchEvent("touchstart", [first], target));
+    host.dispatchEvent(
+      pinchEvent("touchstart", twoAt(opts.span0 ?? SPAN0, target), target),
+    );
+    const moves: Event[] = [];
+    for (const span of spans) {
+      const e = pinchEvent("touchmove", twoAt(span, target), target, opts.cancelable);
+      host.dispatchEvent(e);
+      moves.push(e);
+    }
+    return moves;
+  }
+
+  /** Both fingers up, which is what ends a gesture and fades the readout. */
+  const lift = (m: Mounted): void => {
+    hostOf(m).dispatchEvent(pinchEvent("touchend", [], hostOf(m)));
+  };
+
+  /** The spans that put a claimed gesture at `ratio`, given SPAN0. */
+  const at = (ratio: number): number => SPAN0 * ratio;
+
+  /**
+   * The three moves a Chromium claim costs: two below the classify threshold at
+   * a constant span, then the one that both classifies and steps. Every span is
+   * the same ratio, so the classification is decided by the MOVE COUNT and the
+   * step by the ratio, which is the shape font.ts describes.
+   */
+  const claimAt = (ratio: number): number[] => [at(ratio), at(ratio), at(ratio)];
+
+  /**
+   * A WebKit GestureEvent, whose `scale` is already the cumulative span ratio.
+   * `GestureEvent` does not exist in jsdom (or in Chromium), which is the whole
+   * reason the component reads `scale` off a plain Event.
+   */
+  function gestureEvent(type: string, scale: number, cancelable = true): Event {
+    const e = new Event(type, { bubbles: true, cancelable });
+    Object.defineProperty(e, "scale", { value: scale });
+    return e;
+  }
+
+  /** A whole WebKit pinch: start, one change per scale, then the end. */
+  function gesture(m: Mounted, scales: readonly number[]): Event[] {
+    const host = hostOf(m);
+    const events = [gestureEvent("gesturestart", 1)];
+    for (const s of scales) events.push(gestureEvent("gesturechange", s));
+    for (const e of events) host.dispatchEvent(e);
+    return events;
+  }
+
+  /** Every document listener registered while this is installed. */
+  interface Registered {
+    type: string;
+    capture: boolean;
+    passive: boolean;
+  }
+  function watchDocListeners(): { seen: Registered[]; restore: () => void } {
+    const real = document.addEventListener.bind(document);
+    const seen: Registered[] = [];
+    const spy = (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void => {
+      const bag = typeof options === "object" && options !== null ? options : {};
+      seen.push({
+        type,
+        capture: options === true || bag.capture === true,
+        passive: bag.passive === true,
+      });
+      real(type, listener, options);
+    };
+    document.addEventListener = spy as typeof document.addEventListener;
+    return {
+      seen,
+      restore: () => {
+        document.addEventListener = real as typeof document.addEventListener;
+      },
+    };
+  }
+
+  /** The pinch's own listener types, in the order they went on. */
+  const pinchTypes = (seen: readonly Registered[]): string[] =>
+    seen
+      .filter((r) =>
+        ["touchstart", "touchmove", "touchend", "touchcancel", "gesturestart", "gesturechange", "gestureend"].includes(
+          r.type,
+        ),
+      )
+      .map((r) => r.type);
+
+  let restorePointer: (() => void) | null = null;
+  let listeners: { seen: Registered[]; restore: () => void } | null = null;
+  /** Every `navigator.vibrate` pattern the component asked for, in order. */
+  let buzzes: (number | number[])[] = [];
+
+  beforeEach(() => {
+    buzzes = [];
+    Object.defineProperty(navigator, "vibrate", {
+      configurable: true,
+      value: (pattern: number | number[]): boolean => {
+        buzzes.push(pattern);
+        return true;
+      },
+    });
+  });
+
+  afterEach(() => {
+    restorePointer?.();
+    restorePointer = null;
+    listeners?.restore();
+    listeners = null;
+    Reflect.deleteProperty(navigator, "vibrate");
+    Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  /** A phone: the coarse-pointer gate open, which is where the pinch exists. */
+  async function onTouch(): Promise<Mounted> {
+    restorePointer = fakePointer(true);
+    return mountOpen();
+  }
+
+  /** `visualViewport.scale`, which is the page's own pinch-zoom level. */
+  const withPageScale = (scale: number): void => {
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        scale,
+        // The layout height exactly, so this fake says nothing about a soft
+        // keyboard — that reserve is section 8's claim, not this one's.
+        height: window.innerHeight,
+        offsetTop: 0,
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    });
+  };
+
+  /**
+   * THE GATE, which is the coarse-pointer one: term.html's whole pinch block
+   * sits inside `if (isCoarsePointer)` (:6478 to :7966), so a mouse gets no
+   * recognizer at all and a touchscreen laptop keeps native two-finger zoom.
+   */
+  it("registers nothing where the primary pointer is not a finger", async () => {
+    restorePointer = fakePointer(false);
+    listeners = watchDocListeners();
+    const m = await mountOpen();
+    expect(pinchTypes(listeners.seen)).toEqual([]);
+    pinch(m, claimAt(1.3));
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /**
+   * BOTH FRONT ENDS ARE REGISTERED, which is the one deliberate divergence from
+   * term.html: that page picks by user-agent sniff (:3256-3258) and registers
+   * one set. Neither sniff matches jsdom, so under one nothing here would be
+   * reachable by a test at all — and a UA string is a guess about an engine,
+   * where the arriving event is the engine answering for itself.
+   *
+   * The OPTIONS are part of the claim. The standing three are capture+passive
+   * because a standing non-passive touch listener taxes every one-finger
+   * scroll's latency (term.html:6381-6400); the GestureEvent three are
+   * non-passive because `preventDefault` at `gesturestart` IS the claim there.
+   */
+  it("registers the standing touch trio and the GestureEvent trio", async () => {
+    restorePointer = fakePointer(true);
+    listeners = watchDocListeners();
+    await mountOpen();
+    const pinchOnes = listeners.seen.filter((r) =>
+      ["touchstart", "touchend", "touchcancel", "gesturestart", "gesturechange", "gestureend"].includes(r.type),
+    );
+    expect(pinchOnes).toEqual([
+      { type: "touchstart", capture: true, passive: true },
+      { type: "touchend", capture: true, passive: true },
+      { type: "touchcancel", capture: true, passive: true },
+      { type: "gesturestart", capture: false, passive: false },
+      { type: "gesturechange", capture: false, passive: false },
+      { type: "gestureend", capture: false, passive: false },
+    ]);
+  });
+
+  /**
+   * THE BLOCKING LISTENER IS LAZY, which the page's registry calls
+   * probe-validated and not negotiable (:6381-6400): the non-passive touchmove
+   * goes on when the second finger lands (:6426) and comes off at the last lift
+   * (:6434), so a one-finger sequence traverses zero blocking listeners.
+   */
+  it("attaches the non-passive touchmove only while two fingers are down", async () => {
+    restorePointer = fakePointer(true);
+    listeners = watchDocListeners();
+    const m = await mountOpen();
+    const host = hostOf(m);
+    expect(pinchTypes(listeners.seen)).not.toContain("touchmove");
+
+    const one = twoAt(0)[0];
+    if (!one) throw new Error("unreachable");
+    host.dispatchEvent(pinchEvent("touchstart", [one], host));
+    expect(pinchTypes(listeners.seen)).not.toContain("touchmove");
+
+    host.dispatchEvent(pinchEvent("touchstart", twoAt(SPAN0), host));
+    expect(listeners.seen.filter((r) => r.type === "touchmove")).toEqual([
+      { type: "touchmove", capture: true, passive: false },
+    ]);
+
+    // The last lift takes it off, and a later two-finger start puts one back —
+    // one registration, not two, because the attach is idempotent.
+    host.dispatchEvent(pinchEvent("touchend", [], host));
+    host.dispatchEvent(pinchEvent("touchstart", twoAt(SPAN0), host));
+    host.dispatchEvent(pinchEvent("touchstart", twoAt(SPAN0), host));
+    expect(listeners.seen.filter((r) => r.type === "touchmove")).toHaveLength(2);
+  });
+
+  /**
+   * THE CLAIM IS THE CONSUMPTION, from move 1, with the pinch-or-pan question
+   * deferred to move 3. Chrome's cancelable-touchmove window is only ~1-3
+   * moves, so a recognizer that waited to be sure before claiming would find
+   * the stream already committed to native scrolling — the 2026-07-11
+   * measurement font.ts refuses to let anyone simplify away.
+   */
+  it("consumes every two-finger move from the first, before it has classified", async () => {
+    const m = await onTouch();
+    const moves = pinch(m, [at(1), at(1)]);
+    expect(moves.map((e) => e.defaultPrevented)).toEqual([true, true]);
+    // Nothing has been claimed yet, so nothing has been applied either.
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /**
+   * A SPAN HELD CONSTANT IS A TWO-FINGER PAN, released at the classify move so
+   * native scrolling resumes. The release costs the ~7.5px of centroid travel
+   * the classification consumed, which the page declares rather than hides.
+   */
+  it("releases a two-finger pan at the classify move and never claims again", async () => {
+    const m = await onTouch();
+    const moves = pinch(m, [at(1), at(1), at(1), at(1.3), at(1.3)]);
+    // Moves 1-3 were consumed (3 is the release itself); 4 and 5 are native's.
+    expect(moves.map((e) => e.defaultPrevented)).toEqual([true, true, true, false, false]);
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /**
+   * THE LADDER: one step per 7% of span, truncated toward zero so the size
+   * changes only once the fingers have travelled a whole step.
+   *
+   * The 0.93 row is font.ts's documented asymmetry rather than an oddity worth
+   * fixing: `(0.93 − 1) / 0.07` is −0.9999999999999992 in binary floating
+   * point, so a pinch IN by the same fraction that steps OUT does not step.
+   * term.html carries the identical expression and the identical edge, and
+   * matching it is the point.
+   */
+  it.each([
+    [1.07, 16],
+    [1.15, 17],
+    [1.3, 19],
+    [0.93, 15],
+    [0.86, 13],
+  ])("a claimed pinch to ratio %s puts the size at %i", async (ratio, size) => {
+    const m = await onTouch();
+    pinch(m, claimAt(ratio));
+    expect(m.term.options.fontSize).toBe(size);
+  });
+
+  /**
+   * A STEP FITS AT ONCE, and this is the one place the debounce would be wrong:
+   * fit.ts's owes list names `applyTermPrefs` (:9186-9189) among the four
+   * triggers that fit immediately, because the page masks the burst rather than
+   * thinning it. The pty hears the new geometry in the same tick.
+   */
+  it("fits and resizes the pty on the step rather than 120ms later", async () => {
+    const m = await onTouch();
+    const before = m.fit.fits;
+    const sent = resizes(m.socket()).length;
+    pinch(m, claimAt(1.3));
+    expect(m.fit.fits).toBe(before + 1);
+    expect(resizes(m.socket()).length).toBe(sent + 1);
+  });
+
+  /**
+   * THE READOUT, which is term.html's `#font-pill` (:7825-7843) drawn with this
+   * app's own `.tl-size-pill` — the same pill the text view's pinch uses, so
+   * the two gestures read identically. It appears with the claim and goes 220ms
+   * after the fingers lift, not on the lift itself.
+   */
+  it("shows the size it reached and takes it away 220ms after the lift", async () => {
+    const m = await onTouch();
+    expect(m.pill()).toBeNull();
+    pinch(m, claimAt(1.15));
+    expect(m.pill()?.textContent).toBe("Aa 17px");
+    lift(m);
+    // Still there: the fade is delayed, so a lift between two pinches does not
+    // flash the pill off and on.
+    expect(m.pill()?.textContent).toBe("Aa 17px");
+    vi.advanceTimersByTime(FONT_READOUT_HIDE_MS);
+    expect(m.pill()).toBeNull();
+  });
+
+  /**
+   * A STEP INSIDE THE HIDE WINDOW CANCELS IT, which is `showFontPill` clearing
+   * the timer (:7832-7833). Without it a second pinch would draw a pill that
+   * the first one's timer takes away underneath it.
+   */
+  it("keeps the readout when a second pinch starts inside the hide window", async () => {
+    const m = await onTouch();
+    pinch(m, claimAt(1.15));
+    lift(m);
+    vi.advanceTimersByTime(FONT_READOUT_HIDE_MS - 20);
+    pinch(m, claimAt(1.15));
+    vi.advanceTimersByTime(FONT_READOUT_HIDE_MS - 20);
+    expect(m.pill()).not.toBeNull();
+  });
+
+  /**
+   * THE HAPTIC IS PER COMMITTED STEP (term.html:9225, the `selection` grade at
+   * :3278-3282). Two applies inside one gesture buzz twice; a target the size
+   * is already at buzzes not at all, which is what keeps a pinch held against
+   * the 22px ceiling from ticking against the wall.
+   */
+  it("buzzes once per committed step and goes quiet at the ceiling", async () => {
+    const m = await onTouch();
+    // 1.15 -> 17, then 1.3 -> 19: two committed steps inside one gesture.
+    pinch(m, [...claimAt(1.15), at(1.3)]);
+    expect(buzzes).toEqual([5, 5]);
+    lift(m);
+    // Far past the ceiling, then further still: one step to 22 and silence.
+    pinch(m, [...claimAt(3), at(4)]);
+    expect(m.term.options.fontSize).toBe(22);
+    expect(buzzes).toEqual([5, 5, 5]);
+  });
+
+  /**
+   * The roamed `gestures.haptics` flag, which term.html reads live inside
+   * `haptic()` (:3283-3287) rather than at boot. It is not in `coercePrefs`'
+   * typed view — prefs.ts carries the seven touch flags through untouched — so
+   * the component reads it off the raw document, and this is what says so.
+   */
+  it("makes no vibration call when the roamed haptics flag is off", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ gestures: { haptics: false } }));
+    const m = await onTouch();
+    pinch(m, claimAt(1.15));
+    expect(m.term.options.fontSize).toBe(17);
+    expect(buzzes).toEqual([]);
+  });
+
+  /**
+   * THE SIZE PERSISTS, the way `setPrefs` persists one (:2997-3018): the roamed
+   * document, the legacy device key the A−/A+ stepper has always written
+   * (`setFontSize`, :2682-2684), and the dirty marker that makes the next boot
+   * push this doc up instead of adopting the server's.
+   */
+  it("writes the roamed doc, the legacy key and the dirty marker", async () => {
+    const m = await onTouch();
+    pinch(m, claimAt(1.15));
+    const doc: unknown = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null");
+    expect(doc).toMatchObject({ fontSize: 17 });
+    expect(localStorage.getItem(FONT_SIZE_KEY)).toBe("17");
+    expect(localStorage.getItem(PREFS_DIRTY_KEY)).not.toBeNull();
+  });
+
+  /**
+   * A WRITE KEEPS WHAT THIS SIDE DOES NOT TYPE, because it goes through the
+   * store's own `composeDoc`: the six other touch flags, `input.bar`, and
+   * anything a newer build put in the document. Losing them here would turn
+   * off long-press and the input bar on every device that pinched.
+   */
+  it("leaves the subkeys this side does not type alone", async () => {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ gestures: { keyRepeat: false, haptics: true }, input: { bar: "on" } }),
+    );
+    const m = await onTouch();
+    pinch(m, claimAt(1.15));
+    const doc: unknown = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null");
+    expect(doc).toMatchObject({
+      fontSize: 17,
+      gestures: { keyRepeat: false, haptics: true },
+      input: { bar: "on" },
+    });
+  });
+
+  /**
+   * THE BASE IS THE SIZE ON SCREEN, so a second gesture steps from where the
+   * first one left off rather than from the size the terminal booted at.
+   */
+  it("steps the second gesture from the size the first one reached", async () => {
+    const m = await onTouch();
+    pinch(m, claimAt(1.07));
+    lift(m);
+    pinch(m, claimAt(1.07));
+    expect(m.term.options.fontSize).toBe(BASE + 2);
+  });
+
+  /**
+   * A PINCH ON AN ALREADY-ZOOMED PAGE BELONGS TO THE BROWSER. Claiming it there
+   * takes away the only gesture that zooms back out, which is why font.ts calls
+   * this its standing regression guard. Nothing is consumed, so native pinch
+   * survives.
+   */
+  it("stands down while the page itself is zoomed", async () => {
+    withPageScale(1.5);
+    const m = await onTouch();
+    const moves = pinch(m, claimAt(1.3));
+    expect(moves.some((e) => e.defaultPrevented)).toBe(false);
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /** A viewport reporting 1 with float noise is not a zoomed page. */
+  it("claims at a page scale of 1 reported with float noise", async () => {
+    withPageScale(1.0009);
+    const m = await onTouch();
+    pinch(m, claimAt(1.3));
+    expect(m.term.options.fontSize).toBe(19);
+  });
+
+  /**
+   * FINGERS OFF THE TERMINAL ARE NOT THIS TERMINAL'S GESTURE. The listeners are
+   * on the document, where the page puts them (:6445-6450), so the hit test is
+   * the whole of what scopes them — and the lobby keeps every visited session
+   * mounted, so a hidden terminal's recognizer is listening too.
+   */
+  it("ignores a pinch whose fingers did not land on the terminal", async () => {
+    const m = await onTouch();
+    const moves = pinch(m, claimAt(1.3), { onSurface: false });
+    expect(moves.some((e) => e.defaultPrevented)).toBe(false);
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /**
+   * THE DEVICE FLAG (`tl:gesture-pinch-font:v1`, :3181-3184), default ON and
+   * read per gesture: `"off"` stands the recognizer down while leaving native
+   * pinch-zoom intact.
+   */
+  it("stands down when the device flag is off, and comes back when it is not", async () => {
+    localStorage.setItem("tl:gesture-pinch-font:v1", "off");
+    const m = await onTouch();
+    pinch(m, claimAt(1.3));
+    expect(m.term.options.fontSize).toBe(BASE);
+    lift(m);
+    // Read per gesture, so a flip needs no reload.
+    localStorage.setItem("tl:gesture-pinch-font:v1", "on");
+    pinch(m, claimAt(1.3));
+    expect(m.term.options.fontSize).toBe(19);
+  });
+
+  /**
+   * THE MASTER KILL also stops the blocking listener from being attached at
+   * all, which is where the registry enforces it (:6425-6426). A device whose
+   * gestures are killed pays nothing for this recognizer.
+   */
+  it("attaches no blocking listener while the gestures master kill is set", async () => {
+    localStorage.setItem("tl-gestures", "off");
+    restorePointer = fakePointer(true);
+    listeners = watchDocListeners();
+    const m = await mountOpen();
+    pinch(m, claimAt(1.3));
+    expect(pinchTypes(listeners.seen)).not.toContain("touchmove");
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /**
+   * A THIRD FINGER ABORTS AND NEVER RESUMES, so a pinch cannot be finished with
+   * a different pair than it started with. The lift of the third finger leaves
+   * the gesture aborted rather than reviving it.
+   */
+  it("abandons a pinch a third finger joined", async () => {
+    const m = await onTouch();
+    const host = hostOf(m);
+    const one = twoAt(0)[0];
+    if (!one) throw new Error("unreachable");
+    host.dispatchEvent(pinchEvent("touchstart", [one], host));
+    host.dispatchEvent(pinchEvent("touchstart", twoAt(SPAN0), host));
+    host.dispatchEvent(
+      pinchEvent("touchstart", [...twoAt(SPAN0), { id: 3, x: 400, y: 200 }], host),
+    );
+    // Back to two fingers, then a real pinch: the gesture stays dead.
+    host.dispatchEvent(pinchEvent("touchend", twoAt(SPAN0), host));
+    for (const span of claimAt(1.3)) {
+      host.dispatchEvent(pinchEvent("touchmove", twoAt(span), host));
+    }
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /**
+   * A NON-CANCELABLE MOVE MEANS NATIVE ALREADY OWNS THE STREAM — a finger
+   * joining a scroll already in flight. term.html declares that leak rather
+   * than fighting it: panic-zooming mid-scroll stays native, and nothing
+   * preventDefaults an event where it would be a no-op plus a console warning.
+   */
+  it("hands a stream native already owns straight back", async () => {
+    const m = await onTouch();
+    const moves = pinch(m, claimAt(1.3), { cancelable: false });
+    expect(moves.some((e) => e.defaultPrevented)).toBe(false);
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /**
+   * WEBKIT'S FRONT END, where the GestureEvent IS the pinch signal: nothing to
+   * classify, `scale` already the cumulative ratio, and the `preventDefault` at
+   * `gesturestart` is what suppresses native pinch-zoom for the whole gesture.
+   */
+  it("steps the size from a GestureEvent scale and holds the claim", async () => {
+    const m = await onTouch();
+    const events = gesture(m, [1.15]);
+    expect(events.map((e) => e.defaultPrevented)).toEqual([true, true]);
+    expect(m.term.options.fontSize).toBe(17);
+    expect(m.pill()?.textContent).toBe("Aa 17px");
+    hostOf(m).dispatchEvent(gestureEvent("gestureend", 1.15));
+    vi.advanceTimersByTime(FONT_READOUT_HIDE_MS);
+    expect(m.pill()).toBeNull();
+  });
+
+  /**
+   * THE 5% DEADZONE APPLIES ONLY UNTIL THE FIRST STEP LANDS. After that the
+   * size follows the scale back through it, so a pinch out and back returns to
+   * where it started instead of sticking at the far end.
+   */
+  it("follows the scale back through the deadzone once a step has landed", async () => {
+    const m = await onTouch();
+    gesture(m, [1.03]); // inside the deadzone: no step
+    expect(m.term.options.fontSize).toBe(BASE);
+    hostOf(m).dispatchEvent(gestureEvent("gesturechange", 1.15));
+    expect(m.term.options.fontSize).toBe(17);
+    hostOf(m).dispatchEvent(gestureEvent("gesturechange", 1.0));
+    expect(m.term.options.fontSize).toBe(BASE);
+  });
+
+  /**
+   * A THIRD FINGER FREEZES A WEBKIT GESTURE rather than releasing it, and that
+   * difference from Chromium is not an inconsistency: a claimed WebKit gesture
+   * cannot be released mid-flight without the page popping into native zoom, so
+   * stepping stops and the claim is held to `gestureend`.
+   */
+  it("freezes a claimed WebKit gesture on a third finger, holding the claim", async () => {
+    const m = await onTouch();
+    const host = hostOf(m);
+    gesture(m, [1.15]);
+    expect(m.term.options.fontSize).toBe(17);
+    // The finger count comes off the passive touch listeners, which is the only
+    // way a GestureEvent can know about it.
+    host.dispatchEvent(
+      pinchEvent("touchstart", [...twoAt(SPAN0), { id: 3, x: 400, y: 200 }], host),
+    );
+    const change = gestureEvent("gesturechange", 1.5);
+    host.dispatchEvent(change);
+    expect(change.defaultPrevented).toBe(true);
+    expect(m.term.options.fontSize).toBe(17);
+  });
+
+  /**
+   * ONE ENGINE, ONE FRONT END. WebKit fires both a GestureEvent and the touch
+   * events, so without this the two recognizers would step one pinch twice. The
+   * arriving `gesturestart` is what decides, and it decides for good: the
+   * blocking touchmove is not attached again either, so the platform that
+   * cannot use it stops paying for it.
+   */
+  it("stands the touch front end down once a GestureEvent has arrived", async () => {
+    restorePointer = fakePointer(true);
+    listeners = watchDocListeners();
+    const m = await mountOpen();
+    const host = hostOf(m);
+    gesture(m, [1.15]);
+    host.dispatchEvent(gestureEvent("gestureend", 1.15));
+    expect(m.term.options.fontSize).toBe(17);
+    const attached = listeners.seen.filter((r) => r.type === "touchmove").length;
+
+    const moves = pinch(m, claimAt(1.3));
+    expect(moves.some((e) => e.defaultPrevented)).toBe(false);
+    expect(m.term.options.fontSize).toBe(17);
+    expect(listeners.seen.filter((r) => r.type === "touchmove")).toHaveLength(attached);
+  });
+
+  /**
+   * THE REAL iOS ORDER, which is the sequence that would double-step the size
+   * if the arbitration were missing: WebKit fires both streams, with
+   * `gesturestart` landing after the second finger's `touchstart` and before
+   * the first two-finger `touchmove`.
+   *
+   * So the gesture front end has to stand the touch one down when it arrives,
+   * not only on the gestures after it: the touch recognizer is already armed by
+   * then, from the same two fingers, and its own base and ratio would step the
+   * size a second time from the same pinch.
+   */
+  it("lets only the gesture front end step a pinch WebKit reports twice", async () => {
+    const m = await onTouch();
+    const host = hostOf(m);
+    const one = twoAt(0)[0];
+    if (!one) throw new Error("unreachable");
+    host.dispatchEvent(pinchEvent("touchstart", [one], host));
+    host.dispatchEvent(pinchEvent("touchstart", twoAt(SPAN0), host));
+    host.dispatchEvent(gestureEvent("gesturestart", 1));
+    host.dispatchEvent(gestureEvent("gesturechange", 1.15));
+    expect(m.term.options.fontSize).toBe(17);
+
+    // The same fingers, spread far enough that the touch front end would
+    // claim on its third move and step to 19 from its own base of 15.
+    const moves = [at(1.3), at(1.3), at(1.3)].map((span) => {
+      const e = pinchEvent("touchmove", twoAt(span), host);
+      host.dispatchEvent(e);
+      return e;
+    });
+    expect(moves.some((e) => e.defaultPrevented)).toBe(false);
+    expect(m.term.options.fontSize).toBe(17);
+  });
+
+  /**
+   * PAGEHIDE IS THE RESET, which is the registry's `resetAll` (:6439-6444) and
+   * the one thing font.ts routes to `pinchReset` rather than to the end
+   * handler: it drops the state and takes the readout away even mid-gesture.
+   */
+  it("drops a gesture in flight on pagehide", async () => {
+    const m = await onTouch();
+    pinch(m, claimAt(1.15));
+    expect(m.pill()).not.toBeNull();
+    window.dispatchEvent(new Event("pagehide"));
+    vi.advanceTimersByTime(FONT_READOUT_HIDE_MS);
+    expect(m.pill()).toBeNull();
+    // The dropped gesture cannot go on stepping.
+    for (const span of [at(1.3), at(1.3), at(1.3)]) {
+      hostOf(m).dispatchEvent(pinchEvent("touchmove", twoAt(span), hostOf(m)));
+    }
+    expect(m.term.options.fontSize).toBe(17);
+  });
+
+  /**
+   * THE LISTENERS COME OFF WITH THE COMPONENT. They are on the document, so
+   * they outlive this terminal's own DOM: left behind, they would go on
+   * hit-testing against a host nobody can see, and on a lobby that mounts and
+   * unmounts sessions they would accumulate one recognizer per visit.
+   */
+  it("removes its document listeners on unmount", async () => {
+    const m = await onTouch();
+    const host = hostOf(m);
+    m.unmount();
+    // The host is detached now, so the hit test would refuse anyway; what is
+    // under test is that nothing throws and nothing is applied.
+    document.body.appendChild(host);
+    pinch(m, claimAt(1.3));
+    host.dispatchEvent(gestureEvent("gesturestart", 1));
+    host.dispatchEvent(gestureEvent("gesturechange", 1.3));
+    expect(m.term.options.fontSize).toBe(BASE);
+    host.remove();
   });
 });
