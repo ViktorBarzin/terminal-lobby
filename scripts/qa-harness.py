@@ -220,8 +220,21 @@ RE_TITLE = re.compile(r"^sessions/([^/]+)/title$")
 RE_PROJECT_ID = re.compile(r"^projects/([^/]+)")
 
 
+# Sessions this run has been told, explicitly, that it may touch — added by
+# --allow-session and consulted everywhere is_qa() decides what is safe.
+#
+# The guard's rule was a NAME PREFIX: anything called qa-* is the fleet's own,
+# anything else is somebody's real work. Session names became opaque ids
+# (ADR-0019), so nothing the lobby creates can carry that prefix any more, and
+# the guard went from "protects real work" to "refuses everything" — including
+# refusing the attach that would create the session under test. The prefix still
+# holds for sessions the fleet names itself, so it stays; this is the deliberate
+# way to say "and this one too", by id, one at a time.
+ALLOWED: set[str] = set()
+
+
 def is_qa(name: str) -> bool:
-    return bool(QA_NAME.match(name or ""))
+    return bool(QA_NAME.match(name or "")) or (name or "") in ALLOWED
 
 
 def is_minted(name: str) -> bool:
@@ -882,12 +895,19 @@ def build_parser() -> argparse.ArgumentParser:
                         "routes neither there, so both 404 on the real site")
     p.add_argument("--no-restore", action="store_true",
                    help="do not snapshot/restore /layout and /prefs")
+    p.add_argument("--allow-session", action="append", default=[],
+                   metavar="NAME",
+                   help="also treat NAME as the fleet's own, on top of qa-*. "
+                        "Repeatable. Needed to exercise session CREATION at all, "
+                        "because a created session is now an opaque id and cannot "
+                        "carry the qa- prefix.")
     p.add_argument("--quiet", action="store_true")
     return p
 
 
 def main() -> None:
     args = build_parser().parse_args()
+    ALLOWED.update(args.allow_session)
 
     os.makedirs(args.scratch, exist_ok=True)
 
