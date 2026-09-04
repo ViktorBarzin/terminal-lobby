@@ -4,16 +4,20 @@ Viktor, 2026-09-04: *"let's work on text mode. let's get the / to trigger skill
 search so we can auto suggest skills to paste. I want to have special
 visualisation for skills to show the user that the skill is applied"*, then, on
 the phone: *"it appears but only when not starting the prompt. if it's in the
-middle of a prompt text then it doesn't show"*.
+middle of a prompt text then it doesn't show"*, and then: *"not all question
+tools work in text mode… it's a multi select prompt that can't be handled in
+text mode"*.
 
-Two halves. Getting to a skill from the composer, and seeing one in the
-transcript once it has loaded.
+Three parts. Getting to a skill from the composer, seeing one in the transcript
+once it has loaded, and answering a multi-question call without leaving for the
+Terminal.
 
 ```stats
 130 | entries the slash menu offers once the catalogue arrives
 95 | of them built into the page
 34 | skills of Viktor's own, from GET /commands/{session}
 220px | the menu's height, about four rows
+22.4% | of 1,045 question calls the text view hands to the Terminal
 340 | skill loads across 409 transcripts
 24 | of those the renderer does not recognise
 16,584 | median characters each of the 24 renders in full
@@ -188,6 +192,64 @@ for, and the strip raises questions the transcript does not: when a skill stops
 applying, what a chip does when tapped, and how many fit a 390px row. Nothing
 here forecloses it.
 
+## Answering a multi-question call
+
+The screenshot Viktor sent shows a 4-question call with the answer card reading
+*"Only the question on screen has reached here — answer them in the Terminal."*
+
+`multiSelect` itself works. `keysForQuestion` (`answer.logic.ts:129`) toggles
+with Down/Space and leaves with Enter, and `Partial` is set only when a call
+carries more than one question (`dialog.go:295`), so a single-question
+multi-select is answered from the card today. The shape that hands over is the
+multi-question one.
+
+| shape | share of 1,045 calls | answerable in text mode |
+|---|---|---|
+| one question, single-select | 73.0% | yes |
+| one question, multiSelect | 4.6% | yes |
+| more than one question | 22.4% | only once the record lands |
+
+Of all calls, 2 questions is 10.0%, 3 is 4.4% and 4 is 8.0%.
+
+The hand-over fires on `!recorded() && fromPane().partial`
+(`TextView.tsx:223`), so it is the window before the transcript record arrives.
+That window is not always short: measured 2026-08-28 over five consecutive calls
+in one session, two records landed 3 to 8 seconds after the dialog appeared and
+two were written only when the question was answered, 112 seconds later in one
+case. Waiting for the record is therefore not a fix.
+
+What the pane does carry is a progress signal. The tab bar draws `☐` for an
+unanswered question and `☒` for an answered one, and `tabHeaders`
+(`dialog.go:356`) already splits on both. `reviewScreen` (`dialog.go:322`)
+already recognises the final Submit step. So the card can walk the call from the
+pane one question at a time: answer what is on screen, re-read the pane, parse
+the question now drawn, repeat until the review screen, then Submit. The answer
+machinery already re-reads the pane between steps to confirm each one landed
+(`TextView.tsx:300`), so the missing piece is parsing that fresh pane into the
+next question rather than only checking it for expected text.
+
+```
+┌───────────────────────────────────────┐
+│ Claude needs answers          1 of 4  │
+│                                       │
+│ Both problems are live, but only the  │
+│ crowdsec OOM is critical. What order? │
+│                                       │
+│  1  Crowdsec first, then the GPU      │
+│  2  GPU first                         │
+│  3  Both at once                      │
+│                                       │
+│  ☒ Order  ☐ Done means  ☐ Levers  ☐…  │
+│                          [Next]       │
+└───────────────────────────────────────┘
+```
+
+The step counter comes from the glyphs rather than from a count the card keeps,
+so it cannot drift from what the terminal is actually showing. Every later
+question's options are genuinely undrawn until the walk reaches them, and the
+card says so by showing one at a time rather than listing four with three of
+them empty.
+
 ## Glossary changes
 
 `CONTEXT.md:252` defines a **Skill** as a directory under `~/.claude/skills/`
@@ -222,6 +284,9 @@ on a tool's name. A `skill` type joins the list.
    a body with no receipt before it.
 6. **The card.** A `skill` item type, its own row component, its own styling.
 7. **CONTEXT.md**, as above.
+8. **The multi-question walk.** `ParseDialog` reports which questions the tab
+   bar marks answered; the answer card walks a partial call off successive pane
+   reads and shows `n of N` from those glyphs.
 
 ## What this does not settle
 
@@ -230,6 +295,12 @@ two-character minimum before the menu opens mid-prompt is in the plan as a
 guess; `cd /im` matching `/implement` is the shape of case that would argue for
 three, and the corpus has no data on how often a person types a path into the
 composer.
+
+How often the multi-question hand-over actually fires is not measured. 22.4% of
+calls can reach it, and the transcript-lateness that decides the rest cannot be
+recovered from the corpus, because a record's timestamp is its event time rather
+than the moment it was flushed. The 2026-08-28 figures above come from watching
+five calls directly.
 
 Whether an iPhone PWA has a defect of its own beyond the index-0 guard is
 untested, and cannot be tested here — there is no iOS instrument on this box.
