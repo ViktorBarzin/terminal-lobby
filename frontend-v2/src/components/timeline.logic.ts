@@ -21,8 +21,16 @@ import {
  * Turn model (design): group by turnId when the backend supplies one; otherwise
  * synthesize turns at user-message boundaries (transcripts carry no turn id
  * today). A turn is "settled" once a turn_end event lands OR a later turn
- * begins; the running (last, unsettled) turn never folds and shows a working
- * row. Tool_use/tool_result are paired by toolId (T3's collapseKey).
+ * begins; the last, unsettled turn never folds and shows a live row.
+ * Tool_use/tool_result are paired by toolId (T3's collapseKey).
+ *
+ * An unsettled turn is not proof that anything is RUNNING. The turn ends on an
+ * assistant record with a terminal stop_reason, and Claude stopping to ask the
+ * reader something writes no such record until the answer arrives, so the live
+ * row has to work out for itself whether it is watching work or a wait (see
+ * WorkingRow.waiting). The case it still cannot tell apart is an abandoned turn
+ * — a session killed mid-call looks exactly like one thinking hard — which
+ * needs a signal the transcript does not carry.
  *
  * The folding rules follow t3code's MessagesTimeline.logic.ts (MIT, T3 Tools
  * Inc): the last assistant message of a settled turn stays visible as the
@@ -176,7 +184,15 @@ export interface WorkingRow {
   /** The call currently in flight, if the turn is inside one. */
   tool?: string;
   toolLabel?: string;
+  /** When the thing this row is about began: the call in flight, or the wait. */
   toolStartedAt?: number;
+  /**
+   * The turn is open but Claude is stopped, waiting for the reader: a question
+   * with no answer, a plan with no verdict, a permission request with no
+   * decision. The turn is genuinely unfinished — answering resumes it — so the
+   * row stays; what it says is that nothing is running.
+   */
+  waiting?: boolean;
   /** How much has happened in this turn so far. */
   steps: number;
 }
@@ -632,17 +648,44 @@ export function deriveRows(events: Event[]): TimelineRow[] {
       // turn honestly: the tool actually running, its elapsed time, the step
       // count (Viktor, 2026-08-28).
       //
-      // What is happening RIGHT NOW: the newest tool call that has not come
-      // back yet. The transcript records a tool_use the moment Claude emits it,
-      // so this is specific without any second source (design decision 6).
+      // What is happening RIGHT NOW: the newest thing in the turn that has not
+      // come back yet. The transcript records a tool_use the moment Claude
+      // emits it, so this is specific without any second source (design
+      // decision 6).
+      //
+      // Not all of those are work. A question, a plan put up for approval and a
+      // permission request are all Claude STOPPING and waiting for the reader,
+      // and they leave the turn open in exactly the same way — the assistant
+      // record carries stop_reason "tool_use" and the result is not written
+      // until somebody answers. Replaying the 357 session transcripts on this
+      // box on 2026-09-04 found 3,212 windows where the last turn was open and
+      // the transcript then went quiet for a minute or more, 1,562 hours in
+      // total, and 742 windows / 895 hours of that (57%) was one unanswered
+      // AskUserQuestion. The row said "Working…" with a running clock through
+      // all of it, which is the complaint (Viktor, 2026-09-04).
       let live: ToolRow | undefined;
+      let waitingFor: QuestionRow | PlanRow | PermissionRow | undefined;
       for (let i = work.length - 1; i >= 0; i--) {
         const r = work[i]!;
         if (r.kind === "tool" && !r.done) {
           live = r;
           break;
         }
+        if ((r.kind === "question" || r.kind === "plan") && r.pending) {
+          waitingFor = r;
+          break;
+        }
+        if (r.kind === "permission" && r.decision === undefined) {
+          waitingFor = r;
+          break;
+        }
       }
+      // The pane covers the window the transcript misses: Claude Code does not
+      // always write the AskUserQuestion record while its dialog is up (see
+      // askingFromPane). The answer card already docks off this reading, so the
+      // row above it has to agree with it.
+      const paneAsking = !live && !waitingFor && askingFromPane(turn.events) !== null;
+      const anchor = waitingFor?.at ?? live?.at;
       out.push({
         kind: "working",
         key: `working-${turn.key}`,
@@ -651,13 +694,9 @@ export function deriveRows(events: Event[]): TimelineRow[] {
         ...(turn.events[0]?.at !== undefined
           ? { startedAt: turn.events[0]!.at }
           : {}),
-        ...(live
-          ? {
-              tool: live.tool,
-              toolLabel: live.label,
-              ...(live.at !== undefined ? { toolStartedAt: live.at } : {}),
-            }
-          : {}),
+        ...(live ? { tool: live.tool, toolLabel: live.label } : {}),
+        ...(anchor !== undefined ? { toolStartedAt: anchor } : {}),
+        ...(waitingFor || paneAsking ? { waiting: true } : {}),
       });
     }
   });
@@ -786,7 +825,14 @@ export function pendingPermissions(events: Event[]): PendingPermission[] {
     }));
 }
 
-/** True while the last turn is still running (drives the Send↔Stop morph). */
+/**
+ * True while the last turn is still OPEN (drives the Send↔Stop morph).
+ *
+ * Open is not the same as working, and this is deliberately the wider of the
+ * two: a turn parked on a question is unfinished, and Stop is how a reader
+ * takes the dialog down. What the row says is the narrower question (see
+ * WorkingRow.waiting).
+ */
 export function sessionWorking(rows: TimelineRow[]): boolean {
   return rows.some((r) => r.kind === "working");
 }

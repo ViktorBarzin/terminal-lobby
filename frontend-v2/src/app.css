@@ -1473,6 +1473,15 @@ label.tl-set-row-label {
   background: var(--state-running);
   animation: tl-pulse 1.1s ease-in-out infinite;
 }
+/* The turn is open and nothing is running: Claude asked something and stopped.
+   It takes the awaiting colour the state dot and the permission row already use
+   for the same thing, and it holds still, since a pulse is what says work is
+   happening. */
+.tl-row-working[data-waiting="true"] .tl-working-dot {
+  background: var(--state-awaiting);
+  animation: none;
+  opacity: 1;
+}
 @keyframes tl-pulse {
   0%,
   100% {
