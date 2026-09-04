@@ -250,10 +250,18 @@ inside Settings and moved out on 2026-08-19: the lists are long enough that they
 need a tab each.
 
 **Skill**:
-A directory under a user's `~/.claude/skills/` containing a `SKILL.md`, loaded
-by that user's Claude sessions at start. Belongs to exactly one OS user; a
-second user gets it by **installing** a copy. May carry more than prose —
-scripts, agents, templates — which is why installing one is an act of trust.
+A named bundle of instructions a Claude session can invoke, usually a directory
+containing a `SKILL.md`. Most live under a user's `~/.claude/skills/` and belong
+to exactly one OS user, who a second user gets a copy from by **installing** it;
+a **bundled** skill ships with the CLI and belongs to nobody, so it is invoked
+the same way but is not on disk under that path and cannot be installed, edited
+or removed. A skill may carry more than prose — scripts, agents, templates —
+which is why installing one is an act of trust.
+
+Invoking a skill INJECTS its whole `SKILL.md` into the transcript, at that
+moment rather than at session start: 364 loads across this box's transcripts,
+median 3.1 kB and up to 23.3 kB, which the text view collapses to a card naming
+the skill (`sessionio/skill.go`).
 _Avoid_: plugin (that is the marketplace-installed kind, see below), command
 
 **Plugin**:
@@ -352,8 +360,8 @@ the view is the thing rendered)
 **Item type**:
 What a tool call *did*, independent of which tool did it: `file_read`,
 `file_change`, `command_execution`, `web_search`, `image_view`,
-`mcp_tool_call`, `dynamic_tool_call`. Every tool is classified into one on the
-way to the renderer, so the view never branches on a tool's name.
+`mcp_tool_call`, `skill`, `dynamic_tool_call`. Every tool is classified into one
+on the way to the renderer, so the view never branches on a tool's name.
 _Avoid_: tool kind, category
 
 **Work log**:

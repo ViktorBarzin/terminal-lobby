@@ -4090,6 +4090,33 @@ body.tl-kb-up {
 /* A send that stopped partway. The wording carries the whole state, so it is
    body text rather than an error banner: nothing is broken, an answer is simply
    half-delivered and the Terminal is where the rest of it lives. */
+/* The tab bar, as the card shows it: the same progress the terminal is drawing,
+   so `2 of 4` above can be checked against something. A filled box is a question
+   already answered — the card reads the count from those glyphs rather than from
+   its own tally (sessionio dialog.go tabAnswered). */
+.tl-qcard-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 8px;
+}
+.tl-qcard-tab {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+}
+.tl-qcard-tab[data-done="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.tl-qcard-tab[data-done="true"]::before {
+  content: "\2713";
+  margin-right: 4px;
+}
 .tl-qcard-stopped {
   flex: 1 1 auto;
   min-width: 0;

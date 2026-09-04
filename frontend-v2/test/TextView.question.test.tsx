@@ -175,7 +175,14 @@ describe("a question the transcript has not caught up with", () => {
     expect(v.optionByLabel("This one")!.dataset.chosen).toBe("true");
   });
 
-  it("reports a multi-question call rather than half-answering it", async () => {
+  // Superseded 2026-09-04. This asserted that a multi-question call read off the
+  // pane offered no Send at all and pointed at the Terminal, on the grounds that
+  // half a call cannot be planned. It can be WALKED, one question at a time: the
+  // pane draws the next question as each is answered and marks the tab bar, so
+  // the call is answerable without the transcript record — which for 22.4% of
+  // the 1,045 calls in this box's corpus is what stood between the reader and an
+  // answer, sometimes until the question had been answered elsewhere.
+  it("walks a multi-question call read off the pane", async () => {
     const v = mount([
       asking({
         questions: [
@@ -188,15 +195,72 @@ describe("a question the transcript has not caught up with", () => {
         ],
         headers: ["Fruit", "Drink"],
         count: 2,
+        answered: 0,
         partial: true,
       }),
     ]);
     await waitFor(() => expect(v.card()).not.toBeNull());
+    // Both headers, so the reader can see the shape of what is being asked.
     expect(v.container.textContent).toContain("Fruit");
     expect(v.container.textContent).toContain("Drink");
-    // No walk, no Send: the pane shows one question of two, and answering from
-    // half a call is how a wrong answer gets submitted.
-    expect(v.container.querySelector(".tl-qcard-send")).toBeNull();
+    // `n of N` comes from the tab bar's own glyphs, not from a count the card keeps.
+    expect(v.container.querySelector(".tl-qcard-step")!.textContent).toBe("1 of 2");
+    // The drawn question is answerable, and Send waits for a choice.
+    const send = v.container.querySelector(".tl-qcard-send") as HTMLButtonElement;
+    expect(send).not.toBeNull();
+    expect(send.disabled).toBe(true);
+    v.optionByLabel("Apple")!.click();
+    await waitFor(() =>
+      expect((v.container.querySelector(".tl-qcard-send") as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+    // No review step: the questions ahead have not been drawn, so there is
+    // nothing to review and each answer commits as it is given.
     expect(v.container.querySelector(".tl-qcard-next")).toBeNull();
+  });
+
+  it("says it is ready to submit once every box is filled", async () => {
+    const v = mount([
+      asking({
+        // The CLI's own Submit screen, which carries no options.
+        questions: [{ question: "Ready to submit your answers?", header: "", multiSelect: false, options: [] }],
+        headers: ["Fruit", "Drink"],
+        count: 2,
+        answered: 2,
+        partial: true,
+      }),
+    ]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.container.querySelector(".tl-qcard-step")!.textContent).toBe("ready to submit");
+    const send = v.container.querySelector(".tl-qcard-send") as HTMLButtonElement;
+    expect(send.textContent).toBe("Submit");
+    expect(send.disabled).toBe(false);
+  });
+
+  it("shows which questions the terminal has already answered", async () => {
+    const v = mount([
+      asking({
+        questions: [
+          {
+            question: "Pick one drink",
+            header: "",
+            multiSelect: false,
+            options: [{ label: "Tea", description: "" }],
+          },
+        ],
+        headers: ["Fruit", "Drink"],
+        count: 2,
+        answered: 1,
+        partial: true,
+      }),
+    ]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.container.querySelector(".tl-qcard-step")!.textContent).toBe("2 of 2");
+    const tabs = [...v.container.querySelectorAll(".tl-qcard-tab")];
+    expect(tabs.map((t) => [t.textContent, t.getAttribute("data-done")])).toEqual([
+      ["Fruit", "true"],
+      ["Drink", null],
+    ]);
   });
 });

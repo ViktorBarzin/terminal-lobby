@@ -201,6 +201,80 @@ export function planAnswer(questions: Question[], answers: DraftAnswer[]): Answe
   return steps;
 }
 
+/**
+ * One reading of a multi-question dialog off the pane.
+ *
+ * The same shape `askingFromPane` returns. It lives here because the pane walk
+ * plans from it, and the planner is pure so the walk is testable without a
+ * session (timeline.logic re-exports the type it builds).
+ */
+export interface PaneDialog {
+  questions: Question[];
+  headers: string[];
+  count: number;
+  /** How many questions the tab bar marks `☒`. */
+  answered: number;
+  partial: boolean;
+}
+
+/**
+ * What answers the ONE question a partial dialog is currently drawing.
+ *
+ * A multi-question call cannot be planned whole from the pane: only the question
+ * on screen has been drawn, and each next one appears as the one before it is
+ * answered. So the walk is one step at a time, and the step's expectation is the
+ * tab bar filling in the box of the question just left — `☒ Fruit`. Not the next
+ * question's text, which is exactly what is unknown here.
+ *
+ * At the review screen every box is filled and Enter commits, which leaves no
+ * dialog to check, the same way `planAnswer`'s own final submit does.
+ */
+export function planPaneStep(d: PaneDialog, a: DraftAnswer): AnswerStep[] {
+  if (d.answered >= d.count) {
+    return [{ batches: [["Enter"]], expect: "", what: "submitting the answers" }];
+  }
+  const q = d.questions[0];
+  if (!q) return [];
+  // The header whose box should fill. Absent when the tab bar could not be
+  // read, and then there is nothing to wait for — one question still goes in,
+  // and the walk stops after it either way, because the next reading is what
+  // supplies the next question.
+  //
+  // For a MULTI-SELECT question this check is weaker than it looks. Measured
+  // against Claude Code on 2026-09-04: the box fills on the first Space, before
+  // the Enter that leaves the question — `←  ☐ Picks  ☐ One` became
+  // `←  ☒ Picks  ☐ One` with only a toggle sent. So it still catches the case
+  // that matters, nothing landing at all, and it does NOT catch a toggle that
+  // landed while its Enter did not. The cost of that gap is a step number one
+  // ahead of the question on screen; the card always answers the question the
+  // pane is drawing, so it cannot put an answer against the wrong question.
+  const header = d.headers[d.answered] ?? "";
+  const expect = header ? `${ANSWERED_MARK} ${header}` : "";
+  const what = `answering "${q.header || q.question}"`;
+
+  if (a.chosen[0] === OTHER_LABEL) {
+    const other = (a.other ?? "").trim();
+    if (!other) return [];
+    const idx = optionIndex(q, OTHER_LABEL);
+    if (idx < 0) return [];
+    return [{ batches: [[String(idx + 1)]], text: other, after: ["Enter"], expect, what }];
+  }
+
+  const keys = keysForQuestion(q, a);
+  if (keys.length === 0) return [];
+  const batches = batched(keys);
+  if (q.multiSelect) batches.push(["Enter"]);
+  return [{ batches, expect, what }];
+}
+
+/**
+ * The glyph the CLI's tab bar draws for a question it has an answer for.
+ *
+ * `☐` is still open. sessionio counts the same character to report `answered`
+ * (dialog.go tabAnswered), so the two agree by construction.
+ */
+export const ANSWERED_MARK = "☒";
+
 /** Whether every question has something to send. */
 export function complete(questions: Question[], answers: DraftAnswer[]): boolean {
   if (questions.length === 0) return false;

@@ -45,17 +45,19 @@ export const QuestionCard: Component<{
    */
   stopped?: boolean;
   /**
-   * The call cannot be answered from here: it is being read off the PANE, which
-   * shows one question of several at a time. What is being asked is worth
-   * saying — the reader is otherwise left with "Working…" while the terminal
-   * sits blocked — but answering half a call is how a wrong answer gets
-   * submitted, so the card reports and points at the Terminal instead.
+   * The call is being read off the PANE, which draws one question of several at
+   * a time. So it is answered one question at a time too: the answer goes in,
+   * the tab bar fills that question's box, and the next reading brings the next
+   * question. `answered` says how far along the terminal actually is, so the
+   * card's `n of N` comes from the screen rather than from a count it keeps.
    */
   partial?: boolean;
   /** Every question's header, for a partial call. */
   headers?: string[];
   /** How many questions the call carries. */
   count?: number;
+  /** How many of them the tab bar marks answered. */
+  answered?: number;
   /** Show the Terminal view. */
   onTerminal?: () => void;
 }> = (props) => {
@@ -267,42 +269,172 @@ export const QuestionCard: Component<{
 };
 
 /**
- * What is being asked, when the pane is all there is to go on and it can only
- * show part of the call.
+ * A multi-question call, answered one question at a time off the pane.
  *
- * The transcript carries every question of a multi-question call; the pane
- * carries the one on screen. So this says what the session is waiting for and
- * hands over to the Terminal, and gives way to the full walk the moment the
- * record lands.
+ * The pane draws one question of the call at a time and the transcript record
+ * may not have landed — measured 2026-08-28, two of five records were written
+ * only when the question was ANSWERED, one of them 112 seconds later — so
+ * waiting for the whole call is not an option, and this used to hand the reader
+ * to the Terminal for 22.4% of the 1,045 calls in this box's corpus.
+ *
+ * So it walks the terminal instead of walking a plan. One answer goes in, the
+ * tab bar fills that question's box, and the next reading of the pane brings the
+ * next question. `n of N` is read from those boxes: the card never counts its
+ * own answers, because anything else touching the dialog — a keystroke in the
+ * Terminal, an Esc, a re-ask — would make a private count wrong.
+ *
+ * Unlike the transcript walk, each answer commits as it is given. There is no
+ * review step to change your mind at, because the questions ahead have not been
+ * drawn yet.
  */
 const PartialCard: Component<{
   questions: Question[];
   headers?: string[];
   count?: number;
+  answered?: number;
+  busy?: boolean;
+  stopped?: boolean;
+  onSend: (answers: DraftAnswer[]) => Promise<void>;
   onTerminal?: () => void;
   onChat: () => void;
 }> = (props) => {
+  const [draft, setDraft] = createSignal<DraftAnswer>({ chosen: [] });
   const names = () =>
     (props.headers ?? []).filter(Boolean).length > 0
       ? props.headers!.filter(Boolean)
       : props.questions.map((q) => q.header || q.question);
+  const total = () => props.count ?? names().length;
+  const done = () => props.answered ?? 0;
+  const q = () => props.questions[0];
+  // Every box filled: the CLI is showing its own Submit screen, which carries no
+  // options of its own.
+  const reviewing = () => done() >= total() || (q()?.options.length ?? 0) === 0;
+  const chosen = (label: string) => draft().chosen.includes(label);
+  const toggle = (label: string) => {
+    const cur = draft();
+    if (!q()?.multiSelect) {
+      setDraft({ chosen: [label], ...(label === OTHER_LABEL ? { other: cur.other } : {}) });
+      return;
+    }
+    setDraft({
+      ...cur,
+      chosen: cur.chosen.includes(label)
+        ? cur.chosen.filter((l) => l !== label)
+        : [...cur.chosen, label],
+    });
+  };
+  const ready = () => {
+    const d = draft();
+    if (reviewing()) return true;
+    if (d.chosen.length === 0) return false;
+    if (d.chosen.includes(OTHER_LABEL)) return !!(d.other ?? "").trim();
+    return true;
+  };
+  const send = () => {
+    const d = draft();
+    // The next question arrives as a fresh reading, so the draft has to be
+    // empty by then or its answer would be pre-filled with this one's.
+    setDraft({ chosen: [] });
+    void props.onSend([d]);
+  };
+
   return (
     <div class="tl-qcard" role="dialog" aria-label="Claude needs an answer">
       <div class="tl-qcard-head">
         <span class="tl-qcard-title">Claude needs answers</span>
-        <span class="tl-qcard-step">{props.count ?? names().length} questions</span>
+        <span class="tl-qcard-step">
+          {reviewing() ? "ready to submit" : `${Math.min(done() + 1, total())} of ${total()}`}
+        </span>
       </div>
       <div class="tl-qcard-body">
-        <div class="tl-qcard-question">{props.questions[0]?.question}</div>
-        <div class="tl-qcard-hint">
-          The session is waiting on {names().join(", ")}. Only the question on
-          screen has reached here — answer them in the Terminal.
-        </div>
+        <div class="tl-qcard-question">{q()?.question}</div>
+        <Show when={!reviewing()}>
+          <Show when={q()?.multiSelect}>
+            <div class="tl-qcard-hint">Pick as many as apply</div>
+          </Show>
+          <div class="tl-qcard-options">
+            <For each={answerableOptions(q()!)}>
+              {(label) => (
+                <button
+                  type="button"
+                  class="tl-qcard-option"
+                  data-chosen={chosen(label) ? "true" : undefined}
+                  data-multi={q()!.multiSelect ? "true" : undefined}
+                  onClick={() => toggle(label)}
+                >
+                  {/* The DIALOG's number: it is the key about to be typed, so it
+                      has to be the key the CLI is listening for. */}
+                  <span class="tl-qcard-key" aria-hidden="true">
+                    {optionIndex(q()!, label) + 1}
+                  </span>
+                  <span class="tl-qcard-label">{label}</span>
+                  <Show when={descriptionFor(q()!, label)}>
+                    <span class="tl-qcard-desc">{descriptionFor(q()!, label)}</span>
+                  </Show>
+                </button>
+              )}
+            </For>
+          </div>
+          <Show when={chosen(OTHER_LABEL)}>
+            <input
+              class="tl-qcard-other"
+              type="text"
+              placeholder="Type something"
+              aria-label="Your own answer"
+              value={draft().other ?? ""}
+              onInput={(e) => setDraft({ ...draft(), other: e.currentTarget.value })}
+            />
+          </Show>
+        </Show>
+        {/* What the tab bar says, which is where `n of N` came from. Shown so
+            the reader can see the same progress the terminal is showing. */}
+        <Show when={total() > 1}>
+          <div class="tl-qcard-tabs">
+            <For each={names()}>
+              {(name, i) => (
+                <span class="tl-qcard-tab" data-done={i() < done() ? "true" : undefined}>
+                  {name}
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
       </div>
       <div class="tl-qcard-actions">
-        <Show when={props.onTerminal}>
-          <button type="button" class="tl-qcard-send" onClick={() => props.onTerminal?.()}>
-            Open Terminal
+        <Show when={!props.stopped}>
+          <button type="button" class="tl-qcard-chat" onClick={() => props.onChat()}>
+            Type a message instead
+          </button>
+        </Show>
+        <Show when={props.stopped}>
+          <span class="tl-qcard-stopped">
+            The session's screen changed before that answer landed. Finish it in
+            the Terminal — sending again would answer a different question.
+          </span>
+          <Show when={props.onTerminal}>
+            <button
+              type="button"
+              class="tl-qcard-terminal"
+              onClick={() => props.onTerminal?.()}
+            >
+              Open Terminal
+            </button>
+          </Show>
+        </Show>
+        <Show when={!props.stopped}>
+          <button
+            type="button"
+            class="tl-qcard-send"
+            disabled={!ready() || props.busy}
+            onClick={send}
+          >
+            {props.busy
+              ? "Sending…"
+              : reviewing()
+                ? "Submit"
+                : done() + 1 === total()
+                  ? "Answer, then submit"
+                  : "Answer"}
           </button>
         </Show>
       </div>

@@ -939,6 +939,7 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
         questions?: unknown;
         headers?: unknown;
         count?: unknown;
+        answered?: unknown;
         partial?: unknown;
       }
     | null;
@@ -948,6 +949,7 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
     questions: qs,
     headers: Array.isArray(raw?.headers) ? (raw!.headers as string[]) : [],
     count: typeof raw?.count === "number" ? raw.count : qs.length,
+    answered: typeof raw?.answered === "number" ? raw.answered : 0,
     partial: raw?.partial === true,
   };
 }
@@ -959,8 +961,16 @@ export interface PaneAsking {
   headers: string[];
   /** How many questions the call carries. */
   count: number;
-  /** The pane cannot show them all — a multi-question call shows one at a
-   *  time, so it is reported rather than made answerable from here. */
+  /**
+   * How many the tab bar marks answered (sessionio.Dialog.Answered). The walk's
+   * only honest progress signal: read from what the terminal is showing, so it
+   * cannot drift from it the way a count the client kept would.
+   */
+  answered: number;
+  /**
+   * The pane shows one question at a time, so the call is answered one question
+   * at a time — each next one drawn only once the one before it lands.
+   */
   partial: boolean;
 }
 

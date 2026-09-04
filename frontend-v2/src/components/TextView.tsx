@@ -22,7 +22,7 @@ import {
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "./compose.logic";
 import type { Catalogue } from "../store/catalogue";
 import { contextState } from "./context.logic";
-import { planAnswer, runAnswer, type DraftAnswer } from "./answer.logic";
+import { planAnswer, planPaneStep, runAnswer, type DraftAnswer } from "./answer.logic";
 import { QuestionCard } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { backgroundLabel } from "./lobby.logic";
@@ -42,6 +42,17 @@ import type { DraftAttachment } from "../store/drafts";
  * line repainted 40ms after the keystroke when this was measured (2026-08-17);
  * the first delay is that with room to spare, the second is the retry.
  */
+/**
+ * How long the answer card stays busy after a partial answer lands, waiting for
+ * the next question to reach it.
+ *
+ * The pane watcher ticks every 2s (session-events registry.watchPanesEvery), so
+ * this covers two ticks and the round trip. Past it the card releases anyway: a
+ * reading that never changes is the normal end of a walk, since the last answer
+ * takes the dialog down and there is nothing left to report.
+ */
+const NEXT_QUESTION_WAIT_MS = 5_000;
+
 const PANE_READ_DELAYS_MS = [150, 600];
 
 /**
@@ -282,10 +293,33 @@ export const TextView: Component<{
    * whatever screen is actually there — a half-answered dialog can be finished
    * in the Terminal, and a wrong answer submitted unseen cannot be taken back.
    */
+  /**
+   * Hold until the pane reading is no longer the one `sentAgainst` describes.
+   *
+   * Bounded, because a reading that never changes has to release the card
+   * eventually: the walk's last answer takes the dialog down altogether, and
+   * the watcher then reports nothing rather than reporting something new.
+   */
+  const waitForNextReading = async (sentAgainst: string): Promise<void> => {
+    const deadline = Date.now() + NEXT_QUESTION_WAIT_MS;
+    while (Date.now() < deadline) {
+      if (asking() !== sentAgainst) return;
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  };
+
   const sendAnswers = async (answers: DraftAnswer[]): Promise<void> => {
     const q = blocking();
-    if (!q || partial() || !props.onKeys || answering()) return;
-    const steps = planAnswer(q.questions, answers);
+    if (!q || !props.onKeys || answering()) return;
+    // A partial call is planned ONE question at a time. Only the question the
+    // pane is drawing exists yet; the rest appear as each is answered, and the
+    // step waits for the tab bar to fill that question's box rather than for
+    // text it cannot know (answer.logic planPaneStep).
+    const pane = fromPane();
+    const steps =
+      partial() && pane
+        ? planPaneStep({ ...pane, questions: q.questions }, answers[0] ?? { chosen: [] })
+        : planAnswer(q.questions, answers);
     if (steps.length === 0) return;
     setAnswering(true);
     // Which step the sequence reached, so a failure can say WHERE it stopped.
@@ -304,6 +338,14 @@ export const TextView: Component<{
         return (await props.onPane?.())?.pane ?? null;
       },
     });
+    // A partial walk stays BUSY until the reading changes. The answer landed —
+    // the tab bar filled that question's box — but the next question reaches
+    // this client through the pane watcher's own tick, and until it does the
+    // card is still showing the question just answered. Re-enabling the button
+    // in that gap is how question 2 gets answered with question 1's options.
+    if (res.ok && partial()) {
+      await waitForNextReading(asking());
+    }
     setAnswering(false);
     // Default-on, and deliberately content-free: a dialog can quote anything the
     // session was working on, so this records the SHAPE of the failure and where
@@ -437,6 +479,7 @@ export const TextView: Component<{
             partial={partial()}
             headers={fromPane()?.headers ?? []}
             count={fromPane()?.count ?? asked().length}
+            answered={fromPane()?.answered ?? 0}
             onTerminal={props.onOpenTerminal}
           />
         )}
