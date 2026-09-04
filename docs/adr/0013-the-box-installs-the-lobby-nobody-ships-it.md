@@ -133,3 +133,47 @@ overwrote the live `/etc/sudoers.d/ttyd-users` and revoked two users'
 terminals. The package now carries no identity data at all. `roster.yaml`
 derives the grant alongside the map and the admin list it already produced, and
 `tl-users` renders it from a local declaration on boxes with no roster.
+
+## Amendment, 2026-09-04: published is not installed
+
+The decision above stands. This records the gap between "published" and
+"running" that it left open for one of the two packages, found by driving the
+deployed site after the release that was meant to change it.
+
+`ttyd-devvm` 1.7.7+02cbf4b was built, uploaded and answered 201 by the registry.
+The box kept running the binary installed on 2026-08-29. Two independent
+reasons, and either alone is enough to stall an upgrade:
+
+**A bare short sha is not a monotonic version.** dpkg splits a version into
+alternating non-digit and digit runs, compares the non-digit run first, and sorts
+end-of-string below a letter, so `1.7.7+02cbf4b` is below `1.7.7+c76b116`. Once
+c76b116 was published it became a ceiling: every later build whose sha begins
+with a digit sorted underneath it, and four had. `apt-cache policy ttyd-devvm`
+named c76b116 as the candidate with all four in the same list. The scheme is now
+`1.7.7+git<commit date>.<sha>`, Debian's snapshot convention, which clears the
+ceiling on the first non-digit run and stays monotonic on the numeric date that
+follows. An epoch would lift the package above the ceiling and leave the ordering
+inside the epoch unsortable, so it was not chosen. The date comes from the commit,
+which keeps a re-run of one commit producing one version and the publish step's
+409 handling true.
+
+**An unversioned `Depends:` is not an upgrade instruction.** `tl-reconcile`
+installed `terminal-lobby`, whose control file declares `Depends: ttyd-devvm`,
+and apt considered that satisfied by the installed version. The reconcile now
+names both packages in one `apt-get`, from one list that its before-and-after
+report also walks, so a package cannot be installed without being reported. The
+`ttyd` restart this brings into a reconcile is the cost the consequences above
+already accept: "tmux sessions survive, browsers reconnect". The mechanism,
+checked on the box: ttyd holds one tmux client per connection, and the tmux
+server that owns the sessions sits in `user@1000.service/app.slice/tmux.service`
+while ttyd sits in `system.slice/ttyd.service`, so restarting one cannot reach
+the other.
+
+What this changes about the design, rather than about two files: **"the box
+tracks latest" is a claim about dpkg's ordering**, so a version scheme is part of
+the deploy mechanism and belongs under test. `release/ttydupgrade_test.go` asks
+dpkg itself whether the workflow's scheme sorts above every possible bare-sha
+build, and whether the reconcile installs what it reports. The cheap check on a
+live box is `apt-cache policy <pkg>`: an installed version that equals the
+candidate while CI has published something newer is this failure, and the
+candidate line names it.

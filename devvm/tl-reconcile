@@ -1,5 +1,5 @@
 #!/bin/sh
-# tl-reconcile — install the latest published terminal-lobby package.
+# tl-reconcile installs the latest published terminal-lobby and ttyd-devvm.
 #
 # This is the ONLY thing the deploy SSH key may run. It takes no arguments and
 # reads nothing from the caller, so the key's authority is "ask this box to
@@ -19,6 +19,50 @@ set -eu
 
 log() { echo "tl-reconcile: $*"; }
 
+# What this box tracks. Naming the lobby alone was not enough: it declares
+# "Depends: ttyd-devvm" (release/cmd/tl-pkg/main.go), and an unversioned depend
+# is satisfied by whatever version is already installed, so apt had no reason to
+# fetch a newer terminal server. Measured 2026-09-04: four published ttyd-devvm
+# builds the box had never seen, and the binary it was running dated from
+# 2026-08-29.
+#
+# One list, read twice. The report below walks it too, so a package cannot be
+# installed without being reported, or reported without being installed.
+#
+# Upgrading ttyd-devvm RESTARTS ttyd, because its postinst does
+# (.github/workflows/ttyd.yml), and that drops every live WebSocket. Accepted
+# deliberately, on the same terms ADR-0013 accepted for the lobby's own units:
+# ttyd holds one tmux CLIENT per connection, while the tmux server that owns the
+# sessions is parented to the user's own systemd manager by tmux-user-attach.
+# Measured on this box: the server sits in
+# user@1000.service/app.slice/tmux.service and ttyd in system.slice/ttyd.service,
+# so restarting one cannot reach the other. Sessions survive, browsers
+# reconnect.
+PKGS="terminal-lobby ttyd-devvm"
+
+# dpkg-query exits non-zero for a package it has never heard of, and prints an
+# empty version for a name it knows only from another package's Depends
+# (status "unknown ok not-installed"). Both read as "none". A package that was
+# REMOVED but not purged is neither of those: it keeps its version and status
+# "deinstall ok config-files", so it reports as the version it used to be at.
+# Measured on this box against apache2, containerd, docker.io and firefox.
+pkgver() {
+  v=$(dpkg-query -W -f='${Version}' "$1" 2>/dev/null || true)
+  [ -n "$v" ] || v=none
+  echo "$v"
+}
+
+# The versions recorded before apt ran, kept as "<pkg>=<version>" words because
+# POSIX sh has no associative array.
+before_of() {
+  for e in $BEFORE; do
+    case "$e" in
+      "$1="*) printf '%s\n' "${e#*=}"; return ;;
+    esac
+  done
+  echo none
+}
+
 # One writer at a time. The trigger fires per push, and two pushes close
 # together would otherwise interleave inside dpkg.
 LOCK=/run/lock/tl-reconcile.lock
@@ -29,11 +73,17 @@ if ! flock -w 600 9; then
   exit 1
 fi
 
-BEFORE=$(dpkg-query -W -f='${Version}' terminal-lobby 2>/dev/null || echo none)
-log "installed before: $BEFORE"
+BEFORE=
+for p in $PKGS; do
+  v=$(pkgver "$p")
+  log "installed before: $p $v"
+  BEFORE="$BEFORE $p=$v"
+done
 
 # Only our origin is refreshed. A full `apt-get update` here would pull every
 # configured source on a box whose other updates are unattended-upgrades' job.
+# One source covers both packages: devvm/terminal-lobby.sources.template is the
+# Forgejo Debian registry, which is where ttyd-devvm is published too.
 if ! apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/terminal-lobby.list \
                     -o Dir::Etc::sourceparts=- \
                     -o APT::Get::List-Cleanup=0 >/dev/null; then
@@ -43,14 +93,32 @@ fi
 
 # --only-upgrade would refuse a first install; install is correct for both, and
 # is a no-op when the box already has the published version.
+#
+# TWO TRANSACTIONS, IN THIS ORDER, and the order is the whole point. The lobby's
+# own postinst verification probes ttyd (release/manifest.go, want 407 on
+# 127.0.0.1:7681), and a single failing probe makes release/apply.go return
+# RevertAndHold, which release/cmd/tl-apply acts on by reinstalling and then
+# apt-mark holding terminal-lobby, and only terminal-lobby. So if both packages
+# rode one transaction and a new ttyd came up wrong, the box would revert and
+# HOLD THE LOBBY for a fault that lives in ttyd, and whoever came to fix it
+# would find the brake on the wrong wheel.
+#
+# Installing the lobby first means its probe runs against the ttyd already on
+# the box, which is the one that was working a moment ago, so the lobby's brake
+# only ever fires for the lobby's own faults. ttyd then upgrades on its own,
+# where a failure exits non-zero here and is reported as itself.
 DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades terminal-lobby
+DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades ttyd-devvm
 
-AFTER=$(dpkg-query -W -f='${Version}' terminal-lobby 2>/dev/null || echo none)
-if [ "$BEFORE" = "$AFTER" ]; then
-  log "already at $AFTER; nothing to do"
-else
-  log "installed $BEFORE -> $AFTER"
-fi
+for p in $PKGS; do
+  after=$(pkgver "$p")
+  before=$(before_of "$p")
+  if [ "$before" = "$after" ]; then
+    log "$p: already at $after; nothing to do"
+  else
+    log "$p: installed $before -> $after"
+  fi
+done
 
 # postinst has already restarted what changed and run tl-apply's verification;
 # a non-zero exit above would have failed this script. Report the unit states so

@@ -38,7 +38,30 @@ jobs:
       - name: package
         run: |
           set -euo pipefail
-          VERSION="1.7.7+$(git rev-parse --short HEAD)"
+          # A bare short sha does not sort, so "1.7.7+$(git rev-parse --short
+          # HEAD)" was silently a one-way door. dpkg splits a version into
+          # alternating non-digit and digit runs and compares the non-digit run
+          # first, where end-of-string sorts below a letter: 1.7.7+02cbf4b is
+          # therefore BELOW 1.7.7+c76b116. Measured 2026-09-04 -- four
+          # published builds (0dd30bc, 8cb00b1, 67c3beb, 02cbf4b) sat
+          # unreachable behind c76b116, apt-cache policy named c76b116 as the
+          # candidate, and the box was still running the binary installed on
+          # 2026-08-29.
+          #
+          # +git<date>.<sha> is Debian's snapshot convention and fixes both
+          # ends: "git" beats every hex lead on the first non-digit run, and the
+          # date that follows is compared numerically, so a commit from a later
+          # minute sorts higher whatever its sha is.
+          # An epoch was the other candidate and is worse -- 1:1.7.7+<sha>
+          # clears today's ceiling and leaves the ordering INSIDE the epoch just
+          # as broken, so it would still need a sortable suffix, and then the
+          # epoch is only a wart every later version has to carry.
+          #
+          # The date is the COMMIT's, not the clock's, so re-running this on an
+          # unchanged commit publishes the same version and the 409 below stays
+          # true. --date=format renders in the offset stored in the commit
+          # object, so the string does not depend on the builder's timezone.
+          VERSION="1.7.7+git$(git show -s --format=%cd --date=format:%Y%m%d%H%M).$(git rev-parse --short HEAD)"
           TREE=out/ttyd-pkg
           mkdir -p "$TREE/usr/local/bin" "$TREE/DEBIAN"
           install -m 0755 out/ttyd "$TREE/usr/local/bin/ttyd"

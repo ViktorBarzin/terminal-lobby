@@ -18,7 +18,7 @@ sequenceDiagram
   G->>F: publish the package
   G->>W: POST /pipelines
   W->>B: ssh, forced command
-  B->>F: apt-get install terminal-lobby
+  B->>F: apt-get install terminal-lobby ttyd-devvm
   B->>B: postinst restarts what changed, verifies
   Note over B: failure → reinstall the cached previous .deb, apt-mark hold
 ```
@@ -43,6 +43,15 @@ forced command exists to remove. It holds a lock so two pushes cannot interleave
 inside dpkg, refreshes only this project's apt source, and reports every unit's
 state.
 
+It installs **two** packages, `terminal-lobby` and `ttyd-devvm`, and reports the
+version of each before and after. The lobby declares `Depends: ttyd-devvm`, but
+an unversioned depend is satisfied by whatever version is already installed, so
+asking for the lobby alone leaves a newer terminal server in the registry
+untouched. Upgrading `ttyd-devvm` restarts `ttyd` from its own `postinst`, which
+drops every attached terminal's WebSocket; tmux sessions survive, because the
+tmux server that owns them is parented to the user's own systemd manager rather
+than to `ttyd.service`, and browsers reconnect.
+
 **`postinst`** restarts only the units whose files changed, verifies them, and on
 failure reinstalls the cached previous package and `apt-mark hold`s it.
 
@@ -51,6 +60,15 @@ failure reinstalls the cached previous package and `apt-mark hold`s it.
 The box tracks whatever the registry publishes as latest. There is no version
 pin, so **rollback is fix-forward**: publish a higher version. A hand-run
 downgrade is undone by the next push.
+
+"Latest" is dpkg's opinion, which makes a sortable version scheme part of the
+mechanism rather than a cosmetic choice. `terminal-lobby` gets semver from `svu`.
+`ttyd-devvm` is versioned `1.7.7+git<commit date>.<sha>`, Debian's snapshot
+convention, because the bare short sha it used before does not sort: dpkg
+compares the leading non-digit run first, where end-of-string sorts below a
+letter, so `1.7.7+02cbf4b` is below `1.7.7+c76b116` and four published builds sat
+behind that one unreachable. `dpkg --compare-versions A gt B` answers the
+question for any pair.
 
 ## Turning it on
 
