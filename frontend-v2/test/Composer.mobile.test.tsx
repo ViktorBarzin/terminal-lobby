@@ -23,7 +23,7 @@ describe("<Composer> — send routing", () => {
     fireEvent.input(ta, { target: { value: "  hello world  " } });
     fireEvent.keyDown(ta, { key: "Enter" });
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend).toHaveBeenCalledWith("hello world");
+    expect(onSend).toHaveBeenCalledWith("hello world", []);
     await Promise.resolve();
     expect(ta.value).toBe(""); // cleared after send
   });
@@ -50,7 +50,7 @@ describe("<Composer> — send routing", () => {
     fireEvent.input(ta, { target: { value: "  hello there  " } });
     fireEvent.keyDown(ta, { key: "Enter" });
 
-    expect(onSend).toHaveBeenCalledWith("hello there");
+    expect(onSend).toHaveBeenCalledWith("hello there", []);
     expect(sendToTerminal).not.toHaveBeenCalled();
     expect(ta.value).toBe("");
   });
@@ -65,7 +65,7 @@ describe("<Composer> — send routing", () => {
     fireEvent.keyDown(ta, { key: "Enter" });
     // The newlines stay INSIDE one message; the server's injector is what turns
     // it into a bracketed paste plus a separate submit (sessionio.Injector).
-    expect(onSend).toHaveBeenCalledWith("first\nsecond\nthird");
+    expect(onSend).toHaveBeenCalledWith("first\nsecond\nthird", []);
   });
 
   it("Shift+Enter does NOT submit (soft newline in the field)", () => {
@@ -213,7 +213,7 @@ describe("<Composer> — Enter during IME composition", () => {
     fireEvent.keyDown(ta, { key: "Enter", isComposing: true }); // commit
     fireEvent.keyDown(ta, { key: "Enter" }); // send
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend).toHaveBeenCalledWith("にほんご");
+    expect(onSend).toHaveBeenCalledWith("にほんご", []);
   });
 });
 

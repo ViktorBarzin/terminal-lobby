@@ -36,8 +36,7 @@ import {
 } from "./Icons";
 import { clampFontSize, type PrefsStore } from "../store/prefs";
 import { listDir as fileList } from "../lib/file-api";
-import { uploadBlob, uploadField } from "../clipboard/upload";
-import { attachmentKind } from "../lib/attachments";
+import { uploadAttachments } from "../clipboard/attach-files";
 import type { ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 import { StatusDot } from "./StatusDot";
@@ -404,49 +403,14 @@ export const SessionView: Component<{
    * Claude but which a chip would outlive. `stored:false` is that answer, and it
    * earns a toast rather than a chip — sending a message whose attachment quietly
    * expires in seven days would be worse than saying so now.
+   *
+   * The routine itself is shared with the new-session composer, which does the
+   * same work at a different moment: it holds its files until the session it is
+   * creating exists (clipboard/attach.ts).
    */
-  const attachFiles = async (files: File[]): Promise<DraftAttachment[]> => {
-    const added: DraftAttachment[] = [];
-    const transferred: string[] = [];
-    for (const file of files) {
-      try {
-        const up = await uploadBlob(file, {
-          session,
-          field: uploadField(file.type),
-          filename: file.name,
-        });
-        const name = up.path.slice(up.path.lastIndexOf("/") + 1);
-        if (!up.stored) {
-          transferred.push(up.path);
-          continue;
-        }
-        added.push({ path: up.path, name, kind: attachmentKind(name) });
-      } catch (err) {
-        props.notify?.(
-          `Couldn't attach ${file.name}: ${err instanceof Error ? err.message : "upload failed"}`,
-          "error",
-        );
-      }
-    }
-    if (transferred.length) {
-      // The path IS on the way to the prompt — it just cannot carry a chip. Told
-      // plainly, because the alternative is a message that looks attached and is
-      // not.
-      props.notify?.(
-        `Too large to attach (${transferred.length} file${transferred.length > 1 ? "s" : ""}) — ` +
-          `the path is available but will not render: ${transferred.join(" ")}`,
-        "info",
-      );
-    }
-    // Chromium cannot decode HEIF, which clipboard-upload deliberately accepts,
-    // and Claude Code's Read does not take it either — so an iPhone-native photo
-    // is worth flagging at the moment it is attached rather than when the answer
-    // comes back confused.
-    if (added.some((a) => /\.hei[cf]$/i.test(a.name))) {
-      props.notify?.("HEIC images may not display or be readable — a JPEG is safer", "info");
-    }
-    return added;
-  };
+  const attachFiles = (files: File[]): Promise<DraftAttachment[]> =>
+    uploadAttachments(files, session, { notify: props.notify });
+
   const resolve = (reqId: string, d: PermissionDecision) =>
     void store.resolvePermission(reqId, d);
 

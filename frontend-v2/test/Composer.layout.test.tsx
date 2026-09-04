@@ -115,7 +115,7 @@ describe("<Composer> — the two groups", () => {
     (container.querySelector(".tl-send") as HTMLButtonElement).click();
     (container.querySelector(".tl-stop") as HTMLButtonElement).click();
     (container.querySelector(".tl-mode-chip") as HTMLButtonElement).click();
-    expect(onSend).toHaveBeenCalledWith("hello");
+    expect(onSend).toHaveBeenCalledWith("hello", []);
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onCycleMode).toHaveBeenCalledTimes(1);
   });

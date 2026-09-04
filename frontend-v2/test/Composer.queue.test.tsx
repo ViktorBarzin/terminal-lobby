@@ -74,7 +74,7 @@ describe("<Composer> — sending while the session is working", () => {
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     fireEvent.input(ta, { target: { value: "  the next thing  " } });
     fireEvent.click(container.querySelector(".tl-send")!);
-    expect(onSend).toHaveBeenCalledWith("the next thing");
+    expect(onSend).toHaveBeenCalledWith("the next thing", []);
   });
 
   it("still stops when Stop is pressed", async () => {
@@ -109,6 +109,6 @@ describe("<Composer> — sending while the session is working", () => {
     fireEvent.input(ta, { target: { value: "never mind the question" } });
     fireEvent.click(container.querySelector(".tl-send")!);
     expect(container.querySelector(".tl-send")!.hasAttribute("disabled")).toBe(false);
-    expect(onSend).toHaveBeenCalledWith("never mind the question");
+    expect(onSend).toHaveBeenCalledWith("never mind the question", []);
   });
 });

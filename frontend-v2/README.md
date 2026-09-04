@@ -172,6 +172,13 @@ src/
                          a launch flag: a per-model command key would miss the
                          pre-warm pool and give up Claude's ~2.4s boot on every
                          model but the default
+    first-prompt.ts      Delivering the FIRST prompt of a session created a
+                         moment ago. A session tmux has made is reachable
+                         seconds before the Claude in it is ready to read
+                         anything, and POST /prompt answers 204 either way — so
+                         this waits for a readiness signal (the pane title's
+                         own glyph) as well as walking the 700/1600/3000/6000
+                         ladder, and resumes at the line that did not land
     new-commands.ts      Which new-session commands this box can actually run:
                          GET /new-commands is tmux-user-attach --probe run in
                          the session's own login shell, so a key with nothing
@@ -556,6 +563,11 @@ src/
     drop.ts              PURE drag-payload detection
     upload.ts            clipboard-upload client + field routing
     attach.ts            The DOM glue (window listeners + drop overlay)
+    attach-files.ts      Upload files into a session's store and hand back the
+                         tray chips. Shared by the two composers, which do it at
+                         different moments: the live one when a file is picked,
+                         the new-session one after the create, because until
+                         then there is no session to own the file
   deploy/
     healer.logic.ts      PURE self-update kernel (ADR-0007)
     healer.ts            Its controller: poll own served bytes, TOP-owned reload

@@ -112,8 +112,12 @@ describe("sending", () => {
     fireEvent.input(field, { target: { value: "what's wrong, vs the pdf?" } });
     send();
 
+    // The tray rides along beside the composed message: the live composer
+    // ignores it, having already spliced the paths in, and the new-session
+    // composer is the one that needs the parts (PromptField.pendingAttachments).
     expect(onSend).toHaveBeenCalledWith(
       `${IMG.path}\n${DOC.path}\nwhat's wrong, vs the pdf?`,
+      [IMG, DOC],
     );
   });
 
@@ -122,7 +126,7 @@ describe("sending", () => {
     const { send, onSend, container } = mount();
     await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
     send();
-    expect(onSend).toHaveBeenCalledWith(IMG.path);
+    expect(onSend).toHaveBeenCalledWith(IMG.path, [IMG]);
   });
 
   it("sends nothing when both the field and the tray are empty", () => {
@@ -233,6 +237,6 @@ describe("register", () => {
     api().insertText("from the palette");
     await waitFor(() => {});
     fireEvent.click(getByText("Send"));
-    expect(onSend).toHaveBeenCalledWith("from the palette");
+    expect(onSend).toHaveBeenCalledWith("from the palette", []);
   });
 });

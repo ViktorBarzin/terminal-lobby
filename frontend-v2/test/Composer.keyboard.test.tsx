@@ -148,7 +148,7 @@ describe("the keyboard's send key", () => {
       ta,
       new InputEvent("beforeinput", { inputType: "insertLineBreak", bubbles: true, cancelable: true }),
     );
-    expect(onSend).toHaveBeenCalledWith("ship it");
+    expect(onSend).toHaveBeenCalledWith("ship it", []);
     expect(notPrevented).toBe(false); // the newline never reaches the field
   });
 
