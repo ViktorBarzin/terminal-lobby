@@ -388,6 +388,15 @@
   align-items: center;
   gap: 4px;
 }
+/* The background chip sits beside the running chip and counts a SUBSET of it,
+   so it cannot wear the same filled, pulsing dot — two identical chips with
+   different numbers read as a bug. Hollow and still: the same hue says it is
+   running, the missing fill says nothing is talking. */
+.tl-chip-bg .tl-state-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--state-running);
+  animation: none;
+}
 .tl-group-actions {
   display: flex;
   align-items: center;
@@ -589,6 +598,25 @@
   color: var(--text-muted);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+/* What a session is still waiting on ("2 agents"), beside the elapsed timer.
+   It does NOT shrink first. Measured in the 260px sidebar on 2026-09-04, an
+   ellipsising label read "2 com…", which says a session is waiting and hides
+   the one thing it exists to say — a command is seconds, a workflow is half an
+   hour. The name gives up the room instead: it already truncates, and a
+   half-shown title still identifies the session.
+
+   The cap is what stops that trade going too far: three kinds at once cannot
+   push the name out entirely, and only in that case does the label ellipsise. */
+.tl-card-bg {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+  max-width: 45%;
+  opacity: 0.85;
 }
 /* Alt-hold numbered chip (Alt+1..9/Alt+0 attach-Nth). Absolutely positioned so
    holding Alt never reflows the row; transiently overlays the right edge. */
@@ -1115,6 +1143,25 @@
     line-height: 1;
   }
   .tl-session-bar .tl-back-btn .tl-btn-label {
+    display: inline;
+    font-size: 13px;
+  }
+  /* The composer's route back to the list keeps its word for the same reason
+     the session bar's does, and it needs it more.
+     The session bar's back control sits in a row of named things, so a bare
+     chevron there still reads as "out of here". The composer is the phone's
+     LANDING view: the screen is otherwise empty, the control is the only way to
+     reach the session list, and without the word it is a 12px glyph beside a
+     heading with nothing to say it is a button. Measured on the Android
+     emulator at 412x914 — the chevron rendered, the label did not, and the list
+     was reachable only by guessing. */
+  .tl-new-head .tl-back-btn {
+    width: auto;
+    padding: 0 10px 0 6px;
+    font-size: 17px;
+    line-height: 1;
+  }
+  .tl-new-head .tl-back-btn .tl-btn-label {
     display: inline;
     font-size: 13px;
   }

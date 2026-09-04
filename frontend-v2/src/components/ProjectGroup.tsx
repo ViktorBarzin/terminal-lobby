@@ -227,6 +227,21 @@ export const ProjectGroup: Component<{
             <Show when={counts().running > 0}>
               <span class="tl-chip"><StateDot state="running" size={7} title={false} />{counts().running}</span>
             </Show>
+            {/* Of those running, how many are waiting on background work
+                rather than talking. Its own chip for the same reason unread
+                has one: the running chip counts both, so a collapsed group
+                could not say whether anything inside it was going to keep
+                going after you looked away. The dot is deliberately the
+                running one — this is a subset of running, not a state. */}
+            <Show when={counts().background > 0}>
+              <span
+                class="tl-chip tl-chip-bg"
+                title={`${counts().background} waiting on background work`}
+              >
+                <StateDot state="running" size={7} title={false} />
+                {counts().background}
+              </span>
+            </Show>
             <Show when={counts().awaiting > 0}>
               <span class="tl-chip"><StateDot state="awaiting" size={7} title={false} />{counts().awaiting}</span>
             </Show>

@@ -24,6 +24,8 @@ import { contextState } from "./context.logic";
 import { planAnswer, runAnswer, type DraftAnswer } from "./answer.logic";
 import { QuestionCard } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { backgroundLabel } from "./lobby.logic";
+import type { BackgroundWork } from "../types/lobby";
 import { track } from "../telemetry/track";
 import {
   installTextZoom,
@@ -52,6 +54,11 @@ const PANE_READ_DELAYS_MS = [150, 600];
 export const TextView: Component<{
   events: Event[];
   working: boolean;
+  /** What the SESSION still owes, from the session list rather than the
+   *  transcript. The transcript cannot answer this: it closes the turn when the
+   *  main thread stops talking, and says nothing about the background agent
+   *  that is still running. */
+  background?: () => BackgroundWork | undefined;
   pending: PendingPermission[];
   /** resolves false when the session refused the prompt (the composer keeps it). */
   onSend: (text: string) => Promise<boolean>;
@@ -384,6 +391,20 @@ export const TextView: Component<{
         hasEarlier={props.hasEarlier}
         me={props.me}
       />
+      {/* The transcript closes the turn when the main thread stops talking, so
+          the working row goes with it — while a background agent or a workflow
+          it launched keeps running and will write into this same conversation
+          minutes later. This strip covers exactly that gap: shown only when the
+          session owes something AND no turn is open, so it never doubles up
+          with the working row. */}
+      <Show when={!props.working && backgroundLabel(props.background?.())}>
+        {(what) => (
+          <div class="tl-bg-strip" role="status">
+            <span class="tl-state-dot tl-state-running" aria-hidden="true" />
+            Still working in the background: {what()}
+          </div>
+        )}
+      </Show>
       {/* Docked, not inline: on a phone the timeline scrolls and the keyboard
           covers it, and a walk that slides out from under a thumb mid-answer is
           worse than no walk. The permanent record is the inline row, which

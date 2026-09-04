@@ -43,6 +43,7 @@ import { StatusDot } from "./StatusDot";
 import { TerminalNative } from "./TerminalNative";
 import { terminalFrameArgs } from "../lib/terminal-url";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
+import type { BackgroundWork } from "../types/lobby";
 
 /** The `?native` values that mean yes, and the ones that mean no. */
 const NATIVE_YES = ["1", "true", "yes", "on"];
@@ -124,6 +125,11 @@ export const SessionView: Component<{
    *  viewer — read ONCE when the view takes the session on, never after, since
    *  the count includes this client's own attach. */
   driven?: () => boolean;
+  /** What this session still owes: background agents, workflows or commands it
+   *  launched that have not reported back. From the session list, because the
+   *  transcript closes the turn when the main thread stops talking and cannot
+   *  see them. */
+  background?: () => BackgroundWork | undefined;
   /** The user this tab is acting as ("" = an ordinary tab). A lens comes up
    *  WATCHING every session it opens, and the controls that type into the pty
    *  are inert with it — until you take control, which re-attaches read-write
@@ -870,6 +876,7 @@ export const SessionView: Component<{
             events={store.events}
             rows={rows}
             working={working()}
+            background={props.background}
             pending={pending()}
             onSend={send}
             onStop={stop}
