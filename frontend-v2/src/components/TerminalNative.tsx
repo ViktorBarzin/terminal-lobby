@@ -25,7 +25,11 @@ import {
   type DragSelectWorld,
   type ScreenBox,
 } from "../terminal/dragselect";
-import { reduceStash, type SelectionStash } from "../terminal/selection";
+import {
+  reduceStash,
+  terminalKeydownDecision,
+  type SelectionStash,
+} from "../terminal/selection";
 import { isCoarsePointer } from "../mobile/pointer";
 import { diag } from "../telemetry/diag";
 import {
@@ -63,7 +67,7 @@ const HELD_SAY_MS = 5000;
  * on a measured-bad link, is part of the webfont race and is not ported yet.
  */
 const MONO_STACK_FALLBACK =
-  '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace';
+  '"JetBrains Mono", "TL Symbols", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace';
 
 /** One CSS custom property, read where the app declares them (theme.ts says why body). */
 const cssVar = (name: string): string =>
@@ -210,8 +214,10 @@ function heldWord(
       // does not have. term.html binds Escape inside its
       // `attachCustomKeyEventHandler` (:8554-8564), where it calls
       // `discardHeldInput()` and toasts "Discarded what you typed while
-      // offline". That handler is a later phase, so the sentence is cut back
-      // to what pressing a key here actually achieves. Porting :8554-8564 is
+      // offline". This component now installs a handler of its own, but it
+      // decides the paste chord and nothing else (see the call), so there is
+      // still nothing to discard a hold, and the sentence stays cut back to
+      // what pressing a key here actually achieves. Porting :8554-8564 is
       // what restores the full wording.
       return {
         message: "Your line is held — Backspace to edit it",
@@ -247,15 +253,17 @@ function heldWord(
  * xterm directly, so those become ordinary function calls.
  *
  * WHAT IT DOES. Attaches, reconnects, types, takes the focus at boot, pastes
- * through `term.paste`, reports the mouse and buys plain-drag selection back
- * from that reporting, fits only into a host that has a box, takes the
- * forwarded soft-keyboard height off its own height, hardens xterm's helper
- * textarea against predictive text, and says why a keystroke was refused or
- * held.
+ * through `term.paste` from the bridge and from the paste chord, reports the
+ * mouse and buys plain-drag selection back from that reporting, fits only into
+ * a host that has a box, takes the forwarded soft-keyboard height off its own
+ * height, hardens xterm's helper textarea against predictive text, and says
+ * why a keystroke was refused or held.
  *
- * WHAT IT IS NOT YET. The compose mirror, copy and the clipboard chords, the
- * key-handler contract, touch scroll, pinch-to-zoom, web links, the bell, sixel
- * and the held-key overlay all still belong to term.html. The soft keyboard is
+ * WHAT IT IS NOT YET. The compose mirror, copy and its chord, the REST of the
+ * key-handler contract (the handler is installed and decides the paste chord
+ * alone; term.html:8516-8584 is the rest), touch scroll, pinch-to-zoom, web
+ * links, the bell, sixel and the held-key overlay all still belong to
+ * term.html. The soft keyboard is
  * half ported: `__tlKeyboardOffset` below takes the height the shell measured,
  * and term.html's own reading of it (`syncViewport`, :8427-8469) pairs that
  * height with its visualViewport, its toolbar and its compose bar, none of
@@ -449,6 +457,29 @@ export const TerminalNative: Component<{
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.open(host);
+
+      /**
+       * Re-rasterize once the webfonts have actually arrived.
+       *
+       * xterm caches every glyph it has drawn, so the atlas it builds at open()
+       * is built from whatever font was resolved at that instant. The mono
+       * stack's faces are declared `font-display: block` in theme/theme.css and
+       * fetched over the network, so a first paint can measure and cache the
+       * fallback and then keep it, which is how a symbol that DOES have a glyph
+       * in "TL Symbols" still shows as a box. term.html clears the atlas on
+       * `fonts.loadingdone` for the same reason (:5658-5665, and again at
+       * :5797 after adding the symbol face).
+       *
+       * One shot, on the promise rather than the event: `document.fonts.ready`
+       * has already settled by the time a later mount runs, where a
+       * `loadingdone` listener added then would wait for a load that is not
+       * coming. The full webfont race, which measures the link and drops to a
+       * system stack on a bad one, is not ported yet.
+       */
+      void document.fonts?.ready?.then(() => {
+        if (disposed) return;
+        term.clearTextureAtlas?.();
+      });
 
       /**
        * xterm mounts an offscreen <textarea> as its input proxy, and on a touch
@@ -857,6 +888,153 @@ export const TerminalNative: Component<{
       document.addEventListener("mousemove", onMotion, true);
       document.addEventListener("mouseup", onRelease, true);
 
+      /* ---------------------------------------------------------------- *
+       * PASTE: the chord, and the browser paste event it lets through.
+       * ---------------------------------------------------------------- */
+
+      /**
+       * Text into this terminal, however it arrived. The Paste button, the
+       * soft keys and the palette reach `__tlPasteToTerminal` below, which
+       * SessionView hands the clipboard text the LOBBY read
+       * (SessionView.tsx:543-550); a Ctrl/Cmd-V or a long-press Paste reaches
+       * the event listener under it.
+       *
+       * term.paste, NOT a raw send: it wraps the text in bracketed paste when
+       * the app asked for it and normalizes \r\n, so a multiline paste stops
+       * executing line by line in a shell (term.html:9404-9409). It reaches
+       * the pty through xterm's own onData, which is the same choke point a
+       * keystroke takes, so watch mode still drops it.
+       *
+       * term.html disarms its armed soft modifiers first, because its
+       * onData wrapper would remap the pasted text's first character. There
+       * is nothing to disarm here yet: this app's modifier machine lives
+       * inside SoftKeys.tsx and only remaps the keys that component sends.
+       * The remap (term.html:8340-8360) is still to port, and this line has
+       * to disarm when it lands.
+       *
+       * Empty text is dropped rather than pasted, as the page drops it
+       * (:8933), but the answer is still true: a terminal took the paste, and
+       * false means there was no terminal to take it.
+       */
+      const pasteText = (text: string): boolean => {
+        if (text) term.paste(text);
+        return true;
+      };
+
+      /**
+       * THE ONE KEY HANDLER xterm STORES, wired for the paste chord and for
+       * nothing else yet.
+       *
+       * Ctrl+V is `\x16` to xterm by default, from the plain-Ctrl-letter arm
+       * of its `evaluateKeyboardEvent`, and xterm then preventDefaults the
+       * keydown (`cancel(ev, true)`), which is what stops the browser firing
+       * its paste event at all. Measured on the deployed site with a raw pty
+       * capture: the iframe path put the 53 bytes of clipboard text on the pty
+       * and this path put a single 0x16. In zsh ^V is quoted-insert, so it
+       * then swallowed the first byte of the next paste as well. Answering
+       * false is the whole fix, and it is what term.html answers (:8585-8586,
+       * "let the browser paste event fire").
+       *
+       * Cmd+V on a Mac never had that problem: xterm yields no key and no
+       * preventDefault for it, so the paste event was already firing there.
+       * Both go through the one decision below regardless, because a chord
+       * whose answer depends on the platform is a chord nobody can reason
+       * about.
+       *
+       * The decision is selection.ts's rather than a chord test written here,
+       * so the chord is matched by the rule ADR-0003 states rather than by
+       * `e.key === "v"`: on a Cyrillic layout the V position reports `м`, and
+       * an `e.key` test misses it and lets ^V through.
+       *
+       * ONLY the browser-paste arm is acted on, and the default answer is
+       * true. The same decision also carries the copy chord and the
+       * Escape-clears-a-selection leg (term.html:8565-8584); answering true to
+       * those is exactly what xterm does today with no handler installed, so
+       * Ctrl+C is still SIGINT with a highlight on screen and Escape still
+       * reaches the app without clearing it. Wiring them needs the clipboard
+       * write, the toast each decision names and a `selection` event feeding
+       * the stash, none of which is here yet, and half-wiring them would break
+       * ADR-0003's contract in a new way rather than leave it unported. The
+       * rest of term.html's handler is not here either: the app-chord
+       * interception (:8518-8526), F12 (:8527-8536), the Option-arrow word
+       * jumps (:8537-8553) and Esc discarding a hold (:8554-8564).
+       *
+       * `selection` is a getter because term.html reads `term.getSelection()`
+       * only inside its copy branch (:8570) and never on an ordinary
+       * keystroke, and xterm builds that string by translating every selected
+       * row. The paste arm reads no state at all.
+       */
+      term.attachCustomKeyEventHandler((e: KeyboardEvent): boolean => {
+        const decision = terminalKeydownDecision(
+          e,
+          {
+            hasSelection: term.hasSelection(),
+            get selection(): string {
+              return term.getSelection();
+            },
+            stash,
+          },
+          performance.now(),
+        );
+        if (decision.action === "browser-paste") return false;
+        return true;
+      });
+
+      /**
+       * THE PASTE EVENT the chord above now allows, delivered.
+       *
+       * THE CHORD LEG ALONE ALREADY FIXES THE DEFECT, measured against the real
+       * library rather than assumed: with the handler wired and no listener of
+       * ours at all, xterm's own `handlePasteEvent` takes the text and produces
+       * the same pty bytes, `one\rtwo` either way. So this listener is not the
+       * missing receiver, and an earlier version of this comment said it was.
+       *
+       * What it adds is two things worth having. It calls `preventDefault`,
+       * which xterm does not, keeping the pasted text out of xterm's offscreen
+       * helper textarea the way term.html does (:8934). And it routes through
+       * the same named path the toolbar bridge uses, so paste has one
+       * implementation rather than one for the chord and another for the button.
+       *
+       * For context on why the iframe needed no such thing: term.html's own
+       * document paste listener (:8932-8944) lives in the FRAMED document. This
+       * app has a document listener too (clipboard/attach.ts), and it takes
+       * IMAGE items only, passing a text paste through for the focused field,
+       * which is right for the composer.
+       *
+       * Scoped to THIS terminal's host, where term.html could use the document
+       * because that page held one terminal and excluded its own compose field
+       * by id (:8900-8903). The lobby's own inputs live in the SAME document as
+       * this terminal, so a document-level swallow would send the composer's
+       * and the rename box's text to the pty. A paste event is dispatched at
+       * the focused element, so "inside this host" is exactly the question
+       * worth asking, and it also settles the duplication clipboard/attach.ts
+       * needed an `active` gate for: every mounted session's document listener
+       * sees one paste, while only the focused terminal's host is on its path.
+       *
+       * CAPTURE, and it stops the event, because xterm registers its own
+       * `handlePasteEvent` on the helper textarea and on `.xterm` in
+       * `_initGlobal`, which `open()` calls (@xterm/xterm/lib/xterm.js), and
+       * that handler calls the same routine `term.paste` calls. Left to
+       * propagate, the same text would be pasted twice. `preventDefault` is
+       * term.html's (:8934): the default action inserts the text into xterm's
+       * offscreen helper textarea, the field xterm empties itself on the paste
+       * path being bypassed here.
+       *
+       * The text is read BEFORE anything is prevented, so a paste carrying no
+       * text is left entirely alone: an image belongs to clipboard/attach.ts,
+       * which uploads it and types the path at the prompt. Its document
+       * listener runs first, being higher up the capture path, and term.html
+       * likewise takes its image branch before its text branch (:8905-8930).
+       */
+      const onPasteEvent = (e: ClipboardEvent): void => {
+        const text = e.clipboardData?.getData("text") ?? "";
+        if (!text) return;
+        e.preventDefault();
+        e.stopPropagation();
+        pasteText(text);
+      };
+      host.addEventListener("paste", onPasteEvent, true);
+
       // `ask` goes through attach.ts's `reportNow`, which re-fires the same
       // `onPhase` above rather than reading the ladder from out here, so the
       // badge is painted through one path whether it was volunteered or asked
@@ -912,26 +1090,10 @@ export const TerminalNative: Component<{
         a.send(bytes);
         return true;
       });
-      ownWhile(owns, "__tlPasteToTerminal", (text: string) => {
-        // term.paste, NOT a raw send: it wraps the text in bracketed paste when
-        // the app asked for it and normalizes \r\n, so a multiline paste stops
-        // executing line by line in a shell (term.html:9404-9409). It reaches
-        // the pty through xterm's own onData, which is the same choke point a
-        // keystroke takes, so watch mode still drops it.
-        //
-        // term.html disarms its armed soft modifiers first, because its
-        // onData wrapper would remap the pasted text's first character. There
-        // is nothing to disarm here yet: this app's modifier machine lives
-        // inside SoftKeys.tsx and only remaps the keys that component sends.
-        // The remap (term.html:8340-8360) is still to port, and this line has
-        // to disarm when it lands.
-        //
-        // Empty text is dropped rather than pasted, as the page drops it, but
-        // the answer is still true: a terminal took the paste, and false means
-        // there was no terminal to take it.
-        if (text) term.paste(text);
-        return true;
-      });
+      // The same route a Ctrl/Cmd-V takes, so the toolbar button, the
+      // composer's send and the chord cannot drift apart. `pasteText` above
+      // carries the reasoning.
+      ownWhile(owns, "__tlPasteToTerminal", pasteText);
       ownWhile(owns, "__tlFocusTerminal", () => {
         term.focus();
         return true;
@@ -1006,6 +1168,7 @@ export const TerminalNative: Component<{
         document.removeEventListener("mousedown", onPress, true);
         document.removeEventListener("mousemove", onMotion, true);
         document.removeEventListener("mouseup", onRelease, true);
+        host?.removeEventListener("paste", onPasteEvent, true);
         releaseTheme();
         term.dispose();
       };
