@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { attach, type AttachDeps, type Attachment } from "../src/terminal/attach";
+import { STABLE_AFTER_MS } from "../src/terminal/reconnect";
 import { WS_SUBPROTOCOL } from "../src/terminal/wire";
 
 /** A WebSocket that never touches the network and can be driven from a test. */
@@ -753,5 +754,113 @@ describe("reporting the current phase on demand", () => {
     seen.length = 0;
     a.reportNow();
     expect(seen).toEqual([]);
+  });
+});
+
+/**
+ * ONCE PER ATTACH, which is a different question from the phase.
+ *
+ * term.html has two calls inside `ws.onopen` and on no other path to an open
+ * connection: `mirrorLineReset()` at :10293 and `cancelScrollMomentum()` at
+ * :10294. Neither is among its other nine `mirrorLineReset` sites, and neither
+ * is in `reportConnNow` (:9822-9824). `onPhase("open")` cannot stand in for
+ * that signal, and the two routes below are why: a caller that hung the mirror
+ * reset off the phase blanked the compose field on a session view coming back
+ * on screen, and again 30 seconds after every connect.
+ */
+describe("the once-per-attach signal (term.html:10293-10294)", () => {
+  it("fires once when the socket opens", async () => {
+    FakeSocket.made = [];
+    let attaches = 0;
+    const h = harness({ onAttach: () => void attaches++ });
+    const a = attach(h.deps);
+    await flush();
+    expect(attaches).toBe(0); // connecting is not attached
+    FakeSocket.made[0]!.open();
+    expect(attaches).toBe(1);
+    a.dispose();
+  });
+
+  /**
+   * BEFORE the phase goes out, which is term.html's order: :10293-10294 sit
+   * above `reportConn('open', 0)` at :10296. The mirror's baseline has to drop
+   * before anything downstream acts on the new connection.
+   */
+  it("fires ahead of the open phase", async () => {
+    FakeSocket.made = [];
+    const order: string[] = [];
+    const h = harness({
+      onAttach: () => void order.push("attach"),
+      onPhase: (p) => void order.push(`phase:${p}`),
+    });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+    expect(order).toEqual(["phase:connecting", "attach", "phase:open"]);
+    a.dispose();
+  });
+
+  /**
+   * AN ASK IS NOT AN ATTACH. `reportNow` calls `deps.onPhase` directly, and
+   * `askedPhase()` answers "open" for an open socket, so the phase repeats
+   * while the socket is the same one. SessionView asks every time a session
+   * comes back on screen, so this is the frequent route.
+   */
+  it("says nothing on an ask", async () => {
+    FakeSocket.made = [];
+    let attaches = 0;
+    const seen: string[] = [];
+    const h = harness({ onAttach: () => void attaches++, onPhase: (p) => void seen.push(p) });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+    seen.length = 0;
+    a.reportNow();
+    a.reportNow();
+    expect(seen).toEqual(["open", "open"]); // the badge still gets its answer
+    expect(attaches).toBe(1);
+    a.dispose();
+  });
+
+  /**
+   * NOR IS THE STABILITY PROOF. `dispatch` counts an attempt-count change as a
+   * phase change, and reconnect.ts's `proved-stable` returns `attempts: 0`
+   * (:238) with the phase still "open" where `startAttempt` had bumped it to 1
+   * (:446). So the phase repeats `STABLE_AFTER_MS` after every connect, on a
+   * socket nobody touched.
+   */
+  it("says nothing when the connection proves stable", async () => {
+    FakeSocket.made = [];
+    let attaches = 0;
+    const seen: string[] = [];
+    const h = harness({ onAttach: () => void attaches++, onPhase: (p) => void seen.push(p) });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+    seen.length = 0;
+    const proof = h.timers.find((t) => t.ms === STABLE_AFTER_MS);
+    if (!proof) throw new Error("no stability timer was armed");
+    h.runTimer(proof.id);
+    expect(seen).toEqual(["open"]); // the repeat this test exists to distinguish
+    expect(attaches).toBe(1);
+    a.dispose();
+  });
+
+  /** A reconnect IS an attach: a new socket means a new pty input line. */
+  it("fires again for the socket a retry opens", async () => {
+    FakeSocket.made = [];
+    let attaches = 0;
+    const h = harness({ onAttach: () => void attaches++ });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+    FakeSocket.made[0]!.drop();
+    const retry = h.timers.find((t) => t.ms > 0 && t.ms <= 2000);
+    if (!retry) throw new Error("no retry was scheduled");
+    h.runTimer(retry.id);
+    await flush();
+    FakeSocket.made[1]!.open();
+    expect(attaches).toBe(2);
+    a.dispose();
   });
 });

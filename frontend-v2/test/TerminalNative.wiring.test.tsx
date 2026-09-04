@@ -233,6 +233,31 @@ const xt = vi.hoisted(() => {
 vi.mock("@xterm/xterm", () => ({ Terminal: xt.FakeTerminal }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: xt.FakeFitAddon }));
 
+/**
+ * THE INCIDENTS THE COMPONENT FILES, which are otherwise unobservable: `diag()`
+ * hands back a module singleton that stays `inert` until `startDiagnostics()`
+ * finds a `tlDiag` core on the page, and inert's `incident` is a no-op.
+ *
+ * Whether one is filed is part of a claim here rather than a detail, because
+ * `sel-cleared` feeds the deliberate-dismissal bucket ADR-0003 telemetry
+ * measures, and diagnostics are ON by default (`diagnosticsWanted`). Only
+ * `incident` is replaced; everything else in that module is the real thing.
+ */
+const tel = vi.hoisted(() => ({
+  incidents: [] as { kind: string; attrs?: Record<string, unknown> }[],
+}));
+vi.mock("../src/telemetry/diag", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/telemetry/diag")>();
+  return {
+    ...real,
+    diag: () => ({
+      ...real.diag(),
+      incident: (kind: string, attrs?: Record<string, unknown>) =>
+        void tel.incidents.push({ kind, attrs }),
+    }),
+  };
+});
+
 // Imported after the mocks so the component's dynamic imports resolve to them.
 import { TerminalNative } from "../src/components/TerminalNative";
 import { THEME_LIVE_GLOBAL } from "../src/terminal/theme";
@@ -335,6 +360,7 @@ beforeEach(() => {
   xt.made.terminals.length = 0;
   xt.made.fitAddons.length = 0;
   xt.made.lateTextarea = false;
+  tel.incidents.length = 0;
   toasts.clear();
   raised = [];
   realPush = toasts.push;
@@ -619,6 +645,37 @@ function watchWheels(el: HTMLElement): WheelEvent[] {
   const seen: WheelEvent[] = [];
   el.addEventListener("wheel", (e) => void seen.push(e as WheelEvent));
   return seen;
+}
+
+/**
+ * MOUSE REPORTING ON, which is the state every synthetic wheel exists to reach
+ * and the only state in which a wheel is also pty-bound INPUT.
+ *
+ * The fake terminal does nothing with a dispatched wheel, so this adds the one
+ * thing the real library does with one. Measured against the installed
+ * @xterm/xterm 6.0.0 (jsdom, `\x1b[?1000h\x1b[?1006h` written first, one
+ * untrusted `deltaMode: 1` wheel dispatched on `term.element`): `bindMouse`
+ * consults the custom wheel handler, takes its `true`, and
+ * `coreMouseService.triggerMouseEvent` routes the SGR report through
+ * `_coreService.triggerDataEvent`, so `term.onData` fires SYNCHRONOUSLY inside
+ * `dispatchEvent` and `term.onBinary` fires not at all. Only DEFAULT encoding
+ * takes the binary route, and DECSET 1006 is not it.
+ *
+ * The report's coordinates are the ones a laid-out browser produces; the real
+ * library answers `NaN` for them in jsdom, which is a layout gap and not part of
+ * any claim here. What matters is that a string reaches `onData` while the
+ * dispatch is still on the stack.
+ */
+function reportMouse(term: InstanceType<typeof xt.FakeTerminal>): string[] {
+  const el = term.element;
+  if (!el) throw new Error("the terminal has no element");
+  const reports: string[] = [];
+  el.addEventListener("wheel", () => {
+    const report = "\x1b[<64;1;1M";
+    reports.push(report);
+    for (const cb of term.onDataCbs) cb(report);
+  });
+  return reports;
 }
 
 /**
@@ -2348,8 +2405,43 @@ describe("plain-drag selection (term.html:5921-6055)", () => {
     screen.dispatchEvent(press({ clientX: 100, clientY: 100, detail: 2 }));
 
     expect(m.term.cleared).toBe(1);
+    expect(tel.incidents).toEqual([
+      { kind: "sel-cleared", attrs: { "tl.reason": "double-click replace" } },
+    ]);
     expect(seen).toHaveLength(1);
     expect(seen[0]?.detail).toBe(2); // xterm reads it off the clone to pick a word
+  });
+
+  /**
+   * A DOUBLE CLICK WITH NOTHING HIGHLIGHTED files nothing and clears nothing,
+   * which is term.html's early return at :5893 sitting above all three of the
+   * things `clearSelectionBecause` does.
+   *
+   * The path is reachable and only looks like a corner: dragselect.ts emits
+   * `clear-selection` on `e.detail > 1` ALONE (:409) and says on itself that
+   * the guard is `clearSelectionBecause`'s, while term.html's
+   * `if (!term.hasSelection() || e.detail > 1)` (:6010-6011) is the source
+   * arriving here with no selection. Filing it anyway double-counts the
+   * deliberate-dismissal bucket ADR-0003 telemetry measures, and there is
+   * nothing to clear.
+   *
+   * The stash half is delegated: `reduceStash` is still called with
+   * `hasSelection: false`, which is what leaves a pending copy alive for the
+   * rest of its 15 s (selection.ts says why at `reduceStash`).
+   */
+  it("files nothing when a double click finds nothing highlighted", async () => {
+    const m = await mountOpen();
+    m.term.selected = false;
+    const screen = boxScreen(m.term, GRID);
+    const seen = watchPresses(screen);
+
+    screen.dispatchEvent(press({ clientX: 100, clientY: 100, detail: 2 }));
+
+    expect(tel.incidents).toEqual([]);
+    expect(m.term.cleared).toBe(0);
+    // The press still went through, so the double click still selects a word.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.detail).toBe(2);
   });
 
   /**
@@ -2834,8 +2926,18 @@ describe("touch scroll (term.html:6478-6556)", () => {
     frames.run(NOW + 16);
     // The coast carries the drag's last y, which is what makes the hand-off
     // seamless: same coordinate, same pane, more wheels.
-    expect(wheels.length).toBeGreaterThan(5);
+    const afterOne = wheels.length;
+    expect(afterOne).toBeGreaterThan(5);
     for (const w of wheels.slice(5)) expect(w.clientY).toBe(220);
+    expect(frames.outstanding()).toBe(1);
+
+    // A SECOND frame, because one proves less than it looks like it does. The
+    // re-arm is computed from the reduction the actions were taken FROM, so a
+    // coast whose state was cleared while those actions ran still leaves one
+    // frame outstanding; that frame is the one that finds nothing to do. The
+    // decay is the claim, so it takes two frames to see it.
+    frames.run(NOW + 32);
+    expect(wheels.length).toBeGreaterThan(afterOne);
     expect(frames.outstanding()).toBe(1);
   });
 
@@ -2902,6 +3004,78 @@ describe("touch scroll (term.html:6478-6556)", () => {
     hostOf(m).dispatchEvent(
       new WheelEvent("wheel", { deltaY: -1, deltaMode: 1, bubbles: true }),
     );
+    expect(frames?.outstanding()).toBe(1);
+  });
+
+  /**
+   * THE COAST SURVIVES ITS OWN MOUSE REPORTS, which is the case the `isTrusted`
+   * test above cannot reach and the state a phone is actually in: tmux with
+   * `mouse on`, or any TUI that asked for reports.
+   *
+   * With reporting on, each emitted wheel comes back as pty-bound INPUT inside
+   * the dispatch (`reportMouse` has the measurement), and two interrupt sites
+   * are downstream of that `onData`: the `cancel-momentum` action, then `send`.
+   * Left alone they cancel the coast that produced the wheel, and a flick
+   * scrolls one frame instead of decaying.
+   *
+   * term.html does not diverge, and its reason is the fix: `cancelScrollMomentum`
+   * clears `momentumRAF` alone (:6129-6130) while the velocity, distance and
+   * anchor are `let`s inside `startScrollMomentum`, and `step` re-arms the frame
+   * on the line after `feedScroll` (:6167). Re-entered from inside `step`, the
+   * cancel is a no-op. This port keeps the motion in `TouchScrollState.coast`,
+   * so the component owes the exclusion.
+   *
+   * TWO frames, for the reason the case above spells out: the first re-arms off
+   * a reduction taken before the cancel could land, so a broken coast still
+   * looks alive after one.
+   */
+  it("keeps coasting while its own wheels come back as mouse reports", async () => {
+    const { m, wheels } = await onTouch();
+    const reports = reportMouse(m.term);
+    flick(m);
+    const drag = wheels.length;
+    expect(drag).toBe(5);
+    expect(reports).toHaveLength(drag); // every wheel reported, drag included
+    if (!frames) throw new Error("no frame recorder");
+    expect(frames.outstanding()).toBe(1);
+
+    frames.run(NOW + 16);
+    const afterOne = wheels.length;
+    expect(afterOne).toBeGreaterThan(drag);
+    frames.run(NOW + 32);
+    expect(wheels.length).toBeGreaterThan(afterOne);
+    expect(frames.outstanding()).toBe(1);
+    // And the reports still went to the pty: only the cancel is excluded.
+    expect(reports).toHaveLength(wheels.length);
+    expect(inputs(m.socket())).toHaveLength(wheels.length);
+  });
+
+  /**
+   * A REAL keystroke still ends it while reporting is on, which is what keeps
+   * the exclusion above from being a blanket. `emittingWheel` is true only for
+   * the length of our own dispatch, so a key pressed between frames is the
+   * pty-bound byte term.html cancels for at :8269 and :8341.
+   */
+  it("still ends the coast on a keystroke with mouse reporting on", async () => {
+    const { m } = await onTouch();
+    reportMouse(m.term);
+    flick(m);
+    expect(frames?.outstanding()).toBe(1);
+    m.type("x");
+    expect(frames?.outstanding()).toBe(0);
+  });
+
+  /**
+   * AN ASK IS NOT A REATTACH. term.html cancels a coast inside `ws.onopen`
+   * (:10294) and nowhere on its ask path (:9822-9824), so the ADR-0016 Run
+   * check and a session view returning to the screen must leave a flick alone.
+   * Hanging the cancel off `onPhase("open")` did not, because `reportNow` fires
+   * that phase again for the same socket.
+   */
+  it("does not end the coast when the badge asks what is going on", async () => {
+    const { m } = await coasting();
+    m.control().ask();
+    expect(m.reports.at(-1)).toEqual({ state: "open", attempt: 0 });
     expect(frames?.outstanding()).toBe(1);
   });
 
@@ -3957,8 +4131,35 @@ describe("the compose mirror (term.html:7077-7509)", () => {
   });
 
   /**
+   * AN ASK IS NOT AN ATTACH, and this is the one field write in the component
+   * that a person can be standing in the middle of.
+   *
+   * `mirrorLineReset` appears at ten sites in term.html and `reportConnNow`
+   * (:9822-9824) is none of them, so the ADR-0016 Run check and a session view
+   * coming back on screen leave the field alone there. Hanging the reset off
+   * `onPhase("open")` did not: `reportNow` re-fires that phase for the SAME
+   * socket, and SessionView asks on every return to the screen
+   * (SessionView.tsx:248, inside an effect gated on `onScreen()`), so the field
+   * was blanked mid-word by ordinary navigation. mirror.ts:56-63 says what
+   * goes with such a write: a live QuickType or Gboard suggestion.
+   *
+   * The baseline has to survive too, not just the text, or the next keystroke
+   * re-sends the whole line.
+   */
+  it("keeps the field through a connection ask, which is not a new socket", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls");
+    m.control().ask();
+    expect(m.reports.at(-1)).toEqual({ state: "open", attempt: 0 });
+    expect(m.mirror().value).toBe("ls");
+    edit(m.mirror(), "ls -la");
+    expect(emitted(m)).toEqual(["ls", " -la"]);
+  });
+
+  /**
    * A word jump is NOT a reset site: term.html sends it through `sendInput`
-   * bare (:8550), and its nine `mirrorLineReset` call sites do not include it.
+   * bare (:8550), and none of its ten `mirrorLineReset` call sites is it
+   * (:6828, :7301, :8342, :8922, :8963, :9004, :9126, :9388, :9689, :10293).
    */
   it("keeps the field through a word jump, which the page does not reset for", async () => {
     const had = Object.getOwnPropertyDescriptor(navigator, "platform");

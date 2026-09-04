@@ -36,6 +36,7 @@ import { reduceStash, type SelectionStash } from "../terminal/selection";
 import {
   NO_TOUCH_SCROLL,
   reduce as reduceTouchScroll,
+  type LineWheel,
   type TouchScrollEvent,
   type TouchScrollState,
   type TouchScrollWorld,
@@ -1022,9 +1023,13 @@ export const TerminalNative: Component<{
       // is focused by a click, or by `__tlFocusTerminal`
       // (keybindings/refocus.ts) when an overlay hands the keyboard back.
       // TerminalView also focuses when the TERMINAL VIEW becomes the active
-      // one (TerminalView.tsx:307-311), which needs the `active` prop the
-      // native branch is not given, so a mode switch from text to terminal
-      // still leaves this unfocused.
+      // one (an effect on `props.active`, TerminalView.tsx:307-311), and this
+      // branch does not, so a mode switch from text to terminal still leaves
+      // this unfocused. NOT for want of the prop: SessionView passes the same
+      // `active={mode() === "terminal" && onScreen()}` to both branches
+      // (SessionView.tsx:919 and :966), and this component's only reader of it
+      // is the attention module's `view` gate (`viewHidden`). Closing the gap
+      // is an effect here, not a prop upstream.
       if (bootFitted && !typingElsewhere()) term.focus();
 
       /**
@@ -1110,6 +1115,65 @@ export const TerminalNative: Component<{
       let point: EmitPoint = NO_TOUCH_EMIT;
 
       /**
+       * TRUE only for the length of our own synthetic wheel dispatch, and read
+       * by `cancelCoast` below. `mirrorEmitting` is the same shape for the same
+       * kind of reason.
+       *
+       * WHY IT EXISTS. With mouse reporting on, a dispatched wheel comes back
+       * as pty-bound input INSIDE the dispatch, and a pty-bound byte cancels a
+       * coast. xterm's `bindMouse` consults the custom wheel handler, gets true
+       * for the untrusted synthetic, and `coreMouseService.triggerMouseEvent`
+       * sends the report through `_coreService.triggerDataEvent` rather than
+       * `triggerBinaryEvent`, because only DEFAULT encoding is binary and
+       * DECSET 1006 selects SGR. So `term.onData` fires SYNCHRONOUSLY inside
+       * `dispatchEvent`, and both of the interrupt sites downstream of it (the
+       * `cancel-momentum` action, then `send`) would end the coast that emitted
+       * the wheel. Measured against the installed @xterm/xterm 6.0.0: one
+       * untrusted `deltaMode: 1` wheel after `\x1b[?1000h\x1b[?1006h` yields
+       * `onData ["\x1b[<64;…M"]` and no `onBinary`.
+       *
+       * WHY term.html DOES NOT NEED IT, which is the whole argument for putting
+       * the exclusion here rather than in touchscroll.ts. The page's
+       * `cancelScrollMomentum` clears `momentumRAF` alone (:6129-6130); the
+       * coast's velocity, distance and anchor are `let`s inside
+       * `startScrollMomentum`, which it never touches, and `step` re-arms
+       * `momentumRAF` on the line after `feedScroll` (:6167). Re-entered from
+       * inside `step`, the cancel is therefore a NO-OP. The port moved that
+       * motion state into `TouchScrollState.coast`, so the module's `interrupt`
+       * destroys what the page leaves alone, and a pure reducer cannot see the
+       * re-entrancy that makes the difference. The component can, exactly as it
+       * already can for `onHostWheel`'s `isTrusted` test, which is the same
+       * exclusion arriving by the other route.
+       */
+      let emittingWheel = false;
+
+      /**
+       * The ONE emit primitive both scrollers share (term.html's
+       * `emitLineWheel`, :6105-6113).
+       *
+       * On the xterm ROOT (:6107), and one `dispatchEvent` per wheel: in
+       * mouse-tracking mode xterm forwards one report per DOM event whatever
+       * the magnitude, so collapsing k wheels into one `deltaY: k` would be one
+       * report where k separate events are k. The `term.element` test is the
+       * page's own guard at :6106.
+       */
+      const dispatchWheels = (wheels: readonly LineWheel[]): void => {
+        // Saved and restored rather than set and cleared, so a nested dispatch
+        // could not hand the outer one back an unguarded scope. Nothing nests
+        // today: an untrusted wheel leaves `wheel.ts`'s `onWheel` on its first
+        // line with no actions, so the pacer cannot re-emit for one of ours.
+        const outer = emittingWheel;
+        emittingWheel = true;
+        try {
+          for (const w of wheels) {
+            term.element?.dispatchEvent(new WheelEvent("wheel", w));
+          }
+        } finally {
+          emittingWheel = outer;
+        }
+      };
+
+      /**
        * The screen box height, measured NOW, or null when there is no screen
        * element (term.html:6095, :6099).
        *
@@ -1133,12 +1197,25 @@ export const TerminalNative: Component<{
        * it copies. So the pref fields are read once per event whether or not a
        * reducer asks for them. That is a cost and not a behaviour change, and
        * the two costs are not comparable: the parse and the coerce inside
-       * `readPersistedPrefs` measured 6.2 us per call, which is 0.7 ms per
-       * second of dragging at 120 Hz (prefs.ts, which also says why the
-       * `getItem` half is left unmeasured), while a box read forces a layout on
-       * the hot path. Where the page reads the doc only inside `feedScroll`
-       * (:6119) and `wheelSmoothOn` (:6238), this reads it on a pre-threshold
-       * touchmove and on a modified wheel too.
+       * `readPersistedPrefs` measured 6.2 us per call (prefs.ts, which also says
+       * why the `getItem` half is left unmeasured), while a box read forces a
+       * layout on the hot path. Where the page reads the doc only inside
+       * `feedScroll` (:6119) and `wheelSmoothOn` (:6238), this reads it on a
+       * pre-threshold touchmove and on a modified wheel too.
+       *
+       * ONE TOUCHMOVE IS 1 + k READS, not one, where k is the rows it emits.
+       * The extra one per row is `wheelWorldNow` below: xterm consults the
+       * custom wheel handler for every wheel on `term.element`, our own
+       * synthetic ones included, and `performWheel` evaluates that world as an
+       * ARGUMENT, so the read happens before `reduce` can look at `isTrusted`
+       * and pass the event straight back (wheel.ts, `onWheel`'s first line).
+       * The box stays lazy on that path, since that early return reads no
+       * geometry. At 120 Hz and two rows per touchmove, 1 + k is 3 reads an
+       * event and 2.2 ms per second of dragging; the earlier figure of 0.7 ms
+       * counted one read per touchmove and no dispatch. It was 1 + 3k until the
+       * coast self-cancel was fixed, because the report each wheel produced ran
+       * two more worlds through the interrupt path, and dropping `cancelCoast`
+       * would put those back.
        *
        * A PULL and not the prefs STORE, deliberately: the store is created by
        * App.tsx and never reaches this component, and its signal would miss a
@@ -1176,14 +1253,7 @@ export const TerminalNative: Component<{
         for (const action of r.actions) {
           switch (action.kind) {
             case "wheel":
-              // On the xterm ROOT (:6107), and one dispatchEvent per wheel: in
-              // mouse-tracking mode xterm forwards one report per DOM event
-              // whatever the magnitude, so collapsing k wheels into one
-              // `deltaY: k` would be one report where k separate events are k.
-              // The `term.element` test is the page's own guard at :6106.
-              for (const w of wheelsFor(action, point)) {
-                term.element?.dispatchEvent(new WheelEvent("wheel", w));
-              }
+              dispatchWheels(wheelsFor(action, point));
               break;
             case "focus":
               // term.html's `tapFocus` (:5815, reassigned at :7459-7462), which
@@ -1224,6 +1294,29 @@ export const TerminalNative: Component<{
         if (disposed) return;
         feedTouch({ type: "frame", now });
       }
+
+      /**
+       * THE ONE DOOR every `cancelScrollMomentum` goes through, so the
+       * self-cancel exclusion cannot be missed by a new interrupt path.
+       * touchscroll.ts's owes list names the page's four: a real wheel
+       * (:6281), every pty-bound byte at the shared `sendInput` choke point
+       * (:8269) and again at `term.onData` (:8341), a soft key (:6823, which
+       * natively arrives through the choke point), and a reattach (:10294).
+       *
+       * The guard decides nothing on two of the routes that reach here:
+       * `onHostWheel` cannot see a TRUSTED wheel inside our own dispatch, and a
+       * socket callback cannot arrive inside one either. It decides everything
+       * on `send` and the onData hook, which are the two a mouse report reaches
+       * synchronously.
+       *
+       * NOT the teardown's interrupt, which stays a direct feed: that one gives
+       * up an outstanding frame at unmount and must run whatever else is in
+       * flight.
+       */
+      const cancelCoast = (): void => {
+        if (emittingWheel) return;
+        feedTouch({ type: "interrupt" });
+      };
 
       /**
        * TWO CLOCKS PER TOUCH EVENT, and they are not interchangeable.
@@ -1303,16 +1396,18 @@ export const TerminalNative: Component<{
        * On the HOST element and at capture, where the page puts it, so it sees
        * only wheels over this terminal. `isTrusted` is the whole test: our own
        * synthetic coast ticks are untrusted and would otherwise cancel the
-       * coast they are part of. Registered whatever the pointer type, as the
-       * page registers it (:6278 sits outside the coarse-pointer block), and on
-       * a machine with no touch listeners there is never a coast for it to end.
+       * coast they are part of, and they DO reach this listener, since they are
+       * dispatched on `term.element` with `bubbles: true` and capture on an
+       * ancestor runs first. Registered whatever the pointer type, as the page
+       * registers it (:6278 sits outside the coarse-pointer block), and on a
+       * machine with no touch listeners there is never a coast for it to end.
        *
        * The page's listener does a second job in the same callback, the wheel
        * pixels that dismiss a highlight (`WHEEL_CLEAR_PX`, :6292). That is
        * selection.ts's and is not ported, so this half stands alone.
        */
       const onHostWheel = (e: WheelEvent): void => {
-        if (e.isTrusted) feedTouch({ type: "interrupt" });
+        if (e.isTrusted) cancelCoast();
       };
       host.addEventListener("wheel", onHostWheel, { passive: true, capture: true });
 
@@ -1349,12 +1444,10 @@ export const TerminalNative: Component<{
         for (const action of r.actions) {
           switch (action.kind) {
             case "emit":
-              // The same two lines as the touch path, and the same reason for
+              // The same primitive as the touch path, and the same reason for
               // separate dispatches. These carry `point`, which is the touch
               // path's last y or 100.
-              for (const w of wheelsFor(action, point)) {
-                term.element?.dispatchEvent(new WheelEvent("wheel", w));
-              }
+              dispatchWheels(wheelsFor(action, point));
               break;
             case "schedule-frame":
               // UNCONDITIONAL, never gated on `pumping`: the frame case
@@ -1425,25 +1518,32 @@ export const TerminalNative: Component<{
           term.write(bytes);
         },
         size: () => ({ cols: term.cols, rows: term.rows }),
+        // A (re)attach starts a fresh pty input line, so the mirror's diff
+        // baseline is stale and drops, and it hard-cancels a coast. Both are
+        // term.html's, in this order, inside the socket's own `onopen`:
+        // `mirrorLineReset()` at :10293 then `cancelScrollMomentum()` at
+        // :10294. The order is load-bearing for the offline-Enter flow: the
+        // reset lands before the hold is replayed 49 lines later (:10342), so
+        // the pty comes back holding a line whose baseline says empty, which is
+        // the state mirror.ts's `backspace-at-empty` exists for.
+        //
+        // ON `onAttach` AND NOT ON `onPhase("open")`, which is where this was
+        // and which is not once per attach. attach.ts says the two routes that
+        // re-fire it; the mirror reset is the half that cannot take them,
+        // because it is a write to the field a person may be mid-word in and
+        // mirror.ts:56-63 says a live QuickType or Gboard suggestion goes with
+        // it. A session view coming back on screen asks, so the frequent
+        // trigger is ordinary navigation.
+        //
+        // The other half of term.html's line, a SESSION SWITCH, needs nothing
+        // here: the lobby mounts one terminal per session and keeps them apart,
+        // so the coast a switch would have to cancel belongs to a different
+        // instance.
+        onAttach: () => {
+          feedMirror({ type: "out-of-band", value: mirrorField?.value ?? "" });
+          cancelCoast();
+        },
         onPhase: (phase, attempt) => {
-          // A (re)attach starts a fresh pty input line, so the mirror's diff
-          // baseline is stale and drops, and it hard-cancels a coast. Both are
-          // term.html's, in this order, inside the socket's own `onopen`:
-          // `mirrorLineReset()` at :10293 then `cancelScrollMomentum()` at
-          // :10294. The order is load-bearing for the offline-Enter flow: the
-          // reset lands before the hold is replayed 49 lines later (:10342), so
-          // the pty comes back holding a line whose baseline says empty, which
-          // is the state mirror.ts's `backspace-at-empty` exists for.
-          //
-          // `onPhase` fires on a CHANGE, so this is once per attach, which is
-          // where the page has it. The other half of that line, a SESSION
-          // SWITCH, needs nothing here: the lobby mounts one terminal per
-          // session and keeps them apart, so the coast a switch would have to
-          // cancel belongs to a different instance.
-          if (phase === "open") {
-            feedMirror({ type: "out-of-band", value: mirrorField?.value ?? "" });
-            feedTouch({ type: "interrupt" });
-          }
           props.onConn?.(report(phase, attempt));
         },
         watch: () => props.watch?.() === true,
@@ -1468,9 +1568,16 @@ export const TerminalNative: Component<{
        * NOT `sendBinary`: term.html's own `term.onBinary` hook (:8361-8370)
        * cancels nothing and reaches `ws.send` without passing `sendInput` at
        * all, because a mouse report is not something a person typed.
+       *
+       * A MOUSE REPORT DOES REACH HERE ANYWAY, and that is why the cancel goes
+       * through `cancelCoast`. SGR encoding puts the report on `onData` rather
+       * than `onBinary` (`emittingWheel` has the measurement), so a coast's own
+       * wheel arrives at this choke point as a pty-bound string. The bytes still
+       * go out; only the coast cancel is excluded, twice over, since the onData
+       * hook raises its own interrupt for the same report.
        */
       const send = (data: string): void => {
-        feedTouch({ type: "interrupt" });
+        cancelCoast();
         a.send(data);
       };
 
@@ -1735,7 +1842,11 @@ export const TerminalNative: Component<{
               // :8341 cancels here AND :8269 cancels at the choke point, whose
               // comment calls the scattered per-path cancels belt-and-braces.
               // An interrupt with no coast in flight decides nothing.
-              feedTouch({ type: "interrupt" });
+              //
+              // Through `cancelCoast`, because this hook is also where a mouse
+              // report lands under SGR encoding, so a coast's own wheel reaches
+              // it. It is the first of the two interrupts one report raises.
+              cancelCoast();
               break;
             case "mirror-out-of-band":
               // `mirrorLineReset` (:8342): bytes reached the pty by a route the
@@ -1863,6 +1974,19 @@ export const TerminalNative: Component<{
        * it reports `hasSelection: false`, the stash survives its own dismissal,
        * and Ctrl+C copies recovered text where the user expects SIGINT.
        *
+       * AND THE EARLY RETURN COVERS THREE THINGS, not one. `if
+       * (!term.hasSelection()) return;` (:5893) sits above the stash kill
+       * (:5894), the telemetry (:5896) and `term.clearSelection()` (:5897), so
+       * a dismissal with nothing highlighted files no incident and clears
+       * nothing. The stash third is delegated to `reduceStash`, which is why
+       * the call stays unconditional and reads the same value; the other two
+       * are the component's, so the return is here. It is REACHABLE:
+       * dragselect.ts's `clear-selection` rides `e.detail > 1` alone (:409),
+       * and `if (!term.hasSelection() || e.detail > 1)` at :6010-6011 is
+       * term.html's own proof that a double press with nothing selected gets
+       * here. Filing it anyway double-counts the deliberate-dismissal bucket
+       * ADR-0003 telemetry measures, and diagnostics default on.
+       *
        * ONE LINE OF :5892-5897 IS NOT PORTED, deliberately and with a place to
        * put it: `lastExplainedClear = { why, t: performance.now() }` (:5895).
        * Its only reader is the selection-lifecycle watcher (:6303-6323), which
@@ -1878,11 +2002,15 @@ export const TerminalNative: Component<{
        * in this app.
        */
       const clearSelectionBecause = (reason: string): void => {
+        // One read, as the page makes one (:5893), and the same value answers
+        // both halves.
+        const highlighted = term.hasSelection();
         stash = reduceStash(
           stash,
-          { type: "dismissed", hasSelection: term.hasSelection() },
+          { type: "dismissed", hasSelection: highlighted },
           performance.now(),
         );
+        if (!highlighted) return;
         diag().incident("sel-cleared", { "tl.reason": reason });
         term.clearSelection();
       };
