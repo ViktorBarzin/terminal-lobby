@@ -40,22 +40,34 @@ const receiptCap = 1 << 10
 // ok reports that the text is harness bookkeeping. line is the muted status
 // line it renders as, or "" when there is nothing a reader would act on — in
 // which case the record earns no row at all.
-func harnessRow(text string) (string, bool) {
+//
+// settles reports that the record is a slash command's receipt, which is the
+// transcript's own evidence that the command is finished: the CLI writes it
+// once it has printed the command's output and gone back to the prompt. It
+// matters because the command's own record opens a turn (it is a user-role
+// record with text in it, which is the whole test for "the human spoke") and a
+// command the CLI answers itself never reaches the model, so no assistant
+// record with a terminal stop_reason ever arrives to close that turn. Measured
+// across 357 transcripts on 2026-09-04: 16 command records were answered
+// locally — /model 6, /compact 5, /effort 5 — and every one left its turn open
+// until the operator's next prompt, which the text view drew as a working row
+// on a session with nothing running. The longest was 31.6 hours.
+func harnessRow(text string) (line string, settles, ok bool) {
 	t := strings.TrimSpace(text)
 	switch {
 	case strings.HasPrefix(t, "<local-command-caveat>"):
 		// Addressed to the model, identical every time, and says nothing to a
 		// reader.
-		return "", true
+		return "", false, true
 	case strings.HasPrefix(t, "<task-notification>"):
 		// The markup carries the id, the tool-use id, the output file and the
 		// status; the summary already says all of it in a sentence ("Background
 		// command "…" completed (exit code 0)"). All 583 measured had one.
-		return strings.TrimSpace(plainText(element(t, "summary"))), true
+		return strings.TrimSpace(plainText(element(t, "summary"))), false, true
 	case strings.HasPrefix(t, "<local-command-stdout>"):
-		return commandReceipt(element(t, "local-command-stdout")), true
+		return commandReceipt(element(t, "local-command-stdout")), true, true
 	}
-	return "", false
+	return "", false, false
 }
 
 // commandReceipt is what a slash command's captured output says, once the

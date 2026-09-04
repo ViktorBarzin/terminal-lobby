@@ -92,7 +92,7 @@ func TestHarnessRow(t *testing.T) {
 		{name: "empty", in: "", ok: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := harnessRow(tc.in)
+			got, _, ok := harnessRow(tc.in)
 			if ok != tc.ok {
 				t.Fatalf("ok = %v, want %v (got %q)", ok, tc.ok, got)
 			}
@@ -171,7 +171,7 @@ func TestPlainText(t *testing.T) {
 // A receipt is bounded: the hook filter is a pattern, so a shape it does not
 // recognise must still not become a wall.
 func TestCommandReceiptIsBounded(t *testing.T) {
-	line, ok := harnessRow("<local-command-stdout>" + strings.Repeat("x", 4096) + "</local-command-stdout>")
+	line, _, ok := harnessRow("<local-command-stdout>" + strings.Repeat("x", 4096) + "</local-command-stdout>")
 	if !ok {
 		t.Fatal("not recognised as harness markup")
 	}
@@ -180,6 +180,105 @@ func TestCommandReceiptIsBounded(t *testing.T) {
 	}
 	if !strings.Contains(line, "truncated") {
 		t.Errorf("a cut receipt must say so: %q", line[len(line)-40:])
+	}
+}
+
+// A slash command the CLI answers itself opens a turn nothing can ever close.
+//
+// Claude Code records the command as an ordinary user-role record whose text is
+// <command-name> markup. Every test the normalizer has for "the human spoke"
+// says yes to it, so it starts a turn — but for a command the CLI handles
+// locally the model is never called, no assistant record with a terminal
+// stop_reason ever arrives, and nothing closes the turn. The text view draws a
+// working row for as long as the last turn is open, so the session claims to be
+// working with nothing running, until the operator's next real prompt.
+//
+// Measured across the 357 session transcripts on this box on 2026-09-04: 16
+// command records were answered locally (/model 6, /compact 5, /effort 5) and
+// every one of them held its turn open. The longest stretch was 31.6 hours, in
+// the session this was reported from, and what finally closed it was Viktor
+// typing the bug report about it.
+//
+// The receipt is the transcript's own evidence that the command is over: the
+// CLI writes <local-command-stdout> once it has printed the command's output
+// and gone back to the prompt. For /compact that lands 2.5 minutes after the
+// command record — real work, and it shows as working for exactly as long as it
+// runs.
+func TestCommandReceiptSettlesTheTurnTheCommandOpened(t *testing.T) {
+	// json.Marshal rather than a string literal: the receipt carries the SGR
+	// codes the CLI drew it with, and a raw control byte inside a JSON string is
+	// invalid JSON — the record would fail to decode, which reads as the
+	// normalizer dropping it.
+	user := func(at string, isMeta bool, text string) []byte {
+		b, err := json.Marshal(map[string]any{
+			"type":      "user",
+			"isMeta":    isMeta,
+			"timestamp": at,
+			"message":   map[string]any{"role": "user", "content": text},
+		})
+		if err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+		return b
+	}
+
+	n := NewNormalizer("demo")
+	var out []Event
+	add := func(evs []Event) { out = append(out, evs...) }
+
+	// The five records are the ones the reported session actually holds, in
+	// order (transcript 716469e6, records 13176-13178 preceded by a settled
+	// turn).
+	add(n.Line(user("2026-09-02T19:40:00.000Z", false, "hello")))
+	add(n.Line([]byte(`{"type":"assistant","timestamp":"2026-09-02T19:40:05.000Z","message":{"id":"m1","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"hi"}]}}`)))
+	add(n.Line(user("2026-09-02T19:48:23.996Z", true, realCaveat)))
+	add(n.Line(user("2026-09-02T19:48:23.996Z", false, "<command-name>/compact</command-name>\n<command-message>compact</command-message>")))
+	receiptAt := len(out)
+	add(n.Line(user("2026-09-02T19:50:50.440Z", false, realStdout)))
+
+	// The command opened a turn of its own; the prompt before it kept its own.
+	first, last := out[0].TurnID, out[len(out)-1].TurnID
+	if first == "" || last == "" || first == last {
+		t.Fatalf("want the command in a turn of its own, got %q then %q: %v", first, last, kinds(out))
+	}
+	// The receipt still says what the command printed.
+	if got := out[receiptAt]; got.Kind != KindState || !strings.Contains(got.Body, "Compacted") {
+		t.Fatalf("receipt row = %+v", got)
+	}
+	var ended bool
+	for _, e := range out[receiptAt:] {
+		if e.Kind == KindTurnEnd && e.TurnID == last {
+			ended = true
+		}
+	}
+	if !ended {
+		t.Fatalf("the command's turn %s is still open after its receipt: %v", last, kinds(out[receiptAt:]))
+	}
+	// Settled stays settled. A turn_end per receipt would end the same turn
+	// twice, and the renderer folds a turn on the first one.
+	before := len(out)
+	add(n.Line(user("2026-09-02T19:50:51.000Z", false, realStdout)))
+	for _, e := range out[before:] {
+		if e.Kind == KindTurnEnd {
+			t.Fatalf("a second receipt emitted another turn_end: %v", kinds(out[before:]))
+		}
+	}
+}
+
+// A command the model answers keeps its turn open, because the model is
+// genuinely working on it. /wrap-up, /implement and the other skill commands
+// are recorded as the same <command-name> markup and write no receipt at all:
+// 47 of the 63 command records in the corpus are these. Settling on the markup
+// rather than on the receipt would end their turn before the reply arrived.
+func TestASkillCommandKeepsItsTurnOpen(t *testing.T) {
+	n := NewNormalizer("demo")
+	out := n.Line([]byte(`{"type":"user","timestamp":"2026-09-02T19:40:00.000Z","message":{"role":"user","content":"<command-name>/wrap-up</command-name>"}}`))
+	if len(out) != 1 || out[0].Kind != KindUser || out[0].Body != "/wrap-up" {
+		t.Fatalf("command row = %+v", out)
+	}
+	out = append(out, n.Line([]byte(`{"type":"assistant","timestamp":"2026-09-02T19:40:09.000Z","message":{"id":"m2","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"wrapped"}]}}`))...)
+	if got := kinds(out); len(got) != 3 || got[2] != KindTurnEnd {
+		t.Fatalf("want the model's reply to be what ends the turn, got %v", got)
 	}
 }
 
@@ -204,10 +303,17 @@ func TestHarnessRecordsDoNotOpenATurn(t *testing.T) {
 		name string
 		body string
 		want string
+		// A command receipt ENDS the open turn as well as staying inside it —
+		// it is the CLI reporting that the command it was handling is done (see
+		// TestCommandReceiptSettlesTheTurnTheCommandOpened). A task
+		// notification is a background job reporting in and says nothing about
+		// the turn.
+		wantEnd bool
 	}{
 		{name: "task notification", body: realTaskNotification,
 			want: `Background command "Capture live lexical baseline" completed (exit code 0)`},
-		{name: "command receipt", body: realStdout, want: "Compacted (ctrl+o to see full summary)"},
+		{name: "command receipt", body: realStdout,
+			want: "Compacted (ctrl+o to see full summary)", wantEnd: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			line, err := json.Marshal(map[string]any{
@@ -221,8 +327,12 @@ func TestHarnessRecordsDoNotOpenATurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			evs := n.Line(line)
-			if len(evs) != 1 {
-				t.Fatalf("got %d events, want 1: %+v", len(evs), evs)
+			want := 1
+			if tc.wantEnd {
+				want = 2
+			}
+			if len(evs) != want {
+				t.Fatalf("got %d events, want %d: %+v", len(evs), want, evs)
 			}
 			if evs[0].Kind != KindState {
 				t.Errorf("kind = %q, want %q", evs[0].Kind, KindState)
@@ -232,6 +342,9 @@ func TestHarnessRecordsDoNotOpenATurn(t *testing.T) {
 			}
 			if evs[0].Body != tc.want {
 				t.Errorf("body = %q, want %q", evs[0].Body, tc.want)
+			}
+			if tc.wantEnd && (evs[1].Kind != KindTurnEnd || evs[1].TurnID != turn) {
+				t.Errorf("second event = %+v, want a turn_end in %q", evs[1], turn)
 			}
 		})
 	}

@@ -189,13 +189,24 @@ func (n *Normalizer) Record(rec Record) []Event {
 	// muted status line inside whatever turn is open and opens none of its own
 	// (see harness.go). A shape with nothing worth reading earns no row.
 	if role == "user" {
-		if line, ok := harnessRow(blockText(blocks)); ok {
-			if line == "" {
-				return nil
+		if line, settles, ok := harnessRow(blockText(blocks)); ok {
+			var out []Event
+			if line != "" {
+				e := n.emit(KindState, at)
+				e.Body = line
+				out = append(out, e)
 			}
-			e := n.emit(KindState, at)
-			e.Body = line
-			return []Event{e}
+			// A slash command the CLI answered itself is over when its receipt
+			// lands, and the turn the command's own record opened has to end
+			// with it — nothing else ever will, since the model was never
+			// called (see harnessRow). For /compact the receipt arrives 2.5
+			// minutes later, so the turn stays open for as long as the
+			// compaction actually runs, which is honest.
+			if settles && !n.turnDone {
+				n.turnDone, n.doneMsg = true, ""
+				out = append(out, n.emit(KindTurnEnd, at))
+			}
+			return out
 		}
 	}
 
