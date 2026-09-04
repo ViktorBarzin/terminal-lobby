@@ -69,3 +69,109 @@ describe("xterm on the iPadOS 15.8 floor", () => {
     term.dispose();
   });
 });
+
+/**
+ * The two upstream behaviours the native paste fix rests on.
+ *
+ * Ctrl+V on the app-rendered terminal used to send a raw 0x16 to the pty, which
+ * in zsh is quoted-insert and swallowed the next key, so the paste that followed
+ * arrived corrupted. The fix answers `false` from `attachCustomKeyEventHandler`
+ * for the paste chord and lets the browser's own paste event carry the text.
+ * That works only because of two things xterm does today, neither of them
+ * promised by its API:
+ *
+ *   1. `_keyDown` consults the custom handler FIRST and returns before it emits
+ *      data or cancels the event, so one `false` suppresses both the 0x16 and
+ *      the `preventDefault` that would have eaten the paste event.
+ *   2. `handlePasteEvent` is registered on the helper textarea and on `.xterm`,
+ *      both DESCENDANTS of the host, which is the only reason a capture-phase
+ *      listener on the host can stop the event before xterm sees it and paste
+ *      the text exactly once.
+ *
+ * Bump xterm past a rewrite of either and the component keeps typechecking and
+ * every mocked test keeps passing, while Ctrl+V becomes a silent no-op (case 1)
+ * or pastes twice (case 2). This is the file that runs the real library, so
+ * this is where those two get pinned.
+ */
+describe("what the native paste fix borrows from xterm", () => {
+  const openReal = (): { term: Terminal; host: HTMLDivElement } => {
+    shimJsdomGaps();
+    const host = document.createElement("div");
+    Object.defineProperty(host, "clientWidth", { value: 800 });
+    Object.defineProperty(host, "clientHeight", { value: 600 });
+    document.body.appendChild(host);
+    const term = new Terminal({ cols: 80, rows: 24 });
+    term.open(host);
+    return { term, host };
+  };
+
+  it("lets a custom handler suppress BOTH the data and the preventDefault", () => {
+    const { term, host } = openReal();
+    const data: string[] = [];
+    term.onData((d) => void data.push(d));
+    term.attachCustomKeyEventHandler((e) => !(e.key === "v" && e.ctrlKey));
+
+    const textarea = host.querySelector("textarea");
+    expect(textarea, "xterm no longer mounts a helper textarea").not.toBeNull();
+    const ev = new KeyboardEvent("keydown", {
+      key: "v",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    textarea?.dispatchEvent(ev);
+
+    expect(data, "a refused chord still reached the pty").toEqual([]);
+    expect(
+      ev.defaultPrevented,
+      "xterm cancelled a keydown its custom handler refused, so the browser " +
+        "paste event that carries the clipboard will never fire and Ctrl+V " +
+        "becomes a silent no-op on the native terminal",
+    ).toBe(false);
+    term.dispose();
+    host.remove();
+  });
+
+  it("registers its own paste listener inside the host, not on the document", () => {
+    const { term, host } = openReal();
+    const data: string[] = [];
+    term.onData((d) => void data.push(d));
+
+    // Dispatched at the host itself, which is ABOVE anything xterm listens on.
+    // If xterm had moved its listener to the document, this would still reach
+    // it and the component's own capture listener could not deduplicate.
+    const ev = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "clipboardData", {
+      value: { getData: () => "pasted" },
+    });
+    host.dispatchEvent(ev);
+
+    expect(
+      data,
+      "a paste dispatched AT the host reached xterm, so xterm now listens at or " +
+        "above the host. The native terminal stops the event on the host to " +
+        "keep xterm from pasting the same text a second time, and that no " +
+        "longer works, so every Ctrl+V pastes twice",
+    ).toEqual([]);
+
+    // The same event one level down MUST arrive, or the assertion above proves
+    // nothing: a malformed clipboardData would be ignored wherever it was
+    // dispatched, and this test would pass while measuring the fake rather than
+    // xterm. Dispatched at the helper textarea, which is where xterm does
+    // listen.
+    const textarea = host.querySelector("textarea");
+    const inner = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(inner, "clipboardData", {
+      value: { getData: () => "pasted" },
+    });
+    textarea?.dispatchEvent(inner);
+    expect(
+      data,
+      "xterm ignored a paste dispatched at its own textarea, so the negative " +
+        "assertion above is vacuous and this file is not measuring what it says",
+    ).toEqual(["pasted"]);
+
+    term.dispose();
+    host.remove();
+  });
+});

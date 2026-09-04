@@ -32,8 +32,14 @@
  *   - what a soft keyboard really does to the viewport. The gates below are
  *     driven by a faked `visualViewport` and a faked `matchMedia`; the WebKit
  *     and Gboard halves are device claims.
- *   - links, the compose mirror, the key-handler contract and the held-key
- *     overlay, none of which the component wires yet.
+ *   - whether a real browser then FIRES its paste event once the key handler
+ *     answers false, and whether a real xterm would have sent the ^V byte if
+ *     it had not. Both are the browser's and xterm's own behaviour, and xterm
+ *     is mocked here, so the paste chord is pinned by the value the handler
+ *     returns plus a pty capture on the deployed site.
+ *   - links, the compose mirror, the REST of the key-handler contract (the
+ *     paste leg is wired below; copy, Escape, the app chords, F12 and the
+ *     Option-arrow jumps are not) and the held-key overlay.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
@@ -63,6 +69,7 @@ const xt = vi.hoisted(() => {
     host: HTMLElement | null = null;
     readonly onDataCbs: ((data: string) => void)[] = [];
     readonly onBinaryCbs: ((data: string) => void)[] = [];
+    atlasCleared = 0;
     /** Every `term.paste()` the component made, in order. */
     readonly pasted: string[] = [];
     readonly written: Uint8Array[] = [];
@@ -98,11 +105,28 @@ const xt = vi.hoisted(() => {
       this.screen = screen;
       if (!made.lateTextarea) this.createHelperTextarea();
     }
+    /** What `getSelection()` answers, i.e. xterm's right-trimmed text. */
+    selectionText = "";
+    /** How many times the component asked for the selection TEXT. */
+    selectionReads = 0;
+    /**
+     * The ONE handler xterm stores, as the component installed it. A second
+     * `attachCustomKeyEventHandler` call would replace it, which is why the
+     * component has to fit everything it wants into this one function.
+     */
+    keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
     hasSelection(): boolean {
       return this.selected;
     }
+    getSelection(): string {
+      this.selectionReads++;
+      return this.selectionText;
+    }
     clearSelection(): void {
       this.cleared++;
+    }
+    attachCustomKeyEventHandler(h: (e: KeyboardEvent) => boolean): void {
+      this.keyHandler = h;
     }
     /** xterm 6 makes this inside open(); `lateTextarea` defers it so the
      *  component's not-there-yet arm can be driven. */
@@ -130,6 +154,9 @@ const xt = vi.hoisted(() => {
     }
     refresh(): void {
       this.refreshed++;
+    }
+    clearTextureAtlas(): void {
+      this.atlasCleared++;
     }
     dispose(): void {
       this.disposed++;
@@ -641,6 +668,301 @@ describe("the paste bridge goes through term.paste (term.html:9404-9409)", () =>
     // what xterm would have produced.
     m.type("rm -rf /");
     expect(inputs(m.socket())).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 2b. The paste chord, and the browser paste it lets through
+ *     (term.html:8585-8587 and :8932-8944)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The defect this section pins, measured on the deployed site with a raw pty
+ * capture: with terminal focus in both cases, Ctrl+V on the iframe path put the
+ * 53 bytes of clipboard text on the pty, and on `?native=1` it put a single
+ * 0x16. In zsh ^V is quoted-insert, so it also swallowed the first byte of the
+ * next paste, whose leading ESC was then self-inserted, the bracketed-paste
+ * widget never fired, and the CRs ran the lines one by one.
+ *
+ * Both halves needed wiring. xterm's default handling of Ctrl+V sends ^V and
+ * preventDefaults the keydown, so on that chord no paste event was ever fired;
+ * and the only receiver a fired one had was xterm's own listener on its helper
+ * textarea, since this app's document paste listener (`clipboard/attach.ts`)
+ * takes IMAGE items and passes text through to the focused field. The
+ * component now takes the event first and routes it through the same
+ * `term.paste` call the toolbar bridge uses, which is the route already
+ * measured against the iframe byte for byte.
+ */
+describe("the paste chord (term.html:8585-8587)", () => {
+  /** xterm consulting the one handler it stores. */
+  const consult = (
+    m: Mounted,
+    type: "keydown" | "keyup",
+    init: KeyboardEventInit,
+  ): boolean => {
+    const handler = m.term.keyHandler;
+    if (!handler) throw new Error("no custom key event handler was installed");
+    return handler(new KeyboardEvent(type, init));
+  };
+  const CTRL_V: KeyboardEventInit = { key: "v", code: "KeyV", ctrlKey: true };
+  const CTRL_C: KeyboardEventInit = { key: "c", code: "KeyC", ctrlKey: true };
+
+  it("installs a handler at all", async () => {
+    const m = await mountOpen();
+    expect(m.term.keyHandler).toBeTypeOf("function");
+  });
+
+  /**
+   * FALSE is the whole fix: it is what stops xterm both sending ^V and
+   * preventDefaulting the keydown, and the preventDefault is what suppressed
+   * the browser's paste event. term.html answers the same thing for the same
+   * reason (:8585-8586, "let the browser paste event fire").
+   *
+   * With xterm mocked, the 0x16 byte cannot be produced here at all, so what
+   * is asserted is the answer that governs it. The byte was measured twice
+   * elsewhere: on the deployed site off the pty, and against the real xterm 6
+   * in jsdom, where the same keydown yields `onData: "\x16"` with
+   * `defaultPrevented: true` unhandled, and nothing at all with this answer.
+   */
+  it("keeps Ctrl+V out of xterm's hands, so no ^V reaches the pty", async () => {
+    const m = await mountOpen();
+    expect(consult(m, "keydown", CTRL_V)).toBe(false);
+    expect(inputs(m.socket())).toEqual([]);
+  });
+
+  /**
+   * xterm yields no key and no preventDefault for Cmd+V, so a Mac was already
+   * getting its paste event. Answering the same thing for both is what keeps
+   * the chord from meaning one thing per platform.
+   */
+  it("answers the same for Cmd+V, which is the chord on a Mac", async () => {
+    const m = await mountOpen();
+    expect(consult(m, "keydown", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+  });
+
+  /**
+   * The decision comes from `selection.ts` rather than from a chord test
+   * written in the component, and this is the case that tells the two apart: on
+   * a Cyrillic layout Ctrl+V reports `key: "м"`, so an `e.key === "v"` test
+   * misses it and the chord falls through as ^V (ADR-0003's layout rule).
+   */
+  it("catches the chord on a layout where the key is not 'v'", async () => {
+    const m = await mountOpen();
+    expect(consult(m, "keydown", { key: "м", code: "KeyV", ctrlKey: true })).toBe(false);
+  });
+
+  /**
+   * xterm consults the handler on keyup too, where a false would cost it the
+   * focus and cursor-style work `_keyUp` does. selection.ts answers `pty` for
+   * anything that is not a keydown (term.html:8517).
+   */
+  it("passes the chord's keyup through", async () => {
+    const m = await mountOpen();
+    expect(consult(m, "keyup", CTRL_V)).toBe(true);
+  });
+
+  it("leaves an ordinary keystroke on its way to the pty", async () => {
+    const m = await mountOpen();
+    expect(consult(m, "keydown", { key: "a", code: "KeyA" })).toBe(true);
+    m.type("a");
+    expect(inputs(m.socket())).toEqual([[0x61]]);
+  });
+
+  /**
+   * THIS PHASE WIRES THE PASTE LEG AND NOTHING ELSE, and these two pin that
+   * rather than leaving it to a comment. The same decision also carries the
+   * copy chord and the Escape-clears-a-selection leg (term.html:8565-8584),
+   * and both must answer exactly what xterm answers today with no handler
+   * installed: Ctrl+C stays SIGINT even with a highlight on screen, which is
+   * ADR-0003's contract still unhonoured on this path, and Escape reaches the
+   * app without clearing the highlight. Half-wiring either one is the silent
+   * failure, so `cleared` and the socket are checked as well.
+   */
+  it("still hands the copy chord to the pty, selection or not", async () => {
+    const m = await mountOpen();
+    m.term.selected = true;
+    m.term.selectionText = "highlighted";
+    expect(consult(m, "keydown", CTRL_C)).toBe(true);
+    m.type("\x03");
+    expect(inputs(m.socket())).toEqual([[0x03]]);
+    expect(m.term.pasted).toEqual([]);
+  });
+
+  it("still hands Escape to the pty and clears no selection", async () => {
+    const m = await mountOpen();
+    m.term.selected = true;
+    m.term.selectionText = "highlighted";
+    expect(consult(m, "keydown", { key: "Escape", code: "Escape" })).toBe(true);
+    expect(m.term.cleared).toBe(0);
+    m.type("\x1b");
+    expect(inputs(m.socket())).toEqual([[0x1b]]);
+  });
+
+  /**
+   * term.html reads `term.getSelection()` only inside its copy branch (:8570),
+   * never on an ordinary keystroke, and the component keeps that by passing the
+   * text as a getter: xterm builds the string by translating every selected row.
+   */
+  it("does not build the selection text on every keystroke", async () => {
+    const m = await mountOpen();
+    m.term.selected = true;
+    m.term.selectionText = "highlighted";
+    m.term.selectionReads = 0;
+    consult(m, "keydown", { key: "a", code: "KeyA" });
+    consult(m, "keydown", CTRL_V);
+    expect(m.term.selectionReads).toBe(0);
+    // And the getter is really xterm's, not a hardcoded "": the copy arm asks
+    // for the text, which is the one arm term.html reads it in.
+    consult(m, "keydown", CTRL_C);
+    expect(m.term.selectionReads).toBe(1);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 2c. The paste EVENT the chord now allows (term.html:8932-8944)
+ * ------------------------------------------------------------------ */
+
+describe("the browser paste event reaches the pty", () => {
+  /** A paste event carrying text, the way jsdom will let one be built. */
+  const pasteEvent = (text: string): Event => {
+    const e = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "clipboardData", {
+      value: { getData: (type: string) => (type === "text" ? text : "") },
+    });
+    return e;
+  };
+
+  /** xterm's own input proxy, which is where a paste is really dispatched. */
+  const textareaOf = (m: Mounted): HTMLTextAreaElement => {
+    const ta = m.term.host?.querySelector<HTMLTextAreaElement>(
+      ".xterm-helper-textarea",
+    );
+    if (!ta) throw new Error("the terminal has no helper textarea");
+    return ta;
+  };
+
+  it("hands the text to term.paste, not to a raw send", async () => {
+    const m = await mountOpen();
+    const e = pasteEvent("echo hello");
+    textareaOf(m).dispatchEvent(e);
+    expect(m.term.pasted).toEqual(["echo hello"]);
+    expect(inputs(m.socket())).toEqual([]);
+  });
+
+  /**
+   * The paste that was wrecked. `term.paste` brackets the text and turns the
+   * newlines into CRs (measured against the real xterm 6 with DECSET 2004 on:
+   * `\x1b[200~one\rtwo\x1b[201~`), and the ^V is what broke that bracketing:
+   * the leading ESC was self-inserted by zsh's quoted-insert, the
+   * bracketed-paste widget never fired, and the CRs ran the lines one by one.
+   */
+  it("takes a multiline paste through the same route as the bridge", async () => {
+    const m = await mountOpen();
+    textareaOf(m).dispatchEvent(pasteEvent("one\ntwo\nthree"));
+    window.__tlPasteToTerminal?.("one\ntwo\nthree");
+    // The same argument to term.paste either way, which is the claim: the
+    // toolbar's route was already measured against the iframe byte for byte.
+    expect(m.term.pasted).toEqual(["one\ntwo\nthree", "one\ntwo\nthree"]);
+    expect(inputs(m.socket())).toEqual([]);
+  });
+
+  /**
+   * preventDefault keeps the text out of xterm's offscreen helper textarea, the
+   * field xterm empties itself on the paste path being bypassed here
+   * (term.html:8934 does the same). stopPropagation is what keeps the text from
+   * being pasted TWICE: xterm registers its own `handlePasteEvent` on that
+   * textarea and on `.xterm` in `_initGlobal`, which `open()` calls, and it
+   * calls the same routine `term.paste` calls.
+   */
+  it("stops the event it took", async () => {
+    const m = await mountOpen();
+    const ta = textareaOf(m);
+    // Registered where xterm registers its own, so this stands in for it.
+    let reachedXterm = false;
+    ta.addEventListener("paste", () => void (reachedXterm = true));
+    const e = pasteEvent("echo hello");
+    ta.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(reachedXterm).toBe(false);
+  });
+
+  /**
+   * An image paste belongs to `clipboard/attach.ts`, which uploads it and types
+   * the path at the prompt. Its document listener runs first, being higher in
+   * the capture path, but one that got this far must be left alone rather than
+   * swallowed with nothing pasted (term.html takes its image branch first for
+   * the same reason, :8905-8930).
+   */
+  it("leaves a paste carrying no text alone", async () => {
+    const m = await mountOpen();
+    const e = pasteEvent("");
+    textareaOf(m).dispatchEvent(e);
+    expect(m.term.pasted).toEqual([]);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  /**
+   * Scoped to the terminal's own host, where term.html could use the document
+   * because that page held one terminal and excluded its own compose field by
+   * id (:8900-8903). The lobby's inputs live in THIS document: a document-level
+   * swallow would send the composer's and the rename box's text to the pty.
+   */
+  it("does not touch a paste aimed at a lobby text field", async () => {
+    const m = await mountOpen();
+    const field = document.createElement("textarea");
+    document.body.appendChild(field);
+    const e = pasteEvent("a message for the composer");
+    field.dispatchEvent(e);
+    expect(m.term.pasted).toEqual([]);
+    expect(e.defaultPrevented).toBe(false);
+    field.remove();
+  });
+
+  /**
+   * The other half of that scoping. Every mounted session's document listener
+   * sees one paste (the duplication `clipboard/attach.ts` needed an `active`
+   * gate for, four byte-identical uploads from one gesture), while only the
+   * focused terminal's host is on the event's path.
+   */
+  it("is taken by the terminal the paste landed in, not by every one mounted", async () => {
+    // One at a time, for the module-mock race the drag section documents.
+    const r = render(() => <TerminalNative args="arg=first" ownsBridges={true} />);
+    await settle();
+    const r2 = render(() => <TerminalNative args="arg=second" ownsBridges={false} />);
+    await settle();
+    const [first, second] = xt.made.terminals;
+    if (!first || !second) throw new Error("two terminals were expected");
+    const ta = second.host?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    if (!ta) throw new Error("the second terminal has no helper textarea");
+
+    ta.dispatchEvent(pasteEvent("only mine"));
+
+    expect(second.pasted).toEqual(["only mine"]);
+    expect(first.pasted).toEqual([]);
+    r.unmount();
+    r2.unmount();
+  });
+
+  /** Watch mode is not weakened: the route is the bridge's, so is the drop. */
+  it("still lets watch mode drop it at the choke point", async () => {
+    const m = await mountOpen({ watch: true });
+    textareaOf(m).dispatchEvent(pasteEvent("rm -rf /"));
+    expect(m.term.pasted).toEqual(["rm -rf /"]);
+    // The fake does not re-emit onData, so drive the choke point with what
+    // xterm's own paste would have produced.
+    m.type("rm -rf /");
+    expect(inputs(m.socket())).toEqual([]);
+  });
+
+  it("stops taking pastes once the terminal is unmounted", async () => {
+    const m = await mountOpen();
+    const ta = textareaOf(m);
+    m.unmount();
+    await settle();
+    const e = pasteEvent("after the unmount");
+    ta.dispatchEvent(e);
+    expect(m.term.pasted).toEqual([]);
+    expect(e.defaultPrevented).toBe(false);
   });
 });
 
@@ -1888,5 +2210,79 @@ describe("the live-theme global survives an out-of-order unmount", () => {
     only.unmount();
     await settle();
     expect(themeLive()).toBe(before);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 12. Symbol glyphs, and re-rasterizing once the fonts arrive
+ * ------------------------------------------------------------------ */
+
+/**
+ * JetBrains Mono ships no braille and none of Claude Code's spinner and status
+ * glyphs, so the mono stack carries a "TL Symbols" fallback face declared in
+ * theme/theme.css. Two halves have to hold for a running agent's spinner to be
+ * a picture rather than a box: the face has to be IN the stack the terminal is
+ * constructed with, and xterm has to re-rasterize once the webfont actually
+ * arrives, because the atlas it builds at open() is built from whatever font
+ * was resolved at that instant.
+ */
+describe("symbol glyphs survive the webfont arriving late", () => {
+  // jsdom implements no FontFaceSet at all: document.fonts is undefined here,
+  // which is why the component reaches it optionally. Faked for the same reason
+  // matchMedia and visualViewport are faked above, so the re-rasterize is a
+  // measured claim rather than a silently skipped one. A test that leaves it
+  // undefined passes whether the component reads it or not.
+  let restore: (() => void) | null = null;
+  const fontsSettleAs = (ready: Promise<unknown>): void => {
+    const target = document as unknown as { fonts?: unknown };
+    const had = Object.prototype.hasOwnProperty.call(target, "fonts");
+    const previous = target.fonts;
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: { ready },
+    });
+    restore = () => {
+      if (had) {
+        Object.defineProperty(document, "fonts", { configurable: true, value: previous });
+      } else {
+        delete (document as unknown as { fonts?: unknown }).fonts;
+      }
+    };
+  };
+
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  it("names the symbol face in the constructed stack, after JetBrains Mono", async () => {
+    const m = await mount();
+    const stack = String(m.term.ctor.fontFamily);
+    expect(stack).toContain("TL Symbols");
+    expect(stack.indexOf("JetBrains Mono")).toBeLessThan(stack.indexOf("TL Symbols"));
+  });
+
+  it("clears the texture atlas once the fonts are ready", async () => {
+    fontsSettleAs(Promise.resolve());
+    const m = await mount();
+    await settle();
+    expect(m.term.atlasCleared).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not clear the atlas of a terminal that is already gone", async () => {
+    let settleFonts: () => void = () => {};
+    fontsSettleAs(new Promise<void>((res) => (settleFonts = res)));
+    const m = await mount();
+    const before = m.term.atlasCleared;
+    m.unmount();
+    settleFonts();
+    await settle();
+    expect(m.term.atlasCleared).toBe(before);
+  });
+
+  it("survives a browser with no FontFaceSet, which is what jsdom is", async () => {
+    const m = await mount();
+    await settle();
+    expect(m.term.atlasCleared).toBe(0);
   });
 });

@@ -81,10 +81,36 @@
     U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* The symbol fallback face, second in the mono stack.
+ *
+ * JetBrains Mono 2.304 ships NO braille (U+2800-28FF) and none of Claude
+ * Code's spinner and status glyphs, which scripts/build-tl-symbols.sh records
+ * as fc-query verified. Without this face they fall through to whatever the
+ * client happens to have, which on the machine that reported it was a
+ * replacement box, so a running agent's spinner read as tofu. term.html has
+ * carried the face since the JetBrains webfont landed, loading it as a
+ * FontFace with this same unicode-range (:5789-5799); the app-rendered
+ * terminal reads --font-mono below, so declaring it here covers both.
+ *
+ * The range is a guard, not a decoration: it is what stops a symbol face
+ * shadowing JetBrains Mono's ASCII metrics. The subset contains no ASCII
+ * either, so this is the second of two locks on the same door. Deliberately no
+ * emoji ranges, which would suppress colour emoji.
+ */
+@font-face {
+  font-family: "TL Symbols";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("/fonts/tl-symbols.woff2") format("woff2");
+  unicode-range: U+2300-23FF, U+2700-27BF, U+2800-28FF, U+203B, U+2610, U+2612,
+    U+25FC;
+}
+
 :root {
   /* Single source of truth for chrome mono stacks. */
-  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco,
-    "Courier New", monospace;
+  --font-mono: "JetBrains Mono", "TL Symbols", "Fira Code", "Cascadia Code",
+    Menlo, Monaco, "Courier New", monospace;
   /* Lobby chrome only. Weights in use: 400 body / 500 buttons / 600 headings. */
   --font-ui: "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;

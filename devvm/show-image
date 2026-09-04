@@ -110,7 +110,23 @@ if [ -n "$TMUX" ]; then
     # lists no clients and exits 0, and display-message to a client that has
     # gone exits 0 too, so the one thing that would surface is a session tmux
     # cannot find, which the caller should see. (All measured on tmux 3.4.)
-    notice="show-image: ${img##*/} is in this session's image library (🖼 in the lobby)"
+    #
+    # ASCII only, and the place before the name. Nothing the lobby ships can
+    # draw an emoji: JetBrains Mono 2.304 maps nothing above U+1D56B, and TL
+    # Symbols, the one symbol face vendored for the terminal, is subset to
+    # ranges that hold none (scripts/build-tl-symbols.sh:31) and is loaded by
+    # term.html alone, since the SPA declares just JetBrains Mono and DM Sans
+    # Variable (frontend-v2/src/theme/theme.css:28-71). So the picture emoji
+    # this line used to carry reached the status line as a replacement box.
+    #
+    # The place leads because tmux truncates a status message at the client
+    # width rather than wrapping, so the head is the only part sure to arrive:
+    # 61 characters in, 44 out on a 44-column client, and a filename-first
+    # version lost the whole destination to a screenshot-length name.
+    # "Session images" is the lobby's own name for the place, on the panel
+    # heading (frontend-v2/src/components/Gallery.tsx:145) and on the button
+    # that opens it (frontend-v2/src/components/SessionView.tsx:684).
+    notice="show-image: open Session images in the lobby to see ${img##*/}"
     tmux list-clients -t "$session" -F '#{client_name}' |
     while read -r client; do
         tmux display-message -c "$client" -d 4000 -l "$notice"
