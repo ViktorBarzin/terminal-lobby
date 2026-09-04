@@ -43,10 +43,14 @@ Two distinct defects fall out of that trace.
 The agent it had just launched ran for another 2m16s.
 
 **2. A subagent's own tool calls fire `PreToolUse`/`PostToolUse` in the main
-session**, carrying `agent_id`. The current hook stamps `running` on those, so
-between 05:09:41 and 05:10:23 the dot alternated green and blue. tmux-api caches
-the session list for 5s and the lobby polls every 5s, so which colour a person
-sees depends on when the sample lands. This is why the symptom is intermittent.
+session**, carrying `agent_id`. The trace above was captured with a logging
+hook rather than the real script, so what follows is derived from the script's
+rules rather than sampled: it stamps `running` on every `PreToolUse`, so between
+05:09:41 and 05:10:23 `@claude_state` alternates between `done` and `running`.
+tmux-api caches the session list for 5s and the lobby polls every 5s, so which
+value a person sees depends on when the sample lands. That is the most likely
+explanation for the symptom being intermittent, and the repo test below samples
+the option directly to confirm it.
 
 ## What the hooks already carry
 
@@ -91,29 +95,17 @@ orphan a workflow, and t3-bridge holds its Working pin, which also keeps T3's
 30-minute reaper off a session that is mid-workflow.
 
 ```mermaid
-sequenceDiagram
-    participant H as Human
-    participant C as Claude (main turn)
-    participant K as claude-tmux-state
-    participant T as tmux options
-    participant A as background agent
-
-    H->>C: prompt
-    C->>K: UserPromptSubmit
-    K->>T: @claude_state=running, @claude_bg=(cleared)
-    C->>A: launch (Agent, background)
-    C->>K: PostToolUse agentId=a1c, status=async_launched
-    K->>T: @claude_bg += a:a1c
-    C->>K: Stop
-    K->>T: @claude_bg non-empty, so state stays running
-    Note over T: today: state=done here
-    A->>K: PreToolUse agent_id=a1c
-    K-->>T: ignored (agent_id present)
-    A-->>C: finishes
-    C->>K: UserPromptSubmit "<task-notification><task-id>a1c"
-    K->>T: @claude_bg -= a:a1c, state=running
-    C->>K: Stop
-    K->>T: @claude_bg empty, so state=done
+flowchart TD
+    A["human prompt<br/>@claude_bg cleared<br/>state = running"] --> B["model launches a<br/>background agent"]
+    B --> C["PostToolUse carries<br/>status async_launched<br/>@claude_bg += a:a1c"]
+    C --> D["main turn ends,<br/>Stop fires"]
+    D --> E{"@claude_bg<br/>empty?"}
+    E -- no --> F["state stays running<br/>(today: stamps done,<br/>which is the defect)"]
+    F --> G["the agent's own tool calls<br/>carry agent_id, so the<br/>hook ignores them"]
+    G --> H["agent finishes,<br/>task-notification arrives<br/>@claude_bg -= a:a1c"]
+    H --> I["Stop fires again"]
+    I --> J{"@claude_bg<br/>empty?"}
+    J -- yes --> K["state = done"]
 ```
 
 ### Rules the hook applies
@@ -133,7 +125,7 @@ sequenceDiagram
 
 `@claude_bg` holds space-separated `<kind>:<id>` tokens, kind being `a` (agent),
 `b` (background command) or `w` (workflow), e.g. `a:a1cbb47bebad51b9b b:bmm8ohp9u`.
-Storing the kind is what lets the card say *2 agents* rather than *3 things*.
+Storing the kind is what lets the card say *2 agents* rather than only a total.
 
 `sessionio.Injector.Cancel` already re-derives `@claude_state` after an interrupt
 (ADR-0001); it clears `@claude_bg` at the same instant. tmux-api's
@@ -176,7 +168,7 @@ The dot, its colour and its pulse are unchanged.
 2026-09-04. The set is emptied by four things: a human prompt, `SessionStart`,
 `SessionEnd`, an interrupt, and the dead-claude backstop. No timer anywhere.
 
-The cost is one wrong reading, in a case we can name: launch a long workflow,
+The cost is one wrong reading, in one specific case: launch a long workflow,
 then send a second prompt while it runs, and the set is cleared, so the next
 `Stop` reports `done` with the workflow still going. That session shows today's
 behaviour until the workflow ends. The alternative — carrying ids across a human
@@ -217,7 +209,8 @@ Two levels, both required before the change is called done.
    `Working · 1 agent`, read back rather than assumed.
 
 Recorded payloads from the 2026-09-04 run are kept with the test as fixtures, so
-a payload-shape change fails loudly rather than silently latching a session.
+a payload-shape change fails the test here rather than reaching the box and
+leaving sessions latched at *Working*.
 
 ## Vocabulary
 
