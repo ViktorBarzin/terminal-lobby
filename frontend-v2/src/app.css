@@ -1683,6 +1683,55 @@ label.tl-set-row-label {
   width: 100%;
 }
 
+/* ---- the new-session composer on a phone --------------------------------
+   Measured on the Android emulator at 412px, which is the width class of the
+   iPhone Viktor reported from. Attach, the project select, the command select,
+   the model select and Send do not fit on one row, and they were in a
+   horizontal scroller with its scrollbar hidden. 173px of controls were off
+   the end of it: the command select was sheared by Send's edge (its right edge
+   at 339px against Send's left at 311px) and the model select sat at 478px,
+   past the screen. Nothing on the row said either had happened, so it read as
+   two controls drawn on top of each other, which is what it looked like.
+
+   `display: contents` on the left group is what makes this work. The controls
+   and Send were two sibling flex items, so wrapping the controls put Send on a
+   line of its own with the width of the row empty beside it. Dissolving the
+   group lets all five wrap as one flow, and `margin-left: auto` then parks Send
+   at the right of whatever line it lands on: two rows instead of three, 88px of
+   bar instead of 136, and nothing outside the viewport.
+
+   Scoped to the new-session composer. The live session's composer shares this
+   markup and not this problem: its bar carries Stop and the context meter, its
+   scroller earns its place, and it sits above a keyboard where a second row is
+   height it does not have. */
+@media (pointer: coarse) {
+  .tl-new-composer {
+    /* The landing view. Centring left the box 354px down an otherwise empty
+       screen; on a phone the eye and the thumb both start at the top. */
+    justify-content: flex-start;
+    padding-top: 12px;
+  }
+  .tl-new-composer .tl-composer-bar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .tl-new-composer .tl-bar-left {
+    display: contents;
+  }
+  .tl-new-composer .tl-bar-right {
+    margin-left: auto;
+  }
+  /* The codebase's own touch floor, which these selects were half of. */
+  .tl-new-composer .tl-new-cmd {
+    min-height: 40px;
+  }
+  /* Room to write in. A single line under a placeholder read as a caption on
+     the card rather than the thing the screen is for. */
+  .tl-new-composer .tl-composer-input {
+    min-height: 76px;
+  }
+}
+
 /* ---- composer + permission panel -------------------------------------- */
 .tl-composer {
   flex: 0 0 auto;
