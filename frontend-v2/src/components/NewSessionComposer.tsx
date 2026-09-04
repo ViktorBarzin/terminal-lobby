@@ -13,13 +13,13 @@ import type { NewCommand, PrefsStore } from "../store/prefs";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import {
   canRun,
-  COMMAND_LABELS,
+  COMMAND_PHRASES,
   effectiveCommand,
   NEW_SESSION_COMMANDS as COMMANDS,
   type CommandAvailability,
 } from "../lib/new-commands";
 import {
-  MODEL_LABELS,
+  MODEL_PHRASES,
   modelCommandFor,
   NEW_SESSION_MODELS,
   type NewModel,
@@ -325,9 +325,13 @@ export const NewSessionComposer: Component<{
           value={props.project()}
           onChange={(e) => props.onProject(e.currentTarget.value)}
         >
+          {/* "in <project>" rather than the bare name, so the row reads as
+              one sentence and the name cannot be mistaken for the command or
+              the model beside it. Ungrouped is already a noun and needs no
+              preposition. */}
           <option value="">Ungrouped</option>
           <For each={projects()}>
-            {(p) => <option value={p.name}>{p.name}</option>}
+            {(p) => <option value={p.name}>in {p.name}</option>}
           </For>
         </select>
         <select
@@ -343,7 +347,7 @@ export const NewSessionComposer: Component<{
           <For each={COMMANDS}>
             {(c) => (
               <option value={c} disabled={!canRun(c, avail())}>
-                {COMMAND_LABELS[c]}
+                {COMMAND_PHRASES[c]}
                 {canRun(c, avail()) ? "" : " (not installed)"}
               </option>
             )}
@@ -363,7 +367,7 @@ export const NewSessionComposer: Component<{
             }
           >
             <For each={NEW_SESSION_MODELS}>
-              {(k) => <option value={k}>{MODEL_LABELS[k]}</option>}
+              {(k) => <option value={k}>{MODEL_PHRASES[k]}</option>}
             </For>
           </select>
         </Show>
