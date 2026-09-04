@@ -258,6 +258,31 @@ src/
     battery.ts           Hidden-tab suspend and resume: when to take the socket
                          down on purpose, and the guard that a VISIBLE tab is
                          never suspended by a timer queued before it was shown
+    keys.ts              The keyboard: which keys the terminal never sees, and
+                         what an armed soft modifier does to the ones it does.
+                         Ctrl+C is gated on the selection RANGE, not on the text
+                         it yields, because xterm right-trims rows (ADR-0003)
+    mirror.ts            The compose mirror. A visible textarea kept as a
+                         transparent mirror of the pty's input line, so a phone
+                         keyboard's autocorrect, dictation and swipe typing can
+                         reach a terminal. PASSIVE by construction: it forwards a
+                         delta and never clears its own value, because clearing
+                         is what kills predictive text
+    touchscroll.ts       One finger's drag turned into discrete LINE wheels, and
+                         the lift-off momentum. The only way to scroll a terminal
+                         with a finger: a pixel delta does not make tmux enter
+                         copy-mode, and a line wheel does
+    wheel.ts             The desktop counterpart: a trackpad's pixel-delta stream
+                         de-damped into paced one-row line wheels, with the pref
+                         that detaches it
+    viewport.ts          How much of the terminal's box a soft keyboard covers,
+                         and therefore what height the host should have. NOT
+                         src/mobile/viewport.ts, which is the lobby's own; this
+                         one's header says which owns what
+    attention.ts         Bell and output-while-hidden: what deserves the lobby's
+                         notice, and the one-shot per hidden period that stops
+                         ten frames behind a hidden view becoming ten signals.
+                         NOT src/notify/attention.ts, which consumes the signal
     held.ts              Offline typing — what happens to a keystroke while the
                          socket is down, as a reducer over the verdicts term.html
                          names (held, popped, closed, reopened). Rendering the
