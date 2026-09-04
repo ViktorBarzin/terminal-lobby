@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
 import { PromptField } from "../src/components/PromptField";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
-import { DRAFTS_KEY, loadDraft, saveDraft } from "../src/store/drafts";
+import { DRAFTS_KEY, loadDraft, parkDraft, saveDraft } from "../src/store/drafts";
 import { NAME_RE } from "../src/types/lobby";
 
 beforeEach(() => localStorage.clear());
@@ -97,5 +97,59 @@ describe("<PromptField> — the controls each composer contributes", () => {
       );
     expect(classOf(".tl-bar-left")).toEqual(["tl-left-one"]);
     expect(classOf(".tl-bar-right")).toEqual(["tl-right-one", "tl-send"]);
+  });
+});
+
+describe("<PromptField> — a draft parked from outside while it is mounted", () => {
+  // A first prompt that could not be delivered is written into the NEW
+  // session's draft, and by then this field is the one the person is looking
+  // at: it mounted at select() time, seconds before the delivery gave up. The
+  // onMount restore has already run, and the persist effect would write over
+  // the parked message on the next keystroke.
+  it("takes the message the delivery could not send", () => {
+    const { container } = render(() => (
+      <PromptField onSend={onSend} label="Message" draftKey="k7m2q9x4tp0v" />
+    ));
+    expect(field(container).value).toBe("");
+
+    parkDraft("k7m2q9x4tp0v", { text: "Fix the deploy", attachments: [], at: 2 });
+
+    expect(field(container).value).toBe("Fix the deploy");
+    // And it survives typing, rather than being overwritten by the persist
+    // effect on the next keystroke.
+    type(field(container), "Fix the deploy now");
+    expect(loadDraft("k7m2q9x4tp0v")?.text).toBe("Fix the deploy now");
+  });
+
+  it("keeps what was typed in the meantime, on a line of its own", () => {
+    const { container } = render(() => (
+      <PromptField onSend={onSend} label="Message" draftKey="k7m2q9x4tp0v" />
+    ));
+    type(field(container), "meanwhile");
+
+    parkDraft("k7m2q9x4tp0v", { text: "Fix the deploy", attachments: [], at: 2 });
+
+    expect(field(container).value).toBe("meanwhile\nFix the deploy");
+  });
+
+  it("ignores a park for another session's draft", () => {
+    const { container } = render(() => (
+      <PromptField onSend={onSend} label="Message" draftKey="k7m2q9x4tp0v" />
+    ));
+    parkDraft("q4m8vwx2rt5n", { text: "somebody else's", attachments: [], at: 2 });
+    expect(field(container).value).toBe("");
+  });
+
+  it("brings the attachment chips with it", () => {
+    const { container } = render(() => (
+      <PromptField onSend={onSend} label="Message" draftKey="k7m2q9x4tp0v" />
+    ));
+    parkDraft("k7m2q9x4tp0v", {
+      text: "look at this",
+      attachments: [{ path: "/var/lib/clipboard-store/wizard/k7m2q9x4tp0v/a.png", name: "a.png", kind: "image" }],
+      at: 2,
+    });
+    expect(field(container).value).toBe("look at this");
+    expect(container.querySelectorAll(".tl-tray-item").length).toBe(1);
   });
 });

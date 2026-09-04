@@ -60,10 +60,16 @@ const (
 	//
 	// A summary lands seconds after the first prompt, so the window is sized
 	// for the gap between creating a session and sending that prompt, not for
-	// the summariser. Worth knowing: a session claimed out of the speculative
-	// pre-warm pool inherits the SLOT's creation time, and a slot lives up to
-	// speculativeTTL (2 minutes) before it is reaped — so a create that sat in
-	// an open composer for most of that can land outside its own window.
+	// the summariser.
+	//
+	// It is measured from windowStart, NOT from session_created: a session's
+	// creation time is not when it became somebody's session. A create that
+	// claims a pre-warm slot takes over a tmux session that already existed —
+	// `tmux rename-session` does not touch session_created, and a STANDING slot
+	// is refilled rather than recreated, so it has no TTL at all. Measured on
+	// 2026-09-04: the standing slot for /home/wizard/code read session_created
+	// 4h33m in the past, so every session claimed out of it would have been
+	// born expired.
 	autoTitleWindow = 2 * time.Minute
 
 	// The two outcomes session.autonamed reports.
@@ -72,16 +78,52 @@ const (
 )
 
 // stripTitleGlyph returns a pane title with its leading Claude Code glyph
-// removed, and the surrounding whitespace with it.
+// removed and the surrounding whitespace with it, and reports whether there was
+// a glyph to remove.
 //
 // Only a LEADING glyph goes. A summary that happens to contain one keeps every
 // character of it, which matters because `·` is an ordinary character in
 // ordinary text.
-func stripTitleGlyph(paneTitle string) string {
-	if r, size := utf8.DecodeRuneInString(paneTitle); size > 0 && strings.ContainsRune(claudeTitleGlyphs, r) {
-		paneTitle = paneTitle[size:]
+//
+// The bool is what tells a title Claude Code wrote from one it did not, which
+// paneTitleSummary needs and nothing else does.
+func stripTitleGlyph(paneTitle string) (string, bool) {
+	r, size := utf8.DecodeRuneInString(paneTitle)
+	if size == 0 || !strings.ContainsRune(claudeTitleGlyphs, r) {
+		return strings.TrimSpace(paneTitle), false
 	}
-	return strings.TrimSpace(paneTitle)
+	return strings.TrimSpace(paneTitle[size:]), true
+}
+
+// paneTitleSummary reads a Claude Code summary out of a pane title, and reports
+// whether there is one there at all.
+//
+// A summary is only believed when the pane title LEADS with one of Claude
+// Code's glyphs. That is the whole test, and the reason for it is the gap at
+// boot: @claude_state is stamped about 300ms before Claude writes its first
+// title (docs/plans/2026-09-04-prompt-first-sessions-design.md, Sequencing), so
+// a poll landing inside that gap sees a live Claude whose pane title is still
+// whatever the SHELL left there — on this box `devvm`, the hostname. Testing
+// only against the "Claude Code" sentinel would stamp that hostname as the
+// session's permanent title, and stamping is what stops the rule firing again,
+// so the real summary would never land.
+//
+// Failing this way round is the safe one: a Claude Code that stopped writing
+// the glyph would leave sessions untitled, which is what an untitled session
+// has always looked like, rather than titling them after the shell.
+func paneTitleSummary(paneTitle string) (string, bool) {
+	rest, hadGlyph := stripTitleGlyph(paneTitle)
+	if !hadGlyph || rest == noSummaryYet {
+		return "", false
+	}
+	// CleanTitle runs before the emptiness test so the answer is against the
+	// same normalisation everything else stores, rather than against raw pane
+	// bytes.
+	summary := slug.CleanTitle(rest)
+	if summary == "" {
+		return "", false
+	}
+	return summary, true
 }
 
 // autoTitles is what stops one session being reported twice. Package state
@@ -100,10 +142,31 @@ var autoTitles = newAutoTitleTracker()
 // the box as a fresh failure.
 type autoTitleTracker struct {
 	mu     sync.Mutex
-	byUser map[string]map[string]*autoTitleWatch
+	byUser map[string]*autoTitleUser
+}
+
+// autoTitleUser is one OS user's memory, plus the one fact that is about the
+// user rather than about any session.
+type autoTitleUser struct {
+	// polled is set once the rule has applied to a list for this user.
+	//
+	// Until it is, every session in the list was already running before this
+	// process started, so none of them can be dated from the moment we first
+	// saw them. After it, a name that was not in the previous list is a session
+	// that came into being while we were watching — which is what a create is,
+	// whether it booted a Claude of its own or claimed a pre-warm slot that had
+	// been sitting there for hours.
+	polled   bool
+	sessions map[string]*autoTitleWatch
 }
 
 type autoTitleWatch struct {
+	// firstSeen is when this process first met the session, and fresh says the
+	// session APPEARED while we were watching this user rather than already
+	// being there when we started. Together they date a claimed pre-warm slot,
+	// whose session_created belongs to the slot and not to the create.
+	firstSeen time.Time
+	fresh     bool
 	// watched is set once the rule has seen this session untitled while it was
 	// still inside its window, i.e. genuinely waiting for a summary.
 	watched bool
@@ -122,22 +185,61 @@ type autoTitleWatch struct {
 }
 
 func newAutoTitleTracker() *autoTitleTracker {
-	return &autoTitleTracker{byUser: map[string]map[string]*autoTitleWatch{}}
+	return &autoTitleTracker{byUser: map[string]*autoTitleUser{}}
+}
+
+// user returns this OS user's memory, creating it. Callers hold t.mu.
+func (t *autoTitleTracker) user(osUser string) *autoTitleUser {
+	u := t.byUser[osUser]
+	if u == nil {
+		u = &autoTitleUser{sessions: map[string]*autoTitleWatch{}}
+		t.byUser[osUser] = u
+	}
+	return u
 }
 
 // entry returns this session's watch, creating it. Callers hold t.mu.
 func (t *autoTitleTracker) entry(osUser, name string) *autoTitleWatch {
-	sessions := t.byUser[osUser]
-	if sessions == nil {
-		sessions = map[string]*autoTitleWatch{}
-		t.byUser[osUser] = sessions
-	}
-	w := sessions[name]
+	u := t.user(osUser)
+	w := u.sessions[name]
 	if w == nil {
 		w = &autoTitleWatch{}
-		sessions[name] = w
+		u.sessions[name] = w
 	}
 	return w
+}
+
+// windowStart is the moment this session's auto-title window runs from.
+//
+// Creation, except for a session that appeared while we were watching this
+// user and is older than that: those are pre-warm claims, where tmux reports
+// the SLOT's creation time because a claim is a rename. Anchoring on when the
+// session showed up is what gives a claimed slot the same two minutes a cold
+// create gets, and it is deliberately not applied to the first list we see for
+// a user — at a restart every session looks new, and dating them all from now
+// would put every old untitled Claude session on the box back in front of the
+// rule.
+func (t *autoTitleTracker) windowStart(osUser, name string, created, now time.Time) time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	u := t.user(osUser)
+	w := t.entry(osUser, name)
+	if w.firstSeen.IsZero() {
+		w.firstSeen = now
+		w.fresh = u.polled
+	}
+	if w.fresh && w.firstSeen.After(created) {
+		return w.firstSeen
+	}
+	return created
+}
+
+// polled records that a list has been applied for this user, so the next one
+// can tell a session that appeared from one that was always there.
+func (t *autoTitleTracker) polled(osUser string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.user(osUser).polled = true
 }
 
 // watch records that the rule is waiting on this session for a summary.
@@ -192,16 +294,21 @@ func (t *autoTitleTracker) giveUp(osUser, name string) bool {
 
 // retain drops every session this user no longer has, so the tracker holds one
 // entry per live session rather than one per session the process has ever seen.
+//
+// The USER's record survives an empty list. It is one bool, and dropping it
+// would forget that we have polled this user — which is the fact that tells a
+// claimed pre-warm slot from a session that predates the process.
 func (t *autoTitleTracker) retain(osUser string, live map[string]bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for name := range t.byUser[osUser] {
-		if !live[name] {
-			delete(t.byUser[osUser], name)
-		}
+	u := t.byUser[osUser]
+	if u == nil {
+		return
 	}
-	if len(t.byUser[osUser]) == 0 {
-		delete(t.byUser, osUser)
+	for name := range u.sessions {
+		if !live[name] {
+			delete(u.sessions, name)
+		}
 	}
 }
 
@@ -209,7 +316,10 @@ func (t *autoTitleTracker) retain(osUser string, live map[string]bool) {
 func (t *autoTitleTracker) size(osUser string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return len(t.byUser[osUser])
+	if u := t.byUser[osUser]; u != nil {
+		return len(u.sessions)
+	}
+	return 0
 }
 
 // autoTitleSessions applies the rule to one user's freshly-parsed session list,
@@ -233,18 +343,17 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 			// Not a live Claude, or somebody has already titled it.
 			continue
 		}
-		age := now.Sub(time.Unix(s.Created, 0))
+		age := now.Sub(autoTitles.windowStart(osUser, s.Name, time.Unix(s.Created, 0), now))
 		if age > autoTitleWindow {
 			if autoTitles.giveUp(osUser, s.Name) {
 				emitAutoTitled(osUser, s.Name, age, autoTitleGaveUp)
 			}
 			continue
 		}
-		summary := slug.CleanTitle(stripTitleGlyph(s.PaneTitle))
-		if summary == "" || summary == noSummaryYet {
-			// Still waiting. CleanTitle runs before the sentinel test so the
-			// comparison is against the same normalisation everything else
-			// stores, rather than against raw pane bytes.
+		summary, ok := paneTitleSummary(s.PaneTitle)
+		if !ok {
+			// Still waiting: no glyph yet, the "Claude Code" sentinel, or
+			// nothing that survives the clean.
 			autoTitles.watch(osUser, s.Name)
 			continue
 		}
@@ -268,12 +377,15 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 			emitAutoTitled(osUser, s.Name, age, autoTitleTitled)
 		}
 	}
+	// Last, after every windowStart above has read it: from here on, a name
+	// this user did not have is a session that appeared while we were watching.
+	autoTitles.polled(osUser)
 }
 
-// emitAutoTitled records one outcome. tl.delay_ms is measured from the
-// session's creation, which is the only clock both outcomes share; tmux reports
-// creation in whole seconds, so the number is second-resolution despite its
-// name.
+// emitAutoTitled records one outcome. tl.delay_ms is measured from the window
+// start — creation, or the moment a claimed pre-warm slot appeared under its
+// new name — which is the only clock both outcomes share; tmux reports creation
+// in whole seconds, so the number is second-resolution despite its name.
 func emitAutoTitled(osUser, name string, delay time.Duration, outcome string) {
 	events.Emit("session.autonamed", osUser, telemetry.Attrs{
 		"tl.session":  name,

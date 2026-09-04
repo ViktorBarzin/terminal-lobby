@@ -19,7 +19,13 @@ import {
   type CompletionItem,
   type SlashCommand,
 } from "./compose.logic";
-import { clearDraft, loadDraft, saveDraft, type DraftAttachment } from "../store/drafts";
+import {
+  clearDraft,
+  DRAFT_PARKED_EVENT,
+  loadDraft,
+  saveDraft,
+  type DraftAttachment,
+} from "../store/drafts";
 import { contentUrlFor, storedDisplayName } from "../lib/attachments";
 import { FileTextIcon, PaperclipIcon } from "./Icons";
 
@@ -245,6 +251,38 @@ export const PromptField: Component<{
       autosize();
     }
   });
+
+  /**
+   * Take a draft that was parked from outside while this field was mounted.
+   *
+   * The restore above runs in onMount and nowhere else, which is right for the
+   * drafts this field writes itself. A first prompt that could not be delivered
+   * is written by nothing on screen: the composer that sent it was unmounted by
+   * the create, and this field — the LIVE session's — mounted seconds before
+   * the delivery gave up (store/drafts.ts, parkDraft). Without this it would
+   * never be read, and the persist effect below would overwrite it on the next
+   * keystroke.
+   *
+   * What was typed in the meantime is never thrown away: a parked message joins
+   * it on a new line rather than replacing it.
+   */
+  const onParked = (e: Event) => {
+    const key = props.draftKey;
+    if (!key) return;
+    const detail = (e as CustomEvent<{ session?: string }>).detail;
+    if (!detail || detail.session !== key) return;
+    const parked = loadDraft(key);
+    if (!parked || !ta) return;
+    const current = ta.value;
+    ta.value = current ? current + "\n" + parked.text : parked.text;
+    setDraft(ta.value);
+    if (!props.pendingAttachments && parked.attachments.length > 0) {
+      addToTray(parked.attachments);
+    }
+    autosize();
+  };
+  window.addEventListener(DRAFT_PARKED_EVENT, onParked);
+  onCleanup(() => window.removeEventListener(DRAFT_PARKED_EVENT, onParked));
 
   /**
    * Keep the field's height derived, not pinned.

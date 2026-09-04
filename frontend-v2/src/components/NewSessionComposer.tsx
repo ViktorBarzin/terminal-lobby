@@ -25,7 +25,7 @@ import { deliverFirstPrompt } from "../lib/first-prompt";
 import { uploadAttachments } from "../clipboard/attach-files";
 import { composeMessage } from "./compose.logic";
 import { attachmentKind } from "../lib/attachments";
-import { saveDraft, type DraftAttachment } from "../store/drafts";
+import { parkDraft, type DraftAttachment } from "../store/drafts";
 import { showToast } from "../store/toast";
 
 /** Where the composer's unsent draft lives (store/drafts.ts).
@@ -117,6 +117,15 @@ export const NewSessionComposer: Component<{
   // under us, and releasing a different directory would leave the warmed slot
   // behind and collect one nobody asked about.
   let warmedDir: string | null = null;
+  // Set once submit has handed the warm slot to the attach. From then on this
+  // composer neither warms nor releases: creating WRITES THE LAYOUT, which sets
+  // the layout signal synchronously (store.saveLayout → applyLocalLayout) while
+  // we are still mounted, so the effect below re-runs, finds warmedDir back at
+  // null and re-arms it — and the unmount that follows `select()` would then
+  // hand back, over DELETE /sessions/prewarm, the very slot ttyd is a few
+  // hundred milliseconds away from claiming. Every create into a named project
+  // would boot cold.
+  let handedOff = false;
   const releaseWarm = (): void => {
     if (warmedDir === null) return;
     void props.store.releasePrewarm(warmedDir);
@@ -124,6 +133,7 @@ export const NewSessionComposer: Component<{
   };
   createEffect(() => {
     const dir = dirFor(props.project());
+    if (handedOff) return;
     if (dir === warmedDir || (dir === undefined && warmedDir === null)) return;
     // Changing project hands the old guess back rather than leaving ~530MB for
     // the server's TTL to notice.
@@ -173,7 +183,9 @@ export const NewSessionComposer: Component<{
    * and no reason left to say no. An empty box makes a bare session and sends
    * nothing, which is a real instruction. The slot warmed above is deliberately
    * NOT released — create only STARTS the attach, and handing it back now would
-   * reliably win that race and cost the create its head start.
+   * reliably win that race and cost the create its head start. `handedOff` is
+   * what makes that stick: without it the create's own layout write re-arms the
+   * warm before the unmount, and the unmount releases it.
    *
    * Resolves as soon as the session exists, not when the prompt lands. Creating
    * SELECTS, which unmounts this composer, so the delivery deliberately outlives
@@ -181,6 +193,7 @@ export const NewSessionComposer: Component<{
    * the toaster rather than back into a field that is no longer on screen.
    */
   const submit = async (text: string, tray: readonly DraftAttachment[]): Promise<boolean> => {
+    handedOff = true; // and never warmed again: the create's own layout write re-runs the effect
     warmedDir = null; // claimed by the attach; not ours to hand back
     const shell = naming();
     const store = props.store;
@@ -367,6 +380,8 @@ async function sendFirstPrompt(o: {
   // The session exists and is what the person is now looking at, so the text
   // goes into ITS composer — the field in front of them — rather than back into
   // one that has been unmounted since they pressed Enter.
-  saveDraft(o.session, { text: prompt, attachments: attached, at: Date.now() });
+  // parkDraft, not saveDraft: that composer is already mounted and has already
+  // read storage, so it has to be TOLD (store/drafts.ts).
+  parkDraft(o.session, { text: prompt, attachments: attached, at: Date.now() });
   showToast("Couldn't send the first prompt — it is waiting in the composer", "error", 8000);
 }

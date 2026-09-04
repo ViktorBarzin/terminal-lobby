@@ -243,6 +243,30 @@ describe("lobby store", () => {
     });
   });
 
+  it("create: the prompt's first line survives a poll that does not know the session yet", async () => {
+    // The burst polls at 700/1600/3000ms, and the session does not exist
+    // server-side until the iframe attaches and ttyd runs tmux-user-attach —
+    // behind a 5-second /sessions cache. So the create's own polls report a
+    // list WITHOUT it. Needs another live session in that list: an empty one is
+    // "no information" and prunes nothing, which is what used to hide this.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("aaaaaaaaaaaa")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["aaaaaaaaaaaa"] };
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const id = await store.create("Fix the deploy", "");
+      // A poll landing before tmux-api has heard of it.
+      await store.refresh();
+      expect(promptLineFor(id)).toBe("Fix the deploy");
+
+      // And when it finally appears, the card reads the line rather than
+      // `New session`.
+      api.sessionsVal = [sess("aaaaaaaaaaaa"), sess(id)];
+      await store.refresh();
+      expect(store.sessions.find((s) => s.name === id)?.title).toBe("Fix the deploy");
+    });
+  });
+
   it("create: two sessions can carry the same title, because the name is not derived from it", async () => {
     const api = new FakeApi();
     await withStore(api, async (store) => {
@@ -394,21 +418,55 @@ describe("lobby store", () => {
     });
   });
 
-  it("keeps the selection on a session the poll stopped returning", async () => {
-    // Nothing renames, so a name vanishing from the poll means the session is
-    // gone rather than moved. The store used to chase it by tmux session id;
-    // there is nothing left to chase.
+  it("follows the selection through tmux-api's one-time rename to ids", async () => {
+    // The migration is the only rename left (tmux-api/migrate_ids.go), and it
+    // runs on live sessions. A tab open at that moment holds the old name in
+    // its iframe's ?arg=, and ttyd re-runs `tmux new-session -A` on every
+    // reconnect — so without this the next reconnect creates the old name as an
+    // empty session and the conversation is left running under the id.
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("authentik"), id: "$3" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("authentik");
+      expect(store.selected()?.name).toBe("authentik");
+
+      api.sessionsVal = [{ ...sess("k7m2q9x4tp0v"), id: "$3" }];
+      await store.refresh();
+
+      expect(store.selected()?.name).toBe("k7m2q9x4tp0v");
+    });
+  });
+
+  it("keeps the selection on a session that is genuinely gone, not renamed", async () => {
+    // tmux's session id is what says "the same session under a new name". A
+    // different id is a different session, so there is nothing to follow.
     const api = new FakeApi();
     api.sessionsVal = [{ ...sess("a"), id: "$3" }];
     await withStore(api, async (store) => {
       await store.refresh();
       store.select("a");
-      expect(store.selected()?.name).toBe("a");
 
-      api.sessionsVal = [{ ...sess("b"), id: "$3" }];
+      api.sessionsVal = [{ ...sess("b"), id: "$9" }];
       await store.refresh();
 
       expect(store.selected()?.name).toBe("a");
+    });
+  });
+
+  it("does not follow a rename of somebody else's session", async () => {
+    // A foreign selection carries an owner, and the poll's own rows are this
+    // user's — matching ids across the two would follow the wrong session.
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("theirs", { owner: "bob" }), id: "$3" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("theirs", "bob");
+
+      api.sessionsVal = [{ ...sess("k7m2q9x4tp0v"), id: "$3" }];
+      await store.refresh();
+
+      expect(store.selected()?.name).toBe("theirs");
     });
   });
 

@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, cleanup, fireEvent, waitFor } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { NewSessionComposer } from "../src/components/NewSessionComposer";
 import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
@@ -397,6 +397,52 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
     await waitFor(() => expect(api.puts.length).toBe(1));
     expect(api.released).toEqual([]);
     m.store.dispose();
+  });
+
+  it("KEEPS the slot even though creating UNMOUNTS the composer", async () => {
+    // App shows the composer behind <Show when={!selectedName()}>, so the
+    // create's own select() unmounts it and onCleanup(releaseWarm) runs. The
+    // create also writes the layout, which sets the layout signal synchronously
+    // and re-runs the warm effect while the composer is still there — so
+    // without the hand-off flag the cleanup would hand back the slot ttyd is
+    // about to claim, and every create into a named project would boot cold.
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "alpha" } }));
+    const api = new FakeApi();
+    withProjects(api);
+    let store!: LobbyStore;
+    const utils = render(() => {
+      store = createLobbyStore({ api, autoStart: false, syncHash: false });
+      const prefs = createPrefsStore({
+        fetchImpl: async () => new Response("{}", { status: 200 }),
+      });
+      const project = () => prefs.prefs().session.newProject;
+      return (
+        <Show when={!store.selected()}>
+          <NewSessionComposer
+            store={store}
+            prefs={prefs}
+            project={project}
+            onProject={() => {}}
+            upload={async () => []}
+            deliver={async () => true}
+          />
+        </Show>
+      );
+    });
+    await store.refresh();
+    await waitFor(() => expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]));
+
+    type(field(utils.container)!, "Fix the deploy");
+    enter(field(utils.container)!);
+
+    // The composer really is gone — this is the unmount the release rode on.
+    await waitFor(() => expect(store.selected()).not.toBeNull());
+    await waitFor(() => expect(field(utils.container)).toBeNull());
+    await Promise.resolve();
+    expect(api.released).toEqual([]);
+    // And it did not ask for a second slot on the way out either.
+    expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]);
+    store.dispose();
   });
 });
 

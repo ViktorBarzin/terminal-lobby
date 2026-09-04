@@ -1,4 +1,4 @@
-import { sessionLabel } from "../types/lobby";
+import { sessionConfirmLabel, sessionTitleDraft } from "../types/lobby";
 import type { LobbyStore, NotifyKind } from "../store/lobby";
 import type { PaletteController } from "./palette-controller";
 import type { HelpController } from "../components/ShortcutsHelp";
@@ -61,11 +61,14 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
   const openFindFn = deps.openFind ?? (() => window.__tlOpenFind?.() ?? false);
 
   const current = (): string | null => store.selected()?.name ?? null;
-  /** What to SHOW for a session name: its title when it has one. */
-  const labelOf = (name: string): string => {
+  /** What an irreversible confirmation calls it: the id stands in for no title. */
+  const confirmLabelOf = (name: string): string => {
     const s = store.sessions.find((x) => x.name === name);
-    return s ? sessionLabel(s) : name;
+    return s ? sessionConfirmLabel(s) : name;
   };
+  /** What a rename box opens on: the real title, "" when there is none. */
+  const titleOf = (name: string): string =>
+    sessionTitleDraft(store.sessions.find((x) => x.name === name));
   const order = () => flatSessionOrder(store.model());
   const stateOf = (name: string): string | undefined =>
     store.sessions.find((s) => s.name === name)?.state || undefined;
@@ -129,18 +132,21 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
 
     if (cmd === "session.kill.current") {
       const sel = store.selected();
-      if (sel && confirmFn(`Kill session "${labelOf(sel.name)}"?`)) void store.kill(sel.name);
+      // Named by its id when it has no title: killing is irreversible, and
+      // `Kill session "New session"?` names every untitled session equally.
+      if (sel && confirmFn(`Kill session "${confirmLabelOf(sel.name)}"?`)) void store.kill(sel.name);
       return;
     }
 
     if (cmd === "session.rename.current") {
       const sel = store.selected();
       if (!sel) return;
-      // The prompt edits the TITLE, so it opens on the title and hands one
-      // back; store.rename derives the name and moves it to match. An empty
-      // answer clears the title, which is a real instruction here — only a
-      // cancelled prompt (null) does nothing.
-      const current = labelOf(sel.name);
+      // The prompt edits the TITLE and only the title — the name is an opaque
+      // id fixed at creation (ADR-0019). It opens on the title the session
+      // actually has, which is empty for one nobody and nothing has titled yet.
+      // An empty answer clears the title, which is a real instruction here —
+      // only a cancelled prompt (null) does nothing.
+      const current = titleOf(sel.name);
       const next = promptFn("Rename session", current);
       if (next !== null && next !== current) void store.rename(sel.name, next);
       return;

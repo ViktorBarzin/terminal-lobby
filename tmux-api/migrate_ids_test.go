@@ -280,3 +280,33 @@ func renamedTo(t *testing.T, argv string) string {
 	t.Fatalf("no rename-session in argv:\n%s", argv)
 	return ""
 }
+
+// A machine-made session is excluded from T3 mirroring by its NAME
+// (t3-sync/main.go DefaultIgnorePrefixes). Renaming one to an id would have the
+// syncer adopt it: a real T3 thread created and warmed for a session that
+// exists to be thrown away.
+func TestMigrateLeavesReservedNamesAlone(t *testing.T) {
+	migrationStores(t)
+	argv := withTmuxStub(t, "exit 0")
+
+	reserved := []Session{
+		{ID: "$1", Name: "qa-lobby-smoke"},
+		{ID: "$2", Name: "t3e2e-thread-42"},
+		{ID: "$3", Name: "tlp-t7"},
+		{ID: "$4", Name: poolSlotPrefix + "_home_wizard_code"},
+	}
+	renamed, failed := migrateUserSessionNames("wizard", reserved)
+	if renamed != 0 || failed != 0 {
+		t.Fatalf("renamed=%d failed=%d, want 0 and 0", renamed, failed)
+	}
+	if got := recordedArgv(t, argv); got != "" {
+		t.Errorf("touched tmux for a reserved name:\n%s", got)
+	}
+
+	// And a name that merely CONTAINS one of the prefixes is a person's, so it
+	// still migrates.
+	renamed, failed = migrateUserSessionNames("wizard", []Session{{ID: "$5", Name: "my-qa-notes"}})
+	if renamed != 1 || failed != 0 {
+		t.Fatalf("renamed=%d failed=%d for a human name, want 1 and 0", renamed, failed)
+	}
+}

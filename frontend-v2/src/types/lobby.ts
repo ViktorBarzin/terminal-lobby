@@ -148,6 +148,37 @@ export function sessionLabel(s: Pick<Session, "name" | "title">): string {
   return isSessionId(s.name) ? NEW_SESSION_LABEL : s.name;
 }
 
+/**
+ * What a CONFIRMATION calls a session — a kill prompt, anything where the
+ * answer is irreversible and the question has to name one session and not
+ * another.
+ *
+ * `sessionLabel` answers `New session` for every untitled minted id, so
+ * `Kill session "New session"?` cannot tell two of them apart. The id is the
+ * only thing that can, and this is also where it becomes readable at all: a
+ * name is invisible everywhere else now (ADR-0019's last consequence).
+ */
+export function sessionConfirmLabel(s: Pick<Session, "name" | "title">): string {
+  return s.title && s.title.length > 0 ? s.title : s.name;
+}
+
+/**
+ * What a rename box OPENS on: the session's own title, and "" when it has none.
+ *
+ * Not `sessionLabel`. Offering `New session` for editing invites someone to
+ * save the placeholder as a real title, and stamping a title is what stops
+ * Claude's summary from ever landing (tmux-api/autotitle.go). An empty box says
+ * the same thing honestly, and typing nothing into it changes nothing.
+ */
+export function sessionTitleDraft(s: Pick<Session, "name" | "title"> | undefined): string {
+  if (!s) return "";
+  if (s.title && s.title.length > 0) return s.title;
+  // No title. A minted id says nothing, so the box opens empty; a name from
+  // before ids — or one t3-bridge derived from a directory — is what the card
+  // reads, so it is a fair thing to start editing.
+  return isSessionId(s.name) ? "" : s.name;
+}
+
 export function emptyLayout(): Layout {
   return { version: LAYOUT_VERSION, projects: [], ungrouped: [], ungroupedIndex: 0 };
 }

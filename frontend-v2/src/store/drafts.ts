@@ -97,6 +97,37 @@ export function saveDraft(session: string, draft: Draft): void {
   writeAll(doc);
 }
 
+/**
+ * The event a parked draft raises, so a field already on screen picks it up.
+ *
+ * `detail.session` is the draft key. PromptField restores a draft in onMount
+ * and nowhere else — deliberately, so a restore cannot race the first keystroke
+ * — which is right for every draft written by the field itself and wrong for
+ * one written from OUTSIDE it while it is mounted.
+ */
+export const DRAFT_PARKED_EVENT = "tl:draft-parked";
+
+/**
+ * Park a message in a session's draft from outside its composer, and say so.
+ *
+ * The one caller is a first prompt that could not be delivered: by the time it
+ * gives up, the new-session composer has been unmounted by the create's own
+ * `select()`, and the field the person is looking at is the LIVE composer for
+ * the session that was just made. Writing the draft alone would be invisible
+ * there — that field mounted seconds earlier and has already read storage —
+ * and worse than invisible: its persist effect writes `draft()` back on the
+ * next keystroke, so one typed character would overwrite the parked message.
+ */
+export function parkDraft(session: string, draft: Draft): void {
+  saveDraft(session, draft);
+  if (typeof window === "undefined") return;
+  try {
+    window.dispatchEvent(new CustomEvent(DRAFT_PARKED_EVENT, { detail: { session } }));
+  } catch {
+    /* no CustomEvent (an ancient engine) — the draft is still on disk */
+  }
+}
+
 /** Forget one session's draft (it was sent, or deliberately cleared). */
 export function clearDraft(session: string): void {
   const doc = readAll();
