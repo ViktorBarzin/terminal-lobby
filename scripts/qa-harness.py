@@ -20,6 +20,8 @@ terminal.viktorbarzin.me serves.
       ├─ /earlier/* /result/*    → :7685 session-events, no strip, authed
       │  /pane/*    /keys/*         (the rest of the production ingress rule)
       ├─ /permission/*           → :7681 ttyd catch-all, as in production (†)
+      ├─ /build-id               → :7681 ttyd catch-all, as in production (‡)
+      │  /term-build-id
       ├─ /files/*                → :7686 file-api, no strip, authed
       ├─ /skills, /skills/*      → :7688 skills-api, no strip, authed; READS are
       │                            free, every mutation is refused by default
@@ -39,6 +41,28 @@ the plan claimed it would); it would only swap the SPA's HTML 404 for
 session-events' text/plain 404. The default is therefore production-faithful:
 /permission falls through to the ttyd catch-all. --permission-shim routes
 it to session-events anyway, for the day a handler lands there.
+
+(‡) /build-id and /term-build-id are the ~12-byte build stamps the self-update
+healer polls and the diagnostics read (ADR-0007, amendment of 2026-08-28: "the
+id is read from a stamp, not from the page"). clipboard-upload does serve both
+(publicAssets, clipboard-upload/main.go), which is what makes routing them
+there look obvious, but the production ingress sends them nowhere near it.
+Measured against the live site 2026-09-04: GET
+https://terminal.viktorbarzin.me/build-id and /term-build-id answer 302 to
+Authentik, so both are authed like /term.html rather than public like /sw.js,
+and Traefik's own access log puts them on RouterName
+terminal-terminal-terminal-viktorbarzin-me@kubernetes with
+KubernetesServiceName "terminal", which is the ttyd Service. ttyd answers 404
+(Server: ttyd/1.7.7-40e79c7 on 127.0.0.1:7681), so the 404 an agent sees
+through this harness, and whatever the diagnostics panel makes of it, is
+production and not a harness gap. Adding the two paths to ASSET_PATHS would
+diverge twice at once: 200 from a service the ingress never asks, without the
+auth it does apply. --stamp-shim routes them to clipboard-upload authed, which
+is the only way to exercise the healer's STAMP path here, and what the default
+becomes if an IngressRoute for them ever lands. The healer itself still runs
+without it: it latches the 404 and falls back to reading the page, which is
+exactly what the deployed site does today and what ADR-0007's amendment
+describes as self-update degrading rather than disappearing.
 
 THE GUARD
 ---------
@@ -109,6 +133,7 @@ Usage:
     python3 scripts/qa-harness.py --port 7999      # a second, isolated fleet
     python3 scripts/qa-harness.py --no-restore     # keep whatever the fleet did
     python3 scripts/qa-harness.py --scratch DIR    # only if DIR is under /home/<osUser>
+    python3 scripts/qa-harness.py --stamp-shim     # serve the build stamps (‡)
 """
 from __future__ import annotations
 
@@ -147,9 +172,13 @@ HOP_BY_HOP = {
     "content-length", "content-encoding",
 }
 
-# The exact public-asset paths the prod ingress carves out of Authentik. Kept
-# in lockstep with clipboard-upload's publicAssets whitelist and dev-harness's
-# ASSET_PATHS; term.html is deliberately NOT here (it is authed).
+# The exact public-asset paths the prod ingress carves out of Authentik:
+# module.ingress_assets in infra/stacks/terminal/main.tf, auth = "none", ten
+# paths and no more. NOT clipboard-upload's publicAssets whitelist, which runs
+# three entries longer and decides which FILE a path serves rather than who may
+# ask ("AUTH LIVES AT THE INGRESS, NOT HERE", clipboard-upload/main.go). Those
+# three, /term.html and the two build stamps, are authed in production and are
+# routed authed below.
 ASSET_PATHS = (
     "/manifest.webmanifest",
     "/icon-192.png",
@@ -162,6 +191,11 @@ ASSET_PATHS = (
     "/fonts/JetBrainsMono-BoldItalic.woff2",
     "/fonts/dm-sans-latin-wght-normal.woff2",
 )
+
+# The two build stamps, and the reason they are not in the tuple above: the
+# ingress routes neither of them to clipboard-upload, so both reach ttyd and
+# 404, and this proxy reproduces that. Evidence in the (‡) footnote.
+STAMP_PATHS = ("/build-id", "/term-build-id")
 
 # tmux-api's own sessionNameRe is ^[a-zA-Z0-9_-]{1,32}$, so a qa- prefix with
 # hyphens is a legal session name. Anchored both ends: "qa" alone, "myqa-x" and
@@ -629,6 +663,18 @@ def build_app(args: argparse.Namespace) -> web.Application:
         return await forward(request, f"{CLIPBOARD}/term.html", auth=True,
                              label="/term.html")
 
+    async def stamp_proxy(request: web.Request) -> web.StreamResponse:
+        """/build-id and /term-build-id. The (‡) footnote has the evidence for
+        why the default is ttyd's 404 and not the 200 clipboard-upload gives.
+        Registered rather than left to the catch-all so the log says which
+        decision was taken, the way /permission does."""
+        path = request.rel_url.raw_path
+        if args.stamp_shim:
+            return await forward(request, f"{CLIPBOARD}{path}", auth=True,
+                                 label=f"{path} (stamp shim → clipboard-upload)")
+        return await forward(request, f"{ttyd_base()}{path}", auth=True,
+                             label=f"{path} (no shim → ttyd catch-all)")
+
     async def ws_proxy(request: web.Request) -> web.StreamResponse:
         reason = guard.check_ws(request.rel_url.query)
         if reason:
@@ -777,6 +823,8 @@ def build_app(args: argparse.Namespace) -> web.Application:
     # not open the lobby at all.
     app.router.add_route("*", "/assets/{tail:.*}", asset_proxy)
     app.router.add_route("*", "/term.html", term_html_proxy)
+    for path in STAMP_PATHS:
+        app.router.add_route("*", path, stamp_proxy)
     app.router.add_route("*", "/api/sessions/{tail:.*}", api_proxy)
     app.router.add_route("*", "/clipboard/{tail:.*}", clipboard_proxy)
     app.router.add_route("*", "/events/{tail:.*}", events_proxy)
@@ -823,6 +871,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-permission-shim", dest="permission_shim",
                    action="store_false",
                    help="accepted for compatibility — this is now the default")
+    # Default OFF for the same reason: production routes neither stamp to
+    # clipboard-upload, so both 404 there too. On, they resolve, which is what
+    # a lane exercising the self-update healer needs (footnote ‡).
+    p.add_argument("--stamp-shim", dest="stamp_shim", action="store_true",
+                   default=False,
+                   help="serve /build-id and /term-build-id from "
+                        "clipboard-upload instead of letting them fall to the "
+                        "ttyd catch-all. Off by default: the production ingress "
+                        "routes neither there, so both 404 on the real site")
     p.add_argument("--no-restore", action="store_true",
                    help="do not snapshot/restore /layout and /prefs")
     p.add_argument("--quiet", action="store_true")
@@ -838,7 +895,8 @@ def main() -> None:
     print(f"[qa-harness] http://127.0.0.1:{args.port}  user={args.user}  "
           f"spa=:{args.ttyd_port}  scratch={args.scratch}", flush=True)
     print(f"[qa-harness] mutations restricted to qa-* sessions; "
-          f"permission shim {'ON' if args.permission_shim else 'OFF'}", flush=True)
+          f"permission shim {'ON' if args.permission_shim else 'OFF'}; "
+          f"stamp shim {'ON' if args.stamp_shim else 'OFF'}", flush=True)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
