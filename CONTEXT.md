@@ -49,7 +49,7 @@ title**, which is whatever is running in the pane describing itself.
 **Summary**:
 Claude Code's own one-line description of what a conversation is about, which
 it writes into its terminal title and which therefore arrives as the
-session's **pane title** with a `✳ ` prefix. The lobby adopts the first one
+session's **pane title** behind a glyph prefix. The lobby adopts the first one
 that appears as the session's **title** and then leaves it alone, so a
 summary that drifts as the conversation moves does not move the title. Not
 present for a plain shell, and reads `Claude Code` before the first prompt.
