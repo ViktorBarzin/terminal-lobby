@@ -10,13 +10,13 @@ takes the SPA the rest of the way to rendering the terminal itself, retires the
 It continues [ADR-0017](../adr/0017-the-lobby-renders-its-own-terminal.md), which
 landed the first stage on 2026-09-02 (`1b9e545`).
 
-## Where this starts, measured today
+## Where this started, measured before pass 1
 
 | fact | value | how it was checked |
 |---|---|---|
 | prod frontend | the SolidJS SPA | `/usr/local/share/ttyd/index.html` is 68,668 bytes beside `assets/`, `fonts/`, `sw.js`, `manifest.webmanifest`, `build-id` |
 | prod terminal | the iframe | `/usr/local/share/ttyd/term.html`, 1,529,744 bytes |
-| installed package | `terminal-lobby 0.25.3` | `dpkg` on the devvm |
+| installed package | `terminal-lobby 0.25.3` | `dpkg` on the devvm. Pass 1 took it to 0.27.3 |
 | native path | behind `?native=1`, default off | `SessionView.tsx:179-186`, `:915` |
 | tiers | one | `terminal-dev` + `ttyd-v2` :7687 removed 2026-08-16; `ttyd-ro` :7682 removed 2026-08-29 |
 | native modules | 9 files, `src/terminal/`, 366 tests | ADR-0017 |
@@ -234,11 +234,78 @@ without clearing or reassigning it, because clearing the field is what suppresse
 predictive text. That is why `term.html` mirrors rather than letting xterm's own
 helper textarea take the input.
 
+## Pass 1, as landed
+
+Pass 1 is on master and deployed. Eight commits, `terminal-lobby 0.27.3` and
+`ttyd-devvm 1.7.7+git202609041043.0cfe8e0` on the box, plus one line in infra.
+
+```stats
+3470 | frontend tests passing
+45 | compat cases, up from 33, and the release gate now runs all of them
+0 | tmux sessions lost across three ttyd restarts
+54 | divergences the refuters found in the first cut
+```
+
+What was verified by driving the deployed site through
+`scripts/qa-harness.py` with a real browser, screenshots read back:
+
+| claim | evidence |
+|---|---|
+| the iframe path is untouched | lobby loads, session opens, glyphs and colours correct, keystrokes execute |
+| native focuses at boot | `document.activeElement` is the xterm helper textarea straight after navigate, no click |
+| a keystroke echoes | typed a command, read its output back off the screen |
+| paste lands as one buffer | three lines in one prompt, and a raw pty capture shows the bridge and the iframe deliver byte-identical input |
+| Ctrl+V pastes | a real `Control+v`, three lines in one buffer, `tmux capture-pane` shows no `0x16` |
+| `?native=0` disables | full table: absent, `?native`, `=1`, `=0`, `=off` |
+| sixel is off | `viu` prints `SIXEL IMAGE (12x6)`, and `strings` finds no `xpixel` in the shipped ttyd |
+| `show-image` reaches the person | ASCII notice on the tmux status line, one pane, image in the library |
+| symbol glyphs load | the face reports `loaded`, fetched at status 200, and gives U+23BF a 16.0px advance where JetBrains Mono and system mono both give 32.0 |
+
+### Two things CI could not have told us
+
+Both were green pipelines over broken outcomes, and both were found by looking
+at the box rather than the log.
+
+**The terminal server could not install, and had not for weeks.**
+`ttyd.yml` stamped `1.7.7+<short sha>`, and a bare sha is not monotonic under
+Debian version ordering: dpkg compares the leading non-digit run first, where
+end-of-string sorts below a letter, so any sha starting with a digit lost to the
+`c` in `c76b116`. Five published builds were stranded behind it. A date prefix
+does not fix it either, for the same reason. `+git<date>.<sha>` does. And
+`tl-reconcile` named one package, while the lobby's `Depends: ttyd-devvm` is
+unversioned and satisfied by anything already installed.
+
+**A font can pass two gates and still 404.** The symbol face had to be added to
+clipboard-upload's public asset table AND to the ingress carve-out in
+`infra/stacks/terminal/main.tf`. Fixing one left it 404ing, and the glyphs
+rendered from system fallback, which looks correct on this box and is exactly
+what the change set out to remove.
+
+One quirk worth carrying: `tl-reconcile` ships inside the package it installs,
+so a change to the reconcile script itself always acts one deploy late, and
+nothing retries it on a timer.
+
+### Added to pass 2 by driving it
+
+- **A+ and A- do not resize the native terminal live.** They write
+  `tl-font-size` and `.xterm-rows` keeps its old size until a reload, where the
+  iframe resizes at once. This is the un-ported `__tlPrefsLive` bridge
+  (`term.html:9173-9188`), which the inventory had as low priority. It is
+  user-visible, so it moves up.
+
 ## What stays unverified, and what the guards do not reach
 
 iPadOS 15.8 is the floor, and there is no WebKit instrument in this homelab. The
 Android emulator is real Chrome, so it proves the touch and keyboard mechanisms
-and says nothing about Safari.
+and says nothing about Safari. Pass 1 was driven on a desktop Chromium only, so
+the phone-facing halves of the native path are unexercised even on Chrome.
+
+The glyph fix is the sharpest example of why that gap matters. While the font
+404ed, the nine codepoints still rendered correctly on this devvm, because
+DejaVu Sans and IPAGothic happen to cover them. The machine that reported boxes
+in the first place does not. A check that passes on the box you have and fails
+on the box you cannot reach is worse than no check, which is why the load was
+settled by advance-width measurement rather than by looking at the screen.
 
 The guards that do cover the floor are static, and reading them turned up their
 edges. `scripts/test_frontend_compat.py` runs a per-chunk esbuild differential
