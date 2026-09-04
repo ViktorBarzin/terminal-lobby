@@ -219,6 +219,10 @@
  */
 
 import type { WheelSpeed } from "../store/prefs";
+// The per-frame cap, from the one home the two scrollers share. A VALUE import,
+// where `emit.ts` imports only TYPES from here, so the runtime graph is
+// one-directional and there is no cycle to reason about.
+import { SCROLL_MAX_EVENTS_PER_FEED } from "./emit";
 
 /**
  * The per-frame emission ceiling, term.html:6082.
@@ -227,12 +231,11 @@ import type { WheelSpeed } from "../store/prefs";
  * `feedScroll` (:6123-6124). ~600 rows/s at 60fps, far above any intentional
  * scroll, so it bounds a runaway without being reachable by hand.
  *
- * `touchscroll.ts` declares its own copy of the same number, so the two ports
- * each carry one where the page carries one. Both cite :6082, and picking a
- * single home is a wiring decision rather than something either module can take
- * on its own.
+ * One constant here too, in `emit.ts`. Both ports declared their own copy while
+ * neither could see the other; the re-export ends that without moving the name
+ * out of either module's public API, which both suites read.
  */
-export const SCROLL_MAX_EVENTS_PER_FEED = 10;
+export { SCROLL_MAX_EVENTS_PER_FEED };
 
 /** `WheelEvent.DOM_DELTA_LINE`. A deltaY in rows. */
 export const DOM_DELTA_LINE = 1;
@@ -277,7 +280,9 @@ export interface SmoothGates {
    * The gestures master kill: localStorage `tl-gestures` !== 'off'
    * (term.html:3163-3166). The read goes inside a try/catch that answers TRUE
    * on a throw, so a browser that refuses storage keeps its gestures rather
-   * than losing them. Nothing in frontend-v2 reads that key yet.
+   * than losing them. `store/device-prefs.ts`'s `gesturesEnabled()` is that
+   * read, catch included, and it says on itself that this pref is read fresh at
+   * every use.
    */
   readonly gesturesEnabled: boolean;
   /** The roamed `gestures.wheelSmooth` pref. Default ON. */

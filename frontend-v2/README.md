@@ -275,6 +275,16 @@ src/
     wheel.ts             The desktop counterpart: a trackpad's pixel-delta stream
                          de-damped into paced one-row line wheels, with the pref
                          that detaches it
+    emit.ts              The one synthetic-wheel primitive both scrollers share
+                         (term.html:6105-6113), the clientY they both carry
+                         (scrollLastEmitY, :6087, seeded 100 and written only by
+                         the touch path), the per-frame cap at :6082 that
+                         touchscroll.ts and wheel.ts each declared a copy of,
+                         and the lazy-per-field .xterm-screen read that lets one
+                         measurement serve both worlds without measuring a field
+                         nobody read. Takes a MeasureScreen callback rather than
+                         querying the DOM, so the block's PURE claim above still
+                         holds and the querySelector stays in TerminalNative
     viewport.ts          How much of the terminal's box a soft keyboard covers,
                          and therefore what height the host should have. NOT
                          src/mobile/viewport.ts, which is the lobby's own; this

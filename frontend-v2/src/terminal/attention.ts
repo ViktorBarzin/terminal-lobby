@@ -101,8 +101,9 @@
  *   tab     a `visibilitychange` listener carrying `document.hidden`, in BOTH
  *           directions, because becoming hidden can open a new period just as
  *           much as becoming visible closes one (:5773-5781). Its only job is
- *           the re-arm. TerminalNative.tsx has none today, so this is new work
- *           rather than a line added to a listener that already exists.
+ *           the re-arm. It was new work rather than a line added to a listener
+ *           that already existed; TerminalNative.tsx installs it in its mount
+ *           body now, and takes it off in `teardown`.
  *   view    `!(mode() === "terminal" && onScreen())`, which is the expression
  *           the iframe branch already passes as TerminalView's `active` prop
  *           (SessionView.tsx:919) and posts down as `tl-view`

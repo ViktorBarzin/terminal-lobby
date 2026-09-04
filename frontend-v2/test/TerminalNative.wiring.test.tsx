@@ -23,7 +23,11 @@
  *     arithmetic is terminal.fit.test.ts and the real geometry needs a browser.
  *   - whether Gboard's predictive text actually stops committing into the
  *     terminal. That is a device claim (the shared Android emulator), and the
- *     attributes below are only the mechanism term.html uses to make it.
+ *     attributes below are only the mechanism term.html uses to make it. The
+ *     compose mirror is the same claim from the other side: its whole point is
+ *     that a real soft keyboard's autocorrect, dictation and swipe typing DO
+ *     reach it, and jsdom has no keyboard at all, so section 16 asserts the
+ *     attribute set and the forwarding and says nothing about either.
  *   - whether a dispatched clone actually makes xterm SELECT. The fake records
  *     the clone; what `SelectionService` does with it is upstream's, needs
  *     layout, and is a browser claim. Same for the real cell geometry behind a
@@ -37,9 +41,8 @@
  *     it had not. Both are the browser's and xterm's own behaviour, and xterm
  *     is mocked here, so the paste chord is pinned by the value the handler
  *     returns plus a pty capture on the deployed site.
- *   - links, the compose mirror, the REST of the key-handler contract (the
- *     paste leg is wired below; copy, Escape, the app chords, F12 and the
- *     Option-arrow jumps are not) and the held-key overlay.
+ *   - links, pinch-to-zoom and the held-key overlay, none of which is wired
+ *     into the component yet.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
@@ -49,6 +52,7 @@ import { resolve } from "node:path";
 import { FONT_SIZE_KEY, PREFS_KEY } from "../src/store/prefs";
 import { toasts, type PushToast } from "../src/store/toast";
 import type { TerminalReport } from "../src/diagnostics/status";
+import { HELD_ENTER_MESSAGE, MIRROR_FIELD_ATTRIBUTES } from "../src/terminal/mirror";
 
 /* ------------------------------------------------------------------ *
  * The xterm stand-ins. Hoisted because vi.mock is.
@@ -90,6 +94,15 @@ const xt = vi.hoisted(() => {
      * that is when xterm creates it.
      */
     screen: HTMLDivElement | null = null;
+    /**
+     * `term.element`, xterm's own root, which is what BOTH scrollers dispatch
+     * their synthetic wheels on (term.html:6107) and what their `mounted` field
+     * reads. A real xterm builds it inside `open()` and puts `.xterm-screen`
+     * under it, so the fake nests them the same way: a component that
+     * dispatched on the host or on the screen instead would still look right
+     * against a flat stub.
+     */
+    element: HTMLElement | null = null;
 
     constructor(opts: Record<string, unknown>) {
       this.ctor = { ...opts };
@@ -99,11 +112,24 @@ const xt = vi.hoisted(() => {
     loadAddon(): void {}
     open(host: HTMLElement): void {
       this.host = host;
+      const element = document.createElement("div");
+      element.className = "xterm";
+      host.appendChild(element);
+      this.element = element;
       const screen = document.createElement("div");
       screen.className = "xterm-screen";
-      host.appendChild(screen);
+      element.appendChild(screen);
       this.screen = screen;
       if (!made.lateTextarea) this.createHelperTextarea();
+    }
+    /**
+     * The ONE custom wheel handler xterm stores, as the component installed it.
+     * xterm consults it from two listeners of its own, both on `element`, and
+     * diverts only on an exact `false`.
+     */
+    wheelHandler: ((e: WheelEvent) => boolean) | null = null;
+    attachCustomWheelEventHandler(h: ((e: WheelEvent) => boolean) | null): void {
+      this.wheelHandler = h;
     }
     /** What `getSelection()` answers, i.e. xterm's right-trimmed text. */
     selectionText = "";
@@ -141,6 +167,27 @@ const xt = vi.hoisted(() => {
     }
     onBinary(cb: (data: string) => void): Disposable {
       this.onBinaryCbs.push(cb);
+      return nothing;
+    }
+    /**
+     * Every `term.input()` the component made, which is the compose mirror's
+     * entire route to the pty: xterm's own onData, then the soft-modifier
+     * wrapper, then the send choke point.
+     *
+     * It calls onData SYNCHRONOUSLY, as the real one does
+     * (`coreService.triggerDataEvent`), because that is the whole reason the
+     * mirror brackets the call in `mirrorEmitting`: the reset hook fires
+     * inside it and has to see the flag.
+     */
+    readonly typedIn: { data: string; user: boolean }[] = [];
+    input(data: string, wasUserInput?: boolean): void {
+      this.typedIn.push({ data, user: wasUserInput === true });
+      for (const cb of this.onDataCbs) cb(data);
+    }
+    /** xterm's parser seeing BEL. One event per ring, ungated. */
+    readonly bellCbs: (() => void)[] = [];
+    onBell(cb: () => void): Disposable {
+      this.bellCbs.push(cb);
       return nothing;
     }
     paste(text: string): void {
@@ -259,11 +306,18 @@ let boxH = 600;
  * gated by is 4000, so the live stack has dropped it before the window ends.
  * Counting the stack would count dismissals.
  */
-let raised: { message: string; kind: string }[] = [];
+let raised: { message: string; kind: string; timeoutMs?: number }[] = [];
 let realPush: (t: PushToast) => number;
 
 /** term.html's refit() debounce (term.html:8471-8481), plus a frame of slack. */
 const PAST_DEBOUNCE_MS = 150;
+
+/**
+ * `heldSay`'s throttle (term.html:8191-8195), shared by every held-input
+ * message and the compose mirror's own. Advancing past it is how a second
+ * sentence can be seen at all.
+ */
+const HELD_SAY_WINDOW_MS = 5000;
 
 const TERM_HTML = readFileSync(
   resolve(__dirname, "../..", "frontend/term.html"),
@@ -285,7 +339,11 @@ beforeEach(() => {
   raised = [];
   realPush = toasts.push;
   toasts.push = (t: PushToast): number => {
-    raised.push({ message: t.message, kind: t.kind });
+    // The duration is recorded because two of the key handler's toasts carry
+    // one deliberately: `showToast` defaults its kind to "info" and its length
+    // to 3000, so a wiring that passed only the message would ship an info
+    // toast of the wrong length where term.html shows a short success.
+    raised.push({ message: t.message, kind: t.kind, timeoutMs: t.timeoutMs });
     return realPush(t);
   };
   // The component installs its window bridges from inside its async body, so
@@ -352,18 +410,34 @@ interface Mounted {
   observed(): void;
   /** The session going off screen and coming back (SessionView's onScreen). */
   setOnScreen(v: boolean): void;
+  /** The terminal view coming on or off screen (SessionView's `active`). */
+  setActive(v: boolean): void;
   /** Everything `onConn` was told about the socket, in order (ADR-0016). */
   reports: TerminalReport[];
+  /** Every attention signal handed up, in order (terminal/attention.ts). */
+  attention: ("bell" | "output")[];
   /** The levers `onReady` handed up, which is what SessionView holds. */
   control(): { reconnect: () => void; ask: () => void };
+  /**
+   * The compose mirror's field, scoped to THIS render: a document query would
+   * find another mounted terminal's, which is the bug the host-scoped queries
+   * in the component exist to avoid. Throws where the posture mounted none.
+   */
+  mirror(): HTMLTextAreaElement;
+  /** The bar the field sits in, whose live height is term.html's `cbH`. */
+  bar(): HTMLElement;
+  /** Nothing mounted, which is what a fine pointer and `input.bar: off` give. */
+  noMirror(): boolean;
   unmount(): void;
 }
 
 async function mount(
-  opts: { watch?: boolean; onScreen?: boolean } = {},
+  opts: { watch?: boolean; onScreen?: boolean; active?: boolean } = {},
 ): Promise<Mounted> {
   const [onScreen, setOnScreen] = createSignal(opts.onScreen ?? true);
+  const [active, setActive] = createSignal(opts.active ?? true);
   const reports: TerminalReport[] = [];
+  const attention: ("bell" | "output")[] = [];
   // A list rather than a nullable local, so TypeScript does not have to be
   // argued out of narrowing an assignment made inside a callback.
   const controls: { reconnect: () => void; ask: () => void }[] = [];
@@ -372,6 +446,11 @@ async function mount(
       args="arg=qa-native"
       watch={() => opts.watch === true}
       ownsBridges={onScreen()}
+      // A DIFFERENT question from ownsBridges, and the one attention.ts's
+      // `view` event is the negation of: false while the TEXT view shows over a
+      // terminal that stays mounted and stays attached.
+      active={active()}
+      onAttention={(kind) => void attention.push(kind)}
       onConn={(report) => void reports.push(report)}
       onReady={(c) => void controls.push(c)}
     />
@@ -379,6 +458,8 @@ async function mount(
   await settle();
   const term = one(xt.made.terminals, "terminal");
   const fit = one(xt.made.fitAddons, "fit addon");
+  const field = (): HTMLTextAreaElement | null =>
+    r.container.querySelector<HTMLTextAreaElement>(".tl-compose-mirror textarea");
   return {
     term,
     fit,
@@ -397,15 +478,28 @@ async function mount(
       for (const cb of observers) cb();
     },
     setOnScreen,
+    setActive,
     reports,
+    attention,
     control: () => one(controls, "onReady control"),
+    mirror: () => {
+      const el = field();
+      if (!el) throw new Error("no compose mirror was mounted");
+      return el;
+    },
+    bar: () => {
+      const el = r.container.querySelector<HTMLElement>(".tl-compose-mirror");
+      if (!el) throw new Error("no compose bar was mounted");
+      return el;
+    },
+    noMirror: () => field() === null,
     unmount: () => r.unmount(),
   };
 }
 
 /** A live socket: mounted, /token answered, handshake accepted. */
 async function mountOpen(
-  opts: { watch?: boolean; onScreen?: boolean } = {},
+  opts: { watch?: boolean; onScreen?: boolean; active?: boolean } = {},
 ): Promise<Mounted> {
   const m = await mount(opts);
   m.socket().accept();
@@ -455,8 +549,7 @@ const messages = (): string[] => raised.map((r) => r.message);
  * a constant-true accessor with a no-op setter satisfies jsdom's write and
  * every read that follows it.
  */
-function trusted(type: string, init: MouseEventInit): MouseEvent {
-  const e = new MouseEvent(type, { bubbles: true, cancelable: true, ...init });
+function forceTrusted<E extends Event>(e: E): E {
   const impl = Object.getOwnPropertySymbols(e).find((s) => s.description === "impl");
   if (!impl) throw new Error("jsdom's event impl symbol is gone; see `trusted`");
   const inner = (e as unknown as Record<symbol, object>)[impl];
@@ -466,6 +559,23 @@ function trusted(type: string, init: MouseEventInit): MouseEvent {
     set: () => {},
   });
   return e;
+}
+
+function trusted(type: string, init: MouseEventInit): MouseEvent {
+  return forceTrusted(new MouseEvent(type, { bubbles: true, cancelable: true, ...init }));
+}
+
+/**
+ * A REAL wheel, which both scrollers gate on.
+ *
+ * The same unforgeable flag as `trusted`, and needed for the same reason twice
+ * over: the trackpad pacer passes an untrusted wheel straight through
+ * (term.html:6229-6231, its re-entrancy guard) and only a trusted one cancels a
+ * touch coast (:6281). A test that could not fake the flag would only ever
+ * reach the arm that does nothing.
+ */
+function trustedWheel(init: WheelEventInit): WheelEvent {
+  return forceTrusted(new WheelEvent("wheel", { bubbles: true, cancelable: true, ...init }));
 }
 
 interface Box {
@@ -494,6 +604,131 @@ function boxScreen(term: InstanceType<typeof xt.FakeTerminal>, box: Box): HTMLDi
       toJSON: () => ({}),
     }) as DOMRect;
   return el;
+}
+
+/**
+ * Every wheel that reached a node, in dispatch order.
+ *
+ * Pointed at `term.element` in the scroll sections, because WHICH node the
+ * synthetic wheels land on is part of the claim (term.html:6107): xterm's own
+ * wheel listeners sit on that root, so a component dispatching on the host or
+ * on `.xterm-screen` would emit events nothing forwards to the pty, and a
+ * recorder inside the fake would count those as a pass.
+ */
+function watchWheels(el: HTMLElement): WheelEvent[] {
+  const seen: WheelEvent[] = [];
+  el.addEventListener("wheel", (e) => void seen.push(e as WheelEvent));
+  return seen;
+}
+
+/**
+ * One touch event, with BOTH of the recognizer's clocks under the test's
+ * control.
+ *
+ * jsdom ships a `TouchEvent` constructor and no `Touch`, so the touch list is
+ * plain objects carrying the one field the component reads. `timeStamp` is an
+ * accessor on `Event.prototype`, so an own property shadows it, which is what
+ * makes the velocity ring's clock (`e.timeStamp`) drivable at all. The other
+ * clock is `performance.now()`, read by the component, and vitest's fake timers
+ * do not fake it (measured), so a test that needs a LONG gap on both clocks
+ * has to stub that one as well (`fakeNow` below).
+ */
+function touchEvent(type: string, ys: readonly number[], t: number): Event {
+  const e = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(e, "touches", { value: ys.map((y) => ({ clientY: y })) });
+  Object.defineProperty(e, "timeStamp", { value: t });
+  return e;
+}
+
+/**
+ * `performance.now()`, pinned so the lift's stationary-gap test can be driven.
+ *
+ * The gap is `min(e.timeStamp - last.t, performance.now() - last.th)`
+ * (term.html:6545-6547), so a long gap on one clock alone proves nothing: the
+ * MIN is what the module reads, which is exactly why both are supplied.
+ */
+function fakeNow(read: () => number): () => void {
+  const real = performance.now;
+  performance.now = read;
+  return () => {
+    performance.now = real;
+  };
+}
+
+/**
+ * `matchMedia` answering `(pointer: coarse)` however the test asks.
+ *
+ * The gate the touch listeners go on, read ONCE at mount (term.html:6350, and
+ * the `if (isCoarsePointer)` at :6478). jsdom's own matchMedia answers false to
+ * everything, so the DEFAULT in this file is a fine pointer and the touch half
+ * has to be asked for.
+ */
+function fakePointer(coarse: boolean): () => void {
+  const real = window.matchMedia;
+  window.matchMedia = ((q: string) =>
+    ({
+      matches: coarse && q.includes("pointer: coarse"),
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+  return () => {
+    window.matchMedia = real;
+  };
+}
+
+/**
+ * The rAF queue, recorded rather than run.
+ *
+ * Not vitest's fake timers, which DO fake requestAnimationFrame but hand the
+ * callback a timestamp from their own clock while leaving `performance.now()`
+ * real: measured 219 against 1561 in the same test. The coast subtracts one
+ * from the other (`dt = now - coast.at`), so under those two clocks a frame
+ * arrives BEFORE the lift that scheduled it and the decay runs backwards. A
+ * real browser has no such split: rAF timestamps and `performance.now()` share
+ * the time origin. Recording the queue keeps that true here and makes the
+ * "exactly one frame outstanding" invariant checkable.
+ */
+interface Frames {
+  /** How many callbacks are waiting. The modules promise at most one each. */
+  outstanding(): number;
+  /** Run the single outstanding frame with this timestamp. */
+  run(now: number): void;
+  /** Every id handed to cancelAnimationFrame, in order. */
+  readonly cancelled: number[];
+  restore(): void;
+}
+function fakeFrames(): Frames {
+  const realRequest = globalThis.requestAnimationFrame;
+  const realCancel = globalThis.cancelAnimationFrame;
+  const queued = new Map<number, FrameRequestCallback>();
+  const cancelled: number[] = [];
+  let nextId = 1;
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback): number => {
+    const id = nextId++;
+    queued.set(id, cb);
+    return id;
+  }) as typeof requestAnimationFrame;
+  globalThis.cancelAnimationFrame = ((id: number): void => {
+    cancelled.push(id);
+    queued.delete(id);
+  }) as typeof cancelAnimationFrame;
+  return {
+    outstanding: () => queued.size,
+    run(now: number): void {
+      const entries = [...queued.entries()];
+      expect(entries, "exactly one frame outstanding").toHaveLength(1);
+      const entry = entries[0];
+      if (!entry) throw new Error("no frame was requested");
+      queued.delete(entry[0]);
+      entry[1](now);
+    },
+    cancelled,
+    restore(): void {
+      globalThis.requestAnimationFrame = realRequest;
+      globalThis.cancelAnimationFrame = realCancel;
+    },
+  };
 }
 
 /** Every mousedown that reached xterm's own node, which is only ever a clone. */
@@ -766,36 +1001,6 @@ describe("the paste chord (term.html:8585-8587)", () => {
     expect(consult(m, "keydown", { key: "a", code: "KeyA" })).toBe(true);
     m.type("a");
     expect(inputs(m.socket())).toEqual([[0x61]]);
-  });
-
-  /**
-   * THIS PHASE WIRES THE PASTE LEG AND NOTHING ELSE, and these two pin that
-   * rather than leaving it to a comment. The same decision also carries the
-   * copy chord and the Escape-clears-a-selection leg (term.html:8565-8584),
-   * and both must answer exactly what xterm answers today with no handler
-   * installed: Ctrl+C stays SIGINT even with a highlight on screen, which is
-   * ADR-0003's contract still unhonoured on this path, and Escape reaches the
-   * app without clearing the highlight. Half-wiring either one is the silent
-   * failure, so `cleared` and the socket are checked as well.
-   */
-  it("still hands the copy chord to the pty, selection or not", async () => {
-    const m = await mountOpen();
-    m.term.selected = true;
-    m.term.selectionText = "highlighted";
-    expect(consult(m, "keydown", CTRL_C)).toBe(true);
-    m.type("\x03");
-    expect(inputs(m.socket())).toEqual([[0x03]]);
-    expect(m.term.pasted).toEqual([]);
-  });
-
-  it("still hands Escape to the pty and clears no selection", async () => {
-    const m = await mountOpen();
-    m.term.selected = true;
-    m.term.selectionText = "highlighted";
-    expect(consult(m, "keydown", { key: "Escape", code: "Escape" })).toBe(true);
-    expect(m.term.cleared).toBe(0);
-    m.type("\x1b");
-    expect(inputs(m.socket())).toEqual([[0x1b]]);
   });
 
   /**
@@ -1570,12 +1775,26 @@ describe("the soft-keyboard offset (term.html:9407-9422)", () => {
 
   const realMatchMedia = window.matchMedia;
 
-  /** `window.visualViewport`, which jsdom does not implement (term.html:8428). */
+  /**
+   * `window.visualViewport`, which jsdom does not implement (term.html:8428).
+   *
+   * MOVABLE, where it used to be a frozen `height: 480`. viewport.ts now takes
+   * an `own` reading off this object on every event, so a fake that stayed at
+   * 480 while the shell forwarded 0 would be a browser claiming the keyboard is
+   * both up and down: `keyboardOffset` is `innerHeight - vv.height - offsetTop`
+   * in the shell too (mobile/viewport.ts), so a real keyboard closing returns
+   * this height to `innerHeight` in the same frame the shell forwards 0. The
+   * tests that close the keyboard move both.
+   */
+  const vv = { height: 480, offsetTop: 0, addEventListener() {}, removeEventListener() {} };
   const withVisualViewport = (): void => {
-    Object.defineProperty(window, "visualViewport", {
-      configurable: true,
-      value: { height: 480, offsetTop: 0, addEventListener() {}, removeEventListener() {} },
-    });
+    vv.height = 480;
+    vv.offsetTop = 0;
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: vv });
+  };
+  /** The keyboard, in pixels of the layout viewport it covers. */
+  const keyboardCovers = (px: number): void => {
+    vv.height = window.innerHeight - px;
   };
 
   /** `matchMedia('(pointer: coarse)')` answering yes (term.html:6350, :8441). */
@@ -1602,9 +1821,48 @@ describe("the soft-keyboard offset (term.html:9407-9422)", () => {
 
   it("takes the forwarded height off the terminal", async () => {
     asTouchDevice();
+    keyboardCovers(312);
     const m = await mountOpen();
     expect(window.__tlKeyboardOffset?.(312)).toBe(true);
     expect(height(m)).toBe("calc(100% - 312px)");
+  });
+
+  /**
+   * THE SEED, which is what viewport.ts adds that the inline arithmetic could
+   * not: the terminal reads the viewport FOR ITSELF at mount.
+   *
+   * The shell forwards on CHANGE only (`kb !== lastKb`, mobile/viewport.ts), so
+   * a terminal that mounts while the keyboard is already up is never told. A
+   * session opened from the composer, a switch back to the terminal view, a tab
+   * that started on the list: all three keep their bottom rows, the prompt
+   * among them, behind the keyboard until the keyboard next moves. The shipped
+   * iframe has the same hole: framed, term.html's own reading is 0 (:8402-8404)
+   * and `framedKb` starts at 0 (:8425), so its boot `syncViewport()` (:8490)
+   * reserves nothing either.
+   */
+  it("reserves what it can see for itself, with nothing forwarded", async () => {
+    asTouchDevice();
+    keyboardCovers(336);
+    const m = await mountOpen();
+    expect(height(m)).toBe("calc(100% - 336px)");
+    expect(window.__tlKeyboardOffset).toBeTypeOf("function");
+  });
+
+  /**
+   * `max(own, forwarded)`, NEVER the sum, and this is the case that separates
+   * it from pass 1's arithmetic. Natively there is no iframe: the terminal sits
+   * in the top window and the shell measures that same window, so both readings
+   * describe the SAME keyboard and both are non-zero. Subtracting both leaves a
+   * 60px terminal on an iPhone. term.html says it in its own words at
+   * :8413-8414, and reserves `offset` for exactly that reason.
+   */
+  it("does not subtract the same keyboard twice", async () => {
+    asTouchDevice();
+    keyboardCovers(300);
+    const m = await mountOpen();
+    // A shell reading a fraction of a pixel apart from ours, which iOS does.
+    expect(window.__tlKeyboardOffset?.(302)).toBe(true);
+    expect(height(m)).toBe("calc(100% - 302px)");
   });
 
   /**
@@ -1661,13 +1919,34 @@ describe("the soft-keyboard offset (term.html:9407-9422)", () => {
     expect(height(m)).toBe("calc(100% - 312px)");
   });
 
-  /** The keyboard closing hands the space back rather than keeping 0px of it. */
+  /**
+   * The keyboard closing hands the space back rather than keeping 0px of it.
+   *
+   * BOTH readings move, because both are readings of the one keyboard: the
+   * shell's forward goes to 0 in the same frame the visual viewport comes back
+   * to the layout height. A forwarded 0 alone must NOT give the rows back while
+   * this terminal can still see the keyboard, which is the other half of
+   * `max(own, forwarded)` and the case a remembered `framedKb` would get wrong
+   * in the opposite direction.
+   */
   it("gives the height back when the keyboard closes", async () => {
     asTouchDevice();
+    keyboardCovers(312);
     const m = await mountOpen();
     window.__tlKeyboardOffset?.(312);
+    expect(height(m)).toBe("calc(100% - 312px)");
+    keyboardCovers(0);
     expect(window.__tlKeyboardOffset?.(0)).toBe(true);
     expect(height(m)).toBe("");
+  });
+
+  /** A forwarded 0 over a keyboard this terminal can still see keeps the rows. */
+  it("keeps the reserve when only the forward says the keyboard is gone", async () => {
+    asTouchDevice();
+    keyboardCovers(312);
+    const m = await mountOpen();
+    expect(window.__tlKeyboardOffset?.(0)).toBe(true);
+    expect(height(m)).toBe("calc(100% - 312px)");
   });
 
   /**
@@ -1683,11 +1962,18 @@ describe("the soft-keyboard offset (term.html:9407-9422)", () => {
     expect(height(m)).toBe("calc(100% - 312px)");
   });
 
-  /** `Math.max(0, px)`, as the page clamps it: a negative is no keyboard. */
+  /**
+   * `Math.max(0, px)`, as the page clamps it (:9419 and again in its own
+   * helper at :8418): a negative forward contributes nothing at all, rather
+   * than a negative reserve or a NaN. The visual viewport comes back with it,
+   * because a negative is what a closing keyboard's rounding produces.
+   */
   it("reads a negative offset as no keyboard", async () => {
     asTouchDevice();
+    keyboardCovers(312);
     const m = await mountOpen();
     window.__tlKeyboardOffset?.(312);
+    keyboardCovers(0);
     expect(window.__tlKeyboardOffset?.(-40)).toBe(true);
     expect(height(m)).toBe("");
   });
@@ -2284,5 +2570,1812 @@ describe("symbol glyphs survive the webfont arriving late", () => {
     const m = await mount();
     await settle();
     expect(m.term.atlasCleared).toBe(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 13. Touch scroll (term.html:6056-6171 and the recognizer at :6478-6556)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The only way to scroll a terminal with a finger, and until this landed the
+ * native path had none: `terminal/touchscroll.ts` has been green and unwired
+ * since the port, so 144 passing cases proved arithmetic that nothing ran.
+ *
+ * WHAT THESE CANNOT REACH. jsdom lays nothing out, so a real finger producing a
+ * real scroll is a browser claim and belongs on the shared Android emulator.
+ * What is checked here is every step the component owns: that the gate exists
+ * at all, which events are listened for and on which node, which node the
+ * synthetic wheels land on and how many of them there are, where their
+ * coordinates come from, when the prefs and the screen box are read, and that
+ * exactly one rAF is outstanding for as long as a coast is in flight. The
+ * screen box is a stub, so what is under test is the arithmetic being fed the
+ * box term.html measures, not the pixels.
+ */
+describe("touch scroll (term.html:6478-6556)", () => {
+  /** 24 rows over 384px, so one row is 16px and the numbers below are exact. */
+  const BOX = { left: 0, top: 0, width: 800, height: 384 };
+  /** `performance.now()`, pinned so every `th` in one gesture agrees. */
+  const NOW = 1000;
+
+  let restorePointer: (() => void) | null = null;
+  let restoreNow: (() => void) | null = null;
+  let frames: Frames | null = null;
+
+  afterEach(() => {
+    restorePointer?.();
+    restoreNow?.();
+    frames?.restore();
+    restorePointer = restoreNow = null;
+    frames = null;
+  });
+
+  const hostOf = (m: Mounted): HTMLElement => {
+    const el = m.term.host;
+    if (!el) throw new Error("the terminal was never opened");
+    return el;
+  };
+
+  const elementOf = (m: Mounted): HTMLElement => {
+    const el = m.term.element;
+    if (!el) throw new Error("the terminal has no element");
+    return el;
+  };
+
+  /** A phone: the coarse-pointer gate open, both clocks pinned, rAF recorded. */
+  async function onTouch(): Promise<{
+    m: Mounted;
+    wheels: WheelEvent[];
+    screen: HTMLDivElement;
+  }> {
+    restorePointer = fakePointer(true);
+    restoreNow = fakeNow(() => NOW);
+    frames = fakeFrames();
+    const m = await mountOpen();
+    const screen = boxScreen(m.term, BOX);
+    return { m, wheels: watchWheels(elementOf(m)), screen };
+  }
+
+  /** One finger landing at `start` and moving through `moves`. */
+  const finger = (
+    m: Mounted,
+    start: readonly [y: number, t: number],
+    moves: readonly (readonly [y: number, t: number])[],
+  ): void => {
+    const target = hostOf(m);
+    target.dispatchEvent(touchEvent("touchstart", [start[0]], start[1]));
+    for (const [y, t] of moves) target.dispatchEvent(touchEvent("touchmove", [y], t));
+  };
+
+  /** A flick: two moves fast enough to leave a coast behind, then the lift. */
+  const flick = (m: Mounted): void => {
+    finger(m, [300, 0], [
+      [260, 10],
+      [220, 20],
+    ]);
+    hostOf(m).dispatchEvent(touchEvent("touchend", [], 25));
+  };
+
+  /**
+   * THE GATE, which is the most consequential line of this wiring and the one a
+   * reading of the owes list alone would have missed.
+   *
+   * term.html's whole recognizer sits inside `if (isCoarsePointer)` (:6478), so
+   * on a machine that answers `(pointer: coarse)` false it attaches no touch
+   * listener and a finger gets the browser's native scroll. A touchscreen
+   * laptop is a real machine people own, and without the gate that finger would
+   * ALSO feed one LINE wheel per row to the pty and drop tmux into copy-mode
+   * under it. The page is deliberate about it at :6399-6400.
+   */
+  it("attaches nothing where the primary pointer is not a finger", async () => {
+    restorePointer = fakePointer(false);
+    restoreNow = fakeNow(() => NOW);
+    frames = fakeFrames();
+    const m = await mountOpen();
+    boxScreen(m.term, BOX);
+    const wheels = watchWheels(elementOf(m));
+    const booted = m.term.focused;
+    flick(m);
+    expect(wheels).toHaveLength(0);
+    expect(frames.outstanding()).toBe(0);
+    // Not even the tap focus, which is the other half of the gated block.
+    expect(m.term.focused).toBe(booted);
+  });
+
+  /**
+   * The whole mechanism in one case: 52px of travel on 16px rows is three
+   * discrete one-row LINE wheels, dispatched SEPARATELY on xterm's own root.
+   *
+   * Every field is part of what the pty receives. `deltaMode: 1` is the only
+   * shape xterm neither damps nor collapses; separate dispatches are what beat
+   * its one-report-per-event cap in mouse-tracking mode; and the coordinates
+   * are what the SGR report's cell is derived from, `clientY` being the
+   * finger's last y.
+   */
+  it("turns a drag into one discrete line wheel per row", async () => {
+    const { m, wheels } = await onTouch();
+    finger(m, [300, 0], [[248, 20]]);
+    expect(wheels).toHaveLength(3);
+    for (const w of wheels) {
+      expect(w.deltaMode).toBe(1);
+      expect(w.deltaY).toBe(1);
+      expect(w.clientX).toBe(0);
+      expect(w.clientY).toBe(248);
+      expect(w.isTrusted).toBe(false);
+    }
+  });
+
+  /**
+   * The sign, as the page verified it (:6074-6075): a finger moving DOWN the
+   * screen scrolls UP into scrollback and copy-mode, so content follows the
+   * finger the way it does everywhere else on a phone.
+   */
+  it("scrolls into scrollback when the finger goes down the screen", async () => {
+    const { m, wheels } = await onTouch();
+    finger(m, [100, 0], [[152, 20]]);
+    expect(wheels.map((w) => w.deltaY)).toEqual([-1, -1, -1]);
+    expect(wheels[0]?.clientY).toBe(152);
+  });
+
+  /**
+   * A tap is what raises the soft keyboard, and it is deferred to the LIFT and
+   * gated on the gesture never having become a swipe (:6527). Both mistakes
+   * cost something: a scroll read as a tap puts the keyboard over the
+   * scrollback it just revealed.
+   *
+   * WHERE THE TAP LANDS is the compose mirror's field, not xterm, and that is
+   * the whole of term.html's `tapFocus` reassignment (:7459-7462), which the
+   * case below this one covers. A finger on a phone reaches autocorrect,
+   * dictation and swipe typing; xterm's own helper textarea is deliberately
+   * hardened against all three.
+   */
+  it("focuses on a tap and not on a swipe", async () => {
+    const { m } = await onTouch();
+    const field = m.mirror();
+    field.blur();
+    finger(m, [300, 0], [[298, 10]]); // 2px: still a tap
+    hostOf(m).dispatchEvent(touchEvent("touchend", [], 20));
+    expect(document.activeElement).toBe(field);
+
+    field.blur();
+    finger(m, [300, 30], [[248, 40]]);
+    hostOf(m).dispatchEvent(touchEvent("touchend", [], 50));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  /**
+   * `input.tapFocus: 'terminal'` is the deliberate raw keyboard (settings
+   * 'Terminal tap' -> Keyboard), and it puts the tap back in xterm's hardened
+   * helper textarea. Read per tap, where the page reads `getPrefs()` per tap,
+   * so it is written AFTER the mount: a wiring that had taken it from
+   * `bootPrefs` would answer 'field' here.
+   */
+  it("puts the tap in the terminal when the pref says so", async () => {
+    const { m } = await onTouch();
+    const field = m.mirror();
+    field.blur();
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ input: { tapFocus: "terminal" } }));
+    const booted = m.term.focused;
+    finger(m, [300, 0], [[298, 10]]);
+    hostOf(m).dispatchEvent(touchEvent("touchend", [], 20));
+    expect(m.term.focused).toBe(booted + 1);
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  /**
+   * The screen box is measured ON DEMAND, which is what emit.ts's lazy geometry
+   * is for: a touchmove that has not proven itself a swipe reads nothing, where
+   * an eagerly-built world would force a layout against a grid xterm is writing
+   * into on every move of every gesture.
+   */
+  it("measures no box for a move that is still a tap", async () => {
+    const { m, screen } = await onTouch();
+    const real = screen.getBoundingClientRect.bind(screen);
+    let measured = 0;
+    screen.getBoundingClientRect = (): DOMRect => {
+      measured++;
+      return real();
+    };
+    finger(m, [300, 0], [[296, 10]]); // 4px, under the 6px threshold
+    expect(measured).toBe(0);
+    finger(m, [300, 30], [[248, 40]]);
+    expect(measured).toBeGreaterThan(0);
+  });
+
+  /**
+   * Its OWN host's screen, never a document query. term.html can afford
+   * `document.querySelector('.xterm-screen')` (:6095) because a framed page
+   * holds one terminal; the lobby keeps every visited session mounted and
+   * CSS-hides the rest, and a hidden one measures 0, which makes `rowPx` 0, so
+   * the visible terminal's finger would bank its pixels and emit not one wheel.
+   */
+  it("ignores another terminal's screen node", async () => {
+    const decoy = document.createElement("div");
+    decoy.className = "xterm-screen";
+    document.body.insertBefore(decoy, document.body.firstChild);
+    const { m, wheels } = await onTouch();
+    finger(m, [300, 0], [[248, 20]]);
+    expect(wheels).toHaveLength(3);
+    decoy.remove();
+  });
+
+  /**
+   * The speed pref is read FRESH per feed, where term.html re-reads it inside
+   * `feedScroll` (:6119).
+   *
+   * Written AFTER the mount on purpose: the component's own `bootPrefs` reads
+   * the document once at construction, so a wiring that had taken the speed
+   * from there would still answer 1 here, and this case is what tells the two
+   * apart.
+   */
+  it("reads the scroll speed fresh, not the one it booted with", async () => {
+    const { m, wheels } = await onTouch();
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ gestures: { scrollSpeedV2: 2 } }));
+    finger(m, [300, 0], [[280, 20]]); // 20px: one row at speed 1, two at speed 2
+    expect(wheels).toHaveLength(2);
+  });
+
+  /**
+   * A flick coasts, and the coast is the one thing the module cannot do for
+   * itself: it hands back `coasting` and the component owes it exactly one
+   * outstanding rAF for as long as that is true.
+   *
+   * The frame's timestamp has to come from the same clock as the `th` the lift
+   * froze into `Coast.at` (`performance.now()`), which is why the coast reads
+   * rAF's own argument rather than `Date.now()`.
+   */
+  it("keeps one frame outstanding while a flick is still coasting", async () => {
+    const { m, wheels } = await onTouch();
+    flick(m);
+    expect(wheels).toHaveLength(5);
+    if (!frames) throw new Error("no frame recorder");
+    expect(frames.outstanding()).toBe(1);
+
+    frames.run(NOW + 16);
+    // The coast carries the drag's last y, which is what makes the hand-off
+    // seamless: same coordinate, same pane, more wheels.
+    expect(wheels.length).toBeGreaterThan(5);
+    for (const w of wheels.slice(5)) expect(w.clientY).toBe(220);
+    expect(frames.outstanding()).toBe(1);
+  });
+
+  /**
+   * `gestures.scrollMomentum` is read at the LIFT and only there (:6543), which
+   * is why turning momentum off does not stop a coast already in flight, and
+   * again, written after the mount, so a boot-time read would fail this.
+   */
+  it("does not coast when momentum is off in the document", async () => {
+    const { m } = await onTouch();
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ gestures: { scrollMomentum: false } }));
+    flick(m);
+    expect(frames?.outstanding()).toBe(0);
+  });
+
+  /**
+   * A finger held still before the lift leaves no flick to continue
+   * (`GAP_STILL_MS`, :6549-6550). It cannot be read off the samples, because
+   * browsers dedupe identical-coordinate touchmoves and the buffer still ends
+   * at the last MOVING one, so the gap is measured to the touchend, on BOTH
+   * clocks, and the smaller of the two is what counts. Here both are long: the
+   * event stamps say 400ms and `performance.now()` moves with them.
+   */
+  it("does not coast when the finger was held still", async () => {
+    const { m } = await onTouch();
+    restoreNow?.();
+    let now = NOW;
+    restoreNow = fakeNow(() => now);
+    finger(m, [300, 0], [
+      [260, 10],
+      [220, 20],
+    ]);
+    now = NOW + 400;
+    hostOf(m).dispatchEvent(touchEvent("touchend", [], 420));
+    expect(frames?.outstanding()).toBe(0);
+  });
+
+  /**
+   * FOUR THINGS INTERRUPT A COAST in term.html, and each reaches this component
+   * through one route. A trusted wheel is the first (:6281), through a listener
+   * on the HOST rather than the document, so it sees only wheels over this
+   * terminal.
+   *
+   * Our own coast ticks are untrusted, which is the whole reason that listener
+   * tests the flag: without it the coast would cancel itself on the first wheel
+   * it emitted.
+   */
+  const coasting = async (): Promise<{ m: Mounted; wheels: WheelEvent[] }> => {
+    const started = await onTouch();
+    flick(started.m);
+    expect(frames?.outstanding()).toBe(1);
+    return started;
+  };
+
+  it("ends the coast on a real wheel over the terminal", async () => {
+    const { m } = await coasting();
+    hostOf(m).dispatchEvent(trustedWheel({ deltaY: -3 }));
+    expect(frames?.outstanding()).toBe(0);
+    expect(frames?.cancelled).toHaveLength(1);
+  });
+
+  it("does not let its own synthetic wheels end the coast", async () => {
+    const { m } = await coasting();
+    hostOf(m).dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -1, deltaMode: 1, bubbles: true }),
+    );
+    expect(frames?.outstanding()).toBe(1);
+  });
+
+  /**
+   * Every pty-bound byte cancels a coast, at the one choke point term.html
+   * cancels at (`sendInput`, :8269), and the onData hook cancels a second time
+   * on its own (:8341), which the page calls belt-and-braces and this port
+   * keeps.
+   */
+  it("ends the coast on a keystroke", async () => {
+    const { m } = await coasting();
+    m.type("x");
+    expect(frames?.outstanding()).toBe(0);
+    expect(inputs(m.socket())).toEqual([[0x78]]);
+  });
+
+  /**
+   * The soft keys, the composer's send-to-terminal and a dropped file's path
+   * all arrive at `__tlSendToTerminal`, which is why touchscroll's fourth
+   * interrupt site (term.html's toolbar cancelling for itself at :6823) needs
+   * nothing of its own here: the bridge goes through the choke point.
+   */
+  it("ends the coast on a soft key coming through the bridge", async () => {
+    const { m } = await coasting();
+    expect(window.__tlSendToTerminal?.("\x1b")).toBe(true);
+    expect(frames?.outstanding()).toBe(0);
+    // And the bytes still arrive: the cancel is added to the path, not in place
+    // of it.
+    expect(inputs(m.socket())).toEqual([[0x1b]]);
+  });
+
+  /** A (re)attach ends a coast (:10294), which is `onPhase("open")` here. */
+  it("ends the coast when the socket comes up", async () => {
+    restorePointer = fakePointer(true);
+    restoreNow = fakeNow(() => NOW);
+    frames = fakeFrames();
+    const m = await mount(); // NOT accepted yet, so no `open` has been reported
+    boxScreen(m.term, BOX);
+    flick(m);
+    expect(frames.outstanding()).toBe(1);
+    m.socket().accept();
+    await settle();
+    expect(frames.outstanding()).toBe(0);
+  });
+
+  /**
+   * A cancelled touch cannot be followed by a coast. term.html registers no
+   * touchcancel at all and leaves the stale gesture for the next touchstart to
+   * clear, which is invisible there because no further move can arrive for a
+   * dead touch; folding it in means the module never sits holding half a
+   * gesture.
+   */
+  it("drops the gesture on touchcancel", async () => {
+    const { m } = await onTouch();
+    finger(m, [300, 0], [
+      [260, 10],
+      [220, 20],
+    ]);
+    hostOf(m).dispatchEvent(touchEvent("touchcancel", [], 22));
+    hostOf(m).dispatchEvent(touchEvent("touchend", [], 25));
+    expect(frames?.outstanding()).toBe(0);
+  });
+
+  /**
+   * A second finger disarms the drag, which is what keeps multi-finger shapes
+   * out of this module's way by construction (:6498, :6503). The pinch to font
+   * size is the module that owns two fingers, and it is not this one.
+   */
+  it("stops scrolling the moment a second finger lands", async () => {
+    const { m, wheels } = await onTouch();
+    const target = hostOf(m);
+    target.dispatchEvent(touchEvent("touchstart", [300, 320], 0));
+    target.dispatchEvent(touchEvent("touchmove", [248, 260], 20));
+    expect(wheels).toHaveLength(0);
+  });
+
+  /**
+   * An unmount takes the pending frame with it, through the module's own
+   * `interrupt` rather than a cancel behind its back.
+   */
+  it("cancels a pending coast frame on unmount", async () => {
+    const { m } = await coasting();
+    m.unmount();
+    await settle();
+    expect(frames?.outstanding()).toBe(0);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 14. The desktop smooth-wheel interceptor (term.html:6172-6274)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A trackpad's pixel stream, de-damped into paced one-row line wheels.
+ *
+ * xterm damps a sub-50px pixel wheel to 0.3x and, in mouse-tracking mode,
+ * forwards at most one report per DOM event whatever its magnitude, so tmux
+ * copy-mode jumps five whole lines per surviving report. The fix is to capture
+ * the full pixel travel and re-emit it as a proportional number of LINE wheels,
+ * a frame at a time, through the same primitive the finger uses.
+ *
+ * What jsdom cannot say is whether a real trackpad feels right. What it can say
+ * is which events are intercepted, what the handler answers xterm, how many
+ * wheels come out, and where their coordinates come from.
+ */
+describe("the desktop smooth wheel (term.html:6172-6274)", () => {
+  const BOX = { left: 0, top: 0, width: 800, height: 384 };
+  let frames: Frames | null = null;
+  let restorePointer: (() => void) | null = null;
+
+  afterEach(() => {
+    frames?.restore();
+    restorePointer?.();
+    frames = null;
+    restorePointer = null;
+  });
+
+  async function onTrackpad(): Promise<{
+    m: Mounted;
+    wheels: WheelEvent[];
+    wheel: (init: WheelEventInit) => boolean;
+  }> {
+    frames = fakeFrames();
+    const m = await mountOpen();
+    boxScreen(m.term, BOX);
+    const element = m.term.element;
+    const handler = m.term.wheelHandler;
+    if (!element) throw new Error("the terminal has no element");
+    if (!handler) throw new Error("no custom wheel event handler was installed");
+    return { m, wheels: watchWheels(element), wheel: (init) => handler(trustedWheel(init)) };
+  }
+
+  it("installs a custom wheel handler at all", async () => {
+    const m = await mountOpen();
+    expect(m.term.wheelHandler).toBeTypeOf("function");
+  });
+
+  /**
+   * 100px of travel on 16px rows, paced into one frame: six one-row wheels and
+   * a 4px remainder that waits rather than being dropped. The handler answers
+   * FALSE, which is what takes the event off xterm's own damp-and-cap path, and
+   * the wheels go out on the NEXT frame rather than inside the event being
+   * handled, so nothing re-enters.
+   */
+  it("re-emits a pixel wheel as discrete one-row wheels, a frame later", async () => {
+    const { wheels, wheel } = await onTrackpad();
+    expect(wheel({ deltaY: 100, deltaMode: 0 })).toBe(false);
+    expect(wheels).toHaveLength(0);
+    if (!frames) throw new Error("no frame recorder");
+    expect(frames.outstanding()).toBe(1);
+    frames.run(0);
+    expect(wheels).toHaveLength(6);
+    for (const w of wheels) {
+      expect(w.deltaMode).toBe(1);
+      expect(w.deltaY).toBe(1);
+    }
+  });
+
+  /**
+   * ONE frame per burst (:6257 arms only when nothing is outstanding), and the
+   * recorder is what makes that checkable: two wheels arriving before the frame
+   * runs must not queue two frames.
+   */
+  it("asks for one frame however many wheels arrive first", async () => {
+    const { wheel } = await onTrackpad();
+    wheel({ deltaY: 40, deltaMode: 0 });
+    wheel({ deltaY: 40, deltaMode: 0 });
+    expect(frames?.outstanding()).toBe(1);
+  });
+
+  /**
+   * Our own emissions are untrusted and pass straight through, which is both
+   * halves of the `isTrusted` gate: it keeps the touch scroller's wheels out of
+   * this accumulator AND stops this one converting its own output back into px
+   * for ever.
+   */
+  it("passes an untrusted wheel through untouched", async () => {
+    const { m, wheels } = await onTrackpad();
+    const handler = m.term.wheelHandler;
+    if (!handler) throw new Error("no handler");
+    expect(handler(new WheelEvent("wheel", { deltaY: -1, deltaMode: 1 }))).toBe(true);
+    expect(frames?.outstanding()).toBe(0);
+    expect(wheels).toHaveLength(0);
+  });
+
+  /**
+   * The modifier and horizontal red line, unchanged from before the interceptor
+   * existed (:6233-6237): Shift is horizontal scrolling, Ctrl and Cmd are zoom,
+   * Alt is nothing this may claim, and a horizontal-dominant delta is a native
+   * two-finger swipe.
+   */
+  it.each([
+    ["shift", { shiftKey: true }],
+    ["ctrl", { ctrlKey: true }],
+    ["meta", { metaKey: true }],
+    ["alt", { altKey: true }],
+  ])("leaves a %s-modified wheel to xterm", async (_name, mods) => {
+    const { wheel } = await onTrackpad();
+    expect(wheel({ deltaY: 100, deltaMode: 0, ...mods })).toBe(true);
+    expect(frames?.outstanding()).toBe(0);
+  });
+
+  it("leaves a horizontal-dominant wheel to xterm", async () => {
+    const { wheel } = await onTrackpad();
+    expect(wheel({ deltaX: 120, deltaY: 20, deltaMode: 0 })).toBe(true);
+    expect(frames?.outstanding()).toBe(0);
+  });
+
+  /**
+   * The `tl-gestures` master kill, read FRESH on every wheel because term.html
+   * reads it fresh on every wheel (`wheelSmoothOn`, :6203-6205, called at
+   * :6238). It is a plain per-browser key someone sets by hand to rescue a
+   * device, so a value cached at mount would need a reload to obey.
+   */
+  it("obeys the gestures kill switch flipped after the mount", async () => {
+    const { wheel } = await onTrackpad();
+    expect(wheel({ deltaY: 100, deltaMode: 0 })).toBe(false);
+    localStorage.setItem("tl-gestures", "off");
+    expect(wheel({ deltaY: 100, deltaMode: 0 })).toBe(true);
+  });
+
+  /** The per-feature half of the same reading: `gestures.wheelSmooth` off and
+   *  xterm's exact raw wheel path comes back. */
+  it("obeys gestures.wheelSmooth in the roamed document", async () => {
+    const { wheel } = await onTrackpad();
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ gestures: { wheelSmooth: false } }));
+    expect(wheel({ deltaY: 100, deltaMode: 0 })).toBe(true);
+    expect(frames?.outstanding()).toBe(0);
+  });
+
+  /**
+   * `gestures.wheelSpeed` is read fresh at both of its sites: the accumulator's
+   * cap on the wheel (:6254) and the row size in the frame (:6214). At speed 2
+   * a row is 8px, so the same 100px is capped at ten rows and drains as ten.
+   */
+  it("reads the wheel speed fresh, and the cap follows it", async () => {
+    const { wheels, wheel } = await onTrackpad();
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ gestures: { wheelSpeed: 2 } }));
+    wheel({ deltaY: 100, deltaMode: 0 });
+    frames?.run(0);
+    expect(wheels).toHaveLength(10);
+  });
+
+  /**
+   * CONFLICT 1, AND THE WHOLE REASON `emit.ts` EXISTS. Every synthetic wheel
+   * takes its `clientY` from `scrollLastEmitY` (:6087, read at :6111), which
+   * starts at 100 and which ONLY the touch path writes (:6522). xterm derives
+   * the mouse report's ROW from that coordinate against the screen box, so a
+   * trackpad wheel lands in the tmux pane the finger last touched, and on a
+   * machine where no finger ever did, in whatever pane y=100 falls in.
+   *
+   * Two ports each held half of this and neither could have tested it alone.
+   */
+  it("emits at y 100 with no finger, and at the finger's y after one", async () => {
+    restorePointer = fakePointer(true);
+    frames = fakeFrames();
+    const m = await mountOpen();
+    boxScreen(m.term, BOX);
+    const element = m.term.element;
+    const handler = m.term.wheelHandler;
+    const target = m.term.host;
+    if (!element || !handler || !target) throw new Error("the terminal is not open");
+    const wheels = watchWheels(element);
+
+    handler(trustedWheel({ deltaY: 100, deltaMode: 0 }));
+    frames.run(0);
+    expect(wheels).not.toHaveLength(0);
+    for (const w of wheels) expect(w.clientY).toBe(100);
+
+    const before = wheels.length;
+    target.dispatchEvent(touchEvent("touchstart", [300], 0));
+    target.dispatchEvent(touchEvent("touchmove", [248], 20));
+    handler(trustedWheel({ deltaY: 100, deltaMode: 0 }));
+    frames.run(0);
+    expect(wheels.length).toBeGreaterThan(before);
+    for (const w of wheels.slice(before)) expect(w.clientY).toBe(248);
+  });
+
+  /**
+   * The pacer's own teardown, which is term.html's detach path (:6269-6271):
+   * the accumulator is forgotten and the pending frame is cancelled, so nothing
+   * drains into a terminal that is being disposed.
+   */
+  it("cancels a pending frame on unmount", async () => {
+    const { m, wheel } = await onTrackpad();
+    wheel({ deltaY: 100, deltaMode: 0 });
+    expect(frames?.outstanding()).toBe(1);
+    m.unmount();
+    await settle();
+    expect(frames?.outstanding()).toBe(0);
+    expect(frames?.cancelled).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 15. The rest of the key-handler contract (term.html:8516-8589)
+ * ------------------------------------------------------------------ */
+
+/**
+ * xterm stores exactly ONE key handler, so every rule that wants a look at a
+ * keydown shares this function and the order the legs are tested in is the
+ * order term.html tests them in (`terminal/keys.ts` owns that order). The paste
+ * leg is section 2b; this is the rest of it.
+ *
+ * WHAT AN ANSWER MEANS HERE. Returning false stops xterm dead, BEFORE its own
+ * `cancel(ev)`, so false alone means no pty byte AND no `preventDefault`, which
+ * is what makes the F12 leg work and why the two legs that do want a browser
+ * default suppressed ask for it explicitly. xterm is mocked, so what these
+ * assert is the answer that governs the byte plus the bytes the component sends
+ * itself; what xterm does with the answer is upstream's and is covered against
+ * the real library in test/xterm.baseline.test.ts.
+ */
+describe("the key handler contract (term.html:8516-8589)", () => {
+  /** xterm consulting the one handler it stores, keeping the event to inspect. */
+  const press = (
+    m: Mounted,
+    init: KeyboardEventInit,
+  ): { answer: boolean; event: KeyboardEvent } => {
+    const handler = m.term.keyHandler;
+    if (!handler) throw new Error("no custom key event handler was installed");
+    // `cancelable`, or jsdom refuses to record a preventDefault and the two legs
+    // that ask for one could not be told from the seven that do not.
+    const event = new KeyboardEvent("keydown", { cancelable: true, ...init });
+    return { answer: handler(event), event };
+  };
+
+  /** `navigator.platform`, which is the ONLY Mac test that matters here. */
+  const asPlatform = (platform: string): (() => void) => {
+    const had = Object.getOwnPropertyDescriptor(navigator, "platform");
+    Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+    return () => {
+      if (had) Object.defineProperty(navigator, "platform", had);
+      else Reflect.deleteProperty(navigator as unknown as Record<string, unknown>, "platform");
+    };
+  };
+
+  /** A clipboard, which jsdom has none of: the API is secure-context only. */
+  const withClipboard = (write: (text: string) => Promise<void>): (() => void) => {
+    const had = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: write },
+    });
+    return () => {
+      if (had) Object.defineProperty(navigator, "clipboard", had);
+      else Reflect.deleteProperty(navigator as unknown as Record<string, unknown>, "clipboard");
+    };
+  };
+
+  let restore: (() => void)[] = [];
+  afterEach(() => {
+    for (const r of restore.reverse()) r();
+    restore = [];
+  });
+
+  const CTRL_C: KeyboardEventInit = { key: "c", code: "KeyC", ctrlKey: true };
+
+  /**
+   * F12 opens devtools like on any normal web page. Without this leg xterm's
+   * function-key handling sends ESC [ 24~ to the pty AND cancels the event, so
+   * devtools never opens over a focused terminal. Answering false hands the key
+   * wholly to the browser, which is why this is the ONE leg that must not
+   * preventDefault: the browser default is the entire point.
+   */
+  it("hands F12 to the browser whole, default and all", async () => {
+    const m = await mountOpen();
+    const { answer, event } = press(m, { key: "F12", code: "F12" });
+    expect(answer).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+    expect(inputs(m.socket())).toEqual([]);
+  });
+
+  /** Modified F12 stays with xterm (Viktor, 2026-07-17). */
+  it("leaves a modified F12 to xterm", async () => {
+    const m = await mountOpen();
+    expect(press(m, { key: "F12", code: "F12", ctrlKey: true }).answer).toBe(true);
+  });
+
+  /**
+   * Option+Arrow moves by word, and the sequence matters: xterm's own answer is
+   * the modifier-3 cursor form `ESC [ 1;3D`, which zsh leaves as `undefined-key`
+   * (bash binds it, zsh does not), so word navigation silently no-ops for Mac
+   * users in zsh. That is the reported bug this leg exists for; iTerm2 sends
+   * ESC b / ESC f, which zsh, bash, readline and Claude Code's editor all bind.
+   *
+   * The `preventDefault` is not optional and `false` is not a substitute for it:
+   * the focused element is xterm's helper textarea, where Option+Arrow is the
+   * system's own word-motion binding for a text field, so without it the caret
+   * moves inside that hidden field.
+   */
+  it("sends ESC b for Option+Left on a Mac, and suppresses the field's own motion", async () => {
+    restore.push(asPlatform("MacIntel"));
+    const m = await mountOpen();
+    const { answer, event } = press(m, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+    expect(answer).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+    expect(inputs(m.socket())).toEqual([[0x1b, 0x62]]);
+  });
+
+  it("sends ESC f for Option+Right on a Mac", async () => {
+    restore.push(asPlatform("MacIntel"));
+    const m = await mountOpen();
+    expect(press(m, { key: "ArrowRight", code: "ArrowRight", altKey: true }).answer).toBe(false);
+    expect(inputs(m.socket())).toEqual([[0x1b, 0x66]]);
+  });
+
+  /**
+   * Off a Mac the word-motion modifier is Ctrl, which zsh already binds
+   * (`ESC [ 1;5C/D`), and Alt+Left is Back on Windows and Linux. So the leg is
+   * gated on the platform rather than on the modifier alone.
+   */
+  it("leaves Option+Left alone off a Mac", async () => {
+    restore.push(asPlatform("Linux x86_64"));
+    const m = await mountOpen();
+    expect(press(m, { key: "ArrowLeft", code: "ArrowLeft", altKey: true }).answer).toBe(true);
+    expect(inputs(m.socket())).toEqual([]);
+  });
+
+  /**
+   * A LOBBY CHORD MUST NOT ALSO TYPE. The keybinding engine runs its command
+   * from a capture-phase window listener and calls `preventDefault()` on the
+   * match, and capture descends, so by the time xterm's listener on the helper
+   * textarea consults this handler the command has already run. All that is
+   * left is to keep the key off the pty: without this leg Alt+Shift+W kills the
+   * session AND puts ESC W on the prompt of the next one.
+   *
+   * The signal is `e.defaultPrevented`, which is a declared divergence from
+   * keys.ts's `matchesAppChord` and is argued at the call site.
+   */
+  it("swallows a key the lobby has already claimed", async () => {
+    const m = await mountOpen();
+    const handler = m.term.keyHandler;
+    if (!handler) throw new Error("no handler");
+    const claimed = new KeyboardEvent("keydown", {
+      key: "w",
+      code: "KeyW",
+      altKey: true,
+      shiftKey: true,
+      cancelable: true,
+    });
+    claimed.preventDefault(); // what the engine's own listener did first
+    expect(handler(claimed)).toBe(false);
+    expect(inputs(m.socket())).toEqual([]);
+  });
+
+  it("types the same key when nothing claimed it", async () => {
+    const m = await mountOpen();
+    expect(press(m, { key: "w", code: "KeyW", altKey: true, shiftKey: true }).answer).toBe(true);
+  });
+
+  /**
+   * ADR-0003's contract, finally honoured on this path: Ctrl+C with a highlight
+   * on screen is a COPY, and it is SIGINT the moment there is not one. Both
+   * halves are the test: a chord that always copied would cost the interrupt.
+   */
+  it("copies the highlight instead of interrupting", async () => {
+    const written: string[] = [];
+    restore.push(
+      withClipboard((text) => {
+        written.push(text);
+        return Promise.resolve();
+      }),
+    );
+    const m = await mountOpen();
+    m.term.selected = true;
+    m.term.selectionText = "highlighted";
+    expect(press(m, CTRL_C).answer).toBe(false);
+    expect(written).toEqual(["highlighted"]);
+    await settle();
+    expect(raised).toEqual([{ message: "Copied", kind: "success", timeoutMs: 1500 }]);
+  });
+
+  it("leaves Ctrl+C as SIGINT with nothing highlighted", async () => {
+    const written: string[] = [];
+    restore.push(
+      withClipboard((text) => {
+        written.push(text);
+        return Promise.resolve();
+      }),
+    );
+    const m = await mountOpen();
+    expect(press(m, CTRL_C).answer).toBe(true);
+    expect(written).toEqual([]);
+    m.type("\x03");
+    expect(inputs(m.socket())).toEqual([[0x03]]);
+  });
+
+  /**
+   * The RANGE decides, not the text. xterm right-trims every row it hands back,
+   * so a drag ending in a row's trailing blanks leaves a visible highlight whose
+   * text is "": term.html swallows the chord, writes "" and toasts anyway
+   * (:8569-8570). Gating on the text instead would let ^C through and fire
+   * SIGINT with a highlight on screen.
+   */
+  it("spends the chord on a highlight whose text is empty", async () => {
+    const written: string[] = [];
+    restore.push(
+      withClipboard((text) => {
+        written.push(text);
+        return Promise.resolve();
+      }),
+    );
+    const m = await mountOpen();
+    m.term.selected = true;
+    m.term.selectionText = "";
+    expect(press(m, CTRL_C).answer).toBe(false);
+    expect(written).toEqual([""]);
+  });
+
+  /**
+   * A refused write says so. term.html reaches `navigator.clipboard.writeText`
+   * unguarded (:8570), which throws where the API is absent, meaning any
+   * non-secure context, and a throw inside xterm's key handler takes the
+   * keystroke with
+   * it. jsdom is that browser, so this is the arm the guard exists for.
+   */
+  it("says the browser blocked the copy when there is no clipboard", async () => {
+    const m = await mountOpen();
+    m.term.selected = true;
+    m.term.selectionText = "highlighted";
+    expect(press(m, CTRL_C).answer).toBe(false);
+    expect(raised).toEqual([
+      { message: "Copy blocked by browser", kind: "error", timeoutMs: 2500 },
+    ]);
+  });
+
+  /** And a rejected write, which is the same news by the other route. */
+  it("says the same when the write is rejected", async () => {
+    restore.push(withClipboard(() => Promise.reject(new Error("denied"))));
+    const m = await mountOpen();
+    m.term.selected = true;
+    m.term.selectionText = "highlighted";
+    press(m, CTRL_C);
+    await settle();
+    expect(messages()).toEqual(["Copy blocked by browser"]);
+  });
+
+  /**
+   * Escape clears the highlight AND still reaches the app, which is the whole
+   * of :8565-8567: swallowing it would break vim, where Escape is the
+   * most-pressed key in the editor.
+   */
+  it("clears a highlight on Escape and still hands the key over", async () => {
+    const m = await mountOpen();
+    m.term.selected = true;
+    const { answer } = press(m, { key: "Escape", code: "Escape" });
+    expect(answer).toBe(true);
+    expect(m.term.cleared).toBe(1);
+  });
+
+  /**
+   * With nothing highlighted there is nothing to dismiss, and the guard is
+   * term.html's own early return (:5893). The fake records the call rather than
+   * modelling xterm's state, so the flag is dropped by hand here the way xterm
+   * would drop it.
+   */
+  it("clears nothing on Escape with no highlight", async () => {
+    const m = await mountOpen();
+    m.term.selected = true;
+    press(m, { key: "Escape", code: "Escape" });
+    m.term.selected = false;
+    press(m, { key: "Escape", code: "Escape" });
+    expect(m.term.cleared).toBe(1);
+  });
+
+  /**
+   * THE ONE LEG THAT IS PORTED AND UNREACHABLE, pinned so it cannot be believed
+   * by accident. term.html's Escape discards what was typed offline
+   * (:8554-8564) and toasts "Discarded what you typed while offline"; keys.ts
+   * ports it and this component performs it, but the WORLD it reads carries no
+   * hold, because attach.ts keeps the queue and exposes no discard. So an
+   * Escape with a real hold on the wire falls through to the selection branch,
+   * which is what it did before any of this was wired.
+   *
+   * Wiring the leg without the discard would be worse than leaving it: the key
+   * would be swallowed, the toast would promise the line was thrown away, and
+   * the hold would replay on the next reconnect anyway. When the discard lands,
+   * this case is the one that has to change.
+   */
+  it("leaves Escape alone while a hold it cannot reach is on the wire", async () => {
+    const m = await mountOpen();
+    m.socket().drop();
+    await settle();
+    m.type("qw");
+    expect(messages()).toEqual(["Held — it goes in when the session is back"]);
+    raised = [];
+    expect(press(m, { key: "Escape", code: "Escape" }).answer).toBe(true);
+    expect(messages()).toEqual([]);
+  });
+
+  /**
+   * The onData hook's head runs on EVERY chunk, and its send goes through the
+   * one choke point, so watch mode and the offline hold see a word-jump byte and
+   * a keystroke through the same door.
+   */
+  it("routes a refused keystroke through the same choke point as a word jump", async () => {
+    restore.push(asPlatform("MacIntel"));
+    const m = await mountOpen({ watch: true });
+    press(m, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+    expect(inputs(m.socket())).toEqual([]);
+    expect(messages()).toEqual(["Watching — this device can’t type into the session"]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 16. The compose mirror (term.html:7077-7509)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A textarea kept as a transparent mirror of the pty's input line, because
+ * xterm's own helper textarea is deliberately hardened against predictive text
+ * (section 5) and that leaves a phone with no route to autocorrect, dictation
+ * or swipe typing at all.
+ *
+ * `mirror.ts` decides; this asserts that the component mounts the field the
+ * module describes and performs what the module returns. WHAT IT CANNOT REACH
+ * is the whole reason the field exists: whether Gboard's suggestion bar or iOS
+ * QuickType actually appears over it, and whether a swipe-typed word arrives as
+ * one `input` event. Those are DEVICE claims, answered by the shared Android
+ * emulator for Chrome and by nothing in this homelab for iOS, and the
+ * attributes below are only the mechanism term.html uses to make them. What is checkable here is
+ * that mechanism: the attribute set including its deliberate OMISSION, and
+ * every edit shape reaching the pty as the right bytes.
+ */
+describe("the compose mirror (term.html:7077-7509)", () => {
+  let restorePointer: (() => void) | null = null;
+
+  afterEach(() => {
+    restorePointer?.();
+    restorePointer = null;
+  });
+
+  /** A phone, which is the only device the field is mounted on. */
+  async function onPhone(opts: { open?: boolean } = {}): Promise<Mounted> {
+    restorePointer = fakePointer(true);
+    return opts.open === false ? await mount() : await mountOpen();
+  }
+
+  /**
+   * A phone whose socket has been open and is now down, which is the offline
+   * state the mirror's submit branch is about: attach.ts holds a keystroke for
+   * replay only once there has been a pty to hold it for, so a socket that
+   * never connected is REFUSED rather than held and says something else.
+   */
+  async function onDroppedPhone(): Promise<Mounted> {
+    const m = await onPhone();
+    m.socket().drop();
+    await settle();
+    return m;
+  }
+
+  /** One field edit, as the DOM delivers it: after the mutation, always. */
+  const edit = (field: HTMLTextAreaElement, value: string): void => {
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  /** A paste aimed at the field, which arrives as `beforeinput` first. */
+  const pasteInto = (field: HTMLTextAreaElement, data: string): InputEvent => {
+    const e = new InputEvent("beforeinput", {
+      inputType: "insertFromPaste",
+      data,
+      bubbles: true,
+      cancelable: true,
+    });
+    field.dispatchEvent(e);
+    return e;
+  };
+
+  const backspace = (
+    field: HTMLTextAreaElement,
+    opts: { composing?: boolean } = {},
+  ): void => {
+    field.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Backspace",
+        isComposing: opts.composing === true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  };
+
+  /** Every `term.input()` the mirror made, in order: its whole route out. */
+  const emitted = (m: Mounted): string[] => m.term.typedIn.map((t) => t.data);
+  /** What reached the pty, which is the other end of that route. */
+  const onWire = (m: Mounted): string[] => sgr(m.socket());
+
+  /* ---- the field itself ------------------------------------------- */
+
+  /**
+   * OUTSIDE the terminal host, which mirror.ts's `paste-intent` names as the
+   * thing that breaks if it lives in the wrong place: the host carries a
+   * capture-phase paste listener that preventDefaults and stopPropagations
+   * every paste carrying text (section 2c), so a field mounted inside it would
+   * have its paste swallowed before `beforeinput` fired: no native insertion
+   * for a single-line paste, and no interception for a multiline one.
+   */
+  it("mounts the field outside the terminal host", async () => {
+    const m = await onPhone();
+    const host = m.term.host;
+    if (!host) throw new Error("the terminal was never opened");
+    expect(host.contains(m.mirror())).toBe(false);
+    // And in this component's own tree, so it is unmounted with it rather than
+    // left on the body by one of the sessions the lobby keeps mounted.
+    expect(m.bar().contains(m.mirror())).toBe(true);
+  });
+
+  /** Every attribute mirror.ts carries, from the constant rather than by hand. */
+  it.each(Object.entries(MIRROR_FIELD_ATTRIBUTES))(
+    "sets %s to %s",
+    async (name, value) => {
+      const m = await onPhone();
+      expect(m.mirror().getAttribute(name)).toBe(value);
+    },
+  );
+
+  /**
+   * THE OMISSION, which is the one that removes the feature without breaking
+   * anything. term.html records the measurement (:7103-7110, 2026-07-12): on
+   * iOS, pronounced in the installed PWA's WKWebView, `autocomplete='off'` also
+   * suppresses the QuickType predictive and autocorrect bar. `type` is absent
+   * for a related reason: a textarea has none, and the helper field's
+   * `type=password` trick would kill the composition UI this field is for.
+   */
+  it.each([["autocomplete"], ["type"]])("carries no %s attribute at all", async (name) => {
+    const m = await onPhone();
+    expect(m.mirror().hasAttribute(name)).toBe(false);
+  });
+
+  /**
+   * The contrast, in one case: the two attributes that must be ABSENT here are
+   * set on xterm's own helper textarea, correctly, because that field is being
+   * HARDENED. Copying that block onto this one is the mistake
+   * MIRROR_FIELD_ATTRIBUTES exists to stop, and nothing would fail.
+   */
+  it("leaves xterm's helper textarea hardened the opposite way", async () => {
+    const m = await onPhone();
+    const helper = m.term.host?.querySelector(".xterm-helper-textarea");
+    expect(helper?.getAttribute("autocomplete")).toBe("off");
+    expect(helper?.getAttribute("type")).toBe("password");
+    expect(helper?.getAttribute("autocorrect")).toBe("off");
+    expect(m.mirror().getAttribute("autocorrect")).toBe("on");
+  });
+
+  /**
+   * 16px INLINE, which is the whole of the iOS no-focus-auto-zoom guarantee and
+   * must not depend on a stylesheet rule surviving (term.html:1852-1853).
+   */
+  it("sets a 16px font size inline", async () => {
+    const m = await onPhone();
+    expect(m.mirror().style.fontSize).toBe("16px");
+  });
+
+  /** `rows = 1` is the height the autogrow measures from (:7098). */
+  it("starts at one row, with a placeholder", async () => {
+    const m = await onPhone();
+    expect(m.mirror().rows).toBe(1);
+    expect(m.mirror().placeholder).not.toBe("");
+  });
+
+  /* ---- who gets one ----------------------------------------------- */
+
+  /**
+   * A FINE POINTER GETS NO FIELD, which is where term.html keeps the inert
+   * `applyInputPrefs` stub (:7363-7364) so 'auto' never ghosts on a desktop.
+   * The default in this file is a fine pointer, so this is the plain case.
+   */
+  it("mounts nothing where the primary pointer is not a finger", async () => {
+    const m = await mountOpen();
+    expect(m.noMirror()).toBe(true);
+  });
+
+  /** `input.bar: 'off'`, which is an explicit settings act (:7484). */
+  it("mounts nothing under an off posture", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ input: { bar: "off" } }));
+    const m = await onPhone();
+    expect(m.noMirror()).toBe(true);
+  });
+
+  /**
+   * The DEVICE-LOCAL dismissal, `tl:input.barHidden:v1` (term.html:3208-3211).
+   * Same origin as this app, so a person who hid the bar with the iframe's ⌨
+   * soft key must not have it handed back by the native terminal, and this
+   * app's own ⌨ key is a keyboard-dismiss, so there would be nothing to
+   * dismiss it with a second time.
+   */
+  it("mounts nothing where this device dismissed the bar", async () => {
+    localStorage.setItem("tl:input.barHidden:v1", "1");
+    const m = await onPhone();
+    expect(m.noMirror()).toBe(true);
+  });
+
+  /**
+   * THE DEFAULT POSTURE IS THE GHOST, `input.bar: 'auto'` (term.html:2810), and
+   * that is what keeps the terminal the only visible input surface: the field
+   * is in the DOM, focusable and keyboard-summoning, but painted away and
+   * reserving no rows. `opacity: 0` and NEVER `display: none` or
+   * `visibility: hidden`, which kill focus and the soft keyboard on iOS (a
+   * WebKit trait confirmed 2026-07-13, term.html:1877-1886), so the field keeps
+   * a real size and still answers `.focus()`.
+   */
+  it("paints the default posture away without taking it out of the layout", async () => {
+    const m = await onPhone();
+    const field = m.mirror();
+    expect(field.style.opacity).toBe("0");
+    expect(field.style.display).not.toBe("none");
+    expect(field.style.visibility).not.toBe("hidden");
+    expect(m.bar().style.pointerEvents).toBe("none");
+    field.focus();
+    expect(document.activeElement).toBe(field);
+  });
+
+  /** `input.bar: 'on'` is the painted bar, which only the settings row writes. */
+  it("paints the bar under an on posture", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ input: { bar: "on" } }));
+    const m = await onPhone();
+    expect(m.mirror().style.opacity).toBe("1");
+    expect(m.bar().style.pointerEvents).toBe("auto");
+  });
+
+  /**
+   * The bar rides the shell's own published stack, so there is no second source
+   * of truth for where the keyboard's top edge is: mobile/viewport.ts writes
+   * all three of these, and `#soft-keys` sits on the first two.
+   */
+  it("parks the bar above the keyboard, the safe area and the soft keys", async () => {
+    const m = await onPhone();
+    expect(m.bar().style.position).toBe("fixed");
+    expect(m.bar().style.bottom).toContain("--kb-offset");
+    expect(m.bar().style.bottom).toContain("--safe-b");
+    expect(m.bar().style.bottom).toContain("--sk-h");
+  });
+
+  /* ---- the engine, through the component -------------------------- */
+
+  /**
+   * The whole mechanism in one case: what the field holds streams to the pty
+   * through `term.input()`, which is xterm's own onData and therefore the
+   * soft-modifier remap and the send choke point. NO new socket path
+   * (term.html:7232-7236), which is what keeps watch mode and the offline hold
+   * covering the mirror for free.
+   */
+  it("streams an insertion to the pty through term.input", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls");
+    expect(emitted(m)).toEqual(["ls"]);
+    expect(m.term.typedIn[0]?.user).toBe(true);
+    expect(onWire(m)).toEqual(["ls"]);
+  });
+
+  /** An append is a delta, not a resend: the baseline is what it already sent. */
+  it("sends only what was added", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls");
+    edit(m.mirror(), "ls -");
+    expect(emitted(m)).toEqual(["ls", " -"]);
+  });
+
+  /**
+   * A correction is one DEL per code point and the retype, in ONE frame, which
+   * is term.html building one string and handing it to one `emit()` (:7254).
+   */
+  it("corrects with backspaces and a retype in one frame", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "lz");
+    edit(m.mirror(), "ls");
+    expect(emitted(m)).toEqual(["lz", "\x7fs"]);
+  });
+
+  /** An unchanged value diffs to nothing, which is what makes a double-send impossible. */
+  it("says nothing when the value did not move", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls");
+    edit(m.mirror(), "ls");
+    expect(emitted(m)).toEqual(["ls"]);
+  });
+
+  /**
+   * ENTER IS A NEWLINE IN THE VALUE, because the soft keyboard's send key
+   * inserts one and there is no key event to read for it (`enterkeyhint` is
+   * fixed at 'send' for that reason). The delta and the carriage return are
+   * SEPARATE frames, as the page sends them (:7300-7301), and then the field
+   * and the baseline both drop because the pty's input line restarts empty.
+   */
+  it("submits the line as its own frame and clears the field", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls\n");
+    expect(emitted(m)).toEqual(["ls", "\r"]);
+    expect(m.mirror().value).toBe("");
+    // The baseline dropped with it: the next keystroke is a fresh line, not a
+    // re-send of the one that just ran.
+    edit(m.mirror(), "x");
+    expect(emitted(m)).toEqual(["ls", "\r", "x"]);
+  });
+
+  /** Every newline, and the whole value: a mid-string Enter must not split the line. */
+  it("submits the whole value wherever the newline was", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls\n-la");
+    expect(emitted(m)).toEqual(["ls-la", "\r"]);
+  });
+
+  /**
+   * ENTER WITH NO SOCKET keeps the text where the person can see it: the pty
+   * never saw any of it, the text is sitting in attach.ts's hold, and clearing
+   * the field would take the line away from under the hold and leave an empty
+   * box with no way back (term.html:7286-7299).
+   */
+  it("keeps the line in the field when the socket is down", async () => {
+    const m = await onDroppedPhone();
+    edit(m.mirror(), "ls\n");
+    expect(m.mirror().value).toBe("ls");
+    // The `\r` never went out, so nothing can have run.
+    expect(emitted(m)).toEqual(["ls"]);
+  });
+
+  /**
+   * And it says why, on the SAME clock as the held-input messages, which is
+   * `heldSay`'s one message every 5000ms (term.html:8191-8195).
+   *
+   * That shared clock is visible here rather than hidden: the send that was
+   * held has already spent it on "your keystroke is held", so the mirror's own
+   * sentence lands on the next Enter once the window is over. term.html
+   * collides the same way for the same reason, and the alternative, a second
+   * clock, is two toasts stacked on one drop.
+   */
+  it("names the way out of a held line, on the held-input clock", async () => {
+    const m = await onDroppedPhone();
+    edit(m.mirror(), "ls\n");
+    expect(messages()).toEqual(["Held — it goes in when the session is back"]);
+    vi.advanceTimersByTime(HELD_SAY_WINDOW_MS);
+    raised = [];
+    edit(m.mirror(), "ls\n");
+    expect(messages()).toEqual([HELD_ENTER_MESSAGE]);
+  });
+
+  /**
+   * A MULTILINE PASTE keeps the proven bracketed-paste path: the block never
+   * enters the one-line field, the armed modifiers are disarmed first (they
+   * would remap the paste's first character, which under bracketed paste is the
+   * ESC of `ESC [200~`), and `term.paste` brackets it (:7306-7320).
+   */
+  it("intercepts a multiline paste and brackets it instead", async () => {
+    const m = await onPhone();
+    const e = pasteInto(m.mirror(), "one\ntwo");
+    expect(e.defaultPrevented).toBe(true);
+    expect(m.term.pasted).toEqual(["one\ntwo"]);
+    // Not through the mirror's own route: this paste's onData traffic is what
+    // resets the baseline, and marking it as ours would swallow that.
+    expect(emitted(m)).toEqual([]);
+  });
+
+  /**
+   * A SINGLE-LINE PASTE falls through, inserts natively and streams like
+   * typing, which is what keeps the field showing the line.
+   */
+  it("lets a single-line paste insert itself and stream", async () => {
+    const m = await onPhone();
+    const e = pasteInto(m.mirror(), "one");
+    expect(e.defaultPrevented).toBe(false);
+    expect(m.term.pasted).toEqual([]);
+    // The browser's own insertion, and then the `input` event it fires.
+    edit(m.mirror(), "one");
+    expect(emitted(m)).toEqual(["one"]);
+  });
+
+  /**
+   * BACKSPACE AGAINST AN EMPTY FIELD erases pty-side text the mirror does not
+   * hold, which is what an out-of-band reset leaves behind: transparent erase
+   * (:7321-7327). With text in the field the differ owns the deletion, and
+   * emitting here as well would delete twice; an IME owns its own backspaces
+   * mid-composition.
+   */
+  it("erases pty-side text on a backspace against an empty field", async () => {
+    const m = await onPhone();
+    backspace(m.mirror());
+    expect(emitted(m)).toEqual(["\x7f"]);
+  });
+
+  it("leaves the backspace alone where the field has text", async () => {
+    const m = await onPhone();
+    m.mirror().value = "ls";
+    backspace(m.mirror());
+    expect(emitted(m)).toEqual([]);
+  });
+
+  it("leaves an IME's own backspace alone", async () => {
+    const m = await onPhone();
+    backspace(m.mirror(), { composing: true });
+    expect(emitted(m)).toEqual([]);
+  });
+
+  /* ---- the baseline, and what invalidates it ---------------------- */
+
+  /**
+   * RAW TYPING IN xterm's OWN FIELD is out of band: the bytes reached the pty
+   * by a route the mirror did not emit, so its baseline is a lie and the field
+   * drops with it (term.html:8342, through keys.ts's `mirror-out-of-band`).
+   */
+  it("drops the field when bytes reach the pty through xterm", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls");
+    m.type("q");
+    expect(m.mirror().value).toBe("");
+  });
+
+  /**
+   * THE MIRROR'S OWN ECHO IS NOT OUT OF BAND, and one flag decides it:
+   * `term.input()` fires onData synchronously, so the reset hook runs INSIDE
+   * the mirror's own emission. Answering that gate wrong clears the field
+   * mid-word on every keystroke the person types.
+   */
+  it("does not read its own emission as somebody else's bytes", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls");
+    expect(m.mirror().value).toBe("ls");
+    edit(m.mirror(), "ls -la");
+    expect(m.mirror().value).toBe("ls -la");
+  });
+
+  /**
+   * A SOFT KEY IS OUT OF BAND, and it is the site the onData hook cannot cover:
+   * `__tlSendToTerminal` calls the attachment's `send` directly, so xterm's
+   * onData never sees those bytes. term.html resets the baseline at both of
+   * those call sites, BEFORE the send (`sendKey` :6828, the `tl-input` arm
+   * :9388), and without it a soft arrow or Esc tap silently desyncs the field
+   * from the pty line it claims to mirror.
+   */
+  it("drops the field when the soft keys send through the bridge", async () => {
+    const m = await onPhone();
+    edit(m.mirror(), "ls");
+    expect(window.__tlSendToTerminal?.("\x1b[A")).toBe(true);
+    expect(m.mirror().value).toBe("");
+    // And the reset came first, so the key still reached the pty.
+    expect(onWire(m)).toEqual(["ls", "\x1b[A"]);
+  });
+
+  /**
+   * A FRESH ATTACH IS OUT OF BAND (term.html:10293, in the socket's own
+   * `onopen`, one line ahead of the coast cancel). A (re)attach starts a fresh
+   * pty input line, and the order matters for the offline-Enter flow: the reset
+   * lands before the hold is replayed (:10342), so the pty comes back holding a
+   * line whose baseline says empty, which is the state `backspace-at-empty`
+   * exists for.
+   */
+  it("drops the field when a socket attaches", async () => {
+    const m = await onPhone({ open: false });
+    edit(m.mirror(), "ls");
+    m.socket().accept();
+    await settle();
+    expect(m.mirror().value).toBe("");
+  });
+
+  /**
+   * A word jump is NOT a reset site: term.html sends it through `sendInput`
+   * bare (:8550), and its nine `mirrorLineReset` call sites do not include it.
+   */
+  it("keeps the field through a word jump, which the page does not reset for", async () => {
+    const had = Object.getOwnPropertyDescriptor(navigator, "platform");
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
+    try {
+      const m = await onPhone();
+      edit(m.mirror(), "ls");
+      const handler = m.term.keyHandler;
+      if (!handler) throw new Error("no custom key event handler was installed");
+      handler(
+        new KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          code: "ArrowLeft",
+          altKey: true,
+          cancelable: true,
+        }),
+      );
+      expect(m.mirror().value).toBe("ls");
+      expect(onWire(m)).toEqual(["ls", "\x1bb"]);
+    } finally {
+      if (had) Object.defineProperty(navigator, "platform", had);
+    }
+  });
+
+  /** The field's listeners come off with the terminal. */
+  it("stops mirroring once the terminal is unmounted", async () => {
+    const m = await onPhone();
+    const field = m.mirror();
+    m.unmount();
+    await settle();
+    edit(field, "ls");
+    expect(emitted(m)).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 17. The compose bar's height comes out of the terminal (term.html:8461-8467)
+ * ------------------------------------------------------------------ */
+
+/**
+ * THE CONFLICT BETWEEN TWO MODULES' OWES LISTS, settled here.
+ *
+ * viewport.ts says "nothing sits over the terminal's box, so there is nothing
+ * to subtract", which was true of this tree until section 16 mounted a bar over
+ * it. term.html measures the bar's own live `offsetHeight` (`cbH`, :8461), takes
+ * it off the terminal (:8467) and re-runs the whole calculation when the bar's
+ * height changes (`growAndRefit` :7156-7165, which reaches `syncViewport`
+ * through `refit`'s rAF at :8472-8476). Wire the two lists as written and the
+ * bar covers rows nothing reserved for.
+ *
+ * WHAT jsdom CANNOT DO is lay any of this out, so the two heights are modelled
+ * as functions of what the component itself writes. That makes the
+ * before/after comparison inside the autogrow mean something; whether the rows
+ * really clear the bar on a phone is a device claim.
+ */
+describe("the compose bar's height comes out of the terminal (term.html:8461-8467)", () => {
+  const height = (m: Mounted): string => m.term.host?.style.height ?? "(no host)";
+
+  let restorePointer: (() => void) | null = null;
+
+  /** A phone with the keyboard up, which is where the height write is gated. */
+  const asPhone = (covers: number): void => {
+    restorePointer = fakePointer(true);
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        height: window.innerHeight - covers,
+        offsetTop: 0,
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    });
+  };
+
+  afterEach(() => {
+    restorePointer?.();
+    restorePointer = null;
+    Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  /** One line of the field, and the padding the bar keeps around it. */
+  const LINE_PX = 22;
+  const BAR_PAD_PX = 12;
+  /**
+   * Where the field wraps, in characters. WRAPPING is the only way the bar can
+   * grow: a newline in the value is Enter (`enterkeyhint` is fixed at 'send'),
+   * so the mirror submits and clears rather than ever holding two lines. That
+   * is what term.html's autogrow-to-five-lines is for.
+   */
+  const WRAP_AT = 10;
+  const lines = (value: string): number => Math.max(1, Math.ceil(value.length / WRAP_AT));
+
+  /**
+   * `scrollHeight` off the value's line count, which is what a real textarea
+   * reports once its inline height is `auto`; and the bar's `offsetHeight` off
+   * the height the autogrow then writes, plus its own padding.
+   *
+   * The field's own line-height, padding and border are flattened first, and
+   * that is jsdom's fault rather than a shortcut: `getComputedStyle` there
+   * returns the SPECIFIED `line-height: 1.3` instead of a browser's resolved
+   * "20.8px", so `parseFloat` reads 1.3 and the five-line clamp comes out at 24
+   * pixels, under one line, which makes every height identical and every
+   * assertion below meaningless. So the clamp arithmetic is not exercised here
+   * at all (it is term.html's own, :7143-7155); what these cases pin is the
+   * CHAIN, that a change in the bar's height reaches the terminal's reserve.
+   */
+  const layOut = (m: Mounted): HTMLTextAreaElement => {
+    const field = m.mirror();
+    field.style.lineHeight = `${LINE_PX}px`;
+    field.style.padding = "0";
+    field.style.border = "0";
+    Object.defineProperty(field, "scrollHeight", {
+      configurable: true,
+      get: () => LINE_PX * lines(field.value),
+    });
+    Object.defineProperty(m.bar(), "offsetHeight", {
+      configurable: true,
+      get: () => (parseFloat(field.style.height) || 0) + BAR_PAD_PX,
+    });
+    return field;
+  };
+
+  const type = (field: HTMLTextAreaElement, value: string): void => {
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  /**
+   * The painted bar takes its own height off the terminal, on top of the
+   * keyboard's. Both terms in one string, because they are one box.
+   */
+  it("reserves the bar's height as well as the keyboard's", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ input: { bar: "on" } }));
+    asPhone(300);
+    const m = await mountOpen();
+    const field = layOut(m);
+    expect(height(m)).toBe("calc(100% - 300px)"); // the keyboard alone, so far
+    type(field, "ls");
+    expect(height(m)).toBe(`calc(100% - ${300 + LINE_PX + BAR_PAD_PX}px)`);
+  });
+
+  /**
+   * A LINE ADDED TO THE FIELD gives the terminal one fewer row, with the
+   * keyboard's own reserve unmoved. This is the case viewport.ts's dedupe
+   * cannot answer on its own: the reserve it tracks did not change, so it says
+   * `nothing`, and a wiring that took that literally would leave the taller bar
+   * over rows the terminal still thinks it has.
+   */
+  it("rewrites the height when only the bar grew", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ input: { bar: "on" } }));
+    asPhone(300);
+    const m = await mountOpen();
+    const field = layOut(m);
+    type(field, "ls");
+    const one = height(m);
+    type(field, "ls -la /var/log"); // 15 chars: two wrapped lines
+    expect(height(m)).not.toBe(one);
+    expect(height(m)).toBe(`calc(100% - ${300 + 2 * LINE_PX + BAR_PAD_PX}px)`);
+  });
+
+  /** And gives them back when the line goes away again. */
+  it("gives the row back when the bar shrinks", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ input: { bar: "on" } }));
+    asPhone(300);
+    const m = await mountOpen();
+    const field = layOut(m);
+    type(field, "ls -la /var/log");
+    type(field, "ls");
+    expect(height(m)).toBe(`calc(100% - ${300 + LINE_PX + BAR_PAD_PX}px)`);
+  });
+
+  /**
+   * ONE FIT FOR A TYPING BURST, never one per keystroke: the height write is
+   * immediate but the tmux resize behind it is the same debounce every other
+   * trigger goes through (term.html:8390-8393, and the page's own
+   * "a typing burst costs ONE fit" at :7156-7159).
+   */
+  it("costs one fit for a burst, not one per keystroke", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ input: { bar: "on" } }));
+    asPhone(300);
+    const m = await mountOpen();
+    const field = layOut(m);
+    const before = m.fit.fits;
+    type(field, "l");
+    type(field, "ls");
+    type(field, "ls -la /va");
+    type(field, "ls -la /var/log");
+    expect(m.fit.fits).toBe(before);
+    vi.advanceTimersByTime(PAST_DEBOUNCE_MS);
+    await settle();
+    expect(m.fit.fits).toBe(before + 1);
+  });
+
+  /**
+   * A GHOST BAR IS HEIGHT 0, which is term.html's own exception at :8461
+   * (`!cb.classList.contains('ghost')`) and the whole point of that render: the
+   * terminal RECLAIMS the bar's space. Its field still has a real
+   * `offsetHeight`, because a zero-size field can fail to summon the iOS
+   * keyboard, so the read has to be about the posture rather than the pixels.
+   */
+  it("reserves nothing for the default ghost posture", async () => {
+    asPhone(300);
+    const m = await mountOpen();
+    const field = layOut(m);
+    type(field, "ls -la /var/log");
+    expect(height(m)).toBe("calc(100% - 300px)");
+    // The field really did grow; it is the BAR that reserves nothing.
+    expect(field.style.height).toBe(`${2 * LINE_PX}px`);
+  });
+
+  /**
+   * AND IT RIDES THE SAME TWO GATES AS THE KEYBOARD'S OWN RESERVE, because
+   * term.html's height write is one expression with `cbH` inside it: the
+   * `if (isCoarsePointer)` at :8441, and the `if (!window.visualViewport)
+   * return` at :8428 above it. A machine behind either gate gets no inline
+   * height at all, which is what the page writes there: nothing.
+   */
+  it("writes no height where the page writes none", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ input: { bar: "on" } }));
+    restorePointer = fakePointer(true); // coarse, but no visualViewport
+    const m = await mountOpen();
+    const field = layOut(m);
+    type(field, "ls -la /var/log");
+    expect(height(m)).toBe("");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 18. Attention (term.html:5676-5781, the output site at :10384-10392)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The two things this terminal knows that could be news: the pty rang, and
+ * output arrived while nobody could see it. `attention.ts` decides; the lobby
+ * paints. What this file adds is that the three events reach the module at all
+ * and that the signal reaches the prop, because a hub that never dispatches
+ * leaves a green module suite over a terminal that never reports anything.
+ *
+ * The tab's visibility is an INPUT on every event rather than state, and two of
+ * the cases below are here because a stored flag passes the module's own tests
+ * and fails these: the browser flips `document.hidden` and QUEUES the event, so
+ * a frame processed inside that window is judged on the old value.
+ */
+describe("attention (term.html:5676-5781)", () => {
+  /** `document.hidden`, which jsdom answers from its own visibility state. */
+  const fakeHidden = (hidden: () => boolean): (() => void) => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: hidden });
+    return () => void Reflect.deleteProperty(document, "hidden");
+  };
+
+  let restoreHidden: (() => void) | null = null;
+  let hidden = false;
+
+  beforeEach(() => {
+    hidden = false;
+    restoreHidden = fakeHidden(() => hidden);
+  });
+
+  afterEach(() => {
+    restoreHidden?.();
+    restoreHidden = null;
+  });
+
+  /** xterm's parser seeing BEL. */
+  const ring = (m: Mounted): void => {
+    if (m.term.bellCbs.length === 0) throw new Error("no onBell handler was installed");
+    for (const cb of m.term.bellCbs) cb();
+  };
+
+  /** One frame of pty output, which is the only frame type that is news. */
+  const output = (m: Mounted): void => m.socket().deliver([0x30, 0x68, 0x69]);
+
+  /** The tab flipping, as the browser delivers it: a queued event after the flag. */
+  const flipTab = (to: boolean): void => {
+    hidden = to;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+
+  /**
+   * THE BELL IS UNGATED. `term.onBell(() => signalAttention('bell'))`
+   * (term.html:5772), with no visibility test on that path anywhere in the
+   * page. The "you are already looking at it" rule belongs to the lobby, whose
+   * version is WIDER, latching while `document.hidden || !document.hasFocus()`
+   * (`notify/attention.ts`), so gating it here would silence a ring in a
+   * visible but unfocused tab, which is exactly what that latch is for.
+   */
+  it("reports a bell with the terminal on screen in a visible tab", async () => {
+    const m = await mountOpen({ active: true });
+    ring(m);
+    expect(m.attention).toEqual(["bell"]);
+  });
+
+  /** And it is not a one-shot: three rings are three pieces of news. */
+  it("reports every ring", async () => {
+    const m = await mountOpen({ active: false });
+    ring(m);
+    ring(m);
+    ring(m);
+    expect(m.attention).toEqual(["bell", "bell", "bell"]);
+  });
+
+  /** Output nobody missed is not news: the terminal is right there. */
+  it("says nothing about output while the terminal is on screen", async () => {
+    const m = await mountOpen({ active: true });
+    output(m);
+    expect(m.attention).toEqual([]);
+    // And the bytes still reached xterm.
+    expect(m.term.written).toHaveLength(1);
+  });
+
+  /**
+   * "NOBODY IS LOOKING" IS BIGGER THAN THE TAB: the lobby keeps every visited
+   * session mounted and CSS-hides the ones you are not looking at, and does the
+   * same to the terminal while its text view shows. `active` is the negation of
+   * attention.ts's `view`, and this is the case that needs it, because the tab
+   * is wide open.
+   */
+  it("reports output arriving behind a hidden view", async () => {
+    const m = await mountOpen({ active: false });
+    output(m);
+    expect(m.attention).toEqual(["output"]);
+  });
+
+  /** Ten frames behind a hidden view are ONE piece of news (the one-shot). */
+  it("reports the first output of a hidden period and no more", async () => {
+    const m = await mountOpen({ active: false });
+    output(m);
+    output(m);
+    output(m);
+    expect(m.attention).toEqual(["output"]);
+  });
+
+  /**
+   * A SOLID EFFECT ON `active` FIRES ON MOUNT, and that first event is the
+   * native counterpart of the lobby re-posting `tl-view` on every attach: it is
+   * what tells a session mounted OFF screen that nobody is looking. Without it
+   * this terminal would start from "the view is showing" and stay silent until
+   * the view moved.
+   */
+  it("knows nobody is looking at a session that mounted off screen", async () => {
+    const m = await mountOpen({ active: false });
+    expect(m.attention).toEqual([]); // nothing has happened yet
+    output(m);
+    expect(m.attention).toEqual(["output"]);
+  });
+
+  /** The view coming back and going away again opens a new period. */
+  it("reports again after the view came back", async () => {
+    const m = await mountOpen({ active: false });
+    output(m);
+    m.setActive(true);
+    m.setActive(false);
+    output(m);
+    expect(m.attention).toEqual(["output", "output"]);
+  });
+
+  /**
+   * THE TAB'S VISIBILITY IS READ LIVE, and this case is the reason. The flag is
+   * flipped WITHOUT the event, which is the window the browser really leaves: a
+   * socket message task queued before the visibilitychange task runs first. A
+   * component that stored the flag from the listener would answer "visible"
+   * here, signal nothing, and then stay silent for the whole hidden period,
+   * because the `tab` event arriving next would find nothing latched to re-arm.
+   */
+  it("judges an output frame on the flag as it stands, not on the last event", async () => {
+    const m = await mountOpen({ active: true });
+    hidden = true; // no visibilitychange yet: the event is still queued
+    output(m);
+    expect(m.attention).toEqual(["output"]);
+  });
+
+  /**
+   * THE RE-ARM, which is the visibilitychange listener's only job, in BOTH
+   * directions (:5773-5781). The tab coming back closes the period; going away
+   * again opens a new one.
+   */
+  it("opens a new period when the tab comes back and leaves again", async () => {
+    const m = await mountOpen({ active: true });
+    flipTab(true);
+    output(m);
+    output(m);
+    expect(m.attention).toEqual(["output"]);
+    flipTab(false);
+    flipTab(true);
+    output(m);
+    expect(m.attention).toEqual(["output", "output"]);
+  });
+
+  /**
+   * THE ONE-SHOT REMEMBERS WHICH REASONS SPENT IT, which is the rule nobody
+   * guesses and the one that needs the listener to be wired at all. A shot
+   * burned while only the VIEW was hidden was dropped on arrival by the lobby
+   * (whose latch needs the tab to be away), so it must not silence the first
+   * output of the away period that follows.
+   */
+  it("does not let a view-hidden signal silence the away period after it", async () => {
+    const m = await mountOpen({ active: false });
+    output(m); // spent with the view hidden and the tab wide open
+    expect(m.attention).toEqual(["output"]);
+    flipTab(true); // a reason that was NOT true when the shot was spent
+    output(m);
+    expect(m.attention).toEqual(["output", "output"]);
+  });
+
+  /**
+   * THE OUTPUT SIGNAL COMES FIRST WITHIN ONE FRAME, which is why the dispatch
+   * sits ahead of `term.write`: the page calls `noteHiddenOutput()` at :10388
+   * and writes at :10391-10392, so a BEL inside that same frame reaches
+   * `onBell` after the output signal. The fake rings from inside `write`, which
+   * is where a real parser would.
+   */
+  it("signals output before the bell a frame carries", async () => {
+    const m = await mountOpen({ active: false });
+    m.term.write = (): void => {
+      for (const cb of m.term.bellCbs) cb();
+    };
+    output(m);
+    expect(m.attention).toEqual(["output", "bell"]);
   });
 });

@@ -71,9 +71,16 @@ describe("sidebar.showLastActive — the roamed pref", () => {
     // namespace this pref introduces.
     expect(doc.sidebar.somethingElse).toBe("kept");
     expect(doc.cursorStyle).toBe("block");
-    // gestures is PARTLY owned now (the two desktop wheel keys), so the touch
-    // flag survives beside them rather than being alone.
-    expect(doc.gestures).toEqual({ haptics: true, wheelSmooth: true, wheelSpeed: 1 });
+    // gestures is PARTLY owned (the two desktop wheel keys, and the two the
+    // native terminal's touch scroller reads), so the touch flag survives
+    // beside them rather than being alone.
+    expect(doc.gestures).toEqual({
+      haptics: true,
+      wheelSmooth: true,
+      wheelSpeed: 1,
+      scrollSpeedV2: 1,
+      scrollMomentum: true,
+    });
     expect(doc.links).toEqual({ copyChip: true });
     expect(doc.session.reopenLast).toBe(true);
   });

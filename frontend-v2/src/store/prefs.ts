@@ -43,8 +43,26 @@ export const DEFAULT_NEW_COMMAND: NewCommand = "claude";
 export type CursorStyle = "block" | "bar" | "underline";
 /** The two bold faces Task 1.3 pinned; anything else renders as a synthetic. */
 export type BoldWeight = "600" | "700";
-/** Desktop wheel multiplier — an enumeration, not a range. */
+/**
+ * Wheels emitted per row-height. An enumeration, not a range.
+ *
+ * One type for BOTH speed prefs, because they are the same quantity for two
+ * input devices: `gestures.wheelSpeed` counts LINE wheels per notch or trackpad
+ * row-height and `gestures.scrollSpeedV2` counts them per FINGER row-height,
+ * and term.html validates the two with the identical predicate
+ * (`PREF_VALID.gestures.wheelSpeed` :2890, `.scrollSpeedV2` :2885). A second
+ * name for the same four values would only give them room to drift apart.
+ */
 export type WheelSpeed = 1 | 1.5 | 2 | 3;
+
+/**
+ * Where a terminal tap puts the caret while the mobile input bar is up: the
+ * compose mirror's field, or xterm's own helper textarea.
+ *
+ * `PREF_VALID.input.tapFocus` (term.html:2894), read by that page's `tapFocus`
+ * once the bar has mounted (:7459-7460).
+ */
+export type TapFocus = "field" | "terminal";
 
 export interface Prefs {
   fontSize: number;
@@ -63,11 +81,41 @@ export interface Prefs {
   /** The copy chip on terminal links. One key today; namespaced upstream. */
   links: { copyChip: boolean };
   /**
-   * Desktop smooth-wheel only. The `gestures` namespace also holds eight TOUCH
-   * flags this panel does not edit (keyRepeat, cardLongPress, haptics, …); they
-   * belong to the terminal page and survive every write from here.
+   * The wheel and the finger. `wheelSmooth` and `wheelSpeed` are the desktop
+   * smooth-wheel pair, edited by the settings panel and read by
+   * `terminal/wheel.ts`; `scrollSpeedV2` and `scrollMomentum` are the touch
+   * scroller's (`terminal/touchscroll.ts`) and have no editing UI on this side
+   * yet.
+   *
+   * Seven TOUCH flags in the same namespace stay untyped: keyRepeat,
+   * cardLongPress, overlaySwipe, bottomSheet, swipeSessionOptIn, twoFingerTap,
+   * haptics. They belong to the terminal page and `composeDoc` carries them
+   * through every write from here. So does the burned v1 `gestures.scrollSpeed`,
+   * which `scrollSpeedV2` re-keyed (term.html:2881-2884) and which nothing on
+   * this side may bring back.
    */
-  gestures: { wheelSmooth: boolean; wheelSpeed: WheelSpeed };
+  gestures: {
+    wheelSmooth: boolean;
+    wheelSpeed: WheelSpeed;
+    scrollSpeedV2: WheelSpeed;
+    scrollMomentum: boolean;
+  };
+  /**
+   * The mobile input bar. `tapFocus` is where a terminal tap puts the caret,
+   * and `terminal/touchscroll.ts` and `terminal/dragselect.ts` both route one
+   * through it: since the compose mirror landed, a tap on a phone reaches that
+   * field rather than xterm's hardened helper textarea.
+   *
+   * `input.bar` stays an untyped-but-preserved subkey, and this is why:
+   * its default `'auto'` is a never-touched marker that resolves per DEVICE at
+   * apply time, coarse pointers engaging the bar and fine pointers ignoring it
+   * (term.html:2798-2802), so a value written from here would answer a question
+   * the roamed doc is meant to leave open. Reading it is a different matter and
+   * `TerminalNative`'s `bootInputBar` does exactly that, off the raw document
+   * with its own validator, the way `bootPrefs` reads the legacy font key.
+   * Nothing on this side writes it.
+   */
+  input: { tapFocus: TapFocus };
   /**
    * What the new-session composer starts with. `newCommand` is which tool runs
    * (it is also the one the terminal attach reads); `newProject` is the project
@@ -98,6 +146,7 @@ export interface PrefsPatch {
   fontWeightBold?: BoldWeight;
   links?: Partial<Prefs["links"]>;
   gestures?: Partial<Prefs["gestures"]>;
+  input?: Partial<Prefs["input"]>;
   session?: Partial<Prefs["session"]>;
   notify?: Partial<Prefs["notify"]>;
   sidebar?: Partial<Prefs["sidebar"]>;
@@ -120,6 +169,7 @@ export const LETTER_SPACING_MAX = 1;
 export const CURSOR_STYLES: readonly CursorStyle[] = ["block", "bar", "underline"];
 export const BOLD_WEIGHTS: readonly BoldWeight[] = ["600", "700"];
 export const WHEEL_SPEEDS: readonly WheelSpeed[] = [1, 1.5, 2, 3];
+export const TAP_FOCUS_TARGETS: readonly TapFocus[] = ["field", "terminal"];
 
 export const PREF_DEFAULTS: Prefs = {
   fontSize: FONT_SIZE_DEFAULT,
@@ -129,7 +179,20 @@ export const PREF_DEFAULTS: Prefs = {
   cursorBlink: true, // the historical constructor value
   fontWeightBold: "700", // the real JBM 700 face
   links: { copyChip: true },
-  gestures: { wheelSmooth: true, wheelSpeed: 1 },
+  // Every default below is term.html's own, cited by line, because that page
+  // has been serving them to real devices for months: a different value here is
+  // a silent behaviour change on every device that never set the pref.
+  // wheelSmooth :2783, wheelSpeed :2784, scrollSpeedV2 :2766, scrollMomentum
+  // :2767.
+  //
+  // scrollMomentum is TRUE, and term.html's reader looks like it says otherwise:
+  // `scrollMomentumOn()` is `!!getPrefs().gestures.scrollMomentum` (:6093),
+  // which would turn a missing key into FALSE. It never sees one. `getPrefs()`
+  // runs `normalizePrefs`, which rebuilds each namespace from PREF_DEFAULTS
+  // before any subkey is read (:2929), so the `!!` only ever narrows a boolean
+  // that is already there.
+  gestures: { wheelSmooth: true, wheelSpeed: 1, scrollSpeedV2: 1, scrollMomentum: true },
+  input: { tapFocus: "field" }, // term.html:2811
   session: { newCommand: DEFAULT_NEW_COMMAND, newProject: "", newModel: "default" },
   notify: { onDone: true, onAwaiting: true },
   sidebar: { showLastActive: false, order: DEFAULT_SESSION_ORDER },
@@ -182,6 +245,7 @@ export function coercePrefs(raw: unknown): Prefs {
   const sidebar = isPlainObject(src.sidebar) ? src.sidebar : {};
   const links = isPlainObject(src.links) ? src.links : {};
   const gestures = isPlainObject(src.gestures) ? src.gestures : {};
+  const input = isPlainObject(src.input) ? src.input : {};
   return {
     fontSize: isValidFontSize(src.fontSize) ? src.fontSize : FONT_SIZE_DEFAULT,
     lineHeight: inRange(src.lineHeight, LINE_HEIGHT_MIN, LINE_HEIGHT_MAX)
@@ -210,6 +274,23 @@ export function coercePrefs(raw: unknown): Prefs {
       wheelSpeed: oneOf(gestures.wheelSpeed, WHEEL_SPEEDS)
         ? gestures.wheelSpeed
         : PREF_DEFAULTS.gestures.wheelSpeed,
+      // The touch scroller's two, on the same predicates term.html uses
+      // (:2885, :2886). `touchscroll.ts` validates the speed AGAIN in its own
+      // `scrollSpeedMult`, which is what term.html does too: :6089-6092
+      // re-checks a value `getPrefs()` has already normalized, so the module
+      // stays correct about a world it did not build.
+      scrollSpeedV2: oneOf(gestures.scrollSpeedV2, WHEEL_SPEEDS)
+        ? gestures.scrollSpeedV2
+        : PREF_DEFAULTS.gestures.scrollSpeedV2,
+      scrollMomentum:
+        typeof gestures.scrollMomentum === "boolean"
+          ? gestures.scrollMomentum
+          : PREF_DEFAULTS.gestures.scrollMomentum,
+    },
+    input: {
+      tapFocus: oneOf(input.tapFocus, TAP_FOCUS_TARGETS)
+        ? input.tapFocus
+        : PREF_DEFAULTS.input.tapFocus,
     },
     session: {
       newCommand: isNewCommand(session.newCommand)
@@ -243,8 +324,19 @@ export function coercePrefs(raw: unknown): Prefs {
 /**
  * Write typed prefs back into a raw doc, PRESERVING every unknown top-level key
  * and every unknown subkey of the known namespaces (so a write from this SPA
- * never clobbers the vanilla terminal page's gestures/input namespaces or
- * session.reopenLast etc.). This is the whole-doc payload PUT + persisted.
+ * never clobbers the terminal page's gestures touch flags, its `input.bar` or
+ * `session.reopenLast`). This is the whole-doc payload PUT + persisted.
+ *
+ * Knowing MORE subkeys does not weaken that, which is the question typing
+ * `gestures.scrollSpeedV2`, `gestures.scrollMomentum` and `input.tapFocus` for
+ * the native terminal had to answer. It moved three keys from "spread through
+ * untouched" to "written explicitly", and what a write puts there is the value
+ * the doc already held: `coercePrefs` accepts exactly what term.html accepts,
+ * so the round trip is a no-op. Where a key was ABSENT the write now
+ * materialises term.html's own default, which is the value that page was
+ * already serving for it anyway. The one thing that would break a device is a
+ * subkey typed here whose default differs from term.html's, which is why every
+ * default in PREF_DEFAULTS names its line.
  */
 export function composeDoc(
   raw: unknown,
@@ -255,10 +347,13 @@ export function composeDoc(
   const notify = isPlainObject(base.notify) ? base.notify : {};
   const sidebar = isPlainObject(base.sidebar) ? base.sidebar : {};
   const links = isPlainObject(base.links) ? base.links : {};
-  // Spread FIRST, then overwrite only what this panel edits: `gestures` holds
-  // eight touch flags the terminal page owns, and losing them here would turn
-  // off long-press, haptics and the rest on every device.
+  // Spread FIRST, then overwrite only the subkeys this side knows: `gestures`
+  // holds seven touch flags the terminal page owns (keyRepeat, cardLongPress,
+  // overlaySwipe, bottomSheet, swipeSessionOptIn, twoFingerTap, haptics) and
+  // `input` holds `bar`. Losing them here would turn off long-press, haptics
+  // and the input bar on every device.
   const gestures = isPlainObject(base.gestures) ? base.gestures : {};
+  const input = isPlainObject(base.input) ? base.input : {};
   return {
     ...base,
     fontSize: prefs.fontSize,
@@ -272,7 +367,10 @@ export function composeDoc(
       ...gestures,
       wheelSmooth: prefs.gestures.wheelSmooth,
       wheelSpeed: prefs.gestures.wheelSpeed,
+      scrollSpeedV2: prefs.gestures.scrollSpeedV2,
+      scrollMomentum: prefs.gestures.scrollMomentum,
     },
+    input: { ...input, tapFocus: prefs.input.tapFocus },
     session: {
       ...session,
       newCommand: prefs.session.newCommand,
@@ -305,7 +403,14 @@ export function mergeAdopt(
   const local = isPlainObject(localRaw) ? localRaw : {};
   const server = isPlainObject(serverRaw) ? serverRaw : {};
   const merged: Record<string, unknown> = { ...local, ...server };
-  for (const k of ["session", "notify", "sidebar", "links", "gestures"] as const) {
+  for (const k of [
+    "session",
+    "notify",
+    "sidebar",
+    "links",
+    "gestures",
+    "input",
+  ] as const) {
     const l = isPlainObject(local[k]) ? local[k] : {};
     const s = isPlainObject(server[k]) ? server[k] : {};
     merged[k] = { ...l, ...s };
@@ -338,6 +443,17 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("links.copyChip", prev.links.copyChip, next.links.copyChip);
   diff("gestures.wheelSmooth", prev.gestures.wheelSmooth, next.gestures.wheelSmooth);
   diff("gestures.wheelSpeed", prev.gestures.wheelSpeed, next.gestures.wheelSpeed);
+  diff(
+    "gestures.scrollSpeedV2",
+    prev.gestures.scrollSpeedV2,
+    next.gestures.scrollSpeedV2,
+  );
+  diff(
+    "gestures.scrollMomentum",
+    prev.gestures.scrollMomentum,
+    next.gestures.scrollMomentum,
+  );
+  diff("input.tapFocus", prev.input.tapFocus, next.input.tapFocus);
   diff("session.newCommand", prev.session.newCommand, next.session.newCommand);
   diff("session.newProject", prev.session.newProject, next.session.newProject);
   diff("session.newModel", prev.session.newModel, next.session.newModel);
@@ -367,6 +483,7 @@ export function applyPatch(cur: Prefs, patch: PrefsPatch): Prefs {
     fontWeightBold: pick("fontWeightBold"),
     links: { ...cur.links, ...(patch.links ?? {}) },
     gestures: { ...cur.gestures, ...(patch.gestures ?? {}) },
+    input: { ...cur.input, ...(patch.input ?? {}) },
     session: { ...cur.session, ...(patch.session ?? {}) },
     notify: { ...cur.notify, ...(patch.notify ?? {}) },
     sidebar: { ...cur.sidebar, ...(patch.sidebar ?? {}) },
@@ -436,6 +553,50 @@ function seedFontSize(doc: Record<string, unknown>): number {
   if (isValidFontSize(doc.fontSize)) return doc.fontSize;
   const legacy = Number(lsGet(FONT_SIZE_KEY));
   return isValidFontSize(legacy) ? legacy : FONT_SIZE_DEFAULT;
+}
+
+/**
+ * The roamed prefs as the PERSISTED document holds them right now.
+ *
+ * term.html's `getPrefs()` (:2952-2958) to the letter: read `tl:prefs:v1`,
+ * validate-or-default it, and seed `fontSize` from the legacy device key when
+ * the doc carries no usable one. It computes the same thing as
+ * `TerminalNative`'s private `bootPrefs`, which is the duplicate to collapse
+ * when that component next needs touching.
+ *
+ * WHY A PULL RATHER THAN THE STORE'S SIGNAL. `terminal/touchscroll.ts` reads
+ * `gestures.scrollSpeedV2` on EVERY feed (term.html re-reads it inside
+ * `feedScroll`, :6119) and `gestures.scrollMomentum` at the lift (:6543);
+ * `terminal/wheel.ts` reads `gestures.wheelSmooth` on every wheel (:6238, via
+ * `wheelSmoothOn`). Two facts rule the signal out for those reads. The
+ * component is not given the store: App.tsx creates it and passes it by prop,
+ * which is why `TerminalNative` already reads the document directly rather than
+ * threading one more prop through `SessionView`. And the signal only ever sees
+ * writes made in THIS document, while term.html is still the shipped terminal
+ * on the same origin and the same doc, so a change made in the vanilla settings
+ * panel reaches localStorage and never this signal (that page listens for the
+ * `storage` event for the mirror-image reason, :7585-7586). The document is
+ * never staler than the signal either, because `setPref` persists before it
+ * pushes.
+ *
+ * WHAT IT COSTS, since a touchmove path calls it. The parse plus the coerce
+ * measured 6.2 us per call on a 590-byte doc carrying every namespace (node 22
+ * on the devvm, 200k iterations): 0.7 ms per second of dragging at 120 Hz, under
+ * 0.1% of a frame. The `localStorage.getItem` half is not measured here and does
+ * not need to be, because term.html pays the identical read on every touchmove
+ * and every wheel already, on the phones the touch scroller was tuned on.
+ * Nothing is cached, deliberately: a memo keyed on the raw string would be
+ * sound, and it would be optimising 6 us.
+ *
+ * WHAT A CALLER GIVES UP against term.html: nothing, for these three prefs.
+ * This is a pull, so it reflects a change only when someone calls it, and all
+ * three are read at the moment they are used. A pref that has to PUSH into a
+ * mounted terminal (a font change refitting a live grid) still has no route in,
+ * which is what `bootPrefs`' own comment says.
+ */
+export function readPersistedPrefs(): Prefs {
+  const doc = readRawDoc();
+  return { ...coercePrefs(doc), fontSize: seedFontSize(doc) };
 }
 
 export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {

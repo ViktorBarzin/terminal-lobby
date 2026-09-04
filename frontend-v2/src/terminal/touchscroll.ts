@@ -67,7 +67,7 @@
  * `matchMedia('(pointer: coarse)').matches` read ONCE at :6350. So attach
  * nothing where that query is false. This repo has the query already, as
  * `isCoarsePointer()` in src/mobile/pointer.ts, and TerminalNative.tsx already
- * reads it once at mount (`const coarsePointer = isCoarsePointer()`, :528) for
+ * reads it once at mount (`const coarsePointer = isCoarsePointer()`) for
  * the reason term.html reads it once: a 2-in-1 that flips to its trackpad
  * mid-session must not lose the listeners the finger is using. Read it once and
  * gate the ATTACH on it. Do not put it in `TouchScrollWorld`, which would turn
@@ -116,9 +116,11 @@
  *          which is what the SGR report the pty receives is built from.
  *   focus  term.html's `tapFocus()` (:5815): `term.focus()`, or the compose
  *          field when the mobile input bar is visible and `input.tapFocus` is
- *          'field' (reassigned at :7459-7460). The compose mirror is a later
- *          pass, so until then this is `term.focus()`. dragselect.ts's `focus`
- *          action is the same call.
+ *          'field' (reassigned at :7459-7460). Both halves are wired now, as
+ *          TerminalNative's `tapFocus`: the field takes the tap wherever it is
+ *          mounted, which is a coarse pointer under a posture that engages it,
+ *          and xterm takes it otherwise. dragselect.ts's `focus` action is the
+ *          same call, and the two have to stay the same call.
  *
  * The coast, which is the one thing this module cannot do for itself. While a
  * reduction comes back with `coasting` true, one `requestAnimationFrame` must
@@ -154,12 +156,14 @@
  *                   anything; measuring the box there buys nothing and costs a
  *                   forced layout on the touchmove path.
  *   scrollSpeed     the `gestures.scrollSpeedV2` pref (:6090), read on every
- *                   feed (:6119). NOT in the SPA's `Prefs` type yet, which
- *                   holds only `wheelSmooth` and `wheelSpeed`; the value lives
- *                   in the shared `tl:prefs:v1` document that term.html reads,
- *                   default 1.
+ *                   feed (:6119). `Prefs["gestures"].scrollSpeedV2` in the
+ *                   SPA's own type, default 1, in the same `tl:prefs:v1`
+ *                   document term.html reads. Read it FRESH rather than off the
+ *                   prefs store's signal: `store/prefs.ts`'s
+ *                   `readPersistedPrefs()` exists for this read and its header
+ *                   says why a signal is the wrong source for it.
  *   momentum        the `gestures.scrollMomentum` pref (:6093), default true,
- *                   same document and also not in `Prefs` yet. Read at the LIFT
+ *                   same document and the same fresh read. Read at the LIFT
  *                   only (:6543), which is why turning momentum off does not
  *                   stop a coast already in flight.
  *   mounted         `!!term.element` (:6106, :6508, :6161). Read on a touchmove
@@ -219,9 +223,9 @@
  *     emit primitive, reading this state's `emitY`, and neither port is the
  *     place to decide otherwise alone.
  *   - `SCROLL_MAX_EVENTS_PER_FEED` (:6082), one constant behind the touch feed's
- *     cap (:6123-6124) and both of the desktop path's (:6218-6219, :6254). Each
- *     port declares its own copy of the number; wheel.ts carries why on its own
- *     declaration, and picking a single home is a wiring decision.
+ *     cap (:6123-6124) and both of the desktop path's (:6218-6219, :6254). Both
+ *     ports now take it from `emit.ts` and re-export it, so the page's one
+ *     constant is one constant here too.
  *   - `xtermCellH()` (:6094), read by the touch path at :6119, :6150 and :6551
  *     and by the desktop path at :6214, :6239 and :6254. Its one remaining
  *     caller, :6290, is the selection wheel-clear, which is selection.ts.
@@ -235,6 +239,11 @@
  * HOST element (:6278-6281, `document.getElementById('terminal')`, not
  * `document`), and reaches this module as `interrupt`.
  */
+
+// The per-frame cap, from the one home the two scrollers share. A VALUE import,
+// where `emit.ts` imports only TYPES from here, so the runtime graph is
+// one-directional and there is no cycle to reason about.
+import { SCROLL_MAX_EVENTS_PER_FEED } from "./emit";
 
 /**
  * How far a finger must travel from where it landed before the gesture is a
@@ -282,8 +291,15 @@ export const GAP_STILL_MS = 180;
  */
 export const GAP_ATTEN_TAU_MS = 400;
 
-/** Burst cap: one feed cannot spray hundreds of events (term.html:6082). */
-export const SCROLL_MAX_EVENTS_PER_FEED = 10;
+/**
+ * Burst cap: one feed cannot spray hundreds of events (term.html:6082).
+ *
+ * ONE constant in the page and one here, in `emit.ts`, which is where the two
+ * scrollers' shared middle lives. Both ports declared their own copy while
+ * neither could see the other; this re-export ends that without moving the name
+ * out of either module's public API, which both suites read.
+ */
+export { SCROLL_MAX_EVENTS_PER_FEED };
 
 /** The window the release velocity is measured over (term.html:6083). */
 export const VEL_WINDOW_MS = 100;
@@ -302,6 +318,15 @@ export const COAST_FRAME_CAP_MS = 64;
  * The x every synthetic wheel carries (term.html:6111). The pty's SGR wheel
  * report takes its column from this, so it is part of what the application
  * receives, not a placeholder.
+ *
+ * KEPT HERE rather than shared with `emit.ts`'s private copy of the same 0,
+ * where the per-frame cap above went the other way, and the difference is what
+ * each guards against. The cap is arithmetic: two copies can disagree and each
+ * one still looks right, so one home is the only guard. This 0 is a FIELD of an
+ * emitted event, and both copies are already pinned against the page's own
+ * `clientX: 0, clientY: scrollLastEmitY` text by their own suites, which
+ * compare the built wheel to a literal. That catches a drift a shared constant
+ * would not: a single export only proves the two files agree with each other.
  */
 export const WHEEL_CLIENT_X = 0;
 

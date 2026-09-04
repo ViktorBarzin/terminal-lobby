@@ -8,9 +8,11 @@ import {
   mergeAdopt,
   applyPatch,
   createPrefsStore,
+  readPersistedPrefs,
   PREF_DEFAULTS,
   PREFS_KEY,
   PREFS_DIRTY_KEY,
+  FONT_SIZE_KEY,
   FONT_SIZE_DEFAULT,
   FONT_SIZE_MIN,
   FONT_SIZE_MAX,
@@ -75,7 +77,13 @@ describe("coercePrefs — validate-or-default", () => {
       cursorBlink: true,
       fontWeightBold: "700",
       links: { copyChip: true },
-      gestures: { wheelSmooth: true, wheelSpeed: 1 },
+      gestures: {
+        wheelSmooth: true,
+        wheelSpeed: 1,
+        scrollSpeedV2: 1,
+        scrollMomentum: true,
+      },
+      input: { tapFocus: "field" },
     });
   });
 });
@@ -83,20 +91,29 @@ describe("coercePrefs — validate-or-default", () => {
 describe("composeDoc — write-back preserves unknown keys", () => {
   it("keeps unknown top-level keys AND unknown subkeys of known namespaces", () => {
     const raw = {
-      input: { bar: "auto" }, // unknown top-level namespace
-      // PARTLY owned: this SPA edits gestures.wheelSmooth/wheelSpeed and
-      // links.copyChip, and the terminal page owns everything else in them.
+      // PARTLY owned, all three: this SPA types gestures.wheelSmooth/wheelSpeed
+      // plus the scroller's two, input.tapFocus, and links.copyChip. The
+      // terminal page owns everything else in them.
+      input: { bar: "auto" },
       gestures: { keyRepeat: false },
       links: { copyChip: true },
       session: { reopenLast: false, newCommand: "shell" }, // unknown subkey
       notify: { onDone: true },
+      thermostat: { setpoint: 21 }, // a wholly unknown namespace
     };
     const doc = composeDoc(raw, coercePrefs({ session: { newCommand: "codex" } }));
     // a wholly unknown namespace survives untouched
-    expect(doc.input).toEqual({ bar: "auto" });
-    // in a partly-owned one, the subkeys this SPA does not edit survive and the
+    expect(doc.thermostat).toEqual({ setpoint: 21 });
+    // in a partly-owned one, the subkeys this SPA does not type survive and the
     // ones it does are materialised at their defaults
-    expect(doc.gestures).toEqual({ keyRepeat: false, wheelSmooth: true, wheelSpeed: 1 });
+    expect(doc.input).toEqual({ bar: "auto", tapFocus: "field" });
+    expect(doc.gestures).toEqual({
+      keyRepeat: false,
+      wheelSmooth: true,
+      wheelSpeed: 1,
+      scrollSpeedV2: 1,
+      scrollMomentum: true,
+    });
     expect(doc.links).toEqual({ copyChip: true });
     // unknown subkey preserved, known subkey updated
     expect(doc.session).toEqual({
@@ -282,9 +299,15 @@ describe("createPrefsStore — persistence + local-wins adoption", () => {
       expect(localStorage.getItem(PREFS_DIRTY_KEY)).not.toBeNull();
       const doc = JSON.parse(localStorage.getItem(PREFS_KEY) as string);
       expect(doc.session.newCommand).toBe("codex");
-      // keyRepeat is the terminal page's, and survives; the two wheel keys are
-      // this panel's, and get materialised at their defaults.
-      expect(doc.gestures).toEqual({ keyRepeat: false, wheelSmooth: true, wheelSpeed: 1 });
+      // keyRepeat is the terminal page's, and survives; the four keys this side
+      // types get materialised at their defaults.
+      expect(doc.gestures).toEqual({
+        keyRepeat: false,
+        wheelSmooth: true,
+        wheelSpeed: 1,
+        scrollSpeedV2: 1,
+        scrollMomentum: true,
+      });
       store.dispose();
       dispose();
     });
@@ -336,6 +359,173 @@ describe("createPrefsStore — persistence + local-wins adoption", () => {
       store.dispose();
       dispose();
     });
+  });
+});
+
+/**
+ * The three keys the native terminal's modules read, through the store rather
+ * than against term.html (`prefs.terminal-rows.test.ts` owns the comparison
+ * with the page's own tables, including the defaults).
+ *
+ * There is no settings UI for any of them yet. The reason they are typed anyway
+ * is that a key `coercePrefs` drops is a key no component can read, and
+ * `terminal/touchscroll.ts` and `terminal/wheel.ts` read all three. The reason
+ * to put them through `setPref` and `changedPrefPaths` here, before that UI
+ * exists, is that leaving them half-wired is the trap: a pref in the type that
+ * `composeDoc` does not write no-ops silently at the store's own equality
+ * guard, so the toggle someone adds later would appear to work and persist
+ * nothing.
+ */
+describe("the native terminal's three prefs — through the store", () => {
+  beforeEach(() => localStorage.clear());
+
+  const okJson = (body: unknown) => ({ ok: true, json: async () => body });
+
+  it("patches one of them without resetting its namespace", () => {
+    const next = applyPatch(PREF_DEFAULTS, { gestures: { scrollSpeedV2: 3 } });
+    expect(next.gestures).toEqual({
+      wheelSmooth: true,
+      wheelSpeed: 1,
+      scrollSpeedV2: 3,
+      scrollMomentum: true,
+    });
+    expect(applyPatch(PREF_DEFAULTS, { input: { tapFocus: "terminal" } }).input).toEqual({
+      tapFocus: "terminal",
+    });
+  });
+
+  it("names each as its own dotted path, with the value it moved to", () => {
+    const prev = PREF_DEFAULTS;
+    expect(
+      changedPrefPaths(prev, applyPatch(prev, { gestures: { scrollSpeedV2: 2 } })),
+    ).toEqual([["gestures.scrollSpeedV2", "2"]]);
+    expect(
+      changedPrefPaths(prev, applyPatch(prev, { gestures: { scrollMomentum: false } })),
+    ).toEqual([["gestures.scrollMomentum", "false"]]);
+    expect(
+      changedPrefPaths(prev, applyPatch(prev, { input: { tapFocus: "terminal" } })),
+    ).toEqual([["input.tapFocus", "terminal"]]);
+  });
+
+  it("actually persists a change to one, rather than no-opping in the signal", () => {
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      store.setPref({ gestures: { scrollSpeedV2: 2, scrollMomentum: false } });
+      expect(store.prefs().gestures.scrollSpeedV2).toBe(2);
+      expect(store.prefs().gestures.scrollMomentum).toBe(false);
+      const doc = JSON.parse(localStorage.getItem(PREFS_KEY) as string);
+      expect(doc.gestures.scrollSpeedV2).toBe(2);
+      expect(doc.gestures.scrollMomentum).toBe(false);
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("keeps a value the terminal page set, rather than adopting a default over it", () => {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ gestures: { scrollSpeedV2: 3, haptics: false } }),
+    );
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      expect(store.prefs().gestures.scrollSpeedV2).toBe(3);
+      store.setPref({ fontSize: 12 }); // an unrelated write
+      const doc = JSON.parse(localStorage.getItem(PREFS_KEY) as string);
+      expect(doc.gestures.scrollSpeedV2).toBe(3);
+      expect(doc.gestures.haptics).toBe(false);
+      store.dispose();
+      dispose();
+    });
+  });
+});
+
+/**
+ * `readPersistedPrefs` — the live read `terminal/touchscroll.ts` needs on every
+ * feed, because term.html re-reads the speed pref inside `feedScroll` and the
+ * component that would hold a cached copy is built once at mount.
+ */
+describe("readPersistedPrefs — the pull the touch scroller needs", () => {
+  beforeEach(() => localStorage.clear());
+
+  const okJson = (body: unknown) => ({ ok: true, json: async () => body });
+
+  it("defaults with no doc at all, and never throws on a corrupt one", () => {
+    expect(readPersistedPrefs()).toEqual(PREF_DEFAULTS);
+    localStorage.setItem(PREFS_KEY, "{not json");
+    expect(readPersistedPrefs()).toEqual(PREF_DEFAULTS);
+    localStorage.setItem(PREFS_KEY, "[]");
+    expect(readPersistedPrefs()).toEqual(PREF_DEFAULTS);
+  });
+
+  it("validates like the store, so a junk speed cannot reach the scroller", () => {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ gestures: { scrollSpeedV2: 7, scrollMomentum: "yes" } }),
+    );
+    expect(readPersistedPrefs().gestures.scrollSpeedV2).toBe(1);
+    expect(readPersistedPrefs().gestures.scrollMomentum).toBe(true);
+  });
+
+  it("sees a change written by ANOTHER document, which the signal cannot", () => {
+    // term.html is still the shipped terminal on this origin and writes the same
+    // doc. Nothing in this store listens for a `storage` event, so reading the
+    // signal instead would serve the old speed for the life of the mount.
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ gestures: { scrollSpeedV2: 1 } }));
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      expect(store.prefs().gestures.scrollSpeedV2).toBe(1);
+      // the other frame writes the shared doc
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ gestures: { scrollSpeedV2: 3 } }));
+      expect(readPersistedPrefs().gestures.scrollSpeedV2).toBe(3);
+      expect(store.prefs().gestures.scrollSpeedV2).toBe(1); // the signal is blind
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("returns defaults before any write, because construction persists nothing", () => {
+    // `createPrefsStore` composes its raw doc in memory and only persists on a
+    // setPref or an adoption, so a first-run device has no `tl:prefs:v1` at all
+    // and this read has to answer from PREF_DEFAULTS rather than from a doc.
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      expect(localStorage.getItem(PREFS_KEY)).toBeNull();
+      expect(readPersistedPrefs()).toEqual(PREF_DEFAULTS);
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("re-reads on every call, so a feed after a change sees the new speed", () => {
+    const seen: number[] = [];
+    for (const speed of [1, 1.5, 2, 3]) {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ gestures: { scrollSpeedV2: speed } }));
+      seen.push(readPersistedPrefs().gestures.scrollSpeedV2);
+    }
+    expect(seen).toEqual([1, 1.5, 2, 3]);
+  });
+
+  it("is never staler than the store, which persists before it pushes", () => {
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      store.setPref({ gestures: { scrollMomentum: false } });
+      expect(readPersistedPrefs().gestures.scrollMomentum).toBe(false);
+      store.dispose();
+      dispose();
+    });
+  });
+
+  it("seeds fontSize from the legacy device key, like term.html's getPrefs", () => {
+    // The one part of the read that is not just coercePrefs. Same fallback the
+    // store's own boot takes, so the two cannot disagree about the size.
+    localStorage.setItem(FONT_SIZE_KEY, "19");
+    expect(readPersistedPrefs().fontSize).toBe(19);
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ fontSize: 11 }));
+    expect(readPersistedPrefs().fontSize).toBe(11); // the doc wins over the key
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ fontSize: 99 })); // out of range
+    expect(readPersistedPrefs().fontSize).toBe(19);
+    localStorage.removeItem(FONT_SIZE_KEY);
+    expect(readPersistedPrefs().fontSize).toBe(FONT_SIZE_DEFAULT);
   });
 });
 

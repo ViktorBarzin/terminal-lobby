@@ -949,6 +949,28 @@ export const SessionView: Component<{
               // for the iframe: they are named globals, and a hidden session
               // owning them would take the soft keys and paste with it.
               ownsBridges={onScreen()}
+              // A DIFFERENT question from ownsBridges, which is `onScreen()`
+              // alone: this one is also false while the TEXT view shows over a
+              // terminal that stays mounted and stays attached. The same
+              // expression the iframe branch passes above, because
+              // terminal/attention.ts's `view` event is exactly its negation
+              // and both halves of it carry weight: the text view over the
+              // terminal, and this session's whole slot CSS-hidden behind
+              // another session.
+              //
+              // The repeated expression is load-bearing, so do not fold the two
+              // branches into a shared memo. terminal.attention.test.ts's
+              // "cites the line SessionView really passes `active` on" pins
+              // attention.ts's SessionView.tsx line citation to the FIRST line
+              // in this file holding that exact text, which is the iframe's.
+              active={mode() === "terminal" && onScreen()}
+              // One attention handler for both terminals, so the [Terminal]
+              // dot and the lobby's tab badge answer to one route. The iframe
+              // reports WHICH session rang, because its signal crosses a
+              // document boundary and the lobby validates the name it is given
+              // (notify/attention.ts); this terminal is in our own document, so
+              // the name is ours to supply and there is nothing to distrust.
+              onAttention={(kind) => onAttention(kind, session)}
               onConn={(r) => onScreen() && props.status?.onFrameConn(r)}
               // BOTH levers, as the iframe branch above publishes both. Without
               // the ask, the badge and Run check could only ever read what a

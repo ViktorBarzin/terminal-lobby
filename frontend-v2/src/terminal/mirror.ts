@@ -139,10 +139,9 @@ export const HELD_ENTER_MESSAGE = "Held — reconnect and press Enter to run it"
  * autofill risk.
  *
  * This set is the OPPOSITE of the helper-textarea hardening in
- * `TerminalNative.tsx`'s `hardenInput` (:499-510), which is correct where it
- * is. That field is being hardened, and it does set `autocomplete='off'`
- * (:504). Copying that block onto this field is the mistake this constant
- * exists to stop. A `type` attribute
+ * `TerminalNative.tsx`'s `hardenInput`, which is correct where it is. That
+ * field is being hardened, and it does set `autocomplete='off'`. Copying that
+ * block onto this field is the mistake this constant exists to stop. A `type` attribute
  * is absent for the same class of reason: a textarea has none, and the helper
  * field's `type=password` trick would kill the composition UI this field is
  * for.
@@ -225,11 +224,11 @@ export type MirrorEvent =
    *   :8342          `term.onData`, the one place xterm hands bytes over: raw
    *                  typing in the helper textarea, and the echo of the
    *                  mirror's own `send`, which is why that has to be marked.
-   *                  Natively that hook is `TerminalNative.tsx:669`, and
+   *                  Natively that hook is TerminalNative's `term.onData`, and
    *                  keys.ts already decides it: its `mirror-out-of-band`
    *                  action IS this event, gated on `mirrorEmitting`.
    *   :6828, :9388   the soft-key row and the SPA's `tl-input` bridge. Both
-   *                  become `__tlSendToTerminal` (`TerminalNative.tsx:1089`),
+   *                  become `__tlSendToTerminal` (TerminalNative's `send`),
    *                  called by `SessionView.tsx:471-477` for the soft keys and
    *                  the Text view's send-to-terminal.
    *   :8922, :8963,  path-sends: three upload paths, the gallery's "Insert

@@ -14,15 +14,13 @@
  *     pixels to take off the host's box. It reads nothing, writes nothing, and
  *     holds no clock.
  *
- * NOTHING IMPORTS THIS YET, so a reader should not take the tests for the fix
- * being in. `__tlKeyboardOffset` still does the arithmetic inline
- * (TerminalNative:1134-1160) and the seed in item 1 below is still open in the
- * running code. Wiring it is a change to TerminalNative: `observed` from the
- * mount and from its ResizeObserver (:1054), `forwarded` from the bridge, and
- * `hostHeightStyle` in place of the arithmetic inlined at :1153-1154. :1134's
- * `!host` half stays, since there is nothing to write to and nothing to fit;
- * its `Number.isFinite(px)` half can stay too, and the two agree, because
- * `ignored` is what this module answers for the same input.
+ * WIRED, as of the mirror pass: `TerminalNative`'s `feedViewport` performs it,
+ * fed `observed` from the mount seed and from its ResizeObserver and
+ * `forwarded` from the `__tlKeyboardOffset` bridge, and writes
+ * `hostHeightStyle` where that bridge used to do the arithmetic inline. The
+ * bridge's `!host` guard stayed, since there is nothing to write to and nothing
+ * to fit; its own `Number.isFinite(px)` check went, because `ignored` is what
+ * this module answers for the same input and the two agreed.
  *
  * WHAT WAS ALREADY DONE BEFORE THIS MODULE, so a reader can see how little is
  * left of `syncViewport` to port. Pass 1 wired the receiving half, and the CSS
@@ -36,17 +34,24 @@
  *     is `--sk-h` inside `.tl-views` margin-bottom (app.css:2370-2386,
  *     published at mobile/viewport.ts:267). The container the host fills is
  *     already toolbar-free and safe-area-free.
- *   - term.html's `cbH` term has no analogue. `#compose-bar` is that page's own
- *     fixed mobile input surface; in this app the composer belongs to the TEXT
- *     view, inside a sibling `.tl-view` (SessionView.tsx:872-908). Nothing
- *     sits over the terminal's box, so there is nothing to subtract.
- *   - both of the page's gates are already in TerminalNative:1153,
+ *   - term.html's `cbH` term IS NOT THIS MODULE'S, and it is not absent either.
+ *     An earlier version of this line said nothing sits over the terminal's
+ *     box, which was true until the compose mirror mounted its bar over it: the
+ *     mirror pass added the bar as a second term on the same style write
+ *     (TerminalNative's `barReservePx`, term.html:8461 and :8467), off the
+ *     bar's live `offsetHeight` and 0 for the ghost render, behind the same two
+ *     gates as the reserve this module decides. So a reader wiring a new caller
+ *     owes that term as well as `shrinkPx`. The TEXT view's composer is a
+ *     different surface again, inside a sibling `.tl-view`
+ *     (SessionView.tsx:872-908), and never over the terminal.
+ *   - both of the page's gates are already in that bridge, as
  *     `window.visualViewport && coarsePointer`.
  *   - the fit that has to follow a height change is TerminalNative's, debounced
  *     (`refit("fit-wanted")`), and the host's own ResizeObserver asks for one
- *     on any box change anyway (:1054). So no action here PERFORMS a fit; the
- *     owes list below says which of the three answers must not be followed by
- *     one, because the page's own answers differ on exactly that.
+ *     on any box change anyway (its `new ResizeObserver`). So no action here
+ *     PERFORMS a fit; the owes list below says which of the three answers must
+ *     not be followed by one, because the page's own answers differ on exactly
+ *     that.
  *
  * SO WHAT IS LEFT IS TWO THINGS.
  *
@@ -107,7 +112,8 @@
  *    reading, and any excess is age: taking `max(own, remembered)` would pin
  *    the reserve at the STALE maximum, where a live reading of 0 cannot give
  *    the rows back. Nor would that be a one-frame lag. `__tlKeyboardOffset` is
- *    a global claimed via `ownWhile` (TerminalNative:1105) and every visited
+ *    a global claimed via `ownWhile` (TerminalNative's `__tlKeyboardOffset`)
+ *    and every visited
  *    session stays mounted, so a terminal that hands the bridge over never
  *    receives the close, and one missed zero-forward would hold it short for
  *    the rest of the mount.
@@ -117,7 +123,8 @@
  *    number is the only one it will ever have. Here the only blindness is "no
  *    `visualViewport` at all", and gate 1 decides nothing on it for every event,
  *    since the API cannot appear mid-session. The same goes for the pointer
- *    gate: `coarsePointer` is read once per mount (TerminalNative:528), so a
+ *    gate: `coarsePointer` is read once per mount (TerminalNative's own
+ *    `const coarsePointer`), so a
  *    refusal there is permanent too, and a number remembered behind either gate
  *    could never be spent.
  *
@@ -186,7 +193,7 @@
  * records against the CONTAINER version: a tap below ~54% of the screen blurred
  * the field and flashed the keyboard shut (measured 390x844, dated 2026-08-17
  * at term.html:8406-8411). Shrinking the HOST is what the shipped page already
- * does through this bridge (TerminalNative:1153-1154), so the seed adds a
+ * does through this bridge, in its gate and its height write, so the seed adds a
  * moment when that happens rather than a new mechanism. It still wants the
  * Android emulator or a real phone to confirm, and no unit test here can.
  *
@@ -210,14 +217,15 @@
  * `refit()` (:9421) sits INSIDE
  * `if (e.source === window.parent && Number.isFinite(e.data.px))` (:9418), so a
  * junk message asks for no fit. Pass 1 does the same, returning at
- * TerminalNative:1134 before both the height write and the refit at :1160. An
+ * the bridge's own `Number.isFinite` guard before both the height write and the
+ * refit that follows it. An
  * earlier draft of this list read that arm as unconditional and told the
  * component to fit on every trigger whatever the action, which would have
  * emitted a tmux resize the page does not.
  *
  * `nothing` STILL DOES NOT MEAN "DO NOTHING". A container that changed WIDTH
  * with the reserve unmoved has a new column count, and that is the only thing
- * TerminalNative's ResizeObserver exists for (:1054), so a wiring that skipped
+ * TerminalNative's ResizeObserver exists for, so a wiring that skipped
  * the fit on `nothing` would silence every non-keyboard resize: a view switch,
  * a window resize, the sidebar, an orientation change with the keyboard down.
  * The fit is debounced in the component because the keyboard animates over
@@ -273,7 +281,8 @@ export interface ViewportFacts {
   /**
    * `matchMedia("(pointer: coarse)").matches`. A fact per event rather than a
    * live query because both pages read it once for their lifetime
-   * (term.html:6350, TerminalNative:528), so a pointer type that changes
+   * (term.html:6350, and TerminalNative's `const coarsePointer`), so a
+   * pointer type that changes
    * mid-session moves nothing in either.
    */
   readonly coarsePointer: boolean;
@@ -343,7 +352,8 @@ export type ViewportAction =
    * the whole reason this is a third answer rather than a second `nothing`:
    * term.html keeps the `tl-kb` arm's `refit()` inside the same finite gate as
    * everything else it does (:9418, :9421), and pass 1 returns before its own
-   * (TerminalNative:1134, :1160). Two answers could not tell the component
+   * (the bridge's `Number.isFinite` guard, ahead of its trailing refit). Two
+   * answers could not tell the component
    * which `nothing` it was looking at.
    */
   | { kind: "ignored" };
@@ -417,8 +427,8 @@ export function keyboardReserve(
  * (app.css:30-34, mobile/viewport.ts:276).
  *
  * Empty at 0 so the box goes back to the stylesheet's `height: 100%` instead of
- * carrying an inline `calc(100% - 0px)`, which is what TerminalNative:1154
- * already does.
+ * carrying an inline `calc(100% - 0px)`, which is what the bridge's height
+ * write already does.
  *
  * A reserve taller than the container is not clamped, where term.html clamps
  * its pixel height with `Math.max(0, ...)` (:8467): CSS clamps a `calc()` that
@@ -436,10 +446,11 @@ export function reduce(state: ViewportState, event: ViewportEvent): ViewportRedu
   // `tl-kb` arm on `Number.isFinite(e.data.px)` (:9418), so a junk message
   // moves no `framedKb`, calls no `syncViewport` (no `--kb-offset` write and no
   // height write) and reaches no `refit()` either, since that call is inside the
-  // same gate (:9421); TerminalNative returns at :1134, before both the host
-  // write and its refit at :1160. Falling through here would let a message both
-  // callers ignore write a height, off facts that have nothing to do with the
-  // bad number. `ignored` and not `nothing`, because those two differ on the
+  // same gate (:9421). TerminalNative used to return at its own
+  // `Number.isFinite` guard, ahead of both the host write and the refit that
+  // follows it, and now hands the message here instead. Falling through would
+  // let a message both callers ignore write a height, off facts that have
+  // nothing to do with the bad number. `ignored` and not `nothing`, because those two differ on the
   // fit and only the action can carry that. `keyboardReserve` still clamps a
   // NaN to 0 through its own `|| 0`, because that is the page's HELPER;
   // discarding here is the page's CALLER, and the two are different jobs.
