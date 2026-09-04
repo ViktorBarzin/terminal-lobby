@@ -41,12 +41,15 @@ tmux *client* per websocket while a separate tmux server owns the sessions.
 | docs | supersede ADR-0004, amend the shared infra rule that points agents at `show-image` |
 | evidence | the shared Android emulator for every touch and keyboard gap, plus a semver release bump |
 | compose mirror | ported. It serves every mobile device, not one tablet |
+| gesture scope | two-finger toolbar tap, three-finger session swipe and their shared multi-touch module are dropped. 361 lines |
+| CSS floor | a CSS syntax guard joins pass 1, alongside the existing 11-API JS guard |
 
 ## What reading the source added to the gap list
 
 ADR-0017's "what is not done" section names selection and copy, pinch-zoom,
-sixel and WebGL. Four more gaps came out of reading `TerminalNative.tsx` against
-`term.html`, each confirmed in the source rather than inferred.
+sixel and WebGL. Nine more gaps came out of reading `TerminalNative.tsx` against
+`term.html`, each confirmed in the source rather than inferred. Three of them are
+a prop or an option rather than a port, and all three carry real behaviour.
 
 | gap | where |
 |---|---|
@@ -56,6 +59,9 @@ sixel and WebGL. Four more gaps came out of reading `TerminalNative.tsx` against
 | fit guard | `TerminalNative.tsx:96,114,152` |
 | helper textarea | `TerminalNative.tsx`, after `term.open()` |
 | pixel size | `TerminalNative.tsx:102` |
+| constructor options | `TerminalNative.tsx:88-93` against `term.html:5006-5074` |
+| held and refused input | `attach.ts:91,282,462,475` |
+| connection ask | `SessionView.tsx:206,936` |
 
 Each row in more detail:
 
@@ -75,6 +81,17 @@ Each row in more detail:
   autocorrect, autocapitalize and spellcheck, because predictive text otherwise
   commits into terminal input (xterm #2403, #3600).
 - **Pixel size.** Sixel could not have worked natively regardless of the addon.
+- **Constructor options.** Native passes `allowProposedApi` and `theme`.
+  `term.html` passes twelve, including `scrollback: 10000` where xterm defaults
+  to 1000, `minimumContrastRatio: 4.5`, `cursorInactiveStyle: 'outline'`,
+  `macOptionClickForcesSelection: true`, `altClickMovesCursor: false` and every
+  roamed font pref. Several of these only take effect at construction.
+- **Held and refused input.** `attach.ts` fires `onHeld` at three sites,
+  including `refused:watching`. `TerminalNative` passes no `onHeld`, so a
+  read-only viewer's keystroke is dropped without being explained and held
+  offline keys are not drawn.
+- **Connection ask.** `askConn` is passed on the iframe branch only, so the
+  ADR-0016 badge cannot read the native terminal's socket state on demand.
 
 `?native=1` is also read as `.has("native")`, so `?native=0` currently enables
 native rather than disabling it. Together with `start_url: "/"`, that means the
@@ -83,25 +100,54 @@ consistent with the gaps being concentrated in touch and keyboard handling.
 
 ## Port size
 
-Lines of `term.html` behind each remaining gap:
+An eight-agent sweep of `term.html` against the native modules produced the full
+inventory. Lines of `term.html` behind each item still to port, after the
+gesture rows were dropped:
 
 ```stats
-433 | compose mirror (7077-7509), mirror engine 7167-7330
-166 | touch scroll (6056-6171) + gesture recognizer (6491-6540)
- 84 | attachCustomKeyEventHandler contract (8506-8589)
- 59 | visualViewport driving (8427-8470) + tl-kb inbound (9411-9425)
- 22 | fit guard (5592-5613)
- 12 | mouse reports (8359-8370)
-  9 | helper-textarea suppression (6339-6347)
-  6 | paste route (9404-9409)
- 22 | pixel size (8314-8335), deleted rather than ported
+2309 | lines of term.html still to port
+361 | lines dropped: the two gestures
+22 | lines deleted, not ported: pixel size
 ```
+
+| item | `term.html` | lines |
+|---|---|---|
+| compose mirror | 7077-7509 | 433 |
+| link handling | 5076-5430 | 355 |
+| pinch to font size | 7758-7967 | 210 |
+| bell + hidden-output attention | 5676-5850 | 175 |
+| touch scroll | 6056-6171, 6491-6540 | 166 |
+| drag-selection reclaim | 5921-6055 | 135 |
+| held-input overlay | 8086-8203 | 118 |
+| desktop smooth-wheel interceptor | 6172-6277 | 106 |
+| flow-control accounting | 4849-4936 | 88 |
+| key-handler contract | 8506-8589 | 84 |
+| constructor options | 5006-5074 | 69 |
+| visualViewport driving | 8427-8470, 9411-9425 | 59 |
+| connection ask | 9822-9873 | 52 |
+| webfont race + tier degradation | 4955-5005 | 51 |
+| selection and copy wiring | 8566-8586, 6303-6320 | 38 |
+| OSC 52 clipboard | 5467-5497 | 31 |
+| texture-atlas clear on font load | 5658-5680 | 25 |
+| fit guard | 5592-5613 | 22 |
+| soft-modifier remap | 8340-8360 | 21 |
+| unicode 11 widths | 5536-5553 | 18 |
+| watch-mode nudge | 8280-8313 | 14 |
+| mouse reports | 8359-8370 | 12 |
+| `__tlForwardToTerminal` | 9367-9378 | 12 |
+| helper-textarea suppression | 6339-6347 | 9 |
+| paste route | 9404-9409 | 6 |
+
+
+Already done and wired, for completeness: the reconnect ladder, the liveness
+watchdog, battery suspend, theme reading and live retheme, the first-output
+resize kick, and `SET_TITLE` deliberately ignored.
 
 ## Three stages
 
 ```mermaid
 flowchart TD
-  P1["Pass 1 · correctness<br/>paste route, mouse reports, fit guard,<br/>helper textarea, iOS viewport,<br/>the native=0 read<br/><br/>flag stays OFF"]
+  P1["Pass 1 · correctness<br/>paste route, mouse reports, fit guard,<br/>helper textarea, iOS viewport,<br/>ctor options, onHeld, askConn,<br/>the native=0 read, a CSS floor guard<br/><br/>flag stays OFF"]
   P1 --> SX["Pass 1 · sixel out<br/>ttyd patch re-cut, wire.ts pixel fields,<br/>show-image to library-only,<br/>ADR-0004 superseded"]
   SX --> P2["Pass 2 · mobile parity<br/>touch scroll, compose mirror,<br/>selection and copy, pinch-zoom,<br/>bell, web links"]
   P2 --> F["the flip<br/>native default + device setting<br/>+ ?native=0 honoured"]
@@ -149,7 +195,7 @@ Fixes 2 and 3 of that patch stay:
 
 | fix | what it does | who depends on it |
 |---|---|---|
-| 2. PAUSE/RESUME | makes client flow control work; stock ttyd leaves the pause flag set from spawn | the native path. `wire.ts` sends the frames, `battery.ts` suspends a hidden tab with them |
+| 2. PAUSE/RESUME | makes client flow control work; stock ttyd leaves the pause flag set from spawn | `term.html` today. `wire.ts` has `pauseFrame`/`resumeFrame` and nothing calls them yet, so native starts depending on it when the flow-control accounting is ported in pass 2 |
 | 3. index ETag | serves the `-I` index with an ETag and `no-cache` instead of `no-store` | every page load |
 
 Re-cutting the patch triggers `.github/workflows/ttyd.yml`, which builds and
@@ -188,24 +234,48 @@ without clearing or reassigning it, because clearing the field is what suppresse
 predictive text. That is why `term.html` mirrors rather than letting xterm's own
 helper textarea take the input.
 
-## What stays unverified
+## What stays unverified, and what the guards do not reach
 
 iPadOS 15.8 is the floor, and there is no WebKit instrument in this homelab. The
 Android emulator is real Chrome, so it proves the touch and keyboard mechanisms
-and says nothing about Safari. The guards that do cover the floor are static: the
-`safari15` esbuild differential per chunk and the 11-API runtime check in
-`scripts/test_frontend_compat.py`, plus `frontend-v2/test/xterm.baseline.test.ts`
-for xterm's `OffscreenCanvas` fallback.
+and says nothing about Safari.
 
-Both were run against the SPA extracted from the released `v0.25.0` `.deb` as
-well as a local build. They are stronger than they were on 2026-09-02, and they
-are still not a device. The flip proceeds on that basis by decision, with the
-device-scoped setting and a semver release as the way back.
+The guards that do cover the floor are static, and reading them turned up their
+edges. `scripts/test_frontend_compat.py` runs a per-chunk esbuild differential
+against `safari15` plus 11 literal API substrings, and
+`frontend-v2/test/xterm.baseline.test.ts` asserts that xterm's
+`OffscreenCanvas` fallback still round-trips written text in jsdom. What they do
+not reach:
 
-## Open questions
+| not covered | why |
+|---|---|
+| anything visual | jsdom has no layout, canvas or WebGL. `.xterm-screen` existing is not a glyph on screen |
+| CSS, until pass 1 | `app.css` is 121 KB with no floor check today. iPadOS 15.8 has neither `:has()` nor container queries. Pass 1 adds the guard |
+| a WebKit-15 gap outside the 11 substrings | the match is a literal substring over minified bytes, so a minifier alias or bracket access passes |
+| touch, gesture, soft keyboard, visualViewport | all of `src/mobile/` runs against synthetic jsdom events |
+| PWA cold launch, real WebSocket behaviour, memory pressure on a 2 GB iPad | the whole attach path is jsdom-only |
+| the differential itself, sometimes | it skips silently when esbuild is missing from `node_modules/.bin` and PATH. Present in CI, absent on a bare checkout, where it reports a pass with the check not run |
 
-- The inventory above is the verified high-risk set. Selection and copy,
-  pinch-zoom, the bell and web links are agreed as in scope and their line-level
-  detail is still being enumerated; pass 2 opens with that.
-- `tl-build-stale` and `tl-attention` need an owner in the native path. Neither
-  is terminal plumbing, so neither translates into a direct call on its own.
+`build-deb.sh:133` runs the compat suite with `-k spa` only, so the
+`term.html`-targeted cases in that file do not gate the release path. That
+resolves itself when `term.html` goes.
+
+Both guards were run against the SPA extracted from the released `v0.25.0`
+`.deb` as well as a local build. They are stronger than they were on 2026-09-02,
+and they are still not a device. The flip proceeds on that basis by decision,
+with the device-scoped setting and a semver release as the way back.
+
+## Sixel addon sizes, for the record
+
+The decision to deprecate sixel was taken on how useful the flow is, not on
+size. The measured numbers, off the already-minified vendored blocks in
+`term.html`, are here so a future revisit starts from facts rather than a
+re-measurement:
+
+| addon | bytes | gzip -9 |
+|---|---|---|
+| `@xterm/addon-image@0.9.0` | 79,351 | 25,939 |
+| `@xterm/addon-webgl@0.19.0` | 248,565 | 69,525 |
+
+Neither is installed in `frontend-v2`; `node_modules` carries `@xterm/xterm`
+6.0.0 and `@xterm/addon-fit` 0.11.0 only.
