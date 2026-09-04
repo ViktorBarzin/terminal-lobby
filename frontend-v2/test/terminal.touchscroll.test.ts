@@ -999,7 +999,12 @@ describe("what the component is told to do", () => {
     },
   );
 
-  /** The prefs are not in the SPA's Prefs type yet, so the wiring has to be told. */
+  /**
+   * The two prefs by their document keys, because the world field names do not
+   * match them: `scrollSpeed` is `gestures.scrollSpeedV2` and `momentum` is
+   * `gestures.scrollMomentum`, and a wiring told only the field names has to
+   * guess which stored key it is meant to read.
+   */
   it.each(["scrollSpeedV2", "scrollMomentum"])("names the %s pref it needs read", (needle) => {
     expect(owes()).toContain(needle);
   });

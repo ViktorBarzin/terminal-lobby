@@ -77,7 +77,7 @@ describe("the field's attributes", () => {
    * records it at :7103-7110. On iOS, pronounced in the installed PWA's
    * WKWebView, 'off' also suppresses the predictive and autocorrect bar. So
    * the attribute has to be ABSENT, not 'off', and the hardening set on
-   * xterm's helper textarea (`TerminalNative.tsx:504`, which does set it) must
+   * xterm's helper textarea (TerminalNative's `hardenInput`, which does set it) must
    * not be copied onto this one.
    */
   it("omits autocomplete rather than setting it off", () => {

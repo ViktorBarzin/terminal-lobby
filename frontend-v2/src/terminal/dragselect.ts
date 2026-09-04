@@ -21,7 +21,8 @@
  * not a nicety: intercept one and it clones itself forever.
  *
  * TWO OPTIONS THIS RESTS ON, both passed to the constructor in pass 1
- * (TerminalNative.tsx:351, :356):
+ * (the `new Terminal({...})` call in TerminalNative.tsx; the line numbers this
+ * used to carry pointed at `report` after the file moved under them):
  *   - `macOptionClickForcesSelection: true`, because it is the second half of
  *     that predicate on a Mac and xterm defaults it to false. Without it every
  *     Mac clone is just another reported click and this module does nothing but
@@ -99,8 +100,11 @@
  *   focus               term.html's `tapFocus()` (:5815): `term.focus()`, or the
  *                       compose field when the mobile input bar is visible and
  *                       `input.tapFocus === 'field'` (reassigned at :7459-7460).
- *                       The compose mirror is a pass 2 item, so until then this
- *                       is `term.focus()`.
+ *                       Both halves are wired as TerminalNative's `tapFocus`,
+ *                       and touchscroll.ts's `focus` action is the same call:
+ *                       a tap on a phone produces both, which term.html names
+ *                       and calls harmless, being two `.focus()` calls on one
+ *                       element.
  *   replay-status-click send each string, in order, through the SAME path a
  *                       keystroke takes: `attach.sendInput`, which is what
  *                       term.html uses (:5994-5995). Not the binary path. That

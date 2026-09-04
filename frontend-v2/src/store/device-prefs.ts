@@ -2,17 +2,19 @@
  * Settings that belong to THIS BROWSER rather than to the account.
  *
  * The roamed doc (`store/prefs.ts`, `/prefs`) is the right home for anything
- * that should follow you between devices. These two deliberately do not:
+ * that should follow you between devices. These three deliberately do not:
  *
  *  - **Flow control** is a kill switch for the terminal's XON/XOFF back-
  *    pressure. It exists to rescue a wedged stream on the machine that is
  *    wedged, so roaming it would carry a local rescue to every device.
+ *  - **The gestures master kill** is the same shape for touch and wheel
+ *    gestures, and rescues the device it is set on for the same reason.
  *  - **Clear local data** is an action on this browser's storage.
  *
- * Both keep the plain `tl-` key names the vanilla page used, because the
- * terminal iframe is the reader and it is same-origin: it picks a flip up from
- * a `storage` event, which fires there precisely because ANOTHER window (the
- * lobby) wrote the key.
+ * The two kill switches keep the plain `tl-` key names the vanilla page used,
+ * because the terminal iframe is a reader too and it is same-origin: it picks a
+ * flip up from a `storage` event, which fires there precisely because ANOTHER
+ * window (the lobby) wrote the key.
  */
 
 import { PREFS_PATH } from "../lib/config";
@@ -41,6 +43,44 @@ export function setFlowControlEnabled(on: boolean): void {
     else localStorage.setItem(FLOW_KILL_KEY, "off");
   } catch {
     /* private mode — the setting simply does not stick */
+  }
+}
+
+/**
+ * The Wave-5 gestures master kill: `"off"` in this browser turns off every
+ * touch and wheel gesture built on top of it.
+ *
+ * term.html gives it the same posture as flow control in as many words
+ * (:3078-3086): a plain per-browser key where anything other than `"off"`,
+ * unset included, means enabled, so it can rescue a device with no redeploy and
+ * even with the prefs machinery broken. That is what keeps it out of the roamed
+ * doc. The per-feature opt-outs under `tl:prefs:v1` `gestures.*` are checked IN
+ * ADDITION to this one, never instead of it.
+ *
+ * There is no setter, because nothing writes this key. term.html only reads it
+ * (`gesturesEnabled`, :3163-3166) and watches for another window changing it
+ * (:7585-7586); a person sets it by hand when a gesture is misbehaving.
+ *
+ * READ IT FRESH at every use, never cached. term.html's `wheelSmoothOn`
+ * (:6203-6205) calls its own `gesturesEnabled` from inside the wheel handler on
+ * every event (:6238), so a flip takes effect on the next wheel without a
+ * reload, and `terminal/wheel.ts` asks for its `smoothOn` on every wheel for
+ * the same reason.
+ *
+ * One path deliberately does not consult it: the one-finger touch scroller
+ * (`terminal/touchscroll.ts` says so at length), because a finger has no other
+ * way to scroll a terminal. term.html gates the desktop smooth wheel (:6204)
+ * and the multi-touch registry (:6425) and nothing in that path.
+ */
+export const GESTURES_KILL_KEY = "tl-gestures";
+
+export function gesturesEnabled(): boolean {
+  try {
+    return localStorage.getItem(GESTURES_KILL_KEY) !== "off";
+  } catch {
+    // A browser that refuses storage keeps its gestures rather than losing
+    // them, which is the answer term.html's own `catch` gives.
+    return true;
   }
 }
 

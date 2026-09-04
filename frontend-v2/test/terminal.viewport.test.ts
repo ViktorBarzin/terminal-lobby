@@ -108,7 +108,8 @@ describe("the two readings of one keyboard", () => {
    * `Math.max(0, forwarded || 0)` is term.html's expression verbatim (:8418),
    * and `|| 0` is what neutralises a NaN there. Worth pinning: the two callers
    * that reach this in the app both check `Number.isFinite` first
-   * (term.html:9418, TerminalNative:1134), so this is the belt to that.
+   * (term.html:9418, and the bridge's own `Number.isFinite` guard), so this is
+   * the belt to that.
    */
   it("treats a NaN forwarded height as nothing forwarded", () => {
     expect(keyboardReserve(812, 812, 0, Number.NaN).offset).toBe(0);
@@ -268,7 +269,8 @@ describe("the gates", () => {
    *   no visualViewport: the API does not appear mid-session, so gate 1 refuses
    *     every later event too.
    *   a fine pointer: `coarsePointer` is read once per mount
-   *     (TerminalNative:528, term.html:6350), so gate 2 refuses every later
+   *     (TerminalNative's `const coarsePointer`, term.html:6350), so gate 2
+   *     refuses every later
    *     event too.
    * A number remembered here could therefore never be spent, and the state
    * that held it would be a claim about `framedKb` that does not apply.
@@ -382,7 +384,8 @@ describe("a height forwarded by the shell", () => {
    * rows back.
    *
    * That is not a one-frame lag either. `__tlKeyboardOffset` is a global
-   * claimed via `ownWhile` (TerminalNative:1105) and every visited session
+   * claimed via `ownWhile` (TerminalNative's `__tlKeyboardOffset`) and every
+   * visited session
    * stays mounted, so a terminal that hands the bridge over never receives the
    * close, and one missed zero-forward would hold it short for the rest of the
    * mount.
@@ -430,9 +433,11 @@ describe("a height forwarded by the shell", () => {
    * `tl-kb` arm on `Number.isFinite(e.data.px)` (:9418), so a junk message
    * moves no `framedKb`, calls no `syncViewport` (no `--kb-offset` write and no
    * height write) and reaches no `refit()` either, because that call is inside
-   * the same gate (:9421); TerminalNative returns at :1134, before both the
-   * host write and its refit at :1160. Recomputing from the live facts here
-   * instead would let a message both callers ignore write a height.
+   * the same gate (:9421). TerminalNative used to return at its own
+   * `Number.isFinite` guard, ahead of both the host write and the refit that
+   * follows it, and hands the message to this module instead now. Recomputing
+   * from the live facts here would let a message both callers ignore write a
+   * height.
    *
    * `nothing` could not carry that. It means "write no height, fit anyway", and
    * a component handed it for a junk message would emit a tmux resize neither
@@ -652,7 +657,7 @@ describe("parity with the page it came from", () => {
   /**
    * `isCoarsePointer` is read once, as a `const`, so a pointer type that
    * changes mid-session moves nothing in that page. TerminalNative reads it
-   * once too (:528), so treating it as a fact per event rather than a live
+   * once too, so treating it as a fact per event rather than a live
    * query is parity, not a shortcut. Both gate refusals being permanent for a
    * mount is also why nothing needs remembering behind one.
    */
@@ -871,14 +876,15 @@ describe("the contract handed to the component", () => {
   /**
    * THE RULE A LITERAL WIRING WOULD HAVE GOT WRONG, in the version that is
    * true of the page. `nothing` means "write no height", never "do nothing":
-   * TerminalNative's ResizeObserver (:1054) exists for exactly one call,
+   * TerminalNative's ResizeObserver exists for exactly one call,
    * `refit("fit-wanted")`, and a container that changed WIDTH with the reserve
    * unmoved still has a new column count, so a wiring that skipped the fit
    * there would silence every non-keyboard resize: a view switch, a window
    * resize, the sidebar, an orientation change with the keyboard down.
    * `ignored` is the opposite of that and the reason the set has three answers.
    * term.html keeps the `tl-kb` refit INSIDE its finite gate (:9418, :9421) and
-   * pass 1 returns at TerminalNative:1134 before its own at :1160, so a wiring
+   * pass 1 returns at the bridge's `Number.isFinite` guard before its own
+   * trailing refit, so a wiring
    * told to fit on every trigger regardless would emit a tmux resize neither of
    * them does.
    *

@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   FLOW_KILL_KEY,
+  GESTURES_KILL_KEY,
   clearLocalData,
   flowControlWanted,
+  gesturesEnabled,
   setFlowControlEnabled,
 } from "../src/store/device-prefs";
 
@@ -37,6 +41,76 @@ describe("flow control — the per-browser kill switch", () => {
   it("treats anything else as on, matching the terminal page's test", () => {
     localStorage.setItem(FLOW_KILL_KEY, "yes");
     expect(flowControlWanted()).toBe(true);
+  });
+});
+
+/**
+ * The gestures master kill, which `terminal/wheel.ts` needs as half of its
+ * `SmoothGates` and which nothing in frontend-v2 read before.
+ *
+ * Its whole job is to work when other things do not: a person sets it by hand
+ * to stop a misbehaving gesture on the device it is misbehaving on, with no
+ * redeploy and no working prefs machinery. So the tests here are about the
+ * awkward inputs, not the happy one.
+ */
+describe("the gestures master kill", () => {
+  it("uses the key the terminal page reads, spelled the same way", () => {
+    // Same origin, same key: a flip made for term.html has to reach the native
+    // terminal too, and a typo here would be a switch that silently does nothing.
+    const term = readFileSync(resolve(__dirname, "../..", "frontend/term.html"), "utf8");
+    expect(GESTURES_KILL_KEY).toBe("tl-gestures");
+    expect(term).toContain("const GESTURES_KILL_KEY = 'tl-gestures';");
+    expect(term).toContain(
+      "return localStorage.getItem(GESTURES_KILL_KEY) !== 'off';",
+    );
+  });
+
+  it("is on when the key is unset", () => {
+    expect(gesturesEnabled()).toBe(true);
+  });
+
+  it("is off only for the literal 'off'", () => {
+    localStorage.setItem(GESTURES_KILL_KEY, "off");
+    expect(gesturesEnabled()).toBe(false);
+  });
+
+  it("treats anything else as on, matching the terminal page's test", () => {
+    for (const v of ["", "on", "OFF", "false", "0", "no"]) {
+      localStorage.setItem(GESTURES_KILL_KEY, v);
+      expect(gesturesEnabled(), v).toBe(true);
+    }
+  });
+
+  it("answers ON when storage throws, rather than losing every gesture", () => {
+    // A locked-down browser must not be a browser with no gestures. This is the
+    // vanilla `catch` answer, and getting it backwards would disable touch
+    // scrolling on the devices least able to report it.
+    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    try {
+      expect(gesturesEnabled()).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("re-reads on every call, so a flip needs no reload", () => {
+    // term.html calls its own reader from inside the wheel handler, so the next
+    // wheel after a flip already behaves differently. A cached read here would
+    // hold the old answer for the life of the page.
+    expect(gesturesEnabled()).toBe(true);
+    localStorage.setItem(GESTURES_KILL_KEY, "off");
+    expect(gesturesEnabled()).toBe(false);
+    localStorage.removeItem(GESTURES_KILL_KEY);
+    expect(gesturesEnabled()).toBe(true);
+  });
+
+  it("is wiped by clear-local-data, being a tl- key like the rest", async () => {
+    localStorage.setItem(GESTURES_KILL_KEY, "off");
+    await clearLocalData({ alsoRoamed: false, reload: () => {} });
+    expect(localStorage.getItem(GESTURES_KILL_KEY)).toBeNull();
+    expect(gesturesEnabled()).toBe(true);
   });
 });
 

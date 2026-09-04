@@ -8,6 +8,13 @@ import "@xterm/xterm/css/xterm.css";
 import { attach, type Attachment } from "../terminal/attach";
 import { toXtermTheme, THEME_LIVE_GLOBAL } from "../terminal/theme";
 import type { LadderState } from "../terminal/reconnect";
+import {
+  initialAttention,
+  reduce as reduceAttention,
+  type AttentionEvent,
+  type AttentionKind,
+  type AttentionState,
+} from "../terminal/attention";
 import type { TerminalReport } from "../diagnostics/status";
 import {
   NO_FIT_OWED,
@@ -16,7 +23,7 @@ import {
   type FitState,
   type HostBox,
 } from "../terminal/fit";
-import { isHolding, type HeldState, type HeldVerdict } from "../terminal/held";
+import { EMPTY_HELD, isHolding, type HeldState, type HeldVerdict } from "../terminal/held";
 import {
   NO_GESTURE,
   reduce as reduceGesture,
@@ -25,12 +32,54 @@ import {
   type DragSelectWorld,
   type ScreenBox,
 } from "../terminal/dragselect";
+import { reduceStash, type SelectionStash } from "../terminal/selection";
 import {
-  reduceStash,
-  terminalKeydownDecision,
-  type SelectionStash,
-} from "../terminal/selection";
+  NO_TOUCH_SCROLL,
+  reduce as reduceTouchScroll,
+  type TouchScrollEvent,
+  type TouchScrollState,
+  type TouchScrollWorld,
+} from "../terminal/touchscroll";
+import {
+  isSmoothOn,
+  NO_WHEEL,
+  reduce as reduceWheel,
+  type SmoothWheelEvent,
+  type WheelState,
+  type WheelWorld,
+} from "../terminal/wheel";
+import {
+  reduce as reduceKey,
+  reduceData,
+  type KeyReduction,
+  type KeyState,
+} from "../terminal/keys";
+import {
+  EMPTY_MIRROR,
+  MIRROR_FIELD_ATTRIBUTES,
+  reduce as reduceMirror,
+  type MirrorEvent,
+  type MirrorState,
+} from "../terminal/mirror";
+import {
+  hostHeightStyle,
+  NO_KEYBOARD_RESERVE,
+  reduce as reduceViewport,
+  type ViewportEvent,
+  type ViewportFacts,
+  type ViewportState,
+} from "../terminal/viewport";
+import {
+  noteTouchEmit,
+  NO_TOUCH_EMIT,
+  screenGeometry,
+  touchScrollWorld,
+  wheelsFor,
+  wheelWorld,
+  type EmitPoint,
+} from "../terminal/emit";
 import { isCoarsePointer } from "../mobile/pointer";
+import { consumeSoftMods } from "../mobile/softmods";
 import { diag } from "../telemetry/diag";
 import {
   coercePrefs,
@@ -38,8 +87,10 @@ import {
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   PREFS_KEY,
+  readPersistedPrefs,
   type Prefs,
 } from "../store/prefs";
+import { gesturesEnabled } from "../store/device-prefs";
 import { showToast } from "../store/toast";
 
 /** Every fit trigger waits this long first (term.html:8471-8481, `refit`). */
@@ -54,6 +105,20 @@ const WATCH_NUDGE_MS = 4000;
  * LONGER, so the two throttles are two variables here as well.
  */
 const HELD_SAY_MS = 5000;
+
+/**
+ * The device-local "I dismissed the input bar here" override
+ * (term.html:3208-3211, `tl:input.barHidden:v1`, read by `inputBarHiddenHere`).
+ *
+ * Same origin as this app, so a person who hid the bar with the iframe's ⌨ soft
+ * key already has this set, and a native mirror that ignored it would hand them
+ * back the surface they dismissed with nothing on this side to dismiss it again:
+ * the SPA's own ⌨ key is a keyboard-DISMISS (SoftKeys.tsx, "Dismiss the soft
+ * keyboard"), not a bar toggle. Device-local on purpose in the page too: the
+ * roamed `input.bar` is what the settings row writes, so an accidental tap on
+ * one device does not hide the bar on all of them.
+ */
+const INPUT_BAR_HIDDEN_KEY = "tl:input.barHidden:v1";
 
 /**
  * The mono stack, for when `--font-mono` cannot be read.
@@ -144,6 +209,54 @@ function bootPrefs(): Prefs {
 }
 
 /**
+ * The three postures of the compose mirror's field, `input.bar`
+ * (term.html:2799-2807, validated at :2893).
+ *
+ *   off    no field at all, an explicit settings act.
+ *   on     the painted bar, which costs the terminal its height.
+ *   auto   the never-touched default. On a coarse pointer it resolves to the
+ *          GHOST render (term.html:7377, :1887-1902): the field stays in the
+ *          DOM, focusable and keyboard-summoning, but painted away and
+ *          reserving no terminal space, so the terminal is the only visible
+ *          input surface. That is Viktor's own call in the page (:7086, "we
+ *          either mirror the terminal … or dont at all"). A second composer in
+ *          front of Claude Code's own input box is the thing to avoid.
+ */
+type InputBarPosture = "auto" | "on" | "off";
+
+/**
+ * The posture as the roamed doc holds it, read straight out of `tl:prefs:v1`.
+ *
+ * NOT through `coercePrefs`, which drops `input.bar` deliberately: prefs.ts
+ * types `tapFocus` alone and records that `input.bar` "stays an
+ * untyped-but-preserved subkey until the mirror pass needs it", because a value
+ * WRITTEN from this side would answer a per-device question the roamed doc is
+ * meant to leave open. This is that pass, and reading is not writing, so the
+ * subkey is read here with its own validator the way `bootPrefs` reads the
+ * legacy font key. Nothing on this side writes it.
+ *
+ * Read ONCE per mount. term.html reconciles it live from `applyInputPrefs`
+ * (:7483-7488) over the `tl-prefs` message, which is the un-ported
+ * `__tlPrefsLive` bridge (:9173-9188), the same gap `bootPrefs` records for
+ * the font size, so a posture change lands on this terminal's next mount.
+ */
+function bootInputBar(): InputBarPosture {
+  let bar: unknown;
+  try {
+    const parsed: unknown = JSON.parse(stored(PREFS_KEY) ?? "null");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const input = (parsed as Record<string, unknown>).input;
+      if (input && typeof input === "object" && !Array.isArray(input)) {
+        bar = (input as Record<string, unknown>).bar;
+      }
+    }
+  } catch {
+    /* a corrupt doc reads as no doc, which is the 'auto' default */
+  }
+  return bar === "on" || bar === "off" ? bar : "auto";
+}
+
+/**
  * Is something else in the lobby holding the keyboard right now?
  *
  * The inline rename box, the composer, a palette input. `TerminalView` declines
@@ -210,15 +323,14 @@ function heldWord(
     case "refused:closed":
       // term.html:8221 promises "Backspace to edit it, Esc to discard". The
       // Backspace half is real here (held.ts answers `\x7f` on a committed
-      // line with `reopened`); the Esc half is a key binding this component
-      // does not have. term.html binds Escape inside its
-      // `attachCustomKeyEventHandler` (:8554-8564), where it calls
-      // `discardHeldInput()` and toasts "Discarded what you typed while
-      // offline". This component now installs a handler of its own, but it
-      // decides the paste chord and nothing else (see the call), so there is
-      // still nothing to discard a hold, and the sentence stays cut back to
-      // what pressing a key here actually achieves. Porting :8554-8564 is
-      // what restores the full wording.
+      // line with `reopened`); the Esc half still is not, and the missing piece
+      // has moved. term.html binds Escape inside its
+      // `attachCustomKeyEventHandler` (:8554-8564), which keys.ts now ports and
+      // this component now performs. But that leg reads the HOLD, and no hold
+      // reaches this component: attach.ts keeps the queue, offers it back only
+      // through the `onHeld` callback above, and exposes no discard. So the
+      // sentence stays cut back to what pressing a key here achieves. The
+      // `discard-held` arm at the handler says what would make it whole.
       return {
         message: "Your line is held — Backspace to edit it",
         kind: "info",
@@ -254,20 +366,22 @@ function heldWord(
  *
  * WHAT IT DOES. Attaches, reconnects, types, takes the focus at boot, pastes
  * through `term.paste` from the bridge and from the paste chord, reports the
- * mouse and buys plain-drag selection back from that reporting, fits only into
- * a host that has a box, takes the forwarded soft-keyboard height off its own
- * height, hardens xterm's helper textarea against predictive text, and says
- * why a keystroke was refused or held.
+ * mouse and buys plain-drag selection back from that reporting, scrolls from a
+ * finger and paces a trackpad's pixels into discrete line wheels, decides the
+ * whole of xterm's key-handler contract, fits only into a host that has a box,
+ * reserves what a soft keyboard covers of that box and what its own compose bar
+ * takes off it, mirrors the pty's input line into a field a phone keyboard can
+ * autocorrect into, hardens xterm's helper textarea against predictive text,
+ * tells the lobby when the pty rings or answers unwatched, and says why a
+ * keystroke was refused or held.
  *
- * WHAT IT IS NOT YET. The compose mirror, copy and its chord, the REST of the
- * key-handler contract (the handler is installed and decides the paste chord
- * alone; term.html:8516-8584 is the rest), touch scroll, pinch-to-zoom, web
- * links, the bell, sixel and the held-key overlay all still belong to
- * term.html. The soft keyboard is
- * half ported: `__tlKeyboardOffset` below takes the height the shell measured,
- * and term.html's own reading of it (`syncViewport`, :8427-8469) pairs that
- * height with its visualViewport, its toolbar and its compose bar, none of
- * which is here. It is behind a flag for exactly those reasons.
+ * WHAT IT IS NOT YET. Pinch-to-zoom, web links, sixel and the held-key overlay
+ * still belong to term.html, and two legs of what IS here are waiting on one of
+ * those rather than on themselves: Escape cannot discard an offline hold while
+ * nothing exposes one to discard, and the copy chord's recovery arm is dead
+ * until something stashes a selection. Each says so at its own site. It is
+ * behind a flag while that list stands, and because nobody has opened it on the
+ * iPad.
  *
  * xterm arrives through a dynamic import so it lands in its own content-hashed
  * chunk that a deploy leaves alone unless xterm itself changed (330 KB, 83 KB
@@ -305,6 +419,36 @@ export const TerminalNative: Component<{
    * visited session mounted and CSS-hidden. See the effect below.
    */
   ownsBridges?: boolean;
+  /**
+   * TRUE while this terminal is the thing ON SCREEN: the terminal view showing,
+   * in a session slot that is not itself CSS-hidden behind another session.
+   *
+   * A DIFFERENT question from `ownsBridges`, which is `onScreen()` alone and
+   * stays true while the text view shows over a terminal that is still mounted
+   * and still attached. `terminal/attention.ts`'s `view` event is exactly the
+   * negation of this flag, and the iframe branch passes the same expression as
+   * TerminalView's `active` prop (SessionView.tsx).
+   *
+   * Read by the attention effect below, which fires on mount, so a session
+   * that mounts off screen is told nobody is looking straight away.
+   */
+  active?: boolean;
+  /**
+   * This session wants the lobby's notice: the pty rang the bell, or output
+   * arrived while nobody could see the terminal. Which of those is which, and
+   * the one-shot that keeps ten frames behind a hidden view down to one piece
+   * of news, is `terminal/attention.ts`.
+   *
+   * The lobby owns the tab title, the favicon and the [Terminal] segment's dot
+   * (`notify/title.ts`, `notify/favicon.ts`, SessionView's `onAttention`), so a
+   * terminal that painted any of them would fight them. It reports, and that is
+   * all. WHICH session rang is the caller's to add: this component is handed
+   * `args`, not a session name.
+   *
+   * Fed by `feedAttention` below from three events: xterm's `onBell`, every
+   * output frame, and the tab's own visibility.
+   */
+  onAttention?: (kind: AttentionKind) => void;
 }> = (props) => {
   let host: HTMLDivElement | undefined;
   let attachment: Attachment | null = null;
@@ -331,6 +475,128 @@ export const TerminalNative: Component<{
   // term.html's two toast clocks, kept apart for the reason HELD_SAY_MS gives.
   let nudgedAt = 0;
   let saidAt = 0;
+
+  /**
+   * Is the primary pointer a finger? Read ONCE, where term.html reads it once
+   * (`const isCoarsePointer`, :6350). Reading it live would let a 2-in-1
+   * switching to its trackpad leave a keyboard reservation on screen with
+   * nothing to clear it. mobile/pointer.ts is the app's own mirror of that
+   * query.
+   *
+   * At construction rather than inside the async mount body, where it sat until
+   * the compose mirror arrived: the mirror's field is created by the JSX below,
+   * which runs before the two dynamic imports resolve, and the same answer
+   * gates it (term.html builds the whole bar inside `if (isCoarsePointer)`).
+   * One read, two readers.
+   */
+  const coarsePointer = isCoarsePointer();
+
+  /**
+   * THE COMPOSE MIRROR'S FIELD, and whether there is one.
+   *
+   * term.html's `want` (:7484): a posture other than 'off', and no device-local
+   * dismissal. Inside the coarse-pointer block in that page, which is the gate
+   * added here. A fine pointer keeps the inert `applyInputPrefs` stub, so
+   * 'auto' never ghosts there (:7363-7364) and xterm's own hardened helper
+   * textarea stays the only input surface.
+   *
+   * WHERE THE FIELD LIVES, which mirror.ts's `paste-intent` event says is the
+   * thing that breaks if it lives in the wrong place: OUTSIDE the terminal
+   * host. The host carries a CAPTURE-phase paste listener that preventDefaults
+   * and stopPropagations every paste carrying text, so a field mounted inside
+   * it would have its paste swallowed before `beforeinput` fired: no native
+   * insertion for a single-line paste and no interception for a multiline one.
+   * term.html appends its bar to `document.body` (:7130) and needs the same
+   * escape at document level, spelled as an id check (:8892-8903).
+   *
+   * A JSX SIBLING and not a `document.body.appendChild`. The lobby keeps every
+   * visited session mounted, so an imperative body append leaks one bar per
+   * session that Solid does not own and cannot take down; a sibling is unmounted
+   * with the component. It is `position: fixed` rather than a flex child of the
+   * `.tl-view` it sits in, for two reasons that are both this app's layout
+   * rather than a preference: `.tl-view` is `display: flex` in ROW direction
+   * (app.css `.tl-view`), so an in-flow sibling would sit BESIDE the terminal;
+   * and `.tl-views.tl-kb-inline` deliberately leaves the keyboard OUT of its
+   * box (app.css, `body.has-soft-keys .tl-views.tl-kb-inline`), so a child
+   * anchored to that box would sit behind the keyboard. Fixed puts the bar on
+   * the same `--kb-offset + --safe-b + --sk-h` stack the soft-key row rides,
+   * which is where term.html parks it too (:1826-1828).
+   *
+   * ONE BAR ON SCREEN, without a flag deciding it. `position: fixed` escapes
+   * its ancestors' layout but not their `display: none`, and that is what the
+   * lobby hides a mounted session with (`.tl-hidden`, and the same class on
+   * this terminal's own `.tl-view` while the text view shows), so every other
+   * mounted session's bar is not rendered at all and reads `offsetHeight` 0,
+   * which is how term.html's own formulas read a hidden bar (:8450-8452). The
+   * dock's second terminal is `TerminalView`, an iframe with its own bar
+   * inside it, so it cannot stack with this one either.
+   */
+  const barPosture: InputBarPosture = coarsePointer ? bootInputBar() : "off";
+  const barEngaged = barPosture !== "off" && stored(INPUT_BAR_HIDDEN_KEY) !== "1";
+  /** The 'auto' render: engaged, focusable, painted away, reserving no rows. */
+  const barGhost = barPosture === "auto";
+  let composeBar: HTMLDivElement | undefined;
+  let mirrorField: HTMLTextAreaElement | undefined;
+
+  /**
+   * Words, but only occasionally: a burst of typing is one event to the person,
+   * not one per key. term.html's `heldSay` (:8191-8195), one message every
+   * `HELD_SAY_MS` across every caller, which is why the mirror's `say` action
+   * and the held-input lines share this clock rather than each keeping one. A
+   * drop must not say two things at once.
+   */
+  const heldSay = (message: string, kind: "info" | "error"): void => {
+    if (Date.now() - saidAt < HELD_SAY_MS) return;
+    saidAt = Date.now();
+    showToast(message, kind);
+  };
+
+  /* ------------------------------------------------------------------ *
+   * ATTENTION: the two things this terminal knows that could be news.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * attention.ts's whole state, held here because the module is pure.
+   *
+   * At component scope rather than in the mount body, because the `view` effect
+   * below fires on mount and that first event is the native counterpart of the
+   * lobby re-posting `tl-view` on every attach: it is what tells a session
+   * mounted OFF screen that nobody is looking, and it must not wait on two
+   * dynamic imports. `initialAttention()` takes no seed and wants none.
+   */
+  let attention: AttentionState = initialAttention();
+
+  /**
+   * One attention event, decided and then handed up.
+   *
+   * The component writes no title, no favicon and no dot: those belong to
+   * `notify/title.ts`, `notify/favicon.ts` and SessionView's `onAttention`, and
+   * a terminal that painted its own would fight them. WHICH session rang is the
+   * caller's to add, since this component is handed `args`, not a session name.
+   */
+  const feedAttention = (event: AttentionEvent): void => {
+    const r = reduceAttention(attention, event);
+    attention = r.state;
+    for (const action of r.actions) props.onAttention?.(action.kind);
+  };
+
+  /**
+   * THE TERMINAL CAME ON OR OFF SCREEN (attention.ts's `view`).
+   *
+   * `!active`, which is `!(mode() === "terminal" && onScreen())` at the call
+   * site: the text view showing over the terminal, and this session's whole
+   * slot being CSS-hidden behind another session. Both halves carry weight, and
+   * `document.hidden` rides along because the re-arm this runs reads it LIVE in
+   * the page (term.html:5744, :5754). A stored flag would be a task behind,
+   * since the browser flips the flag and QUEUES the event.
+   *
+   * A missing prop reads as hidden, which errs toward reporting rather than
+   * toward silence. Every call site passes it.
+   */
+  createEffect(() => {
+    const viewHidden = props.active !== true;
+    feedAttention({ type: "view", viewHidden, tabHidden: document.hidden });
+  });
 
   /** The ladder's phase in the vocabulary the status model speaks. */
   const report = (phase: LadderState["phase"], attempt: number): TerminalReport => {
@@ -373,9 +639,7 @@ export const TerminalNative: Component<{
     }
     const word = heldWord(held, verdict);
     if (!word) return;
-    if (Date.now() - saidAt < HELD_SAY_MS) return;
-    saidAt = Date.now();
-    showToast(word.message, word.kind);
+    heldSay(word.message, word.kind);
   };
 
   /**
@@ -519,15 +783,6 @@ export const TerminalNative: Component<{
       }
 
       /**
-       * Is the primary pointer a finger? Read ONCE, where term.html reads it
-       * once (`const isCoarsePointer`, :6350, right after the same textarea
-       * hardening). Reading it live would let a 2-in-1 switching to its
-       * trackpad leave a keyboard reservation on screen with nothing to clear
-       * it. mobile/pointer.ts is the app's own mirror of that query.
-       */
-      const coarsePointer = isCoarsePointer();
-
-      /**
        * Is this a Mac, by the ONLY test that matters here: the one xterm makes.
        *
        * `SelectionService.shouldForceSelection` is
@@ -613,6 +868,122 @@ export const TerminalNative: Component<{
       };
       viewShown = () => refit("shown");
 
+      /* ---------------------------------------------------------------- *
+       * THE SOFT KEYBOARD'S RESERVE, decided by viewport.ts.
+       *
+       * Pass 1 wired the RECEIVING half inline: the `__tlKeyboardOffset` bridge
+       * took the height the shell measured, checked term.html's two gates and
+       * wrote `calc(100% - Npx)`. What the module adds is the two things that
+       * arithmetic could not express, both from its header: a terminal that
+       * READS the viewport for itself, because the shell forwards on CHANGE
+       * only (mobile/viewport.ts) and a terminal mounting into an already-open
+       * keyboard is therefore never told; and `max(own, forwarded)` rather than
+       * the forwarded height alone, because natively both readings describe the
+       * SAME keyboard and subtracting both leaves a 60px terminal.
+       * ---------------------------------------------------------------- */
+
+      let viewportState: ViewportState = NO_KEYBOARD_RESERVE;
+
+      /**
+       * The world as of THIS trigger, read fresh. Never cached when the trigger
+       * fired: a geometry read then can be stale by the time the decision runs,
+       * which is the same rule fit.ts states for its box.
+       *
+       * The `?? 0` on `offsetTop` is load-bearing rather than tidy: without it
+       * the expression is `number | undefined` under `strict: true` and, if it
+       * compiled, `Number.isFinite(undefined)` would make every reading
+       * unmeasurable and reserve nothing.
+       */
+      const viewportFacts = (): ViewportFacts => ({
+        layoutHeight: window.innerHeight,
+        visualHeight: window.visualViewport?.height ?? null,
+        offsetTop: window.visualViewport?.offsetTop ?? 0,
+        coarsePointer,
+      });
+
+      /**
+       * The compose bar's live height, which is term.html's `cbH` (:8461) and
+       * the term viewport.ts does not carry.
+       *
+       * THE CONFLICT THIS SETTLES. viewport.ts's header said "nothing sits over
+       * the terminal's box, so there is nothing to subtract", which was true of
+       * this tree until the bar above it mounted (that line now points here).
+       * term.html measures the
+       * bar's own `offsetHeight` at :8461, takes it off the terminal at :8467
+       * and re-runs the whole calculation when the bar's height changes
+       * (`growAndRefit`, :7156-7165). So the bar's height reaches the decision
+       * here, as a second term on the same style write, and `growBar` below is
+       * the trigger for a change in it.
+       *
+       * A GHOST BAR IS HEIGHT 0, which is term.html's own exception at :8461
+       * (`!cb.classList.contains('ghost')`) and the whole point of that render:
+       * the terminal RECLAIMS the bar's space. Its field keeps a real
+       * offsetHeight, because a zero-size field can fail to summon the iOS
+       * keyboard, so the read has to be about the posture, not the pixels.
+       */
+      const barReservePx = (): number =>
+        barGhost || !composeBar ? 0 : composeBar.offsetHeight;
+
+      /** The cbH term currently ON the host, so a bar-height change is visible. */
+      let appliedBarPx = 0;
+
+      /**
+       * One viewport trigger, decided and then performed. The answer is whether
+       * a caller took the message, which is what the `tl-kb` bridge returns.
+       *
+       * `host-height` writes and fits, `nothing` writes nothing and fits
+       * anyway, `ignored` does neither: viewport.ts's owes list, and the third
+       * answer exists because term.html keeps the `tl-kb` arm's `refit()`
+       * INSIDE the same finite gate as everything else it does (:9418, :9421)
+       * while its four viewport listeners refit outside both of
+       * `syncViewport`'s gates (:8482-8486).
+       *
+       * THE BAR'S TERM RIDES THE SAME TWO GATES, because term.html's height
+       * write is one expression and cbH is inside it: `if (isCoarsePointer)` at
+       * :8441, and the `if (!window.visualViewport) return` at :8428 above it.
+       * So the component reads the same two facts the module reads. Not a
+       * second decision, the same one: a bar-height change on a machine behind
+       * either gate writes nothing, exactly as the page writes nothing there.
+       *
+       * `fit: false` is for the ONE trigger term.html follows with an immediate
+       * `safeFit()` instead of a debounced `refit()`: the boot seed, where
+       * :8490 and :8491 are consecutive lines. Asking for the debounce there as
+       * well would put a second fit, and so a second tmux resize, 120ms into
+       * every mount.
+       */
+      const feedViewport = (
+        event: ViewportEvent,
+        opts: { fit?: boolean } = {},
+      ): boolean => {
+        const r = reduceViewport(viewportState, event);
+        viewportState = r.state;
+        if (r.action.kind === "ignored") return false;
+        const gatesOpen = event.facts.visualHeight !== null && event.facts.coarsePointer;
+        const barPx = gatesOpen ? barReservePx() : 0;
+        if (r.action.kind === "host-height" || barPx !== appliedBarPx) {
+          appliedBarPx = barPx;
+          // `hostHeightStyle` is the one place that knows the height is
+          // RELATIVE: the container has the toolbar and the safe area out of it
+          // already and the keyboard still in, so the reserve is a shrink off
+          // it, and 0 hands the box back to the stylesheet's `height: 100%`.
+          if (host) host.style.height = hostHeightStyle(viewportState.appliedShrink + barPx);
+        }
+        // Debounced, because the keyboard animates over ~250ms and fires a
+        // burst, and each fit emits a tmux resize (term.html:8390-8393).
+        if (opts.fit !== false) refit("fit-wanted");
+        return true;
+      };
+
+      // THE SEED, which is the hole item 1 of viewport.ts's header describes and
+      // the shipped page has as well: `onKeyboard` fires only when the height
+      // the shell measured DIFFERS from the last one it sent
+      // (mobile/viewport.ts), so a session opened while the keyboard is already
+      // up is never told and its bottom rows, the prompt among them, sit behind
+      // the keyboard until the keyboard next moves. Before the boot fit, where
+      // term.html seeds it (`syncViewport()` at :8490, then `safeFit()`), so
+      // the fit measures the box the reserve leaves and is the one below.
+      feedViewport({ type: "observed", facts: viewportFacts() }, { fit: false });
+
       // The boot fit runs straight away, as it does in the page (:5613-5614).
       // A host with no box yet owes one, and the ResizeObserver below or the
       // view coming back on screen settles it.
@@ -656,17 +1027,776 @@ export const TerminalNative: Component<{
       // still leaves this unfocused.
       if (bootFitted && !typingElsewhere()) term.focus();
 
+      /**
+       * THIS terminal's screen node. Never a document query: see `worldAt` and
+       * `screenHeight` below, which both read it.
+       */
+      const screenOf = (): HTMLElement | null =>
+        host?.querySelector<HTMLElement>(".xterm-screen") ?? null;
+
+      /**
+       * WHERE A TAP ON THE TERMINAL PUTS THE CARET. term.html's `tapFocus`
+       * (:7459-7462), which is the whole of that assignment:
+       * `if (composeVisible && getPrefs().input.tapFocus === 'field')
+       * composeInput.focus(); else term.focus();`
+       *
+       * TWO CALLERS, and both were `term.focus()` until this pass: touchscroll's
+       * `focus` action (the lift of a tap) and dragselect's (the synthesized
+       * mousedown a tap also produces). The page names that double-fire and
+       * calls it harmless, because it is two `.focus()` calls on one element.
+       *
+       * `mirrorField` being mounted IS the page's `composeVisible`: that flag
+       * means the field is ENGAGED, true for the ghost render as much as the
+       * painted bar (:7356-7359), and this component only mounts the field on
+       * the postures that engage it. Without this, a tap with the mirror mounted
+       * would focus xterm's HARDENED helper textarea (`type=password`,
+       * autocorrect off) and leave the mirror unfocusable, which removes the
+       * entire feature: that field is the only route a phone has to autocorrect,
+       * dictation or swipe typing.
+       *
+       * The pref is read per tap, where the page reads `getPrefs()` per tap.
+       * `readPersistedPrefs` measured 6.2 us, and a tap is not a hot path.
+       *
+       * A THIRD FOCUS SITE IS LEFT AS IT WAS: `__tlFocusTerminal`, which is the
+       * handback after a lobby overlay closes (keybindings/refocus.ts), still
+       * calls `term.focus()`. term.html's second focus router,
+       * `focusActiveInput` (:7437-7443), re-arms the compose field only when it
+       * was ALREADY the focused input, and its caller is that page's own
+       * soft-key row rather than anything like the command palette, which the
+       * page does not have. So there is no line to port; what a person sees is
+       * that dismissing the palette puts the keyboard back in the terminal
+       * rather than in the field they were typing in.
+       */
+      const tapFocus = (): void => {
+        if (mirrorField && readPersistedPrefs().input.tapFocus === "field") {
+          mirrorField.focus();
+          return;
+        }
+        term.focus();
+      };
+
+      /* ---------------------------------------------------------------- *
+       * SCROLLING: a finger's drag, and a trackpad's pixel stream.
+       *
+       * Two ports of two term.html ranges (:6056-6171 and :6172-6274) that
+       * share one emission primitive, one per-frame cap and one reading of the
+       * screen box. `emit.ts` is that shared middle, and the halves of it that
+       * touch the DOM are here: the `WheelEvent` constructor and the
+       * `getBoundingClientRect`.
+       *
+       * WHY SYNTHETIC WHEELS AT ALL, because the whole mechanism reads as a
+       * workaround until you know: xterm damps a sub-50px pixel wheel to 0.3x
+       * and, in mouse-tracking mode, forwards at most ONE report per DOM wheel
+       * event with the magnitude discarded. So a finger's px and a trackpad's px
+       * both have to come out as k separate `deltaMode: 1` wheels of deltaY +-1,
+       * which are undamped and one row exact. That is what puts tmux into
+       * copy-mode and lets Claude Code scroll its own view.
+       * ---------------------------------------------------------------- */
+
+      /**
+       * The `clientY` the next synthetic wheels carry, per terminal
+       * (term.html's `scrollLastEmitY`, :6087).
+       *
+       * ONE variable for BOTH scrollers, which is the coupling emit.ts exists
+       * to keep: the page has one `emitLineWheel` reading one `scrollLastEmitY`
+       * (:6111), the touch path is its only writer (:6522), and the trackpad
+       * pacer only reads it. So a trackpad wheel carries the last y a finger
+       * reached, and on a machine where no finger ever did it carries 100 for
+       * the life of the terminal. xterm derives the mouse report's ROW from
+       * this coordinate against the screen box, so giving the trackpad path the
+       * wheel's own clientY instead would move a report from one tmux pane to
+       * another on a split window.
+       */
+      let point: EmitPoint = NO_TOUCH_EMIT;
+
+      /**
+       * The screen box height, measured NOW, or null when there is no screen
+       * element (term.html:6095, :6099).
+       *
+       * Behind a callback rather than a measurement so `screenGeometry` can
+       * decline to call it: `getBoundingClientRect` flushes layout against a
+       * grid xterm is writing into, and the touch path's owes list forbids
+       * paying for that on a touchmove for a number only the lift reads.
+       */
+      const screenHeight = (): number | null => {
+        const scr = screenOf();
+        return scr ? scr.getBoundingClientRect().height : null;
+      };
+
+      /**
+       * WHY THE PREF READ IS EAGER WHERE THE BOX READ IS LAZY, since both
+       * modules say "every field FRESH at the moment of the event" and one of
+       * the two is measured on demand.
+       *
+       * `touchScrollWorld` and `wheelWorld` spread `rest` FIRST, which is what
+       * keeps the two box getters unshadowed, and a spread evaluates any getter
+       * it copies. So the pref fields are read once per event whether or not a
+       * reducer asks for them. That is a cost and not a behaviour change, and
+       * the two costs are not comparable: the parse and the coerce inside
+       * `readPersistedPrefs` measured 6.2 us per call, which is 0.7 ms per
+       * second of dragging at 120 Hz (prefs.ts, which also says why the
+       * `getItem` half is left unmeasured), while a box read forces a layout on
+       * the hot path. Where the page reads the doc only inside `feedScroll`
+       * (:6119) and `wheelSmoothOn` (:6238), this reads it on a pre-threshold
+       * touchmove and on a modified wheel too.
+       *
+       * A PULL and not the prefs STORE, deliberately: the store is created by
+       * App.tsx and never reaches this component, and its signal would miss a
+       * change made in the vanilla settings panel, which writes the same
+       * localStorage document on the same origin. `readPersistedPrefs`' own
+       * header carries the rest of that reasoning.
+       */
+      const touchWorld = (): TouchScrollWorld => {
+        const prefs = readPersistedPrefs();
+        return touchScrollWorld(screenGeometry(screenHeight, term.rows), {
+          scrollSpeed: prefs.gestures.scrollSpeedV2,
+          momentum: prefs.gestures.scrollMomentum,
+          mounted: !!term.element,
+        });
+      };
+
+      /** The whole recognizer's state, held here because the module is pure. */
+      let touchState: TouchScrollState = NO_TOUCH_SCROLL;
+      /** The coast's outstanding `requestAnimationFrame`, or null. */
+      let coastFrame: number | null = null;
+
+      /**
+       * One touch event or coast frame, decided and then performed.
+       *
+       * The `point` write is unconditional and comes from the STATE rather than
+       * from a dispatched wheel, because :6522 assigns on every qualifying
+       * touchmove including one that banks its pixels and emits nothing.
+       * Reading it off an action would leave a trackpad wheel carrying a y the
+       * finger has already left.
+       */
+      const feedTouch = (event: TouchScrollEvent): void => {
+        const r = reduceTouchScroll(touchState, event, touchWorld());
+        touchState = r.state;
+        point = noteTouchEmit(point, r.state.emitY);
+        for (const action of r.actions) {
+          switch (action.kind) {
+            case "wheel":
+              // On the xterm ROOT (:6107), and one dispatchEvent per wheel: in
+              // mouse-tracking mode xterm forwards one report per DOM event
+              // whatever the magnitude, so collapsing k wheels into one
+              // `deltaY: k` would be one report where k separate events are k.
+              // The `term.element` test is the page's own guard at :6106.
+              for (const w of wheelsFor(action, point)) {
+                term.element?.dispatchEvent(new WheelEvent("wheel", w));
+              }
+              break;
+            case "focus":
+              // term.html's `tapFocus` (:5815, reassigned at :7459-7462), which
+              // is where the mirror field takes a tap over xterm's hardened
+              // helper textarea. dragselect.ts's `focus` action is the same
+              // call, and the two moved together.
+              tapFocus();
+              break;
+            default: {
+              const unhandled: never = action;
+              void unhandled;
+            }
+          }
+        }
+        // The coast, which is the one thing the module cannot do for itself:
+        // exactly one frame outstanding for as long as `coasting`, cancelled
+        // the moment it goes false (term.html:6167-6169, and the cancel at
+        // :6130).
+        if (r.coasting) {
+          if (coastFrame === null) coastFrame = requestAnimationFrame(onCoastFrame);
+        } else if (coastFrame !== null) {
+          cancelAnimationFrame(coastFrame);
+          coastFrame = null;
+        }
+      };
+
+      /**
+       * One coast tick, carrying rAF's OWN timestamp.
+       *
+       * That timestamp has to be on the same clock as the `th` the lift froze
+       * into `Coast.at`, because the coast measures one against the other:
+       * `performance.now()` is that clock and a rAF timestamp shares its time
+       * origin, where `Date.now()` shares neither. A function declaration
+       * rather than a const, so `feedTouch` above can name it.
+       */
+      function onCoastFrame(now: number): void {
+        coastFrame = null;
+        if (disposed) return;
+        feedTouch({ type: "frame", now });
+      }
+
+      /**
+       * TWO CLOCKS PER TOUCH EVENT, and they are not interchangeable.
+       *
+       * `t` is `e.timeStamp`, the event's CREATION stamp: true finger timing,
+       * which survives coalesced or late delivery on real iOS, where WKWebView
+       * routinely puts more than 80ms between the last touchmove and the lift.
+       * `th` is `performance.now()` read while HANDLING it, which stays sane for
+       * synthetic events whose creation stamps batch unreliably. The velocity
+       * ring uses `t`; the lift compares the gap on BOTH and takes the smaller
+       * (:6545-6547), which is the flick-favourable reading in either world
+       * while a genuine hold is long on both. term.html says all of this at
+       * :6509-6519. Passing one clock for both compiles and no test notices,
+       * and it costs the flick whichever way the delivery went wrong.
+       *
+       * `y` is read off `touches[0]` for both events the module gives it to, and
+       * both ignore it unless there is exactly one touch: a touchstart with two
+       * fingers disarms the drag (:6498) and a touchmove with two returns
+       * (:6503). So the fallback is only ever fed to a branch that drops it.
+       */
+      const onTouchStart = (e: TouchEvent): void =>
+        feedTouch({
+          type: "touchstart",
+          touches: e.touches.length,
+          y: e.touches[0]?.clientY ?? 0,
+        });
+      const onTouchMove = (e: TouchEvent): void =>
+        feedTouch({
+          type: "touchmove",
+          touches: e.touches.length,
+          y: e.touches[0]?.clientY ?? 0,
+          t: e.timeStamp,
+          th: performance.now(),
+        });
+      const onTouchEnd = (e: TouchEvent): void =>
+        feedTouch({ type: "touchend", t: e.timeStamp, th: performance.now() });
+      const onTouchCancel = (): void => feedTouch({ type: "touchcancel" });
+
+      /**
+       * THE GATE, which decides whether any of the touch half exists.
+       *
+       * term.html's whole recognizer, all three listeners included, sits inside
+       * `if (isCoarsePointer)` (:6478), read ONCE at :6350, which is
+       * `coarsePointer` above, read once for the reason the page reads it once.
+       * The hardware this protects is a touchscreen laptop or a 2-in-1: there
+       * the page attaches nothing and a finger gets the browser's native
+       * scroll, while a wiring that skipped the gate would ALSO feed one LINE
+       * wheel per row to the pty and put tmux into copy-mode under the person's
+       * finger. These listeners cannot replace the native scroll either, only
+       * add to it, because they are passive and have no `preventDefault` to
+       * offer.
+       *
+       * PASSIVE is not a detail. A standing non-passive touch listener taxes
+       * the latency of every scroll on the page (term.html measured it at
+       * :6382-6388), and nothing here ever wants to cancel a touch. The pinch
+       * recognizer does need one, which is why the page's multi-touch registry
+       * attaches its non-passive touchmove (:6415-6416) only from
+       * `if (e.touches.length >= 2)` (:6426); that is font.ts and not this.
+       *
+       * `touchcancel` is ours and the page has none. What term.html does on a
+       * cancelled touch is nothing: the drag stays armed with a stale `startY`
+       * until the next touchstart resets it, which is invisible because no
+       * further move can arrive for a cancelled touch. Folding it in means the
+       * module never sits holding half a gesture, and a cancel cannot be
+       * followed by a coast.
+       */
+      if (coarsePointer) {
+        host.addEventListener("touchstart", onTouchStart, { passive: true });
+        host.addEventListener("touchmove", onTouchMove, { passive: true });
+        host.addEventListener("touchend", onTouchEnd, { passive: true });
+        host.addEventListener("touchcancel", onTouchCancel, { passive: true });
+      }
+
+      /**
+       * A REAL wheel hard-cancels a coast (term.html:6278-6281).
+       *
+       * On the HOST element and at capture, where the page puts it, so it sees
+       * only wheels over this terminal. `isTrusted` is the whole test: our own
+       * synthetic coast ticks are untrusted and would otherwise cancel the
+       * coast they are part of. Registered whatever the pointer type, as the
+       * page registers it (:6278 sits outside the coarse-pointer block), and on
+       * a machine with no touch listeners there is never a coast for it to end.
+       *
+       * The page's listener does a second job in the same callback, the wheel
+       * pixels that dismiss a highlight (`WHEEL_CLEAR_PX`, :6292). That is
+       * selection.ts's and is not ported, so this half stands alone.
+       */
+      const onHostWheel = (e: WheelEvent): void => {
+        if (e.isTrusted) feedTouch({ type: "interrupt" });
+      };
+      host.addEventListener("wheel", onHostWheel, { passive: true, capture: true });
+
+      /** The trackpad pacer's state: px owed, and whether a frame is out. */
+      let wheelState: WheelState = NO_WHEEL;
+      /** The pacer's outstanding `requestAnimationFrame`, or null. */
+      let wheelFrame: number | null = null;
+
+      /**
+       * `isSmoothOn` is both halves of term.html's `wheelSmoothOn()`
+       * (:6203-6205), read fresh on every wheel because the page reads it fresh
+       * on every wheel (:6238): the `tl-gestures` master kill, which a person
+       * sets by hand to rescue a device, and the roamed `gestures.wheelSmooth`.
+       */
+      const wheelWorldNow = (): WheelWorld => {
+        const prefs = readPersistedPrefs();
+        return wheelWorld(screenGeometry(screenHeight, term.rows), {
+          speed: prefs.gestures.wheelSpeed,
+          smoothOn: isSmoothOn({
+            gesturesEnabled: gesturesEnabled(),
+            wheelSmooth: prefs.gestures.wheelSmooth,
+          }),
+          mounted: !!term.element,
+        });
+      };
+
+      /**
+       * One wheel, frame or detach, decided and then performed. The answer is
+       * what xterm's custom wheel handler returns.
+       */
+      const performWheel = (event: SmoothWheelEvent): boolean => {
+        const r = reduceWheel(wheelState, event, wheelWorldNow());
+        wheelState = r.state;
+        for (const action of r.actions) {
+          switch (action.kind) {
+            case "emit":
+              // The same two lines as the touch path, and the same reason for
+              // separate dispatches. These carry `point`, which is the touch
+              // path's last y or 100.
+              for (const w of wheelsFor(action, point)) {
+                term.element?.dispatchEvent(new WheelEvent("wheel", w));
+              }
+              break;
+            case "schedule-frame":
+              // UNCONDITIONAL, never gated on `pumping`: the frame case
+              // re-arms and comes back with `pumping` true because more travel
+              // is owed (:6224), so a guard on that flag would drop every
+              // re-arm and stall a burst bigger than one frame. The module
+              // keeps the one-outstanding invariant instead (:6257 arms only
+              // when nothing is out).
+              wheelFrame = requestAnimationFrame(onWheelFrame);
+              break;
+            case "cancel-frame":
+              if (wheelFrame !== null) cancelAnimationFrame(wheelFrame);
+              wheelFrame = null;
+              break;
+            default: {
+              const unhandled: never = action;
+              void unhandled;
+            }
+          }
+        }
+        return r.passToXterm;
+      };
+
+      /** term.html's `pumpWheel` (:6212), which tests nothing: only this asks. */
+      function onWheelFrame(): void {
+        wheelFrame = null;
+        if (disposed) return;
+        performWheel({ type: "frame" });
+      }
+
+      /**
+       * xterm's SANCTIONED hook, which runs before the damp and the cap
+       * (term.html:6188-6192, :6267). It stays attached for the terminal's
+       * whole life where the page attaches and detaches it from the pref path
+       * (:6264-6273), and that is safe because a `smoothOn: false` world passes
+       * every wheel straight through to the same raw xterm path.
+       *
+       * What the always-attached shape gives up is the OTHER two things the
+       * page's detach does (:6269-6271): zero the accumulator and cancel the
+       * pending frame. Both ride the module's `detached` event, and the only
+       * route a live pref change has into a mounted terminal is `__tlPrefsLive`
+       * (:9173-9188), which is not ported, the same gap `bootPrefs` records
+       * for the font size. So a frame already scheduled when the pref goes off
+       * still drains, once, where term.html cancels it. Whoever ports that
+       * bridge owes this a `performWheel({ type: "detached" })`.
+       */
+      term.attachCustomWheelEventHandler((e: WheelEvent): boolean =>
+        performWheel({ type: "wheel", wheel: e }),
+      );
+
       attachment = attach({
         base: "",
         args: props.args,
-        write: (bytes) => term.write(bytes),
+        write: (bytes) => {
+          // ONE ATTENTION EVENT PER OUTPUT FRAME, and attach.ts calls this for
+          // output frames alone (a title or prefs frame arrives once per
+          // connect and is not news). `document.hidden` is read HERE rather
+          // than stored, because the browser flips that flag and QUEUES the
+          // visibilitychange event: a frame processed inside that window is
+          // judged on the old value by a stored one, and then stays silent for
+          // the rest of the hidden period.
+          //
+          // BEFORE the write, where the page has it (`noteHiddenOutput()` at
+          // :10388, `term.write` at :10391-10392), so a BEL inside this same
+          // frame reaches `onBell` after the output signal and the two arrive
+          // in that order.
+          feedAttention({ type: "output", tabHidden: document.hidden });
+          term.write(bytes);
+        },
         size: () => ({ cols: term.cols, rows: term.rows }),
-        onPhase: (phase, attempt) => props.onConn?.(report(phase, attempt)),
+        onPhase: (phase, attempt) => {
+          // A (re)attach starts a fresh pty input line, so the mirror's diff
+          // baseline is stale and drops, and it hard-cancels a coast. Both are
+          // term.html's, in this order, inside the socket's own `onopen`:
+          // `mirrorLineReset()` at :10293 then `cancelScrollMomentum()` at
+          // :10294. The order is load-bearing for the offline-Enter flow: the
+          // reset lands before the hold is replayed 49 lines later (:10342), so
+          // the pty comes back holding a line whose baseline says empty, which
+          // is the state mirror.ts's `backspace-at-empty` exists for.
+          //
+          // `onPhase` fires on a CHANGE, so this is once per attach, which is
+          // where the page has it. The other half of that line, a SESSION
+          // SWITCH, needs nothing here: the lobby mounts one terminal per
+          // session and keeps them apart, so the coast a switch would have to
+          // cancel belongs to a different instance.
+          if (phase === "open") {
+            feedMirror({ type: "out-of-band", value: mirrorField?.value ?? "" });
+            feedTouch({ type: "interrupt" });
+          }
+          props.onConn?.(report(phase, attempt));
+        },
         watch: () => props.watch?.() === true,
         onHeld,
       });
       const a = attachment;
-      term.onData((data) => a.send(data));
+
+      /**
+       * THE INPUT CHOKE POINT, which is what term.html's `sendInput` is
+       * (:8263) and why the coast cancel sits inside it at :8269 rather than on
+       * each input path: "a pty-bound byte hard-cancels a flick coast, WHATEVER
+       * path produced it".
+       *
+       * Every pty-bound STRING in this component goes through here: the
+       * keyboard below, the word-jump sequences, a replayed status-row click,
+       * and everything upstream that reaches `__tlSendToTerminal`. That last
+       * one is why touchscroll's fourth interrupt site collapses into this one:
+       * natively the soft keys go through SessionView's `sendBytesToPty` to
+       * that bridge, where term.html's toolbar called `cancelScrollMomentum()`
+       * for itself at :6823 before reaching `sendInput`.
+       *
+       * NOT `sendBinary`: term.html's own `term.onBinary` hook (:8361-8370)
+       * cancels nothing and reaches `ws.send` without passing `sendInput` at
+       * all, because a mouse report is not something a person typed.
+       */
+      const send = (data: string): void => {
+        feedTouch({ type: "interrupt" });
+        a.send(data);
+      };
+
+      /**
+       * The soft toolbar's armed modifiers, which is the only state either key
+       * reducer carries.
+       *
+       * NULL, which is term.html's DESKTOP case and a real value rather than a
+       * placeholder: the page declares `softMods = null` (:6355, "only
+       * populated on touch devices") and builds it inside the coarse-pointer
+       * block (:6558), and its onData wrapper is gated on it being there
+       * (:8343). Here it is null on every device for a different reason, and
+       * that reason is a gap: this app's modifier machine lives in
+       * `SoftKeys.tsx`, which holds its own `mods` signal, applies `applyMods`
+       * to its OWN pre-baked bytes and consumes them there. So a letter typed
+       * on the SYSTEM soft keyboard while Ctrl is armed is not remapped, where
+       * term.html remaps it here on the way out of xterm, which is the only
+       * place it can be, the key being ordinary `onData` text. Closing that
+       * needs the toolbar's `SoftMods` to reach this component; the reducer's
+       * answer is already stored back below and in `pasteText`, so the arrival
+       * of a real value is the whole of what is left.
+       */
+      let keyState: KeyState = { mods: null };
+
+      /**
+       * Spend an armed modifier, term.html's no-arg `consumeSoftMods()` (:8973,
+       * :8978).
+       *
+       * ONE place, because the port's `consumeSoftMods` is PURE
+       * (`mobile/softmods.ts`, `SoftMods -> SoftMods`) where the page's mutates
+       * a page global, and both callers own the same `keyState.mods`: a paste
+       * (whose first character is the ESC of `ESC [200~` under bracketed paste)
+       * and the mirror's multiline-paste branch. Following either module's list
+       * literally, with each storing its own answer, is how the armed modifier
+       * ends up never spent. It consumes rather than clears, so a LATCHED
+       * modifier still remaps the first pasted character; that asymmetry is
+       * term.html's. A no-op while `mods` is null, which is every device today
+       * for the reason given where that state is declared.
+       */
+      const disarmSoftMods = (): void => {
+        if (keyState.mods) keyState = { mods: consumeSoftMods(keyState.mods) };
+      };
+
+      /* ---------------------------------------------------------------- *
+       * THE COMPOSE MIRROR: the field the DOM half of mirror.ts acts on.
+       *
+       * The module diffs the field's value against the pty's input line as it
+       * shaped it and hands back the byte delta. This is the field, the flags
+       * and the three listeners; every decision is over there.
+       * ---------------------------------------------------------------- */
+
+      /** The pty's input line as this mirror shaped it (term.html's `lastValue`). */
+      let mirrorState: MirrorState = EMPTY_MIRROR;
+      /**
+       * These bytes are the mirror's own, so the onData hook must not read
+       * their echo as an out-of-band reset. term.html's `mirrorEmitting`
+       * (:6375, set around its `term.input` call at :7234-7235).
+       */
+      let mirrorEmitting = false;
+      /**
+       * A `set-field` write must not come back as an `edited` event.
+       * term.html's `suppress` (:7188, :7269-7271): the DOM fires no `input`
+       * for a programmatic `.value` assignment, but the flag is what makes that
+       * true of every path rather than of the ones we happen to know about.
+       */
+      let suppressField = false;
+      /**
+       * The field's three listeners, taken off in `teardown`.
+       *
+       * Solid unmounts the element with the component, so this is the same
+       * belt-and-braces the host's own listeners get: one teardown, and nothing
+       * left holding a disposed terminal.
+       */
+      let releaseField: (() => void) | null = null;
+
+      /**
+       * Autogrow to 5 lines, and refit when the bar's height moved.
+       * term.html's `autoGrowCompose` + `growAndRefit` (:7143-7164).
+       *
+       * Every height derives from the computed style, as it does there, so a
+       * CSS change cannot desync the clamp. The 21px line-height fallback is
+       * the page's own (:7149).
+       *
+       * The refit goes through the viewport decision rather than to `refit`
+       * alone, because the bar's height is a TERM of the host's height
+       * (`barReservePx`): a line added to the field takes a row off the
+       * terminal, and term.html reaches the same recalculation the long way
+       * round, `growAndRefit` -> `refit()` -> its rAF -> `syncViewport()`
+       * (:8472-8476). Only on a CHANGE, which is the page's own test at :7163:
+       * a typing burst costs one fit, never one per keystroke.
+       */
+      const growBar = (): void => {
+        const field = mirrorField;
+        if (!field || !composeBar) return;
+        const before = composeBar.offsetHeight;
+        const cs = getComputedStyle(field);
+        const border =
+          (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+        const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+        const line = parseFloat(cs.lineHeight) || 21;
+        const maxH = Math.ceil(5 * line + pad + border);
+        field.style.height = "auto";
+        const want = field.scrollHeight + border; // border-box height
+        field.style.height = `${Math.min(want, maxH)}px`;
+        field.style.overflowY = want > maxH ? "auto" : "hidden";
+        if (composeBar.offsetHeight !== before) {
+          feedViewport({ type: "observed", facts: viewportFacts() });
+        }
+      };
+
+      /**
+       * One mirror event, decided and then performed.
+       *
+       * The event rides along for `swallow-edit`, which is a `preventDefault`
+       * on the `beforeinput` and cannot come off the return value.
+       */
+      const feedMirror = (event: MirrorEvent, dom?: Event): void => {
+        const r = reduceMirror(mirrorState, event, {
+          // `ws && ws.readyState === WebSocket.OPEN`, read at the moment of the
+          // edit. attach.ts owns the socket and exposes no readyState, so the
+          // ladder's phase is the reading available, and the two agree except
+          // for one task: a socket that has just closed still reads `open` here
+          // until its `onclose` is delivered, where the page reads the flag the
+          // browser has already flipped. In that window the submit clears the
+          // field while attach.ts holds the bytes. The hold carries both the
+          // delta and the `\r`, so the line runs on reconnect rather than being
+          // lost, which is the state `backspace-at-empty` exists for.
+          connected: a.state().phase === "open",
+        });
+        mirrorState = r.state;
+        for (const action of r.actions) {
+          switch (action.kind) {
+            case "send":
+              // `term.input(bytes, true)` and NOT the choke point, because the
+              // mirror's whole route is xterm's own onData -> the soft-modifier
+              // remap -> `send` -> the socket. No new socket path
+              // (term.html:7232-7236). Marked as ours for the length of the
+              // call, which is synchronous: `term.input` fires onData before it
+              // returns, and the `finally` is what keeps a throw from leaving
+              // the flag stuck true and the baseline permanently stale.
+              mirrorEmitting = true;
+              try {
+                term.input(action.bytes, true);
+              } finally {
+                mirrorEmitting = false;
+              }
+              break;
+            case "paste":
+              // NOT marked as ours: this paste's onData traffic is what resets
+              // the baseline, and marking it would swallow that
+              // (term.html:7309-7310). Not through `pasteText` either, which
+              // would spend the arm a second time; the module lists the disarm
+              // as its own action, immediately before this one.
+              term.paste(action.text);
+              break;
+            case "disarm-soft-mods":
+              disarmSoftMods();
+              break;
+            case "swallow-edit":
+              // So the block never enters the one-line field (:7316).
+              dom?.preventDefault();
+              break;
+            case "set-field": {
+              const field = mirrorField;
+              if (!field) break;
+              suppressField = true;
+              field.value = action.value;
+              suppressField = false;
+              // A programmatic assignment fires no `input`, so the autogrow
+              // listener never runs for it and the bar keeps the height of a
+              // line that is gone. term.html calls `growAndRefit` by hand at
+              // :7273 and :7296 for exactly this.
+              growBar();
+              break;
+            }
+            case "say":
+              // The held-input clock, shared so a drop does not say two things
+              // at once (term.html's `heldSay`, :8191-8195).
+              heldSay(action.message, "info");
+              break;
+            default: {
+              const unhandled: never = action;
+              void unhandled;
+            }
+          }
+        }
+      };
+
+      if (mirrorField) {
+        const field = mirrorField;
+        // The height first and the diff second, which is term.html's order:
+        // `growAndRefit` is registered on `input` at :7165 and the mirror
+        // engine's own listener at :7276.
+        const onFieldInput = (): void => {
+          if (suppressField) return;
+          growBar();
+          feedMirror({
+            type: "edited",
+            value: field.value,
+            // `selectionStart`, which the differ never reads: keying the diff
+            // on the caret would only pay off with pty cursor tracking, and
+            // there is none (mirror.ts's V1 constraints). Carried so that stays
+            // checkable.
+            caret: field.selectionStart,
+          });
+        };
+        // `insertFromPaste` ONLY, and `e.data` as it stands: a single-line paste
+        // falls through, inserts natively and streams like typing, which is
+        // what keeps the field showing the line (:7306-7320).
+        const onFieldBeforeInput = (e: InputEvent): void => {
+          if (e.inputType !== "insertFromPaste") return;
+          feedMirror({ type: "paste-intent", data: e.data ?? "" }, e);
+        };
+        // Backspace against an EMPTY field erases pty-side text the mirror does
+        // not hold, which is what an out-of-band reset leaves behind
+        // (:7321-7327). `isComposing` because an IME owns its own backspaces.
+        const onFieldKeyDown = (e: KeyboardEvent): void => {
+          if (e.key !== "Backspace") return;
+          feedMirror({
+            type: "backspace-at-empty",
+            value: field.value,
+            composing: e.isComposing,
+          });
+        };
+        field.addEventListener("input", onFieldInput);
+        field.addEventListener("beforeinput", onFieldBeforeInput);
+        field.addEventListener("keydown", onFieldKeyDown);
+        releaseField = () => {
+          field.removeEventListener("input", onFieldInput);
+          field.removeEventListener("beforeinput", onFieldBeforeInput);
+          field.removeEventListener("keydown", onFieldKeyDown);
+        };
+        // The field starts at the height of one line, measured rather than
+        // assumed, as `setComposeVisible` grows it on the way in (:7380).
+        growBar();
+      }
+
+      /**
+       * The whole `term.onData` wrapper (term.html:8340-8360): two
+       * unconditional calls at its head, then the armed-modifier remap.
+       *
+       * The two head calls run for an empty chunk too, because both sit ABOVE
+       * the `if (softMods && data)` gate (:8343), and only the REMAP is gated:
+       * xterm emits an empty chunk on some composition paths, and burning an
+       * arm on one would drop the modifier before the character it was armed
+       * for arrived.
+       */
+      term.onData((data) => {
+        const r = reduceData(keyState, data, {
+          // TRUE only for the length of the mirror's own `term.input` call,
+          // which is where term.html reads this too (:8342 against the flag it
+          // sets at :7234-7235). Answering false mid-emit clears the field the
+          // person is typing in; answering true for a keystroke leaves the
+          // baseline stale.
+          mirrorEmitting,
+        });
+        keyState = r.state;
+        for (const action of r.actions) {
+          switch (action.kind) {
+            case "cancel-momentum":
+              // Deliberately redundant with `send` above, as it is in the page:
+              // :8341 cancels here AND :8269 cancels at the choke point, whose
+              // comment calls the scattered per-path cancels belt-and-braces.
+              // An interrupt with no coast in flight decides nothing.
+              feedTouch({ type: "interrupt" });
+              break;
+            case "mirror-out-of-band":
+              // `mirrorLineReset` (:8342): bytes reached the pty by a route the
+              // mirror did not emit, so its baseline is a lie and the field
+              // drops with it. This hook is ordinary typing in xterm's own
+              // helper textarea; the other eight of term.html's nine sites come
+              // in through `__tlSendToTerminal` and a fresh attach.
+              //
+              // The field's CURRENT value goes with it, because the module's
+              // early-out reads it: raw typing fires this once per keystroke,
+              // and re-clearing an already-empty field would force a re-measure
+              // and a tmux refit on every one (:7268). With no field mounted
+              // this reduces to nothing, which is the same inert stub the page
+              // keeps on a fine pointer (:6376, replaced only at :7267).
+              feedMirror({ type: "out-of-band", value: mirrorField?.value ?? "" });
+              break;
+            case "send":
+              send(action.data);
+              break;
+            default: {
+              const unhandled: never = action;
+              void unhandled;
+            }
+          }
+        }
+      });
+      /**
+       * THE BELL, reported UNCONDITIONALLY. `term.onBell(() =>
+       * signalAttention('bell'))` (term.html:5772), one event per ring, and
+       * there is no visibility test on that path anywhere in the page.
+       *
+       * The "you are already looking at it" rule is real and belongs one layer
+       * up, where it is WIDER: `notify/attention.ts` latches only while `away`,
+       * which is `document.hidden || !document.hasFocus()`, so a visible but
+       * unfocused tab (the lobby on a second monitor) is away to the lobby and
+       * on screen to this terminal. Gating here would silence exactly the case
+       * the lobby latches for. The page sets no `bellStyle` and makes no sound,
+       * so there is nothing else on this path to port.
+       */
+      term.onBell(() => feedAttention({ type: "bell" }));
+
+      /**
+       * THE TAB'S OWN VISIBILITY, in BOTH directions (term.html:5773-5776).
+       *
+       * Its only job is the re-arm: becoming hidden can open a new period just
+       * as much as becoming visible closes one, because a one-shot spent while
+       * only the VIEW was hidden was dropped on arrival by the lobby's `away`
+       * test and must not silence the first real output of the away period that
+       * follows. New work rather than a line added to an existing listener.
+       *
+       * Registered here rather than at component scope on purpose: the re-arm
+       * returns early on nothing being latched, and nothing can be latched
+       * before there is a terminal writing output, so the two dynamic imports
+       * cost it nothing. The page's other half of this listener, stripping its
+       * own '● ' title prefix (:5777-5780), is the branch for a page with no
+       * lobby to tell, and there is no native terminal outside the lobby.
+       */
+      const onVisibility = (): void =>
+        feedAttention({ type: "tab", tabHidden: document.hidden });
+      document.addEventListener("visibilitychange", onVisibility);
+
       // MOUSE REPORTS, and anything else xterm hands over as bytes-in-a-string:
       // tmux mouse mode and Claude Code's own TUI get no click, drag or wheel
       // without this. Its own path because the framing differs and the watch
@@ -714,9 +1844,48 @@ export const TerminalNative: Component<{
        */
       let stash: SelectionStash | null = null;
 
-      /** THIS terminal's screen node. Never a document query: see `worldAt`. */
-      const screenOf = (): HTMLElement | null =>
-        host?.querySelector<HTMLElement>(".xterm-screen") ?? null;
+      /**
+       * term.html's `clearSelectionBecause` (:5892-5897), and the ONE place
+       * either caller passes through.
+       *
+       * TWO callers, and they are the reason this is a function rather than a
+       * case in each action loop: the drag interceptor dismisses a highlight it
+       * is replacing (dragselect.ts's `clear-selection`) and Escape dismisses
+       * one deliberately (keys.ts's, term.html:8566). Both write the SAME
+       * `stash`, and two loops each running their own `reduceStash` would fork
+       * the recovery stash, the ADR-0003 failure class reached from the side
+       * where a dismissed selection stays copyable and the next Ctrl+C copies
+       * instead of interrupting.
+       *
+       * THE ORDER IS THE CONTRACT. `term.hasSelection()` is read FIRST, because
+       * :5893 returns early when nothing is highlighted and that read is what
+       * selection.ts's `reduceStash` is given as `dismissed`. Clearing before
+       * it reports `hasSelection: false`, the stash survives its own dismissal,
+       * and Ctrl+C copies recovered text where the user expects SIGINT.
+       *
+       * ONE LINE OF :5892-5897 IS NOT PORTED, deliberately and with a place to
+       * put it: `lastExplainedClear = { why, t: performance.now() }` (:5895).
+       * Its only reader is the selection-lifecycle watcher (:6303-6323), which
+       * calls a clear UNEXPLAINED unless an explained one was stamped within
+       * 200ms (:6316-6317). That watcher is not ported, so the stamp would be
+       * state nobody reads; when it lands it must be written HERE, because this
+       * is the one place both explained dismissals pass. Porting the watcher
+       * without the stamp files every deliberate Escape under the bucket
+       * ADR-0003 keeps for repaint-clears nobody asked for.
+       *
+       * `tel` is `tlDiagnostics.incident` (:5868-5870), which is `diag()` here.
+       * The `?seldebug` console line and toast (:5898-5901) have no equivalent
+       * in this app.
+       */
+      const clearSelectionBecause = (reason: string): void => {
+        stash = reduceStash(
+          stash,
+          { type: "dismissed", hasSelection: term.hasSelection() },
+          performance.now(),
+        );
+        diag().incident("sel-cleared", { "tl.reason": reason });
+        term.clearSelection();
+      };
 
       /**
        * Everything the interceptor reads from outside itself, for THIS event.
@@ -824,34 +1993,24 @@ export const TerminalNative: Component<{
               break;
             }
             case "clear-selection":
-              // term.html's `clearSelectionBecause`, in its order (:5892-5902):
-              // the stash, the reason, then the clear. The `hasSelection` read
-              // has to come BEFORE `clearSelection`, because it is the guard at
-              // :5893 and selection.ts keeps the rule. `tel` there is
-              // `tlDiagnostics.incident` (:5868-5870), which is what `diag()`
-              // is here; its `?seldebug` console line and toast (:5898-5901)
-              // have no equivalent in this app.
-              stash = reduceStash(
-                stash,
-                { type: "dismissed", hasSelection: term.hasSelection() },
-                performance.now(),
-              );
-              diag().incident("sel-cleared", { "tl.reason": action.reason });
-              term.clearSelection();
+              // The shared `clearSelectionBecause` above, which is where the
+              // order and the one un-ported line are argued. keys.ts's Escape
+              // leg calls the same function against the same stash.
+              clearSelectionBecause(action.reason);
               break;
             case "focus":
-              // term.html's `tapFocus` (:5815), which is `term.focus()` until
-              // the mobile input bar reassigns it to the compose field
-              // (:7459-7462). That bar is pass 2, and a fine pointer never
-              // reassigns it there either.
-              term.focus();
+              // term.html's `tapFocus` (:5815, reassigned at :7459-7462).
+              // touchscroll.ts's `focus` action is the same call. On a fine
+              // pointer no field is mounted, so this is still `term.focus()`
+              // there, which is what the page's un-reassigned arrow does.
+              tapFocus();
               break;
             case "replay-status-click":
-              // `a.send`, NOT `a.sendBinary`: term.html replays through
+              // The choke point, NOT `a.sendBinary`: term.html replays through
               // `sendInput` (:5994-5995), which carries the read-only guard, so
               // a watcher's status-row click is refused and explained rather
               // than written into a session they cannot type into.
-              for (const bytes of action.sends) a.send(bytes);
+              for (const bytes of action.sends) send(bytes);
               break;
             default: {
               const unhandled: never = action;
@@ -889,7 +2048,8 @@ export const TerminalNative: Component<{
       document.addEventListener("mouseup", onRelease, true);
 
       /* ---------------------------------------------------------------- *
-       * PASTE: the chord, and the browser paste event it lets through.
+       * THE KEYBOARD: the one handler xterm stores, the onData hook's remap,
+       * and the paste route both of them share.
        * ---------------------------------------------------------------- */
 
       /**
@@ -905,79 +2065,208 @@ export const TerminalNative: Component<{
        * the pty through xterm's own onData, which is the same choke point a
        * keystroke takes, so watch mode still drops it.
        *
-       * term.html disarms its armed soft modifiers first, because its
-       * onData wrapper would remap the pasted text's first character. There
-       * is nothing to disarm here yet: this app's modifier machine lives
-       * inside SoftKeys.tsx and only remaps the keys that component sends.
-       * The remap (term.html:8340-8360) is still to port, and this line has
-       * to disarm when it lands.
+       * THE CONSUME IS PART OF THE ROUTE, and this is why it is not a line
+       * anyone should tidy away. `term.paste()` ends in
+       * `coreService.triggerDataEvent`, so pasted text arrives at the onData
+       * hook above like a keystroke, and with bracketed paste on its first
+       * character is the ESC of `ESC [200~`. An armed Ctrl would be spent on
+       * that ESC for no visible effect; an armed Alt would prepend a SECOND
+       * ESC and corrupt the bracket sequence itself. term.html avoids both by
+       * calling `consumeSoftMods()` immediately before its two `term.paste`
+       * calls (:8973, :8978), which is `disarmSoftMods` above: one spender,
+       * shared with the mirror's own multiline-paste branch.
        *
        * Empty text is dropped rather than pasted, as the page drops it
        * (:8933), but the answer is still true: a terminal took the paste, and
-       * false means there was no terminal to take it.
+       * false means there was no terminal to take it. The consume is INSIDE
+       * that test, where all three of the page's are (:8942 under the `if
+       * (text)` at :8933, and :8973 and :8978 each guarded the same way): an
+       * empty paste reaches no character to remap, so spending an arm on it
+       * would drop the modifier before the paste it was armed for.
        */
       const pasteText = (text: string): boolean => {
-        if (text) term.paste(text);
+        if (!text) return true;
+        disarmSoftMods();
+        term.paste(text);
         return true;
       };
 
       /**
-       * THE ONE KEY HANDLER xterm STORES, wired for the paste chord and for
-       * nothing else yet.
+       * Carry out one key decision (keys.ts), in the order it listed its
+       * actions.
        *
-       * Ctrl+V is `\x16` to xterm by default, from the plain-Ctrl-letter arm
-       * of its `evaluateKeyboardEvent`, and xterm then preventDefaults the
-       * keydown (`cancel(ev, true)`), which is what stops the browser firing
-       * its paste event at all. Measured on the deployed site with a raw pty
-       * capture: the iframe path put the 53 bytes of clipboard text on the pty
-       * and this path put a single 0x16. In zsh ^V is quoted-insert, so it
-       * then swallowed the first byte of the next paste as well. Answering
-       * false is the whole fix, and it is what term.html answers (:8585-8586,
-       * "let the browser paste event fire").
+       * The event rides along because two legs ask for `preventDefault` and
+       * neither gets it from the return value: answering false short-circuits
+       * xterm BEFORE its own `cancel(ev)`, so false alone suppresses no browser
+       * default. That is what makes the F12 leg work and why the two legs that
+       * DO want a default suppressed ask for it explicitly.
+       */
+      const performKey = (r: KeyReduction, e: KeyboardEvent): void => {
+        for (const action of r.actions) {
+          switch (action.kind) {
+            case "send":
+              // The choke point, which is what term.html's word-jump leg calls
+              // (`sendInput`, :8550), so a watcher's Option+Arrow is refused
+              // and explained like every other key.
+              send(action.data);
+              break;
+            case "prevent-default":
+              e.preventDefault();
+              break;
+            case "clear-selection":
+              clearSelectionBecause(action.reason);
+              break;
+            case "copy": {
+              // term.html reaches `navigator.clipboard.writeText` unguarded
+              // (:8570, :8579). That throws where the API is absent, which is
+              // any non-secure context, and a throw inside xterm's key handler
+              // takes the keystroke with it. The refusal toast is the same news
+              // the `.catch` would have given, so the guard changes what a
+              // person sees from nothing to that.
+              const clipboard: Clipboard | undefined = navigator.clipboard;
+              const refuse = (): void => {
+                showToast(action.failureToast, action.failureToastKind, action.failureTimeoutMs);
+              };
+              if (!clipboard) refuse();
+              else {
+                void clipboard
+                  .writeText(action.text)
+                  .then(() => showToast(action.toast, action.toastKind, action.timeoutMs))
+                  .catch(refuse);
+              }
+              // OUTSIDE that chain, where :8582 is a plain statement following
+              // the `.then`/`.catch` opened at :8579: it runs whether the write
+              // resolves or is refused, and moving it inside would lose the
+              // count exactly where the write was blocked, which is the case
+              // the failure toast exists for. The attribute is `len` and not
+              // `tl.len` because that is the name the page passes; its
+              // `sel-cleared` call uses the prefixed form and this one does
+              // not.
+              //
+              // UNREACHABLE TODAY, and the reason is one wiring away: `recovered`
+              // is only ever true when the stash holds text, and nothing feeds
+              // `stash` a `selection` event. term.html stashes inside the
+              // selection-lifecycle watcher (:6311, in :6303-6323), which the
+              // design doc groups with the rest of the selection and copy
+              // wiring. Porting only its stash line would leave its UNEXPLAINED
+              // telemetry, and the 200ms stamp `clearSelectionBecause` owes it,
+              // split across two stages.
+              if (action.recovered) diag().incident("copy-recovered", { len: action.text.length });
+              break;
+            }
+            case "toast":
+              showToast(action.message, action.toastKind, action.timeoutMs);
+              break;
+            case "discard-held":
+              // term.html's `discardHeldInput` (:8237-8242): clear the queue and
+              // dispose the held-key overlay.
+              //
+              // UNREACHABLE BY CONSTRUCTION, and deliberately so rather than
+              // pending: the world below passes `EMPTY_HELD`, so `isHolding` is
+              // false and keys.ts never takes this leg. attach.ts owns the hold
+              // and exposes no discard, and the overlay this would dispose is
+              // not ported. Wiring the leg without the discard is worse than
+              // leaving it: Escape would be swallowed, a toast would promise
+              // the line was thrown away, and the hold would replay on the next
+              // reconnect anyway. What it needs is a `discardHeld()` on
+              // `Attachment` plus the hold and its dim flag reaching this
+              // component, which is the same pair `heldWord` above already
+              // reads on the callback.
+              break;
+            default: {
+              const unhandled: never = action;
+              void unhandled;
+            }
+          }
+        }
+      };
+
+      /**
+       * THE ONE KEY HANDLER xterm STORES, now the whole of term.html's
+       * `attachCustomKeyEventHandler` contract (:8516-8589).
        *
-       * Cmd+V on a Mac never had that problem: xterm yields no key and no
-       * preventDefault for it, so the paste event was already firing there.
-       * Both go through the one decision below regardless, because a chord
-       * whose answer depends on the platform is a chord nobody can reason
-       * about.
+       * xterm keeps exactly one (`_customKeyEventHandler` is a single field and
+       * a second `attachCustomKeyEventHandler` replaces it), so every rule that
+       * wants a look at a keydown shares this function, and keys.ts tests them
+       * in the page's order. What each leg does NOT do is the interesting part:
+       * Escape clears a highlight and still reaches vim, Ctrl+C is a copy while
+       * one is up and SIGINT the moment it is not, F12 goes to the browser
+       * whole.
        *
-       * The decision is selection.ts's rather than a chord test written here,
-       * so the chord is matched by the rule ADR-0003 states rather than by
-       * `e.key === "v"`: on a Cyrillic layout the V position reports `м`, and
-       * an `e.key` test misses it and lets ^V through.
+       * The chord tests are selection.ts's, not `e.key === "c"`, because on a
+       * Cyrillic layout the C position reports `с` and a key test misses it,
+       * firing SIGINT with a highlight on screen. That is the failure ADR-0003
+       * exists to prevent.
        *
-       * ONLY the browser-paste arm is acted on, and the default answer is
-       * true. The same decision also carries the copy chord and the
-       * Escape-clears-a-selection leg (term.html:8565-8584); answering true to
-       * those is exactly what xterm does today with no handler installed, so
-       * Ctrl+C is still SIGINT with a highlight on screen and Escape still
-       * reaches the app without clearing it. Wiring them needs the clipboard
-       * write, the toast each decision names and a `selection` event feeding
-       * the stash, none of which is here yet, and half-wiring them would break
-       * ADR-0003's contract in a new way rather than leave it unported. The
-       * rest of term.html's handler is not here either: the app-chord
-       * interception (:8518-8526), F12 (:8527-8536), the Option-arrow word
-       * jumps (:8537-8553) and Esc discarding a hold (:8554-8564).
+       * THE PASTE LEG is the one that was here before the rest, and its measured
+       * record belongs with it. Ctrl+V is `\x16` to xterm by default, from the
+       * plain-Ctrl-letter arm of `evaluateKeyboardEvent`, and xterm then
+       * preventDefaults the keydown (`cancel(ev, true)`), which is what stops
+       * the browser firing its paste event at all. Measured on the deployed site
+       * with a raw pty capture: the iframe path put the 53 bytes of clipboard
+       * text on the pty and this path put a single 0x16, and since ^V is
+       * quoted-insert in zsh it then swallowed the first byte of the next paste
+       * too. Answering false is the whole fix (term.html:8585-8586, "let the
+       * browser paste event fire"). Cmd+V on a Mac never had the problem, xterm
+       * yielding no key and no preventDefault for it, and both go through this
+       * one decision anyway: a chord whose answer depends on the platform is a
+       * chord nobody can reason about.
+       *
+       * `appChord` IS A DECLARED DIVERGENCE. keys.ts asks for
+       * `tlKb.matchesAppChord(e)` (term.html:8526), and the engine that answers
+       * it is created in App.tsx and reaches neither this component nor
+       * SessionView (keybindings/engine.ts, `createKeybindingEngine`). What is
+       * read instead is `e.defaultPrevented`, which is true for the same events
+       * and for one more:
+       *   - the engine's own `onKeydown`, which `init` installs on `window` at
+       *     CAPTURE, calls `preventDefault()` on exactly a `matchesAppChord`
+       *     match and then runs the command. Capture descends, so it has already
+       *     run by the time xterm's own listener consults this handler: the
+       *     installed @xterm/xterm 6.0.0 registers that one on `this.textarea`,
+       *     a descendant of the host, also at capture. All that is left to decide
+       *     is that the key must not ALSO be typed, which is what this leg
+       *     answers.
+       *   - App.tsx's Ctrl/Cmd+J dock chord (App.tsx, `onDockKey`) is the extra
+       *     one, and it is the answer term.html gives too: its own keybinding
+       *     table carries `ctrl+j` -> `session.new.shell`, so :8526 swallows it
+       *     there. Every other capture-phase keydown listener in the app belongs
+       *     to an overlay that owns the keyboard while it is open, and a
+       *     terminal is not focused behind one.
+       * The cost of being wrong either way is worth naming: too NARROW and a
+       * chord fires and types, so Alt+Shift+W kills the session and puts ESC W
+       * on the pty; too WIDE and a key the app claimed is silently not typed.
+       * Threading the matcher itself needs a prop through SessionView from
+       * App.tsx, which is the shape to prefer once one of those files is open.
        *
        * `selection` is a getter because term.html reads `term.getSelection()`
-       * only inside its copy branch (:8570) and never on an ordinary
-       * keystroke, and xterm builds that string by translating every selected
-       * row. The paste arm reads no state at all.
+       * only inside its copy branch (:8570) and never on an ordinary keystroke,
+       * and xterm builds that string by translating every selected row.
+       * `hasSelection` is not the same question and is read eagerly: a drag
+       * ending in a row's trailing blanks leaves a visible highlight whose text
+       * is "", which still clears on Escape and still spends the copy chord.
        */
       term.attachCustomKeyEventHandler((e: KeyboardEvent): boolean => {
-        const decision = terminalKeydownDecision(
-          e,
+        const r = reduceKey(
           {
-            hasSelection: term.hasSelection(),
-            get selection(): string {
-              return term.getSelection();
+            now: performance.now(),
+            macLike: macPlatform,
+            appChord: e.defaultPrevented,
+            selection: {
+              hasSelection: term.hasSelection(),
+              get selection(): string {
+                return term.getSelection();
+              },
+              stash,
             },
-            stash,
+            // See the `discard-held` arm: no hold reaches this component yet,
+            // and a world that claimed otherwise would swallow Escape.
+            held: EMPTY_HELD,
+            heldDim: false,
           },
-          performance.now(),
+          e,
         );
-        if (decision.action === "browser-paste") return false;
-        return true;
+        performKey(r, e);
+        return r.passToTerminal;
       });
 
       /**
@@ -1051,7 +2340,16 @@ export const TerminalNative: Component<{
       // The size the pty is told has to follow the size xterm actually reached,
       // and a reflow can change that without the window resizing (the sidebar
       // opening, the soft keyboard arriving).
-      const ro = new ResizeObserver(() => refit("fit-wanted"));
+      //
+      // Through the viewport decision rather than straight to `refit`, which is
+      // what it did before the module landed: viewport.ts's header names this
+      // observer as one of `observed`'s two callers, and `nothing` still fits,
+      // so a box that changed WIDTH with the reserve unmoved behaves exactly as
+      // it did. What it gains is the case where the box changed because the
+      // keyboard moved.
+      const ro = new ResizeObserver(() =>
+        feedViewport({ type: "observed", facts: viewportFacts() }),
+      );
       ro.observe(host);
 
       // Theme trigger 2, which the module's header calls out: an OS light/dark
@@ -1086,8 +2384,26 @@ export const TerminalNative: Component<{
       // knowing which terminal it is talking to. Each returns a boolean because
       // the callers treat false as "no terminal took this".
       const owns = (): boolean => props.ownsBridges !== false;
+      // Through the choke point, so the soft keys, the composer's send and a
+      // dropped file's path all cancel a flick coast the way term.html's
+      // `sendInput` does for every one of them (:8269).
       ownWhile(owns, "__tlSendToTerminal", (bytes: string) => {
-        a.send(bytes);
+        // THE MIRROR RESET BELONGS HERE, not at the choke point, and term.html
+        // puts it here twice for the same reason: `mirrorLineReset()` THEN
+        // `sendInput()` in the `tl-input` arm (:9388) and in `sendKey` (:6828).
+        // These bytes never pass `term.onData`, so the hook that covers
+        // ordinary typing cannot see them, and a soft arrow or Esc tap would
+        // silently desync the field from the pty line it claims to mirror.
+        // Seven of the page's nine reset sites arrive through this one bridge:
+        // the soft-key row, the Text view's send-to-terminal, three upload
+        // paths, the gallery's "Insert path into terminal" and saved paths.
+        //
+        // The choke point would be wrong twice over: the onData path decides
+        // this question for itself (and must NOT reset while the mirror is the
+        // one emitting), and the word jumps and the replayed status-row click
+        // reach `send` too, where term.html resets nothing (:8550).
+        feedMirror({ type: "out-of-band", value: mirrorField?.value ?? "" });
+        send(bytes);
         return true;
       });
       // The same route a Ctrl/Cmd-V takes, so the toolbar button, the
@@ -1104,71 +2420,63 @@ export const TerminalNative: Component<{
       });
       ownWhile(owns, "__tlKeyboardOffset", (px: number) => {
         // HOW MANY PIXELS OF THE BOTTOM THE SOFT KEYBOARD COVERS, measured by
-        // the shell (mobile/viewport.ts) and forwarded from App.tsx:194. The
-        // terminal cannot measure it: an iframe's own visualViewport never saw
-        // the keyboard, and a ResizeObserver on this div does not fire for one
-        // either, so without this the last rows, the prompt among them, sit
-        // behind it.
+        // the shell (mobile/viewport.ts) and forwarded from App.tsx:194.
         //
         // The shrink has to happen HERE rather than on the container:
         // `.tl-views.tl-kb-inline` deliberately leaves the keyboard out of that
-        // reservation (app.css:2309-2318), because shrinking the container
-        // moved the terminal out from under the tap that had just opened the
-        // keyboard and made it flash shut.
+        // reservation (app.css, `body.has-soft-keys .tl-views.tl-kb-inline`),
+        // because shrinking the container moved the terminal out from under the
+        // tap that had just opened the keyboard and made it flash shut.
         //
-        // Half of term.html's `tl-kb` arm (:9407-9422). The page pairs the
-        // forwarded height with its OWN visualViewport reading and with the
-        // toolbar and compose-bar heights (`syncViewport`, :8427-8469); that
-        // port is pass 2. What is here is the part nothing else can do, and it
-        // composes: `100%` is already the container minus the toolbar.
+        // term.html's `tl-kb` arm (:9407-9422), and viewport.ts is now the
+        // whole decision: both of the page's gates, `max(own, forwarded)` where
+        // pass 1 took the forwarded height alone, and the dedupe. The FACTS go
+        // with the message because the page recomputes from a LIVE read rather
+        // than from the forwarded number alone (:9419-9420), and `px` is spent
+        // on this event rather than remembered: natively the two readings are
+        // one measurement of one keyboard taken twice, so a remembered
+        // forwarded height can only ever be older than a fresh `own` and would
+        // pin the reserve at the stale maximum, where a live 0 cannot give the
+        // rows back. That is where term.html's `framedKb` (:8425) is
+        // deliberately left behind.
         //
-        // A non-finite value is ignored rather than trusted into the layout, as
-        // the page ignores it (:9418, and the reason in its own words at
-        // :9416-9417); false then says nothing took it.
-        //
-        // A terminal that has handed the bridge over keeps whatever it was last
-        // told, because the shell forwards on CHANGE only (mobile/viewport.ts).
-        // A framed term.html keeps its `framedKb` the same way, so this is
-        // parity rather than a new gap, and the pass-2 port is where a terminal
-        // gets to read the keyboard for itself.
-        if (!host || !Number.isFinite(px)) return false;
-        const reserve = Math.max(0, px);
-        // THE HEIGHT WRITE IS GATED TWICE, both gates term.html's, because the
-        // shell forwards this height whatever the device is:
-        // `installViewportSync` reads `visualViewport ?? null`, falls back to
-        // `window.innerHeight`, and still seeds and publishes (viewport.ts:242,
-        // :261, :332), so a fine-pointer desktop reaches this bridge too.
-        //   1. no `window.visualViewport` and `syncViewport` returns before
-        //      writing anything at all (:8428). Read per call, where the page
-        //      reads it per call.
-        //   2. `terminalEl.style.height` is written only inside
-        //      `if (isCoarsePointer)` (:8441). A fine pointer has no soft
-        //      keyboard to make room for, and taking rows off a desktop
-        //      terminal because the browser moved its visual viewport is a
-        //      regression rather than a reservation.
-        // The refit is NOT gated: term.html calls `refit()` outside
-        // `syncViewport` and after it, unconditionally (:9421). And `true` is
-        // still the answer when a gate refuses, because the terminal did take
-        // the message; false is reserved for "there was no terminal".
-        if (window.visualViewport && coarsePointer) {
-          host.style.height = reserve > 0 ? `calc(100% - ${reserve}px)` : "";
-        }
-        // The grid follows the height, through the same debounce as every other
-        // trigger: the keyboard animates over ~250ms and fires a burst, and each
-        // fit emits a tmux resize (term.html:8390-8393, and its own refit at
-        // :9421).
-        refit("fit-wanted");
-        return true;
+        // `false` is reserved for "there was no terminal", which is what a
+        // caller reads it as, and for the non-finite message the page discards
+        // whole (:9418, its reason in its own words at :9416-9417).
+        // viewport.ts answers `ignored` for that one, the only answer that also
+        // skips the fit. A GATE refusing still answers true: the terminal did
+        // take the message.
+        if (!host) return false;
+        return feedViewport({ type: "forwarded", px, facts: viewportFacts() });
       });
 
       teardown = () => {
         if (fitTimer !== undefined) clearTimeout(fitTimer);
         viewShown = null;
         ro.disconnect();
+        // The two outstanding frames, given up through the modules that asked
+        // for them rather than cancelled behind their backs: an `interrupt`
+        // ends a coast (term.html:6130) and `detached` is the page's own
+        // teardown for the pacer, zeroing the accumulator and cancelling the
+        // frame (:6270-6271). Both then run through the same performers, so
+        // this cannot drift from what a pref flip would do.
+        feedTouch({ type: "interrupt" });
+        performWheel({ type: "detached" });
         document.removeEventListener("mousedown", onPress, true);
         document.removeEventListener("mousemove", onMotion, true);
         document.removeEventListener("mouseup", onRelease, true);
+        // Removing a listener that was never added is a no-op, so the four
+        // touch handlers come off without re-testing the coarse-pointer gate
+        // they went on under.
+        host?.removeEventListener("touchstart", onTouchStart);
+        host?.removeEventListener("touchmove", onTouchMove);
+        host?.removeEventListener("touchend", onTouchEnd);
+        host?.removeEventListener("touchcancel", onTouchCancel);
+        host?.removeEventListener("wheel", onHostWheel, true);
         host?.removeEventListener("paste", onPasteEvent, true);
+        document.removeEventListener("visibilitychange", onVisibility);
+        releaseField?.();
+        releaseField = null;
         releaseTheme();
         term.dispose();
       };
@@ -1188,5 +2496,108 @@ export const TerminalNative: Component<{
     props.onConn?.({ state: "closed", attempt: 0 });
   });
 
-  return <div class="tl-terminal-native" ref={host} />;
+  return (
+    <>
+      <div class="tl-terminal-native" ref={host} />
+      {barEngaged ? (
+        <div
+          class="tl-compose-mirror"
+          ref={composeBar}
+          // INLINE, and this is the one place in the app that reaches for that.
+          // The layout here is the posture: the ghost render and the painted
+          // bar differ by six declarations, and keeping them beside the
+          // reasoning is worth more than a class in a 121 KB stylesheet that
+          // nothing else reads. `--kb-offset`, `--safe-b` and `--sk-h` are the
+          // shell's own published values (mobile/viewport.ts), so the bar rides
+          // the exact stack `#soft-keys` does and there is no second source of
+          // truth for where the keyboard's top edge is. term.html parks it the
+          // same way (:1826-1828), with `env(safe-area-inset-bottom)` where
+          // this app has `--safe-b`, which is that env() except while the
+          // platform has already taken the bottom edge (app.css,
+          // `body.tl-kb-up`).
+          style={{
+            position: "fixed",
+            left: "0",
+            right: "0",
+            bottom:
+              "calc(var(--kb-offset, 0px) + var(--safe-b, 0px) + var(--sk-h, 0px))",
+            // Under the soft-key row (40), which it never overlaps: --sk-h is
+            // that row's live height and this sits on top of it.
+            "z-index": "39",
+            "box-sizing": "border-box",
+            display: "flex",
+            // The buttons would hug the bottom as the field grows (:1838).
+            "align-items": "flex-end",
+            gap: "6px",
+            "padding-left": "calc(6px + env(safe-area-inset-left))",
+            "padding-right": "calc(6px + env(safe-area-inset-right))",
+            "padding-top": barGhost ? "0" : "6px",
+            "padding-bottom": barGhost ? "0" : "6px",
+            "font-family": "var(--font-ui)",
+            // GHOST: painted away but interactive. `pointer-events: none` is
+            // what keeps it from intercepting the taps the terminal wants,
+            // since focus arrives only through `tapFocus` (:1882-1883).
+            "pointer-events": barGhost ? "none" : "auto",
+            background: barGhost ? "transparent" : "var(--bg-card)",
+            "border-top": barGhost ? "0" : "1px solid var(--border-strong)",
+          }}
+        >
+          <textarea
+            ref={(el) => {
+              mirrorField = el;
+              // MIRROR_FIELD_ATTRIBUTES rather than a hand-off, because one of
+              // them is an ABSENCE: `autocomplete` is deliberately NOT in that
+              // set and must not be added. term.html records the measurement
+              // (:7103-7110, 2026-07-12) that on iOS, pronounced in the
+              // installed PWA's WKWebView, `autocomplete='off'` also suppresses
+              // the QuickType predictive bar, a WebKit coupling rather than
+              // form-autofill behaviour, which silently killed suggestions in
+              // this exact field. `type` is absent for a related reason: a
+              // textarea has none, and the helper field's `type=password` trick
+              // would kill the composition UI this field exists for. Set from
+              // the constant in a loop so the set cannot drift from the module
+              // that argues for it, and inside `ref` so they are on before the
+              // element is connected rather than two dynamic imports later.
+              for (const [name, value] of Object.entries(MIRROR_FIELD_ATTRIBUTES)) {
+                el.setAttribute(name, value);
+              }
+            }}
+            // The height the autogrow measures from (:7098).
+            rows={1}
+            placeholder="Compose…"
+            style={{
+              flex: "1 1 auto",
+              "min-width": "0",
+              "box-sizing": "border-box",
+              resize: "none",
+              // The autogrow flips this to auto past five lines (:7150-7154).
+              "overflow-y": "hidden",
+              "border-radius": "8px",
+              color: "var(--text-primary)",
+              "font-family": "var(--font-ui)",
+              // 16px, and it has to be inline: this is the whole of the iOS
+              // no-focus-auto-zoom guarantee, and it must not depend on a
+              // stylesheet rule surviving (mirror.ts, term.html:7122, :1852-1853).
+              "font-size": "16px",
+              "line-height": "1.3",
+              "padding-top": "8px",
+              "padding-bottom": "8px",
+              "padding-left": "10px",
+              "padding-right": "10px",
+              // GHOST keeps the field's REAL on-screen size, because a
+              // zero-size field can fail to summon the iOS keyboard, and shows
+              // nothing: no caret, no border, no background. NEVER
+              // `display: none` or `visibility: hidden`, which kill focus and
+              // the soft keyboard on iOS (a WebKit trait confirmed 2026-07-13,
+              // term.html:1877-1886).
+              opacity: barGhost ? "0" : "1",
+              "caret-color": barGhost ? "transparent" : "auto",
+              border: barGhost ? "1px solid transparent" : "1px solid var(--border-strong)",
+              background: barGhost ? "transparent" : "var(--bg-page)",
+            }}
+          />
+        </div>
+      ) : null}
+    </>
+  );
 };
