@@ -600,16 +600,22 @@
   font-variant-numeric: tabular-nums;
 }
 /* What a session is still waiting on ("2 agents"), beside the elapsed timer.
-   Muted and allowed to shrink away first: on a narrow phone the name and the
-   timer are what must survive, and the dot still says the session is working
-   even when there is no room to say what it is working on. */
+   It does NOT shrink first. Measured in the 260px sidebar on 2026-09-04, an
+   ellipsising label read "2 com…", which says a session is waiting and hides
+   the one thing it exists to say — a command is seconds, a workflow is half an
+   hour. The name gives up the room instead: it already truncates, and a
+   half-shown title still identifies the session.
+
+   The cap is what stops that trade going too far: three kinds at once cannot
+   push the name out entirely, and only in that case does the label ellipsise. */
 .tl-card-bg {
   font-size: 10px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  flex: 0 0 auto;
+  max-width: 45%;
   opacity: 0.85;
 }
 /* Alt-hold numbered chip (Alt+1..9/Alt+0 attach-Nth). Absolutely positioned so
