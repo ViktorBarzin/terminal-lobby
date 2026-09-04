@@ -222,13 +222,27 @@ for each session where
      emit session.autonamed
 ```
 
-The prefix is stripped as a set, not as the literal `✳ `. Claude Code carries six
-glyphs for that position — `·` `✢` `✳` `✶` `✻` and a sixth that depends on
-`TERM` — and rotates them on a 960ms interval while a turn animates. Sampled
-live at 4Hz for 10 seconds across two running sessions, every one of 80 reads
-was `✳`, so the animated frames do not reach `pane_title` on this box. Matching
-the set anyway costs one character class and removes the case where a title
-arrives wearing a `✶`.
+The prefix is stripped as a set, not as the literal `✳ `. Claude Code holds a
+six-slot array for that position and rotates it on a 960ms interval while a turn
+animates, and two of the slots swap on `TERM`:
+
+| slot | `TERM=xterm-ghostty` | every other `TERM` |
+|---|---|---|
+| 1, 2, 4, 5 | `·` `✢` `✶` `✻` | `·` `✢` `✶` `✻` |
+| 3 | `✳` | `*` |
+| 6 | `*` | `✽` |
+
+The union is seven symbols, and this box runs `TERM=tmux-256color`, so the third
+slot here is a bare ASCII asterisk. The at-rest constant is `✳` whatever `TERM`
+says, and the separator is always one `U+0020`.
+
+We strip the six Unicode glyphs and deliberately leave the asterisk. Sampled live
+at 4Hz for 10 seconds across two running sessions, every one of 80 reads was `✳`,
+so the animated frames do not reach `pane_title` here at all. The five other
+Unicode glyphs are unambiguous, so matching them is free. An asterisk is not: a
+summary can legitimately begin with one, and stripping it would silently corrupt
+the title. Missing an asterisk prefix costs one stray character in a title we have
+never observed; over-stripping corrupts titles we will.
 
 Stamping `@title` is what stops the rule firing again, so the title freezes at
 the first summary and later drift is ignored. No separate marker is needed.
