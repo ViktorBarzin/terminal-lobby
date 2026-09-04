@@ -249,6 +249,27 @@ func TestClearDeadStatesFailsOpenOnEmptyTree(t *testing.T) {
 	}
 }
 
+// A claude that died took its background tasks with it — they live inside that
+// process — so the ids it left behind can never be retired by the notification
+// that would normally do it. The liveness backstop drops them with the state,
+// which is what keeps such a session off "running" forever given there is no
+// expiry on an id.
+func TestClearDeadStatesDropsOutstandingWorkToo(t *testing.T) {
+	tree := procTree{comm: map[int]string{1: "bash"}, children: map[int][]int{}}
+	sessions := []Session{
+		{Name: "dead", State: "running", Background: &Background{Agents: 2}, PanePID: 1},
+	}
+
+	clearDeadStates(sessions, tree)
+
+	if sessions[0].State != "" {
+		t.Fatalf("State = %q, want empty for a session with no live claude", sessions[0].State)
+	}
+	if sessions[0].Background != nil {
+		t.Fatalf("Background = %+v, want nil: those tasks died with the process", sessions[0].Background)
+	}
+}
+
 // Smoke against the real /proc on this box: our own process must be present
 // with a non-empty comm.
 func TestProcTreeFromRealProc(t *testing.T) {

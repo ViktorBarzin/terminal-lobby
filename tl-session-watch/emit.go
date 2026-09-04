@@ -31,6 +31,11 @@ func Line(f Finding) string {
 	if f.State != "" {
 		fields = append(fields, "state="+logfmtValue(f.State))
 	}
+	// Only when there is some: an empty field on every ordinary line would be
+	// noise in the log store the alerts are built on.
+	if f.Background != "" {
+		fields = append(fields, "bg="+logfmtValue(f.Background))
+	}
 	if f.PaneLimit > 0 {
 		fields = append(fields,
 			"pane_bytes="+strconv.FormatUint(f.PaneBytes, 10),
