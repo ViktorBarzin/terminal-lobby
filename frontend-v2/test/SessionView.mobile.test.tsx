@@ -16,11 +16,19 @@ type Posted = { type?: string; hidden?: boolean };
  * contentWindow (after mount), so every assertion here is about a TRANSITION —
  * which is the case that matters: navigating between the list and the terminal
  * is exactly when the frame has to be re-told.
+ *
+ * `?native=0` because the subject here is the IFRAME's `tl-view` message, and
+ * since the flip (2026-09-04) the app's own terminal is what a bare URL gets.
+ * That one has no frame to post to and answers this question through a prop
+ * instead (TerminalNative's `active`, covered in SessionView.native.test.tsx). The
+ * iframe is still shipped as the way back for a release, so the message it is
+ * sent is still worth holding down; the flag is how a tab reaches it now.
  */
 function mountVisible(initial: boolean | undefined): {
   posted: Posted[];
   setVisible: (v: boolean | undefined) => void;
 } {
+  window.history.replaceState({}, "", "/?native=0");
   const [visible, setVisible] = createSignal<boolean | undefined>(initial);
   const posted: Posted[] = [];
   const { container } = render(() => (

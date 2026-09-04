@@ -207,11 +207,15 @@ describe("a settings row", () => {
     const chipped = [...container.querySelectorAll(".tl-set-row")].filter((r) =>
       r.querySelector(".tl-set-chip"),
     );
+    // Two rows on this page live in the browser rather than the account, in
+    // page order: which terminal to render, the per-device escape hatch the
+    // flip rests on and the only one an installed app has, then flow control.
     expect(chipped.map((r) => r.querySelector(".tl-set-row-label")?.textContent)).toEqual([
+      "Engine",
       "Flow control",
     ]);
     // Everything else on this page is roamed, so nothing else is marked.
-    expect(container.querySelectorAll(".tl-set-chip")).toHaveLength(1);
+    expect(container.querySelectorAll(".tl-set-chip")).toHaveLength(2);
   });
 
   it("draws toggles as switches, still operable as checkboxes", () => {

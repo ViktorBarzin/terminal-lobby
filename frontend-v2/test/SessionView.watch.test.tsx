@@ -22,6 +22,14 @@ vi.mock("../src/lib/terminal-url", async (orig) => {
  *
  * SSE and the terminal iframe are inert here — jsdom loads neither — which is
  * fine: what is under test is the bar and the URL it produces.
+ *
+ * Pinned to `?native=0` (the `beforeEach` below) because the URL is the iframe's
+ * URL: the assertions catch `terminalFrameArgs` at the moment TerminalView
+ * attaches. Since the flip (2026-09-04) a bare URL gets the app's own terminal,
+ * which is handed the same args as a prop but reads them when its socket opens,
+ * so the seam these tests watch is the iframe's. The native side of the same
+ * chain, watch on and the args the component is given saying so, is in
+ * SessionView.native.test.tsx.
  */
 
 // The session store opens an EventSource; jsdom has none, so stub it away. The
@@ -35,6 +43,8 @@ class FakeEventSource {
 }
 
 beforeEach(() => {
+  // The iframe branch, deliberately. See the file's own note above.
+  window.history.replaceState({}, "", "/?native=0");
   localStorage.clear();
   vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]"))));
