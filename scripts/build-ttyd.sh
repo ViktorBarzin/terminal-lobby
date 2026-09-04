@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Build the locally-patched ttyd reproducibly into ./out/ttyd.
 #
-# Why a patched ttyd at all — devvm/ttyd-local.patch carries three fixes:
-# 1. Pixel size → pty (sixel): tmux only re-emits sixel images to clients
-#    whose pty reports a pixel size via TIOCGWINSZ, and stock ttyd 1.7.7
-#    hardcodes ws_xpixel/ws_ypixel to 0 on every resize (src/pty.c). The
-#    patch adds optional "xpixel"/"ypixel" fields to the RESIZE_TERMINAL
-#    message and forwards them to the pty
-#    (docs/adr/0004-sixel-images-in-the-terminal.md).
+# Why a patched ttyd at all: devvm/ttyd-local.patch carries two fixes, and
+# keeps their numbers. Fix 1 forwarded the browser's pixel size to the pty so
+# tmux would re-emit sixel, and it was removed on 2026-09-04 when the sixel
+# flow was deprecated (docs/adr/0004-sixel-images-in-the-terminal.md). The gap
+# at 1 is deliberate, so that every doc naming "fix 2" or "fix 3" keeps
+# pointing at the same hunk.
 # 2. Honor client PAUSE/RESUME (flow control, plan Task 3.4): upstream
 #    1.7.7's pause is a no-op (pty_spawn leaves process->paused stuck true
 #    so pty_pause early-returns, and the writeable pump unconditionally

@@ -52,7 +52,7 @@
 
 /** Client → server: keystrokes and pasted bytes. */
 export const MSG_INPUT = 0x30;
-/** Client → server: `{columns, rows, xpixel, ypixel}` as JSON. */
+/** Client → server: `{columns, rows}` as JSON. */
 export const MSG_RESIZE = 0x31;
 /** Client → server: stop reading the pty (our patched ttyd honours it). */
 export const MSG_PAUSE = 0x32;
@@ -172,39 +172,24 @@ export interface TerminalSize {
   cols: number;
   /** `term.rows`. */
   rows: number;
-  /** Width of `.xterm-screen` in CSS pixels; 0 when it cannot be measured. */
-  xpixel?: number;
-  /** Height of `.xterm-screen` in CSS pixels; 0 when it cannot be measured. */
-  ypixel?: number;
-}
-
-/** getBoundingClientRect returns fractions; the pty's winsize fields are ints. */
-function px(value: number | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
-  return Math.round(value);
 }
 
 /**
- * RESIZE — cols/rows AND the terminal's pixel size.
+ * RESIZE: cols and rows, and nothing else.
  *
- * The pixel fields are what make sixel work: tmux only re-emits an image to
- * clients whose pty reports a pixel size (it reads it via TIOCGWINSZ alone),
- * and a zero-pixel pty gets a "SIXEL IMAGE (WxH)" text placeholder instead of
- * the picture. Our patched ttyd (devvm/ttyd-pixel-size.patch) forwards these
- * optional fields to the pty; stock ttyd ignores unknown JSON fields, so a
- * client that always sends them stays compatible with both.
+ * It also carried `xpixel`/`ypixel` until sixel was deprecated on 2026-09-04
+ * (docs/adr/0004-sixel-images-in-the-terminal.md). Those two fields were read
+ * only by fix 1 of devvm/ttyd-local.patch, which came out in the same change,
+ * so they would now be numbers no server reads.
  *
- * Send 0 rather than omitting a field that cannot be measured — 0 is the
- * honest "no pixel size", and it is what term.html sends when the screen
- * element is not in the DOM yet.
+ * cols and rows go out AS GIVEN, which is what term.html does in both places
+ * it sends a size (`columns: term.cols, rows: term.rows`, :8325 and :10309).
+ * The rounding helper that used to wrap them went with the pixel fields: it
+ * existed because getBoundingClientRect returns fractions, and xterm's own
+ * cols and rows are whole numbers, so there is nothing left for it to round.
  */
 export function encodeResize(size: TerminalSize): Uint8Array {
-  const json = JSON.stringify({
-    columns: px(size.cols),
-    rows: px(size.rows),
-    xpixel: px(size.xpixel),
-    ypixel: px(size.ypixel),
-  });
+  const json = JSON.stringify({ columns: size.cols, rows: size.rows });
   return frame(MSG_RESIZE, encoder.encode(json));
 }
 
@@ -242,17 +227,29 @@ export interface Handshake {
  * The init message, sent as TEXT the moment the socket opens — the only
  * client → server message with no type byte in front of it.
  *
- * It carries NO pixel fields, and ttyd drops RESIZE messages that arrive
- * before the process is spawned. That pair is why the component must send one
- * explicit resize after the FIRST output frame (the only proof the process
- * exists): without that kick the pty never learns its pixel size and tmux
- * never re-emits sixel for this client.
+ * THE PTY IS CREATED AT THIS SIZE. ttyd parses `columns`/`rows` out of this
+ * message and hands them to `spawn_process` (ttyd 1.7.7 src/protocol.c:328-349,
+ * and :150-154, where they are written onto the process before `pty_spawn`).
+ * It is also the only size ttyd will read until that process exists, because
+ * `case RESIZE_TERMINAL` opens with `if (pss->process == NULL) break;`
+ * (protocol.c:316-317).
+ *
+ * So the component still owes ONE explicit resize after the FIRST output frame,
+ * which is the only proof the process exists. The reason is the dropped frame,
+ * NOT a pty that has no size yet: a fit that lands in the gap between open and
+ * spawn is discarded, and the pty then keeps the size measured here. Anything
+ * that says the pty learns its size only once it exists is describing RESIZE,
+ * not the handshake. Until 2026-09-04 that kick was ALSO what taught the pty
+ * its pixel size for sixel; that half is gone with ADR-0004.
+ *
+ * Same field values as term.html:10307-10311, which sends `term.cols` and
+ * `term.rows` as they are.
  */
 export function handshakeMessage(init: Handshake): string {
   return JSON.stringify({
     AuthToken: init.token,
-    columns: px(init.cols),
-    rows: px(init.rows),
+    columns: init.cols,
+    rows: init.rows,
   });
 }
 

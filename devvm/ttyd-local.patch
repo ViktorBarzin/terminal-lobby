@@ -1,14 +1,19 @@
 Local ttyd 1.7.7 patch for terminal-lobby (applied by scripts/build-ttyd.sh
 on top of upstream tag 1.7.7; leading text is ignored by `git apply`).
 
-Three independent fixes, one binary:
+Two independent fixes, one binary.
 
-1. Pixel size → pty (sixel; docs/adr/0004-sixel-images-in-the-terminal.md):
-   stock ttyd hardcodes ws_xpixel/ws_ypixel to 0 on every resize, and tmux
-   only re-emits sixel to clients whose pty reports a pixel size. Adds
-   optional "xpixel"/"ypixel" fields to the RESIZE_TERMINAL message and
-   forwards them via TIOCSWINSZ. Taken verbatim from the validated prototype
-   tree; upstream PR planned.
+Fix 1 was "pixel size → pty", which added optional "xpixel"/"ypixel" fields to
+the RESIZE_TERMINAL message and forwarded them via TIOCSWINSZ, because tmux
+re-emits sixel only to clients whose pty reports a pixel size. It was REMOVED
+on 2026-09-04 when sixel was deprecated
+(docs/adr/0004-sixel-images-in-the-terminal.md), so this binary is stock 1.7.7
+on that point: winsize goes back to {rows, columns, 0, 0} and the JSON fields
+are ignored the way any unknown field is.
+
+The two that stayed KEEP THEIR NUMBERS. Renumbering them to 1 and 2 would
+silently repoint the ADRs, scripts/build-ttyd.sh and the design doc that name
+"fix 2" and "fix 3", so the gap at 1 is deliberate. What the patch carries:
 
 2. Honor client PAUSE / RESUME (flow control; plan Task 3.4, upstream
    no-op — see tsl0922/ttyd PR #1560 for the adjacent upstream discussion):
@@ -50,22 +55,6 @@ index 53e65d4..bc8e912 100644
        }
        break;
  
-@@ -315,8 +315,13 @@ int callback_tty(struct lws *wsi, enum lws_callback_reasons reason, void *user,
-           break;
-         case RESIZE_TERMINAL:
-           if (pss->process == NULL) break;
--          json_object_put(
--              parse_window_size(pss->buffer + 1, pss->len - 1, &pss->process->columns, &pss->process->rows));
-+          {
-+            json_object *_o = parse_window_size(pss->buffer + 1, pss->len - 1, &pss->process->columns, &pss->process->rows);
-+            struct json_object *_p = NULL;
-+            if (json_object_object_get_ex(_o, "xpixel", &_p)) pss->process->xpixel = (uint16_t)json_object_get_int(_p);
-+            if (json_object_object_get_ex(_o, "ypixel", &_p)) pss->process->ypixel = (uint16_t)json_object_get_int(_p);
-+            json_object_put(_o);
-+          }
-           pty_resize(pss->process);
-           break;
-         case PAUSE:
 diff --git a/src/pty.c b/src/pty.c
 index 01e9d6b..e011634 100644
 --- a/src/pty.c
@@ -86,27 +75,6 @@ index 01e9d6b..e011634 100644
    process->out->data = process;
    uv_read_start((uv_stream_t *) process->out, alloc_cb, read_cb);
  }
-@@ -150,7 +150,7 @@ bool pty_resize(pty_process *process) {
-   COORD size = {(int16_t) process->columns, (int16_t) process->rows};
-   return pResizePseudoConsole(process->pty, size) == S_OK;
- #else
--  struct winsize size = {process->rows, process->columns, 0, 0};
-+  struct winsize size = {process->rows, process->columns, process->xpixel, process->ypixel};
-   return ioctl(process->pty, TIOCSWINSZ, &size) == 0;
- #endif
- }
-diff --git a/src/pty.h b/src/pty.h
-index c3f761c..265903b 100644
---- a/src/pty.h
-+++ b/src/pty.h
-@@ -29,6 +29,7 @@ typedef void (*pty_exit_cb)(pty_process *);
- struct pty_process_ {
-   int pid, exit_code, exit_signal;
-   uint16_t columns, rows;
-+  uint16_t xpixel, ypixel;
- #ifdef _WIN32
-   STARTUPINFOEXW si;
-   HPCON pty;
 diff --git a/src/http.c b/src/http.c
 index eea62af..eec3f7a 100644
 --- a/src/http.c

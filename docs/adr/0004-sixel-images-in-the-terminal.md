@@ -1,5 +1,52 @@
 # Sixel images render inline; the pixel-size gap is closed in ttyd
 
+> **Superseded 2026-09-04** by
+> `docs/plans/2026-09-04-native-terminal-de-iframe-design.md`: Viktor deprecated
+> the flow, in his words *"let's deprecate the sixel flow. it's not very useful
+> today. we rely on the library and text mode"*. Everything below happened and
+> every link in the chain worked as described. What changed is the judgement
+> about how much the inline picture is worth next to the two surfaces that
+> carry images now, the session library (ADR-0005, which this decision already
+> leaned on for persistence) and text mode.
+>
+> Three things moved:
+>
+> - **The ttyd patch was re-cut.** Fix 1, the pixel-size plumbing decided here
+>   (optional `xpixel`/`ypixel` on `RESIZE_TERMINAL`, forwarded via
+>   `TIOCSWINSZ`), came out of `devvm/ttyd-local.patch`, so `struct winsize` is
+>   back to upstream's `{process->rows, process->columns, 0, 0}`. Fix 2 (client
+>   PAUSE/RESUME flow control) and fix 3 (the `-I` index ETag) stayed exactly as
+>   they were, and keep their numbers, so every doc that names one still points
+>   at the same hunk. The file this ADR calls `devvm/ttyd-pixel-size.patch` was
+>   renamed `devvm/ttyd-local.patch` when the second and third fixes joined it.
+> - **`show-image` files the image, tells the session, and prints where to open
+>   it.** The split pane and the `viu` inside it are gone for every client, not
+>   only the web one: the tmux branch of the script no longer invokes `viu` at
+>   all, so a human on a real sixel-capable terminal inside tmux loses the
+>   inline picture as well. What the script does instead is register the image
+>   into the per-session store, put a one-line notice on the tmux status line of
+>   every client attached to the session, and print the
+>   `/clipboard/img/<session>/<name>` path it landed on. The notice is there
+>   because the usual caller is an agent's tool call, which captures stdout: the
+>   printed line reaches the agent, and the status line is what reaches the
+>   person at the terminal. That POST also became synchronous, because the
+>   stored name is assigned by the server and a failed registration now means
+>   there is nothing to look at.
+> - **The native terminal never sends pixels.** `frontend-v2/src/terminal/wire.ts`
+>   dropped both fields from its resize frame in the same change.
+>
+> **One consequence was accepted knowingly: sixel stops working in the shipped
+> `term.html` iframe in this release, not after it.** `term.html` is untouched
+> and keeps sending the pixel fields (`:8325`), a re-cut ttyd no longer reads
+> them, so the pty reports 0 by 0 and tmux draws the `SIXEL IMAGE (WxH)`
+> placeholder this ADR documents for a zero-pixel pty. The image addon is still
+> vendored in that page and still amends DA1, so programs inside tmux go on
+> emitting sixel; what stops is tmux re-emitting it to this client. Anyone who
+> was watching pictures appear inline sees that text line instead. An image that
+> came through `show-image` is in the session library and the status-line notice
+> says so; one a program emitted straight into the terminal is not, because
+> nothing files it.
+
 Goal (Viktor, 2026-07-08): view images inline in the web terminal —
 `viu photo.jpg` in any session and the picture appears in the flow of
 the terminal, through tmux, on desktop and phone.

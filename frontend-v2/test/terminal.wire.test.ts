@@ -102,37 +102,32 @@ describe("the liveness probe", () => {
 });
 
 describe("the resize frame", () => {
-  it("prefixes '1' and carries columns, rows and pixels as JSON", () => {
-    const frame = encodeResize({ cols: 80, rows: 24, xpixel: 640, ypixel: 384 });
+  it("prefixes '1' and carries columns and rows as JSON", () => {
+    const frame = encodeResize({ cols: 80, rows: 24 });
     expect(frame[0]).toBe(0x31);
-    expect(text(frame)).toBe('{"columns":80,"rows":24,"xpixel":640,"ypixel":384}');
+    expect(text(frame)).toBe('{"columns":80,"rows":24}');
   });
 
   /**
-   * tmux re-emits sixel only to clients whose pty reports a pixel size (it
-   * reads it via TIOCGWINSZ alone); a zero-pixel pty gets a "SIXEL IMAGE
-   * (WxH)" text placeholder instead of the picture. Dropping the fields when
-   * nothing can be measured means the pty never learns them at all, so 0 goes
-   * out instead.
+   * The frame carried xpixel/ypixel until 2026-09-04, and those two numbers
+   * were the whole reason tmux re-emitted sixel to this client: it reads the
+   * pixel size via TIOCGWINSZ alone, and a zero-pixel pty gets a "SIXEL IMAGE
+   * (WxH)" text placeholder (ADR-0004). Sixel is deprecated, and fix 1 of
+   * devvm/ttyd-local.patch, the only thing that ever read the fields, came out
+   * with it. Sending them now would put two numbers on the wire that nothing
+   * reads.
+   *
+   * Parameterized over sizes, and asserting the exact JSON rather than a
+   * parsed subset, because what this guards against is a field creeping back
+   * in: `toEqual` on a parsed object passes happily while an extra key rides
+   * along in the string.
    */
-  it("always sends the pixel fields, even when nothing could be measured", () => {
-    const parsed = JSON.parse(text(encodeResize({ cols: 100, rows: 30 })));
-    expect(parsed).toEqual({ columns: 100, rows: 30, xpixel: 0, ypixel: 0 });
-  });
-
-  it("rounds a fractional rect to whole pixels", () => {
-    const parsed = JSON.parse(
-      text(encodeResize({ cols: 80, rows: 24, xpixel: 640.4, ypixel: 383.6 })),
-    );
-    expect(parsed.xpixel).toBe(640);
-    expect(parsed.ypixel).toBe(384);
-  });
-
-  /** JSON.stringify turns NaN into null, and a null is not a size ttyd can read. */
-  it("turns an unmeasurable pixel size into 0 rather than null", () => {
-    const parsed = JSON.parse(text(encodeResize({ cols: 80, rows: 24, xpixel: NaN })));
-    expect(parsed.xpixel).toBe(0);
-    expect(parsed.ypixel).toBe(0);
+  it.each([
+    [80, 24, '{"columns":80,"rows":24}'],
+    [100, 30, '{"columns":100,"rows":30}'],
+    [211, 51, '{"columns":211,"rows":51}'],
+  ])("sends columns and rows and nothing else at %ix%i", (cols, rows, json) => {
+    expect(text(encodeResize({ cols, rows }))).toBe(json);
   });
 
   it("does not use the input frame's type byte", () => {
@@ -191,12 +186,18 @@ describe("the init handshake", () => {
   });
 
   /**
-   * The handshake has no pixel fields and ttyd drops RESIZE messages that
-   * arrive before the process is spawned. That pair is the whole reason the
-   * component must send one explicit resize after the first OUTPUT frame — if
-   * this ever changes, that kick can go.
+   * The handshake is the only size ttyd reads before the process exists: the
+   * RESIZE_TERMINAL case drops a frame that arrives first (`if (pss->process
+   * == NULL) break;`). So this field list is the whole of what the pty knows
+   * at spawn, and a fit that lands in between is what the component's resize
+   * after the first OUTPUT frame recovers.
+   *
+   * Until 2026-09-04 this case was about the pixel fields the handshake has
+   * never carried, which is why the kick existed at all. Sixel is deprecated
+   * (ADR-0004) and the resize frame no longer carries them either, so what is
+   * left to pin is the field list itself.
    */
-  it("tells ttyd nothing about pixels, which is why a resize kick is needed", () => {
+  it("carries exactly the auth token and the size", () => {
     const parsed = JSON.parse(handshakeMessage({ token: "t", cols: 80, rows: 24 }));
     expect(Object.keys(parsed)).toEqual(["AuthToken", "columns", "rows"]);
   });

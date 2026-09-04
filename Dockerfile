@@ -41,9 +41,13 @@ RUN set -eux; \
 
 # ttyd is not in Debian, so the upstream static build is pinned by digest.
 #
-# This is STOCK ttyd, not the patched build the devvm runs. That patch adds
-# pixel-size reporting so tmux re-emits sixel, which is how images show inside a
-# terminal here. Without it the lobby works and the Images button does not.
+# This is STOCK ttyd, not the patched build the devvm runs. What that patch
+# still carries is the client PAUSE opcode (stock's is a no-op, so client flow
+# control cannot actually stop the pty) and an ETag on the custom index (stock
+# serves it no-store, so every boot re-downloads it). Its fix 1 reported the
+# pixel size so tmux would re-emit sixel; that came out on 2026-09-04 with the
+# sixel flow (docs/adr/0004-sixel-images-in-the-terminal.md), so images are
+# viewed in the session library here exactly as they are on the devvm.
 ARG TTYD_VERSION=1.7.7
 ARG TTYD_SHA256=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
 RUN set -eux; \
