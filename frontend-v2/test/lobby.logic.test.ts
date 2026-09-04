@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   addProject,
   addSessionToGroup,
+  backgroundLabel,
   countStates,
   deleteProject,
   deriveSidebar,
@@ -520,7 +521,44 @@ describe("display helpers", () => {
       sess("d", { state: "running" }),
       sess("e", { state: "" }),
     ]);
-    expect(c).toEqual({ running: 2, awaiting: 1, done: 1 });
+    expect(c).toEqual({ running: 2, awaiting: 1, done: 1, background: 0 });
+  });
+  // A background-held session is a SUBSET of running, never a fourth state:
+  // the dot, the timer and every consumer of `state` stay on running, and this
+  // count only says how many of them are waiting on something rather than
+  // talking.
+  it("countStates counts background-held sessions inside running", () => {
+    const c = countStates([
+      sess("a", { state: "running" }),
+      sess("b", { state: "running", bg: { agents: 2 } }),
+      sess("c", { state: "running", bg: { workflows: 1, commands: 1 } }),
+      sess("d", { state: "done" }),
+    ]);
+    expect(c).toEqual({ running: 3, awaiting: 0, done: 1, background: 2 });
+  });
+  it("backgroundLabel names the kinds, singular and plural", () => {
+    expect(backgroundLabel(undefined)).toBe("");
+    expect(backgroundLabel({})).toBe("");
+    expect(backgroundLabel({ agents: 1 })).toBe("1 agent");
+    expect(backgroundLabel({ agents: 2 })).toBe("2 agents");
+    expect(backgroundLabel({ workflows: 1 })).toBe("1 workflow");
+    expect(backgroundLabel({ commands: 3 })).toBe("3 commands");
+    // Slowest kind first: a workflow is the one that decides whether it is
+    // worth waiting.
+    expect(backgroundLabel({ commands: 1, agents: 2, workflows: 1 })).toBe(
+      "2 agents, 1 workflow, 1 command",
+    );
+  });
+  // The tooltip and the screen reader are the only places the reason reaches
+  // someone who cannot see an 8px dot, so the background detail belongs in the
+  // words rather than only in the card's own text.
+  it("stateLabel says what a running session is waiting on", () => {
+    expect(stateLabel("running", false, { agents: 2 })).toBe("Working · 2 agents");
+    expect(stateLabel("running", false, {})).toBe("Working");
+    expect(stateLabel("running", false, undefined)).toBe("Working");
+    // Only running carries it: awaiting and done are about the person, not
+    // about what the machine still owes.
+    expect(stateLabel("done", false, { agents: 2 })).toBe("Done");
   });
   it("isOwn treats missing owner as own", () => {
     expect(isOwn(sess("a", { owner: undefined }), ME)).toBe(true);
