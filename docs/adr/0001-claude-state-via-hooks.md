@@ -65,6 +65,31 @@ resulting state itself — see "Interrupts have no hook" below.
   pty clears it within ~3 s, which is what makes the Terminal view the
   in-app recovery path. The liveness backstop below does not help here:
   claude is alive, just idle.
+- **`Stop` is not the end of a turn's work, and a subagent's tool calls
+  reach these same hooks.** Measured on 2026-09-04 against claude 2.1.260,
+  with every hook event logged and its payload kept: a prompt that
+  backgrounded one Agent and one command fired `Stop` at 05:09:41, and the
+  agent finished at 05:11:57. Two minutes sixteen of a session reading
+  *Done* while it was working. The second half is why the wrong colour was
+  intermittent rather than constant — the subagent's own `PreToolUse` and
+  `PostToolUse` arrive in the MAIN session carrying `agent_id`, so the
+  script re-stamped `running` between Stops and the value a poll saw
+  depended on when it landed.
+
+  Both are fixed inside the events already wired, with no change to
+  `managed-settings.json`: `PostToolUse` records a launch that returns
+  `status: async_launched` in a second option, `@claude_bg`; the completing
+  task re-enters as a `UserPromptSubmit` carrying `<task-notification>`,
+  which retires that id; `Stop` stamps `done` only when the set is empty;
+  and any event carrying `agent_id` is ignored. There is deliberately no
+  expiry on an id — a human prompt clears the set, which is what makes
+  typing into a session re-derive it, as it already was for `@claude_state`.
+  `SubagentStart` and `SubagentStop` do fire and are accurate, and are
+  deliberately unused: wiring them means an infra change reaching every
+  headless Claude on the box. `TaskCreated` and `TaskCompleted` exist as
+  event names in the binary and fired for none of the three launch kinds.
+  Design and the full trace:
+  `docs/plans/2026-09-04-background-work-session-state-design.md`.
 - A session whose Claude died without hooks firing (kill -9, OOM) is
   caught by a liveness backstop: a state only survives while a claude
   process is alive under the session's `pane_pid` (one /proc scan per
