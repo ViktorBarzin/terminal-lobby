@@ -79,23 +79,24 @@ We read its output rather than starting a second one.
 sequenceDiagram
     participant U as You
     participant C as Composer
-    participant T as ttyd / tmux
-    participant SE as session-events
+    participant T as tmux
+    participant S as events
     participant A as tmux-api
 
-    U->>C: open (empty state, +, or Alt+Shift+N)
-    C->>A: POST /sessions/prewarm {dir}
-    Note over A,T: a Claude boots speculatively (~2.4s)
-    U->>C: type the prompt, Enter
+    U->>C: open
+    C->>A: prewarm {dir}
+    Note over A,T: Claude boots, ~2.4s
+    U->>C: prompt, Enter
     C->>C: id = base32(12)
-    C->>T: attach ?arg=<id> — claims the warm slot (9ms rename)
-    C->>SE: POST /prompt/<id> "/model sonnet"
-    C->>SE: POST /prompt/<id> "<your text>"
-    Note over C: card shows the first line of your prompt
-    T-->>A: pane_title becomes "✳ Session naming optional"
-    A->>A: stamp @title, emit session.autonamed
-    A-->>C: /sessions poll carries the title
-    Note over C: card, tab title and dock now read the summary
+    C->>T: attach ?arg=id
+    Note over C,T: claims the slot, 9ms
+    C->>S: /prompt "/model sonnet"
+    C->>S: /prompt "your text"
+    Note over C: card shows your first line
+    T-->>A: pane_title = "✳ …"
+    A->>A: stamp @title
+    A-->>C: poll carries the title
+    Note over C: card and tab read the summary
 ```
 
 Nothing renames. The id chosen in the browser is the name for the life of the
@@ -147,20 +148,11 @@ p3vn8w2ljd  Tashkent trip planning
 
 ```mermaid
 flowchart TD
-    subgraph desktop
-      E["no session selected"] --> NC["NewSessionComposer"]
-      K["Alt+Shift+N / palette"] --> NC
-      P["sidebar + on a project"] --> NC
-    end
-    subgraph phone["phone — one view at a time"]
-      NC2["composer (landing view)"] -->|list| L["session list"]
-      L -->|tap| TV["terminal / text view"]
-      TV -->|back| L
-      L -->|+| NC2
-      NC2 -->|send| TV
-    end
-    NC --> PF["PromptField (shared)"]
-    LC["Composer (live session)"] --> PF
+    E["no session selected"] --> NC["NewSessionComposer"]
+    K["Alt+Shift+N or palette"] --> NC
+    P["sidebar + on a project"] --> NC
+    NC --> PF["PromptField, shared"]
+    LC["Composer, live session"] --> PF
 ```
 
 `Composer.tsx` carries a lot that only means something for a live session: the
@@ -188,6 +180,20 @@ rather than open the picker.
 
 **Choosing `shell`** turns the box back into a name box. A shell has no prompt to
 receive, and it is the case where someone most likely wanted to name the thing.
+
+**On a phone** the lobby shows one view at a time, and the composer becomes the
+landing view rather than the session list, so a phone opens ready to type. The
+list is one control away, using the flip that already carries you between the
+list and a terminal.
+
+```mermaid
+flowchart TD
+    NC["composer, the landing view"] -->|list| L["session list"]
+    L -->|tap a card| TV["terminal or text view"]
+    TV -->|back| L
+    L -->|+| NC
+    NC -->|send| TV
+```
 
 **Attachments** are held as `File` objects in the browser and uploaded once the
 session exists, into `/var/lib/clipboard-store/<user>/<id>/`, before the prompt
