@@ -180,12 +180,29 @@ order, and the Ungrouped section's slot among the projects. Collapse
 state is NOT part of the layout — it is a per-browser view preference.
 
 **Session state**:
-What the Claude conversation inside a session is doing: *running* (a
-turn is in flight), *awaiting input* (Claude asked something and is
-blocked on the user), or *completed* (turn finished, ready for the
-next prompt). A session with no live Claude has no state.
+What the Claude conversation inside a session is doing: *running* (it is
+working and will produce more output), *awaiting input* (Claude asked
+something and is blocked on the user), or *completed* (finished, ready
+for the next prompt). A session with no live Claude has no state. Note
+that *running* is not the same as "a turn is in flight": a session with
+**Outstanding work** is running with nobody talking.
 _Avoid_: status, activity (tmux "activity" means terminal output, not
 Claude turn state)
+
+**Outstanding work**:
+Background tasks a session launched that have not reported back —
+background subagents, **Workflow** runs and background commands. A
+session with any is *running* rather than *completed*, because it will
+produce more output without anyone prompting it, and the sidebar names
+what it is waiting on ("2 agents", "1 workflow"). Kept as the set of
+task ids in the session's `@claude_bg` option: a launch that returns
+`async_launched` adds one, and that id's task-notification removes it.
+Nothing expires, so a person typing into the session is what re-derives
+it — the same recovery path a stale **Session state** has. Only the main
+thread's own launches count: a subagent's background tasks report back
+to the subagent, so counting one would leave an id nothing can retire.
+_Avoid_: pending tasks, background jobs (both read as shell job control),
+and any wording that makes it a fourth **Session state**
 
 **Session images**:
 The per-(user, session) store of images the session visually touched —

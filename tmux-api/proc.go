@@ -162,16 +162,24 @@ func annotateTools(sessions []Session, t procTree) {
 // of the claude process alone) and the launcher fell back to a shell. An
 // empty tree (failed scan) fails OPEN: better a briefly stale dot than
 // blanking every user's indicators.
+//
+// The outstanding-work count goes with the state, and for a stronger reason
+// than tidiness. Background tasks live INSIDE the claude process, so a claude
+// that died took them with it; the ids it left behind can never be retired by
+// the notification that would normally do it. This is the backstop that keeps
+// such a session from sitting at "running" forever, since there is deliberately
+// no expiry on an id (2026-09-04).
 func clearDeadStates(sessions []Session, t procTree) {
 	if len(t.comm) == 0 {
 		return
 	}
 	for i := range sessions {
-		if sessions[i].State == "" {
+		if sessions[i].State == "" && sessions[i].Background == nil {
 			continue
 		}
 		if sessions[i].PanePID <= 0 || !t.hasClaudeUnder(sessions[i].PanePID) {
 			sessions[i].State = ""
+			sessions[i].Background = nil
 		}
 	}
 }

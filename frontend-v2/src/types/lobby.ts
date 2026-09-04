@@ -14,6 +14,21 @@ export type ClaudeState = "running" | "awaiting" | "done";
 export type AttachAccess = "ro" | "rw";
 
 /**
+ * Outstanding background work on a session, counted by kind (tmux-api
+ * `Background`). Each key is omitted when zero, so an object with no keys never
+ * reaches the wire — the whole field is dropped instead.
+ *
+ * Counted by kind rather than totalled because the kinds take wildly different
+ * amounts of time: a background command is usually seconds, a workflow can be
+ * half an hour.
+ */
+export interface BackgroundWork {
+  agents?: number;
+  commands?: number;
+  workflows?: number;
+}
+
+/**
  * Which command a session is running (tmux-api `tool`, resolved from the
  * pane's process tree — NOT from pane_current_command, which reads "bash" for
  * both wrapper-launched agents). Absent when the server predates the field or
@@ -54,6 +69,14 @@ export interface Session {
   created: number;
   /** "" when no live Claude. */
   state?: ClaudeState | "";
+  /** What the session is still waiting on, counted by kind. Absent when it is
+   *  waiting on nothing, which is the ordinary case.
+   *
+   *  This is why `state` can read "running" with no turn in flight: a
+   *  background agent, a workflow or a background command outlives the Stop
+   *  that used to finish the turn, and the session will speak again with
+   *  nobody prompting it. */
+  bg?: BackgroundWork;
   /** Global project name the session is assigned to; "" = ungrouped. */
   project?: string;
   /** OS user the session runs as. Own sessions carry the caller; foreign the owner. */
