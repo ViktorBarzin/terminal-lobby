@@ -213,9 +213,17 @@ for each session where
     @title is unset               (nobody has titled it)
     pane_title != "✳ Claude Code" (a summary exists)
     created within the last ~2 min
-  -> stamp @title = pane_title minus the "✳ " prefix
+  -> stamp @title = pane_title minus its glyph prefix
      emit session.autonamed
 ```
+
+The prefix is stripped as a set, not as the literal `✳ `. Claude Code carries six
+glyphs for that position — `·` `✢` `✳` `✶` `✻` and a sixth that depends on
+`TERM` — and rotates them on a 960ms interval while a turn animates. Sampled
+live at 4Hz for 10 seconds across two running sessions, every one of 80 reads
+was `✳`, so the animated frames do not reach `pane_title` on this box. Matching
+the set anyway costs one character class and removes the case where a title
+arrives wearing a `✶`.
 
 Stamping `@title` is what stops the rule firing again, so the title freezes at
 the first summary and later drift is ignored. No separate marker is needed.
@@ -277,6 +285,16 @@ a fresh empty session; with no renames there is no stale name to hold.
 > rather than set the model directly. If it does, the model picker either falls
 > back to new command keys — losing the pre-warm head start for every model but
 > the default — or comes out of the composer.
+
+>[!WARNING]
+> **`CLAUDE_CODE_DISABLE_TERMINAL_TITLE` turns the whole feature off.** Claude
+> Code gates the title write on that environment variable; when it is set,
+> nothing is written and `pane_title` keeps whatever the shell left there. A
+> session started with it set gets no summary, so it stays untitled and shows
+> the first line of its prompt. Nothing on this box sets it today. If it ever
+> becomes an org default in `managed-settings.json`, the auto-title stops
+> working for everyone with no other symptom, so it is worth a line in the
+> runbook.
 
 **The pane title's update cadence is not fully characterised.** ADR-0001 calls
 the `✳` title "a static summary", and this design only reads it once, so the
