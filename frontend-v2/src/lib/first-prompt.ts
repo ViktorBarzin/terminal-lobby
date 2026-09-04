@@ -21,20 +21,14 @@ import { promptUrl } from "./config";
  *    `/model sonnet` at fixed offsets from creation — lost at +0s and +1s,
  *    landed at +2s and +3s, with no error at any offset.
  *
- * So delivery walks a ladder AND waits for a readiness signal, and the caller
- * supplies the signal because only it knows what it started.
+ * So delivery walks a ladder, and asks the SERVER to hold each attempt until
+ * the pane can take it. The readiness check lives there because that is where
+ * the evidence is: `sessionio.AwaitInputReady` watches the pane draw Claude's
+ * own `❯` and then hold still for 300ms, which is the same check the T3 bridge
+ * already runs after a resurrection, for the same reason. Nothing about a
+ * pane's input line reaches the browser, so a browser-side version of this
+ * could only ever be a proxy for it.
  */
-
-/**
- * The glyphs Claude Code puts at the head of the terminal title.
- *
- * Mirrors `claudeTitleGlyphs` in tmux-api/autotitle.go, which strips the same
- * set from a summary before storing it. Here the glyph is read for what its
- * PRESENCE means rather than removed: the title is the shell's own until Claude
- * writes over it, so a glyph at the head is the first thing anyone outside the
- * pane can see that says Claude has drawn its UI.
- */
-export const CLAUDE_TITLE_GLYPHS = "·✢✳✶✻✽";
 
 /**
  * The ladder a first prompt retries on, in ms of wait BEFORE each attempt.
@@ -46,43 +40,19 @@ export const CLAUDE_TITLE_GLYPHS = "·✢✳✶✻✽";
 export const FIRST_PROMPT_LADDER: readonly number[] = [700, 1600, 3000, 6000];
 
 /**
- * How long after the readiness signal to wait before injecting.
- *
- * The pane title carries its glyph from ~1.4s after creation and input is
- * accepted from ~1.9s, so the signal arrives slightly ahead of the thing it
- * signals. Sized for the measured gap with room for a loaded box, where every
- * number here stretches: the devvm sat at load 63 on 32 cores during these
- * measurements and the boot markers moved by several hundred ms.
- */
-export const CLAUDE_SETTLE_MS = 750;
-
-/**
  * The gap between two lines sent back to back.
  *
  * Injecting is four tmux commands (clear the input line, set the buffer, paste
  * it, Enter) and the second line's clear can reach the pane while the first is
  * still being applied. Measured back to back with no gap on a session still
- * settling after boot, the FIRST line was the one lost. Insurance rather than a
- * measured minimum: on a settled session every gap from 0ms up delivered both.
+ * settling after boot, the FIRST line was the one lost.
+ *
+ * Mostly redundant when `awaitReady` is on, since the server's own check makes
+ * the second line wait for the pane to settle after the first repainted it —
+ * measured live, that hold was 662ms. Kept for the case it does not cover, and
+ * it costs a quarter second on a path that already spends seconds.
  */
 export const LINE_GAP_MS = 250;
-
-/**
- * Has Claude drawn its UI in this pane?
- *
- * Reading the pane title, which is the only thing about a pane's INSIDE that
- * reaches the browser (tmux-api serves it in every /sessions row). Before
- * Claude writes over it the title is whatever the shell left — the bare
- * hostname on this box — so a leading glyph is the signal.
- *
- * Necessary but not sufficient on its own, which is what CLAUDE_SETTLE_MS
- * covers, and absent entirely when CLAUDE_CODE_DISABLE_TERMINAL_TITLE is set,
- * which is what the ladder's last rung covers.
- */
-export function claudeIsUp(paneTitle: string | undefined): boolean {
-  const head = paneTitle?.[0];
-  return head !== undefined && CLAUDE_TITLE_GLYPHS.includes(head);
-}
 
 export interface DeliverFirstPromptOptions {
   /** The session id to address. */
@@ -90,14 +60,20 @@ export interface DeliverFirstPromptOptions {
   /** The lines to send, in order. Empty ones are dropped. */
   lines: readonly string[];
   /**
-   * Is the session ready to receive? Polled once per rung.
+   * Ask the server to wait for the pane to be able to take the text.
    *
-   * Absent means "no opinion", and delivery falls back to the ladder alone —
-   * which is what a command with no readiness signal of its own gets.
+   * `session-events` answers 503 rather than injecting when it cannot, which
+   * this treats like any other "not yet". The check is `sessionio`'s own — the
+   * pane drawing Claude's `❯` and then holding still — so it reads the input
+   * line rather than guessing from anything the browser can see.
+   *
+   * Only for a command that draws that prompt, which is Claude. Asking for it
+   * where nothing will ever draw one would spend every rung waiting and then
+   * give up with the text unsent, so a caller starting something else leaves
+   * this off and takes the ladder alone.
    */
-  ready?: () => boolean;
+  awaitReady?: boolean;
   ladder?: readonly number[];
-  settleMs?: number;
   gapMs?: number;
   /** injectable for tests; defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
@@ -111,21 +87,24 @@ type Attempt = "ok" | "later" | "no";
 async function post(
   session: string,
   text: string,
+  awaitReady: boolean,
   fetchImpl: typeof fetch,
 ): Promise<Attempt> {
   try {
     const res = await fetchImpl(promptUrl(session), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, awaitReady }),
       credentials: "same-origin",
     });
     if (res.ok) return "ok";
-    // 502 is what a session tmux cannot find answers, because the injection —
-    // not a lookup — is what fails. 404 is covered for a proxy that answers
-    // ahead of the route. Everything else (400 for an empty body, an auth
-    // refusal) means trying again would produce the same answer.
-    return res.status === 502 || res.status === 404 ? "later" : "no";
+    // Three ways of saying "not yet". 503 is the pane not ready, which is the
+    // answer `awaitReady` asks for. 502 is what a session tmux cannot find
+    // answers, because the injection — not a lookup — is what fails. 404 is
+    // covered for a proxy that answers ahead of the route. Everything else (400
+    // for an empty body, an auth refusal) would produce the same answer again.
+    const later = res.status === 503 || res.status === 502 || res.status === 404;
+    return later ? "later" : "no";
   } catch {
     return "later"; // a blip on the way out, not a refusal
   }
@@ -140,10 +119,11 @@ async function post(
  * never sent twice — a repeated `/model sonnet` would be a second visible
  * command in someone's pane.
  *
- * The readiness gate is an optimisation, not a precondition: it is what lets a
- * pre-warmed session take its prompt on the first rung. The last rung sends
- * regardless, so a session that never raises the signal still gets what was
- * typed rather than losing it.
+ * The LAST rung asks for no readiness wait. By then the ladder has spent 11s,
+ * and a pane that has not drawn a prompt in that time is one that never will —
+ * a Claude that crashed at launch, or something else entirely in the pane. The
+ * text is better sent there than dropped, and it is the operator who can see
+ * both.
  */
 export async function deliverFirstPrompt(
   o: DeliverFirstPromptOptions,
@@ -154,22 +134,14 @@ export async function deliverFirstPrompt(
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const fetchImpl = o.fetchImpl ?? fetch;
   const ladder = o.ladder ?? FIRST_PROMPT_LADDER;
-  const ready = o.ready ?? (() => true);
-  const settleMs = o.settleMs ?? CLAUDE_SETTLE_MS;
   const gapMs = o.gapMs ?? LINE_GAP_MS;
 
   let sent = 0;
-  let settled = false;
   for (let rung = 0; rung < ladder.length; rung++) {
     await sleep(ladder[rung]!);
-    const last = rung === ladder.length - 1;
-    if (!ready() && !last) continue;
-    if (!settled) {
-      await sleep(settleMs);
-      settled = true;
-    }
+    const wait = (o.awaitReady ?? false) && rung < ladder.length - 1;
     while (sent < lines.length) {
-      const r = await post(o.session, lines[sent]!, fetchImpl);
+      const r = await post(o.session, lines[sent]!, wait, fetchImpl);
       if (r === "no") return false;
       if (r === "later") break; // next rung, resuming at this line
       sent += 1;

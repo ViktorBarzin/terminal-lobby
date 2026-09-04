@@ -313,9 +313,11 @@ model line, when one was picked, and then the message itself. It waits for the
 session to be READY rather than merely reachable — a session tmux has made
 accepts input for seconds before the Claude in its pane is ready to read any,
 and text sent into that window is dropped with `POST /prompt` still answering
-204. The pane title's own glyph is the signal that Claude has drawn its UI, and
-the retry ladder underneath it is the backstop for a session that never raises
-one.
+204. The wait happens server-side, where the evidence is: `POST /prompt` takes
+an `awaitReady` flag and holds the injection until the pane draws Claude's own
+prompt character and holds still, answering 503 until then. The retry ladder
+carries the retries, and its last rung asks for no wait, so a pane that never
+draws one still gets the text.
 _Avoid_: initial message, seed prompt
 
 **Text view**:

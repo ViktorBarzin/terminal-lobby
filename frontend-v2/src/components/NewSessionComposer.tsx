@@ -21,7 +21,7 @@ import {
 import { MODEL_LABELS, modelCommandFor, NEW_SESSION_MODELS, type NewModel } from "../lib/models";
 import { PromptField } from "./PromptField";
 import { isCoarsePointer } from "../mobile/pointer";
-import { claudeIsUp, deliverFirstPrompt } from "../lib/first-prompt";
+import { deliverFirstPrompt } from "../lib/first-prompt";
 import { uploadAttachments } from "../clipboard/attach-files";
 import { composeMessage } from "./compose.logic";
 import { attachmentKind } from "../lib/attachments";
@@ -202,7 +202,6 @@ export const NewSessionComposer: Component<{
     // A shell has no conversation to prompt: the text was its NAME.
     if (shell) return true;
     void sendFirstPrompt({
-      store,
       session: id,
       text,
       files,
@@ -343,13 +342,13 @@ export const NewSessionComposer: Component<{
  * before the Claude in it is ready to read any, and text sent into that gap is
  * silently dropped (lib/first-prompt.ts).
  *
- * `pane_title` is the readiness signal for Claude, read out of the poll the
- * create already kicked. For anything else — codex — the best available signal
- * is that tmux-api has seen the session at all, which is honest about what is
- * known rather than pretending to a signal that tool does not raise.
+ * The waiting is asked for rather than done here: `session-events` holds each
+ * attempt until the pane can take the text and answers 503 when it cannot
+ * (lib/first-prompt.ts). Only for Claude, whose `❯` is what that check watches
+ * for — asking where nothing draws one would spend every rung waiting and give
+ * up with the text unsent, so codex takes the ladder alone.
  */
 async function sendFirstPrompt(o: {
-  store: LobbyStore;
   session: string;
   text: string;
   files: readonly File[];
@@ -363,12 +362,7 @@ async function sendFirstPrompt(o: {
   });
   const prompt = composeMessage(o.text, attached.map((a) => a.path));
   const lines = [o.modelLine, prompt].filter((l): l is string => !!l);
-  const row = () => o.store.sessions.find((s) => s.name === o.session);
-  const ok = await o.deliver({
-    session: o.session,
-    lines,
-    ready: o.claude ? () => claudeIsUp(row()?.pane_title) : () => row() !== undefined,
-  });
+  const ok = await o.deliver({ session: o.session, lines, awaitReady: o.claude });
   if (ok || lines.length === 0) return;
   // The session exists and is what the person is now looking at, so the text
   // goes into ITS composer — the field in front of them — rather than back into

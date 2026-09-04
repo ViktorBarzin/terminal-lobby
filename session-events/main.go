@@ -84,10 +84,32 @@ func main() {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		var body struct {
 			Text string `json:"text"`
+			// AwaitReady asks this to wait until the pane can actually take the
+			// text, and to answer 503 rather than inject if it cannot.
+			//
+			// A session tmux has just created accepts send-keys immediately,
+			// while the Claude in its pane takes another ~2s to draw its input,
+			// and text sent into that window is lost with every layer reporting
+			// success. That is invisible to a caller and expensive to the person
+			// who typed it, so the FIRST prompt of a session asks for the wait
+			// (frontend-v2/src/lib/first-prompt.ts). Off by default, which is
+			// every other caller: a session someone is looking at is ready by
+			// definition, and the check costs a capture-pane.
+			AwaitReady bool `json:"awaitReady"`
 		}
 		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Text == "" {
 			http.Error(w, "bad body (need text)", http.StatusBadRequest)
 			return
+		}
+		if body.AwaitReady {
+			// Not distinguished from "no such session": both mean the caller
+			// should come back, and the caller's retry ladder is what decides
+			// how long to keep coming back for.
+			if err := injector.AwaitInputReady(r.Context(), osUser, session,
+				PromptReadyWait, PromptReadyPoll); err != nil {
+				http.Error(w, "session is not ready for input", http.StatusServiceUnavailable)
+				return
+			}
 		}
 		// No turn gate. Claude Code queues typed input itself — its
 		// queue-operation records are in the transcript — and the queued prompt
