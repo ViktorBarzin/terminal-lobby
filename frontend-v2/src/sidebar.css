@@ -1164,6 +1164,9 @@
   .tl-new-head .tl-back-btn .tl-btn-label {
     display: inline;
     font-size: 13px;
+    /* The glyph and the word were touching, so it read as one odd token
+       rather than a chevron and a destination. */
+    margin-left: 5px;
   }
   /* The bar's overflow menu. It anchors the popup, so it needs to be the
      positioned ancestor .tl-menu resolves against (top:100%; right:0). */
