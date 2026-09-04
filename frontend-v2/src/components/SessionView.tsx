@@ -45,6 +45,34 @@ import { TerminalNative } from "./TerminalNative";
 import { terminalFrameArgs } from "../lib/terminal-url";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 
+/** The `?native` values that mean yes, and the ones that mean no. */
+const NATIVE_YES = ["1", "true", "yes", "on"];
+const NATIVE_NO = ["0", "false", "no", "off"];
+
+/**
+ * Which terminal a URL asks for, or null when it does not say.
+ *
+ * PRESENCE was the whole test until now (`.has("native")`), so `?native=0`
+ * turned native ON and the flag had no way to say no. That matters because the
+ * same flag is the escape hatch in the other direction once native is the
+ * default: the de-iframe plan asks for "a URL override that works in both
+ * directions" (docs/plans/2026-09-04-native-terminal-de-iframe-design.md).
+ *
+ * A bare `?native` reads as yes, the way a valueless flag does, and that is
+ * also what it used to do. Anything unrecognised reads as NO ANSWER rather
+ * than as a vote, so a typo leaves the default standing instead of silently
+ * swapping someone's terminal.
+ */
+export function nativeFromSearch(search: string): boolean | null {
+  const raw = new URLSearchParams(search).get("native");
+  if (raw === null) return null;
+  const value = raw.trim().toLowerCase();
+  if (value === "") return true;
+  if (NATIVE_YES.includes(value)) return true;
+  if (NATIVE_NO.includes(value)) return false;
+  return null;
+}
+
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
  * top-level App so the lobby shell can mount ONE of these for the selected
@@ -175,10 +203,12 @@ export const SessionView: Component<{
    */
   /** `?native=1` — the app-rendered terminal instead of the ttyd iframe. Read
    *  once, because swapping the terminal under a live session mid-render would
-   *  tear down a pty connection someone is using. */
+   *  tear down a pty connection someone is using. A URL that does not say
+   *  leaves the iframe, which is still the shipped terminal; the flip to native
+   *  by default is its own change (the de-iframe plan's "the flip"). */
   const nativeTerminal = (): boolean => {
     try {
-      return new URLSearchParams(location.search).has("native");
+      return nativeFromSearch(location.search) ?? false;
     } catch {
       return false;
     }
@@ -949,7 +979,15 @@ export const SessionView: Component<{
               // owning them would take the soft keys and paste with it.
               ownsBridges={onScreen()}
               onConn={(r) => onScreen() && props.status?.onFrameConn(r)}
-              onReady={(control) => (frameRetry = control.reconnect)}
+              // BOTH levers, as the iframe branch above publishes both. Without
+              // the ask, the badge and Run check could only ever read what a
+              // native terminal had volunteered on its last change, so a
+              // session returning to the screen above an already-open terminal
+              // sat on "not reporting" (ADR-0016).
+              onReady={(control) => {
+                frameRetry = control.reconnect;
+                frameAsk = control.ask;
+              }}
             />
           </Show>
         </section>

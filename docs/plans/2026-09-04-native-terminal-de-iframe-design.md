@@ -56,7 +56,7 @@ a prop or an option rather than a port, and all three carry real behaviour.
 | paste route | `TerminalNative.tsx:144` |
 | mouse reporting | `wire.ts:encodeBinaryInput` |
 | soft-keyboard viewport | `TerminalView.tsx:469`, `App.tsx:194` |
-| fit guard | `TerminalNative.tsx:96,114,152` |
+| fit guard | `TerminalNative.tsx`, every `fit.fit()` call site |
 | helper textarea | `TerminalNative.tsx`, after `term.open()` |
 | pixel size | `TerminalNative.tsx:102` |
 | constructor options | `TerminalNative.tsx:88-93` against `term.html:5006-5074` |

@@ -20,6 +20,7 @@
 import {
   decideInput,
   decodeServerFrame,
+  encodeBinaryInput,
   encodeInput,
   encodeResize,
   handshakeMessage,
@@ -99,13 +100,38 @@ export interface AttachDeps {
 }
 
 export interface Attachment {
-  /** Send a keystroke. Dropped when the socket is not open — held-key handling
-   *  arrives with the input stage. */
+  /**
+   * Send a keystroke, or any other pty-bound STRING. Watch mode drops it, and
+   * a socket that is not open holds it for replay rather than losing it.
+   */
   send(data: string): void;
+  /**
+   * Send what xterm hands over on `onBinary`: a string whose char codes ARE
+   * the bytes, which in practice means mouse reports. Separate from `send`
+   * because the two frame the payload differently and only one of them is
+   * gated by watch mode (wire.ts, `encodeBinaryInput`).
+   */
+  sendBinary(data: string): void;
   /** Tell the pty the terminal changed size. */
   resize(): void;
   /** The Reconnect button: starts an attempt from any phase, `ended` included. */
   reconnect(): void;
+  /**
+   * Say what the terminal is doing right now, on demand.
+   *
+   * `onPhase` fires on a CHANGE (see `dispatch`), so a terminal that has been
+   * open for ten minutes has said nothing for ten minutes and a shell asking
+   * "what are you doing right now" has nothing to read: the ADR-0016 panel's
+   * Run check, and a session view coming back on screen after a hidden
+   * terminal went right on working.
+   *
+   * The answer is DERIVED when asked, not replayed, because the last phase
+   * change can be stale in a way that matters: no network path under a socket
+   * that still reads OPEN. term.html answers the same question the same way,
+   * clearing its dedupe and re-deriving the state (`reportConnNow` and
+   * `currentConnState`, :9822-9832).
+   */
+  reportNow(): void;
   state(): LadderState;
   dispose(): void;
 }
@@ -139,6 +165,21 @@ export function attach(deps: AttachDeps): Attachment {
    * this that close would knock the attempt that replaced it off the ladder.
    */
   let liveGen = -1;
+  /**
+   * The attempt number the badge shows, which is NOT `state.attempts` while a
+   * retry is pending.
+   *
+   * term.html paints `connAttempts + 1` in `scheduleReconnect` (:9877) and in
+   * `reconnectAfterDrop` (:10155), which is the attempt the pending timer will
+   * run, and `connect()` increments the counter before painting it
+   * (:10231-10232), so the number holds still when the attempt it names
+   * starts. `state.attempts` counts attempts already STARTED, so it agrees
+   * during a connect and reads one behind for the whole wait in between.
+   *
+   * The ladder already works it out: `connect`, `schedule` and `check-session`
+   * each carry the number to show, and those three are where this moves.
+   */
+  let attemptShown = 0;
 
   const dispatch = (event: LadderEvent): void => {
     if (disposed) return;
@@ -146,7 +187,54 @@ export function attach(deps: AttachDeps): Attachment {
     const phaseChanged = next.phase !== state.phase || next.attempts !== state.attempts;
     state = next;
     for (const action of actions) perform(action);
-    if (phaseChanged) deps.onPhase(state.phase, state.attempts);
+    if (phaseChanged) deps.onPhase(state.phase, attemptShown);
+  };
+
+  /**
+   * What the ask answers, derived when asked rather than replayed.
+   *
+   * term.html's `reportConnNow` clears the dedupe and then asks
+   * `currentConnState()` for the state fresh. The two tests it makes before it
+   * looks at the socket are the ones this follows, in that order: the battery
+   * pause at :9827, then `navigator.onLine === false` at :9828.
+   *
+   * onLine ahead of the socket is the part that changes an answer. A wifi drop
+   * flips onLine at once while the socket stays OPEN until the watchdog gives
+   * up, which liveness.ts puts at ~50s (`strikes: 3`, `probeMs: 25_000`).
+   * Nothing in that window changes phase, and it is the frozen terminal
+   * ADR-0016 was built to explain. Replaying `open` there is the one answer
+   * the panel must not give.
+   *
+   * The socket test at :9829 is the `open` phase itself: `opened` and `closed`
+   * are dispatched from the socket's own handlers, so the phase is what this
+   * file knows about readyState.
+   */
+  const askedPhase = (): LadderState["phase"] => {
+    // The phone did nothing wrong and the next visibility change brings it
+    // back, so a deliberate pause outranks the network. The status model is
+    // where that verdict lives: diagnostics/status.ts maps "suspended" to
+    // working, "paused to save battery", and its comment there gives the
+    // reason, that painting a fault the app caused deliberately misreports a
+    // phone behaving as designed.
+    if (state.phase === "suspended") return "suspended";
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      // The ladder has no `offline` phase: onLine false parks it and it keeps
+      // waiting (reconnect.ts, "OFFLINE IS A PARK, NOT A RUNG"). The status
+      // model does have one, and the shell derives it by reading the browser
+      // for every phase that is not open, suspended or ended
+      // (TerminalNative.tsx, `report`), so every other phase already answers
+      // offline and goes out unchanged. `open` is the one that cannot: it is
+      // read as health, so while there is no path it is replaced by the value
+      // that mapping does read the browser for.
+      //
+      // term.html's onLine test outranks its 'closed' too (:9828 before the
+      // hasConnectedOnce arm at :9831). `ended` is left out of this because
+      // nothing produces it yet. `check-session` above answers `exists: true`
+      // until the session-ended screen lands, and a branch no test can reach
+      // is a claim nothing exercises.
+      return state.phase === "open" ? "connecting" : state.phase;
+    }
+    return state.phase;
   };
 
   function perform(action: LadderAction): void {
@@ -156,6 +244,9 @@ export function attach(deps: AttachDeps): Attachment {
         retryTimer = null;
         return;
       case "schedule":
+        // term.html:9877, `paintConnPill(connAttempts + 1)` in
+        // scheduleReconnect. The badge names the attempt this timer will run.
+        attemptShown = action.attempt;
         if (retryTimer !== null) clearTimer(retryTimer);
         retryTimer = setTimer(() => {
           retryTimer = null;
@@ -179,9 +270,16 @@ export function attach(deps: AttachDeps): Attachment {
         return;
       }
       case "connect":
+        // term.html:10231-10232, `connAttempts++; paintConnPill(connAttempts)`.
+        // The counter moves as the attempt starts, which is why the number a
+        // pending wait was already showing does not change when it runs.
+        attemptShown = action.attempt;
         void openSocket(action.gen);
         return;
       case "check-session":
+        // term.html:10155 paints before the existence check, which can itself
+        // take a moment on a struggling network.
+        attemptShown = action.attempt;
         // Deferred with the session-ended screen; until then a closed socket
         // simply retries, which is term.html's behaviour for a session that is
         // still there and the safe direction for one that is not.
@@ -281,8 +379,13 @@ export function attach(deps: AttachDeps): Attachment {
             for (const chunk of replay.sends) s.send(encodeInput(chunk));
             deps.onHeld?.(held, "held");
           }
-          // The pty learns its size only once it exists, which is why this is
-          // here and not in the handshake.
+          // NOT how the pty first learns its size: it was spawned at the
+          // handshake size (wire.ts, `handshakeMessage`, which carries the
+          // ttyd citations in full). This is here because a RESIZE arriving
+          // before the process exists is dropped (`case RESIZE_TERMINAL: if
+          // (pss->process == NULL) break;`, ttyd 1.7.7 src/protocol.c:316-317),
+          // so a fit that lands between open and spawn is lost, and sending
+          // once there IS a process to receive it is what covers that.
           try {
             s.send(encodeResize(deps.size()));
           } catch {
@@ -450,6 +553,26 @@ export function attach(deps: AttachDeps): Attachment {
     }
   }
 
+  /**
+   * Offer a chunk to the hold and tell the component what came back.
+   *
+   * Both send paths share it, because term.onBinary calls the same
+   * `offerHeldInput` that sendInput calls, commented "same contract as
+   * sendInput" (term.html:8366). Each of those two had its own bare
+   * `if (!OPEN) return` once, and fixing one while leaving the other still ate
+   * input, which is what term-html.bridge.test.ts pins.
+   */
+  const offerToHold = (data: string): void => {
+    const result = offerHeld(held, data, {
+      watching: watching(),
+      hasConnectedOnce: state.hasConnectedOnce,
+      suspended: state.phase === "suspended",
+      now: clock(),
+    });
+    held = result.state;
+    deps.onHeld?.(held, result.verdict);
+  };
+
   dispatch({ type: "start" });
 
   return {
@@ -465,14 +588,7 @@ export function attach(deps: AttachDeps): Attachment {
       if (!socket || socket.readyState !== WebSocket.OPEN) {
         // No socket: the keystroke is held rather than lost, and the component
         // draws it so the person can see their typing is still there.
-        const result = offerHeld(held, data, {
-          watching: watching(),
-          hasConnectedOnce: state.hasConnectedOnce,
-          suspended: state.phase === "suspended",
-          now: clock(),
-        });
-        held = result.state;
-        deps.onHeld?.(held, result.verdict);
+        offerToHold(data);
         return;
       }
       socket.send(decision.frame);
@@ -480,12 +596,77 @@ export function attach(deps: AttachDeps): Attachment {
       // early — the cheapest evidence a socket has stopped carrying anything.
       watch = noteTyped(watch, clock(), lastInboundAt);
     },
+    /**
+     * A mouse report, or anything else xterm hands over on `onBinary`: a string
+     * whose char codes ARE the bytes. This mirrors term.html:8361-8370, and it
+     * differs from `send` in three ways, each of them deliberate.
+     *
+     * ONE BYTE PER CHAR. `encodeBinaryInput`, never `encodeInput`: these bytes
+     * are already encoded, so running them through UTF-8 turns every value
+     * >= 0x80 into two and desyncs the escape sequence the server is parsing.
+     * wire.ts says it at `encodeBinaryInput`.
+     *
+     * NO WATCH GUARD, so no `decideInput` call here. term.onBinary has none
+     * either: tmux discards a read-only client's reports regardless, and a
+     * watcher whose clicks stopped arriving would get a terminal that ignores
+     * the mouse with no nudge to explain it.
+     *
+     * NO ECHO WATCH. sendInput ends with armEchoWatch() (term.html:8298) and
+     * onBinary has no equivalent, so a drag or a wheel spin, which the pty need
+     * not answer at all, does not ask the watchdog for probes the socket has
+     * not earned.
+     *
+     * What it does share is the socket-state and held-input rules, which is
+     * what term.html:8366 means by "same contract as sendInput". The hold
+     * refuses a report rather than queueing it, because `isHoldable` rejects
+     * the ESC every report starts with, and that is also why the hold's UTF-8
+     * replay never sees these bytes.
+     *
+     * ONE DELTA from the page, and it changes no byte on the wire. The shared
+     * hold checks the watch gate first (held.ts, `HeldGates.watching`), so a
+     * WATCHER's report on a dead socket comes back `refused:watching`, where
+     * term.html reaches whatever its socket gates or `heldIsPrintable` say
+     * because validWatch is tested in sendInput and not in onBinary. Both
+     * refuse and neither sends; only the verdict the component reports differs.
+     */
+    sendBinary(data: string): void {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        offerToHold(data);
+        return;
+      }
+      socket.send(encodeBinaryInput(data));
+    },
     resize(): void {
       if (!socket || socket.readyState !== WebSocket.OPEN) return;
       socket.send(encodeResize(deps.size()));
     },
     reconnect(): void {
       dispatch({ type: "reconnect-tapped", why: "asked by the lobby" });
+    },
+    /**
+     * The answer goes out through the SAME callback the change path uses, so
+     * the shell has one place to read it, which is what term.html does with
+     * `reportConn` rather than composing a second message (:9822-9824).
+     *
+     * The answer itself is derived here and CAN differ from the last
+     * volunteered one, which is the point. term.html takes its state fresh
+     * from `currentConnState()` inside that same function, and the case where
+     * the two disagree is the one worth asking about (`askedPhase`).
+     *
+     * It reads; it does not repair. Reading is not the line ADR-0016 draws,
+     * since term.html's own ask reads `ws.readyState` and `navigator.onLine`
+     * (:9828-9829). The line is that the broken state a person came to look at
+     * has to still be there afterwards ("The check reads; the repairs are
+     * separate taps"). So this opens nothing, sends nothing, closes nothing and
+     * arms no timer, and the tests hold it to that.
+     *
+     * Silent once disposed, as `dispatch` is. The component has already handed
+     * the shell its `closed` by then, and re-reporting the phase this died in
+     * would leave the badge describing a terminal that is gone.
+     */
+    reportNow(): void {
+      if (disposed) return;
+      deps.onPhase(askedPhase(), attemptShown);
     },
     state: () => state,
     dispose(): void {
