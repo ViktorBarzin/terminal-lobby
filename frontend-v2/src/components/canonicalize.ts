@@ -36,6 +36,7 @@ export type ItemType =
   | "todo"
   | "question"
   | "plan"
+  | "skill"
   | "dynamic_tool_call";
 
 /** Upstream's tone tag: what a work-log row MEANS, independent of its type. */
@@ -55,6 +56,10 @@ export function classifyToolItemType(toolName: string): ItemType {
       return "question";
     case "ExitPlanMode":
       return "plan";
+    // Its own type, so the card that marks a skill load does not have to test
+    // the tool's NAME to know what it is looking at.
+    case "Skill":
+      return "skill";
     case "Read":
     case "Glob":
     case "Grep":

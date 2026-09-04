@@ -3512,6 +3512,71 @@ body.tl-kb-up {
   color: var(--text-muted);
 }
 
+/* A skill load, marked as a skill.
+   Its own card rather than the hairline the other lifecycle markers get: a
+   skill changes how Claude behaves for the rest of the session, which is not
+   the same weight as "queued" or "context compacted". Deliberately not
+   expandable — the body it stands in for is a median 3.1 kB of prose nobody
+   wrote, and the Skills overlay is where reading one belongs. */
+.tl-row-skill {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-block: 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.tl-skill-kind {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.tl-skill-glyph {
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1;
+}
+/* The name is the whole point of the card, so it takes the row's width and the
+   mono face the `/` menu types it in. */
+.tl-skill-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: calc(13px * var(--tl-text-scale, 1));
+}
+.tl-skill-meta {
+  flex: none;
+  display: inline-flex;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+/* A Skill call whose name did not resolve. Nothing was injected, so there is no
+   size to report and the card has to say why. */
+.tl-row-skill[data-failed="true"] {
+  border-color: color-mix(in srgb, var(--err, #f85149) 45%, var(--border));
+  background: color-mix(in srgb, var(--err, #f85149) 7%, transparent);
+}
+.tl-row-skill[data-failed="true"] .tl-skill-kind {
+  color: var(--err, #f85149);
+}
+.tl-skill-failed {
+  color: var(--err, #f85149);
+}
+
 /* Session lifecycle: a centred rule with a word on it. */
 .tl-row-meta {
   display: flex;

@@ -32,6 +32,13 @@ type Normalizer struct {
 	turnDone    bool   // the current turn has already emitted its turn_end
 	doneMsg     string // message.id of the assistant response that closed it
 	interruptAt int64  // epoch ms of an interrupt the transcript has not caught up with
+	// skillPending is the skill named by the last "Launching skill:" receipt,
+	// waiting for the body that follows it. Held for exactly one isMeta record:
+	// the injection lands immediately after the receipt, and everything else
+	// injected into a session (system reminders, caveats) must not be claimed by
+	// a receipt still lying around. See skill.go for why the receipt rather than
+	// the marker.
+	skillPending string
 }
 
 func NewNormalizer(session string) *Normalizer { return &Normalizer{session: session} }
@@ -211,15 +218,26 @@ func (n *Normalizer) Record(rec Record) []Event {
 	}
 
 	// Loading a skill injects the WHOLE SKILL.md as an isMeta user record, and
-	// it rendered as an enormous message nobody wrote — 312 of them across this
-	// box's transcripts, median 3,125 characters (see skill.go). The load is
-	// worth one line, so that a skill the MODEL chose is not a silent change in
-	// how it behaves; the body is not.
+	// it rendered as an enormous message nobody wrote — 364 of them across this
+	// box's transcripts, median 3.1 kB and up to 23.3 kB (see skill.go). The
+	// load is worth one line, so that a skill the MODEL chose is not a silent
+	// change in how it behaves; the body is not.
+	//
+	// The receipt is preferred over the marker because it is present for every
+	// load: 24 of the 364 bodies carry no marker, all of them from skills that
+	// are not on disk under ~/.claude/skills, and those rendered in full.
 	if rec.IsMeta && role == "user" {
 		text := blockText(blocks)
-		if name, ok := skillLoad(text); ok {
+		name, ok := skillLoad(text)
+		if !ok && n.skillPending != "" {
+			name, ok = n.skillPending, true
+		}
+		// Spent either way. A receipt kept past the record that follows it would
+		// eventually claim an unrelated injection.
+		n.skillPending = ""
+		if ok {
 			e := n.emit(KindMeta, at)
-			e.Meta, e.Body = MetaSkill, name
+			e.Meta, e.Body, e.Bytes = MetaSkill, name, blockTextLen(blocks)
 			return []Event{e}
 		}
 		// `/context` writes its own markdown here — 14,930 characters of it,
@@ -286,7 +304,13 @@ func (n *Normalizer) Record(rec Record) []Event {
 		case "tool_result":
 			e := n.emit(KindToolResult, at)
 			e.ToolID, e.IsError = bl.ToolUseID, bl.IsError
-			body, cut := capText(plainText(decodeToolResult(bl.Content)))
+			raw := decodeToolResult(bl.Content)
+			// "Launching skill: <name>" says a skill is about to inject its
+			// body, and names it even when the body will carry no marker.
+			if name, ok := skillReceipt(raw); ok && !bl.IsError {
+				n.skillPending = name
+			}
+			body, cut := capText(plainText(raw))
 			e.Body = body
 			// The structured result is where the stdout/stderr split and the
 			// diff live, so an oversized one is PRUNED down to those parts
