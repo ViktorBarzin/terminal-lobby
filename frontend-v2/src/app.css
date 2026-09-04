@@ -3646,6 +3646,13 @@ body.tl-kb-up {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  /* Never give up height to the scroller. The menu is a flex column with a
+     max-height, so every row was a shrinkable flex child: measured 2026-09-04 at
+     390x844 with 130 entries, each row sat at its 40px finger-target floor, the
+     name took 19.5px, and the DESCRIPTION was squeezed to 7.5px of the ~15.5px
+     its line needs — so `overflow: hidden` cut every description through the
+     middle of the glyphs. The row grows to its content and the menu scrolls. */
+  flex: none;
   padding: 6px 10px;
   border: 0;
   background: transparent;
@@ -3664,6 +3671,9 @@ body.tl-kb-up {
   white-space: nowrap;
 }
 .tl-complete-desc {
+  /* The other half of the same bug: the description was the child that lost the
+     space, so it holds its own line box whatever the column does. */
+  flex: none;
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: calc(11.5px * var(--tl-text-scale, 1));
@@ -3674,6 +3684,68 @@ body.tl-kb-up {
 }
 .tl-complete-item[data-picked="true"] {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* The name and its provenance share a line, so the badge cannot be mistaken for
+   part of what gets typed. The name may give up width; the badge never does. */
+.tl-complete-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.tl-complete-row .tl-complete-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Which of the four lists a row came from. 95 of the 130 entries are built-ins,
+   which carry no badge at all — the absence IS "the CLI ships this" — so the
+   badge only ever appears on something the reader installed or wrote. */
+.tl-complete-source {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: calc(9.5px * var(--tl-text-scale, 1));
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+/* A row that matched only on its DESCRIPTION. Reachable, and separated from the
+   name matches by a rule on the first of them, so `/grill` reads as "these three
+   are called that, and these two mention it". */
+.tl-complete-item[data-weak="true"] {
+  opacity: 0.72;
+}
+.tl-complete-item[data-weak="true"] ~ .tl-complete-item[data-weak="true"] {
+  border-top: 0;
+}
+.tl-complete-item[data-weak="true"]:not([data-weak="true"] ~ *) {
+  border-top: 1px dashed var(--border);
+}
+/* The per-user half of the catalogue is missing. It sits UNDER the rows that did
+   arrive, because those are real and usable and this is not an error banner —
+   but stuck to the bottom edge rather than merely last, because last is 95 rows
+   down a 220px scroller and a reader would never reach it. Measured 2026-09-04:
+   with the catalogue answering HTML, the note was in the DOM and off screen. */
+.tl-complete-note {
+  position: sticky;
+  bottom: 0;
+  flex: none;
+  padding: 6px 10px;
+  border-top: 1px dashed var(--border);
+  /* Opaque: the rows scroll behind it. */
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+}
+.tl-complete-note::before {
+  content: "\26A0\FE0E";
+  margin-right: 6px;
+  opacity: 0.8;
 }
 .tl-mode-chip {
   flex: none;

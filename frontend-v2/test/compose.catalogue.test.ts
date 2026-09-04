@@ -11,6 +11,7 @@ import {
   BUILTIN_COMMANDS,
   commandRank,
   completionFor,
+  WEAK_RANK,
   mergeCommands,
   type SlashCommand,
 } from "../src/components/compose.logic";
@@ -86,7 +87,7 @@ describe("ranking what the menu offers", () => {
   it("matches on what a command DOES", () => {
     // The CLI's own menu does this — typing /help there offers /debug, whose
     // description reads "…help diagnose issues".
-    expect(commandRank(skill("/debug", "help diagnose issues"), "/help")).toBe(3);
+    expect(commandRank(skill("/debug", "help diagnose issues"), "/help")).toBe(WEAK_RANK);
     expect(commandRank(skill("/debug", "help diagnose issues"), "/zzz")).toBe(-1);
   });
 

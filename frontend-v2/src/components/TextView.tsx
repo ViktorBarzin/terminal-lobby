@@ -20,6 +20,7 @@ import {
   type TimelineRow,
 } from "./timeline.logic";
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "./compose.logic";
+import type { Catalogue } from "../store/catalogue";
 import { contextState } from "./context.logic";
 import { planAnswer, runAnswer, type DraftAnswer } from "./answer.logic";
 import { QuestionCard } from "./QuestionCard";
@@ -77,7 +78,7 @@ export const TextView: Component<{
   /** surface a failed answer sequence to the app's toast stack. */
   notify?: (message: string, kind: "info" | "error" | "warning" | "success") => void;
   /** the session's own skills / custom commands, for the `/` menu. */
-  onCommands?: () => Promise<SlashCommand[]>;
+  onCommands?: () => Promise<Catalogue>;
   /** prompts sent from here the transcript has not shown yet. */
   pendingPrompts?: () => PendingPrompt[];
   /** The rows for `events`, when the owner has already derived them — the
@@ -350,10 +351,16 @@ export const TextView: Component<{
   const context = createMemo(() => contextState(props.events, props.sessionState));
 
   // The catalogue is files on disk; one read when the view opens is enough.
+  // `readable` is held separately from the list because an empty list means two
+  // different things and the menu has to be able to say which (store/catalogue.ts).
   const [commands, setCommands] = createSignal<SlashCommand[]>([]);
+  const [catalogueOk, setCatalogueOk] = createSignal(true);
   createEffect(() => {
     if (!everShown()) return;
-    void props.onCommands?.().then(setCommands);
+    void props.onCommands?.().then((c) => {
+      setCommands(c.commands);
+      setCatalogueOk(c.ok);
+    });
   });
 
   const cycleMode = () => {
@@ -453,6 +460,7 @@ export const TextView: Component<{
         {...(context() ? { context: context()! } : {})}
         onListDir={props.onListDir}
         commands={commands()}
+        commandsOk={catalogueOk()}
         session={props.session}
         me={props.me}
         onAttach={props.onAttach}

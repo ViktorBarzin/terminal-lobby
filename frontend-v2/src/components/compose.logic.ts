@@ -154,6 +154,10 @@ export interface CompletionItem {
   value: string;
   /** Shown beside it — a command's own description; paths have none. */
   description?: string;
+  /** Where the command came from, so the row can say. Absent for a path. */
+  source?: string;
+  /** Matched only on its description, so the menu can set it apart. */
+  weak?: boolean;
 }
 
 export interface Completion {
@@ -168,14 +172,43 @@ export interface Completion {
 }
 
 /**
+ * The rank at which a match stops being about the command's NAME.
+ *
+ * A row at or past this matched only because the query appears in its
+ * description, which is a weaker thing than matching what you would type. The
+ * menu separates the two rather than mixing them: measured 2026-09-04 with every
+ * tier weighted the same, `/grill` returned the three grill skills followed by
+ * `/improve-codebase-architecture` and `/publish-page`, both of which merely
+ * mention grilling.
+ */
+export const WEAK_RANK = 4;
+
+/**
+ * The weakest match a MID-PROMPT slash may open the menu on: a literal one.
+ *
+ * Not the subsequence tier, and this is why. `cd /usr` finds `/cluster-health`,
+ * because c-l-U-S-t-e-R contains u, s and r in order; so does `/hel`, through
+ * cluster-HEaLth. A path typed into a sentence is common and an abbreviation
+ * typed into a sentence is not, so mid-prompt keeps prefix, after-namespace and
+ * substring, and leaves subsequence to a slash at index 0 where the reader is
+ * deliberately invoking something.
+ */
+export const MID_MAX_RANK = 2;
+
+/**
  * How well a command answers what has been typed, or -1 for not at all.
  *
- * Three tiers, because a namespaced catalogue makes a prefix-only match too
+ * Five tiers, because a namespaced catalogue makes a prefix-only match too
  * blunt: `/brainstorming` should still find `/superpowers:brainstorming`, and a
  * skill is often remembered by what it DOES rather than by its name. The CLI's
  * own menu matches descriptions too — typing `/help` there offers `/debug`
  * ("…help diagnose issues") — so this mirrors it rather than inventing a
  * different rule for the same keystrokes.
+ *
+ * The subsequence tier is what makes an abbreviation work: `/dmod` for
+ * `/domain-modeling`, `/grllng` for `/grilling`. It sits below every literal
+ * match, because a subsequence match on a 34-name catalogue is easy to hit by
+ * accident and a prefix match never is.
  */
 export function commandRank(cmd: SlashCommand, token: string): number {
   const q = token.slice(1).toLowerCase();
@@ -186,9 +219,80 @@ export function commandRank(cmd: SlashCommand, token: string): number {
   const colon = name.indexOf(":");
   if (colon >= 0 && name.slice(colon + 1).startsWith(q)) return 1;
   if (name.includes(q)) return 2;
-  if ((cmd.description ?? "").toLowerCase().includes(q)) return 3;
+  if (isSubsequence(q, name)) return 3;
+  if ((cmd.description ?? "").toLowerCase().includes(q)) return WEAK_RANK;
   return -1;
 }
+
+/** Whether every character of `q` appears in `s`, in order. */
+export function isSubsequence(q: string, s: string): boolean {
+  if (!q) return true;
+  let i = 0;
+  for (const ch of s) {
+    if (ch === q[i]) i += 1;
+    if (i === q.length) return true;
+  }
+  return false;
+}
+
+/**
+ * How much a row's provenance is worth when two rows match equally well.
+ *
+ * The catalogue is what a person chose to install or wrote themselves; the
+ * built-ins are what ships. There are 95 of those against 34 skills on this box,
+ * so without this the menu's first screen is almost entirely the CLI's own
+ * commands whatever you type.
+ */
+function sourceRank(source: string | undefined): number {
+  switch (source) {
+    case "skill":
+      return 0;
+    case "command":
+    case "project":
+      return 1;
+    case "plugin":
+      return 2;
+    default:
+      return 3; // builtin, and anything a future catalogue adds
+  }
+}
+
+/**
+ * The commands that answer `token`, best first.
+ *
+ * Ordered by how the query matched, then by provenance, then by name. Name last
+ * and always, so the list is stable: a menu that reorders itself as the ranks
+ * shift is hard to aim at.
+ */
+export function rankCommands(
+  commands: ReadonlyArray<SlashCommand>,
+  token: string,
+): SlashCommand[] {
+  return commands
+    .map((c) => ({ c, rank: commandRank(c, token) }))
+    .filter((r) => r.rank >= 0)
+    .sort(
+      (a, b) =>
+        a.rank - b.rank ||
+        sourceRank(a.c.source) - sourceRank(b.c.source) ||
+        a.c.name.localeCompare(b.c.name),
+    )
+    .map((r) => r.c);
+}
+
+/** Whether this row is one the reader can invoke, rather than only mention. */
+function isDiscovered(cmd: SlashCommand): boolean {
+  return cmd.source !== undefined && cmd.source !== "builtin";
+}
+
+/**
+ * The shortest mid-prompt query that may open the menu.
+ *
+ * A guess, not a measurement: `cd /im` would otherwise offer `/implement`, and
+ * there is no data on how often a path gets typed into the composer. One
+ * character is certainly too few — `/c` matches most of the catalogue.
+ */
+export const MIN_MIDPROMPT_QUERY = 2;
 
 /** The token the caret sits in, if it begins with a completion trigger. */
 function tokenAt(text: string, caret: number): { start: number; token: string } | null {
@@ -217,18 +321,30 @@ export function completionFor(
   const { start, token } = at;
 
   if (token.startsWith("/")) {
-    // Only at the very beginning of the message: a slash command is the whole
-    // prompt, and `cd /usr` should not open a command menu.
-    if (start !== 0) return null;
-    const ranked = commands
-      .map((c) => ({ c, rank: commandRank(c, token) }))
-      .filter((r) => r.rank >= 0);
-    // Stable within a tier: the catalogue arrives sorted by name, and a menu
-    // that reorders itself as the ranks shift is hard to aim at.
-    ranked.sort((a, b) => a.rank - b.rank);
-    const items = ranked.map(({ c }) => ({
+    // At index 0 the slash is a command: the whole catalogue answers, built-ins
+    // included, because that is a prompt the CLI will actually run.
+    //
+    // Anywhere else it can only be a MENTION — Claude Code runs a slash command
+    // only when it is the whole prompt — so two things narrow it. Built-ins are
+    // out, since `/help` inside a sentence names nothing the model will act on;
+    // and only LITERAL name matches count (MID_MAX_RANK). `cd /usr` then opens
+    // nothing, which is the case the index-0 guard existed to prevent (Viktor,
+    // 2026-09-04: it also prevented the menu he wanted).
+    const mid = start !== 0;
+    let pool = commands;
+    if (mid) {
+      if (token.length - 1 < MIN_MIDPROMPT_QUERY) return null;
+      pool = commands.filter(isDiscovered);
+    }
+    const ranked = rankCommands(pool, token).filter(
+      (c) => !mid || commandRank(c, token) <= MID_MAX_RANK,
+    );
+    if (mid && ranked.length === 0) return null;
+    const items = ranked.map((c) => ({
       value: c.name,
       description: c.description,
+      source: c.source,
+      weak: commandRank(c, token) >= WEAK_RANK,
     }));
     return { trigger: "/", start, token, dir: "", items };
   }

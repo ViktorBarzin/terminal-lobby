@@ -74,6 +74,8 @@ export const Composer: Component<{
   /** The session's own skills / custom commands / plugin commands, offered by
    *  `/` beside the built-ins this page ships. */
   commands?: SlashCommand[];
+  /** False when that catalogue could not be read, so the menu can say so. */
+  commandsOk?: boolean;
   /**
    * The session this composer belongs to — the key its unsent draft is stored
    * under (store/drafts.ts). Attachments and text both persist, so a reload or an
@@ -137,6 +139,7 @@ export const Composer: Component<{
         history={props.history}
         onListDir={props.onListDir}
         commands={props.commands}
+        commandsOk={props.commandsOk}
         draftKey={props.session}
         me={props.me}
         onAttach={props.onAttach}
