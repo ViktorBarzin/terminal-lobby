@@ -108,13 +108,30 @@ const sessionEventsProxy: ProxyOptions = {
 // Shared by both `vite` (dev) and `vite preview` (serving the built dist), so a
 // local build can be exercised end-to-end against the same backends.
 const proxy: Record<string, ProxyOptions> = {
+  // The list is the prod ingress's, prefix for prefix: the ten PathPrefix rules
+  // on the session-events IngressRoute (infra/stacks/terminal/main.tf). Any
+  // prefix missing here falls through to ttyd's `location /`, which answers 200
+  // with the SPA's own index.html — so `res.json()` throws, the caller's catch
+  // returns its empty fallback, and the feature is quietly absent rather than
+  // broken. Measured 2026-09-04 with only the first three present: GET
+  // /commands/<session> returned 9,406 bytes of text/html, the `/` menu fell
+  // back to the 95 built-ins the page ships, and none of this user's 34 skills
+  // were offered. Nothing logged.
+  //
+  // No /permission entry: 575d4f5 removed the web-mediated permission broker
+  // from session-events, so proxying it here would forward local dev to a 404
+  // the prod ingress does not even route. /hooks/* is loopback-only and
+  // deliberately absent from the ingress too.
   "/events": sessionEventsProxy,
   "/prompt": sessionEventsProxy,
   "/cancel": sessionEventsProxy,
-  // No /permission entry: 575d4f5 removed the web-mediated permission broker
-  // from session-events, so proxying it here would forward local dev to a 404
-  // the prod ingress does not even route. This list mirrors the routes the
-  // service registers (session-events/main.go).
+  "/earlier": sessionEventsProxy,
+  "/result": sessionEventsProxy,
+  "/pane": sessionEventsProxy,
+  "/keys": sessionEventsProxy,
+  "/commands": sessionEventsProxy,
+  "/search": sessionEventsProxy,
+  "/answer-text": sessionEventsProxy,
   // tmux-api lobby data API: /api/sessions/* -> tmux-api root (strip the whole
   // /api/sessions prefix, mirroring the PROD ingress `PathPrefix /api/sessions/`).
   // Covers whoami/sessions/layout/dirs/prefs/projects/users/shares AND Web Push

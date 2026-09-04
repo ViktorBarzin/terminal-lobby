@@ -26,6 +26,21 @@ export const MODEL_LABELS: Record<NewModel, string> = {
   haiku: "Haiku",
 };
 
+/**
+ * The models as a PHRASE, for the composer — see COMMAND_PHRASES for why.
+ *
+ * Note what MODEL_LABELS already got half right: its default state reads
+ * "Default model" and carries the noun, but every other state drops it, so
+ * choosing Opus left a control saying only "Opus". This keeps the noun in all
+ * four.
+ */
+export const MODEL_PHRASES: Record<NewModel, string> = {
+  default: "default model",
+  opus: "Opus model",
+  sonnet: "Sonnet model",
+  haiku: "Haiku model",
+};
+
 export function isNewModel(v: unknown): v is NewModel {
   return typeof v === "string" && (NEW_SESSION_MODELS as readonly string[]).includes(v);
 }

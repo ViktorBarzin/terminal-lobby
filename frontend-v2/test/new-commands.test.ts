@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { canRun, effectiveCommand, COMMAND_LABELS } from "../src/lib/new-commands";
+import {
+  canRun,
+  effectiveCommand,
+  COMMAND_LABELS,
+  COMMAND_PHRASES,
+  NEW_SESSION_COMMANDS,
+} from "../src/lib/new-commands";
 import { NEW_COMMANDS, type NewCommand } from "../src/store/prefs";
 
 const OFFERED: readonly NewCommand[] = ["claude", "codex", "shell"];
@@ -55,6 +61,29 @@ describe("effectiveCommand — a preference outlives the tool it names", () => {
 
 // The labels moved out of the sidebar row so the Settings page could show the
 // same words. A key with no label would render blank in one of the two.
+// The composer's controls are a row of bare values with no heading over them,
+// so each has to say what it sets. That only works if the noun is actually in
+// the phrase — a map that quietly lost one would put the row back to "code",
+// "Claude", "Opus" and read as three unrelated words.
+describe("COMMAND_PHRASES", () => {
+  it("says what it does for every command the box offers", () => {
+    for (const k of NEW_SESSION_COMMANDS) {
+      expect(COMMAND_PHRASES[k], `no phrase for ${k}`).toBeTruthy();
+      // A verb or a noun, but never the bare product name the label already is.
+      expect(COMMAND_PHRASES[k], `${k} is still a bare label`).not.toBe(
+        COMMAND_LABELS[k],
+      );
+    }
+  });
+
+  it("stays lowercase at the start, being a fragment and not a heading", () => {
+    for (const k of NEW_SESSION_COMMANDS) {
+      const first = COMMAND_PHRASES[k]!.charAt(0);
+      expect(first, `${k} starts uppercase`).toBe(first.toLowerCase());
+    }
+  });
+});
+
 describe("COMMAND_LABELS", () => {
   it("names every command the prefs type allows", () => {
     for (const k of NEW_COMMANDS) {

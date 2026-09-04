@@ -98,6 +98,23 @@ func (e hookEnv) fire(t *testing.T, mode, fixture string) {
 	}
 }
 
+// fireRaw is fire with the payload given directly. Only for a payload that is an
+// ABSENCE — an empty stdin, which is what a hook runner older than the payload
+// fields sends — since every real shape belongs in testdata/hooks as a capture.
+func (e hookEnv) fireRaw(t *testing.T, mode, payload string) {
+	t.Helper()
+	cmd := exec.Command(e.script, mode)
+	cmd.Stdin = strings.NewReader(payload)
+	cmd.Env = append(os.Environ(), "TMUX="+e.tmuxVar, "TMUX_PANE="+e.pane)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %s: %v\n%s", e.script, mode, err, out)
+	}
+	if len(strings.TrimSpace(string(out))) != 0 {
+		t.Fatalf("%s %s wrote to stdout/stderr:\n%s", e.script, mode, out)
+	}
+}
+
 func (e hookEnv) opt(t *testing.T, name string) string {
 	t.Helper()
 	out, err := exec.Command("tmux", "-L", e.sock, "show-option", "-qv", "-t", "demo", name).Output()
@@ -335,5 +352,112 @@ func TestAnUnstampedSessionStaysUnstampedOnANotification(t *testing.T) {
 
 	if got := e.opt(t, OptionState); got != "" {
 		t.Fatalf("%s = %q, want unset for a session no Claude ran in", OptionState, got)
+	}
+}
+
+// The strand this prune exists to fix.
+//
+// The set's only drain was a UserPromptSubmit carrying <task-notification>, and
+// that fires only when the task finishes BETWEEN turns. A task that finishes
+// mid-turn has its notification absorbed into the running turn — the transcript
+// records `queue-operation` enqueue then remove with reason absorbed_mid_turn —
+// and no UserPromptSubmit fires at all, so the id stayed for good.
+//
+// Measured over 122 transcripts on 2026-09-04, how a completion reached the
+// session: commands 258 as a prompt against 765 absorbed or silently removed;
+// agents 57 against 35; workflows 36 against 18. So roughly a quarter of command
+// completions were visible to this hook.
+//
+// stop_tasks_finished.json is a REAL Stop payload captured from that exact
+// sequence: a background command launched and finished inside one turn, leaving
+// `background_tasks` empty while @claude_bg still held its id.
+func TestStopPrunesWorkTheHarnessNoLongerLists(t *testing.T) {
+	e := newHookEnv(t)
+
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_bash_launch.json")
+	if got := e.opt(t, OptionBackground); got == "" {
+		t.Fatal("the launch was not recorded, so there is nothing to prune")
+	}
+
+	// The harness says nothing is outstanding. It is authoritative: a task that
+	// has finished, or been stopped with TaskStop, leaves the list at once
+	// (measured live 2026-09-04).
+	e.fire(t, "done", "stop_tasks_finished.json")
+
+	if got := e.opt(t, OptionBackground); got != "" {
+		t.Errorf("%s after Stop with an empty background_tasks = %q, want empty", OptionBackground, got)
+	}
+	if got := e.opt(t, OptionState); got != StateDone {
+		t.Errorf("%s = %q, want %q: the work is over and nothing will retire the id", OptionState, got, StateDone)
+	}
+}
+
+// The other half: an id the harness DOES still list survives, so a session with
+// live work is not reported finished.
+func TestStopKeepsWorkTheHarnessStillLists(t *testing.T) {
+	e := newHookEnv(t)
+
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_agent_launch.json")
+	e.fire(t, "running", "post_bash_launch.json")
+
+	// stop.json lists both of those ids as running.
+	e.fire(t, "done", "stop.json")
+
+	got := e.opt(t, OptionBackground)
+	for _, want := range []string{"a:a1cbb47bebad51b9b", "b:bmm8ohp9u"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s = %q, want it to still contain %q", OptionBackground, got, want)
+		}
+	}
+	if st := e.opt(t, OptionState); st != StateRunning {
+		t.Errorf("%s = %q, want %q", OptionState, st, StateRunning)
+	}
+}
+
+// A workflow id is NOT pruned. Whether a running Workflow appears in
+// background_tasks is unverified — the two kinds confirmed in a real payload are
+// "shell" and "subagent" — so pruning one would risk reporting done in the
+// middle of a half-hour run. Workflows stay on the notification drain until that
+// is measured.
+func TestStopDoesNotPruneAWorkflow(t *testing.T) {
+	e := newHookEnv(t)
+
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_workflow_launch.json")
+	before := e.opt(t, OptionBackground)
+	if before == "" {
+		t.Fatal("the workflow launch was not recorded")
+	}
+
+	e.fire(t, "done", "stop_tasks_finished.json")
+
+	if got := e.opt(t, OptionBackground); got != before {
+		t.Errorf("%s = %q, want it unchanged at %q", OptionBackground, got, before)
+	}
+	if st := e.opt(t, OptionState); st != StateRunning {
+		t.Errorf("%s = %q, want %q", OptionState, st, StateRunning)
+	}
+}
+
+// A payload with no background_tasks field prunes nothing, so an older harness
+// keeps the behaviour this script had before. Exercised through the no-payload
+// path, which is the documented pre-2026-09-04 fallback: no hook_event_name, so
+// the argv word alone decides and the prune never runs.
+func TestStopWithoutTheFieldPrunesNothing(t *testing.T) {
+	e := newHookEnv(t)
+
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_bash_launch.json")
+	before := e.opt(t, OptionBackground)
+	if before == "" {
+		t.Fatal("the launch was not recorded, so there is nothing to leave alone")
+	}
+
+	e.fireRaw(t, "done", "")
+
+	if got := e.opt(t, OptionBackground); got != before {
+		t.Errorf("%s = %q, want it unchanged at %q", OptionBackground, got, before)
 	}
 }

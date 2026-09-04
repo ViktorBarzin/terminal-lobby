@@ -27,11 +27,11 @@ import {
   searchUrl,
 } from "../lib/config";
 import type { Event, PermissionDecision, SearchHit } from "../types/events";
+import { readCatalogue, type Catalogue } from "./catalogue";
 import {
   isSlashCommand,
   sameCommand,
   type PendingPrompt,
-  type SlashCommand,
 } from "../components/compose.logic";
 import { fetchWithDeadline } from "../lib/http";
 
@@ -81,7 +81,7 @@ export interface SessionStore {
    *  transcript, not the window held here. */
   search: (q: string) => Promise<SearchHit[]>;
   /** The session's own slash commands, beyond the built-ins the page ships. */
-  commands: () => Promise<SlashCommand[]>;
+  commands: () => Promise<Catalogue>;
   /** Prompts sent from here that the transcript has not shown yet. */
   pendingPrompts: () => PendingPrompt[];
   /** True until the opening window has arrived — "not yet", not "nothing". */
@@ -676,17 +676,12 @@ export function createSessionStore(
    * The session's own slash commands. Fetched once per view rather than polled:
    * skills and commands are files on disk, and a session that gains one mid-turn
    * is rare enough that a reload is a fair price. An unreachable catalogue is
-   * not an error — the composer still has the built-ins the page ships.
+   * not an error — the composer still has the built-ins the page ships — but it
+   * now comes back distinguishable from an empty one, so the menu can say which
+   * it got (store/catalogue.ts carries the measurement).
    */
-  const commands = async (): Promise<SlashCommand[]> => {
-    try {
-      const res = await fetchWithDeadline(commandsUrl(session));
-      if (!res.ok) return [];
-      return ((await res.json()) as SlashCommand[] | null) ?? [];
-    } catch {
-      return [];
-    }
-  };
+  const commands = (): Promise<Catalogue> =>
+    readCatalogue(() => fetchWithDeadline(commandsUrl(session)));
 
   const pane = async (): Promise<{ pane: string; state: string } | null> => {
     try {

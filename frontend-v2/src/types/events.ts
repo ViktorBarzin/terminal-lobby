@@ -56,6 +56,11 @@ export interface Event {
   sidechain?: boolean;
   /** body/result were capped for the wire; the rest is fetched on demand. */
   truncated?: boolean;
+  /**
+   * How much text a `meta` event whose meta is "skill" stands in for: the
+   * length of the SKILL.md body sessionio collapsed to that one line.
+   */
+  bytes?: number;
   /** A `/context` reading, on `meta` events whose meta is "context". */
   context?: ContextReading;
 }
@@ -163,6 +168,7 @@ export function parseEvent(data: string): Event | null {
   if (o.result !== undefined) ev.result = o.result;
   if (o.usage && typeof o.usage === "object") ev.usage = o.usage as TokenUsage;
   if (typeof o.meta === "string") ev.meta = o.meta as MetaKind;
+  if (typeof o.bytes === "number") ev.bytes = o.bytes;
   if (o.sidechain === true) ev.sidechain = true;
   if (o.truncated === true) ev.truncated = true;
   if (o.context && typeof o.context === "object") {

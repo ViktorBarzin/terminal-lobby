@@ -86,6 +86,12 @@ export interface ToolRow {
   truncated: boolean;
   /** Subagent work belonging to this call (collab_agent_tool_call only). */
   children: LeafRow[];
+  /**
+   * How much SKILL.md this load collapsed (itemType "skill" only). Folded in
+   * from the `meta:skill` event that follows the call, because one load has to
+   * read as one thing: the call names the skill, the meta event knows the size.
+   */
+  bytes?: number;
   turnKey: string;
   at?: number;
 }
@@ -309,6 +315,10 @@ export function deriveRows(events: Event[]): TimelineRow[] {
     // to the turn: deriveRows runs on every event and must be pure, so nothing
     // here may outlive one derivation.
     const pendingByTool = new Map<string, QuestionRow | PlanRow>();
+    // Skill calls of this turn, by the skill they named, so the `meta:skill`
+    // that follows can fold its size onto the call rather than adding a second
+    // row for the same load.
+    const skillCalls = new Map<string, ToolRow>();
 
     /** Push a row into the turn, or into the subagent that spawned it. */
     const add = (row: LeafRow, sidechain?: boolean) => {
@@ -426,6 +436,11 @@ export function deriveRows(events: Event[]): TimelineRow[] {
             ...(e.at !== undefined ? { at: e.at } : {}),
           };
           if (e.toolId) toolBy.set(e.toolId, row);
+          // The load that follows folds its size onto this call (see the
+          // `meta` case). Keyed on the skill's name, which `describe` put in
+          // the label, so the two find each other across the tool result the
+          // receipt arrived on.
+          if (d.type === "skill" && d.label) skillCalls.set(d.label, row);
           // A subagent's own work arrives as sidechain records AFTER the call
           // that spawned it, so the call becomes the host for what follows.
           if (d.type === "collab_agent_tool_call") host = row;
@@ -515,6 +530,23 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           // measured), and the event still flows so the queue list stays in
           // step.
           if (meta === "queued" && isHarnessNotice(e.body ?? "")) break;
+          // A skill load is TWO records: the `Skill` call, and the SKILL.md
+          // body sessionio collapsed to this event. One thing happened, so it
+          // reads as one card — the size lands on the call and this row is
+          // dropped. Matched by name rather than by position, because the
+          // receipt the load was detected from arrives on the call's own tool
+          // result and anything may sit between them.
+          //
+          // Unmatched, the row stays: a body detected by its `Base directory`
+          // marker with no Skill call before it is still a load, and dropping
+          // it would lose the only trace of one.
+          if (meta === "skill") {
+            const call = skillCalls.get(e.body ?? "");
+            if (call && call.bytes === undefined) {
+              call.bytes = e.bytes ?? 0;
+              break;
+            }
+          }
           add({
             kind: "meta",
             key: `meta-${e.id}`,
@@ -907,6 +939,7 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
         questions?: unknown;
         headers?: unknown;
         count?: unknown;
+        answered?: unknown;
         partial?: unknown;
       }
     | null;
@@ -916,6 +949,7 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
     questions: qs,
     headers: Array.isArray(raw?.headers) ? (raw!.headers as string[]) : [],
     count: typeof raw?.count === "number" ? raw.count : qs.length,
+    answered: typeof raw?.answered === "number" ? raw.answered : 0,
     partial: raw?.partial === true,
   };
 }
@@ -927,8 +961,16 @@ export interface PaneAsking {
   headers: string[];
   /** How many questions the call carries. */
   count: number;
-  /** The pane cannot show them all — a multi-question call shows one at a
-   *  time, so it is reported rather than made answerable from here. */
+  /**
+   * How many the tab bar marks answered (sessionio.Dialog.Answered). The walk's
+   * only honest progress signal: read from what the terminal is showing, so it
+   * cannot drift from it the way a count the client kept would.
+   */
+  answered: number;
+  /**
+   * The pane shows one question at a time, so the call is answered one question
+   * at a time — each next one drawn only once the one before it lands.
+   */
   partial: boolean;
 }
 

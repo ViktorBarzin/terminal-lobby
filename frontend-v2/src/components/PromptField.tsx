@@ -86,6 +86,13 @@ export const PromptField: Component<{
   /** Slash commands offered by `/` beside the built-ins this page ships. */
   commands?: SlashCommand[];
   /**
+   * False when that catalogue could not be read. An empty `commands` is
+   * ambiguous on its own — a user with no skills reads the same as a route the
+   * ingress does not carry — so the menu shows a footer row rather than looking
+   * complete (store/catalogue.ts carries the measurement).
+   */
+  commandsOk?: boolean;
+  /**
    * The key this field's unsent draft is stored under (store/drafts.ts). A live
    * composer passes its session; the new-session composer passes a key of its
    * own, because the session it is writing for does not exist yet. Absent means
@@ -392,6 +399,10 @@ export const PromptField: Component<{
   const completion = createMemo<Completion | null>(() =>
     completionFor(draft(), caret(), paths(), catalogue()),
   );
+  /** The `/` menu is open and the session's own commands are not in it. */
+  const slashUnreadable = createMemo(
+    () => props.commandsOk === false && completion()?.trigger === "/",
+  );
 
   // `@` completes against the real filesystem, so the listing is fetched for
   // whichever directory the token names.
@@ -636,7 +647,7 @@ export const PromptField: Component<{
           </For>
         </div>
       </Show>
-      <Show when={completion() && completion()!.items.length > 0}>
+      <Show when={completion() && (completion()!.items.length > 0 || slashUnreadable())}>
         <div class="tl-complete" role="listbox" ref={menuEl}>
           <For each={completion()!.items}>
             {(item, i) => (
@@ -646,16 +657,36 @@ export const PromptField: Component<{
                 role="option"
                 aria-selected={i() === picked()}
                 data-picked={i() === picked() ? "true" : undefined}
+                data-source={item.source}
+                data-weak={item.weak ? "true" : undefined}
                 onClick={() => applyCompletion(item)}
                 title={item.description}
               >
-                <span class="tl-complete-name">{item.value}</span>
+                <span class="tl-complete-row">
+                  <span class="tl-complete-name">{item.value}</span>
+                  {/* Which of the four lists this row came from. 95 of the 130
+                      entries are built-ins, so without this the reader cannot
+                      tell their own skill from a command the CLI ships. */}
+                  <Show when={item.source && item.source !== "builtin"}>
+                    <span class="tl-complete-source">{item.source}</span>
+                  </Show>
+                </span>
                 <Show when={item.description}>
                   <span class="tl-complete-desc">{item.description}</span>
                 </Show>
               </button>
             )}
           </For>
+          {/* The per-user half of the catalogue is missing. Not an error state —
+              the built-ins above are real and usable — but it must not look
+              complete: every route the ingress does not carry answers with the
+              SPA's own index.html, on which `res.json()` throws, and the menu
+              then silently held 95 rows instead of 130. */}
+          <Show when={slashUnreadable()}>
+            <div class="tl-complete-note" role="note">
+              Your own skills could not be loaded
+            </div>
+          </Show>
         </div>
       </Show>
       {/* Field and controls in ONE surface. They were two: a bordered field

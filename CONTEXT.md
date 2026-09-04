@@ -196,9 +196,13 @@ session with any is *running* rather than *completed*, because it will
 produce more output without anyone prompting it, and the sidebar names
 what it is waiting on ("2 agents", "1 workflow"). Kept as the set of
 task ids in the session's `@claude_bg` option: a launch that returns
-`async_launched` adds one, and that id's task-notification removes it.
-Nothing expires, so a person typing into the session is what re-derives
-it — the same recovery path a stale **Session state** has. Only the main
+`async_launched` adds one, and it is removed either by that id's
+task-notification or, at the end of any turn, by no longer appearing in
+the harness's own list of live tasks. The second path is the load-bearing
+one: a notification for a task that finished mid-turn is absorbed into
+that turn and never arrives as a prompt. Nothing expires, so a person
+typing into the session also re-derives it — the same recovery path a
+stale **Session state** has. Only the main
 thread's own launches count: a subagent's background tasks report back
 to the subagent, so counting one would leave an id nothing can retire.
 _Avoid_: pending tasks, background jobs (both read as shell job control),
@@ -250,10 +254,18 @@ inside Settings and moved out on 2026-08-19: the lists are long enough that they
 need a tab each.
 
 **Skill**:
-A directory under a user's `~/.claude/skills/` containing a `SKILL.md`, loaded
-by that user's Claude sessions at start. Belongs to exactly one OS user; a
-second user gets it by **installing** a copy. May carry more than prose —
-scripts, agents, templates — which is why installing one is an act of trust.
+A named bundle of instructions a Claude session can invoke, usually a directory
+containing a `SKILL.md`. Most live under a user's `~/.claude/skills/` and belong
+to exactly one OS user, who a second user gets a copy from by **installing** it;
+a **bundled** skill ships with the CLI and belongs to nobody, so it is invoked
+the same way but is not on disk under that path and cannot be installed, edited
+or removed. A skill may carry more than prose — scripts, agents, templates —
+which is why installing one is an act of trust.
+
+Invoking a skill INJECTS its whole `SKILL.md` into the transcript, at that
+moment rather than at session start: 364 loads across this box's transcripts,
+median 3.1 kB and up to 23.3 kB, which the text view collapses to a card naming
+the skill (`sessionio/skill.go`).
 _Avoid_: plugin (that is the marketplace-installed kind, see below), command
 
 **Plugin**:
@@ -352,8 +364,8 @@ the view is the thing rendered)
 **Item type**:
 What a tool call *did*, independent of which tool did it: `file_read`,
 `file_change`, `command_execution`, `web_search`, `image_view`,
-`mcp_tool_call`, `dynamic_tool_call`. Every tool is classified into one on the
-way to the renderer, so the view never branches on a tool's name.
+`mcp_tool_call`, `skill`, `dynamic_tool_call`. Every tool is classified into one
+on the way to the renderer, so the view never branches on a tool's name.
 _Avoid_: tool kind, category
 
 **Work log**:

@@ -1146,28 +1146,6 @@
     display: inline;
     font-size: 13px;
   }
-  /* The composer's route back to the list keeps its word for the same reason
-     the session bar's does, and it needs it more.
-     The session bar's back control sits in a row of named things, so a bare
-     chevron there still reads as "out of here". The composer is the phone's
-     LANDING view: the screen is otherwise empty, the control is the only way to
-     reach the session list, and without the word it is a 12px glyph beside a
-     heading with nothing to say it is a button. Measured on the Android
-     emulator at 412x914 — the chevron rendered, the label did not, and the list
-     was reachable only by guessing. */
-  .tl-new-head .tl-back-btn {
-    width: auto;
-    padding: 0 10px 0 6px;
-    font-size: 17px;
-    line-height: 1;
-  }
-  .tl-new-head .tl-back-btn .tl-btn-label {
-    display: inline;
-    font-size: 13px;
-    /* The glyph and the word were touching, so it read as one odd token
-       rather than a chevron and a destination. */
-    margin-left: 5px;
-  }
   /* The bar's overflow menu. It anchors the popup, so it needs to be the
      positioned ancestor .tl-menu resolves against (top:100%; right:0). */
   .tl-bar-menu {

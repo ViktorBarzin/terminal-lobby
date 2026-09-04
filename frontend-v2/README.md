@@ -58,7 +58,7 @@ without CORS (`vite.config.ts`):
 
 | Prefix | Target | Mapping |
 |---|---|---|
-| `/events`, `/prompt`, `/cancel` | **session-events** (`TL_SESSION_EVENTS`, default `http://127.0.0.1:7685`) | verbatim — the service serves these at its root |
+| `/events`, `/prompt`, `/cancel`, `/earlier`, `/result`, `/pane`, `/keys`, `/commands`, `/search`, `/answer-text` | **session-events** (`TL_SESSION_EVENTS`, default `http://127.0.0.1:7685`) | verbatim — the service serves these at its root. The list is the prod IngressRoute's, prefix for prefix; a prefix missing here reaches ttyd's `location /` and answers 200 with the SPA's own index.html, so `res.json()` throws and the caller's catch returns an empty fallback with nothing logged |
 | `/api/sessions` | **tmux-api** (`TL_TMUX_API`, default `:7684`) | strips the whole prefix |
 | `/clipboard` | **clipboard-upload** (`TL_CLIPBOARD_UPLOAD`, default `:7683`) | strips the prefix |
 | `/files` | **file-api** (`TL_FILE_API`, default `:7686`) | verbatim — its own routes carry `/files` |
@@ -340,6 +340,10 @@ src/
                          and freeze on the old conversation
   store/
     session.ts           SSE → Solid store of events + prompt/cancel control
+    catalogue.ts         Reads GET /commands into {commands, ok}. `ok` exists
+                         because an empty list means two different things — a
+                         user with no skills, or a route that answered with
+                         index.html — and the `/` menu has to say which it got
     lobby.ts             Lobby store: poll + optimistic layout PUT + session CRUD
     transcript-cache.ts  Client-side transcript store (IndexedDB): seeds the
                          timeline from what this device already holds and resumes
