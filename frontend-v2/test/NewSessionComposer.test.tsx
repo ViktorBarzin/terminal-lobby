@@ -25,6 +25,9 @@ import {
   type PrefsStore,
 } from "../src/store/prefs";
 import type { CommandAvailability } from "../src/lib/new-commands";
+import { DRAFTS_KEY, loadDraft, type DraftAttachment } from "../src/store/drafts";
+import { toasts } from "../src/store/toast";
+import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 
 class FakeApi implements LobbyApi {
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
@@ -73,9 +76,32 @@ interface Mounted {
   container: HTMLElement;
   setPreset: (name: string | null) => void;
   unmount: () => void;
+  wire: Wire;
 }
 
-function mount(api: FakeApi, available: CommandAvailability = {}): Mounted {
+/**
+ * What the composer did with the prompt after it created the session.
+ *
+ * Delivery and upload are seams, so every test drives them rather than the
+ * network. The ladder they replace is covered on its own in
+ * test/first-prompt.test.ts, where the timing is the subject.
+ */
+interface Wire {
+  delivered: { session: string; lines: readonly string[] }[];
+  uploads: { files: readonly File[]; session: string }[];
+  /** What each upload answers with, in order; the last answer repeats. */
+  chips: DraftAttachment[][];
+  /** What each delivery answers with, in order; the last answer repeats. */
+  results: boolean[];
+  /** The readiness gate the last delivery was handed, to exercise directly. */
+  lastReady?: () => boolean;
+}
+
+function mount(
+  api: FakeApi,
+  available: CommandAvailability = {},
+  wire: Wire = { delivered: [], uploads: [], chips: [[]], results: [true] },
+): Mounted {
   let store!: LobbyStore;
   let prefs!: PrefsStore;
   const [preset, setPreset] = createSignal<string | null>(null);
@@ -96,11 +122,44 @@ function mount(api: FakeApi, available: CommandAvailability = {}): Mounted {
           setPreset(name);
           prefs.setPref({ session: { newProject: name } });
         }}
+        upload={async (files, session) => {
+          wire.uploads.push({ files, session });
+          const i = Math.min(wire.uploads.length - 1, wire.chips.length - 1);
+          return wire.chips[i] ?? [];
+        }}
+        deliver={async (o) => {
+          wire.delivered.push({ session: o.session, lines: o.lines });
+          wire.lastReady = o.ready;
+          const i = Math.min(wire.delivered.length - 1, wire.results.length - 1);
+          return wire.results[i] ?? true;
+        }}
       />
     );
   });
-  return { store, prefs, container: utils.container, setPreset, unmount: utils.unmount };
+  return { store, prefs, container: utils.container, setPreset, unmount: utils.unmount, wire };
 }
+
+const emptyWire = (): Wire => ({ delivered: [], uploads: [], chips: [[]], results: [true] });
+
+/** Hand a picked file to the composer's tray, the way the file input does. */
+const pickFile = (c: HTMLElement, ...files: File[]): void => {
+  const input = c.querySelector<HTMLInputElement>("input[type=file]")!;
+  Object.defineProperty(input, "files", { value: files, configurable: true });
+  fireEvent.change(input);
+};
+
+const aFile = (name: string, type = "image/png"): File =>
+  new File([new Uint8Array([1, 2, 3])], name, { type });
+
+/** A poll row for a session that exists, wearing the pane title given. */
+const row = (name: string, paneTitle: string): Session => ({
+  name,
+  attached: 1,
+  lastActivity: 1,
+  created: 1,
+  state: "done",
+  pane_title: paneTitle,
+});
 
 const field = (c: HTMLElement) =>
   c.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt for a new session"]');
@@ -124,7 +183,10 @@ const labelOf = (store: LobbyStore, name: string): string =>
     store.model().groups.flatMap((g) => g.sessions).find((s) => s.name === name) ?? { name },
   );
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  toasts.clear();
+});
 afterEach(cleanup);
 
 describe("<NewSessionComposer> — creating from a prompt", () => {
@@ -460,6 +522,253 @@ describe("<NewSessionComposer> — the model it starts on", () => {
     expect(sel.value).toBe("default");
     fireEvent.change(sel, { target: { value: "sonnet" } });
     expect(m.prefs.prefs().session.newModel).toBe("sonnet");
+    m.store.dispose();
+  });
+});
+
+describe("<NewSessionComposer> — the first prompt", () => {
+  const created = (api: FakeApi): string => api.puts[0]!.ungrouped[0]!;
+
+  it("sends what you typed to the session it just created", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    type(field(m.container)!, "Fix the deploy\nit 500s on the second push");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]).toEqual({
+      session: created(api),
+      lines: ["Fix the deploy\nit 500s on the second push"],
+    });
+    m.store.dispose();
+  });
+
+  it("puts the model ahead of the prompt, so it decides who answers", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "sonnet" } });
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    // Verified against Claude Code 2.1.260 on 2026-09-04: `/model sonnet` SETS
+    // the model, it does not open the picker.
+    expect(w.delivered[0]!.lines).toEqual(["/model sonnet", "Fix the deploy"]);
+    m.store.dispose();
+  });
+
+  it("sends no model line on the default, which is the absence of a choice", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
+    m.store.dispose();
+  });
+
+  it("keeps /model away from codex, which would read it as prose", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "haiku" } });
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "codex" } });
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
+    m.store.dispose();
+  });
+
+  it("applies a picked model even when the box is empty", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "opus" } });
+
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]!.lines).toEqual(["/model opus"]);
+    m.store.dispose();
+  });
+
+  it("sends nothing at all for an empty box on the default model", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]!.lines).toEqual([]);
+    m.store.dispose();
+  });
+
+  it("sends nothing to a shell, which has no conversation to prompt", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "shell" } });
+
+    type(nameBox(m.container)!, "scratch");
+    fireEvent.keyDown(nameBox(m.container)!, { key: "Enter" });
+
+    await waitFor(() => expect(api.puts.length).toBe(1));
+    expect(w.delivered).toEqual([]);
+    expect(w.uploads).toEqual([]);
+    m.store.dispose();
+  });
+
+  it("waits for Claude's own pane title before it sends", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+
+    const id = created(api);
+    // Nothing polled yet, and a session whose shell title still stands: both
+    // are the window where an injected prompt is dropped with no error.
+    expect(w.lastReady!()).toBe(false);
+    api.sessionsVal = [row(id, "devvm")];
+    await m.store.refresh();
+    expect(w.lastReady!()).toBe(false);
+    api.sessionsVal = [row(id, "✳ Claude Code")];
+    await m.store.refresh();
+    expect(w.lastReady!()).toBe(true);
+    m.store.dispose();
+  });
+
+  it("asks only that codex EXISTS, since it raises no readiness signal", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "codex" } });
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+
+    const id = created(api);
+    expect(w.lastReady!()).toBe(false);
+    api.sessionsVal = [row(id, "devvm")];
+    await m.store.refresh();
+    expect(w.lastReady!()).toBe(true);
+    m.store.dispose();
+  });
+});
+
+describe("<NewSessionComposer> — attachments", () => {
+  const created = (api: FakeApi): string => api.puts[0]!.ungrouped[0]!;
+
+  it("holds a picked file rather than uploading it, because there is no session yet", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    pickFile(m.container, aFile("shot.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    expect(w.uploads).toEqual([]);
+    m.store.dispose();
+  });
+
+  it("uploads into the new session's bucket, then sends the paths with the prompt", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    w.chips = [
+      [
+        {
+          path: "/var/lib/clipboard-store/wizard/s/shot-a1.png",
+          name: "shot-a1.png",
+          kind: "image",
+        },
+      ],
+    ];
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    pickFile(m.container, aFile("shot.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    type(field(m.container)!, "what is wrong here?");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    const id = created(api);
+    expect(w.uploads.length).toBe(1);
+    expect(w.uploads[0]!.session).toBe(id);
+    expect(w.uploads[0]!.files.map((f) => f.name)).toEqual(["shot.png"]);
+    expect(w.delivered[0]!.lines).toEqual([
+      "/var/lib/clipboard-store/wizard/s/shot-a1.png\nwhat is wrong here?",
+    ]);
+    m.store.dispose();
+  });
+
+  it("uploads nothing when the composer is abandoned", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    pickFile(m.container, aFile("shot.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    m.store.dispose();
+    m.unmount();
+
+    expect(w.uploads).toEqual([]);
+  });
+
+  it("leaves the held files out of the saved draft, keeping the prose", async () => {
+    const api = new FakeApi();
+    const m = mount(api, {}, emptyWire());
+    await m.store.refresh();
+
+    type(field(m.container)!, "what is wrong here?");
+    pickFile(m.container, aFile("shot.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+
+    // A File does not survive JSON, so restoring one would be a chip pointing
+    // at nothing. The half that CAN persist still does.
+    const saved = loadDraft(NEW_SESSION_DRAFT_KEY)!;
+    expect(saved.attachments).toEqual([]);
+    expect(saved.text).toBe("what is wrong here?");
+    expect(localStorage.getItem(DRAFTS_KEY)).not.toContain("held:");
+    m.store.dispose();
+  });
+
+  it("parks the prompt in the new session's composer when delivery fails", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    w.results = [false];
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    // The session exists and is what the person is looking at, so the text goes
+    // into ITS field rather than back into one that has been unmounted.
+    await waitFor(() => expect(loadDraft(created(api))?.text).toBe("Fix the deploy"));
+    expect(toasts.toasts().map((t) => t.message).join(" ")).toContain("waiting in the composer");
     m.store.dispose();
   });
 });

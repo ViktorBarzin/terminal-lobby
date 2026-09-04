@@ -55,9 +55,16 @@ export const PromptField: Component<{
    *  changes — the height is written in px, so the text would otherwise outgrow
    *  a box that stays where it was. */
   textSize?: number;
-  /** resolves false when the send was refused, which puts the typed text back
-   *  in the field. */
-  onSend: (text: string) => Promise<boolean>;
+  /**
+   * Send what was written. Resolves false when the send was refused, which puts
+   * the typed text AND the tray back in the field.
+   *
+   * `text` is the whole message with the attachment paths already spliced in,
+   * unless `pendingAttachments` says the tray's paths do not exist yet — then
+   * it is the prose alone and the tray arrives beside it for the caller to
+   * compose once it has real paths.
+   */
+  onSend: (text: string, attachments: readonly DraftAttachment[]) => Promise<boolean>;
   placeholder?: string;
   /** aria-label for the field; what a screen reader announces it as. */
   label: string;
@@ -113,6 +120,22 @@ export const PromptField: Component<{
    * "just give me a session".
    */
   allowEmpty?: boolean;
+  /**
+   * The tray holds files that have not been uploaded yet.
+   *
+   * True only for the new-session composer, where there is nothing to upload
+   * INTO until Enter is pressed: the session is created by that keypress
+   * (ADR-0019), and writing into a bucket for a session that may never exist
+   * would leave litter behind every abandoned draft.
+   *
+   * Two things follow, and they are the same fact twice. `onSend` is handed the
+   * prose and the tray separately rather than one composed message, because the
+   * paths it would splice in are placeholders. And the tray is left OUT of the
+   * saved draft: a `File` does not survive JSON, so a reloaded tab would restore
+   * chips pointing at nothing. The typed text still persists, which is the half
+   * that can.
+   */
+  pendingAttachments?: boolean;
   /** Take focus on mount. The new-session composer does this on a desktop; a
    *  coarse pointer deliberately does not, because focusing raises a keyboard
    *  over the screen the person just opened. */
@@ -215,7 +238,7 @@ export const PromptField: Component<{
     if (!key) return;
     const saved = loadDraft(key);
     if (!saved) return;
-    setTray(saved.attachments);
+    if (!props.pendingAttachments) setTray(saved.attachments);
     if (saved.text && ta) {
       ta.value = saved.text;
       setDraft(saved.text);
@@ -272,7 +295,7 @@ export const PromptField: Component<{
     if (!key) return;
     // Both halves are read reactively so either one changing persists the pair.
     const text = draft();
-    const attachments = tray();
+    const attachments = props.pendingAttachments ? [] : tray();
     saveDraft(key, { text, attachments, at: Date.now() });
   });
 
@@ -376,10 +399,12 @@ export const PromptField: Component<{
     const held = tray();
     // The TRAY counts too: attachments with no prose is a valid message, so the
     // old `if (!t) return` would have swallowed a photo sent on its own.
-    const message = composeMessage(raw, held.map((a) => a.path));
-    if (!message && !props.allowEmpty) return;
+    const message = props.pendingAttachments
+      ? raw.trim()
+      : composeMessage(raw, held.map((a) => a.path));
+    if (!message && held.length === 0 && !props.allowEmpty) return;
     clear();
-    void props.onSend(message).then((ok) => {
+    void props.onSend(message, held).then((ok) => {
       if (ok || !ta || ta.value !== "") return;
       // A refusal restores BOTH halves. The text already had this guarantee; an
       // attachment needs it more, because re-attaching means finding the file
