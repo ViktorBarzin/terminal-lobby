@@ -237,14 +237,79 @@ describe("the README's Layout map is the whole source tree", () => {
     expect(srcFiles.length).toBeGreaterThan(50);
   });
 
-  it("names every file under src/", () => {
+  /**
+   * The fence read as a tree, so a name is checked against the DIRECTORY it
+   * lives in rather than against the whole map.
+   *
+   * The map is indented: a directory line is `  terminal/`, its files sit
+   * deeper, and a nested directory such as `    settings/` opens its own block.
+   * Parsing that gives a set of "dir/basename" keys.
+   *
+   * WHY THIS IS NOT A BASENAME MATCH, measured 2026-09-04. It used to take the
+   * basename and ask whether the fence mentioned it ANYWHERE, so a name reused
+   * in a second directory satisfied the check for both. Two files landed
+   * invisible to it on one afternoon: src/terminal/attention.ts was covered by
+   * src/notify/attention.ts's row, and src/terminal/viewport.ts by
+   * src/mobile/viewport.ts's. Six new modules arrived, the guard reported four,
+   * and the two it missed were exactly the two whose names collided. A guard
+   * whose whole job is noticing a new module cannot be blind to the modules
+   * most likely to be named after an existing one.
+   */
+  const documented = ((): Set<string> => {
+    const keys = new Set<string>();
+    /** A directory currently open, with the indent it opened at. */
+    type Open = { indent: number; path: string };
+    const stack: Open[] = [];
+    // tsconfig has noUncheckedIndexedAccess, so stack[n] is possibly undefined.
+    // One accessor rather than a cast at each use: the empty stack is a real
+    // state (a row at the fence's own root) and it answers "" for it.
+    const openPath = (): string => (stack.length ? (stack[stack.length - 1] as Open).path : "");
+    const openIndent = (): number =>
+      stack.length ? (stack[stack.length - 1] as Open).indent : -1;
+
+    for (const raw of fence.split("\n")) {
+      if (!raw.trim()) continue;
+      const indent = raw.length - raw.trimStart().length;
+      const trimmed = raw.trimStart();
+      while (stack.length && indent <= openIndent()) stack.pop();
+
+      const dir = /^([A-Za-z0-9_.-]+)\/(\s|$)/.exec(trimmed);
+      if (dir?.[1]) {
+        const parent = openPath();
+        stack.push({ indent, path: parent ? `${parent}/${dir[1]}` : dir[1] });
+        continue;
+      }
+      // Two row styles, both in use. Most rows are a bare name inside a
+      // directory block; some spell the path out instead, as `types/events.ts`
+      // and `telemetry/track.ts` do, and those carry their own directory.
+      const file = /^((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)(\s|$)/.exec(
+        trimmed,
+      );
+      const named = file?.[1];
+      if (!named) continue;
+      if (named.includes("/")) {
+        keys.add(named.replace(/^src\//, ""));
+        continue;
+      }
+      // The fence roots at `src/`, which is not part of a path relative to src.
+      const rel = openPath().replace(/^src\/?/, "");
+      keys.add(rel ? `${rel}/${named}` : named);
+    }
+    return keys;
+  })();
+
+  it("parsed the map into something to check against", () => {
+    // Without this, a parser that matched nothing would report every file
+    // missing, and a parser that matched everything would report none. The
+    // count is a sanity floor on the first and the test below covers the second.
+    expect(documented.size, "the Layout fence parsed to no file rows").toBeGreaterThan(50);
+  });
+
+  it("names every file under src/, in the directory it actually lives in", () => {
     // The map reads as exhaustive — it goes down to Mermaid.tsx — so a file
     // missing from it reads as a file that does not exist. That is exactly how
     // the whole file-preview/editor surface went undocumented.
-    const missing = srcFiles.filter((f) => {
-      const base = f.slice(f.lastIndexOf("/") + 1).replace(/\./g, "\\.");
-      return !new RegExp(`(?:^|[\\s/])${base}`, "m").test(fence);
-    });
+    const missing = srcFiles.filter((f) => !documented.has(f));
     expect(missing, "src/ files absent from the README Layout map").toEqual([]);
   });
 });
