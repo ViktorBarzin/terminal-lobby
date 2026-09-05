@@ -33,8 +33,10 @@ viewer's platform):
 
 Sessions past the tenth aren't digit-jumpable — cycle with
 `Alt+Shift+[` / `]` or search with the palette. The chords work while
-focus is inside the terminal too (the iframe forwards them up to the
-lobby). **Alt**, not Cmd/Ctrl: the browser reserves `Cmd/Ctrl+digit` for
+focus is inside the terminal too: the terminal is part of the same page,
+so one shortcut layer sees the key, and the terminal declines a key that
+layer claimed rather than also typing it into the shell.
+**Alt**, not Cmd/Ctrl: the browser reserves `Cmd/Ctrl+digit` for
 tab-switching and a page in a normal tab can't override them, whereas
 `Alt+digit` is capturable everywhere.
 
@@ -115,10 +117,9 @@ Nine presets shipped as CSS variables on `body.theme-*`: `carbon`, `slate`
 colours rather than carrying its name alone, so you pick by seeing it.
 Choice persists per device in
 `localStorage` (`tmux-theme`) — deliberately not part of the roamed prefs
-doc. Switches apply live: the lobby posts `tl-theme` to the attached
-terminal iframe, which re-reads the CSS vars and repaints xterm without a
-reload; a stale iframe build that doesn't ACK gets the old full-reload
-fallback after ~1s.
+doc. Switches apply live: the attached terminal re-reads the CSS vars and
+repaints xterm without a reload. An OS light/dark flip does the same while
+the theme is `system`, which is the path that fires with nobody in the app.
 
 ## Mobile
 
