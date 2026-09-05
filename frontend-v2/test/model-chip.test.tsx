@@ -54,9 +54,22 @@ describe("the model chip", () => {
     expect(chip(mount({}))).toBeNull();
   });
 
-  it("names the model and the effort the session is on", () => {
+  it("names the model and the effort the session is on, by its exact slug", () => {
     const c = mount({ harness: "claude", model: { model: "claude-opus-5", effort: "max" } });
-    expect(chip(c)!.textContent).toBe("opus · max");
+    expect(chip(c)!.textContent).toBe("claude-opus-5 · max");
+  });
+
+  // A slug outruns the chip on a phone, so the stylesheet ellipsises it. The
+  // title is what carries the whole thing, and it must never be the truncated
+  // form.
+  it("puts the whole slug in the title, however long it is", () => {
+    const c = mount({
+      harness: "claude",
+      model: { model: "claude-haiku-4-5-20251001", effort: "low" },
+    });
+    expect(chip(c)!.getAttribute("title")).toBe(
+      "Model and effort: claude-haiku-4-5-20251001 · low",
+    );
   });
 
   // A session that has not answered yet has written no record naming either, so

@@ -12,9 +12,16 @@ the driver types the command) arrives as ordinary bytes rather than as line
 editing.
 """
 
+import os
 import sys
 import termios
+import time
 import tty
+
+# How long to sit on a keystroke before redrawing. The driver reads the pane
+# between steps, so a repaint slower than its settle makes it read the row it
+# was already on — which is what a loaded box does to a real picker.
+LAG = float(os.environ.get("FAKEPICKER_LAG", "0"))
 
 MODELS = [
     ("Default (recommended)", "Sonnet 5 · Efficient for routine tasks"),
@@ -49,11 +56,20 @@ def read1():
     return b.decode("utf-8", "replace") if b else ""
 
 
+# Printed once the terminal is in raw mode and the read loop is about to
+# start. The test waits for it rather than sleeping: under load python3 takes
+# long enough to boot that a command typed at it beforehand is swallowed by
+# the cooked-mode line discipline, and the driver then waits out its whole
+# deadline for a picker that was never asked for.
+READY = "PICKER-READY"
+
+
 def main():
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
     try:
+        out(READY + "\r\n")
         line = ""
         at = 2  # the picker opens on the model in force, as the real one does
         picking = False
@@ -87,6 +103,8 @@ def main():
                     at = max(0, at - 1)
                 elif key == "B":
                     at = min(len(MODELS) - 1, at + 1)
+                if LAG:
+                    time.sleep(LAG)
                 draw(at)
             elif ch == "s":
                 chose(MODELS[at][0])
