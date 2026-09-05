@@ -167,11 +167,17 @@ src/
                          plus lensTarget(), the one answer for "whose account
                          is this tab looking at": it makes a session open
                          WATCHING and namespaces the Watch choice per target
-    models.ts            Which model a new session starts on. Applied as
-                         `/model <name>` down the prompt channel rather than as
-                         a launch flag: a per-model command key would miss the
-                         pre-warm pool and give up Claude's ~2.4s boot on every
-                         model but the default
+    models.ts            The model and effort catalogue, per harness: Claude
+                         and codex share no vocabulary, and their effort
+                         ladders differ at the top step (ultracode / ultra).
+                         Neither setting is a launch flag — a per-model command
+                         key would miss the pre-warm pool and give up Claude's
+                         ~2.4s boot on every model but the default
+    model-api.ts         Applying one of those choices to a session:
+                         POST /model, which drives the CLI's own picker. The
+                         reply is what the session reports afterwards rather
+                         than an echo, because an effort change can be refused
+                         without anything failing
     first-prompt.ts      Delivering the FIRST prompt of a session created a
                          moment ago. A session tmux has made is reachable
                          seconds before the Claude in it is ready to read
@@ -495,6 +501,11 @@ src/
     ContextMeter.tsx     How full the context is, beside the mode chip, with the
                          breakdown behind a tap. Figures are the CLI's own — the
                          ceiling is not on the wire and is not a constant
+    ModelMenu.tsx        The model and effort chip, beside the mode chip: what
+                         the session is answering AS, one tap from changing it.
+                         Its lists are the running CLI's own, and `default` is
+                         not among them — "leave it alone" answers a question
+                         only a session that does not exist yet can be asked
     PermissionPanel.tsx  INERT. Approve/Deny UI kept for a future gated
                          re-enable; its server side was removed in 575d4f5, so
                          Composer still mounts it but it always renders nothing

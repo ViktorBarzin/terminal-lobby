@@ -48,7 +48,9 @@ import {
 } from "../store/device-prefs";
 import { terminalFrameArgs } from "../lib/terminal-url";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
-import type { BackgroundWork } from "../types/lobby";
+import type { BackgroundWork, SessionTool } from "../types/lobby";
+import { modelHarness } from "../lib/models";
+import { setSessionModel } from "../lib/model-api";
 
 /** The `?native` values that mean yes, and the ones that mean no. */
 const NATIVE_YES = ["1", "true", "yes", "on"];
@@ -171,6 +173,11 @@ export const SessionView: Component<{
   lens?: () => string;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
+  /** Which CLI this session is running, from the session list's own `tool`
+   *  (tmux-api reads it off the pane's process tree). It decides which model
+   *  and effort lists the composer's chip offers, and a session running a plain
+   *  shell — or one nothing has reported a tool for — gets no chip at all. */
+  tool?: () => SessionTool | undefined;
   /** roamed prefs — the A−/A+ buttons step fontSize, which the store persists
    *  and pushes live into the terminal via window.__tlPrefsLive. Optional so a
    *  test can mount the view without one (the buttons then no-op). */
@@ -221,6 +228,24 @@ export const SessionView: Component<{
     autoStart: false,
   });
   const [mode, setMode, toggleMode] = createViewMode(() => session);
+  /**
+   * Put this session on a model or an effort level.
+   *
+   * No ladder: the session is on screen and answering, so it is ready by
+   * definition — the rungs exist for a session created a moment ago, which is
+   * the new-session composer's problem rather than this one's.
+   */
+  const setModel = (choice: { model: string; effort: string }) => {
+    const h = modelHarness(props.tool?.());
+    if (!h) return Promise.resolve({ ok: false as const, reason: "No model to pick here." });
+    return setSessionModel({
+      session,
+      harness: h,
+      model: choice.model,
+      effort: choice.effort,
+      ladder: [0],
+    });
+  };
   // Watch mode is per (session, device) and lives only in this browser — the
   // desktop keeps driving the same session while the phone watches it.
   const [watch, , toggleWatch] = createWatchMode(
@@ -949,6 +974,8 @@ export const SessionView: Component<{
             onListDir={listDir}
             session={session}
             me={props.me?.() ?? ""}
+            harness={modelHarness(props.tool?.())}
+            onSetModel={setModel}
             onAttach={attachFiles}
             inertReason={inertReason()}
             register={(api) => (composer = api)}

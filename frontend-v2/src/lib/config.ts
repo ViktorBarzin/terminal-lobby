@@ -144,6 +144,16 @@ export function promptUrl(session: string): string {
   return withActAs(`${API_BASE}/prompt/${encodeURIComponent(session)}`);
 }
 
+/**
+ * POST target that puts the session on a model and an effort level
+ * (session-events). Body: {tool, model, effort, awaitReady}; the reply is what
+ * the session reports afterwards. Neither is a launch flag — the server drives
+ * the CLI's own picker (lib/models.ts).
+ */
+export function modelUrl(session: string): string {
+  return withActAs(`${API_BASE}/model/${encodeURIComponent(session)}`);
+}
+
 /** POST target to cancel/interrupt the running turn (session-events). No body. */
 export function cancelUrl(session: string): string {
   return withActAs(`${API_BASE}/cancel/${encodeURIComponent(session)}`);

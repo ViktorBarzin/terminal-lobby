@@ -11,6 +11,7 @@ import type { Event, PermissionDecision, SessionState } from "../types/events";
 import {
   askingFromPane,
   currentMode,
+  currentModel,
   deriveRows,
   pendingQuestion,
   promptHistory,
@@ -36,6 +37,25 @@ import {
 } from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
+import {
+  isCurrentModel,
+  type ModelField,
+  type ModelHarness,
+  type ModelState,
+} from "../lib/models";
+import type { SetModelResult } from "../lib/model-api";
+
+/**
+ * A model reading, as one comparable string.
+ *
+ * The applied reading holds only until the TRANSCRIPT moves, and this is how it
+ * notices: the reading is stored alongside the transcript's value at the moment
+ * it was taken, and it simply stops matching when a turn writes a new one. The
+ * same trick the permission-mode chip uses for its pane reading, and it needs
+ * no bookkeeping to expire.
+ */
+const modelKey = (m: ModelState | undefined): string =>
+  `${m?.model ?? ""}/${m?.effort ?? ""}`;
 
 /**
  * When to look at the pane after asking it to change, in ms. The CLI's status
@@ -114,6 +134,11 @@ export const TextView: Component<{
   onListDir?: (dir: string) => Promise<string[]>;
   /** the session, so the composer can key its unsent draft. */
   session?: string;
+  /** which CLI the session runs, from the session list's own `tool`. Absent
+   *  for a plain shell, which has no model to pick. */
+  harness?: ModelHarness | null;
+  /** put the session on a model or an effort level, and say what happened. */
+  onSetModel?: (choice: { model: string; effort: string }) => Promise<SetModelResult>;
   /** the effective OS user — decides which store paths render as attachments. */
   me?: string;
   /** upload files and return the ones that became attachable. */
@@ -392,6 +417,64 @@ export const TextView: Component<{
   // and is not a constant.
   const context = createMemo(() => contextState(props.events, props.sessionState));
 
+  /**
+   * What the session is answering as.
+   *
+   * Two sources, for the same reason the permission-mode chip has two. The
+   * TRANSCRIPT is authoritative and is what an arriving reader has, but it only
+   * moves when a turn ends, so a change made from the chip would not show until
+   * the session next answered. The APPLY reports what the session said about
+   * itself immediately afterwards, and that reading holds until the transcript
+   * reports a pair of its own.
+   */
+  const transcriptModel = createMemo(() => currentModel(props.events, props.sessionState));
+  const [appliedModel, setAppliedModel] = createSignal<{
+    state: ModelState;
+    against: string;
+  } | null>(null);
+  const modelState = createMemo((): ModelState | undefined => {
+    const t = transcriptModel();
+    const a = appliedModel();
+    return a && a.against === modelKey(t) ? a.state : t;
+  });
+  const [modelBusy, setModelBusy] = createSignal(false);
+
+  /**
+   * Drive the session's picker, then say what it actually did.
+   *
+   * The reply is the session's own reading, not an echo: an effort change can
+   * be refused without anything failing, and on this box it is, so a chip that
+   * trusted the request would show a level the session is not on
+   * (lib/model-api.ts).
+   */
+  const pickModel = (field: ModelField, id: string): void => {
+    if (!props.onSetModel || modelBusy()) return;
+    const want = { model: field === "model" ? id : "", effort: field === "effort" ? id : "" };
+    const against = modelKey(transcriptModel());
+    setModelBusy(true);
+    void props
+      .onSetModel(want)
+      .then((r) => {
+        if (!r.ok) {
+          props.notify?.(r.reason, "error");
+          return;
+        }
+        setAppliedModel({ state: r.state, against });
+        const got = field === "model" ? r.state.model : r.state.effort;
+        const took =
+          field === "model"
+            ? isCurrentModel(props.harness ?? "claude", id, got)
+            : got === id;
+        if (got && !took) {
+          props.notify?.(
+            `The session stayed on ${got} — something on the box pins it`,
+            "error",
+          );
+        }
+      })
+      .finally(() => setModelBusy(false));
+  };
+
   // The catalogue is files on disk; one read when the view opens is enough.
   // `readable` is held separately from the list because an empty list means two
   // different things and the menu has to be able to say which (store/catalogue.ts).
@@ -501,6 +584,11 @@ export const TextView: Component<{
         queued={queued()}
         {...(props.onKeys ? { mode: mode(), onCycleMode: cycleMode } : {})}
         {...(context() ? { context: context()! } : {})}
+        {...(props.harness && props.onSetModel
+          ? { harness: props.harness, onPickModel: pickModel }
+          : {})}
+        {...(modelState() ? { model: modelState()! } : {})}
+        modelBusy={modelBusy()}
         onListDir={props.onListDir}
         commands={commands()}
         commandsOk={catalogueOk()}

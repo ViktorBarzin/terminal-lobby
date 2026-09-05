@@ -9,6 +9,7 @@ import {
   type JSX,
 } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
+import type { SessionTool } from "../types/lobby";
 import type { NewCommand, PrefsStore } from "../store/prefs";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import {
@@ -19,11 +20,15 @@ import {
   type CommandAvailability,
 } from "../lib/new-commands";
 import {
-  MODEL_PHRASES,
-  modelCommandFor,
-  NEW_SESSION_MODELS,
-  type NewModel,
+  modelHarness,
+  modelRequest,
+  optionsFor,
+  phraseFor,
+  type ModelField,
+  type ModelHarness,
 } from "../lib/models";
+import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
+import { setSessionModel } from "../lib/model-api";
 import { PromptField } from "./PromptField";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt } from "../lib/first-prompt";
@@ -63,13 +68,15 @@ const HELD_PATH_PREFIX = "held:";
  * from Claude's own summary of the conversation a few seconds later. Until it
  * does, the card reads the first line of what was typed here.
  *
- * Three controls sit under the field. The PROJECT is where the session lands,
- * defaulting to the last one created in and overridable for one create by the
- * `+` on a sidebar group. The COMMAND is which tool runs, the same roamed
- * `session.newCommand` the terminal attach reads, so what is picked here is
- * what starts. The MODEL is applied as `/model <name>` ahead of the first
- * prompt (lib/models.ts) rather than as a launch flag, which is what keeps the
- * pre-warm pool usable for every model.
+ * Four controls sit under the field, and the row reads as one sentence: "in
+ * code · run Claude · Opus model · max effort". The PROJECT is where the
+ * session lands, defaulting to the last one created in and overridable for one
+ * create by the `+` on a sidebar group. The COMMAND is which tool runs, the
+ * same roamed `session.newCommand` the terminal attach reads, so what is picked
+ * here is what starts. The MODEL and the EFFORT belong to whichever CLI the
+ * command names — the two share no vocabulary — and are applied to the session
+ * once it is up rather than as launch flags, which is what keeps the pre-warm
+ * pool usable for every model (lib/models.ts).
  *
  * Choosing `shell` turns the box back into a NAME box: a shell has no
  * conversation to prompt or to summarise, and it is the case where someone most
@@ -96,11 +103,14 @@ export const NewSessionComposer: Component<{
    *  given its first prompt, and how held files reach its store. */
   deliver?: typeof deliverFirstPrompt;
   upload?: typeof uploadAttachments;
+  setModel?: typeof setSessionModel;
 }> = (props) => {
   const avail = (): CommandAvailability => props.available?.() ?? {};
   const cmd = (): NewCommand =>
     effectiveCommand(props.prefs.prefs().session.newCommand, avail(), COMMANDS);
-  const model = (): NewModel => props.prefs.prefs().session.newModel;
+  /** Which of the two CLIs is starting, or null for a shell, which has none. */
+  const harness = (): ModelHarness | null => modelHarness(cmd() as SessionTool);
+  const choice = (h: ModelHarness) => modelChoiceFor(props.prefs.prefs(), h);
   /** A shell has no prompt to receive, so the box asks for a name instead. */
   const naming = (): boolean => cmd() === "shell";
   const projects = () => props.store.layout().projects;
@@ -210,9 +220,12 @@ export const NewSessionComposer: Component<{
     const shell = naming();
     const store = props.store;
     const key = cmd();
-    // `/model` is Claude's. Codex and a plain shell would take it as literal
-    // text and put it in the conversation (lib/models.ts).
-    const modelLine = key === "claude" ? modelCommandFor(model()) : null;
+    // Neither the model nor the effort is a launch flag: both are applied to
+    // the session once it is up, by driving the CLI's own picker
+    // (lib/models.ts). A shell has neither, and null here is also what a pair
+    // of untouched defaults produces.
+    const h = harness();
+    const wants = h ? modelRequest(h, choice(h)) : null;
     const files = tray
       .map((a) => held.get(a.path))
       .filter((f): f is File => f !== undefined);
@@ -222,6 +235,7 @@ export const NewSessionComposer: Component<{
     // us, so nothing below may reach back into props.
     const deliver = props.deliver ?? deliverFirstPrompt;
     const upload = props.upload ?? uploadAttachments;
+    const setModel = props.setModel ?? setSessionModel;
 
     const project = props.project();
     const id = await store.create(text, project, shell ? "name" : "prompt");
@@ -237,10 +251,11 @@ export const NewSessionComposer: Component<{
       session: id,
       text,
       files,
-      modelLine,
+      wants,
       claude: key === "claude",
       deliver,
       upload,
+      setModel,
     });
     return true;
   };
@@ -353,25 +368,37 @@ export const NewSessionComposer: Component<{
             )}
           </For>
         </select>
-        {/* Nothing summarises a shell and nothing reads `/model` in one, so the
-            picker is only offered where it means something. */}
-        <Show when={!naming()}>
-          <select
-            class="tl-new-cmd"
-            aria-label="Model for new session"
-            value={model()}
-            onChange={(e) =>
-              props.prefs.setPref({
-                session: { newModel: e.currentTarget.value as NewModel },
-              })
-            }
-          >
-            <For each={NEW_SESSION_MODELS}>
-              {(k) => <option value={k}>{MODEL_PHRASES[k]}</option>}
-            </For>
-          </select>
+        {/* A shell has no model and no effort, so it gets neither picker. The
+            two that remain are the CHOSEN CLI's own: `opus` means nothing to
+            codex and `gpt-5.6-terra` means nothing to Claude, so switching
+            command swaps both lists and each keeps its own remembered pick. */}
+        <Show when={harness()}>
+          {(h) => (
+            <>
+              {picker(h(), "model", "Model for new session")}
+              {picker(h(), "effort", "Effort for new session")}
+            </>
+          )}
         </Show>
       </>
+    );
+  }
+
+  /** One of the two choices, bound to its harness's own roamed key. */
+  function picker(h: ModelHarness, field: ModelField, label: string): JSX.Element {
+    return (
+      <select
+        class="tl-new-cmd"
+        aria-label={label}
+        value={choice(h)[field]}
+        onChange={(e) =>
+          props.prefs.setPref(modelChoicePatch(h, field, e.currentTarget.value))
+        }
+      >
+        <For each={optionsFor(h, field)}>
+          {(o) => <option value={o.id}>{phraseFor(h, field, o.id)}</option>}
+        </For>
+      </select>
     );
   }
 };
@@ -384,26 +411,30 @@ export const NewSessionComposer: Component<{
  *
  * Order matters and is the whole of it. The files go up FIRST, because the
  * prompt has to carry their paths and those paths do not exist until they are
- * in the session's own bucket. The model line goes ahead of the prompt, because
- * it decides which model answers it. Both ride `deliverFirstPrompt`, which is
- * where the waiting lives: a session tmux has created accepts input seconds
- * before the Claude in it is ready to read any, and text sent into that gap is
- * silently dropped (lib/first-prompt.ts).
+ * in the session's own bucket. The model and the effort go next, because they
+ * decide who answers the prompt and how hard — and because both are applied by
+ * driving the CLI's own picker, which cannot be done over a turn already
+ * running. The prompt goes last.
  *
- * The waiting is asked for rather than done here: `session-events` holds each
- * attempt until the pane can take the text and answers 503 when it cannot
- * (lib/first-prompt.ts). Only for Claude, whose `❯` is what that check watches
- * for — asking where nothing draws one would spend every rung waiting and give
- * up with the text unsent, so codex takes the ladder alone.
+ * Both waits are the server's: a session tmux has created accepts input seconds
+ * before the CLI in it is ready to read any, and text sent into that gap is
+ * silently dropped, so `session-events` holds each attempt until the pane can
+ * take it and answers 503 when it cannot (lib/first-prompt.ts, lib/model-api.ts).
+ *
+ * A model that will not apply does not cost the prompt. The session is up and
+ * the person is looking at it; sending what they typed on the wrong model is
+ * better than dropping it, so the failure is a toast and the prompt goes
+ * anyway.
  */
 async function sendFirstPrompt(o: {
   session: string;
   text: string;
   files: readonly File[];
-  modelLine: string | null;
+  wants: ReturnType<typeof modelRequest>;
   claude: boolean;
   deliver: typeof deliverFirstPrompt;
   upload: typeof uploadAttachments;
+  setModel: typeof setSessionModel;
 }): Promise<void> {
   const attached = await o.upload(o.files, o.session, {
     notify: (message, kind) => void showToast(message, kind, 8000),
@@ -412,7 +443,24 @@ async function sendFirstPrompt(o: {
     o.text,
     attached.map((a) => a.path),
   );
-  const lines = [o.modelLine, prompt].filter((l): l is string => !!l);
+  if (o.wants) {
+    const r = await o.setModel({
+      session: o.session,
+      harness: o.wants.tool,
+      model: o.wants.model,
+      effort: o.wants.effort,
+      awaitReady: true,
+    });
+    if (!r.ok) showToast(`Started on the session's own model — ${r.reason}`, "error", 8000);
+    else if (o.wants.effort && r.state.effort && r.state.effort !== o.wants.effort) {
+      showToast(
+        `The session stayed on ${r.state.effort} effort — something on the box pins it`,
+        "error",
+        8000,
+      );
+    }
+  }
+  const lines = [prompt].filter((l): l is string => !!l);
   const ok = await o.deliver({
     session: o.session,
     lines,

@@ -962,6 +962,7 @@ export const App: Component = () => {
                     creating={shown() && selectedIsCreating()}
                     dir={shown() ? selectedDir() : undefined}
                     newCommand={newCommand}
+                    tool={() => store.sessions.find((s) => s.name === k.name)?.tool}
                     prefs={prefs}
                     notify={notify}
                     overlayOpen={overlayOpen}
