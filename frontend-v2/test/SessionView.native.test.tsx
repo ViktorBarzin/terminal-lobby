@@ -1,42 +1,31 @@
 /**
- * WHICH TERMINAL a tab gets, and what the shell hands the one it mounted.
+ * WHAT THE SHELL HANDS THE TERMINAL IT MOUNTS.
  *
- * THE FLIP (2026-09-04) lives here: a bare URL now mounts the terminal the app
- * renders itself, and `term.html` in an iframe is what the URL flag or this
- * device's setting selects instead. Three answers in a fixed order: the flag,
- * then the setting, then native. That order is the design, so it is tested as a
- * table rather than as a handful of cases.
+ * There is one terminal, and this file is about the handover rather than
+ * anything either side does with it. Three describes went from here on
+ * 2026-09-05, with the escape hatch they tested: `nativeFromSearch`, the
+ * nine-row precedence table over `?native` crossed with the stored device
+ * setting, and the DOM half of that table. All three answered "which terminal
+ * does this tab get", and a question with one answer is not a test.
  *
- * The setting is not a convenience. `manifest.webmanifest` sets
- * `"start_url": "/"`, so an app launched from a home-screen icon opens with no
- * query string and no flag can reach it; on an installed PWA the stored choice
- * is the only way back to the iframe.
+ * What is checked here, all of it SessionView's own wiring:
  *
- * Four things are checked here, all of them SessionView's own wiring rather
- * than either terminal's behaviour:
- *
- *   - the `?native` read. Presence was the whole test until pass 1, so
- *     `?native=0` turned native ON, which makes the flag useless as the way
- *     back to the iframe now that native is the default (the de-iframe plan's
- *     "a URL override that works in both directions").
- *   - the precedence, and that the component really consults both sources. A
- *     pure function that orders them correctly is half the claim; the other
- *     half is which component ends up in the DOM.
- *   - the ADR-0016 connection ask. `askConn` was passed on the iframe branch
- *     only, so the badge and Run check could not ask a native terminal what its
- *     socket was doing. What the native terminal DOES when asked is
+ *   - the levers `onReady` hands back — the ADR-0016 connection ask and
+ *     Reconnect, plus the soft-key row's Copy, which has no keyboard to press
+ *     the copy chord with. What the terminal DOES when a lever is pulled is
  *     TerminalNative.wiring.test.tsx and terminal.attach.test.ts.
- *   - `active` and `onAttention`, which the iframe branch already gets and the
- *     native branch did not. terminal/attention.ts needs both: its `view`
- *     event is the negation of `active`, and its `signal` action is the
- *     hand-up. A branch that is handed neither cannot tell that nobody is
+ *   - the attach args, and Watch mode surviving in them. arg5 is
+ *     red-line-class: a client that asked to watch and attached read-WRITE
+ *     takes the grid from whoever is driving.
+ *   - `active` and `onAttention`, which terminal/attention.ts needs both of:
+ *     its `view` event is the negation of `active`, and its `signal` action is
+ *     the hand-up. A terminal handed neither cannot tell that nobody is
  *     looking, and has nowhere to say so. What the module DECIDES from them is
  *     terminal.attention.test.ts; these props are only how they reach it.
  *
  * `TerminalNative` is stubbed for exactly that reason: this file is about the
- * branch and the handover, and a real one would boot xterm, a socket and a
- * ResizeObserver to answer a question about neither. The iframe branch stays
- * real, so `iframe.tl-ttyd` is the shipped component and not a stand-in.
+ * handover, and a real one would boot xterm, a socket and a ResizeObserver to
+ * answer a question about neither.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
@@ -46,6 +35,7 @@ import type { TerminalReport } from "../src/diagnostics/status";
 const native = vi.hoisted(() => ({
   asks: 0,
   retries: 0,
+  copies: 0,
   mounted: 0,
   /** The attach args it was handed, read the way a prop getter is read. */
   args: null as null | (() => string | undefined),
@@ -58,6 +48,9 @@ const native = vi.hoisted(() => ({
   active: null as null | (() => boolean | undefined),
   /** Fire the hand-up, standing in for attention.ts's `signal` action. */
   signal: null as null | ((kind: "bell" | "output") => void),
+  /** FALSE stands in for the window before the real component's two dynamic
+   *  imports resolve, when it has handed no lever back yet. */
+  readyOnMount: true,
 }));
 
 vi.mock("../src/components/TerminalNative", () => ({
@@ -65,30 +58,28 @@ vi.mock("../src/components/TerminalNative", () => ({
     args?: string;
     active?: boolean;
     onAttention?: (kind: "bell" | "output") => void;
-    onReady?: (control: { reconnect: () => void; ask: () => void }) => void;
+    onReady?: (control: {
+      reconnect: () => void;
+      ask: () => void;
+      copy: () => void;
+    }) => void;
   }) => {
     native.mounted++;
     native.active = () => props.active;
     native.args = () => props.args;
     native.signal = (kind) => props.onAttention?.(kind);
-    props.onReady?.({
-      reconnect: () => void native.retries++,
-      ask: () => void native.asks++,
-    });
+    if (native.readyOnMount) {
+      props.onReady?.({
+        reconnect: () => void native.retries++,
+        ask: () => void native.asks++,
+        copy: () => void native.copies++,
+      });
+    }
     return <div class="tl-terminal-native" />;
   },
 }));
 
-import {
-  SessionView,
-  nativeFromSearch,
-  wantsNativeTerminal,
-} from "../src/components/SessionView";
-import {
-  TERMINAL_RENDERER_KEY,
-  setTerminalRenderer,
-  type TerminalRenderer,
-} from "../src/store/device-prefs";
+import { SessionView } from "../src/components/SessionView";
 import { WATCH_KEY_PREFIX } from "../src/store/watchmode";
 
 /** The status surface a mounted view is handed, with both levers captured. */
@@ -100,16 +91,11 @@ function statusProbe() {
       channels: () => [],
       onOpen: () => {},
       onTranscript: () => {},
-      onFrameConn: (_r: TerminalReport | null) => {},
+      onTerminalConn: (_r: TerminalReport | null) => {},
       askConn: (ask: () => void) => void (held.ask = ask),
       retryConn: (retry: () => void) => void (held.retry = retry),
     },
   };
-}
-
-/** Put the tab on a URL, the way someone typing the flag would. */
-function at(search: string): void {
-  window.history.replaceState({}, "", "/" + search);
 }
 
 /** The [Text | Terminal] switch, and its two activity dots, in that order. */
@@ -123,212 +109,71 @@ const mode = (root: HTMLElement): string | null =>
   root.querySelector(".tl-session-view")?.getAttribute("data-mode") ?? null;
 
 afterEach(() => {
-  at("");
   native.asks = 0;
   native.retries = 0;
+  native.copies = 0;
   native.mounted = 0;
   native.active = null;
   native.args = null;
   native.signal = null;
+  native.readyOnMount = true;
   // The view mode persists per session (store/viewmode.ts), and these tests
   // switch views, so a name reused across files would inherit the deviation.
   localStorage.clear();
 });
 
 /* ------------------------------------------------------------------ *
- * The flag itself
+ * There is one terminal
  * ------------------------------------------------------------------ */
 
-describe("reading ?native", () => {
-  /**
-   * The tokens a person would actually type, in both directions. `null` is
-   * "the URL did not say", which is what hands the question on to the device
-   * setting and then to the default.
-   */
-  it.each([
-    ["?native=1", true],
-    ["?native=true", true],
-    ["?native=yes", true],
-    ["?native=on", true],
-    ["?native=TRUE", true],
-    // A bare flag and an empty value are the same string once parsed, so they
-    // cannot be told apart and both read as yes.
-    ["?native", true],
-    ["?native=", true],
-    ["?native=0", false],
-    ["?native=false", false],
-    ["?native=no", false],
-    ["?native=off", false],
-    ["?native=OFF", false],
-    ["", null],
-    ["?other=1", null],
-    ["?native=banana", null],
-  ])("reads %j as %o", (search, want) => {
-    expect(nativeFromSearch(search)).toBe(want);
-  });
-
-  /** The flag lives beside the rest of the query, not alone. */
-  it("finds the flag among other params", () => {
-    expect(nativeFromSearch("?arg=demo&native=0&lens=emo")).toBe(false);
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * The precedence: the URL, then the device, then the default
- * ------------------------------------------------------------------ */
-
-describe("the order the two answers are asked in", () => {
-  /**
-   * Every combination that exists: the flag absent / 0 / 1, crossed with the
-   * device setting unset / iframe / native.
-   *
-   * Three of the nine rows carry the whole design. `("", "iframe")` is the
-   * installed PWA's only route back, since a home-screen launch has no query
-   * to put a flag in. `("?native=1", "iframe")` is one tab overriding that
-   * device without disturbing it, and `("?native=0", "native")` is the same
-   * trick in the other direction, which is what makes the flag a way to TRY
-   * the other terminal rather than a way to switch to it.
-   */
-  it.each([
-    ["", null, true],
-    ["", "iframe", false],
-    ["", "native", true],
-    ["?native=0", null, false],
-    ["?native=0", "iframe", false],
-    ["?native=0", "native", false],
-    ["?native=1", null, true],
-    ["?native=1", "iframe", true],
-    ["?native=1", "native", true],
-  ] as [string, TerminalRenderer | null, boolean][])(
-    "%j with the device set to %o wants native: %o",
-    (search, stored, want) => {
-      expect(wantsNativeTerminal(search, stored)).toBe(want);
-    },
-  );
-
-  /** A typo is not a vote, so the setting under it still gets its say. */
-  it("hands an unrecognised flag on to the device rather than eating it", () => {
-    expect(wantsNativeTerminal("?native=banana", "iframe")).toBe(false);
-    expect(wantsNativeTerminal("?native=banana", null)).toBe(true);
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * What that selects, in the DOM
- * ------------------------------------------------------------------ */
-
-describe("which terminal <SessionView> mounts", () => {
-  const iframe = (root: HTMLElement): Element | null =>
-    root.querySelector("iframe.tl-ttyd");
+describe("the terminal <SessionView> mounts", () => {
   const host = (root: HTMLElement): Element | null =>
     root.querySelector(".tl-terminal-native");
 
+  it("mounts the terminal the lobby draws itself", () => {
+    const { container } = render(() => <SessionView session="qa-native-default" />);
+    expect(host(container)).toBeTruthy();
+    expect(native.mounted).toBe(1);
+  });
+
   /**
-   * The same nine rows again, through the component this time. The pure
-   * function above proves the ORDER; this proves SessionView asks both
-   * sources at all. A component reading only `location` would pass the table
-   * above and still leave an installed PWA with no way out.
+   * There is no renderer switch left, so a URL cannot ask for another
+   * terminal. `?native=0` was the escape hatch and it went with the page it
+   * selected: a flag that silently does nothing is worse than no flag, so this
+   * pins that it is now simply query text.
    */
-  it.each([
-    ["", null, "native"],
-    ["", "iframe", "iframe"],
-    ["", "native", "native"],
-    ["?native=0", null, "iframe"],
-    ["?native=0", "iframe", "iframe"],
-    ["?native=0", "native", "iframe"],
-    ["?native=1", null, "native"],
-    ["?native=1", "iframe", "native"],
-    ["?native=1", "native", "native"],
-  ] as [string, TerminalRenderer | null, "native" | "iframe"][])(
-    "%j with the device on %o mounts the %s terminal",
-    (search, stored, want) => {
-      at(search);
-      if (stored) setTerminalRenderer(stored);
-      // A fresh name per row: the view mode is remembered per session
-      // (store/viewmode.ts), so a reused one would carry the last row's state.
-      const session = `qa-prec-${search.replace(/\W/g, "") || "bare"}-${stored ?? "unset"}`;
+  it.each(["?native=0", "?native=1", "?native=banana", "?terminal=/term2.html"])(
+    "ignores %s — no flag selects a different terminal any more",
+    (search) => {
+      window.history.replaceState({}, "", "/" + search);
+      const session = `qa-native-flag-${search.replace(/\W/g, "")}`;
       const { container } = render(() => <SessionView session={session} />);
-      if (want === "native") {
-        expect(host(container)).toBeTruthy();
-        expect(iframe(container)).toBeNull();
-      } else {
-        expect(iframe(container)).toBeTruthy();
-        expect(host(container)).toBeNull();
-        expect(native.mounted, "the native terminal must not even mount").toBe(0);
-      }
+      expect(host(container)).toBeTruthy();
+      expect(container.querySelector("iframe")).toBeNull();
+      window.history.replaceState({}, "", "/");
     },
   );
 
-  /** The default, stated on its own because it is the flip. */
-  it("mounts the app's own terminal when nothing says otherwise", () => {
-    const { container } = render(() => <SessionView session="qa-native-default" />);
-    expect(host(container)).toBeTruthy();
-    expect(iframe(container)).toBeNull();
-  });
-
   /**
-   * `?native=0` was the bug pass 1 fixed: `.has("native")` read it as a
-   * request FOR native, so the one URL a person would try did the opposite.
-   * It matters more now that it is the way back rather than the way in.
+   * The stored key outlives the code that wrote it. Anyone who had picked
+   * "Classic" on a device has `tl-terminal-renderer` in localStorage, and it
+   * must not be read as anything: no branch, and no crash on a value whose
+   * type no longer exists.
    */
-  it("mounts the iframe for ?native=0", () => {
-    at("?native=0");
-    const { container } = render(() => <SessionView session="qa-native-0" />);
-    expect(iframe(container)).toBeTruthy();
-    expect(host(container)).toBeNull();
-    expect(native.mounted).toBe(0);
-  });
-
-  /** An unrecognised value is not a vote, so the default stands. */
-  it("mounts the app's own terminal for a value it does not understand", () => {
-    at("?native=maybe");
-    const { container } = render(() => <SessionView session="qa-native-junk" />);
+  it("ignores a leftover tl-terminal-renderer from before the deletion", () => {
+    localStorage.setItem("tl-terminal-renderer", "iframe");
+    const { container } = render(() => <SessionView session="qa-native-leftover" />);
     expect(host(container)).toBeTruthy();
-    expect(iframe(container)).toBeNull();
-  });
-
-  /**
-   * The setting is stored where the settings panel writes it, not somewhere
-   * only this test knows about. A key name that drifted would leave the panel
-   * writing a preference nothing reads, which is the failure mode the flip
-   * cannot afford, since that control is the way back on an installed app.
-   */
-  it("reads the same key the settings control writes", () => {
-    setTerminalRenderer("iframe");
-    expect(localStorage.getItem(TERMINAL_RENDERER_KEY)).toBe("iframe");
-    const { container } = render(() => <SessionView session="qa-native-key" />);
-    expect(iframe(container)).toBeTruthy();
-  });
-
-  /**
-   * READ ONCE. The setting changing under a mounted session must not swap the
-   * terminal, because that would tear down a pty somebody is typing at. So it
-   * applies to the next session opened, which is what the control's own note
-   * tells the reader.
-   */
-  it("keeps the terminal it mounted when the setting changes under it", () => {
-    const { container } = render(() => <SessionView session="qa-native-live" />);
-    expect(host(container)).toBeTruthy();
-
-    setTerminalRenderer("iframe");
-    // No re-render is triggered, and none is wanted: nothing here is reactive.
-    expect(host(container), "still the terminal this session booted with").toBeTruthy();
-    expect(iframe(container)).toBeNull();
-
-    // A session opened AFTER the change gets the other one, which is the whole
-    // of what "takes effect next time" means.
-    const next = render(() => <SessionView session="qa-native-live-2" />);
-    expect(next.container.querySelector("iframe.tl-ttyd")).toBeTruthy();
+    expect(container.querySelector("iframe")).toBeNull();
   });
 });
 
 /* ------------------------------------------------------------------ *
- * The ADR-0016 levers, on the native branch
+ * The levers onReady hands back
  * ------------------------------------------------------------------ */
 
-describe("the connection levers <SessionView> gives a native terminal", () => {
-  it("routes the status model's ask to the native terminal", () => {
-    at("?native=1");
+describe("the connection levers <SessionView> gives the terminal", () => {
+  it("routes the status model's ask to the terminal", () => {
     const probe = statusProbe();
     render(() => <SessionView session="qa-native-ask" status={probe.props} />);
     // The effect asks once on becoming visible, because a terminal that was
@@ -339,38 +184,89 @@ describe("the connection levers <SessionView> gives a native terminal", () => {
     expect(native.asks).toBe(onMount + 1);
   });
 
-  it("routes Reconnect to the native terminal", () => {
-    at("?native=1");
+  it("routes Reconnect to the terminal", () => {
     const probe = statusProbe();
     render(() => <SessionView session="qa-native-retry" status={probe.props} />);
     probe.held.retry();
     expect(native.retries).toBe(1);
   });
+});
 
-  /** The iframe branch keeps the levers it already had. */
-  it("leaves the iframe branch asking the frame", () => {
-    at("?native=0");
-    const probe = statusProbe();
-    render(() => <SessionView session="qa-native-iframe" status={probe.props} />);
-    expect(() => probe.held.ask()).not.toThrow();
-    expect(native.asks).toBe(0);
+/**
+ * THE SOFT-KEY ROW'S Copy BUTTON.
+ *
+ * It was `window.__tlForwardToTerminal?.("terminal.copy")` until 2026-09-05,
+ * a global that TerminalView installed and TerminalNative never did — so on a
+ * phone with the native terminal the tap called `undefined?.()` and did
+ * nothing, silently, because of the optional call. It is a typed lever now, so
+ * a terminal that does not supply one is a compile error rather than a dead
+ * button.
+ */
+describe("the Copy lever the soft keys use", () => {
+  const realMatchMedia = window.matchMedia;
+  /** A coarse-pointer phone, the only place the toolbar renders at all. */
+  const stubPhone = (): void => {
+    window.matchMedia = ((q: string) =>
+      ({
+        media: q,
+        matches:
+          q.includes("pointer: coarse") || /max-width:\s*(3|4|5|6|7)\d\dpx/.test(q),
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        onchange: null,
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+  };
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+  });
+
+  it("reaches the terminal when Copy is tapped", () => {
+    stubPhone();
+    const { container } = render(() => <SessionView session="qa-native-copy" />);
+    // Text is the default view on a phone, and the row is the terminal view's.
+    fireEvent.click(segments(container)[1]!); // [Terminal]
+    const copy = document
+      .getElementById("soft-keys")
+      ?.querySelector<HTMLButtonElement>('button[aria-label="Copy"]');
+    expect(copy, "the soft-key row's Copy button").toBeTruthy();
+    fireEvent.click(copy!);
+    expect(native.copies).toBe(1);
+  });
+
+  /**
+   * The tap that lands before xterm has finished its two dynamic imports. It
+   * must not throw: the lever is a local no-op until `onReady` replaces it,
+   * which is the honest answer for "there is no terminal to copy from yet".
+   */
+  it("does nothing, quietly, before the terminal has handed its lever over", () => {
+    stubPhone();
+    native.readyOnMount = false;
+    const { container } = render(() => <SessionView session="qa-native-copy-early" />);
+    fireEvent.click(segments(container)[1]!); // [Terminal]
+    const copy = document
+      .getElementById("soft-keys")
+      ?.querySelector<HTMLButtonElement>('button[aria-label="Copy"]');
+    expect(copy).toBeTruthy();
+    expect(() => fireEvent.click(copy!)).not.toThrow();
+    expect(native.copies).toBe(0);
   });
 });
 
 /* ------------------------------------------------------------------ *
- * The attach args, on the branch a person now gets
+ * The attach args
  * ------------------------------------------------------------------ */
 
 /**
- * Watch mode has to survive the flip.
+ * Watch mode has to survive the deletion.
  *
  * `arg5` is red-line-class: a client that asked to watch and attached
  * read-WRITE takes the grid from whoever is driving, which is the failure the
- * whole feature exists to prevent. SessionView.watch.test.tsx catches the same
- * chain at the iframe's URL builder; this catches it in the prop the app's own
- * terminal is handed, because that is the branch a bare URL now takes.
+ * whole feature exists to prevent.
  */
-describe("the attach args <SessionView> gives a native terminal", () => {
+describe("the attach args <SessionView> gives the terminal", () => {
   it("carries the watch request into the args", () => {
     localStorage.setItem(WATCH_KEY_PREFIX + "qa-native-ro", "ro");
     render(() => <SessionView session="qa-native-ro" />);
@@ -387,10 +283,10 @@ describe("the attach args <SessionView> gives a native terminal", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * What attention.ts needs, on the native branch
+ * What attention.ts needs
  * ------------------------------------------------------------------ */
 
-describe("the attention props <SessionView> gives a native terminal", () => {
+describe("the attention props <SessionView> gives the terminal", () => {
   /**
    * `ownsBridges` cannot stand in for this one. It is `onScreen()` alone, so it
    * stays TRUE while the text view shows over a terminal that is still mounted
@@ -398,7 +294,6 @@ describe("the attention props <SessionView> gives a native terminal", () => {
    * report, since output arriving then is what dots the [Terminal] segment.
    */
   it("hands over `active`, and takes it away when the text view shows", () => {
-    at("?native=1");
     const { container } = render(() => <SessionView session="qa-native-active" />);
     expect(native.active?.(), "the terminal is the default view").toBe(true);
 
@@ -416,23 +311,16 @@ describe("the attention props <SessionView> gives a native terminal", () => {
    * behind the one you are looking at (store/keepalive.ts).
    */
   it("hands over `active` as false while this session's pane is hidden", () => {
-    at("?native=1");
     render(() => <SessionView session="qa-native-behind" visible={false} />);
     expect(native.active?.()).toBe(false);
   });
 
-  /**
-   * One handler for both terminals. The iframe's `tl-attention` message and the
-   * native module's `signal` action have to land in the same place, or the tab
-   * badge and the [Terminal] dot speak for one terminal and not the other.
-   */
-  it("routes a native attention signal up, naming this session", () => {
-    at("?native=1");
+  it("routes an attention signal up, naming this session", () => {
     const seen: [string, string | null][] = [];
     render(() => (
       <SessionView
         session="qa-native-bell"
-        onFrameAttention={(kind, from) => void seen.push([kind, from])}
+        onTerminalAttention={(kind, from) => void seen.push([kind, from])}
       />
     ));
     native.signal?.("bell");
@@ -441,9 +329,7 @@ describe("the attention props <SessionView> gives a native terminal", () => {
     expect(seen).toEqual([["bell", "qa-native-bell"]]);
   });
 
-  /** The dot itself, driven from the native path rather than a postMessage. */
-  it("dots the [Terminal] segment for native output behind the text view", () => {
-    at("?native=1");
+  it("dots the [Terminal] segment for output behind the text view", () => {
     const { container } = render(() => <SessionView session="qa-native-dot" />);
     fireEvent.click(segments(container)[0]!); // [Text]
     expect(dots(container)).toEqual([false, false]);

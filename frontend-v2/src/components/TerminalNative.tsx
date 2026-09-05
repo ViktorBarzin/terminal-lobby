@@ -39,7 +39,12 @@ import {
   type DragSelectWorld,
   type ScreenBox,
 } from "../terminal/dragselect";
-import { reduceStash, type SelectionStash } from "../terminal/selection";
+import {
+  chooseCaptureWrite,
+  copyCommandDecision,
+  reduceStash,
+  type SelectionStash,
+} from "../terminal/selection";
 import {
   NO_TOUCH_SCROLL,
   reduce as reduceTouchScroll,
@@ -57,6 +62,8 @@ import {
   type WheelWorld,
 } from "../terminal/wheel";
 import {
+  COPY_FAILURE_TOAST_MS,
+  COPY_TOAST_MS,
   reduce as reduceKey,
   reduceData,
   type KeyReduction,
@@ -119,6 +126,7 @@ import {
 } from "../store/prefs";
 import { gesturesEnabled } from "../store/device-prefs";
 import { showToast } from "../store/toast";
+import { apiUrl } from "../lib/config";
 
 /** Every fit trigger waits this long first (term.html:8471-8481, `refit`). */
 const REFIT_DEBOUNCE_MS = 120;
@@ -215,9 +223,10 @@ function validFontSize(v: unknown): v is number {
  * this reads is the one that store writes. The BOUNDS are shared (prefs.ts
  * FONT_SIZE_MIN/MAX, term.html:2670).
  *
- * A LIVE pref change reaches term.html through the `__tlPrefsLive` bridge
- * (:9173-9188) and has no route in here yet, so a change made while this
- * terminal is mounted lands on its next mount.
+ * This is the read at MOUNT. A change made while the terminal is already up
+ * arrives on the `__tlPrefsLive` receiver below instead, so the two have to
+ * agree on what a usable size is: both ask `validFontSize` and both discard
+ * rather than clamp.
  */
 function bootPrefs(): Prefs {
   let raw: Record<string, unknown> = {};
@@ -262,10 +271,12 @@ type InputBarPosture = "auto" | "on" | "off";
  * subkey is read here with its own validator the way `bootPrefs` reads the
  * legacy font key. Nothing on this side writes it.
  *
- * Read ONCE per mount. term.html reconciles it live from `applyInputPrefs`
- * (:7483-7488) over the `tl-prefs` message, which is the un-ported
- * `__tlPrefsLive` bridge (:9173-9188), the same gap `bootPrefs` records for
- * the font size, so a posture change lands on this terminal's next mount.
+ * Read ONCE per mount, and this one really is mount-only. term.html reconciles
+ * it live from `applyInputPrefs` (:7483-7488) over the same `tl-prefs` message
+ * that carried the font size, and the `__tlPrefsLive` receiver below takes the
+ * font-size half alone: moving the input bar rebuilds the compose mirror and
+ * the soft-key rows rather than changing a number on xterm, so it is a larger
+ * port than a fit. A posture change therefore lands on the next mount.
  */
 function bootInputBar(): InputBarPosture {
   let bar: unknown;
@@ -574,14 +585,24 @@ export const TerminalNative: Component<{
    */
   watch?: () => boolean;
   /**
-   * Hands the caller the two levers the ADR-0016 status model needs: `reconnect`
-   * for the panel's Reconnect button, and `ask` for "what are you doing right
-   * now", which is Run check and a session view coming back on screen above a
-   * terminal that has been quietly open the whole time. The iframe branch
-   * publishes the same pair as `retryConn` and `askConn`
-   * (TerminalView.tsx:454-457).
+   * Hands the caller the levers it cannot reach from outside this component.
+   *
+   * `reconnect` and `ask` are what the ADR-0016 status model needs: the panel's
+   * Reconnect button, and "what are you doing right now", which is Run check
+   * and a session view coming back on screen above a terminal that has been
+   * quietly open the whole time.
+   *
+   * `copy` is the mobile soft-key row's Copy button, which has no keyboard to
+   * press the copy chord with. It is a lever rather than a window global
+   * because there is one document now: the button and the terminal are
+   * siblings, so the caller can hold a function instead of a name every
+   * mounted terminal would fight over.
    */
-  onReady?: (control: { reconnect: () => void; ask: () => void }) => void;
+  onReady?: (control: {
+    reconnect: () => void;
+    ask: () => void;
+    copy: () => void;
+  }) => void;
   /**
    * FALSE for a secondary terminal. The window-level bridges below are named
    * globals, so two mounted terminals would fight over them and the soft keys,
@@ -1616,10 +1637,11 @@ export const TerminalNative: Component<{
        * WHY IT SHIPS WITH THE FLIP rather than with the rest of pass 2. A
        * pinch is how a person changes text size on a tablet, and the A−/A+
        * buttons are hidden on a coarse pointer for exactly that reason
-       * (SessionView.tsx, the terminal-controls comment). They also do not
-       * reach a mounted native terminal yet — the `__tlPrefsLive` bridge is
-       * not ported — so without this the tablet the flip hands the native
-       * terminal to has no way to resize at all.
+       * (SessionView.tsx, the terminal-controls comment). So this is a tablet's
+       * only way to resize at all, whether or not the stepper's live route
+       * exists: at the flip that route was un-ported and the pinch was the
+       * whole story, and now that `__tlPrefsLive` is back it is still the whole
+       * story on a coarse pointer, because the buttons are not there to press.
        * ---------------------------------------------------------------- */
 
       /**
@@ -2047,10 +2069,11 @@ export const TerminalNative: Component<{
        * page's detach does (:6269-6271): zero the accumulator and cancel the
        * pending frame. Both ride the module's `detached` event, and the only
        * route a live pref change has into a mounted terminal is `__tlPrefsLive`
-       * (:9173-9188), which is not ported, the same gap `bootPrefs` records
-       * for the font size. So a frame already scheduled when the pref goes off
-       * still drains, once, where term.html cancels it. Whoever ports that
-       * bridge owes this a `performWheel({ type: "detached" })`.
+       * (:9173-9188), and the receiver below reads the FONT SIZE out of that
+       * payload and nothing else. The gestures pref is still mount-only here,
+       * so a frame already scheduled when gestures go off still drains, once,
+       * where term.html cancels it. Whoever wires gestures into that receiver
+       * owes this a `performWheel({ type: "detached" })`.
        */
       term.attachCustomWheelEventHandler((e: WheelEvent): boolean =>
         performWheel({ type: "wheel", wheel: e }),
@@ -2800,6 +2823,94 @@ export const TerminalNative: Component<{
       };
 
       /**
+       * THE SOFT-KEY ROW'S Copy BUTTON, which is term.html's
+       * `runTerminalCopy` (:9572-9612).
+       *
+       * A press of a button is unambiguous intent, so it is NOT the copy
+       * chord's routine: `copyCommandDecision` gates on the TEXT rather than on
+       * whether a range exists, and an empty one falls back to the visible
+       * screen instead of falling through to the pty. On touch there is never a
+       * selection — a drag scrolls, by design — which is the case the fallback
+       * exists for, and it is the whole reason this button is not simply the
+       * chord under another name.
+       *
+       * `chooseCaptureWrite` decides how the capture reaches the clipboard, and
+       * "promise-item" is load-bearing on the platform this button is for: iOS
+       * Safari honours a clipboard write only inside the tap's transient
+       * activation, and awaiting the fetch first voids it. So the write is
+       * called SYNCHRONOUSLY and handed the fetch as a ClipboardItem promise.
+       *
+       * The session name comes out of `args` rather than a second prop: it is
+       * arg1 of the positional contract (lib/terminal-url.ts), which is where
+       * ttyd itself reads it, so there is one source of truth instead of two
+       * that can disagree.
+       */
+      const runCopy = (): void => {
+        const decision = copyCommandDecision({
+          hasSelection: term.hasSelection(),
+          selection: term.getSelection(),
+          // The recovery stash backs the CHORD, not this button: term.html's
+          // routine reads `term.getSelection()` and nothing else (:9573), and
+          // the fallback below is what covers an empty one here.
+          stash: null,
+        });
+        const clipboard: Clipboard | undefined = navigator.clipboard;
+        // Braces, not an expression body: `showToast` hands back a toast id
+        // that nothing here wants, and an arrow annotated `void` may not return
+        // one.
+        const ok = (): void => {
+          showToast(decision.toast, "success", COPY_TOAST_MS);
+        };
+        const fail = (): void => {
+          showToast(decision.failureToast, "error", COPY_FAILURE_TOAST_MS);
+        };
+        if (!clipboard) {
+          fail();
+          return;
+        }
+        if (decision.action === "copy") {
+          void clipboard.writeText(decision.text).then(ok).catch(fail);
+          return;
+        }
+        const session = new URLSearchParams(props.args).getAll("arg")[0] ?? "";
+        if (!session) {
+          fail();
+          return;
+        }
+        // `/sessions/` and not `/`: apiUrl only adds the ingress prefix
+        // (`/api/sessions`), and tmux-api's own route is
+        // `/sessions/{name}/capture` (main.go:375, copymode.go:25), which the
+        // ingress reaches after stripping that prefix whole. term.html built
+        // this on `SESSIONS_API = '/api/sessions/sessions'` (:2379, :9582) and
+        // dropping the segment made every capture a 404 under a success toast.
+        const captured = fetch(apiUrl(`/sessions/${encodeURIComponent(session)}/capture`), {
+          credentials: "same-origin",
+        }).then((resp) => {
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          return resp.text();
+        });
+        const how = chooseCaptureWrite({
+          hasClipboardWrite: typeof clipboard.write === "function",
+          hasClipboardItem: typeof ClipboardItem !== "undefined",
+        });
+        if (how === "promise-item") {
+          void clipboard
+            .write([
+              new ClipboardItem({
+                "text/plain": captured.then((t) => new Blob([t], { type: "text/plain" })),
+              }),
+            ])
+            .then(ok)
+            .catch(fail);
+          return;
+        }
+        void captured
+          .then((t) => clipboard.writeText(t))
+          .then(ok)
+          .catch(fail);
+      };
+
+      /**
        * Carry out one key decision (keys.ts), in the order it listed its
        * actions.
        *
@@ -3043,7 +3154,11 @@ export const TerminalNative: Component<{
       // `reportConn` and the state fresh from `currentConnState`
       // (term.html:9822-9832). That window is roughly 50 seconds wide, since
       // nothing volunteers a change until the liveness watchdog gives up.
-      props.onReady?.({ reconnect: () => a.reconnect(), ask: () => a.reportNow() });
+      props.onReady?.({
+        reconnect: () => a.reconnect(),
+        ask: () => a.reportNow(),
+        copy: runCopy,
+      });
 
       // The size the pty is told has to follow the size xterm actually reached,
       // and a reflow can change that without the window resizing (the sidebar
@@ -3124,6 +3239,38 @@ export const TerminalNative: Component<{
       });
       ownWhile(owns, "__tlRefitTerminal", () => {
         refit("fit-wanted");
+        return true;
+      });
+      /**
+       * THE LIVE PREF ROUTE, which is term.html's `applyTermPrefs`
+       * (:9178-9203) reached through the `__tlPrefsLive` bridge (:9173-9188).
+       *
+       * store/prefs.ts:734 calls this AFTER it has persisted, so Settings →
+       * Terminal's A− / A+ reaches an attached terminal instead of waiting for
+       * its next mount. Nothing persists here, or the two writes would chase
+       * each other through the same key.
+       *
+       * THE FIT IS IMMEDIATE, like the pinch's, and for the same reason: the
+       * cell metrics just changed under xterm, so `refit`'s 120ms coalesce
+       * would leave the grid wrong for a visible beat. fit.ts's owes list names
+       * both call sites.
+       *
+       * WHAT DOES NOT COME WITH IT: `maskFitBurst` (:9159-9170), which dimmed
+       * the container to .35 through the metric swap and lifted it 180ms after
+       * the last fit of a burst. A held-down stepper is steppier here than in
+       * the page. That is cosmetic where the resize itself is not, so it is
+       * left rather than half-ported.
+       *
+       * `false` means the size was one xterm should never be given, which is
+       * the same discard-or-ignore `bootPrefs` above applies to a stored value.
+       * The sender treats it as "no terminal took this" and does nothing else,
+       * so a rejected size costs a no-op rather than a broken grid.
+       */
+      ownWhile(owns, "__tlPrefsLive", (p: { fontSize: number }) => {
+        if (!validFontSize(p.fontSize)) return false;
+        if (term.options.fontSize === p.fontSize) return true;
+        term.options.fontSize = p.fontSize;
+        safeFit("fit-wanted");
         return true;
       });
       ownWhile(owns, "__tlKeyboardOffset", (px: number) => {

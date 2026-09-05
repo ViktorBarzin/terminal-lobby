@@ -157,3 +157,26 @@ Both guards were also run against the SPA extracted from the released
 What has not changed: nobody has opened `?native=1` on the iPad, and there is
 still no instrument here that can. The guards are stronger; they are not a
 device. The flag stays off.
+
+## Amendment — 2026-09-05: the flag flipped, and then both sides of it went
+
+Two sentences above are records rather than current state, and both were already
+overtaken before this amendment was written. "`term.html` is untouched and
+remains the shipped terminal. `?native=1` is off by default" held until
+2026-09-04, when the de-iframe plan's passes 1 and 2 closed the parity gap and
+the default became native. "Until someone does, the flag stays off and term.html
+stays" describes an iPad gate that the plan then waived by decision, flipping on
+the evidence available, which is not a device.
+
+On 2026-09-05 `term.html`, `TerminalView.tsx`, `scripts/vendor-xterm.py` and the
+escape hatch were deleted together, with `/term-build-id` and the 18-type
+postMessage protocol.
+[ADR-0020](0020-one-terminal-in-one-document.md) records what went, what
+replaced it and what was dropped on purpose.
+
+What has still not changed is the sentence this ADR has carried through both
+amendments: nobody has opened the native terminal on iPadOS 15.8, and there is
+no instrument here that can. The guards are stronger than they were and they are
+not a device. What the deletion changes is the cost of being wrong about that,
+since a device where the built-in terminal is unusable now needs a package
+downgrade rather than a setting.

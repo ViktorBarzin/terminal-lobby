@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   altLabel,
-  commandAllowed,
   KB_ALWAYS_BINDINGS,
   KB_COMMANDS,
   KB_DEFAULT_BINDINGS,
@@ -342,41 +341,6 @@ describe("keyContext — one reading of who owns the keyboard", () => {
  * the gallery open and focus in the terminal, Alt+Shift+] switched session and
  * took the gallery with it. Re-checking the clause by command name closes it.
  */
-describe("commandAllowed — the guard for a command forwarded up from the iframe", () => {
-  it("allows a session switch while nothing owns the keyboard", () => {
-    expect(commandAllowed("session.next", ctx())).toBe(true);
-  });
-
-  it("refuses one while the gallery is open (the QA repro)", () => {
-    expect(commandAllowed("session.next", ctx({ galleryOpen: true }))).toBe(false);
-    expect(commandAllowed("session.attach.3", ctx({ galleryOpen: true }))).toBe(false);
-  });
-
-  it("refuses one over an unsaved editor draft, like the chord path", () => {
-    expect(commandAllowed("session.next", ctx({ previewOpen: true, previewDirty: true }))).toBe(
-      false,
-    );
-  });
-
-  it("refuses the always-on kill forwarded into an open overlay", () => {
-    expect(commandAllowed("session.kill.current", ctx())).toBe(true);
-    expect(commandAllowed("session.kill.current", ctx({ settingsOpen: true }))).toBe(false);
-  });
-
-  it("refuses the forwarded view.toggle while an overlay owns the keyboard", () => {
-    // Ctrl/Cmd+J has no row in the v2 table (SessionView owns the lobby half),
-    // so its clause lives with the other forwarded-only commands.
-    expect(commandAllowed("view.toggle", ctx())).toBe(true);
-    expect(commandAllowed("view.toggle", ctx({ paletteOpen: true }))).toBe(false);
-  });
-
-  it("leaves a command with no when-clause alone", () => {
-    // terminal.paste is routed straight back DOWN to the iframe that sent it.
-    expect(commandAllowed("terminal.paste", ctx({ galleryOpen: true }))).toBe(true);
-    expect(commandAllowed("nonsense.command", ctx({ settingsOpen: true }))).toBe(true);
-  });
-});
-
 describe("altLabel", () => {
   it("is Option on Mac, Alt elsewhere", () => {
     expect(altLabel(true)).toBe("Option");

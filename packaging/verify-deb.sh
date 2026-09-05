@@ -59,19 +59,14 @@ check "the local override is NOT a conffile" \
 check "postinst is present" \
   "$(printf '%s' "$ctrl" | grep -c '^./postinst$' || true)" 1
 
-check "the stamp endpoints ship (the healer polls them)" \
-  "$(printf '%s' "$contents" | grep -cE 'usr/local/share/ttyd/(build-id|term-build-id)$' || true)" 2
+check "the stamp endpoint ships (the healer polls it)" \
+  "$(printf '%s' "$contents" | grep -cE 'usr/local/share/ttyd/build-id$' || true)" 1
 
 check "the PWA surface ships" \
   "$(printf '%s' "$contents" | grep -cE 'usr/local/share/ttyd/(sw\.js|manifest\.webmanifest|icon-192\.png|icon-512\.png|icon-512-maskable\.png)$' || true)" 5
 
 check "the six webfonts ship" \
   "$(printf '%s' "$contents" | grep -c 'usr/local/share/ttyd/fonts/.*\.woff2$' || true)" 6
-
-# The lobby resolves the terminal page by content hash; a missing hashed copy
-# 404s every attach.
-check "the content-hashed terminal page is in the payload" \
-  "$(printf '%s' "$contents" | grep -cE 'usr/share/terminal-lobby/assets/term-[0-9a-f]{12}\.html$' || true)" 1
 
 check "the revert unit ships (the brake runs outside the dpkg transaction)" \
   "$(printf '%s' "$contents" | grep -c 'terminal-lobby-revert.service' || true)" 1

@@ -62,8 +62,14 @@ const CELL_H = 16;
 const ROWS = 24;
 const SCREEN_H = CELL_H * ROWS;
 
-const TERM_HTML = resolve(__dirname, "../..", "frontend/term.html");
-const html = ((): string => readFileSync(TERM_HTML, "utf8"))();
+/**
+ * `frontend/term.html` was read here at module scope until 2026-09-05, and the
+ * cases that compared this module's constants and helpers against the page's
+ * own source went with it. Every `term.html:NNNN` citation below indexes that
+ * page at the commit that removed it: provenance for the port, not a claim
+ * about anything running. The values they pinned are asserted here as this
+ * module's own.
+ */
 
 const touchWorld = (over: Partial<TouchScrollWorld> = {}): TouchScrollWorld => ({
   cellHeightPx: CELL_H,
@@ -300,7 +306,7 @@ describe("conflict 1: one primitive, two action shapes", () => {
    * a sub-50px PIXEL delta is damped to 0.3x, and in mouse-tracking mode one DOM
    * event is at most one app report whatever its magnitude.
    */
-  it("builds term.html's wheel and nothing else", () => {
+  it("builds the page's wheel and nothing else", () => {
     expect(lineWheelAt(-1, 42)).toEqual({
       deltaY: -1,
       deltaMode: 1,
@@ -370,17 +376,19 @@ describe("conflict 1: one primitive, two action shapes", () => {
 
 describe("conflict 2: one home for the per-frame cap", () => {
   /**
-   * term.html has one constant and four spends of it, two in each scroller. The
-   * two ports each declared their own copy, both citing :6082, and both now
-   * re-export this one instead, so the three names below are one number. The
-   * guard that still earns its keep is the first case: a port that re-declared
-   * its own copy and quietly raised it hands back the multi-second runaway coast
-   * the number was tuned to stop, and only term.html can say what it should be.
+   * The page had one constant and four spends of it, two in each scroller
+   * (:6082). The two ports each declared their own copy and both re-export this
+   * one instead, so the three names below are one number. A port that
+   * re-declared its own copy and quietly raised it hands back the multi-second
+   * runaway coast the number was tuned to stop, which is what this holds down.
+   *
+   * The value itself was checked against the page's declaration until the page
+   * was deleted; the literal is pinned below instead.
    */
-  it("agrees with term.html", () => {
-    const m = /const SCROLL_MAX_EVENTS_PER_FEED = (\d+);/.exec(html);
-    expect(m?.[1], "SCROLL_MAX_EVENTS_PER_FEED in term.html").toBeTruthy();
-    expect(Number(m?.[1])).toBe(SCROLL_MAX_EVENTS_PER_FEED);
+  it("is the number the page was tuned to", () => {
+    // term.html:6082, `const SCROLL_MAX_EVENTS_PER_FEED = 10;`, with the
+    // comment "burst cap: one frame can't spray hundreds of events".
+    expect(SCROLL_MAX_EVENTS_PER_FEED).toBe(10);
   });
 
   it("agrees with both modules' copies", () => {
@@ -388,17 +396,6 @@ describe("conflict 2: one home for the per-frame cap", () => {
     expect(WHEEL_CAP).toBe(SCROLL_MAX_EVENTS_PER_FEED);
   });
 
-  /**
-   * The four spends, which is why one home matters: two of them are the finger's
-   * feed and two are the trackpad's pump and accumulator cap.
-   */
-  it("is spent by both scrollers in the page", () => {
-    expect(html).toContain("if (k > SCROLL_MAX_EVENTS_PER_FEED) k = SCROLL_MAX_EVENTS_PER_FEED;");
-    expect(html).toContain(
-      "const capPx = SCROLL_MAX_EVENTS_PER_FEED * (xtermCellH() / wheelSpeedMult());",
-    );
-    expect([...html.matchAll(/SCROLL_MAX_EVENTS_PER_FEED/g)]).toHaveLength(10);
-  });
 });
 
 describe("conflict 3: one box, two freshness rules, so the read is lazy per field", () => {
@@ -602,7 +599,7 @@ describe("conflict 3: one box, two freshness rules, so the read is lazy per fiel
   });
 });
 
-describe("the fallbacks term.html falls back to", () => {
+describe("the fallbacks the page falls back to", () => {
   /**
    * No screen element at all, which is `xtermCellH`'s bare 16 and
    * `xtermScreenH`'s `(term.rows || 24) * 16`. Both are reached without a second
@@ -646,91 +643,19 @@ describe("the fallbacks term.html falls back to", () => {
     expect(s.geometry.screenHeightPx).toBe(SCREEN_H);
   });
 
-  /** Both helpers, verbatim, so neither fallback can drift. */
-  it("ports the two helpers term.html ships", () => {
-    expect(html).toContain(
-      "return (scr && term.rows) ? scr.getBoundingClientRect().height / term.rows : 16;",
-    );
-    expect(html).toContain(
-      "return scr ? scr.getBoundingClientRect().height : (term.rows || 24) * 16;",
-    );
-  });
-
   /**
-   * And the reason the port takes a resolver instead: term.html finds this box
-   * with a DOCUMENT query, six times over, which it can afford at one terminal
-   * per document: the two scroll helpers (:6095, :6099), the link copy-chip's
-   * position (:5394), two hit-tests in the drag-selection reclaim (:5961,
-   * :6051) and the pixel-size resize payload (:8323). The lobby keeps every
-   * visited session mounted, so a document query here would hand every terminal
-   * the first match, and a hidden one measures 0.
+   * And the reason the port takes a resolver instead: the page found this box
+   * with a DOCUMENT query, six times over, which it could afford at one
+   * terminal per document: the two scroll helpers (:6095, :6099), the link
+   * copy-chip's position (:5394), two hit-tests in the drag-selection reclaim
+   * (:5961, :6051) and the pixel-size resize payload (:8323). The lobby keeps
+   * every visited session mounted, so a document query here would hand every
+   * terminal the first match, and a hidden one measures 0.
    */
   it("keeps the document query out of the port", () => {
-    expect(
-      [...html.matchAll(/const scr = document\.querySelector\('\.xterm-screen'\);/g)],
-    ).toHaveLength(6);
     const source = readFileSync(resolve(__dirname, "../src/terminal/emit.ts"), "utf8");
     const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     expect(code).not.toContain("querySelector");
-  });
-});
-
-describe("parity with term.html's one primitive", () => {
-  /** The declaration, the read and the one write, which is the whole variable. */
-  it("has one writer in the page, and it is the touch path", () => {
-    const writes = [...html.matchAll(/scrollLastEmitY\s*=\s*([^;]+);/g)];
-    expect(writes).toHaveLength(2);
-    expect(writes[0]?.[1]?.trim(), "the declaration").toBe("100");
-    expect(writes[1]?.[1]?.trim(), "the only assignment").toBe("y");
-    const gate = html.indexOf("if (isCoarsePointer) {");
-    expect(gate).toBeGreaterThan(-1);
-    const at = writes[1]?.index ?? -1;
-    expect(at, "the assignment sits inside the coarse-pointer gate").toBeGreaterThan(gate);
-    const all = [...html.matchAll(/scrollLastEmitY/g)];
-    expect(all, "declared, read once, written once").toHaveLength(3);
-  });
-
-  /**
-   * The primitive's body, field by field, because each field is a different way
-   * for the emission to arrive at the pty as something else: a pixel-mode delta
-   * is damped, a magnitude over one row is discarded in mouse-tracking mode, and
-   * the coordinates are what the SGR report's cell is derived from.
-   */
-  it("carries the same six fields the page carries", () => {
-    const at = html.indexOf("function emitLineWheel(sign)");
-    expect(at).toBeGreaterThan(-1);
-    const body = html.slice(at, html.indexOf("}", html.indexOf("}", at) + 1));
-    expect(body).toContain("if (!term.element) return;");
-    expect(body).toContain("term.element.dispatchEvent(new WheelEvent('wheel', {");
-    expect(body).toContain("deltaY: sign < 0 ? -1 : 1,");
-    expect(body).toContain("deltaMode: 1,");
-    expect(body).toContain("bubbles: true, cancelable: true,");
-    expect(body).toContain("clientX: 0, clientY: scrollLastEmitY,");
-    // The same wheel, built here from a sign and the shared point.
-    expect(lineWheelAt(-1, EMIT_Y_SEED)).toEqual({
-      deltaY: -1,
-      deltaMode: 1,
-      bubbles: true,
-      cancelable: true,
-      clientX: 0,
-      clientY: 100,
-    });
-  });
-
-  /**
-   * The page's own callers already reduce a signed count to a sign, which is why
-   * `lineWheelAt` can take `-1 | 1` and refuse anything else without losing
-   * behaviour.
-   */
-  it("is called with a sign by both scrollers in the page", () => {
-    expect([...html.matchAll(/const sign = k < 0 \? -1 : 1;/g)]).toHaveLength(2);
-    // The fan-out, both of them: the finger's feed at :6127 and the trackpad's
-    // pump at :6222. `emitLineWheel(sign)` alone would also match the
-    // declaration at :6105, which is how an earlier version of this case
-    // counted three callers.
-    expect(
-      [...html.matchAll(/for \(let i = 0; i < Math\.abs\(k\); i\+\+\) emitLineWheel\(sign\);/g)],
-    ).toHaveLength(2);
   });
 });
 

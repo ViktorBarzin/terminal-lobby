@@ -84,9 +84,10 @@ func TestAUnitWithSeveralFilesRestartsOnceWhenMoreThanOneChanged(t *testing.T) {
 
 func TestAChangeNoUnitOwnsRestartsNothing(t *testing.T) {
 	units := []Unit{{Name: "ttyd", Files: []string{"bin/ttyd"}}}
-	// term.html is served from the shared asset dir by clipboard-upload's
-	// exact-path whitelist, so shipping it restarts no service.
-	if got := RestartSet(units, []string{"share/term.html"}); len(got) != 0 {
+	// The webfonts are served from the shared asset dir by clipboard-upload's
+	// exact-path whitelist, so shipping one restarts no service. This used to
+	// say share/term.html, which was the same shape until the page was deleted.
+	if got := RestartSet(units, []string{"frontend/fonts/tl-symbols.woff2"}); len(got) != 0 {
 		t.Fatalf("want no restarts, got %v", got)
 	}
 }

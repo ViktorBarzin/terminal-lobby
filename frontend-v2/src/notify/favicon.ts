@@ -1,8 +1,7 @@
 /**
  * Favicon state badge (inventory Cat.9, high-risk). Ported from the vanilla
- * frontend: the lobby OWNS the browser tab (the terminal is an iframe inside
- * it), so it badges `link[rel=icon]` with a canvas-rendered dot to signal state
- * at a glance from another tab.
+ * frontend: the lobby OWNS the browser tab, so it badges `link[rel=icon]` with
+ * a canvas-rendered dot to signal state at a glance from another tab.
  *
  * Two badge KINDS (Viktor: "yellow signals something is wrong — I'd prefer a
  * green tick for done"):

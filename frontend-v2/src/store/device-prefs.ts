@@ -2,23 +2,23 @@
  * Settings that belong to THIS BROWSER rather than to the account.
  *
  * The roamed doc (`store/prefs.ts`, `/prefs`) is the right home for anything
- * that should follow you between devices. These four deliberately do not:
+ * that should follow you between devices. These three deliberately do not:
  *
  *  - **Flow control** is a kill switch for the terminal's XON/XOFF back-
  *    pressure. It exists to rescue a wedged stream on the machine that is
  *    wedged, so roaming it would carry a local rescue to every device.
  *  - **The gestures master kill** is the same shape for touch and wheel
  *    gestures, and rescues the device it is set on for the same reason.
- *  - **Which terminal to render** is per-device because it answers a question
- *    about the device: whether the terminal the app draws itself works well
- *    enough there. Roaming it would let one browser's rescue take the terminal
- *    away from every other.
  *  - **Clear local data** is an action on this browser's storage.
  *
- * The two kill switches keep the plain `tl-` key names the vanilla page used,
- * because the terminal iframe is a reader too and it is same-origin: it picks a
- * flip up from a `storage` event, which fires there precisely because ANOTHER
- * window (the lobby) wrote the key.
+ * The two kill switches keep the plain `tl-` key names the vanilla page used.
+ * A fourth setting lived here until 2026-09-05, WHICH TERMINAL to render, and
+ * it went with the page it selected: there is one terminal now, so there is no
+ * question left to answer per device.
+ *
+ * The `term.html:NNNN` citations below index that deleted page at the commit
+ * that removed it. They are provenance for the port, not claims about anything
+ * running.
  */
 
 import { PREFS_PATH } from "../lib/config";
@@ -28,8 +28,8 @@ import { PREF_DEFAULTS, composeDoc } from "./prefs";
 /** Terminal flow control (XON/XOFF back-pressure). "off" disables it here. */
 export const FLOW_KILL_KEY = "tl-flow-control";
 
-/** True unless this browser has explicitly turned flow control off. Matches
- *  term.html's own test (`!== 'off'`), so any other value reads as enabled. */
+/** True unless this browser has explicitly turned flow control off. The test
+ *  is the page's (`!== 'off'`), so any other value reads as enabled. */
 export function flowControlWanted(): boolean {
   try {
     return localStorage.getItem(FLOW_KILL_KEY) !== "off";
@@ -54,26 +54,24 @@ export function setFlowControlEnabled(on: boolean): void {
  * The Wave-5 gestures master kill: `"off"` in this browser turns off every
  * touch and wheel gesture built on top of it.
  *
- * term.html gives it the same posture as flow control in as many words
- * (:3078-3086): a plain per-browser key where anything other than `"off"`,
- * unset included, means enabled, so it can rescue a device with no redeploy and
- * even with the prefs machinery broken. That is what keeps it out of the roamed
- * doc. The per-feature opt-outs under `tl:prefs:v1` `gestures.*` are checked IN
- * ADDITION to this one, never instead of it.
+ * The page gave it the same posture as flow control in as many words
+ * (term.html:3078-3086): a plain per-browser key where anything other than
+ * `"off"`, unset included, means enabled, so it can rescue a device with no
+ * redeploy and even with the prefs machinery broken. That is what keeps it out
+ * of the roamed doc. The per-feature opt-outs under `tl:prefs:v1` `gestures.*`
+ * are checked IN ADDITION to this one, never instead of it.
  *
- * There is no setter, because nothing writes this key. term.html only reads it
- * (`gesturesEnabled`, :3163-3166) and watches for another window changing it
- * (:7585-7586); a person sets it by hand when a gesture is misbehaving.
+ * There is no setter, because nothing writes this key: it is read here and
+ * nowhere else, and a person sets it by hand when a gesture is misbehaving.
  *
- * READ IT FRESH at every use, never cached. term.html's `wheelSmoothOn`
- * (:6203-6205) calls its own `gesturesEnabled` from inside the wheel handler on
- * every event (:6238), so a flip takes effect on the next wheel without a
- * reload, and `terminal/wheel.ts` asks for its `smoothOn` on every wheel for
- * the same reason.
+ * READ IT FRESH at every use, never cached. `terminal/wheel.ts` asks for its
+ * `smoothOn` on every wheel, so a flip takes effect on the next wheel without a
+ * reload, which is the page's own arrangement (`wheelSmoothOn` called its own
+ * `gesturesEnabled` from inside the handler, :6203-6205 and :6238).
  *
  * One path deliberately does not consult it: the one-finger touch scroller
  * (`terminal/touchscroll.ts` says so at length), because a finger has no other
- * way to scroll a terminal. term.html gates the desktop smooth wheel (:6204)
+ * way to scroll a terminal. The page gated the desktop smooth wheel (:6204)
  * and the multi-touch registry (:6425) and nothing in that path.
  */
 export const GESTURES_KILL_KEY = "tl-gestures";
@@ -83,80 +81,8 @@ export function gesturesEnabled(): boolean {
     return localStorage.getItem(GESTURES_KILL_KEY) !== "off";
   } catch {
     // A browser that refuses storage keeps its gestures rather than losing
-    // them, which is the answer term.html's own `catch` gives.
+    // them, which is the answer the page's own `catch` gave.
     return true;
-  }
-}
-
-/**
- * WHICH TERMINAL this browser renders: the one the app draws itself, or the
- * `frontend/term.html` page in an iframe.
- *
- * `native` is the default, so this key holds an explicit choice and nothing
- * else. Absent means "whatever the app defaults to", which is what makes the
- * URL flag, the setting and the default three distinct answers rather than two
- * (`SessionView.tsx`'s `wantsNativeTerminal` is where they are ordered).
- *
- * It has to be a stored setting, and it has to be per-device, because of one
- * deployment fact: `manifest.webmanifest` sets `"start_url": "/"`, so an app
- * launched from a home-screen icon opens with no query string at all and
- * `?native=0` never reaches it. On an installed PWA this setting is the only
- * way back to the iframe, which is why it is not optional.
- *
- * `tl-` rather than `tl:` for the prefix's other property: `OWNED_PREFIXES`
- * below covers both, so Clear local data drops this too, returning that browser
- * to the default. Nothing else reads the key: unlike the two kill switches
- * above, term.html has no opinion about which terminal is on screen.
- */
-export type TerminalRenderer = "native" | "iframe";
-
-export const TERMINAL_RENDERER_KEY = "tl-terminal-renderer";
-
-/**
- * What a browser that has never chosen gets.
- *
- * `iframe` until the flip on 2026-09-04, `native` since. It lives here rather
- * than as a literal in each reader so the two of them cannot disagree: the
- * precedence in `SessionView.tsx` falls back to it, and the settings control
- * shows it as the current state while nothing is stored.
- */
-export const DEFAULT_TERMINAL_RENDERER: TerminalRenderer = "native";
-
-/**
- * This browser's stored choice, or `null` when it has never made one.
- *
- * A value neither branch understands reads as NO CHOICE rather than as a vote,
- * the same posture `nativeFromSearch` gives an unrecognised flag: a key written
- * by some later version leaves the default standing instead of selecting a
- * terminal from a string nobody here can interpret.
- */
-export function terminalRenderer(): TerminalRenderer | null {
-  try {
-    const raw = localStorage.getItem(TERMINAL_RENDERER_KEY);
-    return raw === "native" || raw === "iframe" ? raw : null;
-  } catch {
-    // A browser that refuses storage cannot carry a choice, so it gets the
-    // default. Same answer as never having chosen.
-    return null;
-  }
-}
-
-/**
- * Record a choice for this browser.
- *
- * BOTH values are written out, where flow control above deletes its key to mean
- * "on". The difference is that flow control's reader only ever looks for `off`,
- * so there is one state to store; here each value names a terminal, and an
- * explicit `native` has to survive the default changing under it. This is the
- * setting someone reaches for when a terminal is unusable on the device in
- * front of them, and it should not quietly depend on which way the default
- * happens to point that release.
- */
-export function setTerminalRenderer(choice: TerminalRenderer): void {
-  try {
-    localStorage.setItem(TERMINAL_RENDERER_KEY, choice);
-  } catch {
-    /* private mode: the choice does not stick, and the default stands */
   }
 }
 

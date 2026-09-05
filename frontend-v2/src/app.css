@@ -2024,26 +2024,11 @@ label.tl-set-row-label {
   color: var(--text-muted);
 }
 
-/* ---- terminal view (live ttyd iframe) ---------------------------------- */
-.tl-terminalview {
-  position: relative;
-  flex: 1 1 auto;
-  display: flex;
-  min-height: 0;
-  width: 100%;
-  background: var(--terminal-bg);
-  color: var(--terminal-fg);
-}
-.tl-ttyd {
-  flex: 1 1 auto;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  display: block;
-}
-/* The app-rendered terminal fills its pane the way the iframe does. xterm's
-   FitAddon measures this box to choose cols/rows, so a box with no height
-   measures as one row and the pty is told the terminal is one row tall. */
+/* ---- terminal view ------------------------------------------------------ */
+/* The terminal fills its pane. xterm's FitAddon measures this box to choose
+   cols/rows, so a box with no height measures as one row and the pty is told
+   the terminal is one row tall — which tmux then applies to every other client
+   on that session. */
 .tl-terminal-native {
   flex: 1 1 auto;
   width: 100%;
@@ -2051,61 +2036,6 @@ label.tl-set-row-label {
   min-height: 0;
   overflow: hidden;
   background: var(--terminal-bg);
-}
-/* Instant themed panel over the iframe during a session (re)load — hides the
-   blank/re-boot flash; JS sets opacity 1 (no transition) on navigate and fades
-   it out on tl-terminal-ready (or the 1800ms fallback). */
-.tl-frame-cover {
-  position: absolute;
-  inset: 0;
-  background: var(--terminal-bg);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* The terminal document did not arrive. A truncated term.html renders a page
-   that never fires `load` and reports nothing, so without this a half-arrived
-   terminal is indistinguishable from a slow one, forever. Shown only after a
-   silent retry has already been spent. */
-.tl-frame-failed {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 24px;
-  text-align: center;
-  background: var(--terminal-bg);
-  color: var(--text-primary);
-}
-.tl-frame-failed-title {
-  margin: 0;
-  font-size: calc(15px * var(--tl-text-scale, 1));
-  font-weight: 600;
-}
-.tl-frame-failed-body {
-  margin: 0;
-  max-width: 42ch;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  line-height: 1.5;
-  color: var(--text-muted);
-}
-.tl-frame-retry {
-  padding: 8px 18px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-  font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  cursor: pointer;
-}
-.tl-frame-retry:hover {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 /* ---- Command palette + shortcuts help (pillar #2 keybindings) ---------- */
@@ -2435,14 +2365,15 @@ body.tl-kb-up {
     );
   }
   /* TERMINAL view: leave the keyboard OUT of the reservation.
-     The focused field in this view is the ghost mirror INSIDE the terminal
-     iframe, so shrinking this container by the keyboard height moved the iframe
-     out from under the tap that had just focused it — the tap's delayed compat
-     mousedown then landed on a non-focusable shell element and blurred the
-     field, and the keyboard flashed shut for any tap below ~54% of the screen
+     The focused field in this view is the ghost compose mirror, so shrinking
+     this container by the keyboard height moved the terminal out from under the
+     tap that had just focused it — the tap's delayed compat mousedown then
+     landed on a non-focusable shell element and blurred the field, so
+     the keyboard flashed shut for any tap below ~54% of the screen
      (measured 390x844: this container's bottom edge jumped 793 -> 457).
-     The frame is told the height instead (tl-kb) and shrinks its own terminal,
-     so the prompt still clears the keyboard and the frame stays put. */
+     The terminal host is told the height instead (__tlKeyboardOffset ->
+     terminal/viewport.ts) and shrinks itself, so the prompt still clears the
+     keyboard and nothing moves under the finger. */
   body.has-soft-keys .tl-views.tl-kb-inline {
     margin-bottom: calc(var(--sk-h, 50px) + var(--safe-b, 0px));
   }

@@ -786,25 +786,22 @@ describe("what the component is told to do", () => {
   );
 });
 
-describe("parity with term.html", () => {
-  const TERM_HTML = resolve(__dirname, "../..", "frontend/term.html");
-  const html = (): string => readFileSync(TERM_HTML, "utf8");
-
-  /**
-   * Four numbers, tuned against real trackpads, living in two places until
-   * term.html retires. A port that quietly halved one hands back the failure it
-   * was tuned to stop.
-   */
-  it("uses the thresholds term.html ships", () => {
-    const src = html();
-    const m = /const GHOST_MS = (\d+), GHOST_PX = (\d+), REPLACE_PX = (\d+);/.exec(src);
-    expect(m, "the threshold line in term.html").toBeTruthy();
-    expect(Number(m?.[1])).toBe(GHOST_MS);
-    expect(Number(m?.[2])).toBe(GHOST_PX);
-    expect(Number(m?.[3])).toBe(REPLACE_PX);
-    const stall = /const STALL_MS = (\d+);/.exec(src);
-    expect(stall, "STALL_MS in term.html").toBeTruthy();
-    expect(Number(stall?.[1])).toBe(STALL_MS);
+/**
+ * The numbers and the strings, as literals.
+ *
+ * They lived in two places until 2026-09-05 — here and in the page this module
+ * was ported from — and five cases read that page to keep them equal: the four
+ * thresholds, the two clear reasons, the interceptor's guards, the SGR replay
+ * form, and the two xterm options the clone's force modifier depends on. Only
+ * the last of those had a second side that survives, so it stays as it was; the
+ * rest are pinned here with the page lines they came from.
+ */
+describe("the numbers and words the page was tuned to", () => {
+  it("uses the thresholds the page shipped", () => {
+    // term.html:5848, `const GHOST_MS = 400, GHOST_PX = 8, REPLACE_PX = 10;`
+    // and :5919, `const STALL_MS = 500;`. Tuned against real trackpads; a port
+    // that quietly halved one hands back the failure it was tuned to stop.
+    expect([GHOST_MS, GHOST_PX, REPLACE_PX, STALL_MS]).toEqual([400, 8, 10, 500]);
   });
 
   /**
@@ -812,10 +809,7 @@ describe("parity with term.html", () => {
    * `sel-cleared` telemetry and the seldebug toast, so a rewording breaks the
    * only trail a vanished selection leaves.
    */
-  it("keeps the clear reasons term.html records", () => {
-    const src = html();
-    expect(src).toContain("'double-click replace'");
-    expect(src).toContain("'replacing drag (bottom row)'");
+  it("keeps the clear reasons the page recorded", () => {
     const w = world({ hasSelection: true });
     expect(find(reduce(NO_GESTURE, down({ detail: 2 }), w), "clear-selection").reason).toBe(
       "double-click replace",
@@ -826,21 +820,8 @@ describe("parity with term.html", () => {
     ).toBe("replacing drag (bottom row)");
   });
 
-  /**
-   * The interceptor's own guards, quoted out of the page. If term.html ever
-   * loses the isTrusted test, the clone recursion it prevents is worth knowing
-   * about before this port is blamed for it.
-   */
-  it("still intercepts the same presses term.html does", () => {
-    const src = html();
-    expect(src).toContain("if (!e.isTrusted || e.button !== 0) return;");
-    expect(src).toContain("if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;");
-    expect(src).toContain("e.stopImmediatePropagation();");
-  });
-
-  /** The SGR replay, byte for byte, as :5994-5995 writes it. */
-  it("sends the status click in the SGR form term.html sends", () => {
-    expect(html()).toContain("sendInput('\\x1b[<0;' + col + ';' + row + 'M');");
+  /** The SGR replay, byte for byte, as term.html:5994-5995 wrote it. */
+  it("sends the status click in the SGR form the page sent", () => {
     const held = reduce(NO_GESTURE, down({ clientX: 0, clientY: 399 }), world());
     expect(find(reduce(held.state, lifted(), world()), "replay-status-click").sends).toEqual([
       "\x1b[<0;1;20M",

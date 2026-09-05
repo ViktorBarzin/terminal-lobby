@@ -614,239 +614,114 @@ describe("a panned visual viewport", () => {
   });
 });
 
-describe("parity with the page it came from", () => {
+
+/**
+ * WHAT THIS MODULE DELIBERATELY DOES NOT DUPLICATE.
+ *
+ * Each claim the module's header makes about the rest of the app is
+ * load-bearing for "most of syncViewport is already done", or for the shrink
+ * being `own` rather than `own + offsetTop`, so each one is pinned rather than
+ * asserted in a comment.
+ *
+ * These sat inside a "parity with the page it came from" describe until
+ * 2026-09-05, alongside cases that read `frontend/term.html` for the shape of
+ * its `keyboardReserve` block, its refit listeners, and its boot seed, plus one
+ * that read TerminalView.tsx for the framed side of the keyboard bridge. Those
+ * went with the page and the component; the ones below read files that are
+ * still here.
+ */
+describe("the chain this module deliberately does not duplicate", () => {
   const root = resolve(__dirname, "../..");
-  const html = (): string => readFileSync(resolve(root, "frontend/term.html"), "utf8");
+  const read = (rel: string): string => readFileSync(resolve(root, rel), "utf8");
 
-  /** term.html's keyboardReserve, code only, read out of the page by its markers. */
-  const reserveBlock = (): string => {
-    const src = html();
-    const start = src.indexOf(">>> tl-kb-reserve");
-    const end = src.indexOf("<<< tl-kb-reserve", start);
-    expect(start, "the tl-kb-reserve marker in term.html").toBeGreaterThan(-1);
-    expect(end, "the end of the reserve block").toBeGreaterThan(start);
-    return src.slice(start, end);
-  };
-
-  /**
-   * The max-not-sum rule, in the page's own code. If this ever became a sum
-   * there, the reserve here would be wrong by a keyboard.
-   */
-  it("still takes the larger of the two readings, never the sum", () => {
-    const body = reserveBlock();
-    expect(body).toContain("Math.max(own, fwd)");
-    expect(body).toContain("Math.max(0, innerH - vvH - vvTop)");
-    expect(body).toContain("Math.max(0, forwarded || 0)");
+  /** The shell owns `--kb-offset`; the contract tests below pin that this module writes none. */
+  it("leaves --kb-offset to the shell", () => {
+    expect(read("frontend-v2/src/mobile/viewport.ts")).toContain(
+      'root.setProperty("--kb-offset", kb + "px")',
+    );
   });
 
-  /** Both of the gates this module reproduces, still where the header says they are. */
-  it("still gates on visualViewport and on the pointer type", () => {
-    const src = html();
-    const sync = src.indexOf("function syncViewport()");
-    expect(sync).toBeGreaterThan(-1);
-    const body = src.slice(sync, src.indexOf("let kbRafScheduled", sync));
-    expect(body).toContain("if (!window.visualViewport) return;");
-    expect(body).toContain("if (isCoarsePointer) {");
-    // The height write is INSIDE the coarse gate, which is the half that
-    // decides whether a desktop terminal loses rows.
-    expect(body.indexOf("terminalEl.style.height")).toBeGreaterThan(
-      body.indexOf("if (isCoarsePointer) {"),
+  it("leaves the toolbar height to the container's margin", () => {
+    const css = read("frontend-v2/src/app.css");
+    expect(css).toContain("body.has-soft-keys .tl-views.tl-kb-inline {");
+    // The terminal view's container reserves the toolbar and the safe area
+    // and leaves the keyboard IN, which is exactly why the host needs a
+    // shrink of its own.
+    expect(css).toContain("margin-bottom: calc(var(--sk-h, 50px) + var(--safe-b, 0px));");
+    expect(read("frontend-v2/src/mobile/viewport.ts")).toContain('root.setProperty("--sk-h"');
+  });
+
+  /**
+   * The two edges the panned-viewport arithmetic above measures between, and
+   * the innerHeight-anchored container the relative height depends on.
+   */
+  it("parks the toolbar on --kb-offset and anchors the app to innerHeight", () => {
+    const css = read("frontend-v2/src/app.css");
+    expect(css).toContain("bottom: calc(var(--kb-offset, 0px) + var(--safe-b, 0px));");
+    expect(css).toContain("height: var(--app-vh, 100%);");
+    expect(read("frontend-v2/src/mobile/viewport.ts")).toContain(
+      'root.setProperty("--app-vh", window.innerHeight + "px")',
     );
   });
 
   /**
-   * `isCoarsePointer` is read once, as a `const`, so a pointer type that
-   * changes mid-session moves nothing in that page. TerminalNative reads it
-   * once too, so treating it as a fact per event rather than a live
-   * query is parity, not a shortcut. Both gate refusals being permanent for a
-   * mount is also why nothing needs remembering behind one.
+   * The shell forwards `keyboardOffset(...)`, the same formula as `own`, and
+   * NOT `coveredAtBottom` (mobile/viewport.ts:57-63), which is the other
+   * number that file computes. That distinction is load-bearing for the max:
+   * `coveredAtBottom` counts a shrunken LAYOUT viewport as coverage, so
+   * forwarding it would take 312px off an Android container that had already
+   * shrunk itself.
    */
-  it("still reads the pointer type once for the life of the page", () => {
-    expect(html()).toContain("const isCoarsePointer = matchMedia('(pointer: coarse)').matches;");
+  it("forwards the same measurement the terminal reads, on change only", () => {
+    const shell = read("frontend-v2/src/mobile/viewport.ts");
+    expect(shell).toContain("const kb = keyboardOffset(window.innerHeight, h, top);");
+    expect(shell).toMatch(/if \(kb !== lastKb\) \{\s*\n\s*lastKb = kb;\s*\n\s*opts\.onKeyboard\?\.\(kb\);/);
   });
 
-  /**
-   * THE WHOLE `tl-kb` ARM IS INSIDE THE FINITE GATE, THE REFIT INCLUDED, which
-   * is why a non-finite px is `ignored` rather than `nothing`. The regex is the
-   * arm's three statements in order between the gate's braces, so the refit
-   * moving OUT of the gate would fail it. An earlier version of this test read
-   * the same code as "the refit after it is unconditional", which is what the
-   * module's owes list then told a wiring to do.
-   */
-  it("still discards a whole tl-kb message that is not a number, the refit too", () => {
-    const src = html();
-    const arm = src.indexOf("e.data.type === 'tl-kb'");
-    expect(arm).toBeGreaterThan(-1);
-    const body = src.slice(arm, arm + 1200);
-    expect(body).toMatch(
-      /Number\.isFinite\(e\.data\.px\)\) \{\s*\n\s*framedKb = Math\.max\(0, e\.data\.px\);\s*\n\s*syncViewport\(\);\s*\n\s*refit\(\);\s*\n\s*\}/,
+  /** The install is at the shell and stays there; only the message is conditional. */
+  it("installs the shell's sync once for the whole app", () => {
+    const app = read("frontend-v2/src/components/App.tsx");
+    expect(app).toContain("onKeyboard: (px) => window.__tlKeyboardOffset?.(px),");
+    expect(app).toContain("// At the SHELL, not per session.");
+  });
+
+  it("puts the host's container below the session bar", () => {
+    expect(read("frontend-v2/src/app.css")).toContain(
+      ".tl-view {\n  position: absolute;\n  inset: 0;",
     );
+    const sidebar = read("frontend-v2/src/sidebar.css");
+    expect(sidebar).toMatch(/\n\.tl-session-view \{[^}]*flex-direction: column;/);
+    expect(sidebar).toMatch(/\n\.tl-session-bar \{[^}]*flex: 0 0 auto;/);
+    // The bar comes first in that column, so the views start below it.
+    const view = read("frontend-v2/src/components/SessionView.tsx");
+    const bar = view.indexOf('<div class="tl-session-bar">');
+    const views = view.indexOf('<main class="tl-views"');
+    expect(bar).toBeGreaterThan(-1);
+    expect(views).toBeGreaterThan(bar);
+  });
+
+  it("has no compose bar over the terminal to subtract", () => {
+    // The page's `cbH` term was its own fixed mobile input surface, measured
+    // off a `#compose-bar` element. In this app the composer belongs to the
+    // TEXT view, so nothing sits over the terminal's box and there is no
+    // analogue to port — which is a claim about this app's CSS, and that is
+    // the half still checkable.
+    expect(read("frontend-v2/src/app.css")).not.toContain("--cb-h");
   });
 
   /**
-   * AND WHAT *IS* UNGATED IN THAT PAGE: the four viewport listeners, which call
-   * `refit()` with no condition on them at all (:8482-8486). That is the fit
-   * being outside `syncViewport`'s two GATES, which is a different statement
-   * from the `tl-kb` arm above, and it is why `nothing` still owes a fit. A
-   * fine-pointer desktop whose window resized writes no height and refits.
+   * The measured bug that put the reserve on the terminal instead of the
+   * container, still recorded next to the rule it explains. The header owes
+   * the reader the native version of it: natively the shrunken box is the tap
+   * target's own ancestor, so the seed this module adds moves the host's
+   * bottom edge out from under wherever the finger is. Same shape as the
+   * shipped page, and a unit test cannot settle it.
    */
-  it("still refits on every viewport event with nothing gating it", () => {
-    const src = html();
-    const listeners = src.slice(
-      src.indexOf("let kbRafScheduled"),
-      src.indexOf("// Seed offset + height"),
-    );
-    expect(listeners).toContain("window.addEventListener('resize', refit);");
-    expect(listeners).toContain("window.addEventListener('orientationchange', refit);");
-    expect(listeners).toContain("window.visualViewport.addEventListener('resize', refit);");
-    expect(listeners).toContain("window.visualViewport.addEventListener('scroll', refit);");
-    // The only `if` between the fit and those events is the feature test for
-    // visualViewport itself, not a gate on the pointer or on the geometry.
-    expect(listeners).toContain("if (window.visualViewport) {");
-    expect(listeners).not.toContain("isCoarsePointer");
-  });
-
-  /**
-   * THE CLAIMS THIS MODULE'S HEADER MAKES ABOUT THE REST OF THE APP. Each one
-   * is load-bearing for "most of syncViewport is already done", or for the
-   * shrink being `own` rather than `own + offsetTop`, so each one is pinned
-   * rather than asserted in a comment.
-   */
-  describe("the chain this module deliberately does not duplicate", () => {
-    const read = (rel: string): string => readFileSync(resolve(root, rel), "utf8");
-
-    /** The shell owns `--kb-offset`; the contract tests below pin that this module writes none. */
-    it("leaves --kb-offset to the shell", () => {
-      expect(read("frontend-v2/src/mobile/viewport.ts")).toContain(
-        'root.setProperty("--kb-offset", kb + "px")',
-      );
-    });
-
-    it("leaves the toolbar height to the container's margin", () => {
-      const css = read("frontend-v2/src/app.css");
-      expect(css).toContain("body.has-soft-keys .tl-views.tl-kb-inline {");
-      // The terminal view's container reserves the toolbar and the safe area
-      // and leaves the keyboard IN, which is exactly why the host needs a
-      // shrink of its own.
-      expect(css).toContain("margin-bottom: calc(var(--sk-h, 50px) + var(--safe-b, 0px));");
-      expect(read("frontend-v2/src/mobile/viewport.ts")).toContain('root.setProperty("--sk-h"');
-    });
-
-    /**
-     * The two edges the panned-viewport arithmetic above measures between, and
-     * the innerHeight-anchored container the relative height depends on.
-     */
-    it("parks the toolbar on --kb-offset and anchors the app to innerHeight", () => {
-      const css = read("frontend-v2/src/app.css");
-      expect(css).toContain("bottom: calc(var(--kb-offset, 0px) + var(--safe-b, 0px));");
-      expect(css).toContain("height: var(--app-vh, 100%);");
-      expect(read("frontend-v2/src/mobile/viewport.ts")).toContain(
-        'root.setProperty("--app-vh", window.innerHeight + "px")',
-      );
-    });
-
-    /**
-     * The shell forwards `keyboardOffset(...)`, the same formula as `own`, and
-     * NOT `coveredAtBottom` (mobile/viewport.ts:57-63), which is the other
-     * number that file computes. That distinction is load-bearing for the max:
-     * `coveredAtBottom` counts a shrunken LAYOUT viewport as coverage, so
-     * forwarding it would take 312px off an Android container that had already
-     * shrunk itself.
-     */
-    it("forwards the same measurement the terminal reads, on change only", () => {
-      const shell = read("frontend-v2/src/mobile/viewport.ts");
-      expect(shell).toContain("const kb = keyboardOffset(window.innerHeight, h, top);");
-      expect(shell).toMatch(/if \(kb !== lastKb\) \{\s*\n\s*lastKb = kb;\s*\n\s*opts\.onKeyboard\?\.\(kb\);/);
-    });
-
-    /** The install is at the shell and stays there; only the message is conditional. */
-    it("installs the shell's sync once for the whole app", () => {
-      const app = read("frontend-v2/src/components/App.tsx");
-      expect(app).toContain("onKeyboard: (px) => window.__tlKeyboardOffset?.(px),");
-      expect(app).toContain("// At the SHELL, not per session.");
-    });
-
-    /**
-     * THE FRAMED BOOT SEED RESERVES NOTHING, so the shipped page has the same
-     * hole the module's `observed` closes. Both of the page's readings are 0 at
-     * boot: `framedKb` starts at 0, and an iframe's own visualViewport never
-     * saw the keyboard, so `innerHeight - vv.height - vv.offsetTop` is 0 there
-     * whatever the keyboard is doing. The seed is `syncViewport()` with no
-     * argument (:8490), so there is nowhere for a real height to come from.
-     */
-    it("seeds a framed page with no reserve at all", () => {
-      const src = html();
-      expect(src).toContain("let framedKb = 0;");
-      expect(src).toMatch(/\/\/ Seed offset \+ height[\s\S]{0,200}\n\s*syncViewport\(\);/);
-      // The framed geometry, as arithmetic: layout and visual are the same
-      // number, so both readings are 0 and so is the reserve.
-      expect(keyboardReserve(IPHONE_LAYOUT, IPHONE_LAYOUT, 0, 0).offset).toBe(0);
-    });
-
-    /**
-     * AND NOTHING ELSE SEEDS THE FRAME. `keyboardToFrame` is never called
-     * directly; it is reachable only as the `__tlKeyboardOffset` global, whose
-     * one caller is App.tsx's `onKeyboard` above, which fires on CHANGE only.
-     * The frame's own `onLoad` seeds the Alt state and nothing else. So on an
-     * iPad with the keyboard already up, the shipped page's prompt sits behind
-     * it until the keyboard next moves, exactly as the native path's does.
-     */
-    it("has no second seed for the framed page either", () => {
-      const view = read("frontend-v2/src/components/TerminalView.tsx");
-      expect(view).toContain('postToFrame({ type: "tl-kb", px });');
-      expect(view).toContain('ownWhile(ownsBridges, "__tlKeyboardOffset", keyboardToFrame);');
-      // Referenced, never invoked: no `keyboardToFrame(...)` anywhere.
-      expect(view).not.toMatch(/keyboardToFrame\s*\(/);
-      expect(view).toContain("onLoad={() => props.onFrameAlt?.(false)}");
-      // One mention in the shell, and it is the on-change forward.
-      const app = read("frontend-v2/src/components/App.tsx");
-      expect(app.match(/__tlKeyboardOffset/g)).toHaveLength(1);
-    });
-
-    /**
-     * THE CONTAINER THE SHRINK COMES OFF, which is why the answer is a shrink
-     * and not an absolute `vv.height`. `.tl-view` is `inset: 0` inside
-     * `.tl-views`, and `.tl-views` is the flex remainder BELOW
-     * `.tl-session-bar`. The bar's height is one of the two terms the module's
-     * header was missing when it called the difference "exactly --sk-h +
-     * --safe-b".
-     */
-    it("puts the host's container below the session bar", () => {
-      expect(read("frontend-v2/src/app.css")).toContain(
-        ".tl-view {\n  position: absolute;\n  inset: 0;",
-      );
-      const sidebar = read("frontend-v2/src/sidebar.css");
-      expect(sidebar).toMatch(/\n\.tl-session-view \{[^}]*flex-direction: column;/);
-      expect(sidebar).toMatch(/\n\.tl-session-bar \{[^}]*flex: 0 0 auto;/);
-      // The bar comes first in that column, so the views start below it.
-      const view = read("frontend-v2/src/components/SessionView.tsx");
-      const bar = view.indexOf('<div class="tl-session-bar">');
-      const views = view.indexOf('<main class="tl-views"');
-      expect(bar).toBeGreaterThan(-1);
-      expect(views).toBeGreaterThan(bar);
-    });
-
-    it("has no compose bar over the terminal to subtract", () => {
-      // term.html's `cbH` term is its own fixed mobile input surface. In this
-      // app the composer belongs to the TEXT view, so nothing sits over the
-      // terminal's box and there is no analogue to port.
-      expect(html()).toContain("getElementById('compose-bar')");
-      expect(read("frontend-v2/src/app.css")).not.toContain("--cb-h");
-    });
-
-    /**
-     * The measured bug that put the reserve on the terminal instead of the
-     * container, still recorded next to the rule it explains. The header owes
-     * the reader the native version of it: natively the shrunken box is the tap
-     * target's own ancestor, so the seed this module adds moves the host's
-     * bottom edge out from under wherever the finger is. Same shape as the
-     * shipped page, and a unit test cannot settle it.
-     */
-    it("still records why the keyboard is left inside the terminal's container", () => {
-      expect(read("frontend-v2/src/app.css")).toContain("the keyboard flashed shut for any tap");
-    });
+  it("still records why the keyboard is left inside the terminal's container", () => {
+    expect(read("frontend-v2/src/app.css")).toContain("the keyboard flashed shut for any tap");
   });
 });
+
 
 describe("the contract handed to the component", () => {
   const source = readFileSync(resolve(__dirname, "../src/terminal/viewport.ts"), "utf8");

@@ -54,19 +54,26 @@ for path in /files/list /skills; do
   ok "$path is routed ($code)"
 done
 
-# The terminal itself is an iframe onto /term.html, which clipboard-upload
-# serves and ttyd does not. Unrouted, ttyd answers 404 with its own error page,
-# the iframe shows that instead of a terminal, and no session is ever created —
-# with the lobby around it looking entirely healthy.
+# /term.html was the terminal, in an iframe, until the lobby started drawing
+# its own. The page is deleted and the path now redirects, so what this checks
+# is that the route still REACHES clipboard-upload: ttyd does not know the path,
+# and an unrouted one gets ttyd's own 404 instead of the redirect. A bookmark or
+# an installed home-screen icon would then be a dead end rather than a lobby.
+#
+# Asserted against the container's nginx on purpose. The route lives in
+# docker/nginx.conf.template and is separate from the cluster's Traefik table,
+# so the redirect can hold in production and be missing here.
 term=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/term.html")
-[[ "$term" == "200" ]] || fail "GET /term.html got $term, want 200; the terminal cannot load"
-# Counted rather than matched with grep -q, and never held in a variable: the
-# page carries vendored xterm and runs to well over a megabyte, which an early
-# -q exit turns into a SIGPIPE that pipefail reports as a failed curl.
-termhits=$(curl -s "http://127.0.0.1:17681/term.html" | grep -c "TERMINAL-MODE page" || true)
-[[ "$termhits" != "0" ]] \
-  || fail "/term.html is routed somewhere that is not the terminal page"
-ok "the terminal page is served"
+[[ "$term" == "302" ]] || fail "GET /term.html got $term, want 302; a stale terminal link is a dead end"
+loc=$(curl -s -o /dev/null -w '%{redirect_url}' "http://127.0.0.1:17681/term.html")
+[[ "$loc" == *"/" ]] || fail "GET /term.html redirects to '$loc', want the lobby"
+# The session name has to survive the hop, which is the half a plain 302 would
+# lose: the page took it as the first positional ?arg=, the lobby reads
+# ?session=, and a bookmark that named a session must land on it.
+loc=$(curl -s -o /dev/null -w '%{redirect_url}' "http://127.0.0.1:17681/term.html?arg=smoke1&arg=default")
+[[ "$loc" == *"?session=smoke1" ]] \
+  || fail "GET /term.html?arg=smoke1 redirects to '$loc', want ?session=smoke1"
+ok "a stale /term.html link redirects to the lobby, session name and all"
 
 # The PWA shell must be fetchable without auth or the app cannot install.
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:17681/manifest.webmanifest")

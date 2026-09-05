@@ -53,7 +53,6 @@ function makeRun(over: Partial<CommandDeps> = {}): {
     focusNewSession: noop,
     notify,
     openGallery: noop,
-    forwardToTerminal: () => false,
     pasteToTerminal: () => true,
     toggleDock: () => {},
     ...over,

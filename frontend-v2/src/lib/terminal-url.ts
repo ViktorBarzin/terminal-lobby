@@ -21,7 +21,7 @@
  * deploy can retarget the ttyd origin without touching call sites.
  */
 
-import { ACT_AS, TERMINAL_BASE } from "./config";
+import { ACT_AS } from "./config";
 
 export interface TerminalUrlOpts {
   /** arg2 — the new-session command key. Defaults to "default" (the user's tmux
@@ -38,30 +38,18 @@ export interface TerminalUrlOpts {
 }
 
 /**
- * Build the ttyd attach URL for `name` under `base` — the terminal PAGE URL
- * (default "/term.html"; see config.TERMINAL_BASE). `base` is the full page path
- * (or origin+path for a cross-origin canary), and the positional args are appended
- * as its query, so `buildTerminalUrl("/term.html", "foo")` → "/term.html?arg=foo".
- * Every arg value is encodeURIComponent'd.
- */
-export function buildTerminalUrl(
-  base: string,
-  name: string,
-  opts: TerminalUrlOpts = {},
-): string {
-  return base + "?" + buildTerminalArgs(name, opts);
-}
-
-/**
- * The positional `arg=` list on its own, without a page URL in front of it.
+ * The positional `arg=` list, which is the whole of the attach.
  *
- * The framed attach passes these OUT OF BAND (see `TERMINAL_FRAME_PREFIX`)
- * because the page URL is a cache key: with the session name in the query, every
- * session was a separate entry for a 1.8 MB document — measured 1,796,377 B for
- * a name never seen before against 300 B for an exact repeat, so opening a new
- * session cost 8.4-10.3 s on a 400kbps link every single time. ttyd never reads
- * the page URL anyway: `connect()` re-emits these args on /token and /ws, which
- * is where `ttyd -a` maps them to $1..$5.
+ * There is no page URL in front of it: the terminal is drawn by this app in
+ * this document, and these args go straight onto /token and /ws, which is where
+ * `ttyd -a` maps them to $1..$5 (terminal/attach.ts, terminal/wire.ts).
+ *
+ * They travelled out of band on the frame's NAME while the terminal was a
+ * separate document, because the page URL was a cache key: with the session
+ * name in the query, every session was its own entry for a 1.8 MB document —
+ * measured 1,796,377 B for a name never seen before against 300 B for an exact
+ * repeat, so opening a new session cost 8.4-10.3 s on a 400 kbps link every
+ * single time. One document has one URL and no such cost.
  */
 export function buildTerminalArgs(name: string, opts: TerminalUrlOpts = {}): string {
   let u = "arg=" + encodeURIComponent(name);
@@ -100,31 +88,19 @@ export function buildTerminalArgs(name: string, opts: TerminalUrlOpts = {}): str
   return u;
 }
 
-/** Marks a frame-name that carries an attach's args, so a name set by anything
- *  else is never mistaken for one. Bump the digit if the encoding changes. */
-export const TERMINAL_FRAME_PREFIX = "tl1:";
-
-/** Config-bound builder: `buildTerminalUrl` against TERMINAL_BASE (the
- *  same-origin /term.html page by default; `?terminal=` overrides it). */
-export function terminalUrl(name: string, opts?: TerminalUrlOpts): string {
+/** Config-bound arg list — {@link buildTerminalArgs} with the act-as owner
+ *  filled in. This is what every attach in the app is built from. */
+export function terminalFrameArgs(name: string, opts?: TerminalUrlOpts): string {
   // The act-as switch (?as=) cannot reach ttyd — it resolves the guest from the
   // Authentik header itself and takes only positional ?arg= values — so here it
   // becomes arg4, the owner slot that already exists for shared attaches.
   //
   // A DEFAULT, not an override. The sidebar passes no owner for a session it
   // considers the caller's own, and in an as-bob tab bob's sessions are exactly
-  // that: without this the iframe would attach WIZARD's session of the same
+  // that: without this the attach would reach WIZARD's session of the same
   // name. But while acting as bob you can still see sessions a third party
   // shared WITH bob, and those carry their real owner — forcing the act-as
   // target there would attach the wrong account.
-  const owner = opts?.owner || ACT_AS || undefined;
-  return buildTerminalUrl(TERMINAL_BASE, name, { ...opts, owner });
-}
-
-/** Config-bound arg list for a FRAMED attach, with the same act-as owner
- *  defaulting as {@link terminalUrl}. The frame's URL stays constant so all
- *  sessions share one cache entry; these ride the frame instead. */
-export function terminalFrameArgs(name: string, opts?: TerminalUrlOpts): string {
   const owner = opts?.owner || ACT_AS || undefined;
   return buildTerminalArgs(name, { ...opts, owner });
 }

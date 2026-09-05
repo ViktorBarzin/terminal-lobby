@@ -6,45 +6,41 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "@solidjs/testing-library";
-import { SessionView } from "../src/components/SessionView";
-
-type Posted = { type?: string; hidden?: boolean };
 
 /**
- * Mount a session whose `visible` can be moved afterwards, and capture what its
- * terminal iframe is told. The stub can only be installed once the iframe has a
- * contentWindow (after mount), so every assertion here is about a TRANSITION —
- * which is the case that matters: navigating between the list and the terminal
- * is exactly when the frame has to be re-told.
+ * The terminal, stubbed so `active` can be read the way a prop getter is read.
  *
- * `?native=0` because the subject here is the IFRAME's `tl-view` message, and
- * since the flip (2026-09-04) the app's own terminal is what a bare URL gets.
- * That one has no frame to post to and answers this question through a prop
- * instead (TerminalNative's `active`, covered in SessionView.native.test.tsx). The
- * iframe is still shipped as the way back for a release, so the message it is
- * sent is still worth holding down; the flag is how a tab reaches it now.
+ * Solid compiles a prop whose expression calls a signal into a getter, so
+ * reading it after a change is what makes a TRANSITION observable — and the
+ * transition is the case that matters here: navigating between the list and
+ * the terminal is exactly when the terminal has to learn nobody is looking.
+ *
+ * This was a postMessage until 2026-09-05. The terminal was a separate
+ * document, so the shell told it `{type:'tl-view', hidden}` and these tests
+ * captured the frame's `postMessage`. It is a sibling component now and the
+ * same fact arrives as a prop.
  */
+const terminal = vi.hoisted(() => ({
+  active: null as null | (() => boolean | undefined),
+}));
+vi.mock("../src/components/TerminalNative", () => ({
+  TerminalNative: (props: { active?: boolean }) => {
+    terminal.active = () => props.active;
+    return <div class="tl-terminal-native" />;
+  },
+}));
+
+import { SessionView } from "../src/components/SessionView";
+
+/** Mount a session whose `visible` can be moved afterwards. */
 function mountVisible(initial: boolean | undefined): {
-  posted: Posted[];
   setVisible: (v: boolean | undefined) => void;
 } {
-  window.history.replaceState({}, "", "/?native=0");
   const [visible, setVisible] = createSignal<boolean | undefined>(initial);
-  const posted: Posted[] = [];
-  const { container } = render(() => (
-    <SessionView session="qa-mobile" visible={visible()} />
-  ));
-  const frame = container.querySelector<HTMLIFrameElement>("iframe.tl-ttyd");
-  expect(frame, "the mounted terminal iframe").toBeTruthy();
-  const win = frame!.contentWindow as unknown as {
-    postMessage: (m: unknown) => void;
-  };
-  win.postMessage = (m: unknown) => void posted.push(m as Posted);
-  return { posted, setVisible: (v) => setVisible(() => v) };
+  render(() => <SessionView session="qa-mobile" visible={visible()} />);
+  expect(terminal.active, "the mounted terminal").toBeTruthy();
+  return { setVisible: (v) => setVisible(() => v) };
 }
-
-const lastView = (posted: Posted[]): Posted | undefined =>
-  [...posted].reverse().find((p) => p.type === "tl-view");
 
 /** Answer media queries from a viewport, not from a substring of the query. */
 function stubViewport(vp: { width: number; height: number; coarse: boolean }): void {
@@ -99,27 +95,28 @@ describe("<SessionView> — the merged phone bar", () => {
 });
 
 describe("<SessionView> — visible: a hidden pane must not resize tmux", () => {
-  it("tells the frame it is hidden when the pane goes off screen", () => {
+  it("tells the terminal nobody is looking when the pane goes off screen", () => {
     // The phone hides the whole session pane (display:none) to give the list
-    // the screen. An iframe in a display:none ancestor measures 0x0, and a fit
-    // against that resizes the REAL tmux window — tmux sizes a window to its
-    // SMALLEST attached client, so every other device on the session shrinks
-    // with it. The frame has to be told, not merely hidden.
-    const { posted, setVisible } = mountVisible(true);
+    // the screen. A terminal host in a display:none ancestor measures 0x0, and
+    // a fit against that resizes the REAL tmux window — tmux sizes a window to
+    // its SMALLEST attached client, so every other device on the session
+    // shrinks with it. The terminal has to be told, not merely hidden:
+    // terminal/fit.ts holds the owed fit until the box is real again.
+    const { setVisible } = mountVisible(true);
     setVisible(false);
-    expect(lastView(posted)?.hidden).toBe(true);
+    expect(terminal.active?.()).toBe(false);
   });
 
-  it("tells the frame it is showing when the pane comes back", () => {
-    const { posted, setVisible } = mountVisible(false);
+  it("tells it again when the pane comes back", () => {
+    const { setVisible } = mountVisible(false);
     setVisible(true);
-    expect(lastView(posted)?.hidden).toBe(false);
+    expect(terminal.active?.()).toBe(true);
   });
 
   it("treats an absent flag as visible, so the desktop never passes it", () => {
-    const { posted, setVisible } = mountVisible(false);
+    const { setVisible } = mountVisible(false);
     setVisible(undefined);
-    expect(lastView(posted)?.hidden).toBe(false);
+    expect(terminal.active?.()).toBe(true);
   });
 });
 

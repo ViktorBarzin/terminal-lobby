@@ -233,74 +233,18 @@ describe("the journey a hidden session takes", () => {
   });
 });
 
-describe("parity with the page it came from", () => {
-  const TERM_HTML = resolve(__dirname, "../..", "frontend/term.html");
-  const html = (): string => readFileSync(TERM_HTML, "utf8");
-
-  /** term.html's createFitGuard, code only, read out of the page. */
-  const guard = (): string => {
-    const src = html();
-    const start = src.indexOf("function createFitGuard(");
-    const end = src.indexOf("// <<< tl-fit-guard", start);
-    expect(start, "createFitGuard in term.html").toBeGreaterThan(-1);
-    expect(end, "the end of the guard block").toBeGreaterThan(start);
-    return src.slice(start, end);
-  };
-
-  /**
-   * The zero test, in the page's own words. `!(box.width > 0)` and not
-   * `box.width === 0`, so NaN and a negative are refused too. That is why the
-   * NaN cases above are not defensive padding.
-   */
-  it("still refuses a box with `!(box.width > 0)`", () => {
-    const body = guard();
-    expect(body).toContain("!box || !(box.width > 0) || !(box.height > 0)");
-  });
-
-  /** A skip records the debt; a fit clears it. Both halves, in the page. */
-  it("still owes a skipped fit and clears the debt on a real one", () => {
-    const body = guard();
-    expect(body).toMatch(/owed = true;\s*\n\s*return false;/);
-    expect(body).toMatch(/owed = false;\s*\n\s*doFit\(\);/);
-  });
-
-  /**
-   * The guard weighs no visibility of its own. The box is the whole test, and
-   * that is what lets this module hold one flag and no notion of which view is
-   * on screen.
-   */
-  it("reads no visibility flag of its own", () => {
-    expect(guard()).not.toMatch(/hidden|viewHidden|document\.visibilityState/);
-  });
-
-  /**
-   * The replay site. Both halves are load-bearing: `!hidden` because a fit
-   * against a hidden box is the failure, and `owed()` because a switch with
-   * nothing outstanding must not emit a resize.
-   */
-  it("still replays the owed fit when the view comes back", () => {
-    expect(html()).toContain("if (!e.data.hidden && fitGuard.owed()) refit();");
-  });
-
-  /**
-   * Every fit in that page goes through the guard, so no caller can reach
-   * `fitAddon.fit()` around it. If a bare call ever appears there, the same
-   * mistake is available here.
-   */
-  it("keeps fitAddon.fit() behind the guard in the page", () => {
-    const src = html();
-    const calls = [...src.matchAll(/fitAddon\.fit\(\)/g)];
-    expect(calls.length, "fits outside the guard").toBe(1);
-    // The one call is the guard's own `doFit` argument (term.html:5609-5612),
-    // so every fit in that page is measured before it runs.
-    const wiring = src.indexOf("const fitGuard = createFitGuard(");
-    expect(wiring).toBeGreaterThan(-1);
-    const only = calls[0]!.index;
-    expect(only).toBeGreaterThan(wiring);
-    expect(only).toBeLessThan(src.indexOf("const safeFit =", wiring));
-  });
-});
-
+/**
+ * A "parity with the page it came from" describe stood here until 2026-09-05,
+ * with `frontend/term.html`. Its five cases quoted that page's own
+ * `createFitGuard` block: the zero test spelled `!(box.width > 0)` rather than
+ * `=== 0`, so NaN and a negative are refused too; a skip recording the debt and
+ * a fit clearing it; the guard weighing no visibility of its own; the replay
+ * site `if (!e.data.hidden && fitGuard.owed()) refit();`; and the fact that the
+ * page's ONE `fitAddon.fit()` call sat inside the guard, so no caller could
+ * reach around it. Every one of those properties is asserted above as this
+ * module's own, over its action tables. What is gone is the second
+ * implementation they were compared against.
+ */
 describe("the contract handed to the component", () => {
   const source = readFileSync(resolve(__dirname, "../src/terminal/fit.ts"), "utf8");
   const owes = (): string => {
