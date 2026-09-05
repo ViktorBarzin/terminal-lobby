@@ -1,6 +1,38 @@
+# The daily retention sweep for the session image store. Timer-driven, see
+# clipboard-cleanup.timer; policy lives in docs/adr/0005-session-image-store.md.
+#
+# It ran as unconfined root until 2026-09-05 (TL-6) while every other unit this
+# package ships runs as the account that owns the files. Nothing in the sweep
+# needs privilege: the store, the transfer directories and the layout files it
+# reads all belong to the same account clipboard-upload runs as. Root only
+# widened what a symlink planted in the store could reach.
 [Unit]
 Description=Retention sweep for the session image store and old dropped files
+Documentation=https://github.com/ViktorBarzin/terminal-lobby
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/clipboard-store-clean
+User=wizard
+
+# The sandbox tl-session-watch already demonstrates, minus the root that one
+# genuinely needs. ProtectSystem=strict makes the whole tree read-only, so the
+# directories the sweep deletes from are named back in; the '-' prefix means a
+# directory that has never been created is not a startup failure
+# (/tmp/clipboard-images holds only pre-store leftovers and is absent on a box
+# installed after the store landed).
+#
+# PrivateTmp is deliberately NOT set. The sweep's last step ages out the
+# transfer directories, two of which are the /tmp paths those files used before
+# TL-7 moved them to /run, and a private /tmp hides both.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/clipboard-store -/run/clipboard-files -/tmp/clipboard-files -/tmp/clipboard-images
+PrivateDevices=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=

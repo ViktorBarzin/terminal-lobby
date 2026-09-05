@@ -17,7 +17,7 @@ curl -H "X-Forwarded-User: $(whoami)" http://localhost:7684/sessions
 routes (`/upload` — pastes, uploads and dropped files alike — plus
 `/list`, `/img/…` and `/file/…`). Identity is now required on both
 upload fields, since a document joins the same per-user store; only a
-document over the 25MB cap still lands in `/tmp/clipboard-files`. Locally it needs a writable
+document over the 25MB cap still lands in `/run/clipboard-files`. Locally it needs a writable
 `/var/lib/clipboard-store` (`sudo install -d -o $USER
 /var/lib/clipboard-store`) — without it only the store routes 500.
 

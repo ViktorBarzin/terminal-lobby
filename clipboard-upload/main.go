@@ -30,7 +30,14 @@ import (
 // here must be able to point it at its own directory. Left as a const, the
 // suite passed only because the running service had already created the real
 // path, so it failed on any machine where the service had never run.
-var fileDir = "/tmp/clipboard-files"
+//
+// /run, not /tmp, since TL-7: this is clipboard-upload.service's
+// RuntimeDirectory, which systemd creates under the unit's User= before
+// ExecStart. In /tmp it was created by the MkdirAll below, which accepts an
+// existing directory of any owner and any mode, so a local user who won the
+// boot race owned every file transferred through it. The unit and this default
+// have to agree; TestEphemeralTransferDirIsTheUnitsRuntimeDirectory checks it.
+var fileDir = "/run/clipboard-files"
 
 const (
 	maxUpload = 100 << 20 // 100MB
@@ -1072,6 +1079,11 @@ func handleStoredFile(w http.ResponseWriter, r *http.Request) {
 // creating it as needed, and returns the absolute path.
 func saveToStore(osUser, session, name string, src io.Reader) (string, error) {
 	dir := filepath.Join(storeRoot, osUser, session)
+	// 0755 (and 0644 files, via the unit's UMask=0022) is a decision, not a
+	// default: docs/adr/0005-session-image-store.md argues it from the org's
+	// shared-workstation read policy, and show-image has to keep working for
+	// a user who is not the account this service runs as. Tightening it is an
+	// ADR change first.
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
