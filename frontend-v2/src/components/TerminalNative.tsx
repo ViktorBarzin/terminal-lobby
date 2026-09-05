@@ -69,6 +69,7 @@ import {
   type MirrorEvent,
   type MirrorState,
 } from "../terminal/mirror";
+import { shouldKeepFocus, takesFocus } from "../terminal/keepfocus";
 import {
   hostHeightStyle,
   NO_KEYBOARD_RESERVE,
@@ -2710,7 +2711,29 @@ export const TerminalNative: Component<{
       };
 
       const onPress = (e: MouseEvent): void => {
-        const r = reduceGesture(gesture, { type: "press", press: e }, worldAt(e.target));
+        const world = worldAt(e.target);
+        // HOLD THE KEYBOARD. A tap focuses the mirror at touchend; this compat
+        // mousedown follows 10-44ms later, hit-tested where the finger was
+        // against the layout as it stands NOW. The keyboard reserve has shrunk
+        // the host in between, so on a viewport that does not shrink with it the
+        // press lands off the grid, on something focusable=false, and blurs the
+        // mirror — the keyboard goes down as fast as it came up. Inside the grid
+        // dragselect's `swallow-press` already prevents it, which is why the top
+        // of the screen always worked (terminal/keepfocus.ts).
+        if (
+          shouldKeepFocus({
+            trusted: e.isTrusted,
+            coarsePointer: isCoarsePointer(),
+            insideScreen: world.insideScreen,
+            mirrorFocused: !!mirrorField && document.activeElement === mirrorField,
+            targetTakesFocus: takesFocus(e.target),
+          })
+        ) {
+          // preventDefault ONLY: the press still reaches every other listener and
+          // still produces its click. All that is suppressed is the focus move.
+          e.preventDefault();
+        }
+        const r = reduceGesture(gesture, { type: "press", press: e }, world);
         // Remembered only while the module is holding THIS press, so a press it
         // passed through (a right button, a modifier chord, our own clone)
         // cannot move the node a later travel will clone from.
