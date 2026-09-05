@@ -16,8 +16,7 @@ func attachFull(t *testing.T, owner, name, guest, requested string) (int, string
 		"owner": owner, "name": name, "guest": guest,
 		"tty": "/dev/pts/7", "requested": requested,
 	})
-	req := projectsReq(http.MethodPost, "/internal/attach", string(body), "")
-	req.Header.Set("X-Internal-Token", "secret-tok")
+	req := internalAttachReq(string(body), "secret-tok")
 	rec := httptest.NewRecorder()
 	handleInternalAttach(rec, req)
 	var resp struct {

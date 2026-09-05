@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"terminal-lobby/authuser"
 	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
@@ -337,7 +338,17 @@ var (
 // happen at all (else 403 — DENY), records the guest's client tty for later
 // kick, pins the grid when the attach is read-only, and returns the effective
 // mode ({"mode":"ro"|"rw"}) so tmux-attach.sh can source `-r` from the server,
-// never a client argument. Token-gated; localhost-only in practice.
+// never a client argument.
+//
+// Two gates, and what each one is worth. The peer must be loopback, because the
+// route sits on the same listener as the public ones and TL_BIND is wide for the
+// cluster ingress — before that check the endpoint answered anything that could
+// route to the box. The shared token must match, which separates the box's own
+// attach script from everything else running on the box; it is readable from
+// the process table of an attach that is in flight, so the peer check is what
+// carries the network boundary. Neither gate proves an identity: body.Guest and
+// body.Owner are what the caller SAYS it is, and the admin branch below trusts
+// body.Guest for exactly that reason.
 //
 // Two callers, two authorization stories:
 //
@@ -359,6 +370,10 @@ var (
 // attach authorized by administering the box can watch or drive what is running
 // there, and nothing more.
 func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
+	if !authuser.IsLoopback(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if internalToken == "" || r.Header.Get("X-Internal-Token") != internalToken {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -370,6 +385,9 @@ func handleInternalAttach(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Owner string `json:"owner"`
 		Name  string `json:"name"`
+		// Guest is a caller assertion, not a resolved identity: no identity
+		// header is read here and no secret is checked. It is trusted only
+		// because the loopback gate and the token bound who may say it.
 		Guest string `json:"guest"`
 		Tty   string `json:"tty"`
 		// Requested is the client's Watch-mode ask: "ro" to attach without

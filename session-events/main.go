@@ -332,8 +332,10 @@ func main() {
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	// The session-start hook runs as the OS user on THIS box, so it is hard-gated
 	// to loopback (defense in depth alongside the ingress not routing /hooks/*
-	// publicly).
-	root.HandleFunc("POST /hooks/session-start", localhostOnly(rg.handleSessionStart()))
+	// publicly) and, on top of that, to the account that opened the connection:
+	// loopback authenticates a host, and every lobby user has a shell on this
+	// host, so the "user" in the body was previously anyone's to choose.
+	root.HandleFunc("POST /hooks/session-start", localhostOnly(peerOwnsClaim(rg.handleSessionStart())))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {

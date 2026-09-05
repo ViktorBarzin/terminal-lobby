@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Cross-user file access.
@@ -127,7 +128,7 @@ func opReadEnvelope(home, path string) privopResult {
 	if status != http.StatusOK {
 		return privopResult{Status: status, Error: msg}
 	}
-	data, err := os.ReadFile(resolved)
+	data, err := readNoFollow(resolved)
 	if err != nil {
 		return errResult(err)
 	}
@@ -158,7 +159,7 @@ func opWrite(home, path string, content []byte) privopResult {
 	if info, err := os.Lstat(resolved); err == nil && !info.Mode().IsRegular() {
 		return privopResult{Status: http.StatusBadRequest, Error: "target is not a regular file"}
 	}
-	if err := os.WriteFile(resolved, content, 0o644); err != nil {
+	if err := writeNoFollow(resolved, content, 0o644); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return privopResult{Status: http.StatusNotFound, Error: "parent directory does not exist"}
 		}
@@ -198,6 +199,8 @@ func errResult(err error) privopResult {
 		return privopResult{Status: http.StatusBadRequest, Error: "invalid path"}
 	case errors.Is(err, fs.ErrNotExist):
 		return privopResult{Status: http.StatusNotFound, Error: "not found"}
+	case errors.Is(err, syscall.ELOOP):
+		return privopResult{Status: http.StatusBadRequest, Error: "not a regular file"}
 	default:
 		log.Printf("path resolution error: %v", err)
 		return privopResult{Status: http.StatusInternalServerError, Error: "internal error"}
