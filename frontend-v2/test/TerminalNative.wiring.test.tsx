@@ -702,9 +702,19 @@ function reportMouse(term: InstanceType<typeof xt.FakeTerminal>): string[] {
  * do not fake it (measured), so a test that needs a LONG gap on both clocks
  * has to stub that one as well (`fakeNow` below).
  */
-function touchEvent(type: string, ys: readonly number[], t: number): Event {
+function touchEvent(
+  type: string,
+  ys: readonly number[],
+  t: number,
+  changed: readonly { clientX: number; clientY: number }[] = [],
+): Event {
   const e = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(e, "touches", { value: ys.map((y) => ({ clientY: y })) });
+  // `changedTouches` is empty on a touchstart and holds the finger that LEFT on
+  // a touchend, which is the list the component reads for the lift point. It
+  // defaults empty so every case that does not care about the point keeps
+  // exactly the event it had, and the component's `lift` stays null for them.
+  Object.defineProperty(e, "changedTouches", { value: changed });
   Object.defineProperty(e, "timeStamp", { value: t });
   return e;
 }
@@ -4646,14 +4656,18 @@ describe("pinch to font size (term.html:7758-7965)", () => {
     cancelable = true,
   ): Event {
     const e = new Event(type, { bubbles: true, cancelable });
-    Object.defineProperty(e, "touches", {
-      value: fingers.map((f) => ({
-        identifier: f.id,
-        clientX: f.x,
-        clientY: f.y,
-        target: f.target ?? target,
-      })),
-    });
+    const list = fingers.map((f) => ({
+      identifier: f.id,
+      clientX: f.x,
+      clientY: f.y,
+      target: f.target ?? target,
+    }));
+    Object.defineProperty(e, "touches", { value: list });
+    // Same list, because the component reads `changedTouches[0]` on every
+    // touchend and a missing property would throw before the pinch was
+    // classified. Nothing here records a tap anyway: a multi-finger sequence
+    // leaves touchscroll.ts with a null `startY` and it emits no `focus`.
+    Object.defineProperty(e, "changedTouches", { value: list });
     return e;
   }
 
@@ -5324,5 +5338,222 @@ describe("pinch to font size (term.html:7758-7965)", () => {
     host.dispatchEvent(gestureEvent("gesturechange", 1.3));
     expect(m.term.options.fontSize).toBe(BASE);
     host.remove();
+  });
+});
+
+/**
+ * THE KEYBOARD SURVIVES A TAP LOW ON THE SCREEN.
+ *
+ * BUG (iPhone, reported 2026-09-04): "when tapping on the terminal in terminal
+ * mode, if I tap under the half of the screen the keyboard only flickers and
+ * then closes."
+ *
+ * The chain this section drives, link by link, in the order a finger produces
+ * it: the tap focuses the compose mirror, the keyboard opens, `feedViewport`
+ * takes the keyboard's height off the HOST, and the browser then replays the
+ * tap as a compat mouse press hit-tested at the finger's coordinates against
+ * the layout as it now is. Natively the host is the tap target's own ancestor,
+ * so that press lands below the terminal on a non-focusable shell element,
+ * where a mousedown blurs the field, and the blur shuts the keyboard the tap
+ * had just opened.
+ *
+ * WHAT THIS FILE CAN PROVE AND WHAT IT CANNOT. jsdom has no soft keyboard, no
+ * layout and no compat mouse events, and it does not implement a mousedown's
+ * focus default action either, so it cannot show the blur happening. Every
+ * other link is reachable, and those are what is asserted: the tap focuses the
+ * field, the reserve is written, and the press arriving where the terminal used
+ * to be comes back `defaultPrevented`. Cancelling that default action IS how
+ * the focus is kept, so a press that is prevented is a press that cannot blur.
+ *
+ * The device claim left over is that iOS behaves as measured, which needs a
+ * real iPhone: WebKit ignores `interactive-widget=resizes-content`, so
+ * `innerHeight` stays put and the host shrinks alone. The Android emulator
+ * cannot stand in for it unforced, because Chrome honours that hint and moves
+ * the whole layout viewport, which is why 30 real taps there kept the keyboard
+ * at every height from y=80 to y=720.
+ */
+describe("a tap low on the screen keeps its keyboard", () => {
+  /** The screen box BEFORE the keyboard: a 390x844 phone, less the soft-key row. */
+  const PRE: Box = { left: 0, top: 0, width: 390, height: 732 };
+  /**
+   * And after 312px of keyboard came off the host. 420 is the boundary the
+   * iPhone geometry predicts (732 - 312), 53.7% of a 783px `innerHeight`:
+   * Viktor's "about half", and the same place the iframe's version of this bug
+   * had its edge in August.
+   */
+  const POST: Box = { left: 0, top: 0, width: 390, height: 420 };
+
+  /** Where the finger goes: inside the screen before the shrink, below it after. */
+  const TAP_Y = 600;
+  const KEYBOARD_PX = 312;
+
+  const realMatchMedia = window.matchMedia;
+  const vv = { height: 844, offsetTop: 0, addEventListener() {}, removeEventListener() {} };
+  let shell: HTMLDivElement | null = null;
+
+  /**
+   * The clone's `view: window` throws under vitest's jsdom, for the reason the
+   * plain-drag section sets out in full (`ViewlessMouseEvent`). The last case
+   * here drives the ordinary interception, so it needs the same shim: without
+   * it the clone dispatch throws inside the document listener and the press
+   * that a person meant as a selection quietly reaches nothing.
+   */
+  const realMouseEvent = globalThis.MouseEvent;
+  beforeEach(() => {
+    globalThis.MouseEvent = class extends MouseEvent {
+      constructor(type: string, init: MouseEventInit = {}) {
+        const rest: MouseEventInit = { ...init };
+        delete rest.view;
+        super(type, rest);
+      }
+    } as unknown as typeof MouseEvent;
+  });
+
+  /** A phone: a coarse pointer, so the mirror mounts and the touch listeners attach. */
+  async function onPhone(): Promise<{ m: Mounted; screen: HTMLDivElement }> {
+    vv.height = window.innerHeight;
+    vv.offsetTop = 0;
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: vv });
+    window.matchMedia = ((q: string) =>
+      ({
+        matches: q.includes("pointer: coarse"),
+        media: q,
+        addEventListener() {},
+        removeEventListener() {},
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+    const m = await mountOpen();
+    return { m, screen: boxScreen(m.term, PRE) };
+  }
+
+  /**
+   * The shell below the terminal, which is what the replay lands on.
+   *
+   * `#soft-keys`, `.sk-group` and `.tl-session-view` were all measured
+   * focusable=false on the emulator, and a mousedown on a non-focusable element
+   * is what blurs a focused field. Outside the host, so the component's
+   * `insideScreen` reads false exactly as it does on a phone.
+   */
+  function belowTheTerminal(): HTMLDivElement {
+    const el = document.createElement("div");
+    el.id = "soft-keys";
+    document.body.appendChild(el);
+    shell = el;
+    return el;
+  }
+
+  afterEach(() => {
+    globalThis.MouseEvent = realMouseEvent;
+    window.matchMedia = realMatchMedia;
+    Reflect.deleteProperty(window, "visualViewport");
+    shell?.remove();
+    shell = null;
+  });
+
+  /** One finger, down and up at the same point, which is what a tap is. */
+  function tap(target: EventTarget, y: number): void {
+    target.dispatchEvent(touchEvent("touchstart", [y], 0));
+    target.dispatchEvent(touchEvent("touchend", [], 10, [{ clientX: 100, clientY: y }]));
+  }
+
+  /** The keyboard opening: the shell's own reading, then the height it forwards. */
+  function keyboardOpens(m: Mounted): void {
+    vv.height = window.innerHeight - KEYBOARD_PX;
+    expect(window.__tlKeyboardOffset?.(KEYBOARD_PX)).toBe(true);
+    expect(m.term.host?.style.height).toBe(`calc(100% - ${KEYBOARD_PX}px)`);
+    // The box the shrink leaves. jsdom lays nothing out, so this is the
+    // measurement a browser would have made, stated rather than computed.
+    boxScreen(m.term, POST);
+  }
+
+  /** A real press, at the point the finger left, on the node a hit test now finds. */
+  function replay(on: EventTarget, y: number): MouseEvent {
+    const e = trusted("mousedown", { button: 0, buttons: 1, detail: 1, clientX: 100, clientY: y });
+    on.dispatchEvent(e);
+    return e;
+  }
+
+  /**
+   * THE BUG, end to end. Each assertion is one link, so a regression says which
+   * link broke rather than only that the keyboard went away.
+   */
+  it("cancels the press that lands where the terminal used to be", async () => {
+    const { m, screen } = await onPhone();
+    const shellEl = belowTheTerminal();
+
+    tap(screen, TAP_Y);
+    expect(document.activeElement, "the tap focuses the compose mirror").toBe(m.mirror());
+
+    keyboardOpens(m);
+    expect(TAP_Y, "the finger is below the box the shrink left").toBeGreaterThan(POST.height);
+
+    const e = replay(shellEl, TAP_Y);
+    expect(e.defaultPrevented, "the replay's focus change is cancelled").toBe(true);
+    expect(document.activeElement, "so the field still holds the focus").toBe(m.mirror());
+  });
+
+  /**
+   * THE NEGATIVE CASE, and the one that would make this unshippable if it
+   * failed: a press on the soft-key row that a person meant. Its touch never
+   * reaches the recognizer, whose listeners are on the host, so nothing is
+   * recorded and the press keeps its default action and its focus change.
+   */
+  it("leaves a press on the soft-key row alone", async () => {
+    const { m } = await onPhone();
+    const shellEl = belowTheTerminal();
+    keyboardOpens(m);
+
+    tap(shellEl, TAP_Y);
+    expect(replay(shellEl, TAP_Y).defaultPrevented).toBe(false);
+  });
+
+  /**
+   * A press elsewhere in the shell with a terminal tap's record live. The rule
+   * is about ONE finger, so a press away from where that finger lifted is
+   * somebody pressing and keeps its default action.
+   */
+  it("leaves a press somewhere else alone, record or no record", async () => {
+    const { m, screen } = await onPhone();
+    const shellEl = belowTheTerminal();
+
+    tap(screen, TAP_Y);
+    keyboardOpens(m);
+    expect(replay(shellEl, TAP_Y + 40).defaultPrevented).toBe(false);
+  });
+
+  /**
+   * A SCROLL IS NOT A TAP. The record is written from touchscroll.ts's `focus`
+   * verdict, which a gesture travelling more than `SWIPE_THRESHOLD_PX` never
+   * earns, so a flick ending low on the screen protects nothing. It raises no
+   * keyboard either, so there is nothing there to protect.
+   */
+  it("records nothing for a scroll that ended low on the screen", async () => {
+    const { m, screen } = await onPhone();
+    const shellEl = belowTheTerminal();
+
+    screen.dispatchEvent(touchEvent("touchstart", [TAP_Y - 60], 0));
+    screen.dispatchEvent(touchEvent("touchmove", [TAP_Y], 10));
+    screen.dispatchEvent(touchEvent("touchend", [], 20, [{ clientX: 100, clientY: TAP_Y }]));
+    expect(document.activeElement, "a scroll takes no focus").not.toBe(m.mirror());
+
+    keyboardOpens(m);
+    expect(replay(shellEl, TAP_Y).defaultPrevented).toBe(false);
+  });
+
+  /**
+   * A tap ABOVE the boundary is the case that must not change. The host shrank,
+   * but not past this finger, so the replay is still inside the screen and gets
+   * the ordinary interception: swallowed, cloned for xterm's SelectionService,
+   * and focused.
+   */
+  it("keeps the ordinary path for a tap the keyboard never displaced", async () => {
+    const { m, screen } = await onPhone();
+    const clones = watchPresses(screen);
+
+    tap(screen, 100);
+    keyboardOpens(m);
+
+    expect(replay(screen, 100).defaultPrevented).toBe(true);
+    expect(clones.length, "the clone xterm selects with").toBe(1);
+    expect(document.activeElement).toBe(m.mirror());
   });
 });

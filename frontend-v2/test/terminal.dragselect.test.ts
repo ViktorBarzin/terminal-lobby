@@ -7,6 +7,8 @@ import {
   NO_GESTURE,
   REPLACE_PX,
   STALL_MS,
+  TAP_PRESS_MS,
+  TAP_PRESS_PX,
   reduce,
   type DragSelectAction,
   type DragSelectEvent,
@@ -97,6 +99,7 @@ const dragging = (clientX: number, clientY: number, at: number): DragSelectState
   drag: { clientX, clientY, at },
   lastRelease: null,
   pending: null,
+  tap: null,
 });
 
 describe("which presses are reclaimed at all", () => {
@@ -494,6 +497,7 @@ describe("the trackpad ghost-click guard", () => {
     drag: null,
     lastRelease: { at: 10_000, clientX: 100, clientY: 100 },
     pending: null,
+    tap: null,
   };
 
   /**
@@ -784,6 +788,42 @@ describe("what the component is told to do", () => {
       expect(owes()).toContain(needle);
     },
   );
+
+  /**
+   * The `tap` event is the one thing here a mouse listener cannot supply, and
+   * it comes with two ways to wire it wrongly: feeding it on every touchend
+   * rather than on touchscroll.ts's `focus` verdict, which would record a
+   * scroll as a tap, and building the world from `touches` rather than from the
+   * touchend's `target`, which is what says where the finger went DOWN.
+   */
+  it.each(["tap", "touchscroll.ts's `focus`", "changedTouches", "touchstart"])(
+    "names %s among the tap event's wiring",
+    (needle) => {
+      expect(owes()).toContain(needle);
+    },
+  );
+
+  /**
+   * The purity ADR-0017 asks of every module under src/terminal, and the guard
+   * terminal.viewport.test.ts already keeps over its neighbour. It matters more
+   * here since the tap rules gained a clock reading and a containment test, and
+   * both are the component's to take: the header names `Date.now` and
+   * `contains` in prose, which is why the comments come off before the search.
+   * What must not appear is a CALL.
+   */
+  const code = (): string => source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+  it.each([
+    ["the DOM", /\bdocument\s*\./],
+    ["the window", /\bwindow\s*\./],
+    ["a media query", /matchMedia\s*\(/],
+    ["a timer", /set(?:Timeout|Interval)\s*\(/],
+    ["a frame", /requestAnimationFrame\s*\(/],
+    ["a clock", /Date\.now|performance\.now/],
+    ["an element", /getBoundingClientRect|\.contains\s*\(|dispatchEvent/],
+    ["an event's own methods", /preventDefault|stopImmediatePropagation/],
+  ])("reaches for %s nowhere in its code", (_name, forbidden) => {
+    expect(code()).not.toMatch(forbidden);
+  });
 });
 
 describe("parity with term.html", () => {
@@ -857,5 +897,180 @@ describe("parity with term.html", () => {
     const native = readFileSync(resolve(__dirname, "../src/components/TerminalNative.tsx"), "utf8");
     expect(native).toContain("macOptionClickForcesSelection: true");
     expect(native).toContain("altClickMovesCursor: false");
+  });
+});
+
+/**
+ * THE TAP'S OWN REPLAYED PRESS, and why this module is the one that stops it.
+ *
+ * BUG (iPhone, reported 2026-09-04, against the native terminal): "when tapping
+ * on the terminal in terminal mode, if I tap under the half of the screen the
+ * keyboard only flickers and then closes."
+ *
+ * The chain, one link per rule below. A tap focuses the compose mirror and the
+ * soft keyboard opens. Making room for it shrinks the HOST, which natively is
+ * the tap target's own ancestor (viewport.ts's reserve, TerminalNative's
+ * `feedViewport`), and on iOS nothing else on the page moves, because WebKit
+ * ignores `interactive-widget=resizes-content` and leaves `innerHeight` where it
+ * was. The browser then replays the tap as a compat mouse press, hit-tested at
+ * the finger's coordinates against the layout AS IT NOW IS, so for a tap low
+ * enough that press lands below the terminal on a non-focusable shell element.
+ * A mousedown there blurs the field, and the blur closes the keyboard the tap
+ * had just opened.
+ *
+ * SECOND TIME, ONE SURFACE ALONG. The iframe had the same bug and it was fixed
+ * on 2026-08-17 by making the tap target stop moving (app.css's
+ * `.tl-views.tl-kb-inline`; term-html.bridge.test.ts tells it in full, measured
+ * at 390x844 with the boundary at ~54%). Native deleted the frame, so the
+ * element that shrinks IS the element under the finger and that answer is not
+ * available a second time.
+ *
+ * PREVENTED, NOT REPAIRED. A refocus is the obvious fix and it is the wrong one:
+ * a listener runs before the default action, so a refocus on this event is
+ * undone by the blur that follows it, and a refocus deferred past the blur has
+ * left the user gesture, which is the only thing WebKit will raise a keyboard
+ * for. That repair moves the focus back WITHOUT the keyboard, which is the
+ * flicker itself. Cancelling the press's default action keeps the focus that is
+ * already there.
+ */
+describe("the compat press of a tap the keyboard displaced", () => {
+  /** The lift of a tap, at the point the finger left. */
+  const tapped = (over: Partial<{ clientX: number; clientY: number }> = {}): DragSelectEvent => ({
+    type: "tap",
+    lift: { clientX: 100, clientY: 380, ...over },
+  });
+
+  /** A tap on the terminal, at t=10000, as touchscroll.ts's `focus` action delivers it. */
+  const afterTap = (over: Partial<{ clientX: number; clientY: number }> = {}): DragSelectState =>
+    reduce(NO_GESTURE, tapped(over), world()).state;
+
+  /**
+   * The world the REPLAY arrives in: the same point, no longer in the terminal,
+   * because the host shrank out from under it between the lift and the press.
+   * `insideScreen` is a containment test, so this is the whole of what moved.
+   */
+  const displaced = (over: Partial<DragSelectWorld> = {}): DragSelectWorld =>
+    world({ insideScreen: false, ...over });
+
+  it("remembers a tap that lifted inside the terminal", () => {
+    expect(afterTap()).toMatchObject({ tap: { at: 10_000, clientX: 100, clientY: 380 } });
+  });
+
+  /**
+   * The component leans on this: `feedTouch`'s `focus` arm reduces and stores
+   * the state WITHOUT going through `perform`, because the focus the arm just
+   * took is the very thing the record protects and there is nothing left to do.
+   * An action added here later would be dropped in silence, so it fails here.
+   */
+  it("asks the component for nothing", () => {
+    expect(reduce(NO_GESTURE, tapped(), world()).actions).toEqual([]);
+  });
+
+  /**
+   * THE FIX. Swallowed, which is `preventDefault` and nothing else that matters
+   * here, and NO `focus` beside it: the field the tap focused still holds the
+   * focus, and asking for it again is the repair that costs the keyboard.
+   */
+  it("swallows the replay, and asks for nothing else", () => {
+    const r = reduce(afterTap(), down({ clientX: 100, clientY: 380 }), displaced({ now: 10_011 }));
+    expect(kinds(r)).toEqual(["swallow-press"]);
+  });
+
+  /**
+   * A tap ABOVE the boundary is the case that must not change: the host shrank,
+   * but not past this finger, so the replay is still inside the screen and takes
+   * the ordinary path, clone and focus included.
+   */
+  it("leaves a replay that is still inside the terminal on the ordinary path", () => {
+    const r = reduce(afterTap({ clientY: 100 }), down({ clientY: 100 }), world({ now: 10_011 }));
+    expect(kinds(r)).toEqual(["swallow-press", "force-selection", "focus"]);
+  });
+
+  /**
+   * THE NEGATIVE CASE THAT MATTERS MOST. A tap that starts on the soft-key row,
+   * a session card or the settings sheet is a press a person meant, and it never
+   * records anything: `onTap` writes only for a lift inside `.xterm-screen`. So
+   * every control in the shell keeps its press, and keeps moving the focus.
+   */
+  it("records nothing for a tap that started outside the terminal", () => {
+    const state = reduce(NO_GESTURE, tapped(), displaced()).state;
+    expect(state.tap).toBeNull();
+    expect(kinds(reduce(state, down(), displaced({ now: 10_011 })))).toEqual([]);
+  });
+
+  /**
+   * And a tap outside CLEARS a record it was holding, so a terminal tap whose
+   * replay the browser never sent cannot be spent by the soft-key tap that
+   * follows it.
+   */
+  it("clears a held record when the next tap lands outside", () => {
+    const state = reduce(afterTap(), tapped(), displaced()).state;
+    expect(state.tap).toBeNull();
+    expect(kinds(reduce(state, down({ clientX: 100, clientY: 380 }), displaced()))).toEqual([]);
+  });
+
+  /**
+   * Measured touchend to mousedown on the Android emulator: 10-44ms over 30
+   * taps, median 11. `TAP_PRESS_MS` is roughly six times the worst of those, for
+   * a slower phone whose main thread is busy with the keyboard animation the tap
+   * started; a press later than that is somebody pressing.
+   */
+  it("stops protecting once the window has passed", () => {
+    const late = displaced({ now: 10_000 + TAP_PRESS_MS + 1 });
+    expect(kinds(reduce(afterTap(), down({ clientX: 100, clientY: 380 }), late))).toEqual([]);
+    const inside = displaced({ now: 10_000 + TAP_PRESS_MS });
+    expect(kinds(reduce(afterTap(), down({ clientX: 100, clientY: 380 }), inside))).toEqual([
+      "swallow-press",
+    ]);
+  });
+
+  /** A press somewhere else is a different finger, whatever the clock says. */
+  it("protects only the point the tap lifted at", () => {
+    const w = displaced({ now: 10_011 });
+    const far = down({ clientX: 100 + TAP_PRESS_PX + 1, clientY: 380 });
+    expect(kinds(reduce(afterTap(), far, w))).toEqual([]);
+    const near = down({ clientX: 100 + TAP_PRESS_PX, clientY: 380 - TAP_PRESS_PX });
+    expect(kinds(reduce(afterTap(), near, w))).toEqual(["swallow-press"]);
+  });
+
+  /**
+   * ONE TAP, ONE PRESS. The record is spent by the first trusted left press
+   * after the lift, so a second press at the same place inside the same window
+   * reaches whatever is under it.
+   */
+  it("spends the record on the first press", () => {
+    const w = displaced({ now: 10_011 });
+    const first = reduce(afterTap(), down({ clientX: 100, clientY: 380 }), w);
+    expect(kinds(first)).toEqual(["swallow-press"]);
+    expect(first.state.tap).toBeNull();
+    expect(kinds(reduce(first.state, down({ clientX: 100, clientY: 380 }), w))).toEqual([]);
+  });
+
+  /**
+   * The force-selection clone is an untrusted press this module dispatches on
+   * the screen. It must not spend the record on its way past the recursion
+   * guard, or a real replay arriving after it would go unprotected.
+   */
+  it("is not spent by our own clone", () => {
+    const w = displaced({ now: 10_011 });
+    const cloned = reduce(afterTap(), down({ isTrusted: false }), w);
+    expect(kinds(cloned)).toEqual([]);
+    expect(cloned.state.tap).not.toBeNull();
+    expect(kinds(reduce(cloned.state, down({ clientX: 100, clientY: 380 }), w))).toEqual([
+      "swallow-press",
+    ]);
+  });
+
+  /**
+   * A drag still selects. The replay guard sits behind `!insideScreen`, so every
+   * press on the terminal itself reaches the clone path untouched, and the
+   * travel that turns a held-back press into a selection is unchanged.
+   */
+  it("leaves drag-to-select alone", () => {
+    const w = world({ hasSelection: true, now: 10_011 });
+    const held = reduce(afterTap({ clientY: 100 }), down({ clientY: 100 }), w);
+    expect(kinds(held)).toEqual(["swallow-press", "focus"]);
+    const dragged = reduce(held.state, moved({ clientX: 200, clientY: 100 }), w);
+    expect(kinds(dragged)).toEqual(["clear-selection", "force-selection"]);
   });
 });
