@@ -84,6 +84,27 @@ identity model, not two.
   quotes when reporting a problem, so it is worth showing in the UI somewhere
   copyable.
 
+## What the migration missed, and what fixes it
+
+A rename has to carry everything keyed by the name. `rename_cascade.go` carried
+six stores; it did not carry the one piece of state tmux itself holds. `PinGrid`
+(`sessionio/grid.go`) writes the session name into three hooks, so renaming a
+watched session leaves them naming a session that no longer resolves. Each hook
+then fails into its own `|| true`, nothing resizes the window, and `window-size`
+stays `manual` — the combination that freezes a grid rather than merely nudging
+it. The session stops following the shape of whatever it is being read in, which
+is invisible until someone reads it on a phone.
+
+Measured on 2026-09-05, after the migration renamed every label-named session at
+once: 1 of wizard's sessions frozen and 8 of emo's 16, none reported. One sat at
+58x38 with a 92x58 client attached, its hooks reading `resize-window -t =ux:`
+against a server holding no session `ux`.
+
+Two changes. The cascade now repins after a rename, so this cannot recur. And
+`tmux-api` sweeps for stale pins on every start and repairs them, which is what
+returns the sessions already frozen — a marker-guarded one-shot would not, since
+the freeze predates the code that detects it.
+
 ## What this does not do
 
 The id is not a security boundary. Session names have never been secret — they

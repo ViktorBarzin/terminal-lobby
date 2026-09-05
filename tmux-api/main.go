@@ -354,7 +354,12 @@ func main() {
 	// per user and the listener must not wait on that — nothing serves worse
 	// for the migration having not finished yet, and the lobby's five-second
 	// poll picks up each new name as it lands.
-	go migrateSessionNamesToIDs(mappedOSUsers(), userSessions)
+	// One goroutine, in order: the rename pass makes a pin stale, so the sweep
+	// that repairs stale pins has to follow it rather than race it.
+	go func() {
+		migrateSessionNamesToIDs(mappedOSUsers(), userSessions)
+		repairStaleGridPins(mappedOSUsers(), userSessions)
+	}()
 
 	// Localhost token the devvm attach path uses to record a shared attach's
 	// client tty (for kick-on-revoke). Non-fatal if it can't be set up.
