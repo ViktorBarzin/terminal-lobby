@@ -391,6 +391,10 @@ func createProject(w http.ResponseWriter, r *http.Request, osUser string) {
 		http.Error(w, "project dir must be an absolute path", http.StatusBadRequest)
 		return
 	}
+	if body.Dir != "" && !callerOwnsDir(body.Dir, osUser) {
+		http.Error(w, "project dir must be under your own home directory", http.StatusBadRequest)
+		return
+	}
 	p := GlobalProject{
 		ID:        newProjectID(),
 		Name:      name,
@@ -556,7 +560,7 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		if !projectMember(ps.Projects[i], target) {
 			ps.Projects[i].Members = append(ps.Projects[i].Members, Member{OSUser: target, AddedBy: osUser})
 			if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
-				grant = &coownOp{"grant", p.Dir, []string{target}}
+				grant = &coownOp{"grant", p.Dir, []string{target}, coownOwnerFunc(p)(p.Dir)}
 			}
 		}
 		return nil
@@ -580,7 +584,7 @@ func removeMember(w http.ResponseWriter, osUser, id, target string) {
 	var revoke *coownOp
 	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" && projectMember(p, target) {
-			revoke = &coownOp{"revoke", p.Dir, []string{target}}
+			revoke = &coownOp{"revoke", p.Dir, []string{target}, coownOwnerFunc(p)(p.Dir)}
 		}
 		members := ps.Projects[i].Members[:0]
 		for _, m := range ps.Projects[i].Members {
@@ -707,6 +711,10 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		http.Error(w, "project dir must be an absolute path", http.StatusBadRequest)
 		return
 	}
+	if body.Dir != nil && *body.Dir != "" && !callerOwnsDir(*body.Dir, osUser) {
+		http.Error(w, "project dir must be under your own home directory", http.StatusBadRequest)
+		return
+	}
 	if body.AttachMode != nil {
 		switch *body.AttachMode {
 		case "", projectAttachRO, projectAttachRW:
@@ -741,7 +749,7 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		return
 	}
 	// Apply/remove filesystem ACLs if co-ownership or the dir changed (async).
-	for _, op := range coownOpsForPatch(wasCoOwned, oldDir, updated.CoOwned, updated.Dir, memberUsers(updated)) {
+	for _, op := range coownOpsForPatch(wasCoOwned, oldDir, updated.CoOwned, updated.Dir, memberUsers(updated), coownOwnerFunc(updated)) {
 		runCoownAsync(op)
 	}
 	// One PATCH can carry several edits; each is its own event so a dashboard
@@ -776,7 +784,7 @@ func deleteProject(w http.ResponseWriter, osUser, id string) {
 	var revoke *coownOp
 	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
-			revoke = &coownOp{"revoke", p.Dir, memberUsers(p)}
+			revoke = &coownOp{"revoke", p.Dir, memberUsers(p), coownOwnerFunc(p)(p.Dir)}
 		}
 		ps.Projects = append(ps.Projects[:i], ps.Projects[i+1:]...)
 		return nil
