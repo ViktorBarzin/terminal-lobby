@@ -424,9 +424,10 @@ var actAsGate = &authuser.Gate{
 }
 
 // authHeader is the identity header this build resolves by default. The name is
-// configuration now (TL_AUTH_HEADER); the constant remains so tests, and the
-// one handler that only wants to know whether a request carries an identity at
-// all, can name it.
+// configuration now (TL_AUTH_HEADER), so nothing in the request path may name
+// the constant: the handler that asks whether a request carries an identity at
+// all asks actAsGate.Config.Header(), which is what the gate itself resolves
+// by. What is left is the tests, which run against an unconfigured gate.
 const authHeader = authuser.DefaultAuthHeader
 
 // setMapPath keeps the gate in step, since the gate is what reads the file.
@@ -439,7 +440,7 @@ func resolveOSUser(w http.ResponseWriter, r *http.Request) string {
 	return actAsGate.ResolveOSUser(w, r)
 }
 
-// osUserKnown reports whether name is a mapped OS user. /register's localhost
+// osUserKnown reports whether name is a mapped OS user. /register's loopback
 // callers self-report their user; only real terminal accounts are accepted.
 func osUserKnown(name string) bool { return actAsGate.IsTarget(name) }
 
@@ -620,13 +621,31 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Three ways in, in the order that keeps the weakest one local.
+	//
+	// The identity branch is selected by the CONFIGURED header name: reading the
+	// compiled default here meant every request on a box whose proxy sends
+	// X-Authentik-Username fell through to the user= branch instead.
+	//
+	// That branch is for the box's own tools — show-image and the clipboard
+	// helper run as the user, with no proxy in front of them and no header to
+	// send — and it trusts a self-reported name. Nothing checked that the caller
+	// was local, so with TL_BIND widened for an ingress elsewhere, any host that
+	// could route to this port named any mapped user and wrote into that user's
+	// store. It is loopback-only now; a caller on the network must present
+	// identity, and the proxy secret with it once one is configured.
 	var osUser string
-	if r.Header.Get(authHeader) != "" {
+	switch {
+	case r.Header.Get(actAsGate.Config.Header()) != "":
 		osUser = resolveOSUser(w, r)
 		if osUser == "" {
 			return
 		}
-	} else {
+	case !authuser.IsLoopback(r):
+		log.Printf("register: refusing headerless request from %s", r.RemoteAddr)
+		http.Error(w, "missing identity header", http.StatusUnauthorized)
+		return
+	default:
 		osUser = r.FormValue("user")
 		if !osUserKnown(osUser) {
 			log.Printf("register: unknown user %q", osUser)

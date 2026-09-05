@@ -21,6 +21,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/user"
@@ -71,7 +72,13 @@ type Config struct {
 	MultiUser   string // TL_MULTI_USER: "auto" (default), "on", "off"
 }
 
-func (c Config) header() string {
+// Header is the identity header's configured name, or the compiled default
+// when TL_AUTH_HEADER is unset. Exported because a service that only wants to
+// know whether a request carries an identity at all must ask by the SAME name
+// the gate resolves by: a copy that names the compiled default reads an empty
+// string on every box whose proxy sends something else, and takes the wrong
+// branch every time.
+func (c Config) Header() string {
 	if c.AuthHeader == "" {
 		return DefaultAuthHeader
 	}
@@ -112,7 +119,7 @@ func (g *Gate) Resolve(r *http.Request) (Identity, error) {
 		return Identity{}, err
 	}
 
-	raw := strings.TrimSpace(r.Header.Get(g.Config.header()))
+	raw := strings.TrimSpace(r.Header.Get(g.Config.Header()))
 	if raw == "" {
 		return Identity{}, ErrNoIdentity
 	}
@@ -187,6 +194,23 @@ func (g *Gate) checkSecret(r *http.Request) error {
 		return ErrBadSecret
 	}
 	return nil
+}
+
+// IsLoopback reports whether the request came from this host.
+//
+// A route meant for the box's own tools uses it. Those callers have no proxy in
+// front of them and no identity header to send, so the peer address is the only
+// thing that separates them from a caller on the network — and with TL_BIND
+// widened for a proxy that lives elsewhere, that network is everything routable
+// to the box. A RemoteAddr that will not parse is not loopback, so anything
+// unusual fails closed.
+func IsLoopback(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
 }
 
 // MultiUser reports the mode. "auto" — the default — reads the presence of the
@@ -394,12 +418,12 @@ func (g *Gate) Configure(service, bindAddr string) {
 	if g.MultiUser() {
 		mode = "multi-user"
 	}
-	log.Printf("%s: identity header %q, %s mode", service, g.Config.header(), mode)
+	log.Printf("%s: identity header %q, %s mode", service, g.Config.Header(), mode)
 	if g.Config.ProxySecret == "" {
 		log.Printf("%s: no TL_PROXY_SECRET set — any caller that can reach %s may "+
 			"send %s and be treated as that user. Set TL_PROXY_SECRET in "+
 			"/etc/terminal-lobby.conf and have your proxy send %s to require one.",
-			service, bindAddr, g.Config.header(), SecretHeader)
+			service, bindAddr, g.Config.Header(), SecretHeader)
 	}
 }
 

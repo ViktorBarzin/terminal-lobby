@@ -57,7 +57,7 @@ func req(header, user string, extra ...string) *http.Request {
 
 func TestDefaultHeaderIsXForwardedUser(t *testing.T) {
 	g := resolveGate(t, Config{}, "", "")
-	if got := g.Config.header(); got != DefaultAuthHeader {
+	if got := g.Config.Header(); got != DefaultAuthHeader {
 		t.Fatalf("unconfigured header = %q, want %q", got, DefaultAuthHeader)
 	}
 	if DefaultAuthHeader != "X-Forwarded-User" {
@@ -570,5 +570,42 @@ func TestResolveRealOSUserDoesNotReportAnActAs(t *testing.T) {
 	g.ResolveRealOSUser(httptest.NewRecorder(), r)
 	if fired != 0 {
 		t.Fatalf("the real-user resolver reported %d act-as switches", fired)
+	}
+}
+
+// --- routes that resolve no identity ---------------------------------------
+//
+// Five services bind every interface when the proxy lives elsewhere, so a route
+// that never calls Resolve is a route the secret does not cover. What separates
+// the box's own tools from a caller on that network is the peer address.
+
+func TestIsLoopbackFailsClosed(t *testing.T) {
+	for _, c := range []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:44321", true},
+		{"127.0.0.53:9", true},
+		{"[::1]:44321", true},
+		{"10.0.20.9:44321", false},
+		{"192.168.1.7:80", false},
+		{"", false},
+		{"not-an-address", false},
+	} {
+		r := httptest.NewRequest("POST", "/register", nil)
+		r.RemoteAddr = c.addr
+		if got := IsLoopback(r); got != c.want {
+			t.Fatalf("IsLoopback(%q) = %v, want %v", c.addr, got, c.want)
+		}
+	}
+}
+
+// A service asking "does this request carry an identity at all" must ask by the
+// configured name. Reading the compiled default instead is silently wrong on
+// every box whose proxy sends anything else, which is every Authentik box.
+func TestConfiguredHeaderNameIsReadable(t *testing.T) {
+	g := resolveGate(t, Config{AuthHeader: "X-Authentik-Username"}, "", "")
+	if got := g.Config.Header(); got != "X-Authentik-Username" {
+		t.Fatalf("Header() = %q, want the configured name", got)
 	}
 }
