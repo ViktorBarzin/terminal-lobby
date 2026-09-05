@@ -55,10 +55,14 @@ server {
   location = /icon-512.png        { auth_basic off; proxy_pass http://clipboard_upload; }
   location = /icon-512-maskable.png { auth_basic off; proxy_pass http://clipboard_upload; }
   location /assets/               { auth_basic off; proxy_pass http://clipboard_upload; }
-  # The terminal page. ttyd serves only the single index file it is given, so
-  # this has to reach the service that holds the built assets or the terminal
-  # iframe gets ttyd's 404 page. Behind auth, unlike the PWA shell above: it is
-  # the application, not the installable wrapper.
+  # The DELETED terminal page. It was a second document the lobby framed, and
+  # the route had to reach the service holding it or the iframe got ttyd's 404.
+  # The page is gone and the route stays, because clipboard-upload now answers
+  # the path with a redirect to the lobby, carrying the session name across from
+  # the old positional ?arg= to the lobby's ?session=. ttyd serves only the one
+  # index file it is given, so without this a bookmark or an installed
+  # home-screen icon lands on ttyd's 404 instead. Behind auth, like the lobby it
+  # redirects to, rather than off it like the PWA shell above.
   location = /term.html           { proxy_pass http://clipboard_upload; }
 
   # tmux-api is the one route whose prefix is stripped, matching the ingress.
