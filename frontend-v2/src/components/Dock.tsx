@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, Show, type Component } from "solid-js";
-import { TerminalView } from "./TerminalView";
+import { TerminalNative } from "./TerminalNative";
+import { terminalFrameArgs } from "../lib/terminal-url";
 import type { DockStore } from "../store/dock";
 
 /**
@@ -11,13 +12,11 @@ import type { DockStore } from "../store/dock";
  * shell running — that is why Ctrl+J cycles create → hide → show rather than
  * tearing the terminal down each time.
  *
- * Desktop only. A phone has room for one terminal, and the vanilla page draws
- * the same line (coarse pointers ignore the dock entirely).
+ * Desktop only. A phone has room for one terminal, so coarse pointers ignore
+ * the dock entirely.
  */
 export const Dock: Component<{
   dock: DockStore;
-  /** a chord fired inside the dock's terminal → the lobby dispatcher. */
-  onFrameCommand?: (command: string) => void;
 }> = (props) => {
   const d = props.dock;
   const [dragging, setDragging] = createSignal(false);
@@ -73,18 +72,29 @@ export const Dock: Component<{
           </button>
         </div>
         <div class="tl-dock-body">
-          <TerminalView
-            session={d.session()!}
+          <TerminalNative
+            // arg2 is a CREATE-only concern, so the shell command goes out only
+            // while this dock is the thing bringing its tmux session into being
+            // — a re-attach must not carry it, or `new-session -A` would
+            // resurrect an exited shell as whatever this passed.
+            args={terminalFrameArgs(d.session()!, {
+              cmd: d.creating() ? "shell" : undefined,
+            })}
+            // The dock is rendered only while it is showing, so a mounted one
+            // is on screen by construction.
             active
-            creating={d.creating()}
-            newCommand={() => "shell"}
-            // The primary session view owns the window bridges; a second frame
-            // installing them would point the soft keys, paste and the focus
-            // handback at this shell instead of the session above it.
+            // The primary session view owns the window bridges; a second
+            // terminal installing them would point the soft keys, paste and the
+            // focus handback at this shell instead of the session above it.
+            // TerminalNative also reads this as its fit guard's `shown`
+            // signal, which the dock does not need: it mounts with a box
+            // already, so the host's ResizeObserver delivers the first fit.
             ownsBridges={false}
-            // ...but a chord pressed IN here still has to reach the lobby —
-            // Ctrl+J from the dock is how you hide the dock.
-            onFrameCommand={props.onFrameCommand}
+            // No connection badge and no attention route: the dock has no bar
+            // of its own, and the lobby's tab badge speaks for the session
+            // above it. A chord pressed in here needs no forwarding either —
+            // this terminal is in the lobby's own document, so the keybinding
+            // engine's capture-phase window listener sees the keydown.
           />
         </div>
       </div>

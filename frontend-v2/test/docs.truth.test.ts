@@ -168,7 +168,7 @@ const SHIPPED: readonly Shipped[] = [
   { named: /soft.?keys/i, proof: ["src/components/SoftKeys.tsx", "src/mobile/keybytes.ts"] },
   {
     named: /terminal (?:view|mode)/i,
-    proof: ["src/components/TerminalView.tsx", "src/lib/terminal-url.ts"],
+    proof: ["src/components/TerminalNative.tsx", "src/lib/terminal-url.ts"],
   },
   {
     named: /file (?:preview|editor)/i,

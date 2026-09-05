@@ -204,7 +204,7 @@ describe("config wiring under ?as=bob", () => {
  * guest from the Authentik header itself and takes positional ?arg= values, so
  * the switch rides the EXISTING arg4 owner slot instead.
  */
-describe("terminal URL under ?as=bob", () => {
+describe("terminal attach args under ?as=bob", () => {
   const load = async (search: string) => {
     vi.resetModules();
     vi.stubGlobal("window", {
@@ -222,35 +222,35 @@ describe("terminal URL under ?as=bob", () => {
   it("defaults the owner to the act-as target", async () => {
     // The sidebar passes no owner for a session it considers the caller's own,
     // and in an as-bob tab bob's sessions ARE 'own'. Without this default the
-    // iframe would attach WIZARD's session of the same name, because ttyd never
+    // attach would reach WIZARD's session of the same name, because ttyd never
     // sees ?as=.
-    const { terminalUrl } = await load("?as=bob");
-    expect(terminalUrl("main")).toBe(
-      "/term.html?arg=main&arg=default&arg=default&arg=bob",
+    const { terminalFrameArgs } = await load("?as=bob");
+    expect(terminalFrameArgs("main")).toBe(
+      "arg=main&arg=default&arg=default&arg=bob",
     );
   });
 
   it("does not override a genuinely foreign owner", async () => {
     // While acting as bob you can still see sessions shared WITH bob by a third
     // party. Forcing the owner to bob would attach the wrong account's session.
-    const { terminalUrl } = await load("?as=bob");
-    expect(terminalUrl("main", { owner: "carol" })).toBe(
-      "/term.html?arg=main&arg=default&arg=default&arg=carol",
+    const { terminalFrameArgs } = await load("?as=bob");
+    expect(terminalFrameArgs("main", { owner: "carol" })).toBe(
+      "arg=main&arg=default&arg=default&arg=carol",
     );
   });
 
   it("still reaches arg5 when watching", async () => {
-    const { terminalUrl } = await load("?as=bob");
-    expect(terminalUrl("main", { watch: true })).toBe(
-      "/term.html?arg=main&arg=default&arg=default&arg=bob&arg=ro",
+    const { terminalFrameArgs } = await load("?as=bob");
+    expect(terminalFrameArgs("main", { watch: true })).toBe(
+      "arg=main&arg=default&arg=default&arg=bob&arg=ro",
     );
   });
 
   it("changes nothing without ?as=", async () => {
-    const { terminalUrl } = await load("");
-    expect(terminalUrl("main")).toBe("/term.html?arg=main");
-    expect(terminalUrl("main", { owner: "bob" })).toBe(
-      "/term.html?arg=main&arg=default&arg=default&arg=bob",
+    const { terminalFrameArgs } = await load("");
+    expect(terminalFrameArgs("main")).toBe("arg=main");
+    expect(terminalFrameArgs("main", { owner: "bob" })).toBe(
+      "arg=main&arg=default&arg=default&arg=bob",
     );
   });
 });

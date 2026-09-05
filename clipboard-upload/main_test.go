@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -253,42 +254,107 @@ func TestBuildIDStampIsServed(t *testing.T) {
 	}
 }
 
-// /term.html is the terminal-mode page the v2 SPA frames
-// (config.TERMINAL_BASE). It reached this service before it was in the table —
-// both hosts route Path(`/term.html`) here — and fell through to the mux as a
-// 404, which is what left the SPA Terminal view blank. Same shape as the
-// maskable icon: 404 while the file is not installed, 200 once deploy-v2.sh
-// ships it, no code change in between. Served no-cache so a browser cannot pin
-// a terminal page that has been replaced under it.
-func TestPublicAssetTermHTML(t *testing.T) {
+// /term.html is GONE. It served the terminal until the lobby started drawing
+// its own (ADR-0020), and the file is no longer built, packaged or installed.
+// Three kinds of client still ask for it: a bookmark, an iOS home-screen icon
+// installed against that URL, and a tab left open across the deploy. So the
+// path answers a redirect to the lobby rather than the 404 it would otherwise
+// fall to. The session name rides along, because the page took it as the first
+// positional ?arg= (ttyd's -a contract) and the lobby reads ?session= at boot.
+//
+// This replaces the test that pinned the opposite contract (404 until
+// deploy-v2.sh installs the page, 200 after). Both halves are gone:
+// deploy-v2.sh was deleted in d6b9501, and no install target ships term.html.
+func TestTermPageRedirects(t *testing.T) {
 	dir := fixtureAssetDir(t)
 
-	rec := assetServe(t, http.MethodGet, "/term.html")
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("GET /term.html before deploy-v2.sh installs it: got %d, want 404", rec.Code)
+	// No file on disk, and that is now the permanent state.
+	if _, err := os.Stat(filepath.Join(dir, "term.html")); !os.IsNotExist(err) {
+		t.Fatalf("the fixture must not ship term.html: %v", err)
 	}
 
-	const body = "<!DOCTYPE html><html><head><title>Terminal</title></head><body></body></html>"
-	if err := os.WriteFile(filepath.Join(dir, "term.html"), []byte(body), 0o644); err != nil {
+	for _, c := range []struct{ target, location string }{
+		// Nothing to carry: straight to the lobby.
+		{"/term.html", "/"},
+		// The session name survives, whatever else the old link carried.
+		{"/term.html?arg=main", "/?session=main"},
+		{"/term.html?arg=qa-1&arg=default", "/?session=qa-1"},
+		{"/term.html?arg=my_sess-2&arg=claude&arg=%2Ftmp", "/?session=my_sess-2"},
+		// A name the lobby could not select is dropped rather than forwarded:
+		// it would only be ignored one hop later. Same for an empty arg, and
+		// for the shapes sessionNameRe exists to refuse.
+		{"/term.html?arg=", "/"},
+		{"/term.html?arg=" + url.QueryEscape("../etc/passwd"), "/"},
+		{"/term.html?arg=" + url.QueryEscape("has space"), "/"},
+		{"/term.html?arg=" + strings.Repeat("x", 33), "/"},
+		{"/term.html?session=main", "/"},
+	} {
+		for _, m := range []string{http.MethodGet, http.MethodHead} {
+			rec := assetServe(t, m, c.target)
+			if rec.Code != http.StatusFound {
+				t.Fatalf("%s %s: got %d, want 302 (body %q)", m, c.target, rec.Code, rec.Body.String())
+			}
+			if loc := rec.Header().Get("Location"); loc != c.location {
+				t.Fatalf("%s %s: Location = %q, want %q", m, c.target, loc, c.location)
+			}
+			// 302 with no-cache: a permanent redirect a browser has already
+			// cached cannot be taken back.
+			if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+				t.Fatalf("%s %s: Cache-Control = %q, want no-cache", m, c.target, cc)
+			}
+		}
+	}
+
+	// Method-guarded like handleAsset, and it must not fall through to the mux.
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		rec := assetServe(t, m, "/term.html")
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s /term.html: got %d, want 405", m, rec.Code)
+		}
+		if a := rec.Header().Get("Allow"); a != "GET, HEAD" {
+			t.Fatalf("%s /term.html: Allow = %q, want %q", m, a, "GET, HEAD")
+		}
+	}
+}
+
+// /term-build-id went with the page: it was term.html's own build stamp, and
+// one document means one stamp. Unlike the page itself it gets NO redirect —
+// nothing bookmarks a stamp, and a healer still polling it wants a clear
+// failure rather than an HTML lobby page it would read as 12 hex characters.
+//
+// So the path leaves the whitelist entirely and lands where every unclaimed
+// path lands: through the dispatcher to the mux, which registers no pattern
+// covering it, and answers 404.
+func TestTermBuildIDIsGone(t *testing.T) {
+	dir := fixtureAssetDir(t)
+
+	// A file sitting there under the old name must not resurrect the route.
+	if err := os.WriteFile(filepath.Join(dir, "term-build-id"), []byte("4a01bfff1d16"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if _, listed := publicAssets["/term-build-id"]; listed {
+		t.Fatal("/term-build-id is still in the whitelist")
+	}
 
-	// The SPA asks for it WITH a query (`?arg=<session>`), so the lookup must
-	// key off the path alone. Both spellings must serve the page.
-	for _, target := range []string{"/term.html", "/term.html?arg=qa-1&arg=default"} {
-		rec = assetServe(t, http.MethodGet, target)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("GET %s: got %d, want 200 (body %q)", target, rec.Code, rec.Body.String())
+	// The mux the dispatcher forwards to, carrying main()'s real route set.
+	mux := http.NewServeMux()
+	for _, p := range []string{"/upload", "/register", "/list", "/img/", "/file/", "/health"} {
+		mux.HandleFunc(p, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	}
+	for _, m := range []string{http.MethodGet, http.MethodHead} {
+		rec := httptest.NewRecorder()
+		withPublicAssets(mux).ServeHTTP(rec, httptest.NewRequest(m, "/term-build-id", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s /term-build-id: got %d, want 404 (body %q)", m, rec.Code, rec.Body.String())
 		}
-		if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
-			t.Fatalf("GET %s content-type: got %q, want %q", target, ct, "text/html; charset=utf-8")
-		}
-		if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
-			t.Fatalf("GET %s cache-control: got %q, want no-cache", target, cc)
-		}
-		if got, err := io.ReadAll(rec.Result().Body); err != nil || string(got) != body {
-			t.Fatalf("GET %s body: got %q (err %v), want %q", target, got, err, body)
-		}
+	}
+
+	// The lobby's own stamp still answers, which is what the healer polls now.
+	if err := os.WriteFile(filepath.Join(dir, "build-id"), []byte("4a01bfff1d16"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := assetServe(t, http.MethodGet, "/build-id"); rec.Code != http.StatusOK {
+		t.Fatalf("GET /build-id: got %d, want 200", rec.Code)
 	}
 }
 

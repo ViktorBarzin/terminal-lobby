@@ -14,28 +14,13 @@ import {
   type PrefsStore,
   type WheelSpeed,
 } from "../../../store/prefs";
-import {
-  DEFAULT_TERMINAL_RENDERER,
-  flowControlWanted,
-  setFlowControlEnabled,
-  setTerminalRenderer,
-  terminalRenderer,
-  type TerminalRenderer,
-} from "../../../store/device-prefs";
+import { flowControlWanted, setFlowControlEnabled } from "../../../store/device-prefs";
 import { Group, Row, Segmented, Stepper, Toggle } from "../controls";
 import type { StepSpec } from "../stepper";
 
 const FONT: StepSpec = { min: FONT_SIZE_MIN, max: FONT_SIZE_MAX, step: 1 };
 const LINE: StepSpec = { min: LINE_HEIGHT_MIN, max: LINE_HEIGHT_MAX, step: 0.05 };
 const LETTER: StepSpec = { min: LETTER_SPACING_MIN, max: LETTER_SPACING_MAX, step: 0.1 };
-
-/** The two terminals, and what to call them on screen. "Native" and "iframe"
- *  name an implementation; these name the choice a person is making. */
-const RENDERERS: readonly TerminalRenderer[] = ["native", "iframe"];
-const RENDERER_LABELS: Record<TerminalRenderer, string> = {
-  native: "Built in",
-  iframe: "Classic",
-};
 
 /**
  * Everything that changes how the terminal looks and behaves.
@@ -46,27 +31,24 @@ const RENDERER_LABELS: Record<TerminalRenderer, string> = {
  * terminal behaviour, so it belongs here, wearing the chip that says where it
  * is stored.
  *
- * Engine joined them at the flip (2026-09-04), and it is the one row on this
- * page that is not cosmetic. It chooses WHICH terminal renders, so it is also
- * the only way back to the iframe on an installed app, where a `?native=0` in
- * the URL never survives the home-screen launch. Per-device for the same reason
- * flow control is: it answers a question about this device.
+ * An Engine row sat between them from the flip (2026-09-04) until the deletion
+ * (2026-09-05), choosing which of the two terminals rendered. There is one
+ * terminal now, and a segmented control over a single option is a control that
+ * pretends to offer a choice, so the row went with the page it selected. The
+ * key it wrote, `tl-terminal-renderer`, is simply ignored from here on; it is
+ * covered by the `tl-` prefix that Clear local data drops. Anyone who had
+ * deliberately picked Classic on a device gets the built-in terminal instead,
+ * with no migration and no notice.
  *
- * Every row except those two is roamed and read by the terminal page out of the
- * shared-origin prefs doc, so a change reaches the live terminal without a
- * reload. Engine is the exception in the other direction as well: it is read
- * once when a session mounts, so it applies to the next session opened rather
- * than to the one on screen.
+ * Every row except flow control is roamed, so a change reaches the live
+ * terminal without a reload. Font size gets there through the `__tlPrefsLive`
+ * receiver TerminalNative installs, which the store calls after it persists
+ * (store/prefs.ts). The input-bar posture is the row that still waits for the
+ * terminal's next mount, and the reason is on the read.
  */
 export const TerminalPage: Component<{ prefs: PrefsStore }> = (props) => {
   const p = () => props.prefs.prefs();
   const [flowOn, setFlowOn] = createSignal(flowControlWanted());
-  // Nothing stored reads as the default rather than as an empty strip: the
-  // control has to show which terminal you are getting, and with no choice
-  // recorded that is whatever the app defaults to.
-  const [renderer, setRenderer] = createSignal<TerminalRenderer>(
-    terminalRenderer() ?? DEFAULT_TERMINAL_RENDERER,
-  );
 
   return (
     <>
@@ -154,34 +136,6 @@ export const TerminalPage: Component<{ prefs: PrefsStore }> = (props) => {
             label="Copy button on terminal links"
             checked={p().links.copyChip}
             onChange={(on) => props.prefs.setPref({ links: { copyChip: on } })}
-          />
-        </Row>
-      </Group>
-
-      <Group title="Engine">
-        <Row
-          label="Engine"
-          deviceOnly
-          hint={
-            <>
-              <b>Built in</b> is the terminal the lobby draws itself, in this
-              page. <b>Classic</b> is the older one: its own page inside a
-              frame, kept for one release as the way back. Classic still has a
-              few things the built-in terminal has not picked up yet: clickable
-              links, and A− / A+ resizing without a reload.
-            </>
-          }
-          note="Applies to the next session you open in this tab. Sessions already open keep the terminal they started with until you reload."
-        >
-          <Segmented
-            label="Terminal engine"
-            options={RENDERERS}
-            value={renderer()}
-            format={(r) => RENDERER_LABELS[r]}
-            onChange={(r) => {
-              setTerminalRenderer(r);
-              setRenderer(r);
-            }}
           />
         </Row>
       </Group>

@@ -185,13 +185,15 @@ export const App: Component = () => {
   // so the sidebar had no way to know a keyboard was covering its bottom third,
   // and a project's "new session" box opened underneath one.
   //
-  // The terminal callbacks are global bridges TerminalView owns while it is
+  // The terminal callbacks are global bridges TerminalNative owns while it is
   // mounted, so they no-op cleanly on the list screen.
   onMount(() => {
     const stopViewport = installViewportSync({
       onRefit: () => window.__tlRefitTerminal?.(),
-      // The terminal frame reserves the keyboard's space itself — see
-      // .tl-kb-inline in app.css and keyboardReserve in term.html.
+      // The terminal reserves the keyboard's space on its own host element
+      // rather than letting the container shrink — see .tl-kb-inline in
+      // app.css and terminal/viewport.ts. Shrinking the container pulled the
+      // terminal out from under the tap that had just opened the keyboard.
       onKeyboard: (px) => window.__tlKeyboardOffset?.(px),
     });
     const stopReveal = installFocusReveal();
@@ -208,7 +210,7 @@ export const App: Component = () => {
   // ---- PWA notifications (pillar #2 — inventory Cat.9) ---------------------
   // A plain snapshot of the poll list feeds the tab title/favicon badge + the
   // foreground transition notifications. The system owns the header bell, web
-  // push, and the attention latch fed by the terminal iframe's tl-attention.
+  // push, and the attention latch the terminal feeds (terminal/attention.ts).
   const sessionSnapshot = createMemo<TitleSession[]>(() =>
     store.sessions.map((s) => ({
       name: s.name,
@@ -261,15 +263,15 @@ export const App: Component = () => {
       server: "unknown",
     }),
   );
-  /** Ask the terminal frame on screen to re-report its socket. Replaced by
-   *  whichever TerminalView is mounted; a no-op when none is. */
+  /** Ask the terminal on screen to re-report its socket. Replaced by whichever
+   *  TerminalNative is mounted; a no-op when none is. */
   let askTerminalConn: () => void = () => {};
   /** Retry the terminal socket. Only ever called from the Reconnect button. */
   let retryTerminalConn: () => void = () => {};
-  /** Waiting for the frame's answer to one `tl-conn-ask`. */
+  /** Waiting for the terminal's answer to one `ask`. */
   let awaitingConn: ((r: TerminalReport | null) => void) | null = null;
 
-  const onFrameConn = (report: TerminalReport | null): void => {
+  const onTerminalConn = (report: TerminalReport | null): void => {
     status.setTerminal(report);
     const waiting = awaitingConn;
     awaitingConn = null;
@@ -348,12 +350,12 @@ export const App: Component = () => {
 
   // ---- deploy self-heal (pillar #3 — inventory Cat.10) --------------------
   // The lobby is the ONLY deploy channel (no server build header): it polls its
-  // own served bytes on a 5s timer + on resume/bfcache, and on a real change
-  // owns the SINGLE reload. A terminal is "attached" when a session is selected
-  // (SessionView + its ttyd iframe are mounted) — the v2 analog of the vanilla
-  // `currentActive`; that gates the immediate-vs-deferred reload policy. The
-  // iframe's own `tl-build-stale` signal routes up through SessionView →
-  // onFrameBuildStale → healer.onBuildStale (the TOP-owned reload contract).
+  // own served bytes on a timer + on resume/bfcache, and on a real change owns
+  // the SINGLE reload. A terminal is "attached" when a session is selected (a
+  // SessionView is mounted) — the v2 analog of the vanilla `currentActive`;
+  // that gates the immediate-vs-deferred reload policy. ONE document, ONE
+  // stamp: the terminal used to hand its own build-stale verdict up here, and
+  // there is no second document left to have one.
   const healer = createDeployHealer({
     hasAttachedTerminal: () => store.selected() !== null,
     onUpdatePending: (pending) => status.setBuild({ updateReady: pending }),
@@ -538,7 +540,8 @@ export const App: Component = () => {
   // `store.create` only writes the layout, and the session comes into being when
   // a terminal attaches. That one terminal must attach immediately; every other
   // session's waits for the Terminal view, because attaching resizes the tmux
-  // WINDOW to the iframe and would reflow a wide client already using it.
+  // WINDOW to whatever this client measures and would reflow a wide client
+  // already using it.
   // `loading` covers the pre-first-poll window, where everything looks unseen.
   const selectedIsCreating = createMemo(() => {
     const name = selectedName();
@@ -553,8 +556,8 @@ export const App: Component = () => {
 
   // ---- sessions kept mounted (store/keepalive.ts) --------------------------
   // A session you have opened stays mounted and hidden, so going back to it
-  // shows what is already there instead of rebuilding an iframe, an xterm, a
-  // ttyd socket and an SSE stream — 1,797 ms of cover per switch, measured.
+  // shows what is already there instead of rebuilding an xterm, a ttyd socket
+  // and an SSE stream — 1,797 ms of cover per switch, measured.
   const selectedSession = createMemo<Selected | null>(() => {
     const sel = store.selected();
     return sel ? { name: sel.name, owner: sel.owner } : null;
@@ -596,15 +599,14 @@ export const App: Component = () => {
   const [previewState, setPreviewState] = createSignal({ open: false, dirty: false });
 
   // ---- keybinding engine + command palette + shortcuts help (pillar #2) ----
-  // The lobby SPA is always the "lobby" side: it owns the sidebar, palette and
-  // session switching. The terminal iframe forwards its chords up over
-  // tl-command (onFrameCommand -> runAppCommand) and its Alt state over
-  // tl-kb-alt (onFrameAlt -> engine.setFrameAlt) for the Alt-hold badges.
+  // The lobby SPA owns the sidebar, palette and session switching, and its one
+  // capture-phase window keydown sees every chord in the page — the terminal's
+  // included, since the terminal is drawn in this document.
   const engine = createKeybindingEngine();
-  // Both overlays render OUTSIDE the terminal iframe, so dismissing one leaves
-  // focus on <body> and the pty deaf. refocusTerminal calls the bridge the
-  // mounted TerminalView publishes; it is a no-op with no session selected or
-  // while the text view owns the keyboard.
+  // Both overlays render OVER the terminal and take focus off it, so dismissing
+  // one leaves focus on <body> and the pty deaf. refocusTerminal calls the
+  // bridge the mounted TerminalNative publishes; it is a no-op with no session
+  // selected or while the text view owns the keyboard.
   const help = createHelpController({ refocus: refocusTerminal });
 
   // Session rows for the palette (recents-first is applied inside the palette).
@@ -683,15 +685,10 @@ export const App: Component = () => {
     openGallery: () => void gallery.open(),
     pasteToTerminal: () => window.__tlDoPaste?.() ?? false,
     toggleDock: () => void dock.toggle(),
-    forwardToTerminal: (cmd) => {
-      const f = window.__tlForwardToTerminal;
-      return typeof f === "function" ? !!f(cmd) : false;
-    },
   });
 
-  // The shell's when-context, built in ONE place (keyContext) and read by all
-  // three key paths: the engine's window keydown, the terminal iframe's
-  // forwarded commands (engine.allows, below) and SessionView's always-on
+  // The shell's when-context, built in ONE place (keyContext) and read by both
+  // key paths: the engine's window keydown and SessionView's always-on
   // Ctrl/Cmd+J. Each of those used to decide for itself what an open overlay
   // meant, so a chord refused on one path fired on another.
   const keyCtx = createMemo(() =>
@@ -890,8 +887,7 @@ export const App: Component = () => {
           </Show>
           {/* Every session opened in this tab stays mounted, and the one being
               read is the one not hidden. The slots are appended and never
-              reordered: moving an iframe in the DOM reloads it, which is the
-              whole cost this avoids. */}
+              reordered, so a live terminal is never moved in the DOM. */}
           <For each={kept().list}>
             {(k) => {
               const shown = () => k.key === selectedKey();
@@ -920,7 +916,7 @@ export const App: Component = () => {
                       channels: status.channels,
                       onOpen: () => openSettings("network"),
                       onTranscript: setSessionStatus,
-                      onFrameConn,
+                      onTerminalConn,
                       askConn: (ask) => (askTerminalConn = ask),
                       retryConn: (retry) => (retryTerminalConn = retry),
                     }}
@@ -966,22 +962,12 @@ export const App: Component = () => {
                     prefs={prefs}
                     notify={notify}
                     overlayOpen={overlayOpen}
-                    // Everything below reaches the LOBBY, so only the session on
-                    // screen may speak: a hidden mount raising a chord, a badge or
-                    // an app reload would be a session acting from behind another.
-                    // A chord pressed INSIDE the terminal iframe is matched by
-                    // term.html against the TERMINAL page's own context and arrives
-                    // here as a bare command name — so it has to clear the same
-                    // when-clause the window keydown path clears, or an open
-                    // overlay guards exactly one of the two.
-                    onFrameCommand={(cmd) => {
-                      if (shown() && engine.allows(cmd)) run(cmd);
+                    // This reaches the LOBBY, so only the session on screen may
+                    // speak: a hidden mount raising a badge would be a session
+                    // acting from behind another.
+                    onTerminalAttention={(kind, session) => {
+                      if (shown()) notifications.onTerminalAttention(kind, session);
                     }}
-                    onFrameAlt={(down) => shown() && engine.setFrameAlt(down)}
-                    onFrameAttention={(kind, session) => {
-                      if (shown()) notifications.onFrameAttention(kind, session);
-                    }}
-                    onFrameBuildStale={() => shown() && healer.onBuildStale()}
                     onOpenGallery={() => void gallery.open()}
                     onPreviewState={(st) => shown() && setPreviewState(st)}
                   />
@@ -989,7 +975,7 @@ export const App: Component = () => {
               );
             }}
           </For>
-          <Dock dock={dock} onFrameCommand={(cmd) => run(cmd)} />
+          <Dock dock={dock} />
         </div>
       </div>
 

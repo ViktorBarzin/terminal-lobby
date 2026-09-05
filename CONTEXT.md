@@ -436,8 +436,7 @@ What Terminal Lobby cost a **device** in **wire bytes** over a period — today,
 the last 7 days, this calendar month, last calendar month, and **Since** —
 split into five feature **buckets** and across the **networks** the bytes
 crossed. Per browser profile,
-never per account: every tab on a device, and the terminal iframe inside them,
-add into one figure. Read in Settings; the counter runs whether or not
+never per account: every tab on a device adds into one figure. Read in Settings; the counter runs whether or not
 diagnostics are being sent, because it never leaves the browser.
 _Avoid_: bandwidth, traffic, network usage (each ambiguous between what
 travelled and what the app received)
@@ -508,7 +507,7 @@ ground until it lands.
 **Package**:
 The unit of release: a Debian package built by GitHub Actions and installed by
 `apt` on the devvm. `terminal-lobby` carries the whole application — the Go
-services, the SPA, `term.html`, the helper scripts and the units — at one
+services, the SPA, the helper scripts and the units — at one
 **version**, which is what makes frontend/backend skew unreachable. It
 deliberately carries NO identity data: the sudo grant, the user map and the
 admin list belong to whoever owns the accounts on that box. `ttyd-devvm` and `viu` are separate packages because they are slow

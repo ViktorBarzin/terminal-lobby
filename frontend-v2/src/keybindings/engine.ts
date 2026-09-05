@@ -1,7 +1,6 @@
 import { createSignal, type Accessor } from "solid-js";
 import {
   altLabel as altLabelFor,
-  commandAllowed,
   KB_KEY,
   matchesAppChord as matchesAppChordPure,
   normalizeKeybindings,
@@ -22,11 +21,11 @@ import type { ChordEventLike } from "./chords.logic";
  * command, plus the Alt tracker legs (keyup + window blur) that drive the
  * Alt-hold badge overlay.
  *
- * It does NOT stopPropagation — in the vanilla app the same event still had to
- * reach xterm's merged handler; here the terminal is a cross-document iframe so
- * lobby keydowns never reach it anyway, but the non-stopping posture is kept so
- * other capture-phase listeners (the "/"/"?" help opener, the view-toggle) still
- * see non-chord keys.
+ * It does NOT stopPropagation, and that matters again: the terminal is drawn in
+ * this document, so a non-chord key has to carry on past this listener and
+ * reach xterm's own handler, exactly as it did on the vanilla page. The other
+ * capture-phase listeners (the "/"/"?" help opener, the view toggle) depend on
+ * the same posture.
  */
 export interface KeybindingEngine {
   /** the opt-in gate (reactive; drives the Settings toggle + Alt badges). */
@@ -39,16 +38,6 @@ export interface KeybindingEngine {
   isMac: boolean;
   /** the shared match decision point (exposed for parity / future xterm merge). */
   matchesAppChord: (e: ChordEventLike) => ResolvedBinding | null;
-  /**
-   * The same when-clause decision, taken by command NAME against the live
-   * context — for the terminal iframe's forwarded chords (tl-command), which
-   * never produce a keydown in this document and so never reach the listener
-   * above. Independent of the `enabled` gate: term.html applies that itself
-   * before forwarding, and the always-on chords bypass it on both sides.
-   */
-  allows: (command: string) => boolean;
-  /** feed the terminal iframe's Alt state up (tl-kb-alt), for the badge overlay. */
-  setFrameAlt: (down: boolean) => void;
   /** wire the context + command runner, then install the window listeners. */
   init: (opts: {
     getContext: () => Record<string, boolean>;
@@ -118,24 +107,19 @@ export function createKeybindingEngine(): KeybindingEngine {
     });
   }
 
-  function allows(command: string): boolean {
-    return commandAllowed(command, context());
-  }
-
   // ---- Alt-hold badge tracker (syncAltBadges port) ------------------------
-  let lobbyAltDown = false;
-  let frameAltDown = false;
+  let altDown = false;
   let altTimer: ReturnType<typeof setTimeout> | undefined;
   let altOn = false;
   const [altActive, setAltActive] = createSignal(false);
 
   function syncAlt(): void {
-    const want = enabled() && (lobbyAltDown || frameAltDown);
+    const want = enabled() && altDown;
     if (want) {
       if (altOn || altTimer) return;
       altTimer = setTimeout(() => {
         altTimer = undefined;
-        if (enabled() && (lobbyAltDown || frameAltDown)) {
+        if (enabled() && altDown) {
           altOn = true;
           setAltActive(true);
         }
@@ -154,19 +138,14 @@ export function createKeybindingEngine(): KeybindingEngine {
 
   function trackAlt(e: KeyboardEvent): void {
     if (!enabled()) {
-      lobbyAltDown = false;
+      altDown = false;
       syncAlt();
       return;
     }
-    if (e.key === "Alt") lobbyAltDown = e.type === "keydown";
-    else lobbyAltDown = !!e.altKey;
+    if (e.key === "Alt") altDown = e.type === "keydown";
+    else altDown = !!e.altKey;
     syncAlt();
   }
-  function setFrameAlt(down: boolean): void {
-    frameAltDown = down;
-    syncAlt();
-  }
-
   // ---- window listeners ---------------------------------------------------
   const onKeydown = (e: KeyboardEvent): void => {
     trackAlt(e);
@@ -177,8 +156,7 @@ export function createKeybindingEngine(): KeybindingEngine {
   };
   const onKeyup = (e: KeyboardEvent): void => trackAlt(e);
   const onBlur = (): void => {
-    lobbyAltDown = false;
-    frameAltDown = false;
+    altDown = false;
     syncAlt();
   };
   const onStorage = (e: StorageEvent): void => {
@@ -223,8 +201,6 @@ export function createKeybindingEngine(): KeybindingEngine {
     altLabel: altLabelFor(isMac),
     isMac,
     matchesAppChord,
-    allows,
-    setFrameAlt,
     init,
     dispose,
   };

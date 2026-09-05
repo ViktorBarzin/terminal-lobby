@@ -19,19 +19,12 @@
          copies the head through verbatim, so the placeholder survives the build
          and the deploy script substitutes it. -->
     <meta name="tl-asset" content="__TL_ASSET__" />
-    <!-- The TERMINAL page's fingerprint, stamped by deploy-v2.sh alongside this
-         page's own. It lets the terminal iframe go straight to the immutable
-         copy (/assets/term-<asset>.html, cached forever) with no request to
-         discover the name: both files ship in the same deploy, so the stamp is
-         correct by construction. Absent or unsubstituted -> /term.html. -->
-    <meta name="tl-term-asset" content="__TL_TERM_ASSET__" />
     <!-- Client diagnostics (docs/adr/0008-client-diagnostics.md). The same
-         frontend/diag.js the two vanilla surfaces inline, substituted by
-         deploy-v2.sh into the built page — one measurement core across all
-         three, so the quiet-gate state machine cannot drift between them. It
-         sits in <head> so its global error handlers and its fetch and
-         WebSocket wrappers are installed before the SPA boots. Defining
-         tlDiag has no side effects; src/telemetry/diag.ts calls bind(). -->
+         frontend/diag.js the vanilla surfaces inlined, substituted by tl-stamp
+         into the built page. It sits in <head> so its global error handlers and
+         its fetch and WebSocket wrappers are installed before the SPA boots.
+         Defining tlDiag has no side effects; src/telemetry/diag.ts calls
+         bind(). -->
     <script>
       __TL_DIAG__
     </script>

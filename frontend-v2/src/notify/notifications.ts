@@ -13,8 +13,8 @@
  *     per-session away gate — and skipped entirely on a device the server pushes
  *     to, which is the single notifier there);
  *   - repaint the tab title + favicon badge from the session list and the
- *     attention latch (bell/output signals forwarded up from the terminal iframe,
- *     cleared on visibility/focus return);
+ *     attention latch (the terminal's bell/output signals, cleared on
+ *     visibility/focus return);
  *   - expose the settings readouts (permission / subscribed-here) + test actions.
  *
  * Everything push/notification-related is BEST-EFFORT: a dark server (vapid 404),
@@ -115,8 +115,8 @@ export interface NotificationSystem {
   toggleBell: () => Promise<void>;
   /** the iOS "Add to Home Screen" guidance (bellMode === 'install-hint'). */
   showInstallHint: () => void;
-  /** forwarded from the terminal iframe: a bell / output-while-hidden signal. */
-  onFrameAttention: (kind: "bell" | "output", session: string | null) => void;
+  /** from the terminal: a bell, or output while nobody could see it. */
+  onTerminalAttention: (kind: "bell" | "output", session: string | null) => void;
   /** current OS permission (settings readout). */
   permission: Accessor<NotificationPermission | "unsupported">;
   /** whether this device is registered for background push on the server. */
@@ -472,8 +472,8 @@ export function createNotificationSystem(
     }
   });
 
-  // ---- attention latch (from the terminal iframe) ------------------------
-  const onFrameAttention = (
+  // ---- attention latch (from the terminal) -------------------------------
+  const onTerminalAttention = (
     kind: "bell" | "output",
     session: string | null,
   ): void => {
@@ -652,7 +652,7 @@ export function createNotificationSystem(
     bellTitle,
     toggleBell,
     showInstallHint,
-    onFrameAttention,
+    onTerminalAttention,
     permission,
     deviceState,
     refreshDeviceState,

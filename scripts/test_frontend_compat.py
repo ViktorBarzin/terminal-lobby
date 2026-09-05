@@ -1,16 +1,36 @@
 #!/usr/bin/env python3
 """Guards the oldest browser engine we serve against the shipped frontend.
 
-The vanilla frontend is a single self-contained file, so a syntax error
-anywhere in it is fatal for the whole script block it sits in. That is not
-theoretical: xterm.js 6.0.0 (vendored 2026-07-13) ships ES2022 class static
-blocks, Safari parses those only from 16.4, and on iPadOS 15.8 — a Safari
-15.6-era WebKit, which every browser on that OS uses — the bundle failed to
-parse. window.Terminal was never defined, so the terminal pane came up empty
+A syntax error in a shipped chunk is fatal for the whole script it sits in, and
+that is not theoretical: xterm.js 6.0.0 (vendored 2026-07-13) shipped ES2022
+class static blocks, Safari parses those only from 16.4, and on iPadOS 15.8 — a
+Safari 15.6-era WebKit, which every browser on that OS uses — the bundle failed
+to parse. window.Terminal was never defined, so the terminal pane came up empty
 while the rest of the lobby kept working, and no WebSocket was ever attempted.
 
-scripts/vendor-xterm.py refuses to emit static blocks, so these tests exist for
-the other path in: a hand-edit, or a vendor bump done without the script.
+WHAT THIS FILE CHECKS, since it has been aimed at three different things now.
+The subject is THE BUILT SPA: its page, every assets/*.js chunk beside it, and
+every stylesheet it ships. It reads the built artifact rather than the source,
+because the source is TypeScript and says nothing about what vite will emit.
+
+There was a second arm until 2026-09-05, aimed at `frontend/term.html` — a
+hand-written page that mounted xterm itself, with a hand-vendored copy of the
+library spliced between BEGIN/END VENDOR markers by scripts/vendor-xterm.py.
+Five test functions and 15 cases read that page, and all five had an SPA
+counterpart in this same file already, so they went with it rather than being
+re-pointed at bytes another test already audits. Two had no counterpart and
+needed none: they asserted that the hand-written block existed and defined
+Terminal, FitAddon and WebglAddon, and there is no hand-written block any more
+— TerminalNative does `import("@xterm/xterm")`, a bare specifier vite resolves
+from the committed package-lock.json.
+
+The question those two DID answer has not gone away, and it has its own test
+now (`test_the_spa_loads_no_script_from_a_cdn`): xterm was on a CDN for a while,
+which would have handed bob's iPad the same blank terminal the vendoring existed
+to fix. The routine path back to that is closed by construction, but an
+`<script src="https://cdn…">` hand-added to frontend-v2/index.html was invisible
+to every check here, because the SPA fixture collects script BODIES and an
+src-only tag has none.
 """
 from __future__ import annotations
 
@@ -25,20 +45,10 @@ from typing import Literal, NamedTuple
 import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# TL_INDEX aims the same guards at a candidate file — an already-installed page
-# you want to audit, say. With it unset, the page checked is term.html, the
-# terminal the v2 SPA frames: it is the only hand-written page left that mounts
-# xterm now that the vanilla lobby has gone (2026-08-29), and it was on a CDN
-# xterm for a while after the vanilla page was vendored, which would have handed
-# bob's iPad the same blank terminal the vendoring existed to fix.
-PAGES = (
-    [os.environ["TL_INDEX"]]
-    if os.environ.get("TL_INDEX")
-    else [os.path.join(REPO, "frontend", "term.html")]
-)
 
 # The floor is set by the oldest engine in use: bob's iPad, which cannot be
-# upgraded past iPadOS 15.8. Keep this in sync with vendor-xterm.py's BASELINE.
+# upgraded past iPadOS 15.8. Keep this in sync with `build.target` in
+# frontend-v2/vite.config.ts, which is what decides the shipped syntax.
 BASELINE = "safari15"
 
 # Constructs that are a PARSE-time SyntaxError on the baseline engine, so they
@@ -62,47 +72,6 @@ FATAL_SYNTAX = {
 }
 
 
-@pytest.fixture(scope="module", params=PAGES, ids=lambda p: os.path.basename(p))
-def page_path(request: pytest.FixtureRequest) -> str:
-    return request.param
-
-
-@pytest.fixture(scope="module")
-def index(page_path: str) -> str:
-    with open(page_path, encoding="utf-8") as f:
-        return f.read()
-
-
-@pytest.mark.parametrize("name", sorted(FATAL_SYNTAX))
-def test_no_syntax_fatal_on_baseline_engine(index: str, page_path: str, name: str) -> None:
-    hits = FATAL_SYNTAX[name].findall(index)
-    assert not hits, (
-        f"{os.path.basename(page_path)} contains {len(hits)} instance(s) of {name}, which "
-        f"is a parse-time SyntaxError on {BASELINE} (iPadOS 15.8). The enclosing "
-        f"script will not run at all there. If this came from a vendor bump, "
-        f"re-run scripts/vendor-xterm.py instead of editing the page by hand."
-    )
-
-
-def test_xterm_is_vendored_not_cdn(index: str) -> None:
-    """Self-hosted, so no third party can change what an old engine must parse."""
-    assert "cdn.jsdelivr.net/npm/@xterm" not in index.replace("/* https://cdn.jsdelivr.net", "/* x"), (
-        "index.html loads xterm from a CDN again; vendor it with "
-        "scripts/vendor-xterm.py so the bytes are transpiled and pinned."
-    )
-    for marker in ("BEGIN VENDOR CSS", "END VENDOR CSS", "BEGIN VENDOR JS", "END VENDOR JS"):
-        assert marker in index, f"missing {marker} marker — vendor-xterm.py cannot splice"
-
-
-def test_terminal_global_is_defined_by_the_vendored_block(index: str) -> None:
-    """The empty-terminal symptom was window.Terminal missing; assert its source."""
-    start = index.index("BEGIN VENDOR JS")
-    end = index.index("END VENDOR JS")
-    block = index[start:end]
-    for expected in ("Terminal", "FitAddon", "WebglAddon"):
-        assert expected in block, f"vendored block does not define {expected}"
-
-
 def _esbuild() -> list[str] | None:
     local = os.path.join(REPO, "frontend-v2", "node_modules", ".bin", "esbuild")
     if os.path.isfile(local):
@@ -110,57 +79,16 @@ def _esbuild() -> list[str] | None:
     return [shutil.which("esbuild")] if shutil.which("esbuild") else None
 
 
-def test_esbuild_agrees_nothing_needs_lowering(tmp_path, page_path: str) -> None:
-    """Catches post-baseline syntax the regexes above do not enumerate.
-
-    `esbuild --target=safari15` on its own is NOT a compatibility check -- it
-    silently LOWERS what the target cannot run and says nothing. So compare its
-    baseline output against its esnext output: any difference means the source
-    contained syntax newer than the baseline.
-    """
-    esb = _esbuild()
-    if not esb:
-        pytest.skip("esbuild not available (frontend-v2/node_modules or PATH)")
-
-    # Only the vendored block is machine-generated third-party code; the app's
-    # own inline script is hand-written against the baseline and is covered by
-    # the regex tests above.
-    with open(page_path, encoding="utf-8") as f:
-        html = f.read()
-    assert "BEGIN VENDOR JS" in html and "END VENDOR JS" in html, (
-        "no vendored block to check — xterm is not vendored into this page "
-        "(run scripts/vendor-xterm.py)"
-    )
-    block = html[html.index("BEGIN VENDOR JS"):html.index("END VENDOR JS")]
-    code = "\n".join(re.findall(r"<script>(.*?)</script>", block, re.S))
-    assert code.strip(), "no vendored script content found"
-
-    src = tmp_path / "vendored.js"
-    src.write_text(code, encoding="utf-8")
-    outs = {}
-    for target in (BASELINE, "esnext"):
-        r = subprocess.run(
-            esb + [str(src), f"--target={target}", "--log-level=silent"],
-            capture_output=True, check=True,
-        )
-        outs[target] = r.stdout
-
-    assert outs[BASELINE] == outs["esnext"], (
-        f"the vendored block still contains syntax newer than {BASELINE} — "
-        f"esbuild had to lower it, so the real {BASELINE} engine cannot parse it"
-    )
-
-
 # ---------------------------------------------------------------------------
 # The BUILT SPA (frontend-v2).
 #
 # The lobby stopped being frontend/index.html on 2026-08-16, when the SolidJS
-# SPA was promoted to /usr/local/share/ttyd/index.html. The guards above only
-# ever read the vanilla pages, so the promotion quietly moved the shipped bytes
-# out from under the check that existed for exactly this failure: vite's
-# build.target decides what syntax survives, it was "es2022", and viteSingleFile
-# inlines the whole bundle into ONE script — so one ES2022 construct anywhere in
-# it takes the entire lobby down on the baseline engine.
+# SPA was promoted to /usr/local/share/ttyd/index.html. The guards that existed
+# then only ever read the vanilla pages, so the promotion quietly moved the
+# shipped bytes out from under the check that existed for exactly this failure:
+# vite's build.target decides what syntax survives, it was "es2022", and
+# viteSingleFile inlined the whole bundle into ONE script — so one ES2022
+# construct anywhere in it took the entire lobby down on the baseline engine.
 #
 # It did. On 2026-08-18 the shipped bundle held 270 class static blocks, and
 # bob's iPad (iPadOS 15.8) rendered a blank page: the tab title arrived, nothing
@@ -224,6 +152,71 @@ def spa() -> tuple[str, list[tuple[str, str]]]:
     )
 
 
+# A THIRD PARTY MUST NOT DECIDE WHAT THE FLOOR HAS TO PARSE.
+#
+# This is the question the two deleted vendored-block tests existed to answer,
+# in the shape the SPA needs. xterm was loaded from a CDN for a while, and the
+# CDN's CJS build carried 18 class static blocks, which is exactly the blank
+# terminal the hand-vendoring was introduced to fix. Every check in this file
+# reads bytes that are IN the payload, so a script fetched at runtime from
+# somewhere else is audited by nothing at all.
+#
+# The routine path back is closed by construction: TerminalNative does
+# `import("@xterm/xterm")`, a bare specifier vite resolves from node_modules
+# against a committed package-lock.json at build time, and vite emits it as a
+# content-hashed chunk this file already audits. What is NOT closed, and what
+# this test covers, are the two ways a remote script can still ship:
+#
+#   1. `<script src="https://cdn…">` hand-added to frontend-v2/index.html. The
+#      SPA fixture above collects script BODIES (`<script…>(.*?)</script>`) and
+#      skips empty ones, so an src-only tag contributes no piece and is
+#      invisible to every other assertion here.
+#   2. a dynamic `import()` of a URL, which lands the host inside a chunk with
+#      nothing asserting its absence.
+#
+# Same-origin sources are fine and expected: the page loads its own
+# /assets/*.js, and those ARE audited.
+CDN_HOSTS = (
+    "cdn.jsdelivr.net",
+    "unpkg.com",
+    "cdnjs.cloudflare.com",
+    "esm.sh",
+    "cdn.skypack.dev",
+    "ga.jspm.io",
+    "code.jquery.com",
+)
+
+
+def test_the_spa_loads_no_script_from_a_cdn(spa: tuple[str, list[tuple[str, str]]]) -> None:
+    path, pieces = spa
+    with open(path, encoding="utf-8") as f:
+        html = f.read()
+
+    # An external script tag, whatever the host: the page must load only its own
+    # origin, so this needs no host list and catches a CDN nobody enumerated.
+    external = [
+        m.group(1)
+        for m in re.finditer(r"""<script[^>]*\bsrc\s*=\s*["']([^"']+)["']""", html, re.I)
+        if re.match(r"(?i)(?:https?:)?//", m.group(1))
+    ]
+    assert not external, (
+        f"{os.path.basename(path)} loads {external} from another origin. Nothing in "
+        f"this file audits a script fetched at runtime, so its syntax reaches "
+        f"bob's iPad unchecked — which is how a CDN xterm handed that device a "
+        f"blank terminal. Add the dependency to package.json and import it, so "
+        f"vite emits it as a chunk beside the page."
+    )
+
+    # And a URL import inside the shipped JavaScript, which would fetch at run
+    # time from a chunk this file otherwise reads as clean.
+    for label, code in pieces:
+        for host in CDN_HOSTS:
+            assert host not in code, (
+                f"{label} references {host}. A module fetched from there at run "
+                f"time is parsed by the browser and audited by nothing here."
+            )
+
+
 # Only the static block is regex-checked on the SPA. The other two patterns
 # cannot gate a MINIFIED bundle without false positives, measured on the
 # 2026-08-18 build: every "v flag" hit was inline SVG path data inside a string
@@ -257,9 +250,9 @@ def test_spa_esbuild_agrees_nothing_needs_lowering(
 ) -> None:
     """The authoritative check: a real parser, not the regexes above.
 
-    Same differential the vendored block gets — `--target=safari15` on its own
-    only tells you esbuild COULD lower the input, silently. Comparing it against
-    `--target=esnext` is what reveals that lowering was necessary at all.
+    `--target=safari15` on its own only tells you esbuild COULD lower the input,
+    silently. Comparing it against `--target=esnext` is what reveals that
+    lowering was necessary at all.
     """
     esb = _esbuild()
     if not esb:
@@ -309,10 +302,6 @@ def test_spa_esbuild_agrees_nothing_needs_lowering(
 # something must fill it in first". src/lib/baseline-polyfills.ts is that
 # something, and it stamps data-tl-polyfills so a device with no developer
 # tools can still answer whether it ran.
-#
-# The SPA only. frontend/term.html names AbortSignal.timeout in a COMMENT saying
-# it deliberately uses a controller and a timer instead, and a grep cannot tell
-# that apart from a call.
 # ---------------------------------------------------------------------------
 
 # Substring → the Safari version that first shipped it. Matched literally.
@@ -613,10 +602,11 @@ def _assert_css_within_floor(
 ) -> None:
     """Fail unless `name` is absent from `sheets`, or tolerated for shipping.
 
-    Shared by the two callers below so the SPA stylesheet and the hand-written
-    page are judged by one set of rules. Splitting the message per surface would
-    let the two drift, and the drift is the bug: the audit landed on the SPA
-    alone while term.html was the page rendering the terminal.
+    A helper rather than an inline body because it had two callers, one per
+    surface, and judging them by one set of rules is what stopped them drifting
+    — the drift being the bug: the audit landed on the SPA stylesheet alone
+    while a second page was the one rendering the terminal on the floor. One
+    caller now, and the shape is kept for the next surface rather than inlined.
     """
     feature = POST_BASELINE_CSS[name]
     hits = _css_hits(sheets, feature)
@@ -654,60 +644,21 @@ def test_spa_css_has_no_post_baseline_syntax(
     _assert_css_within_floor(path, sheets, name)
 
 
-# The same audit over the hand-written page, because term.html is what renders
-# the terminal today: ADR-0017 puts the SPA's own xterm mount behind `?native=1`
-# "while it is incomplete", so the default path is still this page in an iframe.
-# The CSS section arrived aimed at the SPA stylesheet alone, which left the page
-# actually serving the floor unchecked.
+# The CSS section was aimed at the SPA stylesheet alone until 2026-09-04, when a
+# second arm was added for `frontend/term.html` — the page then actually serving
+# the floor, which the SPA-only guard left unchecked. That page was deleted on
+# 2026-09-05 and the arm went with it: ten parameterized cases over a `page_css`
+# fixture that read every <style> block in it.
 #
-# Measured on the 2026-09-04 source: nine of the ten patterns find nothing in
-# term.html, and color-mix() finds 18, all in the page's own <style> block (the
-# second one, lines 356 to 1937). By property: 11 `background`, 3
-# `border-color`, 3 `box-shadow`, 1 `border`. That is the same cosmetic,
-# one-declaration loss CSS_DROPS_ONE_DECLARATION already tolerates for the SPA,
-# and it is a real floor crossing that shipped before this guard existed rather
-# than something this change introduced.
-#
-# Two things this cannot see, recorded so their absence is not read as a pass.
-# A 19th color-mix() is assigned from JavaScript at term.html:9258,
-# `Object.assign(dropOverlay.style, {...})` on the drag-and-drop overlay: the
-# CSSOM drops a value it cannot parse, so on the floor that overlay paints no
-# background while its dashed border and label still draw, and it carries
-# `pointerEvents:'none'` so it cannot trap input either way. Finding it would
-# mean matching CSS inside JavaScript string literals, which is the false
-# positive the comment above test_spa_no_class_static_blocks describes. The
-# other is that no non-empty-haystack test guards this fixture, because it needs
-# none: `index` reads one fixed path directly and open() raises when it is
-# missing, so there is no glob here to come up empty the way the SPA's did.
-
-
-@pytest.fixture(scope="module")
-def page_css(index: str, page_path: str) -> tuple[str, list[tuple[str, str]]]:
-    """Every <style> block in the hand-written page, vendored xterm CSS included.
-
-    The vendored block is audited with the rest on purpose: it ships to the
-    floor like everything else on the page, so a vendor bump that brings
-    post-floor CSS in is the same failure as writing it by hand.
-    """
-    sheets = [
-        (f"{os.path.basename(page_path)} <style> #{i}", css)
-        for i, css in enumerate(re.findall(r"<style[^>]*>(.*?)</style>", index, re.S))
-        if css.strip()
-    ]
-    if not sheets:
-        pytest.fail(
-            f"{page_path} carries no <style> block, so nothing was audited -- "
-            "either the page stopped carrying its CSS or TL_INDEX points elsewhere"
-        )
-    return page_path, sheets
-
-
-@pytest.mark.parametrize("name", sorted(POST_BASELINE_CSS))
-def test_page_css_has_no_post_baseline_syntax(
-    page_css: tuple[str, list[tuple[str, str]]], name: str
-) -> None:
-    path, sheets = page_css
-    _assert_css_within_floor(path, sheets, name)
+# Worth recording, since it was measured rather than assumed: nine of the ten
+# patterns found nothing in that page, and color-mix() found 18, all in its own
+# <style> block — 11 `background`, 3 `border-color`, 3 `box-shadow`, 1 `border`.
+# That was the same cosmetic, one-declaration loss CSS_DROPS_ONE_DECLARATION
+# still tolerates for the SPA, and a real floor crossing that had shipped for
+# months before the guard existed. A 19th was assigned from JavaScript
+# (term.html:9258, `Object.assign(dropOverlay.style, {...})` on the
+# drag-and-drop overlay), which no regex here could have found without matching
+# CSS inside string literals.
 
 
 # One planted stylesheet per entry, plus one near-miss that must NOT fire. Kept

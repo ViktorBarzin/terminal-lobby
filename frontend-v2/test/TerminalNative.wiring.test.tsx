@@ -51,8 +51,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { FONT_SIZE_KEY, PREFS_DIRTY_KEY, PREFS_KEY } from "../src/store/prefs";
 import { FONT_READOUT_HIDE_MS } from "../src/terminal/font";
 import { toasts, type PushToast } from "../src/store/toast";
@@ -349,12 +347,14 @@ const PAST_DEBOUNCE_MS = 150;
  */
 const HELD_SAY_WINDOW_MS = 5000;
 
-const TERM_HTML = readFileSync(
-  resolve(__dirname, "../..", "frontend/term.html"),
-  "utf8",
-);
-/** Curly apostrophes to straight, so a quoted string can be compared. */
-const plain = (s: string): string => s.replace(/[‘’]/g, "'");
+/**
+ * The toast wording below used to be checked against `frontend/term.html`'s own
+ * source, read here at module scope, so a sentence that drifted from the page's
+ * failed. The page was deleted on 2026-09-05 and those nine assertions went
+ * with it; the wording itself is still asserted literally, which is what a
+ * person actually sees. The `term.html:NNNN` citations throughout this file
+ * index that page at the commit that removed it.
+ */
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -387,6 +387,7 @@ beforeEach(() => {
     "__tlFocusTerminal",
     "__tlRefitTerminal",
     "__tlKeyboardOffset",
+    "__tlPrefsLive",
   ]) {
     Reflect.deleteProperty(window, key);
   }
@@ -448,7 +449,7 @@ interface Mounted {
   /** Every attention signal handed up, in order (terminal/attention.ts). */
   attention: ("bell" | "output")[];
   /** The levers `onReady` handed up, which is what SessionView holds. */
-  control(): { reconnect: () => void; ask: () => void };
+  control(): { reconnect: () => void; ask: () => void; copy: () => void };
   /**
    * The compose mirror's field, scoped to THIS render: a document query would
    * find another mounted terminal's, which is the bug the host-scoped queries
@@ -477,7 +478,7 @@ async function mount(
   const attention: ("bell" | "output")[] = [];
   // A list rather than a nullable local, so TypeScript does not have to be
   // argued out of narrowing an assignment made inside a callback.
-  const controls: { reconnect: () => void; ask: () => void }[] = [];
+  const controls: { reconnect: () => void; ask: () => void; copy: () => void }[] = [];
   const r = render(() => (
     <TerminalNative
       args="arg=qa-native"
@@ -1456,10 +1457,6 @@ describe("the fit guard (term.html:5579-5613)", () => {
  * at `display: none`, so it measures 0x0 and the guard refuses the fit.
  */
 describe("the boot focus (term.html:5614-5617)", () => {
-  it("is still what term.html does, and still for that reason", () => {
-    expect(TERM_HTML).toContain("Nothing else focuses the terminal on load");
-  });
-
   it("focuses a terminal that booted onto the screen", async () => {
     const m = await mount();
     expect(m.fit.fits).toBe(1);
@@ -1602,19 +1599,17 @@ describe("refused and held input become something a person can see", () => {
     m.type("l");
     expect(messages()).toHaveLength(1);
     expect(messages()[0]).toContain("Watching");
-    expect(plain(TERM_HTML)).toContain(plain(messages()[0] ?? ""));
   });
 
   /**
-   * The apostrophe is term.html's own curly one (:8310), asserted with NO
-   * normalisation: `plain()` above would hide the difference, and the point of
-   * quoting the page is that the two builds put the SAME sentence on screen.
+   * The apostrophe is the page's own curly one (:8310), asserted as the literal
+   * it is: a build that quietly straightened it would be showing a different
+   * sentence, and this is the assertion that notices.
    */
   it("says the watch nudge byte for byte", async () => {
     const m = await mountOpen({ watch: true });
     m.type("l");
     expect(messages()[0]).toContain("can’t");
-    expect(TERM_HTML).toContain(messages()[0] ?? "");
   });
 
   /** term.html:8303, one nudge per WATCH_NUDGE_MS however many keys. */
@@ -1642,7 +1637,6 @@ describe("refused and held input become something a person can see", () => {
     m.type("q");
     expect(messages()).toHaveLength(1);
     expect(messages()[0]).toContain("Held");
-    expect(plain(TERM_HTML)).toContain(plain(messages()[0] ?? ""));
   });
 
   /**
@@ -1652,14 +1646,12 @@ describe("refused and held input become something a person can see", () => {
   it.each([
     ["\t", "control keys"],
     ["\x7f", "reconnect"],
-  ])("has term.html's own wording for %j", async (key, fragment) => {
+  ])("has the page's own wording for %j", async (key, fragment) => {
     const m = await mountOpen();
     m.socket().drop();
     await settle();
     m.type(key);
-    const said = messages()[0] ?? "";
-    expect(said).toContain(fragment);
-    expect(plain(TERM_HTML)).toContain(plain(said));
+    expect(messages()[0] ?? "").toContain(fragment);
   });
 
   /**
@@ -1684,12 +1676,10 @@ describe("refused and held input become something a person can see", () => {
     m.type("x");
     const said = messages()[0] ?? "";
     expect(said).toBe("Your line is held — Backspace to edit it");
+    // The half it does NOT promise. The page said "Backspace to edit it, Esc
+    // to discard" and reached `discardHeldInput()` from a key handler that is
+    // not ported, so promising Esc would be a promise nothing here can keep.
     expect(said).not.toContain("Esc");
-    // Everything it DOES say, term.html says.
-    expect(plain(TERM_HTML)).toContain(plain(said));
-    // And the promise it dropped is still there to be restored.
-    expect(TERM_HTML).toContain("Backspace to edit it, Esc to discard");
-    expect(TERM_HTML).toContain("discardHeldInput()");
   });
 
   /** heldSay's shared gate: term.html:8191-8195, 5000ms across all of them. */
@@ -2600,6 +2590,84 @@ describe("the live-theme global survives an out-of-order unmount", () => {
     only.unmount();
     await settle();
     expect(themeLive()).toBe(before);
+  });
+});
+
+/**
+ * THE LIVE FONT-SIZE BRIDGE, the sibling of the theme one above.
+ *
+ * store/prefs.ts calls `window.__tlPrefsLive` AFTER it has persisted a change,
+ * so Settings → Terminal's A− / A+ reaches an attached terminal without
+ * dropping its WebSocket. The iframe host installed it and posted the size
+ * across the boundary; deleting that component took the receiver with it, and
+ * for one day A− / A+ wrote the pref and the terminal kept its size until it
+ * next remounted.
+ *
+ * Two things this pins beyond "the size changed". The receiver must NOT persist,
+ * because the sender already did and a second write would be a loop through the
+ * same key. And it must fit IMMEDIATELY rather than through `refit`, because
+ * the metrics changed under xterm: fit.ts's owes list names the pref path
+ * alongside the pinch as the call sites that do not debounce.
+ *
+ * What is NOT ported with it: `maskFitBurst`, which dimmed the container to .35
+ * through the metric swap and restored it 180ms after the last fit of a burst.
+ * A held-down stepper is therefore visibly steppy here where the page hid the
+ * burst. That is cosmetic, and strictly better than a terminal that does not
+ * resize at all, so it is left for whoever wants the polish.
+ */
+describe("the live font-size bridge (term.html:9173-9203)", () => {
+  const prefsLive = (): ((p: { fontSize: number }) => boolean) | undefined =>
+    window.__tlPrefsLive;
+
+  it("is claimed by a mounted terminal", async () => {
+    await mount();
+    expect(typeof prefsLive()).toBe("function");
+  });
+
+  it("applies the size to xterm and fits at once", async () => {
+    const m = await mount();
+    const fitsBefore = m.fit.fits;
+    expect(m.term.options.fontSize).toBe(15);
+
+    expect(prefsLive()?.({ fontSize: 21 })).toBe(true);
+    expect(m.term.options.fontSize).toBe(21);
+    expect(m.fit.fits).toBe(fitsBefore + 1);
+  });
+
+  it("does not write the pref back, because the sender already did", async () => {
+    await mount();
+    localStorage.removeItem("tl-prefs");
+    prefsLive()?.({ fontSize: 19 });
+    expect(localStorage.getItem("tl-prefs")).toBe(null);
+  });
+
+  it("refuses a size xterm should never be given", async () => {
+    const m = await mount();
+    for (const bad of [0, -3, 99, Number.NaN]) {
+      expect(prefsLive()?.({ fontSize: bad })).toBe(false);
+      expect(m.term.options.fontSize).toBe(15);
+    }
+  });
+
+  it("keeps the newer terminal's receiver when an older one unmounts", async () => {
+    const first = render(() => (
+      <TerminalNative args="arg=qa-prefs-1" watch={() => false} ownsBridges={true} />
+    ));
+    await settle();
+    const afterFirst = prefsLive();
+
+    const second = render(() => (
+      <TerminalNative args="arg=qa-prefs-2" watch={() => false} ownsBridges={true} />
+    ));
+    await settle();
+    expect(prefsLive()).not.toBe(afterFirst);
+    const afterSecond = prefsLive();
+
+    first.unmount();
+    await settle();
+    expect(prefsLive()).toBe(afterSecond);
+
+    second.unmount();
   });
 });
 
@@ -3689,6 +3757,101 @@ describe("the key handler contract (term.html:8516-8589)", () => {
     press(m, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
     expect(inputs(m.socket())).toEqual([]);
     expect(messages()).toEqual(["Watching — this device can’t type into the session"]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 15b. The soft-key row's Copy lever (term.html:9572-9612)
+ * ------------------------------------------------------------------ */
+
+/**
+ * `onReady.copy` is the ONLY caller of the capture endpoint, and it is
+ * mobile-only: the button lives in the soft-key row's ⋯ tier, which mounts
+ * behind a coarse pointer. `terminal/selection.ts` is unit-tested for WHICH
+ * branch a decision takes; nothing asserted the URL the fetch is built from,
+ * and the ported lever asked for `/api/sessions/<name>/capture` where tmux-api
+ * answers `/api/sessions/sessions/<name>/capture` (`http.HandleFunc
+ *("/sessions/", handleSessionByName)`, tmux-api/main.go:375, and the whole
+ * prefix is stripped by the ingress). Measured on the shared Android emulator
+ * 2026-09-05: a real tap answered 404 and left the clipboard holding whatever
+ * it held before, under a "Screen copied" toast. term.html got this right by
+ * building on `SESSIONS_API = '/api/sessions/sessions'` (:2379, :9582).
+ */
+describe("the soft-key Copy lever (term.html:9572-9612)", () => {
+  const withClipboard = (write: (text: string) => Promise<void>): (() => void) => {
+    const had = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: write },
+    });
+    return () => {
+      if (had) Object.defineProperty(navigator, "clipboard", had);
+      else Reflect.deleteProperty(navigator as unknown as Record<string, unknown>, "clipboard");
+    };
+  };
+
+  let restore: (() => void)[] = [];
+  afterEach(() => {
+    for (const r of restore.reverse()) r();
+    restore = [];
+  });
+
+  /**
+   * The URL, which is the leg a decision test cannot see. `args` carries the
+   * session as arg1 of the positional contract, the same place ttyd reads it.
+   */
+  it("asks tmux-api for the capture at the path tmux-api serves", async () => {
+    const urls: string[] = [];
+    const had = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Promise.resolve(new Response("screen text", { status: 200 }));
+    }) as typeof fetch;
+    restore.push(() => {
+      globalThis.fetch = had;
+    });
+    restore.push(withClipboard(() => Promise.resolve()));
+
+    const m = await mount();
+    m.term.selected = false;
+    m.term.selectionText = "";
+    m.control().copy();
+    await settle();
+
+    expect(urls.filter((u) => u.includes("capture"))).toEqual([
+      "/api/sessions/sessions/qa-native/capture",
+    ]);
+    m.unmount();
+  });
+
+  /** With a highlight it never asks the server at all: the range is the copy. */
+  it("writes the selection and asks the server for nothing", async () => {
+    const urls: string[] = [];
+    const written: string[] = [];
+    const had = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Promise.resolve(new Response("", { status: 200 }));
+    }) as typeof fetch;
+    restore.push(() => {
+      globalThis.fetch = had;
+    });
+    restore.push(
+      withClipboard((text) => {
+        written.push(text);
+        return Promise.resolve();
+      }),
+    );
+
+    const m = await mount();
+    m.term.selected = true;
+    m.term.selectionText = "SELROW-ALPHA-BRAVO";
+    m.control().copy();
+    await settle();
+
+    expect(written).toEqual(["SELROW-ALPHA-BRAVO"]);
+    expect(urls.filter((u) => u.includes("capture"))).toEqual([]);
+    m.unmount();
   });
 });
 

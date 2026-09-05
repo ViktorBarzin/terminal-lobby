@@ -332,23 +332,6 @@ describe("createDeployHealer — confirmation, not fire-and-forget", () => {
   });
 });
 
-describe("createDeployHealer — tl-build-stale bridge routing", () => {
-  it("routes a terminal's build-stale signal into one check, not a reload", async () => {
-    const h = harness();
-    h.setBody(page(ASSET_B));
-    h.healer.onBuildStale();
-    await vi.waitFor(() => expect(h.reload).toHaveBeenCalledTimes(1));
-  });
-
-  it("ten reconnect signals in a row still produce at most one reload", async () => {
-    const h = harness();
-    h.setBody(page(ASSET_B));
-    for (let i = 0; i < 10; i++) h.healer.onBuildStale();
-    await vi.waitFor(() => expect(h.reload).toHaveBeenCalled());
-    expect(h.reload).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("createDeployHealer — no update UI exists any more", () => {
   it("exposes no pill state and no manual apply", () => {
     const h = harness();

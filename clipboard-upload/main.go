@@ -13,6 +13,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -135,22 +136,22 @@ func main() {
 //
 // AUTH LIVES AT THE INGRESS, NOT HERE. This table decides WHICH file a path
 // serves; Traefik decides WHO may ask. The PWA carve-out
-// (module.ingress_assets*, auth = "none") lists exactly ten paths — the
-// manifest, three icons, sw.js and five fonts — and every other route on
-// both hosts, including Path(`/term.html`), keeps
-// the authentik-forward-auth middleware. So a path in this table is not
-// thereby public: /term.html is routed here by BOTH hosts' ingresses and stays
-// gated, exactly as infra/stacks/terminal/main.tf says. What
-// the table does grant is a direct unauthenticated hit on :7683 from the box
-// or the cluster network, which bypasses the ingress in the first place —
-// acceptable for term.html on the same grounds as the other entries: a fixed
-// file from the repo, byte-identical for every user, carrying no user data
-// (the page fetches everything it shows through the authed APIs at runtime).
+// (module.ingress_assets, auth = "none") lists exactly eleven paths — the
+// manifest, three icons, sw.js and six fonts — and every other route on
+// terminal.viktorbarzin.me keeps the authentik-forward-auth middleware. So a
+// path in this table is not thereby public. What the table does grant is a
+// direct unauthenticated hit on :7683 from the box or the cluster network,
+// which bypasses the ingress in the first place — acceptable for every entry
+// on the same grounds: a fixed file from the repo, byte-identical for every
+// user, carrying no user data.
+//
+// One host, not two: terminal-dev.viktorbarzin.me and its ttyd-v2 on :7687
+// were removed on 2026-08-16 (docs/architecture.md).
 
-// defaultAssetDir is the deploy scripts' shared install target: manifest +
-// icons sit next to index.html, the woff2 files under fonts/. deploy.sh puts
-// everything here except term.html, which deploy-v2.sh installs alongside them
-// (it is built from frontend-v2, not frontend).
+// defaultAssetDir is the shared install target: manifest + icons sit next to
+// index.html, the woff2 files under fonts/. The .deb's postinst puts everything
+// here (release/manifest.go names each destination); deploy-v2.sh, which used
+// to install the terminal page beside them, was deleted in d6b9501.
 const defaultAssetDir = "/usr/local/share/ttyd"
 
 // publicAsset describes one servable file — every field fixed at compile time.
@@ -179,32 +180,22 @@ type publicAsset struct {
 // sw.js (the push service worker) is served no-cache: the browser re-fetches
 // the worker bytes on every update check, so a deploy must never be masked
 // by a cached copy.
-// /term.html gets the SAME no-cache treatment for the same reason, one level
-// up: it is the terminal-mode page the v2 SPA frames (config.TERMINAL_BASE),
-// it is redeployed by scripts/deploy-v2.sh, and it carries the zero-touch
-// self-update healer — a browser holding a cached copy would pin a stale
-// terminal that can never notice its own replacement. no-cache is revalidate,
-// not re-download: ServeContent answers a conditional request with 304 while
-// the file is untouched (deploy-v2.sh skips byte-identical installs precisely
-// to keep that mtime stable), so the ~800 KB body only crosses the wire when
-// it actually changed.
 var publicAssets = map[string]publicAsset{
 	"/manifest.webmanifest":  {"manifest.webmanifest", "application/manifest+json", "public,max-age=3600"},
 	"/icon-192.png":          {"icon-192.png", "image/png", "public,max-age=3600"},
 	"/icon-512.png":          {"icon-512.png", "image/png", "public,max-age=3600"},
 	"/icon-512-maskable.png": {"icon-512-maskable.png", "image/png", "public,max-age=3600"},
 	"/sw.js":                 {"sw.js", "application/javascript", "no-cache"},
-	"/term.html":             {"term.html", "text/html; charset=utf-8", "no-cache"},
 	// The lobby's build stamp, on its own so the self-update check costs ~12
 	// bytes instead of the whole page. It used to read the stamp out of a full
 	// GET of "/" every 5s: measured 1,430,075-1,430,242 B per fetch, and on
 	// iOS Safari 1,279 full bodies to 2 revalidations in 24h = 1.83 GB/day
 	// from one phone, which is 5.7x the whole downlink of a 400kbps link.
 	"/build-id": {"build-id", "text/plain; charset=utf-8", "no-cache"},
-	// term.html's own stamp. Same reasoning, different fingerprint: the framed
-	// page checks itself on every reconnect, which measured 502,720 B against
-	// 300 B for the same 12 hex characters.
-	"/term-build-id": {"term-build-id", "text/plain; charset=utf-8", "no-cache"},
+	// There was a SECOND stamp here, /term-build-id, because the terminal was a
+	// separate document with its own identity: the framed page re-checked itself
+	// on every reconnect, which measured 502,720 B against 300 B for the same 12
+	// hex characters. One document means one stamp, so it went with the page.
 
 	"/fonts/JetBrainsMono-Regular.woff2":     {"fonts/JetBrainsMono-Regular.woff2", "font/woff2", "public,max-age=604800"},
 	"/fonts/JetBrainsMono-Bold.woff2":        {"fonts/JetBrainsMono-Bold.woff2", "font/woff2", "public,max-age=604800"},
@@ -225,6 +216,58 @@ func assetDir() string {
 	return defaultAssetDir
 }
 
+// --- The deleted terminal page ----------------------------------------------
+//
+// /term.html served the terminal until the lobby started drawing its own
+// (ADR-0017), and the page is gone. Three kinds of client still ask for it: a
+// bookmark, an iOS home-screen icon installed against that URL, and a tab left
+// open across the deploy. A 404 for any of them is a dead end, so the path
+// answers a redirect to the lobby instead of falling off the table.
+//
+// The SESSION NAME survives the hop, which is the part worth getting right. The
+// page took it as the first positional `?arg=` (ttyd's -a contract, $1 in
+// devvm/tmux-attach.sh); the lobby reads `?session=` at boot
+// (readInitialSelection in frontend-v2/src/components/App.tsx, which checks it
+// against the same NAME_RE as sessionNameRe above). So /term.html?arg=main
+// becomes /?session=main and a bookmark lands on the session it named. Nothing
+// deeper carries: the command, dir, owner and watch slots ($2..$5) have no
+// spelling in the lobby's own URL, and the lobby resolves all four itself from
+// the layout and the sharing state.
+//
+// This MOVES a decision from the page into the server. The old bounce — a
+// /term.html with no usable ?arg= sending you to the lobby — was the page's own
+// JavaScript, so it died with the page; answering it here is a different layer,
+// and the layer is now Go rather than a script the client has to run.
+//
+// 302, not 301: every answer this file gives is no-cache, and a permanent
+// redirect a browser has already cached cannot be taken back. Not 410 either,
+// which is the technically honest code for a deleted document and useless to a
+// person, who would get a blank error page instead of their terminal.
+const termPagePath = "/term.html"
+
+// lobbyPath is where a stale terminal link lands: index.html, served by ttyd.
+const lobbyPath = "/"
+
+// handleTermPageRedirect answers termPagePath. Method-guarded like handleAsset,
+// since the ingress and the walloff probe both reach these paths with HEAD.
+func handleTermPageRedirect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	dest := lobbyPath
+	// Query().Get returns the FIRST value of a repeated key, and ttyd's
+	// contract is positional, so this is arg1 — the session name — however
+	// many args the old link carried. A name the lobby could not select is
+	// dropped rather than forwarded: it would only be ignored one hop later.
+	if name := r.URL.Query().Get("arg"); sessionNameRe.MatchString(name) {
+		dest = lobbyPath + "?session=" + url.QueryEscape(name)
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	http.Redirect(w, r, dest, http.StatusFound)
+}
+
 // withPublicAssets routes the public-asset namespace ahead of the mux: the
 // whitelisted paths AND every near-miss inside the namespace (traversal
 // shapes like "/icon-../…" or "/fonts/../../…") reach handleAsset and get
@@ -235,6 +278,10 @@ func withPublicAssets(next http.Handler) http.Handler {
 		p := r.URL.Path
 		if strings.HasPrefix(p, hashedAssetPrefix) {
 			handleHashedAsset(w, r)
+			return
+		}
+		if p == termPagePath {
+			handleTermPageRedirect(w, r)
 			return
 		}
 		if _, listed := publicAssets[p]; listed ||
@@ -248,9 +295,15 @@ func withPublicAssets(next http.Handler) http.Handler {
 	})
 }
 
-// hashedAssetPrefix is where the lobby's content-hashed build output lives:
-// the SPA's JS/CSS chunks and an immutable copy of the terminal page. Routed
-// here by the terminal stack's IngressRoute.
+// hashedAssetPrefix is where the lobby's content-hashed build output lives: the
+// SPA's JS/CSS chunks. Routed here by the terminal stack's IngressRoute.
+//
+// A build no longer emits a hashed copy of the terminal page, but installed ones
+// outlive the deploy that stopped producing them: the payload is not
+// dpkg-owned, so postinst prunes this directory with `-mtime +14` rather than
+// clearing it. A client still running an older lobby build therefore keeps a
+// working terminal here for up to a fortnight, which is why ".html" stays in
+// hashedAssetTypes below.
 const hashedAssetPrefix = "/assets/"
 
 // hashedAssetName is what a name under /assets/ may look like: ONE flat segment
@@ -278,10 +331,10 @@ var hashedAssetTypes = map[string]string{
 //
 // Every name here is content-hashed by the build, which is what lets the answer
 // be `immutable`: the bytes for a given name never change, so a client never
-// revalidates and a deploy changes the NAME instead of invalidating a path. That
-// is the difference between the terminal page costing a conditional round trip
-// per attach (and ~474 KB after every deploy, measured on a real device) and
-// costing nothing at all.
+// revalidates and a deploy changes the NAME instead of invalidating a path. The
+// measurement that bought the scheme: the terminal page, when it was a separate
+// document, cost a conditional round trip per attach and ~474 KB after every
+// deploy on a real device, against nothing at all once it was hashed.
 func handleHashedAsset(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")

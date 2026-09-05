@@ -125,31 +125,20 @@ func TestTheAuthedSurfacesAreProbedUnauthenticated(t *testing.T) {
 	}
 }
 
-// The healer polls these two endpoints to learn a new version shipped. They are
-// generated at stamp time, so it is easy to generate them and then not ship
-// them -- at which point no open tab ever self-updates again (ADR-0007).
-func TestTheStampEndpointsAreShipped(t *testing.T) {
+// The healer polls this endpoint to learn a new version shipped. It is
+// generated at stamp time, so it is easy to generate it and then not ship it --
+// at which point no open tab ever self-updates again (ADR-0007).
+//
+// There were two until 2026-09-05: the framed terminal page had a stamp of its
+// own, and a content-hashed copy of that page in the asset payload, both
+// asserted here. One document, one stamp.
+func TestTheStampEndpointIsShipped(t *testing.T) {
 	owned := map[string]bool{}
 	for _, f := range Package.Files {
 		owned[f.Dest] = true
 	}
-	for _, dest := range []string{
-		"/usr/local/share/ttyd/build-id",
-		"/usr/local/share/ttyd/term-build-id",
-	} {
-		if !owned[dest] {
-			t.Errorf("%s is not shipped; the self-update healer would poll a 404 forever", dest)
-		}
-	}
-}
-
-// The lobby resolves the terminal page by its content hash and only falls back
-// to /term.html when the meta tag is absent -- and it is never absent, because
-// stamping always writes one. So the hashed copy has to exist or every attach
-// loads a 404 into the terminal iframe.
-func TestTheHashedTerminalPageIsGenerated(t *testing.T) {
-	if !Package.HashedTermPage {
-		t.Fatal("the content-hashed terminal page must be generated into the asset payload")
+	if !owned["/usr/local/share/ttyd/build-id"] {
+		t.Error("build-id is not shipped; the self-update healer would poll a 404 forever")
 	}
 }
 

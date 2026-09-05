@@ -11,6 +11,23 @@ vi.mock("../src/components/codemirror-view", () => ({
   },
 }));
 
+/**
+ * The terminal, stubbed. A real one boots xterm, and xterm's
+ * `CoreBrowserService` calls `matchMedia`, which jsdom does not ship — so
+ * `term.open()` rejects and Vitest fails the FILE on the unhandled rejection
+ * while every assertion in it passes. What the real component does is
+ * TerminalNative.wiring.test.tsx, which brings its own `matchMedia`.
+ */
+const terminal = vi.hoisted(() => ({
+  signal: null as null | ((kind: "bell" | "output") => void),
+}));
+vi.mock("../src/components/TerminalNative", () => ({
+  TerminalNative: (props: { onAttention?: (kind: "bell" | "output") => void }) => {
+    terminal.signal = (kind) => props.onAttention?.(kind);
+    return <div class="tl-terminal-native" />;
+  },
+}));
+
 /** file-api reads: serve one small text file, no network. */
 vi.mock("../src/lib/file-api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/file-api")>();
@@ -26,17 +43,22 @@ vi.mock("../src/lib/file-api", async (importOriginal) => {
  *
  * The dot is the mirror of the [Text] one: output that arrives in the pty while
  * the text view is showing has to mark the segment you are NOT looking at. The
- * signal rides the terminal iframe's `tl-attention` postMessage, so these tests
- * drive that message rather than the latch directly.
+ * signal used to ride the terminal iframe's `tl-attention` postMessage; the
+ * terminal is a sibling component now and hands it over through `onAttention`,
+ * so `fromTerminal` below fires the prop instead of dispatching a message.
  *
- * Every mount here is pinned to `?native=0` (the `beforeEach` below), because
- * the iframe is what these tests talk to: `tl-attention` and `tl-view` are
- * postMessages, and the attach assertions read `/term.html?arg=…` off the
- * frame's own navigation. Since the flip (2026-09-04) a bare URL gets the
- * terminal the app renders itself, which reaches the same latch through
- * `onAttention` instead, and that side is SessionView.native.test.tsx. The iframe
- * stays shipped as the way back for a release, so its bridge stays tested; the
- * flag is how a tab selects it now.
+ * ONE GUARD LOST ITS SUBJECT HERE ON 2026-09-05, and it is worth naming rather
+ * than quietly dropping. "does not attach the terminal while it is the hidden
+ * view, only when opened" held the LAZY ATTACH property: attaching a live
+ * session resizes its tmux window to whatever this client measures, so a
+ * passive selection could squeeze a real 200x50 client to 80x24. TerminalView
+ * implemented it with a one-way `attachAllowed` latch. TerminalNative has no
+ * such latch — it attaches inside `onMount` — so the property has not held
+ * since the flip (2026-09-04), and the test was passing because the flag sent
+ * it to the iframe. Deleting it does not cause that; it removes a test that can
+ * no longer be true. terminal/fit.ts still stops a 0x0 host from RESIZING the
+ * window, which is the other half of the same damage, but nothing stops the
+ * attach itself.
  */
 
 const g = globalThis as unknown as { EventSource?: unknown; fetch?: unknown };
@@ -69,7 +91,7 @@ function statusProbe() {
       channels: () => [],
       onOpen: () => {},
       onTranscript: (s: string | null) => void transcript.push(s),
-      onFrameConn: () => {},
+      onTerminalConn: () => {},
       askConn: () => {},
       retryConn: () => {},
     },
@@ -85,24 +107,16 @@ const dots = (root: HTMLElement): boolean[] =>
 const mode = (root: HTMLElement): string | null =>
   root.querySelector(".tl-session-view")?.getAttribute("data-mode") ?? null;
 
-/** Post a message UP from the mounted terminal iframe, as term.html does. */
-function fromFrame(root: HTMLElement, data: unknown): void {
-  const frame = root.querySelector<HTMLIFrameElement>("iframe.tl-ttyd");
-  expect(frame, "the mounted terminal iframe").toBeTruthy();
-  window.dispatchEvent(
-    new MessageEvent("message", {
-      data,
-      origin: location.origin,
-      source: frame?.contentWindow,
-    }),
-  );
+/** Fire the terminal's attention hand-up, as terminal/attention.ts does. */
+function fromTerminal(kind: "bell" | "output"): void {
+  expect(terminal.signal, "the mounted terminal").toBeTruthy();
+  terminal.signal?.(kind);
 }
 
 describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   let origES: unknown;
   beforeEach(() => {
-    // The iframe branch, deliberately. See the file's own note above.
-    window.history.replaceState({}, "", "/?native=0");
+    terminal.signal = null;
     origES = g.EventSource;
     eventSources.length = 0;
     g.EventSource = class {
@@ -200,7 +214,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(mode(container)).toBe("text");
     expect(dots(container)).toEqual([false, false]);
 
-    fromFrame(container, { type: "tl-attention", kind: "output", session: "qa-vs" });
+    fromTerminal("output");
     // [Text (selected), Terminal (hidden — has unseen output)]
     expect(dots(container)).toEqual([false, true]);
   });
@@ -208,7 +222,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   it("clears the [Terminal] dot when you switch to the terminal", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
     fireEvent.click(segments(container)[0]!); // [Text] — so the bell lands while the terminal is hidden
-    fromFrame(container, { type: "tl-attention", kind: "bell", session: "qa-vs" });
+    fromTerminal("bell");
     expect(dots(container)).toEqual([false, true]);
 
     fireEvent.click(segments(container)[1]!); // [Terminal]
@@ -293,64 +307,12 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(probe.transcript.every((s) => s === null)).toBe(true);
   });
 
-  // Attaching a live session resizes ITS tmux window to whatever the iframe
-  // measures, so a HIDDEN terminal must not attach: a passive selection used to
-  // squeeze a real 200x50 client to 80x24. Terminal-first means the DEFAULT view
-  // attaches on mount (correctly, at full size); to exercise the laziness we
-  // start this session in Text so the terminal is the hidden one.
-  it("does not attach the terminal while it is the hidden view, only when opened", () => {
-    localStorage.setItem("tl:viewmode:v1:qa-vs", "text"); // start with the terminal hidden
-    const nav: string[] = [];
-  const navUrl: string[] = [];
-    const desc = Object.getOwnPropertyDescriptor(
-      HTMLIFrameElement.prototype,
-      "contentWindow",
-    );
-    const fakes = new WeakMap<HTMLIFrameElement, unknown>();
-    Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
-      configurable: true,
-      get(this: HTMLIFrameElement) {
-        const el = this;
-        let f = fakes.get(this);
-        if (!f) {
-          f = {
-            // The attach args ride the frame (dataset/name) now that the URL is
-            // constant for every session — one cache entry for a 1.8 MB document
-            // instead of one per session name. Rebuild the equivalent URL so the
-            // assertions below still read as "this session, these args".
-            location: {
-              replace: (u: string) => {
-                const args = el.dataset.tlArgs;
-                void nav.push(args ? u + "?" + args : u);
-                void navUrl.push(u);
-              },
-            },
-            postMessage: () => {},
-            focus: () => {},
-          };
-          fakes.set(this, f);
-        }
-        return f;
-      },
-    });
-    try {
-      const { container } = render(() => <SessionView session="qa-vs" />);
-      expect(mode(container)).toBe("text");
-      expect(nav).toEqual([]);
-
-      fireEvent.click(segments(container)[1]!); // [Terminal]
-      expect(nav).toEqual(["/term.html?arg=qa-vs"]);
-    } finally {
-      if (desc) Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", desc);
-    }
-  });
-
   it("still forwards the attention signal to the lobby (tab badge)", () => {
     const seen: string[] = [];
-    const { container } = render(() => (
-      <SessionView session="qa-vs" onFrameAttention={(kind) => seen.push(kind)} />
+    render(() => (
+      <SessionView session="qa-vs" onTerminalAttention={(kind) => seen.push(kind)} />
     ));
-    fromFrame(container, { type: "tl-attention", kind: "output", session: "qa-vs" });
+    fromTerminal("output");
     expect(seen).toEqual(["output"]);
   });
 
@@ -487,35 +449,36 @@ describe("<SessionView> — terminal controls in the session bar", () => {
     expect(sizes.at(-1)).toBe(22);
   });
 
-  it("reads the clipboard HERE and sends the text down, never asking the frame to read", async () => {
-    // The frame cannot read the clipboard: clicking this button focuses the
-    // LOBBY, and the async clipboard is gated on document focus, so a read
-    // inside the frame throws "Document is not focused" — reported to the user
-    // as denied access for a permission never requested.
+  it("reads the clipboard HERE and hands the text over as a paste", async () => {
+    // The read belongs out here. The async clipboard is gated on document
+    // focus, and this is the routine the soft-key button and the palette share,
+    // so there is one place that asks for the permission and one that fails.
     const pasted: string[] = [];
-    const forwarded: string[] = [];
+    const sent: string[] = [];
     const orig = navigator.clipboard;
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { readText: async () => "from-the-lobby" },
     });
-    // AFTER render: the mounted TerminalView installs these hooks in its
-    // onMount, so stubs set beforehand are the ones that lose.
+    // AFTER render: the mounted terminal installs these hooks itself, so stubs
+    // set beforehand are the ones that lose.
     const { container } = render(() => <SessionView session="qa-tools" />);
     window.__tlPasteToTerminal = (t: string) => {
       pasted.push(t);
       return true;
     };
-    window.__tlForwardToTerminal = (cmd: string) => {
-      forwarded.push(cmd);
+    window.__tlSendToTerminal = (b: string) => {
+      sent.push(b);
       return true;
     };
     try {
       fireEvent.click(container.querySelector('[aria-label="Paste from clipboard"]')!);
       await waitFor(() => expect(pasted).toEqual(["from-the-lobby"]));
-      expect(forwarded).not.toContain("terminal.paste");
+      // Through `term.paste`, not as raw bytes: paste brackets the text and
+      // normalizes \r\n, so a multiline paste cannot execute line by line.
+      expect(sent).toEqual([]);
     } finally {
-      delete window.__tlForwardToTerminal;
+      delete window.__tlSendToTerminal;
       delete window.__tlPasteToTerminal;
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: orig });
     }

@@ -1,8 +1,8 @@
 /**
  * The live connection status — one store, five providers, two readers.
  *
- * The providers push in from where the facts already are: TerminalView relays
- * the iframe's socket, SessionView forwards its SSE status, the lobby store
+ * The providers push in from where the facts already are: TerminalNative
+ * reports its socket, SessionView forwards its SSE status, the lobby store
  * reports its poll, the push module answers for notifications and the deploy
  * healer says when an update is waiting. Nothing here polls anything; a channel
  * that has not spoken stays `unknown`, which is the honest answer and never

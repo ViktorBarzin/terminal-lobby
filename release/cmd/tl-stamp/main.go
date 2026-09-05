@@ -17,56 +17,43 @@ import (
 
 func main() {
 	var (
-		lobby  = flag.String("lobby", "", "path to the built lobby page (with placeholders)")
-		term   = flag.String("term", "", "path to the terminal page (with placeholders)")
-		diag   = flag.String("diag", "", "path to the shared diagnostics core")
-		out    = flag.String("out", "", "directory to write the stamped surfaces into")
-		assets = flag.String("assets", "", "asset directory to write the content-hashed terminal page into")
-		build  = flag.String("build", "", "provenance stamp: the commit being built")
+		lobby = flag.String("lobby", "", "path to the built lobby page (with placeholders)")
+		diag  = flag.String("diag", "", "path to the shared diagnostics core")
+		out   = flag.String("out", "", "directory to write the stamped surface into")
+		build = flag.String("build", "", "provenance stamp: the commit being built")
 	)
 	flag.Parse()
-	for name, v := range map[string]*string{"lobby": lobby, "term": term, "diag": diag, "out": out, "build": build, "assets": assets} {
+	for name, v := range map[string]*string{"lobby": lobby, "diag": diag, "out": out, "build": build} {
 		if *v == "" {
 			fmt.Fprintf(os.Stderr, "tl-stamp: -%s is required\n", name)
 			os.Exit(2)
 		}
 	}
 
-	// The terminal page's identity has to be known before the lobby is stamped
-	// with it: the lobby carries it in a meta tag so a client can find the
-	// terminal page without a request.
-	termAsset, err := release.AssetID(*term, *diag)
-	check(err)
+	// ONE SURFACE, ONE IDENTITY. There were two until 2026-09-05: the lobby, and
+	// the terminal page it framed, which had a stamp of its own so it could
+	// notice its own staleness on every reconnect. The lobby draws its own
+	// terminal now, so there is one document, one asset id and one endpoint for
+	// the healer to poll. A -term flag, a hashed copy of that page under
+	// assets/, and a /term-build-id endpoint went with it.
 	lobbyAsset, err := release.AssetID(*lobby, *diag)
 	check(err)
 
-	stamps := release.Stamps{Build: *build, Asset: lobbyAsset, TermAsset: termAsset}
-	lobbyOut, err := release.Stamp(*lobby, *diag, stamps)
-	check(err)
-	termOut, err := release.Stamp(*term, *diag, release.Stamps{Build: *build, Asset: termAsset, TermAsset: termAsset})
+	lobbyOut, err := release.Stamp(*lobby, *diag, release.Stamps{Build: *build, Asset: lobbyAsset})
 	check(err)
 
 	check(os.MkdirAll(*out, 0o755))
 	check(os.WriteFile(filepath.Join(*out, "index.html"), lobbyOut, 0o644))
-	check(os.WriteFile(filepath.Join(*out, "term.html"), termOut, 0o644))
 
-	// The lobby resolves the terminal page by content hash and only falls back
-	// to /term.html when the meta tag is absent -- which stamping never leaves
-	// it. A mismatch here 404s every attach, so the hashed copy is written from
-	// the same bytes and the same id in one place.
-	check(os.MkdirAll(*assets, 0o755))
-	check(os.WriteFile(filepath.Join(*assets, "term-"+termAsset+".html"), termOut, 0o644))
-
-	// The two stamp endpoints the self-update healer reads.
+	// The stamp endpoint the self-update healer reads.
 	check(os.WriteFile(filepath.Join(*out, "build-id"), []byte(lobbyAsset), 0o644))
-	check(os.WriteFile(filepath.Join(*out, "term-build-id"), []byte(termAsset), 0o644))
 
 	report, err := json.MarshalIndent(map[string]string{
-		"build": *build, "lobby_asset": lobbyAsset, "term_asset": termAsset,
+		"build": *build, "lobby_asset": lobbyAsset,
 	}, "", "  ")
 	check(err)
 	check(os.WriteFile(filepath.Join(*out, "stamps.json"), append(report, '\n'), 0o644))
-	fmt.Printf("stamped: build=%s lobby=%s term=%s\n", *build, lobbyAsset, termAsset)
+	fmt.Printf("stamped: build=%s lobby=%s\n", *build, lobbyAsset)
 }
 
 func check(err error) {
