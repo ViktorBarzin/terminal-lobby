@@ -1474,41 +1474,6 @@ export const TerminalNative: Component<{
               // helper textarea. dragselect.ts's `focus` action is the same
               // call, and the two moved together.
               tapFocus();
-              // AND TELL dragselect A TAP JUST TOOK THE FOCUS, which is the
-              // whole of what this file owes the tap-replay branch there.
-              //
-              // The browser is about to replay this tap as a compat mouse
-              // press, hit-tested at the finger's coordinates against the
-              // layout as it will be THEN. The focus above raises the soft
-              // keyboard, `feedViewport` shrinks this host to make room for it,
-              // and on iOS nothing else on the page moves, so for a tap low
-              // enough the replay lands outside the terminal. A mousedown on a
-              // non-focusable element blurs the field the tap just focused, and
-              // the keyboard shuts again. The module's answer is to cancel that
-              // press's default action, and it can only recognise the press if
-              // it knows where and when the tap lifted.
-              //
-              // Here rather than in `onTouchEnd`, because this arm is the
-              // module's own verdict that the gesture was a tap and not a
-              // scroll (touchscroll.ts:698-702). A scroll's lift records
-              // nothing, so it can protect nothing.
-              //
-              // Reduced and stored WITHOUT `perform`, because a `tap` answers
-              // with state and no actions by construction: the focus this arm
-              // just took is the very thing the record exists to protect, so
-              // there is nothing left for a component to do. `perform` wants
-              // the MouseEvent its swallow arms call into, and there is no
-              // mouse event here to hand it. The dragselect suite holds that
-              // invariant ("a tap asks the component for nothing"), so an
-              // action added to `onTap` later fails there rather than being
-              // dropped here in silence.
-              if (lift) {
-                gesture = reduceGesture(
-                  gesture,
-                  { type: "tap", lift: { clientX: lift.clientX, clientY: lift.clientY } },
-                  worldAt(lift.target),
-                ).state;
-              }
               break;
             default: {
               const unhandled: never = action;
@@ -1599,29 +1564,8 @@ export const TerminalNative: Component<{
           t: e.timeStamp,
           th: performance.now(),
         });
-      /**
-       * WHERE THE LIFT LANDED, for the one reader that needs it:
-       * dragselect.ts's `tap` event, fed from `feedTouch`'s `focus` arm below.
-       *
-       * Read here rather than there because `feedTouch` is handed a plain
-       * `TouchScrollEvent` and never the DOM event, and touchscroll.ts's
-       * `touchend` deliberately carries no coordinates: nothing in the scroll
-       * recognizer reads them (its lift is a time and a velocity ring). Adding
-       * them there to reach one caller in this file would widen that module's
-       * contract for something it does not decide.
-       *
-       * `changedTouches[0]` is the finger that just left; `touches` is empty by
-       * then. `e.target` is the element the touch STARTED on, which the touch
-       * model fixes at touchstart and keeps for every event of the sequence, so
-       * it answers "was the terminal under this finger when it went down"
-       * whatever the layout has done since.
-       */
-      let lift: { clientX: number; clientY: number; target: EventTarget | null } | null = null;
-      const onTouchEnd = (e: TouchEvent): void => {
-        const gone = e.changedTouches[0];
-        lift = gone ? { clientX: gone.clientX, clientY: gone.clientY, target: e.target } : null;
+      const onTouchEnd = (e: TouchEvent): void =>
         feedTouch({ type: "touchend", t: e.timeStamp, th: performance.now() });
-      };
       const onTouchCancel = (): void => feedTouch({ type: "touchcancel" });
 
       /**
