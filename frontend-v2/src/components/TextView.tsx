@@ -443,8 +443,9 @@ export const TextView: Component<{
    * Drive the session's picker, then say what it actually did.
    *
    * The reply is the session's own reading, not an echo: an effort change can
-   * be refused without anything failing, and on this box it is, so a chip that
-   * trusted the request would show a level the session is not on
+   * be refused without anything failing — an `env.CLAUDE_CODE_EFFORT_LEVEL` in
+   * the account's settings pins one and the slider still moves — so a chip
+   * that trusted the request would show a level the session is not on
    * (lib/model-api.ts).
    */
   const pickModel = (field: ModelField, id: string): void => {
