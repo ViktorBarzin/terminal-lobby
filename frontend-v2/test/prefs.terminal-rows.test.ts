@@ -267,7 +267,14 @@ describe("terminal prefs — a write never disturbs the neighbours", () => {
     const raw = realDoc();
     expect(composeDoc(raw, coercePrefs(raw))).toEqual({
       ...raw,
-      session: { ...raw.session, newProject: "", newModel: "default" },
+      session: {
+        ...raw.session,
+        newProject: "",
+        newModel: "default",
+        newEffort: "default",
+        newCodexModel: "default",
+        newCodexEffort: "default",
+      },
       sidebar: { showLastActive: false, order: PREF_DEFAULTS.sidebar.order },
     });
   });

@@ -26,7 +26,7 @@ install.
 | Piece | State |
 |---|---|
 | systemd unit on the devvm | installed, `enable --now`, listening on `:7685` |
-| Ingress | `terminal.viktorbarzin.me` routes `PathPrefix(/events/)`, `/prompt/`, `/cancel/`, `/earlier/`, `/result/`, `/pane/`, `/keys/` and `/commands/` here behind Authentik (`infra/stacks/terminal/main.tf`). No strip — the service serves those at its root |
+| Ingress | `terminal.viktorbarzin.me` routes `PathPrefix(/events/)`, `/prompt/`, `/cancel/`, `/earlier/`, `/result/`, `/pane/`, `/keys/`, `/commands/`, `/search/`, `/answer-text/` and `/model/` here behind Authentik (`infra/stacks/terminal/main.tf`). No strip — the service serves those at its root |
 | `SessionStart` hook | wired org-wide: `/usr/local/bin/claude-se-hook session-start` in `/etc/claude-code/managed-settings.json`, installed by `scripts/deploy.sh`. It registers (user, tmux session, transcript) so the SSE handler can find the transcript to tail. The path comes from the hook payload's `transcript_path` — Claude Code files a session under the directory it STARTED in, so a path rebuilt from the session's current cwd is wrong the moment it cds |
 
 `/hooks/*` is **never** routed publicly, and the session-start handler is

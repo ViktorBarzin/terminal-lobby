@@ -99,6 +99,7 @@ const proxy: Record<string, ProxyOptions> = {
   "/commands": sessionEventsProxy,
   "/search": sessionEventsProxy,
   "/answer-text": sessionEventsProxy,
+  "/model": sessionEventsProxy,
   // tmux-api lobby data API: /api/sessions/* -> tmux-api root (strip the whole
   // /api/sessions prefix, mirroring the PROD ingress `PathPrefix /api/sessions/`).
   // Covers whoami/sessions/layout/dirs/prefs/projects/users/shares AND Web Push

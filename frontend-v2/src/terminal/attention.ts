@@ -106,7 +106,7 @@
  *           body now, and takes it off in `teardown`.
  *   view    `!(mode() === "terminal" && onScreen())`, which is the expression
  *           SessionView passes as the terminal's `active` prop
- *           (SessionView.tsx:899). Both halves carry weight: the text view
+ *           (SessionView.tsx:926). Both halves carry weight: the text view
  *           showing over the terminal, and this session's whole slot being
  *           CSS-hidden behind another session. A Solid effect on `active` fires
  *           on mount, and that first event is the native counterpart of the

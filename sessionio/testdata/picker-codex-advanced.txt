@@ -1,0 +1,40 @@
+╭──────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.144.3)                           │
+│                                                      │
+│ model:       gpt-5.6-terra medium   /model to change │
+│ directory:   /tmp                                    │
+│ permissions: YOLO mode                               │
+╰──────────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+• You have 3 usage limit resets available. Run /usage to use one.
+
+
+  Advanced Reasoning
+  ⚠ Consumes usage limits faster
+
+› 1. Max    For difficult problems when quality matters more than speed · higher usage
+  2. Ultra  For demanding work using multiple agents · highest usage
+
+  Press enter to confirm or esc to go back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
