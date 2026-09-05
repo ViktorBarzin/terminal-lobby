@@ -63,7 +63,7 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 	// requests (the common case) fall through to the inline path below,
 	// unchanged.
 	if crossUser(osUser) {
-		res := runPrivop(osUser, "list", userHome(osUser), r.URL.Query().Get("dir"),
+		res := runPrivop(osUser, "list", r.URL.Query().Get("dir"),
 			r.URL.Query().Get("all") == "1", nil)
 		writeEnvelope(w, res, "")
 		return
@@ -133,7 +133,7 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 	}
 	if crossUser(osUser) {
 		p := r.URL.Query().Get("path")
-		res := runPrivop(osUser, "read", userHome(osUser), p, false, nil)
+		res := runPrivop(osUser, "read", p, false, nil)
 		if res.Status == http.StatusOK {
 			// The same signal the inline path records, from the requested
 			// extension — the child never sees the telemetry pipe.
@@ -244,7 +244,7 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 	// file in someone else's home, which they could then not edit from a
 	// shell — worse than refusing.
 	if crossUser(osUser) {
-		res := runPrivop(osUser, "write", userHome(osUser), body.Path, false,
+		res := runPrivop(osUser, "write", body.Path, false,
 			[]byte(body.Content))
 		if res.Status == http.StatusOK {
 			events.Emit("file.saved", osUser, telemetry.Attrs{

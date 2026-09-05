@@ -3,6 +3,7 @@ package sessionio
 import (
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -365,12 +366,12 @@ func TestVerbsStillWorkOnAnExactName(t *testing.T) {
 func TestKeysRefusesAnythingOutsideTheAnswerAlphabet(t *testing.T) {
 	in := NewInjectorOnSocket("nobody", "tl-never")
 	for _, bad := range [][]string{
-		{"C-c"},                      // interrupt has its own verb, with its own state handling
-		{"rm -rf /"},                 // not a key name at all
-		{"Enter; tmux kill-server"},  // no shell here, but the shape must still be refused
-		{"1", "Enter", "C-u"},        // one bad key spoils the batch
-		{},                           // nothing to send
-		make([]string, MaxKeys+1),    // unbounded batches are not an answer
+		{"C-c"},                     // interrupt has its own verb, with its own state handling
+		{"rm -rf /"},                // not a key name at all
+		{"Enter; tmux kill-server"}, // no shell here, but the shape must still be refused
+		{"1", "Enter", "C-u"},       // one bad key spoils the batch
+		{},                          // nothing to send
+		make([]string, MaxKeys+1),   // unbounded batches are not an answer
 	} {
 		if err := in.Keys("nobody", "s", bad); err == nil {
 			t.Fatalf("Keys accepted %q", bad)
@@ -402,5 +403,54 @@ func TestCapturePaneRefusesAMissingSession(t *testing.T) {
 	in, osUser, _ := scratchServer(t)
 	if _, err := in.CapturePane(osUser, "nope"); err == nil {
 		t.Fatal("capture-pane on a missing session must fail, not return another session's screen")
+	}
+}
+
+// TL-22. The privileged call must not let PATH choose which binary runs as
+// another user. tmux-api and file-api already pin theirs; this package was the
+// one that still asked PATH.
+func TestCommandPinsItsBinariesByAbsolutePath(t *testing.T) {
+	in := NewInjector("wizard")
+
+	own := in.Command("wizard", "list-sessions")
+	if !filepath.IsAbs(own.Args[0]) {
+		t.Errorf("own-user tmux is %q, want an absolute path", own.Args[0])
+	}
+	other := in.Command("bob", "list-sessions")
+	if !filepath.IsAbs(other.Args[0]) {
+		t.Errorf("sudo is %q, want an absolute path", other.Args[0])
+	}
+	want := []string{sudoBinary, "-n", "-u", "bob", tmuxBinary, "list-sessions"}
+	if strings.Join(other.Args, " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", other.Args, want)
+	}
+}
+
+// TL-22, the latent half. Option interpolates the name into a tmux FORMAT, and
+// #(...) in a format is command expansion, so a name is not inert text. Every
+// caller passes a package constant today; the guard is what keeps that true.
+func TestOptionRefusesANameThatWouldRunACommand(t *testing.T) {
+	in := NewInjector("wizard")
+	for _, name := range []string{
+		"}#(touch /tmp/tl-tl22)#{",
+		"@thread #{pane_id}",
+		"",
+	} {
+		if v, ok := in.Option("wizard", "demo", name); ok || v != "" {
+			t.Errorf("Option(%q) = (%q,%v), want a refusal", name, v, ok)
+		}
+	}
+}
+
+// TL-22, the other latent half. SetOption passed its value as a bare positional,
+// so a value beginning with "-" would be permuted into a flag by getopt.
+func TestSetOptionAcceptsAValueThatLooksLikeAFlag(t *testing.T) {
+	in, osUser, _ := scratchSession(t)
+	if err := in.SetOption(osUser, "demo", OptionThread, "-not-a-flag"); err != nil {
+		t.Fatalf("SetOption: %v", err)
+	}
+	got, ok := in.Option(osUser, "demo", OptionThread)
+	if !ok || got != "-not-a-flag" {
+		t.Errorf("read back (%q,%v), want (%q,true)", got, ok, "-not-a-flag")
 	}
 }

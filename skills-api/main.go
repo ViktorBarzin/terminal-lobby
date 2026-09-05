@@ -64,9 +64,14 @@ func main() {
 		return
 	}
 
-	if u, err := user.Current(); err == nil {
-		selfUser = u.Username
+	// A service that cannot name its own OS user cannot tell a request for
+	// itself from a request for someone else, and every op below is keyed on
+	// that difference. Refuse to start rather than guess.
+	u, err := user.Current()
+	if err != nil {
+		log.Fatalf("skills-api: cannot resolve my own OS user: %v", err)
 	}
+	selfUser = u.Username
 
 	mux := routes()
 

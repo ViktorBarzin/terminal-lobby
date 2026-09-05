@@ -28,21 +28,30 @@ func main() {
 	// one op AS that user and prints a JSON envelope. These flags are internal
 	// (set only by runPrivop), never by the systemd unit.
 	privop := flag.String("privop", "", "internal: run one op (list|read|write) as the current sudo-ed user")
-	home := flag.String("home", "", "internal (-privop): user home containment root")
+	// -home is accepted and ignored. The child used to take its containment
+	// root from here, which let anyone holding the sudo grant choose it; it now
+	// reads its own home from the password database. Still parsed so that
+	// during a deploy an old parent's argv does not fail the new child on an
+	// unknown flag. Drop it once no old parent can be running.
+	_ = flag.String("home", "", "internal (-privop): ignored, kept for one upgrade")
 	path := flag.String("path", "", "internal (-privop): target path or dir")
 	all := flag.Bool("all", false, "internal (-privop): include dotfiles (list)")
 	flag.Parse()
 
 	if *privop != "" {
-		runPrivopMain(*privop, *home, *path, *all)
+		runPrivopMain(*privop, *path, *all)
 		return
 	}
 
 	// Record the service's own OS user so same-user requests skip sudo and read
-	// inline; everyone else is reached via the -privop re-exec.
-	if u, err := user.Current(); err == nil {
-		selfUser = u.Username
+	// inline; everyone else is reached via the -privop re-exec. A service that
+	// cannot name itself cannot tell those two apart, so it does not start:
+	// every decision below this line, inline or sudo, is keyed on this name.
+	u, err := user.Current()
+	if err != nil {
+		log.Fatalf("file-api: cannot resolve my own OS user: %v", err)
 	}
+	selfUser = u.Username
 
 	http.HandleFunc("/files/list", handleList)
 	http.HandleFunc("/files/read", handleRead)

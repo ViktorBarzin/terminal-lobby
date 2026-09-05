@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -92,6 +93,20 @@ func NewInjectorOnSocket(selfUser, socket string) *Injector {
 	return &Injector{selfUser: selfUser, socket: socket}
 }
 
+// tmuxBinary and sudoBinary are absolute so a privileged call cannot be pointed
+// at a different program by whatever PATH the unit happens to inherit. tmux-api
+// and file-api pin theirs for the same reason. Vars, not constants, only as a
+// test seam; nothing in production reassigns them.
+var (
+	tmuxBinary = "/usr/bin/tmux"
+	sudoBinary = "/usr/bin/sudo"
+)
+
+// optionNameRe is the charset a tmux option name may use. Option interpolates
+// the name into a tmux FORMAT string, where #(...) runs a command, so a name is
+// not inert text even though every caller passes a package constant today.
+var optionNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-]+$`)
+
 // Command builds a tmux invocation for a verb this package does not wrap. It is
 // exported so callers do not re-derive the two rules that matter — which socket
 // to talk to, and whether to go through `sudo -u` — each in their own way.
@@ -103,9 +118,9 @@ func (in *Injector) Command(osUser string, args ...string) *exec.Cmd {
 	}
 	full = append(full, args...)
 	if osUser == in.selfUser {
-		return exec.Command("tmux", full...)
+		return exec.Command(tmuxBinary, full...)
 	}
-	return exec.Command("sudo", append([]string{"-n", "-u", osUser, "tmux"}, full...)...)
+	return exec.Command(sudoBinary, append([]string{"-n", "-u", osUser, tmuxBinary}, full...)...)
 }
 
 // exactPane targets the named session and NOTHING ELSE, for the verbs whose
@@ -303,6 +318,9 @@ func (in *Injector) State(osUser, session string) string {
 // the requested name is printed back alongside the value and has to match, or
 // the value is not this session's to serve.
 func (in *Injector) Option(osUser, session, name string) (string, bool) {
+	if !optionNameRe.MatchString(name) {
+		return "", false
+	}
 	out, err := in.Command(osUser, "display-message", "-p", "-t", exactPane(session),
 		"#{session_name}\n#{"+name+"}").Output()
 	if err != nil {
@@ -316,8 +334,13 @@ func (in *Injector) Option(osUser, session, name string) (string, bool) {
 }
 
 // SetOption stamps a tmux session option. It fails if the session does not exist.
+// The `--` matters: tmux permutes flags, so without it a value beginning with
+// "-" is read as an option to set-option rather than as the value.
 func (in *Injector) SetOption(osUser, session, name, value string) error {
-	return in.Command(osUser, "set-option", "-t", exactPane(session), name, value).Run()
+	if !optionNameRe.MatchString(name) {
+		return fmt.Errorf("sessionio: %q is not a tmux option name", name)
+	}
+	return in.Command(osUser, "set-option", "-t", exactPane(session), "--", name, value).Run()
 }
 
 // HasSession reports whether the named session is live on this user's tmux
