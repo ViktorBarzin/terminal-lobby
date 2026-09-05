@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -227,4 +228,36 @@ func TestRenameCarriesOnWhenOneStoreFails(t *testing.T) {
 	if got.Shares[0].Name != "fix-the-parser" {
 		t.Errorf("the share did not move after an unrelated store failed: %+v", got.Shares)
 	}
+}
+
+// The seventh thing a rename has to move is not a store: it is the grid pin tmux
+// itself holds. PinGrid writes the session name into three hooks, so a rename
+// leaves them naming a session that no longer resolves, and the window freezes at
+// `window-size manual` with nothing able to resize it (sessionio/grid.go).
+func TestCarryRenameRepinsTheGrid(t *testing.T) {
+	var got []string
+	orig := repinGrid
+	repinGrid = func(osUser, name string) error {
+		got = append(got, osUser+"/"+name)
+		return nil
+	}
+	t.Cleanup(func() { repinGrid = orig })
+
+	carryRenameAcrossStores("wizard", "deploy-the-thing", "fix-the-parser")
+
+	// The NEW name: hooks are session-scoped and follow the rename, so it is the
+	// target inside them that has to be rewritten.
+	if len(got) != 1 || got[0] != "wizard/fix-the-parser" {
+		t.Fatalf("repinGrid calls = %v, want one for wizard/fix-the-parser", got)
+	}
+}
+
+// A repin that fails must not stop the rename: the other six moves have already
+// happened, and a stuck grid is recoverable while a half-renamed session is not.
+func TestCarryRenameSurvivesARepinFailure(t *testing.T) {
+	orig := repinGrid
+	repinGrid = func(string, string) error { return errors.New("no such session") }
+	t.Cleanup(func() { repinGrid = orig })
+
+	carryRenameAcrossStores("wizard", "gone-already", "new-name")
 }

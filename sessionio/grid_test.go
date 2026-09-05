@@ -436,3 +436,148 @@ func TestGridHookStaysQuietWhenEverythingInItFails(t *testing.T) {
 		t.Errorf("the hook wrote %q, which paints the pane", out)
 	}
 }
+
+// A rename orphans the pin, and the session is left frozen.
+//
+// PinGrid bakes the session name into all three hooks, so `tmux rename-session`
+// leaves them pointing at a name that no longer resolves. Every hook then fails
+// into its own `|| true` and nothing resizes the window, while `window-size`
+// stays `manual` — the one combination that freezes a grid for good.
+//
+// Found live on 2026-09-05: session `hjtedz8zrn7h`, renamed from `ux` by the
+// ADR-0019 id migration, sat at 58x38 with a 92x58 client attached, and its
+// hooks read `resize-window -t =ux:` against a server with no session `ux`.
+func TestRenameOrphansThePinUntilItIsRepinned(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+
+	owner := attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+	run(t, sock, "rename-session", "-t", "=demo", "renamed")
+
+	// The pin now names a session that is gone, so a resize goes nowhere.
+	owner.resize(t, 120, 40)
+	if got := gridOf(t, sock, "renamed"); got == "120x40" {
+		t.Fatalf("grid = %s: the stale pin resized after all, so this bug is gone "+
+			"and RepinGrid may be unnecessary", got)
+	}
+
+	if err := in.RepinGrid(osUser, "renamed"); err != nil {
+		t.Fatalf("RepinGrid: %v", err)
+	}
+
+	// Repinning both restores the size and re-points the hooks.
+	if got := gridOf(t, sock, "renamed"); got != "120x40" {
+		t.Errorf("after RepinGrid: grid = %s, want 120x40 (the owner's size)", got)
+	}
+	owner.resize(t, 90, 30)
+	if got := gridOf(t, sock, "renamed"); got != "90x30" {
+		t.Errorf("resize after RepinGrid: grid = %s, want 90x30", got)
+	}
+	// And it is still a PIN: a viewer must not move it.
+	viewer := attach(t, sock, "renamed", 60, 20, "-r")
+	if got := gridOf(t, sock, "renamed"); got != "90x30" {
+		t.Errorf("viewer attached: grid = %s, want it untouched at 90x30", got)
+	}
+	viewer.close()
+}
+
+// RepinGrid is only for a session that WAS pinned. Calling it on an ordinary
+// session must not quietly take that session's sizing away from tmux.
+func TestRepinGridLeavesAnUnpinnedSessionAlone(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+	attach(t, sock, "demo", 200, 50)
+
+	if err := in.RepinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("RepinGrid: %v", err)
+	}
+
+	got, err := exec.Command("tmux", "-L", sock, "show-options", "-qv", "-t", "demo",
+		"window-size").Output()
+	if err != nil {
+		t.Fatalf("show-options: %v", err)
+	}
+	if strings.Contains(string(got), "manual") {
+		t.Errorf("window-size = %q: RepinGrid pinned a session that was never pinned",
+			strings.TrimSpace(string(got)))
+	}
+	if hooks := showHooks(t, sock, "demo"); hooks != "" {
+		t.Errorf("hooks = %q, want none", hooks)
+	}
+}
+
+// gridOf is grid() for a session that is not called "demo".
+func gridOf(t *testing.T, sock, session string) string {
+	t.Helper()
+	out, err := exec.Command("tmux", "-L", sock, "display", "-p", "-t", session,
+		"#{window_width}x#{window_height}").Output()
+	if err != nil {
+		t.Fatalf("display: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func showHooks(t *testing.T, sock, session string) string {
+	t.Helper()
+	out, err := exec.Command("tmux", "-L", sock, "show-hooks", "-t", session).Output()
+	if err != nil {
+		t.Fatalf("show-hooks: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// GridPinStale is what a startup sweep uses to find the frozen ones without
+// disturbing the healthy ones.
+func TestGridPinStale(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+	attach(t, sock, "demo", 200, 50)
+
+	// Unpinned: not stale, whatever else is true of it.
+	if stale, err := in.GridPinStale(osUser, "demo"); err != nil || stale {
+		t.Fatalf("unpinned: stale=%v err=%v, want false", stale, err)
+	}
+
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+	if stale, err := in.GridPinStale(osUser, "demo"); err != nil || stale {
+		t.Fatalf("freshly pinned: stale=%v err=%v, want false", stale, err)
+	}
+
+	run(t, sock, "rename-session", "-t", "=demo", "renamed")
+	stale, err := in.GridPinStale(osUser, "renamed")
+	if err != nil {
+		t.Fatalf("after rename: %v", err)
+	}
+	if !stale {
+		t.Fatal("after rename: stale=false, want true — the hooks still name `demo`")
+	}
+
+	if err := in.RepinGrid(osUser, "renamed"); err != nil {
+		t.Fatalf("RepinGrid: %v", err)
+	}
+	if stale, err := in.GridPinStale(osUser, "renamed"); err != nil || stale {
+		t.Errorf("after repin: stale=%v err=%v, want false", stale, err)
+	}
+}
+
+// A name that is a prefix of another must not read as fresh: `-t =demo:` and
+// `-t =demo2:` differ only past the name, which is why the check matches the
+// full exact-target form rather than the bare name.
+func TestGridPinStaleDoesNotPrefixMatch(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+	attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+	run(t, sock, "rename-session", "-t", "=demo", "demo2")
+
+	stale, err := in.GridPinStale(osUser, "demo2")
+	if err != nil {
+		t.Fatalf("GridPinStale: %v", err)
+	}
+	if !stale {
+		t.Fatal("stale=false: hooks naming `demo` read as fresh for `demo2`")
+	}
+}

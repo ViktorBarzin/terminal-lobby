@@ -329,6 +329,7 @@ var (
 	gridInjector  = sessionio.NewInjector(selfUser)
 	sessionExists = func(osUser, name string) bool { return gridInjector.HasSession(osUser, name) }
 	pinGrid       = func(osUser, name string) error { return gridInjector.PinGrid(osUser, name) }
+	repinGrid     = func(osUser, name string) error { return gridInjector.RepinGrid(osUser, name) }
 )
 
 // handleInternalAttach is the devvm attach path's single authorization call:
