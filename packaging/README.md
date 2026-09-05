@@ -147,12 +147,13 @@ if either side changes, because a divergence would silently invalidate every
 open tab at the cutover:
 
 ```sh
-sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' frontend/term.html | sha256sum | cut -c1-12
 sed -e '/__TL_DIAG__/{r frontend/diag.js' -e 'd;}' frontend-v2/index.html | sha256sum | cut -c1-12
 ```
 
-must equal the `term_asset` and `lobby_asset` in `tl-stamp`'s `stamps.json`.
-Verified identical on 2026-08-29 against the real 58 KB `diag.js`.
+must equal the `lobby_asset` in `tl-stamp`'s `stamps.json`. Verified identical
+on 2026-08-29 against the real 58 KB `diag.js`. There was a second line here,
+for `frontend/term.html` and its `term_asset`, until that page was deleted on
+2026-09-05.
 
 ## Before the trigger can be switched on
 

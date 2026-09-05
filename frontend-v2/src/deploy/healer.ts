@@ -4,11 +4,12 @@
  *
  * The lobby (this SPA, the TOP document) is the ONLY deploy channel — there is
  * no server build header, so it polls its own served bytes on a short timer and
- * compares the served `TL_ASSET` against its own. TOP-owned reload: the embedded
- * terminal iframe (the ttyd page) never reloads itself — on its own reconnect
- * heal it posts `{type:'tl-build-stale'}` UP, TerminalView forwards it to
- * `onBuildStale`, and the lobby drives the SINGLE reload (which replaces the
- * iframe too).
+ * compares the served `TL_ASSET` against its own. ONE document, ONE stamp: the
+ * terminal used to be a page of its own, with its own identity that could go
+ * stale on its own, so it checked itself on every reconnect and handed the
+ * verdict UP as `{type:'tl-build-stale'}`. It is drawn in this document now, so
+ * this poll is the whole of the update check and there is no second opinion to
+ * collect.
  *
  * ZERO-TOUCH (ADR-0007, Viktor 2026-08-04): there is no "Update ready" pill and
  * no tap. An update applies itself at a boundary that happens anyway — the next
@@ -56,8 +57,8 @@ export const UPDATE_KEY = "tl-update";
  * bfcache restore — are event-driven and unchanged. */
 export const SELF_CHECK_MS = 300_000;
 
-/** Where the stamp lives. Served from the shared asset whitelist beside
- *  term.html, so it needs no service of its own and no restart to update. */
+/** Where the stamp lives. Served from the shared asset whitelist, so it needs
+ *  no service of its own and no restart to update. */
 export const STAMP_PATH = "/build-id";
 
 /** What the healer wrote before it navigated, read back at the next boot. */
@@ -77,7 +78,7 @@ type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type MinTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
 export interface DeployHealerDeps {
-  /** Is a terminal attached (a session selected → SessionView/iframe mounted)?
+  /** Is a terminal attached (a session selected → a mounted SessionView)?
    *  The v2 analog of the vanilla `currentActive`. */
   hasAttachedTerminal: () => boolean;
   /** this document's own update identity; default: the `tl-asset` meta tag. */
@@ -123,8 +124,6 @@ export interface DeployHealerDeps {
 }
 
 export interface DeployHealer {
-  /** the tl-build-stale bridge destination (a terminal saw a new build). */
-  onBuildStale(): void;
   /** run one lobby self-check now (skipped while hidden). */
   checkNow(opts?: { justResumed?: boolean }): Promise<void>;
   /** read back the record the previous page life wrote before it navigated. */
@@ -340,13 +339,6 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
     await evaluate(!!opts.justResumed, opts.justResumed ? "resume" : "poll");
   }
 
-  function onBuildStale(): void {
-    // A terminal iframe saw a new build on its reconnect heal and handed the
-    // decision UP. The top owns the single reload; the plan is idempotent, so a
-    // reconnect storm collapses to at most one.
-    void evaluate(false, "terminal signal");
-  }
-
   /**
    * Read back what the previous page life was reloading towards. Landed → clear
    * and report; did not land → keep the count, and once it hits the cap report
@@ -416,5 +408,5 @@ export function createDeployHealer(deps: DeployHealerDeps): DeployHealer {
 
   if (deps.autostart !== false) start();
 
-  return { onBuildStale, checkNow, confirmBoot, dispose };
+  return { checkNow, confirmBoot, dispose };
 }

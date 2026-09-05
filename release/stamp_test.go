@@ -98,10 +98,13 @@ func TestInlineRejectsACoreThatWouldLandOutsideAScriptBlock(t *testing.T) {
 func TestACoreOnlyChangeMovesEverySurfacesAssetID(t *testing.T) {
 	root := t.TempDir()
 	lobby := page(t, root, "index.html", surfaceHTML)
-	term := page(t, root, "term.html", strings.Replace(surfaceHTML, "lobby", "terminal", 1))
+	// A second surface, so the property is asserted over more than one file.
+	// This was frontend/term.html until 2026-09-05; the name is now a fixture's
+	// and nothing reads it as a live path.
+	other := page(t, root, "other.html", strings.Replace(surfaceHTML, "lobby", "other", 1))
 
 	before := map[string]string{}
-	for name, p := range map[string]string{"lobby": lobby, "term": term} {
+	for name, p := range map[string]string{"lobby": lobby, "other": other} {
 		id, err := AssetID(p, page(t, root, "diag.js", diagCore))
 		if err != nil {
 			t.Fatal(err)
@@ -110,7 +113,7 @@ func TestACoreOnlyChangeMovesEverySurfacesAssetID(t *testing.T) {
 	}
 
 	changed := page(t, filepath.Join(root, "v2"), "diag.js", diagCore+"// a fix\n")
-	for name, p := range map[string]string{"lobby": lobby, "term": term} {
+	for name, p := range map[string]string{"lobby": lobby, "other": other} {
 		id, err := AssetID(p, changed)
 		if err != nil {
 			t.Fatal(err)
@@ -154,7 +157,7 @@ func TestTheAssetIDIgnoresTheStampsThemselves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stamped, err := Stamp(surface, diag, Stamps{Build: "deadbee", Asset: id, TermAsset: "0123456789ab"})
+	stamped, err := Stamp(surface, diag, Stamps{Build: "deadbee", Asset: id})
 	if err != nil {
 		t.Fatal(err)
 	}

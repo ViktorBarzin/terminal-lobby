@@ -39,7 +39,12 @@ import {
   type DragSelectWorld,
   type ScreenBox,
 } from "../terminal/dragselect";
-import { reduceStash, type SelectionStash } from "../terminal/selection";
+import {
+  chooseCaptureWrite,
+  copyCommandDecision,
+  reduceStash,
+  type SelectionStash,
+} from "../terminal/selection";
 import {
   NO_TOUCH_SCROLL,
   reduce as reduceTouchScroll,
@@ -57,6 +62,8 @@ import {
   type WheelWorld,
 } from "../terminal/wheel";
 import {
+  COPY_FAILURE_TOAST_MS,
+  COPY_TOAST_MS,
   reduce as reduceKey,
   reduceData,
   type KeyReduction,
@@ -119,6 +126,7 @@ import {
 } from "../store/prefs";
 import { gesturesEnabled } from "../store/device-prefs";
 import { showToast } from "../store/toast";
+import { apiUrl } from "../lib/config";
 
 /** Every fit trigger waits this long first (term.html:8471-8481, `refit`). */
 const REFIT_DEBOUNCE_MS = 120;
@@ -574,14 +582,24 @@ export const TerminalNative: Component<{
    */
   watch?: () => boolean;
   /**
-   * Hands the caller the two levers the ADR-0016 status model needs: `reconnect`
-   * for the panel's Reconnect button, and `ask` for "what are you doing right
-   * now", which is Run check and a session view coming back on screen above a
-   * terminal that has been quietly open the whole time. The iframe branch
-   * publishes the same pair as `retryConn` and `askConn`
-   * (TerminalView.tsx:454-457).
+   * Hands the caller the levers it cannot reach from outside this component.
+   *
+   * `reconnect` and `ask` are what the ADR-0016 status model needs: the panel's
+   * Reconnect button, and "what are you doing right now", which is Run check
+   * and a session view coming back on screen above a terminal that has been
+   * quietly open the whole time.
+   *
+   * `copy` is the mobile soft-key row's Copy button, which has no keyboard to
+   * press the copy chord with. It is a lever rather than a window global
+   * because there is one document now: the button and the terminal are
+   * siblings, so the caller can hold a function instead of a name every
+   * mounted terminal would fight over.
    */
-  onReady?: (control: { reconnect: () => void; ask: () => void }) => void;
+  onReady?: (control: {
+    reconnect: () => void;
+    ask: () => void;
+    copy: () => void;
+  }) => void;
   /**
    * FALSE for a secondary terminal. The window-level bridges below are named
    * globals, so two mounted terminals would fight over them and the soft keys,
@@ -2800,6 +2818,94 @@ export const TerminalNative: Component<{
       };
 
       /**
+       * THE SOFT-KEY ROW'S Copy BUTTON, which is term.html's
+       * `runTerminalCopy` (:9572-9612).
+       *
+       * A press of a button is unambiguous intent, so it is NOT the copy
+       * chord's routine: `copyCommandDecision` gates on the TEXT rather than on
+       * whether a range exists, and an empty one falls back to the visible
+       * screen instead of falling through to the pty. On touch there is never a
+       * selection — a drag scrolls, by design — which is the case the fallback
+       * exists for, and it is the whole reason this button is not simply the
+       * chord under another name.
+       *
+       * `chooseCaptureWrite` decides how the capture reaches the clipboard, and
+       * "promise-item" is load-bearing on the platform this button is for: iOS
+       * Safari honours a clipboard write only inside the tap's transient
+       * activation, and awaiting the fetch first voids it. So the write is
+       * called SYNCHRONOUSLY and handed the fetch as a ClipboardItem promise.
+       *
+       * The session name comes out of `args` rather than a second prop: it is
+       * arg1 of the positional contract (lib/terminal-url.ts), which is where
+       * ttyd itself reads it, so there is one source of truth instead of two
+       * that can disagree.
+       */
+      const runCopy = (): void => {
+        const decision = copyCommandDecision({
+          hasSelection: term.hasSelection(),
+          selection: term.getSelection(),
+          // The recovery stash backs the CHORD, not this button: term.html's
+          // routine reads `term.getSelection()` and nothing else (:9573), and
+          // the fallback below is what covers an empty one here.
+          stash: null,
+        });
+        const clipboard: Clipboard | undefined = navigator.clipboard;
+        // Braces, not an expression body: `showToast` hands back a toast id
+        // that nothing here wants, and an arrow annotated `void` may not return
+        // one.
+        const ok = (): void => {
+          showToast(decision.toast, "success", COPY_TOAST_MS);
+        };
+        const fail = (): void => {
+          showToast(decision.failureToast, "error", COPY_FAILURE_TOAST_MS);
+        };
+        if (!clipboard) {
+          fail();
+          return;
+        }
+        if (decision.action === "copy") {
+          void clipboard.writeText(decision.text).then(ok).catch(fail);
+          return;
+        }
+        const session = new URLSearchParams(props.args).getAll("arg")[0] ?? "";
+        if (!session) {
+          fail();
+          return;
+        }
+        // `/sessions/` and not `/`: apiUrl only adds the ingress prefix
+        // (`/api/sessions`), and tmux-api's own route is
+        // `/sessions/{name}/capture` (main.go:375, copymode.go:25), which the
+        // ingress reaches after stripping that prefix whole. term.html built
+        // this on `SESSIONS_API = '/api/sessions/sessions'` (:2379, :9582) and
+        // dropping the segment made every capture a 404 under a success toast.
+        const captured = fetch(apiUrl(`/sessions/${encodeURIComponent(session)}/capture`), {
+          credentials: "same-origin",
+        }).then((resp) => {
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          return resp.text();
+        });
+        const how = chooseCaptureWrite({
+          hasClipboardWrite: typeof clipboard.write === "function",
+          hasClipboardItem: typeof ClipboardItem !== "undefined",
+        });
+        if (how === "promise-item") {
+          void clipboard
+            .write([
+              new ClipboardItem({
+                "text/plain": captured.then((t) => new Blob([t], { type: "text/plain" })),
+              }),
+            ])
+            .then(ok)
+            .catch(fail);
+          return;
+        }
+        void captured
+          .then((t) => clipboard.writeText(t))
+          .then(ok)
+          .catch(fail);
+      };
+
+      /**
        * Carry out one key decision (keys.ts), in the order it listed its
        * actions.
        *
@@ -3043,7 +3149,11 @@ export const TerminalNative: Component<{
       // `reportConn` and the state fresh from `currentConnState`
       // (term.html:9822-9832). That window is roughly 50 seconds wide, since
       // nothing volunteers a change until the liveness watchdog gives up.
-      props.onReady?.({ reconnect: () => a.reconnect(), ask: () => a.reportNow() });
+      props.onReady?.({
+        reconnect: () => a.reconnect(),
+        ask: () => a.reportNow(),
+        copy: runCopy,
+      });
 
       // The size the pty is told has to follow the size xterm actually reached,
       // and a reflow can change that without the window resizing (the sidebar

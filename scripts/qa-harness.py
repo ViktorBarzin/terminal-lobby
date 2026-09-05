@@ -12,7 +12,8 @@ terminal.viktorbarzin.me serves.
       ├─ 10 exact PWA paths      → :7683 clipboard-upload, UNSTRIPPED, NO auth
       │  + /assets/*               (mirrors the public auth="none" carve-out;
       │                            /assets/ is the split bundle's hashed chunks)
-      ├─ /term.html              → :7683 clipboard-upload, UNSTRIPPED, authed
+      ├─ /term.html              → :7683 clipboard-upload, UNSTRIPPED, authed,
+      │                            which answers 302 to the lobby (§)
       ├─ /api/sessions/*         → :7684 tmux-api, prefix STRIPPED, authed
       ├─ /clipboard/*            → :7683 clipboard-upload, prefix stripped, authed
       ├─ /events/*               → :7685 session-events, no strip, authed, STREAMED
@@ -21,7 +22,6 @@ terminal.viktorbarzin.me serves.
       │  /pane/*    /keys/*         (the rest of the production ingress rule)
       ├─ /permission/*           → :7681 ttyd catch-all, as in production (†)
       ├─ /build-id               → :7681 ttyd catch-all, as in production (‡)
-      │  /term-build-id
       ├─ /files/*                → :7686 file-api, no strip, authed
       ├─ /skills, /skills/*      → :7688 skills-api, no strip, authed; READS are
       │                            free, every mutation is refused by default
@@ -42,15 +42,27 @@ session-events' text/plain 404. The default is therefore production-faithful:
 /permission falls through to the ttyd catch-all. --permission-shim routes
 it to session-events anyway, for the day a handler lands there.
 
-(‡) /build-id and /term-build-id are the ~12-byte build stamps the self-update
-healer polls and the diagnostics read (ADR-0007, amendment of 2026-08-28: "the
-id is read from a stamp, not from the page"). clipboard-upload does serve both
-(publicAssets, clipboard-upload/main.go), which is what makes routing them
-there look obvious, but the production ingress sends them nowhere near it.
+(§) /term.html no longer serves a page. The terminal was a separate document
+until 2026-09-05, and the lobby draws its own now, so clipboard-upload answers
+that path with a 302 rather than a file: to `/`, or to `/?session=<name>` when
+the old link carried a session in its first positional `?arg=`
+(handleTermPageRedirect, clipboard-upload/main.go). A bookmark, an iOS
+home-screen icon installed against that URL and a tab left open across the
+deploy all reach the lobby instead of a 404. The route stays here because
+clipboard-upload is still what answers it.
+
+(‡) /build-id is the ~12-byte build stamp the self-update healer polls and the
+diagnostics read (ADR-0007, amendment of 2026-08-28: "the id is read from a
+stamp, not from the page"). clipboard-upload does serve it (publicAssets,
+clipboard-upload/main.go), which is what makes routing it there look obvious,
+but the production ingress sends it nowhere near it. There was a SECOND stamp,
+/term-build-id, because the framed terminal page had an identity of its own and
+re-checked itself on every reconnect; it went with the page on 2026-09-05, so
+one document now has one stamp.
 Measured against the live site 2026-09-04: GET
-https://terminal.viktorbarzin.me/build-id and /term-build-id answer 302 to
-Authentik, so both are authed like /term.html rather than public like /sw.js,
-and Traefik's own access log puts them on RouterName
+https://terminal.viktorbarzin.me/build-id answered 302 to
+Authentik, so it is authed like /term.html rather than public like /sw.js,
+and Traefik's own access log puts it on RouterName
 terminal-terminal-terminal-viktorbarzin-me@kubernetes with
 KubernetesServiceName "terminal", which is the ttyd Service. ttyd answers 404
 (Server: ttyd/1.7.7-40e79c7 on 127.0.0.1:7681), so the 404 an agent sees
@@ -188,7 +200,7 @@ HOP_BY_HOP = {
 # paths and no more. NOT clipboard-upload's publicAssets whitelist, which runs
 # three entries longer and decides which FILE a path serves rather than who may
 # ask ("AUTH LIVES AT THE INGRESS, NOT HERE", clipboard-upload/main.go). Those
-# three, /term.html and the two build stamps, are authed in production and are
+# two, /term.html and the build stamp, are authed in production and are
 # routed authed below.
 ASSET_PATHS = (
     "/manifest.webmanifest",
@@ -203,15 +215,19 @@ ASSET_PATHS = (
     "/fonts/dm-sans-latin-wght-normal.woff2",
     # The symbol fallback face. Added to the ingress carve-out on 2026-09-04
     # (infra stacks/terminal/main.tf) because the app-rendered terminal asks for
-    # it by URL where term.html embeds it as a data: URI. This proxy 404ed it
-    # until that landed, correctly, and would now be the one diverging.
+    # it by URL, where the page it replaced embedded it as a data: URI. This
+    # proxy 404ed it until that landed, correctly, and would now be the one
+    # diverging. It is load-bearing: three gates had to agree before the face
+    # loaded at all — this carve-out, clipboard-upload's publicAssets entry and
+    # the @font-face in frontend-v2/src/theme/theme.css.
     "/fonts/tl-symbols.woff2",
 )
 
-# The two build stamps, and the reason they are not in the tuple above: the
-# ingress routes neither of them to clipboard-upload, so both reach ttyd and
-# 404, and this proxy reproduces that. Evidence in the (‡) footnote.
-STAMP_PATHS = ("/build-id", "/term-build-id")
+# The build stamp, and the reason it is not in the tuple above: the ingress does
+# not route it to clipboard-upload, so it reaches ttyd and 404s, and this proxy
+# reproduces that. Evidence in the (‡) footnote. Still a tuple because it held
+# two until 2026-09-05 and may hold a second surface again.
+STAMP_PATHS = ("/build-id",)
 
 # tmux-api's own sessionNameRe is ^[a-zA-Z0-9_-]{1,32}$, so a qa- prefix with
 # hyphens is a legal session name. Anchored both ends: "qa" alone, "myqa-x" and
@@ -689,11 +705,15 @@ def build_app(args: argparse.Namespace) -> web.Application:
                              label=f"{request.rel_url.raw_path} (public asset)")
 
     async def term_html_proxy(request: web.Request) -> web.StreamResponse:
+        """The deleted terminal page, which clipboard-upload answers with a 302
+        to the lobby. The (§) footnote has the shape. Kept as its own route so
+        the log says a stale terminal link was followed, rather than showing a
+        redirect appearing from the catch-all."""
         return await forward(request, f"{CLIPBOARD}/term.html", auth=True,
-                             label="/term.html")
+                             label="/term.html (302 → the lobby)")
 
     async def stamp_proxy(request: web.Request) -> web.StreamResponse:
-        """/build-id and /term-build-id. The (‡) footnote has the evidence for
+        """/build-id. The (‡) footnote has the evidence for
         why the default is ttyd's 404 and not the 200 clipboard-upload gives.
         Registered rather than left to the catch-all so the log says which
         decision was taken, the way /permission does."""
@@ -722,7 +742,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
             # ttyd runs `-H X-authentik-username`, so the UPGRADE is authed
             # exactly like every HTTP leg. Miss this and ttyd drops the dial
             # while the browser socket is already open, which surfaces as
-            # "Reconnecting… (attempt N)" in term.html and nothing in the log
+            # "Reconnecting… (attempt N)" in the terminal and nothing in the log
             # except this handler's failure line.
             ws_up = await request.app["client"].ws_connect(
                 url, protocols=offered or ("tty",),
@@ -900,15 +920,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-permission-shim", dest="permission_shim",
                    action="store_false",
                    help="accepted for compatibility — this is now the default")
-    # Default OFF for the same reason: production routes neither stamp to
-    # clipboard-upload, so both 404 there too. On, they resolve, which is what
+    # Default OFF for the same reason: production does not route the stamp to
+    # clipboard-upload, so it 404s there too. On, it resolves, which is what
     # a lane exercising the self-update healer needs (footnote ‡).
     p.add_argument("--stamp-shim", dest="stamp_shim", action="store_true",
                    default=False,
-                   help="serve /build-id and /term-build-id from "
-                        "clipboard-upload instead of letting them fall to the "
+                   help="serve /build-id from "
+                        "clipboard-upload instead of letting it fall to the "
                         "ttyd catch-all. Off by default: the production ingress "
-                        "routes neither there, so both 404 on the real site")
+                        "does not route it there, so it 404s on the real site")
     p.add_argument("--no-restore", action="store_true",
                    help="do not snapshot/restore /layout and /prefs")
     p.add_argument("--allow-session", action="append", default=[],

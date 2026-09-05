@@ -1,7 +1,7 @@
 /**
  * Attention latch/clear (inventory Cat.9, high-risk). Ported from the vanilla
- * frontend's attention system — the lobby-owned tab signal driven by the
- * terminal iframe's `tl-attention` messages (bell / output-while-hidden).
+ * frontend's attention system — the lobby-owned tab signal driven by what the
+ * terminal reports (bell / output-while-hidden, terminal/attention.ts).
  *
  * Two latches:
  *   - `session` — the '● <name>' title prefix (attention.ts feeds title.ts).
@@ -13,10 +13,12 @@
  * latches clear together on the return to visibility/focus.
  *
  * Pure + unit-tested. The caller (notifications.ts) holds this as a signal, calls
- * `applyAttentionSignal` on each iframe message and `clearAttention` on
- * visibility/focus, and repaints title + favicon from the result. NAME_RE anti-
- * spoof lives here so a malformed session name falls back to the active session
- * (never trusted into the title verbatim).
+ * `applyAttentionSignal` on each report and `clearAttention` on visibility/focus,
+ * and repaints title + favicon from the result. NAME_RE anti-spoof lives here so
+ * a malformed session name falls back to the active session (never trusted into
+ * the title verbatim). It mattered more when the name crossed a document
+ * boundary; the caller supplies it directly now, and validating it is still
+ * cheaper than trusting it.
  */
 import { NAME_RE } from "../types/lobby";
 
@@ -32,7 +34,7 @@ export const emptyAttention: AttentionState = { session: null, bell: false };
 export interface AttentionSignal {
   /** 'bell' also latches the favicon badge; 'output' only the title prefix. */
   kind: "bell" | "output";
-  /** the session the iframe reported (validated here), or null. */
+  /** the session reported (validated here), or null. */
   session: string | null;
   /** document.hidden || !document.hasFocus() when the signal arrived. */
   away: boolean;
@@ -41,7 +43,7 @@ export interface AttentionSignal {
 }
 
 /**
- * Fold one iframe attention signal into the latch state. A signal while the tab
+ * Fold one attention signal into the latch state. A signal while the tab
  * is NOT away is ignored (returns the same state object). A bell sets the bell
  * latch; both kinds set the session prefix (validated, else active fallback).
  */

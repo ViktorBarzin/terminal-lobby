@@ -25,18 +25,20 @@ const diagPlaceholder = "__TL_DIAG__"
 // proves the inlining landed somewhere that will execute.
 const diagCoreMarker = "globalThis.tlDiag = (function"
 
-// Stamps are the two identities a surface carries, plus the terminal page's
-// identity which the lobby embeds so a client can find it without a request.
+// Stamps are the two identities a surface carries.
 //
 // Build is provenance: which commit is deployed. It moves on every release.
 //
 // Asset is update identity: a fingerprint of the surface's own unstamped
 // content, so it moves if and only if the page a user runs actually changed
 // (ADR-0007).
+//
+// A third field, TermAsset, carried the framed terminal page's own identity so
+// the lobby could embed it and find that page without a request. It went with
+// the page on 2026-09-05.
 type Stamps struct {
-	Build     string
-	Asset     string
-	TermAsset string
+	Build string
+	Asset string
 }
 
 var literalScriptTag = regexp.MustCompile(`(?i)</?script`)
@@ -148,6 +150,5 @@ func Stamp(surfacePath, diagPath string, s Stamps) ([]byte, error) {
 	}
 	out := bytes.ReplaceAll(pre, []byte("__TL_BUILD__"), []byte(s.Build))
 	out = bytes.ReplaceAll(out, []byte("__TL_ASSET__"), []byte(s.Asset))
-	out = bytes.ReplaceAll(out, []byte("__TL_TERM_ASSET__"), []byte(s.TermAsset))
 	return out, nil
 }

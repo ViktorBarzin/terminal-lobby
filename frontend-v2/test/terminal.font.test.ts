@@ -607,29 +607,30 @@ describe("the WebKit front-end", () => {
 });
 
 /**
- * Three copies of this arithmetic exist while the iframe is still shipping:
- * term.html, the text view's port, and this module. They are meant to answer a
- * pinch identically, so drift between them is a bug nobody would notice by hand.
+ * Two copies of this arithmetic exist: the text view's port and this module.
+ * They are meant to answer a pinch identically, so drift between them is a bug
+ * nobody would notice by hand.
+ *
+ * There were three until 2026-09-05, the third being `frontend/term.html`
+ * itself, and three of the cases here read that page: one checked that the
+ * wiring note pointed touchcancel where the page actually sent it, one compared
+ * the four pinch constants against the page's declarations, and one compared
+ * the page-zoom ceiling. The page is gone, so the constants are pinned as
+ * literals below with the page line they came from, and the wiring note keeps
+ * its own half of the check (the note still has to say pagehide and
+ * touchPinchEnd).
  */
-describe("parity with the page and the sibling port", () => {
-  const page = readFileSync(resolve(process.cwd(), "../frontend/term.html"), "utf8");
+describe("parity with the sibling port", () => {
   const source = readFileSync(resolve(process.cwd(), "src/terminal/font.ts"), "utf8");
 
   /**
    * The wiring note is the only place this survives extraction, and it pointed
-   * the wrong way: term.html gives touchend and touchcancel to one handler that
-   * calls end(), and reaches reset() only through resetAll() on pagehide. A note
-   * telling a component to send touchcancel to pinchReset would drop a gesture
-   * the page keeps. Asserted against the page, so it fails if either side moves.
+   * the wrong way once: the page gave touchend and touchcancel to one handler
+   * that called end(), and reached reset() only through resetAll() on pagehide.
+   * A note telling a component to send touchcancel to pinchReset would drop a
+   * gesture the page kept.
    */
-  it("says where touchcancel goes, and says what term.html actually does", () => {
-    expect(page).toContain(
-      "document.addEventListener('touchcancel', onDocTouchEndOrCancel",
-    );
-    expect(page).toMatch(/function onDocTouchEndOrCancel\(e\)[^]*?r\.end\(e\)/);
-    expect(page).toMatch(/function resetAll\(\)[^]*?r\.reset\(\)/);
-    expect(page).toContain("window.addEventListener('pagehide', resetAll);");
-
+  it("sends touchcancel to the end, not to the reset", () => {
     const note = /\/\*\*([^]*?)\*\/\s*export function pinchReset/.exec(source)?.[1];
     expect(note, "pinchReset has no doc comment").toBeTruthy();
     expect(note).toContain("pagehide");
@@ -638,21 +639,21 @@ describe("parity with the page and the sibling port", () => {
     expect(cancelEnd).toContain("touchcancel");
   });
 
-  it("carries the same numbers term.html does", () => {
-    expect(page).toMatch(
-      new RegExp(`const PINCH_CLASSIFY_MOVE = ${PINCH_CLASSIFY_MOVE};`),
-    );
-    expect(page).toMatch(
-      new RegExp(`const PINCH_CLASSIFY_RATIO = ${PINCH_CLASSIFY_RATIO};`),
-    );
-    expect(page).toMatch(new RegExp(`const PINCH_STEP_RATIO = ${PINCH_STEP_RATIO};`));
-    expect(page).toContain(
-      `const FONT_SIZE_MIN = ${FONT_SIZE_MIN}, FONT_SIZE_MAX = ${FONT_SIZE_MAX}, FONT_SIZE_DEFAULT = ${FONT_SIZE_DEFAULT};`,
-    );
+  /**
+   * The numbers the page shipped, as literals. A pinch that classifies or steps
+   * differently from the page it was ported from is a behaviour change, and
+   * these are the four values that decide it.
+   */
+  it("carries the same numbers the page did", () => {
+    // term.html:7808-7810 and :2670.
+    expect(PINCH_CLASSIFY_MOVE).toBe(3);
+    expect(PINCH_CLASSIFY_RATIO).toBe(0.05);
+    expect(PINCH_STEP_RATIO).toBe(0.07);
+    expect([FONT_SIZE_MIN, FONT_SIZE_MAX, FONT_SIZE_DEFAULT]).toEqual([6, 22, 15]);
   });
 
-  it("stands down at the same page zoom term.html does", () => {
-    expect(page).toContain(`pageScale() > ${PINCH_PAGE_SCALE_MAX}`);
+  it("stands down at the same page zoom the page did", () => {
+    expect(PINCH_PAGE_SCALE_MAX).toBe(1.001);
   });
 
   it("agrees with the text view on every step of a pinch", () => {

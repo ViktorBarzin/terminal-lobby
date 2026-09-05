@@ -7,7 +7,6 @@ import {
   STORM_WINDOW_MS,
   buildLogLine,
   fetchSelf,
-  isBuildStale,
   parseAssetId,
   planUpdate,
   stormOK,
@@ -222,20 +221,6 @@ describe("fetchSelf — build-substring gating", () => {
     const f = vi.fn(async () => resp(true, withMarker("x"))) as unknown as typeof fetch;
     await fetchSelf(f, "/?a=1", "no-store");
     expect(f).toHaveBeenCalledWith("/?a=1", { cache: "no-store", credentials: "same-origin" });
-  });
-});
-
-describe("isBuildStale — tl-build-stale bridge predicate", () => {
-  it("accepts the exact build-stale payload", () => {
-    expect(isBuildStale({ type: "tl-build-stale" })).toBe(true);
-  });
-
-  it("rejects other message types and junk", () => {
-    expect(isBuildStale({ type: "tl-command", command: "x" })).toBe(false);
-    expect(isBuildStale({ type: "tl-attention" })).toBe(false);
-    expect(isBuildStale(null)).toBe(false);
-    expect(isBuildStale("tl-build-stale")).toBe(false);
-    expect(isBuildStale(undefined)).toBe(false);
   });
 });
 

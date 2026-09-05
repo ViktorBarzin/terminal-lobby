@@ -302,8 +302,21 @@ class QaAgent:
 
         tmux-api has no create endpoint — a session is born from
         `tmux new-session -A` on the ttyd attach. So this drives the real path:
-        open /term.html?arg=<name> in a background tab and wait for tmux-api to
-        report it.
+        open the LOBBY on a session that does not exist yet, in a background
+        tab, and wait for tmux-api to report it.
+
+        `/?session=<name>` is the spelling. `readInitialSelection`
+        (frontend-v2/src/components/App.tsx) reads it, validates it against the
+        same NAME_RE tmux-api uses, and selects it; a selected session the poll
+        has never returned is what `selectedIsCreating` means, so the terminal
+        attaches at once instead of waiting to be shown, and that attach is the
+        `new-session -A` that births the tmux session. This is the same URL a
+        stale /term.html bookmark now redirects to
+        (handleTermPageRedirect, clipboard-upload/main.go).
+
+        It WAS `/term.html?arg=<name>`, the framed terminal page, taking the
+        name as ttyd's first positional arg. That page was deleted on
+        2026-09-05, so the URL it created sessions through no longer exists.
 
         The name may be `qa-*` or a minted id (`new_session_id()`), which is
         what the new-session composer produces — the guard admits an id that is
@@ -315,7 +328,7 @@ class QaAgent:
                 f"{name!r} is neither a qa-* name nor a minted id; the harness "
                 f"guard will refuse it (see new_session_id())")
         page = self._context.new_page()
-        page.goto(f"/term.html?arg={name}", wait_until="load")
+        page.goto(f"/?session={name}", wait_until="load")
         deadline = time.time() + timeout
         while time.time() < deadline:
             if name in self.session_names():
@@ -331,15 +344,16 @@ class QaAgent:
         """Create the tmux session straight from the CLI, bypassing the app.
 
         Use this for SETUP — when an area needs a session to exist so it can
-        test something else. `create_session` (the /term.html attach) is the
-        path under test and should stay the one areas 4 and 7 exercise; keeping
-        setup off it means a sweep of some OTHER area is not blocked whenever
-        the attach path regresses.
+        test something else. `create_session` (the lobby attach) is the path
+        under test and should stay the one areas 4 and 7 exercise; keeping setup
+        off it means a sweep of some OTHER area is not blocked whenever the
+        attach path regresses.
 
-        That path does work now: finding A's /term.html 404 is fixed, and as of
-        2026-08-06 the harness authenticates the /ws upgrade too (before that it
-        dialled ttyd anonymously, ttyd hung up, and every attach in the fleet
-        sat at "Reconnecting…").
+        That path does work: as of 2026-08-06 the harness authenticates the /ws
+        upgrade too (before that it dialled ttyd anonymously, ttyd hung up, and
+        every attach in the fleet sat at "Reconnecting…"), and it was re-pointed
+        at `/?session=<name>` on 2026-09-05 when the framed terminal page it
+        used to open was deleted.
         """
         if not QA_NAME.match(name):
             raise ValueError(f"{name!r} is not a qa-* name")

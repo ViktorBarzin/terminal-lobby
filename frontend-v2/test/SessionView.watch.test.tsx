@@ -4,12 +4,27 @@ import { SessionView } from "../src/components/SessionView";
 import { WATCH_KEY_PREFIX } from "../src/store/watchmode";
 import { terminalFrameArgs } from "../src/lib/terminal-url";
 
-// Spy on the URL builder so the toggle→attach wiring can be asserted directly.
-// jsdom does not navigate an iframe, so the built URL is otherwise unobservable.
+// Spy on the arg builder so the toggle→attach wiring can be asserted directly.
+// The args go out on /token and /ws, which jsdom does not open, so they are
+// otherwise unobservable.
 vi.mock("../src/lib/terminal-url", async (orig) => {
   const real = await orig<typeof import("../src/lib/terminal-url")>();
   return { ...real, terminalFrameArgs: vi.fn(real.terminalFrameArgs) };
 });
+
+// The terminal itself is inert here: a real one boots xterm, whose
+// `CoreBrowserService` calls `matchMedia`, which jsdom does not ship — so
+// `term.open()` rejects and Vitest fails the FILE on the unhandled rejection
+// while every assertion in it passes. What is under test is the bar and the
+// args it produces.
+vi.mock("../src/components/TerminalNative", () => ({
+  // `props.args` is READ, and that read is the point: Solid compiles the
+  // expression at the call site into a getter, so a stub that ignores the prop
+  // never runs `terminalFrameArgs` at all and the spy below sees nothing.
+  TerminalNative: (props: { args?: string }) => (
+    <div class="tl-terminal-native" data-tl-args={props.args} />
+  ),
+}));
 
 /**
  * The Watch toggle, as mounted in the session bar.
@@ -20,16 +35,13 @@ vi.mock("../src/lib/terminal-url", async (orig) => {
  * too late), that flipping it persists per session, and that the choice reaches
  * the terminal attach as arg5.
  *
- * SSE and the terminal iframe are inert here — jsdom loads neither — which is
- * fine: what is under test is the bar and the URL it produces.
+ * SSE and the terminal are inert here — jsdom loads neither — which is fine:
+ * what is under test is the bar and the args it produces.
  *
- * Pinned to `?native=0` (the `beforeEach` below) because the URL is the iframe's
- * URL: the assertions catch `terminalFrameArgs` at the moment TerminalView
- * attaches. Since the flip (2026-09-04) a bare URL gets the app's own terminal,
- * which is handed the same args as a prop but reads them when its socket opens,
- * so the seam these tests watch is the iframe's. The native side of the same
- * chain, watch on and the args the component is given saying so, is in
- * SessionView.native.test.tsx.
+ * These were pinned to `?native=0` until 2026-09-05, because the assertions
+ * caught `terminalFrameArgs` at the moment the IFRAME navigated. The lobby
+ * draws its own terminal now and is handed the same args as a prop, built by
+ * the same call, so the seam is the same one and the flag is gone.
  */
 
 // The session store opens an EventSource; jsdom has none, so stub it away. The
@@ -43,8 +55,6 @@ class FakeEventSource {
 }
 
 beforeEach(() => {
-  // The iframe branch, deliberately. See the file's own note above.
-  window.history.replaceState({}, "", "/?native=0");
   localStorage.clear();
   vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]"))));

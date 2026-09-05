@@ -20,13 +20,12 @@ tmux/Claude session:
   session's normalized event stream: turn folding, collapsed tool rows with
   expand-to-raw, full-width assistant **markdown with mermaid + inline images**,
   user bubbles, and a composer that injects prompts and cancels the running turn.
-- **Terminal mode (fallback)** — a live pty attach to the *same* tmux session:
-  an iframe pointed at the ttyd-served `/term.html` page, navigated by
-  `contentWindow.location.replace()`. The attach is **lazy** — it waits until
-  this view is first shown, because attaching resizes the tmux window to the
-  iframe and would squeeze a wider client already using it. The exception is a
-  session the app is CREATING: that attach is what BIRTHS its tmux (via
-  `new-session -A`), so it happens immediately. The `?arg=` positional
+- **Terminal mode** — a live pty attach to the *same* tmux session, drawn by
+  this app: `TerminalNative.tsx` mounts xterm (a lazy import) and speaks ttyd's
+  binary WebSocket protocol over `/token` and `/ws`. It was an iframe pointed at
+  a separate `/term.html` page until 2026-09-05, which is why so many modules
+  here carry `term.html:NNNN` citations: they are provenance for the port, and
+  they index that page at the commit that removed it. The `?arg=` positional
   contract — name, command, **project dir**, owner — lives in
   `lib/terminal-url.ts`. xterm stays **external** (never bundled), per the
   deploy decision.
@@ -47,8 +46,7 @@ npm test             # vitest run
 ```
 
 `?session=<id>` selects the session; `?api=<base>` points the SSE/control calls
-at a remote devvm for local dev (default is same-origin); `?terminal=<url>`
-overrides the terminal page the iframe frames.
+at a remote devvm for local dev (default is same-origin).
 
 ### Local dev against real backends
 
@@ -64,7 +62,7 @@ without CORS (`vite.config.ts`):
 | `/files` | **file-api** (`TL_FILE_API`, default `:7686`) | verbatim — its own routes carry `/files` |
 | `/skills` | **skills-api** (`TL_SKILLS_API`, default `:7688`) | verbatim — its own routes carry `/skills` |
 | `/ws`, `/token` | **ttyd** (`TL_TTYD`, default `:7681`) | the terminal attach + its token fetch |
-| `/fonts` | **clipboard-upload** | the webfonts `term.html` sources |
+| `/fonts` | **clipboard-upload** | the webfonts `src/theme/theme.css` sources |
 
 Every backend resolves the OS user from the `X-Authentik-Username` header the
 ingress injects in prod; set `TL_DEV_AUTH=<authentik-name>` and the proxy stands
@@ -73,7 +71,7 @@ in for the ingress so the dev server authenticates (injected on `proxyReq` *and*
 
 ## Build output
 
-`npm run build` emits three kinds of file into `dist/`:
+`npm run build` emits two kinds of file into `dist/`:
 
 - **`index.html`** — the whole SPA. `vite-plugin-singlefile` inlines **all** JS +
   CSS into it, so there are no `.js`/`.css`/`.wasm`/worker sidecars and ttyd can
@@ -82,11 +80,6 @@ in for the ingress so the dev server authenticates (injected on `proxyReq` *and*
   injected via Vite `define` (`__TL_BUILD__`) as a literal placeholder that
   `deploy-v2.sh` substitutes, so the artifact is a pure function of the source
   (ADR-0007).
-- **`term.html`** — the terminal-mode page the iframe frames, copied from
-  `../frontend/term.html` by the `copyTermHtml` plugin and stamped with the same
-  build id. It is deliberately outside the bundle: it pulls xterm from a CDN and
-  speaks ttyd's binary WS protocol. The Debian package installs it beside
-  `index.html` (ADR-0013; the hand-run `deploy-v2.sh` is retired).
 - **`public/` verbatim** — `sw.js`, `manifest.webmanifest` and the three icons,
   which Vite copies as static assets. In production these are served by
   clipboard-upload from its exact-path whitelist, and the Debian package installs
@@ -235,15 +228,16 @@ src/
     probes.ts            The five probes themselves. All read-only — /health and
                          GET /push-subscriptions are the only server calls, and
                          nothing is ever sent to a device
-  terminal/              The terminal's own logic, lifted out of frontend/term.html
-                         ahead of replacing the ttyd iframe with a native xterm
-                         component. Every module here is PURE — no DOM, no xterm
-                         import, no fetch, no timers it owns — so the rules can be
-                         tested without a socket or a browser, which is the whole
-                         reason they were extracted rather than moved. term.html
-                         remains the source of truth until the port lands; where a
-                         module knowingly differs, the divergence is argued in a
-                         comment at the site
+  terminal/              The terminal's own logic, lifted out of the
+                         frontend/term.html page the iframe used to frame. Every
+                         module here is PURE — no DOM, no xterm import, no fetch,
+                         no timers it owns — so the rules can be tested without a
+                         socket or a browser, which is the whole reason they were
+                         extracted rather than moved. The page was deleted on
+                         2026-09-05, so its citations are provenance rather than
+                         a second implementation; where a module knowingly
+                         differs from it, the divergence is argued in a comment
+                         at the site
     keepfocus.ts         Whether a tap's compat mousedown may move focus. A tap
                          focuses the compose mirror at touchend; the mousedown
                          follows 10-44ms later and is hit-tested where the finger
@@ -366,7 +360,7 @@ src/
     keepalive.ts         PURE rules for which sessions stay MOUNTED behind the
                          one on screen (every session visited, one-day TTL).
                          Appends only and hands back stable entries: moving or
-                         replacing a slot reloads its iframe, which is the
+                         replacing a slot would rebuild its terminal, which is the
                          1,797 ms cover this exists to remove
     watchmode.ts         Per-session/per-device Watch mode (attach read-only).
                          A lens (acting as another user) defaults to watching
@@ -389,7 +383,7 @@ src/
                          so stamping it would freeze the placeholder in place
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
     device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
-                         terminal flow control (tl-flow-control — the iframe
+                         terminal flow control (tl-flow-control — the terminal
                          picks a flip up live via a storage event) and the
                          Clear-local-data wipe
     toast.ts             Toast stack + the slow-request health coordinator
@@ -415,22 +409,25 @@ src/
     ProjectGroup.tsx     One project group header + its cards (DnD, menu)
     SessionCard.tsx      One session row: dot, tool mark, timer, inline rename
     StateDot.tsx         Claude state dot (running / awaiting / done)
-    TerminalNative.tsx   The terminal rendered by this app instead of by the
-                         ttyd iframe, behind `?native=1`. Mounts xterm (a lazy
-                         import, so it lands in its own immutable chunk), wires
+    TerminalNative.tsx   THE terminal, and the only one since the iframe was
+                         deleted (2026-09-05). Mounts xterm (a lazy import, so
+                         it lands in its own immutable chunk), wires
                          terminal/attach.ts to it, and reports the ladder's phase
                          into the connection badge. Attaches, reconnects, types,
                          pastes through `term.paste`, reports the mouse, fits
                          through the guard, says why a keystroke was refused,
-                         and takes the forwarded soft-keyboard height off its
-                         own host (`__tlKeyboardOffset`). The rest of that
-                         viewport work is still term.html's: its `syncViewport`
-                         also reads the page's own visualViewport and subtracts
-                         the toolbar and compose-bar heights, and none of that
-                         is ported. Nor are the compose mirror, selection, touch
-                         scroll, pinch-zoom, links, the bell or the held-key
-                         overlay, so term.html stays the shipped terminal until
-                         parity is proven. Sixel is not on that list: it was
+                         copies for the soft-key row, and takes the forwarded
+                         soft-keyboard height off its own host
+                         (`__tlKeyboardOffset`). WHAT WENT WITH THE PAGE and has
+                         not been picked up: clickable web links, the held-input
+                         decoration overlay, flow-control accounting, OSC 52
+                         clipboard, live A−/A+ font resizing (the
+                         `__tlPrefsLive` receiver — a change writes the pref and
+                         the terminal keeps its size until it remounts), and the
+                         lazy attach, which used to keep a hidden session from
+                         resizing the real tmux window (terminal/fit.ts still
+                         stops a 0x0 host from RESIZING it; nothing stops the
+                         attach itself). Sixel is not on that list: it was
                          deprecated in the same change (ADR-0004), so it is
                          nobody's to port
     StatusDot.tsx        The connection badge (ADR-0016). Dot always, a word
@@ -499,8 +496,6 @@ src/
                          re-enable; its server side was removed in 575d4f5, so
                          Composer still mounts it but it always renders nothing
                          — no `permission_request` can arrive (header comment)
-    TerminalView.tsx     Terminal mode: the ttyd iframe + lazy attach (eager
-                         only for the session being created)
     Gallery.tsx          Session image-gallery overlay + shared lightbox
     FilePreview.tsx      File-preview overlay (markdown/HTML/image/code/binary)
     CodeView.tsx         Read-only highlighted code (lazy highlight.js)
@@ -579,20 +574,21 @@ src/
     chords.logic.ts      PURE layout-proof chord parse/match
     bindings.logic.ts    PURE binding table + resolve/normalize
     engine.ts            One capture-phase keydown + Alt-hold tracker + storage
-    commands.ts          The lobby command dispatcher (also serves tl-command
-                         forwarded up from the terminal iframe)
+    commands.ts          The lobby command dispatcher — the palette, the
+                         Shortcuts sheet and the engine's own keydown all land
+                         here
     navigation.logic.ts  PURE Alt+1..9/0 attach-Nth + next/prev/next-awaiting
     palette.logic.ts     PURE palette ranking / filtering / recents-first
     palette-controller.ts Reactive palette state (open, query, selection)
-    refocus.ts           Hand the keyboard back to the terminal iframe when a
-                         lobby overlay closes (window.__tlFocusTerminal)
+    refocus.ts           Hand the keyboard back to the terminal when a lobby
+                         overlay closes (window.__tlFocusTerminal)
   notify/
     transitions.ts       PURE poll→poll state edges that deserve a notification
     fire.ts              Show ONE foreground OS notification per session edge
     title.ts             Tab-title state badge
     favicon.ts           Canvas-rendered favicon badge
     appbadge.ts          PWA icon badge — how many sessions are waiting
-    attention.ts         Bell / output-while-hidden latches from the iframe
+    attention.ts         Bell / output-while-hidden latches from the terminal
     opt-in.ts            Per-browser notification opt-in flag
     notifications.ts     Wires the above + push into the running app
   pwa/
@@ -615,7 +611,7 @@ src/
                          against the geometry from before it opened, which is
                          how a project's new-session box ended up under it
     textzoom.ts          Pinch to size the TEXT view, the way it sizes the
-                         terminal. Both recognizers ported from term.html —
+                         terminal. Both recognizers ported from the page —
                          Chromium measures the two-finger span itself, WebKit
                          gets the ratio from GestureEvent — so one gesture, the
                          same 7%-per-step arithmetic, in both views. It scales
@@ -684,8 +680,8 @@ All of the following ship in the deployed build:
   `Alt+Shift+]`/`[` step forward/back, `Alt+Shift+Enter` jumps to the next
   awaiting one, `Alt+Shift+S` collapses the sidebar, `Cmd/Ctrl-J` swaps view.
   The shortcuts help opens on a bare `/` in the lobby, or `Alt+/` from anywhere
-  including inside the terminal — chords pressed in the iframe are forwarded up
-  over the `tl-command` channel. Bindings are user-overridable and persisted
+  including inside the terminal, which is in this document and so its keydowns
+  reach the one window listener. Bindings are user-overridable and persisted
   per-browser (`tl:keybindings:v1`).
 - **Command palette** — `Ctrl+Shift+K`; type to filter sessions, `>` switches to
   action mode. The action list is selection-dependent.
@@ -699,7 +695,7 @@ All of the following ship in the deployed build:
   markdown (Markdown+Mermaid), HTML (sandboxed `srcdoc`), images, or
   syntax-highlighted code, and edit-and-save in CodeMirror 6.
 - **Notifications** — tab-title, favicon and **app-icon** badges, attention
-  latches from the terminal iframe, foreground OS notifications on state edges,
+  latches from the terminal, foreground OS notifications on state edges,
   and background **Web Push** via `/sw.js` + `/api/sessions/push/*` when the
   browser and the server's VAPID key allow it. A tap routes to the session that
   called (ADR-0014).
@@ -733,7 +729,8 @@ All of the following ship in the deployed build:
   remove / update / restart on the row itself.
 - **Self-update** (ADR-0007) — the page polls its own served bytes and reloads
   itself when the asset id changes, deferring while a terminal is attached until
-  the next resume. `index.html` and `term.html` each carry their own id.
+  the next resume. ONE document, ONE id: the terminal used to be a second page
+  with a stamp of its own, and checked itself on every reconnect.
 - **Telemetry** (ADR-0006) — batched usage events POSTed to tmux-api's
   `/telemetry` intake, which owns attribution; the browser never says who it is.
 

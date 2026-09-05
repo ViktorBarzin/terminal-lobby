@@ -1178,6 +1178,28 @@
   flex-direction: column;
   flex: 0 0 auto;
   min-height: 80px;
+  /* A WIDTH FLOOR, and it is standing in for a fix that belongs elsewhere.
+     Every other rule here describes a bottom panel: column direction, a
+     border-TOP, a row-resize gutter. The dock does not render as one, because
+     `.tl-shell-body` (:117) is a flex ROW so that the sidebar can be a left
+     column, and the dock is its sibling. So it has always landed as a
+     right-hand strip, contradicting Dock.tsx's own docblock.
+     That predates the de-iframe work and the real fix is structural: wrap the
+     session view and the dock in a column sub-container. What the de-iframe
+     work DID change is the width. `TerminalView` was an iframe, and an iframe
+     carries an intrinsic 300px, so `flex: 0 0 auto` in a row resolved to 300px
+     and the strip was at least usable. `TerminalNative` is a div with no
+     intrinsic size, so the same rule collapsed it to content width. Measured at
+     1440x900: 300x129 at x=1140 before. After, the width is whatever the dock
+     header happens to say, so the collapse measures differently per run —
+     93x129 at x=1347 on an empty header, 108x129 at x=1332 on one carrying a
+     session name. Overriding this floor and REMOUNTING reproduces it; clearing
+     it on a live element only reaches 286px, because xterm has already sized
+     its content to 300.
+     300px is therefore not a design choice, it is the number that keeps the
+     shipped behaviour unchanged while the layout question is settled
+     separately. Remove this when the dock becomes a real bottom panel. */
+  min-width: 300px;
   border-top: 1px solid var(--border);
   background: var(--bg-page);
 }

@@ -164,8 +164,8 @@ async function badgeFromWaiting(waiting, pushed) {
 // The test is focused-or-visible rather than "a window exists". A backgrounded
 // PWA is still a window client, and store/lobby.ts parks its poll while the page
 // is hidden, so treating any open window as authoritative would leave the badge
-// frozen on stale work. Terminal frames are skipped for the same reason as in
-// the tap handler: they are not the lobby.
+// frozen on stale work. A stranded terminal frame is skipped for the same reason
+// as in the tap handler: it is not the lobby.
 async function lobbyOnScreen() {
     try {
         const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -329,29 +329,33 @@ self.addEventListener('push', (event) => {
     })());
 });
 
-// Is this client the TERMINAL rather than the lobby?
+// Is this client a stranded TERMINAL PAGE rather than the lobby?
 //
 // Tested POSITIVELY, and that direction is the point: the lobby is whatever is
 // left over, so a page shape nobody anticipated still RECEIVES the switch
 // instead of silently swallowing it.
 //
-// Two terminal shapes exist. A deep-linked or legacy terminal carries the
-// positional '?arg=<name>' contract in its query. The FRAMED attach does not:
-// it passes those args out of band on iframe.name (TERMINAL_FRAME_PREFIX in
-// lib/terminal-url.ts) because the page URL is a CACHE KEY — with the session
-// name in the query, every session was a separate entry for a 1.8 MB document,
-// measured at 1,796,377 B cold against 300 B for a repeat, so each new session
-// cost 8.4-10.3 s on a 400 kbps link. The iframe is therefore a bare
-// '/term.html' or '/assets/term-<hash>.html'.
+// The lobby draws its own terminal now (2026-09-05), in the lobby's own
+// document, so a client that is a terminal AND NOT a lobby can only be one
+// thing: a tab still holding a pre-deletion lobby build, whose iframe is at
+// '/term.html' or at the immutable '/assets/term-<hash>.html'. The hashed copy
+// outlives the deploy — postinst prunes /usr/local/share/ttyd/assets with
+// `-mtime +14` — so such a tab can keep a working terminal for up to a
+// fortnight, and this is what keeps its notification taps routing to the lobby
+// above it rather than into a frame with no message listener. Matching the
+// PATHNAME alone is what covers it, since the framed attach passed its args out
+// of band on iframe.name and left the URL bare.
 //
-// Matching the query ALONE is what broke tap routing on 2026-09-01: the bare
-// iframe read as a lobby, took a postMessage it has no listener for, and the
-// handler returned having done nothing. Both shapes are matched here.
+// The '?arg=<name>' query is deliberately NOT matched. It was the second shape
+// while a terminal could be deep-linked, and it is now a trap: the SPA carries
+// its session in the HASH ('/#<name>'), so any lobby URL that ever picks up an
+// '?arg=' — an old bookmark, or a server-side redirect off /term.html that
+// preserved the query — would be classified as a terminal, dropped from the
+// candidate list below, and the tap would stop switching session. Nothing the
+// lobby serves puts 'arg' in its own query.
 function looksLikeTerminal(url) {
     let u;
     try { u = new URL(url); } catch (e) { return false; }
-    const arg = u.searchParams.get('arg');
-    if (arg && /^[a-zA-Z0-9_-]{1,32}$/.test(arg)) return true;
     return /(^|\/)term(-[0-9a-f]+)?\.html$/.test(u.pathname);
 }
 
@@ -404,14 +408,15 @@ self.addEventListener('notificationclick', (event) => {
         // NOT WindowClient.navigate(): navigate() needs a CONTROLLED client
         // (it rejects on the uncontrolled windows matchAll surfaces right after
         // a fresh register/update), has inconsistent hash-fragment semantics on
-        // WebKit, and can reload — tearing down the live terminal iframe and its
+        // WebKit, and can reload — tearing down the live terminal and its
         // WebSocket. postMessage reaches an uncontrolled client, survives a
         // rejected focus(), and on iOS standalone is the only reliable warm-path
         // switch, since openWindow drops the hash.
         const wins = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
             .filter((c) => 'focus' in c);
-        // matchAll also returns the nested terminal and dock iframes, which have
-        // neither the message listener nor activateSession — both are lobby-only.
+        // A tab still on a pre-deletion lobby build surfaces its terminal iframe
+        // here too, and that frame has neither the message listener nor
+        // activateSession — both are lobby-only.
         const lobbies = wins.filter((c) => !looksLikeTerminal(c.url));
         // A focused window before a background one: with several lobbies open,
         // the switch belongs to the one the user is actually looking at.
@@ -429,7 +434,7 @@ self.addEventListener('notificationclick', (event) => {
             return;
         }
 
-        // No lobby open — a cold start, or only a bare terminal tab. Carry the
+        // No lobby open — a cold start, or only a stranded terminal frame. Carry the
         // session in the hash so boot-hash activation attaches it on load; a
         // session-less test tap just opens the lobby. (On iOS a KILLED PWA
         // cold-launches at start_url and can drop this hash — a documented WebKit

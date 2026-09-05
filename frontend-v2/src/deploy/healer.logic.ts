@@ -159,7 +159,7 @@ export interface UpdateState {
   runningAsset: string | null;
   /** the id parsed out of the served bytes; null = no information. */
   servedAsset: string | null;
-  /** is a terminal attached (a session selected / iframe mounted)? */
+  /** is a terminal attached (a session is selected and mounted)? */
   attached: boolean;
   /** is the document visible AND focused right now? */
   visible: boolean;
@@ -200,21 +200,6 @@ export function planUpdate(s: UpdateState): UpdatePlan {
     return "none";
   }
   return "reload";
-}
-
-/**
- * The lobby message-bus bridge predicate: is this postMessage the terminal
- * iframe's build-stale signal? The origin + source are validated by the caller
- * (TerminalView); this only classifies the payload. Completes the TOP-owned
- * reload contract — the embedded terminal never reloads itself, it posts
- * `{type:'tl-build-stale'}` UP and the lobby owns the single reload.
- */
-export function isBuildStale(data: unknown): boolean {
-  return (
-    !!data &&
-    typeof data === "object" &&
-    (data as { type?: unknown }).type === "tl-build-stale"
-  );
 }
 
 /** The boot log line, `"terminal-lobby build: <id>"`. Emitting `BUILD_SUBSTRING`
