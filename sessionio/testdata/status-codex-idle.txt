@@ -1,0 +1,40 @@
+╭──────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.144.3)                           │
+│                                                      │
+│ model:       gpt-5.6-terra medium   /model to change │
+│ directory:   /tmp                                    │
+│ permissions: YOLO mode                               │
+╰──────────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+• You have 3 usage limit resets available. Run /usage to use one.
+
+
+› Find and fix a bug in @filename
+
+  gpt-5.6-terra medium · /tmp
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

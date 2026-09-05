@@ -1,4 +1,11 @@
-import type { Event, MetaKind, PermissionDecision, TokenUsage, SessionState } from "../types/events";
+import type {
+  Event,
+  MetaKind,
+  ModelState,
+  PermissionDecision,
+  TokenUsage,
+  SessionState,
+} from "../types/events";
 import type { PendingPrompt } from "./compose.logic";
 import {
   describe as describeTool,
@@ -510,6 +517,11 @@ export function deriveRows(events: Event[]): TimelineRow[] {
           // 15 KB block of markdown the CLI already rendered in the pane, so a
           // row per reading would be the biggest thing in the log.
           if (meta === "context") break;
+          // Which model is answering is state as well, and the chip beside the
+          // composer is where it shows. A change made from the lobby leaves its
+          // own visible mark anyway: applying one types `/model` into the pane,
+          // and that line arrives as an ordinary row.
+          if (meta === "model") break;
           // The queue's departures are bookkeeping for queuedPrompts(), the
           // same way the mode events are for the chip: a divider saying a
           // prompt left the queue tells the reader nothing the queue itself
@@ -981,6 +993,25 @@ export function currentMode(events: Event[], seed?: SessionState | null): string
     if (e.kind === "meta" && e.meta === "permission-mode" && e.body) mode = e.body;
   }
   return mode;
+}
+
+/**
+ * The model and effort the session last answered on, folded the same way.
+ *
+ * Undefined until it has answered once: both come off the transcript's
+ * assistant records (sessionio MetaModel), so a session that has taken no turn
+ * has said nothing about either — and a chip showing a guess would be worse
+ * than one showing nothing.
+ */
+export function currentModel(
+  events: Event[],
+  seed?: SessionState | null,
+): ModelState | undefined {
+  let state = seed?.model;
+  for (const e of after(events, seed)) {
+    if (e.kind === "meta" && e.meta === "model" && e.model) state = e.model;
+  }
+  return state;
 }
 
 /**

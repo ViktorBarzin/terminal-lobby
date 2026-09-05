@@ -7,6 +7,8 @@ import type { DraftAttachment } from "../store/drafts";
 import { ContextMeter } from "./ContextMeter";
 import type { ContextState } from "./context.logic";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
+import { ModelMenu } from "./ModelMenu";
+import type { ModelField, ModelHarness, ModelState } from "../lib/models";
 
 /**
  * The LIVE session's composer: everything that only means something once there
@@ -69,6 +71,14 @@ export const Composer: Component<{
   context?: ContextState;
   /** Cycle the permission mode (Shift+Tab in the CLI). */
   onCycleMode?: () => void;
+  /** Which CLI this session runs, when it is one with a model to pick. Absent
+   *  for a plain shell, and for a session whose tool nothing has reported. */
+  harness?: ModelHarness;
+  /** What that CLI reports being on, and whether a change is in flight. */
+  model?: ModelState;
+  modelBusy?: boolean;
+  /** Put the session on a model or an effort level. */
+  onPickModel?: (field: ModelField, id: string) => void;
   /** Directory listing for `@` path completion. */
   onListDir?: (dir: string) => Promise<string[]>;
   /** The session's own skills / custom commands / plugin commands, offered by
@@ -154,6 +164,7 @@ export const Composer: Component<{
             : undefined
         }
         leftExtra={
+          <>
           <Show when={props.mode && props.onCycleMode}>
             <button
               type="button"
@@ -167,6 +178,18 @@ export const Composer: Component<{
               {modeLabel(props.mode ?? "")}
             </button>
           </Show>
+          <Show when={props.harness && props.onPickModel}>
+            {(_ok) => (
+              <ModelMenu
+                harness={props.harness!}
+                state={() => props.model}
+                busy={() => props.modelBusy === true}
+                onPick={(field, id) => props.onPickModel?.(field, id)}
+                inertReason={props.inertReason}
+              />
+            )}
+          </Show>
+          </>
         }
         rightExtra={
           <>

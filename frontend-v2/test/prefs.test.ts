@@ -66,7 +66,14 @@ describe("coercePrefs — validate-or-default", () => {
     });
     expect(p).toEqual({
       fontSize: 18,
-      session: { newCommand: "codex", newProject: "", newModel: "default" },
+      session: {
+        newCommand: "codex",
+        newProject: "",
+        newModel: "default",
+        newEffort: "default",
+        newCodexModel: "default",
+        newCodexEffort: "default",
+      },
       notify: { onDone: false, onAwaiting: true },
       // Absent from the input, so these take their defaults. This assertion is
       // exhaustive on purpose: a new pref has to show up here.
@@ -121,6 +128,9 @@ describe("composeDoc — write-back preserves unknown keys", () => {
       newCommand: "codex",
       newProject: "",
       newModel: "default",
+      newEffort: "default",
+      newCodexModel: "default",
+      newCodexEffort: "default",
     });
     // known fields written
     expect(doc.fontSize).toBe(FONT_SIZE_DEFAULT);

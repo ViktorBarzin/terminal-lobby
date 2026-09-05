@@ -499,6 +499,9 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   // Dropped by deriveRows too — the reading belongs to the meter beside the
   // composer, and one row per settled turn would divide the whole transcript.
   context: "context",
+  // Dropped by deriveRows for the same reason as the mode: which model is
+  // answering is state, and the chip beside the composer shows it.
+  model: "model",
 };
 
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (

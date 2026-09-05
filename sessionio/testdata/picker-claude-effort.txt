@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.261
+▝▜██████▀  Opus 5 with max effort · Claude API
+  ▝▝ ▝▝    /tmp
+
+▎ Using Opus 5 (from managed settings) · /model
+
+❯ /model
+  ⎿  Kept model as Opus 5
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Effort
+
+                             Faster                                                 Smarter
+                             ────────────────────────────────────────▲──┆──────────────────
+                             low     medium     high     xhigh      max       ultracode
+                                                                          xhigh + workflows
+     May use excessive tokens resulting in long response times or overthinking. Use sparingly for the hardest tasks.
+
+   ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel

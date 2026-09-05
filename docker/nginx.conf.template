@@ -75,6 +75,7 @@ server {
   location /pane/    { proxy_pass http://session_events; }
   location /commands/ { proxy_pass http://session_events; }
   location /keys/    { proxy_pass http://session_events; }
+  location /model/   { proxy_pass http://session_events; }
 
   location /files/ { proxy_pass http://file_api; }
   location /skills { proxy_pass http://skills_api; }

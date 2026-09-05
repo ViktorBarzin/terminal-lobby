@@ -52,6 +52,18 @@ const (
 	// dialog is up (see dialog.go); the transcript's own record still wins
 	// whenever it has one.
 	MetaAsking Meta = "asking"
+	// MetaModel carries the model the session is answering on, and the effort
+	// it is answering at, in Event.Model. Emitted only when the pair CHANGES,
+	// because every assistant record names it and a marker per turn would say
+	// nothing.
+	//
+	// It reads off the transcript rather than off the pane, unlike the
+	// permission mode next door, because a stock Claude pane does not report
+	// its model anywhere: the line under the input is whatever statusLine
+	// command the account configured, and on this box that is a plugin. The
+	// transcript names the model on every assistant record and has since long
+	// before this existed.
+	MetaModel Meta = "model"
 )
 
 // Event is the renderer's contract. Field order is fixed by the struct so the
@@ -96,6 +108,8 @@ type Event struct {
 	// holds per-tool, per-agent, per-memory and per-skill tables, which are
 	// most of its 14.9 KB and are not what a meter shows.
 	Context *ContextReading `json:"context,omitempty"`
+	// Model is the model and effort on a MetaModel event (see above).
+	Model *ModelState `json:"model,omitempty"`
 }
 
 // JSON returns the compact wire encoding of the event.

@@ -63,6 +63,18 @@ export interface Event {
   bytes?: number;
   /** A `/context` reading, on `meta` events whose meta is "context". */
   context?: ContextReading;
+  /**
+   * What the session is answering as, on `meta` events whose meta is "model".
+   * Emitted only when the pair changes: every assistant record names it, so a
+   * marker per turn would say nothing (sessionio MetaModel).
+   */
+  model?: ModelState;
+}
+
+/** The model a session answers on, and the effort it answers at. */
+export interface ModelState {
+  model?: string;
+  effort?: string;
 }
 
 /** One row of the `/context` usage-by-category table. */
@@ -112,7 +124,8 @@ export type MetaKind =
   | "compact"
   | "hook-error"
   | "context"
-  | "asking";
+  | "asking"
+  | "model";
 
 export interface TokenUsage {
   input_tokens?: number;
@@ -174,6 +187,9 @@ export function parseEvent(data: string): Event | null {
   if (o.context && typeof o.context === "object") {
     ev.context = o.context as ContextReading;
   }
+  if (o.model && typeof o.model === "object") {
+    ev.model = o.model as ModelState;
+  }
   return ev;
 }
 
@@ -194,6 +210,8 @@ export function parseEvent(data: string): Event | null {
 export interface SessionState {
   at: number;
   mode?: string;
+  /** What the session last answered on. Absent until it has answered once. */
+  model?: ModelState;
   context?: ContextReading;
   contextTurnsAgo?: number;
   queue: string[];

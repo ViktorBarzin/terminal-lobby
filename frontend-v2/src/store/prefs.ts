@@ -7,7 +7,13 @@ import {
 import { apiUrl, PREFS_PATH } from "../lib/config";
 import { track } from "../telemetry/track";
 import { fetchWithDeadline } from "../lib/http";
-import { isNewModel, type NewModel } from "../lib/models";
+import {
+  DEFAULT_CHOICE,
+  isEffortFor,
+  isModelFor,
+  type ModelField,
+  type ModelHarness,
+} from "../lib/models";
 
 /**
  * Roamed preferences — the whole-document, last-writer-wins store that mirrors
@@ -118,12 +124,26 @@ export interface Prefs {
   input: { tapFocus: TapFocus };
   /**
    * What the new-session composer starts with. `newCommand` is which tool runs
-   * (it is also the one the terminal attach reads); `newProject` is the project
-   * a create lands in, "" for Ungrouped; `newModel` is the model injected as
-   * `/model <name>` ahead of the first prompt (lib/models.ts). All three roam,
-   * because none of them changes when a person picks up a different device.
+   * (it is also the one the terminal attach reads) and `newProject` is the
+   * project a create lands in, "" for Ungrouped.
+   *
+   * The model and the effort are held PER HARNESS, because the two CLIs share
+   * no vocabulary: `opus` means nothing to codex, `gpt-5.6-terra` means nothing
+   * to Claude, and their effort ladders agree on every step but the top one
+   * (`ultracode` / `ultra`). One key for both would have made switching command
+   * silently ask for a model the other cannot run. Claude's keeps the original
+   * `newModel` name so a doc written before this still applies.
+   *
+   * All of them roam: none changes when a person picks up a different device.
    */
-  session: { newCommand: NewCommand; newProject: string; newModel: NewModel };
+  session: {
+    newCommand: NewCommand;
+    newProject: string;
+    newModel: string;
+    newEffort: string;
+    newCodexModel: string;
+    newCodexEffort: string;
+  };
   notify: { onDone: boolean; onAwaiting: boolean };
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
    *  each card — OFF by default, and deliberately not the running session's
@@ -135,6 +155,27 @@ export interface Prefs {
    *  nobody asked. Its own namespace because the vanilla page never wrote one,
    *  so there is nothing to collide with. */
   sidebar: { showLastActive: boolean; order: SessionOrder };
+}
+
+/** A harness's pair of choices, as the composer and the chip both want it. */
+export interface ModelChoice {
+  model: string;
+  effort: string;
+}
+
+/** What a new session of this harness should start on. */
+export function modelChoiceFor(p: Prefs, h: ModelHarness): ModelChoice {
+  return h === "codex"
+    ? { model: p.session.newCodexModel, effort: p.session.newCodexEffort }
+    : { model: p.session.newModel, effort: p.session.newEffort };
+}
+
+/** The patch that records one of those choices, under the right harness's key. */
+export function modelChoicePatch(h: ModelHarness, f: ModelField, id: string): PrefsPatch {
+  if (h === "codex") {
+    return { session: f === "model" ? { newCodexModel: id } : { newCodexEffort: id } };
+  }
+  return { session: f === "model" ? { newModel: id } : { newEffort: id } };
 }
 
 export interface PrefsPatch {
@@ -193,7 +234,14 @@ export const PREF_DEFAULTS: Prefs = {
   // that is already there.
   gestures: { wheelSmooth: true, wheelSpeed: 1, scrollSpeedV2: 1, scrollMomentum: true },
   input: { tapFocus: "field" }, // term.html:2811
-  session: { newCommand: DEFAULT_NEW_COMMAND, newProject: "", newModel: "default" },
+  session: {
+    newCommand: DEFAULT_NEW_COMMAND,
+    newProject: "",
+    newModel: DEFAULT_CHOICE,
+    newEffort: DEFAULT_CHOICE,
+    newCodexModel: DEFAULT_CHOICE,
+    newCodexEffort: DEFAULT_CHOICE,
+  },
   notify: { onDone: true, onAwaiting: true },
   sidebar: { showLastActive: false, order: DEFAULT_SESSION_ORDER },
 };
@@ -301,7 +349,21 @@ export function coercePrefs(raw: unknown): Prefs {
       // to Ungrouped in the composer rather than being rewritten here, so
       // recreating the project brings the choice back.
       newProject: typeof session.newProject === "string" ? session.newProject : "",
-      newModel: isNewModel(session.newModel) ? session.newModel : "default",
+      // Each id is checked against ITS OWN harness: a doc that carried
+      // "gpt-5.5" under Claude's key came from a client that did not know the
+      // two lists are different, and the safe reading of it is no choice.
+      newModel: isModelFor("claude", session.newModel)
+        ? (session.newModel as string)
+        : DEFAULT_CHOICE,
+      newEffort: isEffortFor("claude", session.newEffort)
+        ? (session.newEffort as string)
+        : DEFAULT_CHOICE,
+      newCodexModel: isModelFor("codex", session.newCodexModel)
+        ? (session.newCodexModel as string)
+        : DEFAULT_CHOICE,
+      newCodexEffort: isEffortFor("codex", session.newCodexEffort)
+        ? (session.newCodexEffort as string)
+        : DEFAULT_CHOICE,
     },
     notify: {
       onDone: typeof notify.onDone === "boolean" ? notify.onDone : true,
@@ -376,6 +438,9 @@ export function composeDoc(
       newCommand: prefs.session.newCommand,
       newProject: prefs.session.newProject,
       newModel: prefs.session.newModel,
+      newEffort: prefs.session.newEffort,
+      newCodexModel: prefs.session.newCodexModel,
+      newCodexEffort: prefs.session.newCodexEffort,
     },
     notify: {
       ...notify,
@@ -457,6 +522,9 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("session.newCommand", prev.session.newCommand, next.session.newCommand);
   diff("session.newProject", prev.session.newProject, next.session.newProject);
   diff("session.newModel", prev.session.newModel, next.session.newModel);
+  diff("session.newEffort", prev.session.newEffort, next.session.newEffort);
+  diff("session.newCodexModel", prev.session.newCodexModel, next.session.newCodexModel);
+  diff("session.newCodexEffort", prev.session.newCodexEffort, next.session.newCodexEffort);
   diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
   diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
   diff(

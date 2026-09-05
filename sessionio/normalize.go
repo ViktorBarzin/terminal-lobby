@@ -39,6 +39,10 @@ type Normalizer struct {
 	// a receipt still lying around. See skill.go for why the receipt rather than
 	// the marker.
 	skillPending string
+	// model is the last model/effort pair reported, so the next one is only
+	// reported when it differs. Every assistant record carries the pair, and a
+	// marker on each of them would say nothing.
+	model ModelState
 }
 
 func NewNormalizer(session string) *Normalizer { return &Normalizer{session: session} }
@@ -162,6 +166,38 @@ func (n *Normalizer) Record(rec Record) []Event {
 	if !rec.Conversational() {
 		return n.meta(rec)
 	}
+	// What the session is answering AS leads what it answered, because it is
+	// true of the record that follows rather than of the one before it.
+	if lead := n.modelChange(rec); len(lead) > 0 {
+		return append(lead, n.conversation(rec)...)
+	}
+	return n.conversation(rec)
+}
+
+// modelChange reports the model and effort of an assistant record when they
+// differ from the last pair reported, and nothing otherwise.
+//
+// Sidechains are skipped: a subagent answers on whatever model it was
+// dispatched with, and reporting that would show the session running on Haiku
+// while the thread in front of the operator is on Opus. A record naming no
+// model is skipped too — an older transcript, or a line the CLI writes without
+// one, must not blank out a model that is still in force.
+func (n *Normalizer) modelChange(rec Record) []Event {
+	if rec.Type != RecordAssistant || rec.IsSidechain || rec.Message.Model == "" {
+		return nil
+	}
+	now := ModelState{Model: rec.Message.Model, Effort: rec.Effort}
+	if SameModel(now.Model, n.model.Model) && now.Effort == n.model.Effort {
+		return nil
+	}
+	n.model = now
+	e := n.emit(KindMeta, parseAt(rec.Timestamp))
+	e.Meta, e.Model = MetaModel, &now
+	return []Event{e}
+}
+
+// conversation is the rest of Record: what was actually said.
+func (n *Normalizer) conversation(rec Record) []Event {
 	// A compaction boundary is written as a user-role record, so the "the human
 	// spoke" test claims it and the summary renders as an enormous prompt
 	// nobody typed — and opens a turn around it. It is session lifecycle, not
@@ -198,6 +234,17 @@ func (n *Normalizer) Record(rec Record) []Event {
 	if role == "user" {
 		if line, settles, ok := harnessRow(blockText(blocks)); ok {
 			var out []Event
+			// A `/model` receipt is the only source that reports a change the
+			// moment it happens: the assistant records that name a model are
+			// written by a TURN, so until the session takes one they all still
+			// name the model that answered before the change (see MetaModel).
+			if m, ok := ModelFromReceipt(line); ok && !SameModel(m, n.model.Model) {
+				n.model.Model = m
+				e := n.emit(KindMeta, at)
+				now := n.model
+				e.Meta, e.Model = MetaModel, &now
+				out = append(out, e)
+			}
 			if line != "" {
 				e := n.emit(KindState, at)
 				e.Body = line
