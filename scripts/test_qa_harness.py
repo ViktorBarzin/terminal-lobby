@@ -435,10 +435,12 @@ def test_deny_response_is_identifiable(guard):
 
 # --- which paths are public, and which only look it -----------------------
 #
-# clipboard-upload's publicAssets table holds thirteen paths; the prod ingress
-# carve-out holds ten. The three in the table and not the carve-out (term.html
-# and the two build stamps) are authed in production, so the harness must not
-# serve them from the unauthenticated table however public the Go file looks.
+# clipboard-upload's publicAssets table holds twelve paths; the prod ingress
+# carve-out holds eleven. The one in the table and not the carve-out (the build
+# stamp) is authed in production, so the harness must not serve it from the
+# unauthenticated table however public the Go file looks. /term.html is in
+# neither now: it is a 302 handler rather than a file (2026-09-05), and it is
+# authed like the stamp.
 
 # module.ingress_assets in infra/stacks/terminal/main.tf, auth = "none". The
 # same eleven are live: `kubectl get ingress terminal-assets -n terminal`.
@@ -464,22 +466,25 @@ PROD_PUBLIC_CARVE_OUT = frozenset({
 
 def test_public_assets_are_exactly_the_prod_carve_out():
     """Measured against the live site 2026-09-04: GET /sw.js answers 200
-    unauthenticated, while /term.html, /build-id and /term-build-id answer 302
-    to Authentik. A path added here that production gates would let the fleet
-    load something anonymously that a real browser cannot, and the divergence
-    would read as an app bug in whichever sweep hit it."""
+    unauthenticated, while /term.html and /build-id answer 302 to Authentik. A
+    path added here that production gates would let the fleet load something
+    anonymously that a real browser cannot, and the divergence would read as an
+    app bug in whichever sweep hit it."""
     assert set(qa.ASSET_PATHS) == PROD_PUBLIC_CARVE_OUT
 
 
-@pytest.mark.parametrize("path", ["/build-id", "/term-build-id"])
-def test_the_build_stamps_are_authed_not_public(path):
-    """The two stamps the self-update healer polls (ADR-0007's 2026-08-28
-    amendment). clipboard-upload serves both, which is what makes the mistake
-    tempting; production answers both with a 302 to Authentik."""
-    assert path in qa.STAMP_PATHS
-    assert path not in qa.ASSET_PATHS, (
-        f"{path} is authed in production (302 to Authentik, measured "
-        f"2026-09-04), so it cannot ride the unauthenticated asset table")
+def test_the_build_stamp_is_authed_not_public():
+    """The stamp the self-update healer polls (ADR-0007's 2026-08-28
+    amendment). clipboard-upload serves it, which is what makes the mistake
+    tempting; production answers it with a 302 to Authentik.
+
+    There were two until 2026-09-05, the second being /term-build-id: the
+    framed terminal page had an identity of its own and re-checked itself on
+    every reconnect. One document, one stamp."""
+    assert qa.STAMP_PATHS == ("/build-id",)
+    assert "/build-id" not in qa.ASSET_PATHS, (
+        "/build-id is authed in production (302 to Authentik, measured "
+        "2026-09-04), so it cannot ride the unauthenticated asset table")
 
 
 # ==========================================================================

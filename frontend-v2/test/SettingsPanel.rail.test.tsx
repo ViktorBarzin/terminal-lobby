@@ -207,15 +207,16 @@ describe("a settings row", () => {
     const chipped = [...container.querySelectorAll(".tl-set-row")].filter((r) =>
       r.querySelector(".tl-set-chip"),
     );
-    // Two rows on this page live in the browser rather than the account, in
-    // page order: which terminal to render, the per-device escape hatch the
-    // flip rests on and the only one an installed app has, then flow control.
+    // One row on this page lives in the browser rather than the account: flow
+    // control, which exists to rescue a wedged stream on the machine that is
+    // wedged. An "Engine" row sat above it from the flip (2026-09-04) until
+    // the deletion (2026-09-05), choosing which of the two terminals rendered;
+    // there is one terminal now, so there is nothing to choose.
     expect(chipped.map((r) => r.querySelector(".tl-set-row-label")?.textContent)).toEqual([
-      "Engine",
       "Flow control",
     ]);
     // Everything else on this page is roamed, so nothing else is marked.
-    expect(container.querySelectorAll(".tl-set-chip")).toHaveLength(2);
+    expect(container.querySelectorAll(".tl-set-chip")).toHaveLength(1);
   });
 
   it("draws toggles as switches, still operable as checkboxes", () => {

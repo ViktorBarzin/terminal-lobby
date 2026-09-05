@@ -922,37 +922,12 @@ describe("what stops a scroll", () => {
 });
 
 /**
- * The page and the port, as text, read once each.
+ * The port, as text, read once.
  *
- * Citations are resolved by LINE NUMBER rather than grepped for anywhere in a
- * 1.5MB file, because a citation that has drifted to another line is one a
- * reader cannot follow, and `toContain` over the whole page cannot tell the
- * difference.
+ * There were readers for the PAGE here too, resolving each citation at the LINE
+ * it named rather than grepping a 1.5 MB file. They went with
+ * `frontend/term.html` on 2026-09-05.
  */
-const TERM_HTML = resolve(__dirname, "../..", "frontend/term.html");
-let cachedHtml: string | null = null;
-const html = (): string => (cachedHtml ??= readFileSync(TERM_HTML, "utf8"));
-let cachedLines: readonly string[] | null = null;
-const htmlLines = (): readonly string[] => (cachedLines ??= html().split("\n"));
-/** One 1-indexed line of term.html, trimmed of its indentation. */
-const lineAt = (n: number): string => (htmlLines()[n - 1] ?? "").trim();
-/** An inclusive 1-indexed line range of term.html. */
-const span = (from: number, to: number): string =>
-  htmlLines()
-    .slice(from - 1, to)
-    .join("\n");
-/**
- * Every 1-indexed line of term.html mentioning `needle`, in file order.
- *
- * For the claims that assert COMPLETENESS: "only the touch path writes this",
- * "these are its two callers". A `toContain` over the page cannot check those,
- * and a new caller added later is exactly what would make them false.
- */
-const linesWith = (needle: string): readonly number[] =>
-  htmlLines()
-    .map((line, i) => [i + 1, line] as const)
-    .filter(([, line]) => line.includes(needle))
-    .map(([n]) => n);
 let cachedSource: string | null = null;
 const source = (): string =>
   (cachedSource ??= readFileSync(resolve(__dirname, "../src/terminal/touchscroll.ts"), "utf8"));
@@ -1130,253 +1105,96 @@ describe("which world fields an event consults", () => {
   });
 });
 
-describe("parity with term.html", () => {
+/**
+ * THE NUMBERS AND THE CLASSIFICATION, as this module's own.
+ *
+ * A "parity with term.html" describe stood here until 2026-09-05 and read that
+ * page for every case in it: eleven tuned constants, the four classification
+ * lines, the wheel-init fields, the emission-primitive's writers and callers,
+ * the two screen-geometry helpers, the coarse-pointer gate and its three touch
+ * listeners, and a set of citation checks resolving each claim at the LINE it
+ * named rather than grepping a 1.5 MB file.
+ *
+ * The constants are pinned as literals below with the page line each came from.
+ * The four classification lines keep their behaviour half, which is the half
+ * that still has two sides: those four are the part momentum was not allowed to
+ * change (term.html:6070-6071, "Only EMISSION/MOMENTUM changed; tap-vs-swipe
+ * CLASSIFICATION is byte-identical"), so a divergence there is a regression in
+ * the oldest behaviour on the page.
+ */
+describe("the numbers the page was tuned to", () => {
   /**
-   * Nine numbers tuned on a real phone, living in two places until term.html
-   * retires: the eight below, and the swipe threshold in the test after them. A
-   * port that quietly moved one hands back the feel it was tuned to.
+   * Eleven numbers tuned on a real phone. A port that quietly moved one hands
+   * back the feel it was tuned to.
    */
-  it.each([
-    ["MOMENTUM_TAU_MS", MOMENTUM_TAU_MS],
-    ["MOMENTUM_STOP_ROWS_PER_S", MOMENTUM_STOP_ROWS_PER_S],
-    ["MOMENTUM_MAX_COAST_SCREENS", MOMENTUM_MAX_COAST_SCREENS],
-    ["MOMENTUM_MIN_START_ROWS_PER_S", MOMENTUM_MIN_START_ROWS_PER_S],
-    ["GAP_STILL_MS", GAP_STILL_MS],
-    ["GAP_ATTEN_TAU_MS", GAP_ATTEN_TAU_MS],
-    ["SCROLL_MAX_EVENTS_PER_FEED", SCROLL_MAX_EVENTS_PER_FEED],
-    ["VEL_WINDOW_MS", VEL_WINDOW_MS],
-  ] as const)("uses the %s term.html ships", (name, value) => {
-    const m = new RegExp(`const ${name} = ([\\d.]+);`).exec(html());
-    expect(m, `${name} in term.html`).toBeTruthy();
-    expect(Number(m?.[1])).toBe(value);
+  it("uses the momentum and gap constants the page shipped", () => {
+    // term.html:6076-6081 and :6083.
+    expect(MOMENTUM_TAU_MS).toBe(325);
+    expect(MOMENTUM_STOP_ROWS_PER_S).toBe(0.5);
+    expect(MOMENTUM_MAX_COAST_SCREENS).toBe(4);
+    expect(MOMENTUM_MIN_START_ROWS_PER_S).toBe(3);
+    expect(GAP_STILL_MS).toBe(180);
+    expect(GAP_ATTEN_TAU_MS).toBe(400);
+    expect(VEL_WINDOW_MS).toBe(100);
   });
 
-  it("uses the swipe threshold term.html ships", () => {
-    const m = /const SWIPE_THRESHOLD = (\d+);/.exec(html());
-    expect(m, "SWIPE_THRESHOLD in term.html").toBeTruthy();
-    expect(Number(m?.[1])).toBe(SWIPE_THRESHOLD_PX);
+  it("uses the swipe threshold the page shipped", () => {
+    // term.html:6490, `const SWIPE_THRESHOLD = 6;  // px — tap vs. swipe`
+    expect(SWIPE_THRESHOLD_PX).toBe(6);
   });
 
-  it("keeps the ring buffer and frame caps term.html ships", () => {
-    const src = html();
-    const ring = /scrollSamples\.length > (\d+)/.exec(src);
-    expect(Number(ring?.[1])).toBe(VEL_SAMPLES_MAX);
-    const frame = /Math\.min\((\d+), now - last\)/.exec(src);
-    expect(Number(frame?.[1])).toBe(COAST_FRAME_CAP_MS);
+  it("keeps the ring buffer and frame caps the page shipped", () => {
+    // term.html:6521, `if (scrollSamples.length > 24) scrollSamples.shift();`
+    expect(VEL_SAMPLES_MAX).toBe(24);
+    // term.html:6159, `const dt = Math.min(64, now - last); last = now;`
+    expect(COAST_FRAME_CAP_MS).toBe(64);
   });
 
-  /**
-   * The classification lines, each pinned at the line the module header cites
-   * AND paired with what the port does for it. Quoting the page alone would
-   * pass a port that classified differently, which is the risk that matters
-   * most here: these four are the part momentum was not allowed to change, so a
-   * divergence is a regression in the oldest behaviour on the page.
-   */
-  it.each([
-    {
-      at: 6498,
-      line: "if (e.touches.length !== 1) { startY = lastY = null; return; }",
-      port: (): void => {
-        const two = reduce(NO_TOUCH_SCROLL, start(200, 2), world());
-        expect(two.state.startY).toBeNull();
-        expect(two.state.lastY).toBeNull();
-        const one = reduce(NO_TOUCH_SCROLL, start(200), world());
-        expect(one.state.startY).toBe(200);
-        expect(one.state.lastY).toBe(200);
-      },
-    },
-    {
-      at: 6507,
-      line: "if (!moved && Math.abs(startY - y) > SWIPE_THRESHOLD) moved = true;",
-      port: (): void => {
-        const down = reduce(NO_TOUCH_SCROLL, start(200), world()).state;
-        // Strictly greater, and measured from the landing point in both
-        // directions.
-        expect(reduce(down, move(206, 16), world()).state.moved).toBe(false);
-        expect(reduce(down, move(207, 16), world()).state.moved).toBe(true);
-        expect(reduce(down, move(194, 16), world()).state.moved).toBe(false);
-        expect(reduce(down, move(193, 16), world()).state.moved).toBe(true);
-      },
-    },
-    {
-      at: 6508,
-      line: "if (!moved || delta === 0 || !term.element) return;",
-      port: (): void => {
-        // All three gates, in the page's order.
-        expect(play([start(200), move(204, 16)]).wheels).toHaveLength(0);
-        const armed = play([start(200), move(240, 16)]);
-        expect(armed.wheels).toHaveLength(2);
-        const still = reduce(armed.state, move(240, 32), world());
-        expect(still.actions).toHaveLength(0);
-        expect(still.state.samples).toHaveLength(1);
-        expect(play(dragBy(200, 8, 4), world({ mounted: false })).wheels).toHaveLength(0);
-      },
-    },
-    {
-      at: 6527,
-      line: "if (!moved && startY !== null) tapFocus();",
-      port: (): void => {
-        expect(play([start(200), end(16)]).focuses).toBe(1);
-        expect(play([...dragBy(200, 8, 3), end(64)]).focuses).toBe(0);
-        expect(reduce(NO_TOUCH_SCROLL, end(16), world()).actions).toHaveLength(0);
-      },
-    },
-  ])("classifies with term.html:$at, and so does the port", ({ at, line, port }) => {
-    expect(lineAt(at)).toBe(line);
-    port();
+  /** Shared with the desktop wheel there and here; one number, two modules. */
+  it("uses the per-frame cap the page shipped", () => {
+    // term.html:6082, `const SCROLL_MAX_EVENTS_PER_FEED = 10;`
+    expect(SCROLL_MAX_EVENTS_PER_FEED).toBe(10);
+  });
+});
+
+describe("the classification momentum was not allowed to change", () => {
+  /** term.html:6498 — `if (e.touches.length !== 1) { startY = lastY = null; return; }` */
+  it("classifies as term.html:6498 did", () => {
+    const two = reduce(NO_TOUCH_SCROLL, start(200, 2), world());
+    expect(two.state.startY).toBeNull();
+    expect(two.state.lastY).toBeNull();
+    const one = reduce(NO_TOUCH_SCROLL, start(200), world());
+    expect(one.state.startY).toBe(200);
+    expect(one.state.lastY).toBe(200);
   });
 
-  /**
-   * Which comment marks those four as untouchable, and where it lives. The
-   * note inside the touchstart handler covers the three lines under it and
-   * stops there; the fourth line the port counts is in the touchend handler,
-   * past the end of that note. What covers all four is the banner over the
-   * whole scroller, so that is what the module header cites.
-   */
-  it("cites the comment that covers all four classification lines", () => {
-    expect(span(6492, 6495)).toContain("The three CLASSIFICATION lines below");
-    expect(lineAt(6527)).toBe("if (!moved && startY !== null) tapFocus();");
-    expect(span(6070, 6071)).toContain("Only EMISSION/MOMENTUM changed; tap-vs-swipe");
-    expect(span(6070, 6071)).toContain("CLASSIFICATION is byte-identical");
-    const redLine = headerBlock(
-      "THE CLASSIFICATION IS THE RED LINE",
-      "One thing is deliberately NOT gated",
-    );
-    expect(redLine).toContain(":6070-6071");
+  /** term.html:6507 — `if (!moved && Math.abs(startY - y) > SWIPE_THRESHOLD) moved = true;` */
+  it("classifies as term.html:6507 did", () => {
+    const down = reduce(NO_TOUCH_SCROLL, start(200), world()).state;
+    // Strictly greater, and measured from the landing point in both
+    // directions.
+    expect(reduce(down, move(206, 16), world()).state.moved).toBe(false);
+    expect(reduce(down, move(207, 16), world()).state.moved).toBe(true);
+    expect(reduce(down, move(194, 16), world()).state.moved).toBe(false);
+    expect(reduce(down, move(193, 16), world()).state.moved).toBe(true);
   });
 
-  /**
-   * The wheel init, field for field on both sides, and the accumulator
-   * arithmetic the count comes from. A port that shipped deltaMode 0, or lost
-   * the carried clientY, or floored the count instead of truncating it, would
-   * still satisfy a grep of the page.
-   */
-  it("emits the wheel term.html emits, field for field", () => {
-    const init = span(6107, 6112);
-    expect(init).toContain("deltaY: sign < 0 ? -1 : 1,");
-    expect(init).toContain("deltaMode: 1,");
-    expect(init).toContain("bubbles: true, cancelable: true,");
-    expect(init).toContain("clientX: 0, clientY: scrollLastEmitY,");
-    expect(play(dragBy(200, 16, 1)).wheels).toEqual([
-      {
-        deltaY: -1,
-        deltaMode: 1,
-        bubbles: true,
-        cancelable: true,
-        clientX: 0,
-        clientY: 216,
-      },
-    ]);
-    // :6121 carries a trailing comment, so it is matched rather than compared.
-    expect(lineAt(6121)).toContain("let k = Math.trunc(scrollAccumPx / rowPx);");
-    expect(lineAt(6125)).toBe("scrollAccumPx -= k * rowPx;");
-    // Truncation and the kept remainder, which is what those two lines are:
-    // 53px of travel is three rows and 5px owed, not four rows.
-    const kept = play([start(200), move(253, 16)]);
-    expect(kept.wheels).toHaveLength(3);
-    expect(kept.state.accumPx).toBeCloseTo(-5, 10);
+  /** term.html:6508 — `if (!moved || delta === 0 || !term.element) return;` */
+  it("classifies as term.html:6508 did", () => {
+    // All three gates, in the page's order.
+    expect(play([start(200), move(204, 16)]).wheels).toHaveLength(0);
+    const armed = play([start(200), move(240, 16)]);
+    expect(armed.wheels).toHaveLength(2);
+    const still = reduce(armed.state, move(240, 32), world());
+    expect(still.actions).toHaveLength(0);
+    expect(still.state.samples).toHaveLength(1);
+    expect(play(dragBy(200, 8, 4), world({ mounted: false })).wheels).toHaveLength(0);
   });
 
-  /** The starting y of a synthetic wheel before any drag has set one (:6087). */
-  it("starts from the same carried clientY", () => {
-    const m = /let scrollLastEmitY = (\d+);/.exec(html());
-    expect(Number(m?.[1])).toBe(NO_TOUCH_SCROLL.emitY);
-  });
-
-  /**
-   * The gate, pinned at the two lines the owes list cites, plus the three
-   * listeners sitting inside it. Everything in the ported range is under this
-   * `if`, so a component that attaches unconditionally diverges from the page
-   * on every machine where the query answers false.
-   */
-  it("gates the whole recognizer on the coarse-pointer query, at :6350 and :6478", () => {
-    expect(lineAt(6350)).toBe("const isCoarsePointer = matchMedia('(pointer: coarse)').matches;");
-    expect(lineAt(6478)).toBe("if (isCoarsePointer) {");
-    // The three listeners the owes list asks for, all below that line.
-    expect(lineAt(6491)).toContain("terminalEl.addEventListener('touchstart'");
-    expect(lineAt(6502)).toContain("terminalEl.addEventListener('touchmove'");
-    expect(lineAt(6526)).toContain("terminalEl.addEventListener('touchend'");
-    // No fourth: term.html registers no touchcancel on the terminal element,
-    // which is the divergence the header's own note owns.
-    expect(html()).not.toContain("terminalEl.addEventListener('touchcancel'");
-    // And the page's reason for leaving a fine-pointer machine alone.
-    expect(span(6399, 6400)).toContain("touch-capable desktops keep native 2-finger");
-    expect(span(6399, 6400)).toContain("scrolling latency-free");
-  });
-
-  /**
-   * The carried clientY is SHARED with the desktop wheel pacer, which the OUT
-   * OF SCOPE note used to call private ("shares emitLineWheel and nothing
-   * else"). One `emitLineWheel` reads one `scrollLastEmitY` for its clientY,
-   * and both the touch feed and `pumpWheel` call it, so the y this module owns
-   * as `emitY` is the y a trackpad's wheels carry too. wheel.ts keeps that
-   * deliberately, because the mouse report's cell is derived from the
-   * coordinate: a wiring that gave the desktop path the wheel's own clientY
-   * would change which tmux pane a trackpad report lands in.
-   */
-  it("shares the carried clientY with the desktop wheel pacer", () => {
-    expect(span(6105, 6113)).toContain("clientX: 0, clientY: scrollLastEmitY,");
-    // Three mentions in the whole page: the declaration, the read inside
-    // emitLineWheel, and the touch path as its only writer.
-    expect(linesWith("scrollLastEmitY")).toEqual([6087, 6111, 6522]);
-    expect(lineAt(6522)).toBe("scrollLastEmitY = y;");
-    // Both callers of the one primitive.
-    expect(lineAt(6127)).toContain("emitLineWheel(sign)");
-    expect(lineAt(6222)).toContain("emitLineWheel(sign)");
-    expect(lineAt(6212)).toBe("function pumpWheel() {");
-    // The other three the note names as shared, each pinned by its FULL caller
-    // list, because the note claims completeness for them.
-    expect(lineAt(6082)).toContain("const SCROLL_MAX_EVENTS_PER_FEED = 10;");
-    expect(linesWith("SCROLL_MAX_EVENTS_PER_FEED")).toEqual([6082, 6123, 6124, 6218, 6219, 6254]);
-    // 6119/6150/6551 touch, 6214/6239/6254 desktop, 6290 the selection
-    // wheel-clear the note routes to selection.ts.
-    expect(linesWith("xtermCellH()")).toEqual([6094, 6119, 6150, 6214, 6239, 6254, 6290, 6551]);
-    expect(linesWith("xtermScreenH()")).toEqual([6098, 6156, 6240]);
-    // And the note says so, rather than calling the coupling private.
-    const scope = headerBlock("OUT OF SCOPE, on purpose.", "*/");
-    for (const needle of ["emitLineWheel", "scrollLastEmitY", "SCROLL_MAX_EVENTS_PER_FEED"]) {
-      expect(scope, needle).toContain(needle);
-    }
-  });
-
-  /**
-   * Where the page reads each world field, which is what the per-field notes in
-   * the header now claim. Inside the ported range the screen box is measured at
-   * the lift and nowhere else, and so is the momentum pref.
-   */
-  it("reads the screen box and the momentum pref at the lift only", () => {
-    // Inside the scroller's own range: the definition, and one read at the
-    // coast cap.
-    expect(linesWith("xtermScreenH()").filter((n) => n >= 6056 && n <= 6171)).toEqual([6098, 6156]);
-    expect(lineAt(6156)).toBe("const capPx = MOMENTUM_MAX_COAST_SCREENS * xtermScreenH();");
-    // The momentum pref: its definition and one caller, in the touchend.
-    expect(linesWith("scrollMomentumOn()")).toEqual([6093, 6543]);
-    expect(lineAt(6543)).toContain("if (scrollEmittedGesture && scrollMomentumOn()) {");
-    // The three that ARE read per event, at the sites the header cites.
-    expect(lineAt(6119)).toBe("const rowPx = xtermCellH() / scrollSpeedMult();");
-    expect(lineAt(6508)).toBe("if (!moved || delta === 0 || !term.element) return;");
-    expect(lineAt(6161)).toContain("!term.element");
-    // Both box helpers query the document, which is what one terminal per
-    // document can afford and several mounted at once cannot.
-    expect(lineAt(6095)).toBe("const scr = document.querySelector('.xterm-screen');");
-    expect(lineAt(6099)).toBe("const scr = document.querySelector('.xterm-screen');");
-  });
-
-  /**
-   * The scroll-speed enumeration, taken OUT of the page rather than restated
-   * here, and then fed to the port: the four values the ternary accepts pass
-   * through unchanged, and anything else lands on the fallback the page names.
-   */
-  it("accepts the scroll speeds term.html accepts", () => {
-    const m =
-      /\(v === ([\d.]+) \|\| v === ([\d.]+) \|\| v === ([\d.]+) \|\| v === ([\d.]+)\) \? v : ([\d.]+)/.exec(
-        html(),
-      );
-    expect(m, "the scrollSpeedV2 ternary in term.html").toBeTruthy();
-    const accepted = [m?.[1], m?.[2], m?.[3], m?.[4]].map(Number);
-    expect(accepted).toEqual([1, 1.5, 2, 3]);
-    for (const v of accepted) expect(scrollSpeedMult(v)).toBe(v);
-    const fallback = Number(m?.[5]);
-    for (const v of [0, -2, 2.5, 10, Number.NaN]) expect(scrollSpeedMult(v)).toBe(fallback);
+  /** term.html:6527 — `if (!moved && startY !== null) tapFocus();` */
+  it("classifies as term.html:6527 did", () => {
+    expect(play([start(200), end(16)]).focuses).toBe(1);
+    expect(play([...dragBy(200, 8, 3), end(64)]).focuses).toBe(0);
+    expect(reduce(NO_TOUCH_SCROLL, end(16), world()).actions).toHaveLength(0);
   });
 });

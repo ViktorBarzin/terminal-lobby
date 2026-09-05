@@ -11,6 +11,10 @@
  * before (rendered 681px against a 641px window) and cured there; v2 was built
  * without the guard.
  *
+ * There were two documents to guard until 2026-09-05: the lobby, and the
+ * terminal page inside its iframe, whose own `html, body { overflow: hidden }`
+ * was asserted here for the same reason. One document now, so one guard.
+ *
  * These are CSS-text assertions because the behaviour they protect only appears
  * on a viewport whose layout and visual sizes differ — something jsdom does not
  * have and headless Chromium does not emulate (measured: with a deliberately
@@ -22,10 +26,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const APP_CSS = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
-const TERM_HTML = readFileSync(
-  resolve(process.cwd(), "../frontend/term.html"),
-  "utf8",
-);
 
 /** The declaration block of the first rule whose selector list matches. */
 function ruleFor(css: string, selector: string): string {
@@ -57,13 +57,5 @@ describe("the lobby document cannot scroll", () => {
     const rule = ruleFor(APP_CSS, "#root {");
     expect(rule).toMatch(/height:\s*var\(--app-vh/);
     expect(rule).toMatch(/overflow:\s*hidden/);
-  });
-
-  it("keeps the same guard on the terminal page inside the iframe", () => {
-    // term.html is its own document; a gesture that escapes it lands on the
-    // lobby behind it.
-    const rule = ruleFor(TERM_HTML, "html, body {");
-    expect(rule).toMatch(/overflow:\s*hidden/);
-    expect(rule).toMatch(/overscroll-behavior:\s*none/);
   });
 });

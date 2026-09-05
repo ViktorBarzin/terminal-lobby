@@ -19,7 +19,7 @@ import {
  */
 const sentinels = (name: string) => name;
 
-/** Slate's declarations, copied from term.html. Slate is the app default. */
+/** Slate's declarations, copied from the theme CSS. Slate is the app default. */
 const SLATE: Record<string, string> = {
   "--terminal-bg": "#0d1117",
   "--terminal-fg": "#e6e8eb",
@@ -276,19 +276,21 @@ describe("the module's own shape", () => {
  *
  * A theme re-read has two causes, and only one of them involves a person in
  * the app: the picker, and an OS light/dark flip while the stored theme is
- * 'system'. term.html serves both through one global, `__tlThemeLive` — the
- * picker via its tl-theme branch (9355-9360), the OS flip via the pre-paint
- * boot script's prefers-color-scheme listener (2004-2008), which swaps the
- * body class itself and then calls the global instead of reloading the page.
- * frontend-v2/index.html ships its own copy of that listener (reformatted, and
- * without term.html's reload fallback), and it can
- * only reach a terminal that published the global; a component wired for the
- * picker alone leaves an OS flip re-theming the chrome while the terminal
- * keeps the outgoing palette, silently. These tests pin the fact in the one
- * place it survives the port — this module — so it cannot be dropped again.
+ * 'system'. Both arrive through one global, `__tlThemeLive` — the picker from
+ * theme.ts, the OS flip from the pre-paint boot script's prefers-color-scheme
+ * listener in index.html, which swaps the body class itself and then calls the
+ * global instead of reloading the page. It can only reach a terminal that
+ * published the global; a component wired for the picker alone leaves an OS
+ * flip re-theming the chrome while the terminal keeps the outgoing palette,
+ * silently. These tests pin the fact in the one place it survives the port —
+ * this module — so it cannot be dropped again.
+ *
+ * The page half of each check went on 2026-09-05 with `frontend/term.html`,
+ * which carried its own copy of that listener (term.html:2004-2008, and the
+ * tl-theme branch at :9355-9360) and its own `liveRetheme`. index.html's copy
+ * is the only one now, and it is still checked here.
  */
 describe("the second re-theme trigger: an OS scheme flip under theme='system'", () => {
-  const page = readFileSync(resolve(process.cwd(), "../frontend/term.html"), "utf8");
   const shell = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
   const source = readFileSync(resolve(process.cwd(), "src/terminal/theme.ts"), "utf8");
 
@@ -304,10 +306,8 @@ describe("the second re-theme trigger: an OS scheme flip under theme='system'", 
   });
 
   /** The name is a wire format: the listener is inline HTML and imports nothing. */
-  it("pins the global name term.html and the shell both call by hand", () => {
+  it("pins the global name the shell calls by hand", () => {
     expect(THEME_LIVE_GLOBAL).toBe("__tlThemeLive");
-    expect(page).toContain(`window.${THEME_LIVE_GLOBAL} = liveRetheme;`);
-    expect(page).toContain(`window.${THEME_LIVE_GLOBAL}('system');`);
     expect(shell).toContain(`window.${THEME_LIVE_GLOBAL}("system");`);
   });
 
@@ -320,7 +320,6 @@ describe("the second re-theme trigger: an OS scheme flip under theme='system'", 
   it("fires only when the stored theme is exactly 'system'", () => {
     const osFlip = TERMINAL_RETHEME_TRIGGERS.find((t) => t.id === "os-scheme-flip");
     expect(osFlip?.when).toContain("'system'");
-    expect(page).toContain("if (stored() !== 'system') return;");
     expect(shell).toContain('if (stored() !== "system") return;');
   });
 
@@ -329,10 +328,7 @@ describe("the second re-theme trigger: an OS scheme flip under theme='system'", 
    * because the re-read takes whatever is on body at call time. Reversed, the
    * repaint would carry the palette the document is leaving.
    */
-  it("swaps the body class before calling the global, in the page and the shell", () => {
-    expect(page.indexOf("window.__tlApplyTheme('system');")).toBeLessThan(
-      page.indexOf("window.__tlThemeLive('system');"),
-    );
+  it("swaps the body class before calling the global", () => {
     expect(shell.indexOf('window.__tlApplyTheme("system");')).toBeLessThan(
       shell.indexOf('window.__tlThemeLive("system");'),
     );
@@ -341,11 +337,9 @@ describe("the second re-theme trigger: an OS scheme flip under theme='system'", 
   /**
    * Why that ordering matters, in this module's own terms: the mapping is a
    * function of the reader alone. Both callers pass a theme NAME, and this path
-   * has no use for it — term.html's liveRetheme takes no parameter at all.
+   * has no use for it — the page's own `liveRetheme` took no parameter at all.
    */
   it("follows the body, never the theme name its callers pass", () => {
-    expect(page).toContain("function liveRetheme() {");
-
     let vars: Record<string, string> = SLATE;
     const read = (name: string) => vars[name];
     expect(toXtermTheme(read).background).toBe("#0d1117");

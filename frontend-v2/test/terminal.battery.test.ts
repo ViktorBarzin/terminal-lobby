@@ -308,72 +308,22 @@ describe("a phone put down and picked up again", () => {
   });
 });
 
-describe("parity with the page it came from", () => {
-  const TERM_HTML = resolve(__dirname, "../..", "frontend/term.html");
-  const html = (): string => readFileSync(TERM_HTML, "utf8");
-
-  /** term.html's suspendForBattery, body and all, read out of the page. */
-  const suspendForBattery = (): string => {
-    const src = html();
-    const start = src.indexOf("function suspendForBattery()");
-    const end = src.indexOf("function resumeFromSuspend(", start);
-    expect(start, "suspendForBattery in term.html").toBeGreaterThan(-1);
-    expect(end, "resumeFromSuspend after it").toBeGreaterThan(start);
-    return src.slice(start, end);
-  };
-
-  /**
-   * One knob, tuned once, in two places until term.html retires. A port that
-   * quietly halved the grace would double the reconnects on every phone.
-   */
-  it("uses the grace period term.html ships", () => {
-    const m = /const HIDDEN_SUSPEND_MS = (\d+);/.exec(html());
-    expect(m?.[1], "HIDDEN_SUSPEND_MS in term.html").toBeTruthy();
-    expect(Number(m?.[1])).toBe(HIDDEN_SUSPEND_MS);
-  });
-
-  /**
-   * The visible-tab guard is the one rule whose absence is invisible in
-   * testing and expensive in the field. If term.html ever loses it, this fails
-   * loudly enough to check whether the reason applies here too.
-   */
-  it("still finds the visible-tab guard in the page it was extracted from", () => {
-    expect(html()).toContain("if (!document.hidden || batterySuspended) return;");
-  });
-
-  /**
-   * The boot-hidden countdown, in the page's own words. It is the reason the
-   * `boot` event exists, and the reason an unstamped run has to be honoured:
-   * this line arms a countdown that no visibilitychange will ever stamp.
-   */
-  it("still arms the countdown at load on a page that boots hidden", () => {
-    expect(html()).toContain(
-      "if (document.hidden) hiddenSuspendTimer = setTimeout(suspendForBattery, HIDDEN_SUSPEND_MS);",
-    );
-  });
-
-  /**
-   * The page suspends on the strength of the timer alone — its only guard is
-   * the visible-tab one. So the staleness check this module adds is a
-   * divergence, and a run term.html would have suspended must still suspend
-   * here.
-   */
-  it("weighs no clock of its own between the countdown and the suspend", () => {
-    const body = suspendForBattery();
-    expect(body).toContain("if (!document.hidden || batterySuspended) return;");
-    expect(body).not.toMatch(/Date\.now\(\)|performance\.now\(\)|hiddenSince|msHidden/);
-  });
-
-  /**
-   * Both of these are suspend-time work with no other home: the ladder's 30s
-   * stability proof would otherwise fire behind a socket that is down on
-   * purpose and reset the retry ladder to rung 0, and `dropped` is the pill's
-   * fault-red drop flash, which a suspend must not leave painted on.
-   */
-  it("still cancels the stability proof and clears the drop flash as it suspends", () => {
-    const body = suspendForBattery();
-    expect(body).toContain("clearTimeout(stableTimer)");
-    expect(body).toContain("connPill.classList.remove('dropped')");
+/**
+ * The knob, as a literal.
+ *
+ * It lived in two places until 2026-09-05 — here and in the page this module
+ * was ported from — and five cases in this file read that page to keep them
+ * equal: the grace period, the visible-tab guard, the boot-hidden countdown,
+ * the absence of a second clock inside `suspendForBattery`, and the two pieces
+ * of suspend-time cleanup. There is one implementation now, so the value is
+ * pinned rather than compared, and the rules those cases described are asserted
+ * above as this module's own behaviour.
+ */
+describe("the grace period", () => {
+  it("is the minute the page was tuned to", () => {
+    // term.html:9785, `const HIDDEN_SUSPEND_MS = 60000;`. A port that quietly
+    // halved it would double the reconnects on every phone.
+    expect(HIDDEN_SUSPEND_MS).toBe(60000);
   });
 });
 

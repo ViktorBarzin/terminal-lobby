@@ -7,7 +7,6 @@ import {
   buildChannel,
   channelPhrase,
   notificationsChannel,
-  readConn,
   scope,
   sessionsChannel,
   summarise,
@@ -228,42 +227,6 @@ describe("the terminal channel", () => {
 
   it("is down once the socket is closed with no ladder running", () => {
     expect(terminalChannel({ state: "closed", attempt: 0 }).state).toBe("down");
-  });
-});
-
-describe("reading the terminal's message", () => {
-  it("reads a well-formed report", () => {
-    expect(readConn({ type: "tl-conn", state: "open", attempt: 0 })).toEqual({
-      state: "open",
-      attempt: 0,
-    });
-  });
-
-  it("keeps the attempt number", () => {
-    expect(readConn({ type: "tl-conn", state: "connecting", attempt: 4 })?.attempt).toBe(4);
-  });
-
-  /**
-   * The frame may be a cached older build, another page entirely, or something
-   * hostile that got past the origin check. An unrecognised state must read as
-   * "not reporting", never as a state we then paint with confidence.
-   */
-  it("refuses a state it does not know", () => {
-    expect(readConn({ type: "tl-conn", state: "great", attempt: 0 })).toBeNull();
-  });
-
-  it("refuses anything that is not this message", () => {
-    expect(readConn(null)).toBeNull();
-    expect(readConn({ type: "tl-focus" })).toBeNull();
-    expect(readConn({ state: "open" })).toBeNull();
-    expect(readConn("tl-conn")).toBeNull();
-  });
-
-  it("repairs a missing or nonsense attempt rather than trusting it", () => {
-    expect(readConn({ type: "tl-conn", state: "open" })?.attempt).toBe(0);
-    expect(readConn({ type: "tl-conn", state: "open", attempt: -3 })?.attempt).toBe(0);
-    expect(readConn({ type: "tl-conn", state: "open", attempt: "7" })?.attempt).toBe(0);
-    expect(readConn({ type: "tl-conn", state: "open", attempt: 2.7 })?.attempt).toBe(2);
   });
 });
 

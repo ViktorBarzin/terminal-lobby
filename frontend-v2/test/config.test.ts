@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   TMUX_API_PREFIX,
   apiUrl,
-  TERMINAL_BASE,
   clipboardUrl,
   fileListUrl,
   fileReadUrl,
@@ -75,10 +74,3 @@ describe("config — fileListUrl carries the dotfile opt-in", () => {
   });
 });
 
-describe("config — terminal page base (avoids SPA-in-iframe recursion)", () => {
-  it("TERMINAL_BASE defaults to /term.html (a separate static page, not '/')", () => {
-    // The SPA is served at '/', so an iframe pointed at '/?arg=' would reload the
-    // SPA. term.html is the standalone terminal-mode page it must attach against.
-    expect(TERMINAL_BASE).toBe("/term.html");
-  });
-});

@@ -2,11 +2,11 @@
  * Connection status — the model behind the dot, the Right now panel and the
  * check (docs/adr/0016-connection-status-in-the-ui.md).
  *
- * A client keeps five **channels**, and until now a person could see two of
+ * A client keeps five **channels**, and until the ADR a person could see two of
  * them: the transcript stream had a badge in the session bar, and the terminal
- * socket painted a pill inside its own iframe. The session list, notifications
- * and a stale build reported nothing at all, which is why "it stopped working"
- * has never had an answer a user could reach on their own.
+ * socket painted a pill of its own. The session list, notifications and a stale
+ * build reported nothing at all, which is why "it stopped working" had no
+ * answer a user could reach on their own.
  *
  * The word "channel" belongs to this file, CONTEXT.md and the ADR. It is never
  * shown on screen: the rows are labelled Terminal, Transcript, Session list,
@@ -18,9 +18,9 @@
  * actually needs: degraded means wait, down means act. `unknown` is the fourth
  * value and it is deliberately NOT a severity — a channel that has not reported
  * is skipped by every rule here rather than counted as either health or fault.
- * A booting terminal iframe, a cached older build that predates the status
- * message, and a browser with no push support all land there, and none of them
- * is a failure to show someone.
+ * A terminal still booting, a lobby build too old to report, and a browser with
+ * no push support all land there, and none of them is a failure to show
+ * someone.
  *
  * Everything in this file is pure. The live wiring is status-store.ts and the
  * probes are check.ts, so the rules that decide what a person is told can be
@@ -96,7 +96,7 @@ const RANK: Record<Exclude<ChannelState, "unknown">, number> = {
  */
 export const SESSIONS_DOWN_AFTER_MS = 60_000;
 
-/** What the terminal iframe reports about its socket (frontend/term.html). */
+/** What the terminal reports about its socket (TerminalNative's `onConn`). */
 export interface TerminalReport {
   state: "open" | "connecting" | "offline" | "suspended" | "closed";
   /** which attempt the ladder is on; 0 or 1 is a first connect, not a retry. */
@@ -217,33 +217,6 @@ export function scope(channels: readonly Channel[], ids: readonly ChannelId[]): 
         detail: channelPhrase(id, "unknown"),
       },
   );
-}
-
-/** The states term.html is allowed to report. Anything else is not a state. */
-const TERMINAL_STATES: readonly TerminalReport["state"][] = [
-  "open",
-  "connecting",
-  "offline",
-  "suspended",
-  "closed",
-] as const;
-
-/**
- * Parse a `tl-conn` message from the terminal frame, or null.
- *
- * Null for anything unrecognised is the point. The frame may be a cached older
- * build that predates this message, another page entirely, or something that
- * got past the origin check — and every one of those must read as "not
- * reporting" rather than as a state the badge then paints with confidence.
- */
-export function readConn(data: unknown): TerminalReport | null {
-  if (!data || typeof data !== "object") return null;
-  const d = data as { type?: unknown; state?: unknown; attempt?: unknown };
-  if (d.type !== "tl-conn") return null;
-  const state = TERMINAL_STATES.find((s) => s === d.state);
-  if (!state) return null;
-  const raw = typeof d.attempt === "number" && Number.isFinite(d.attempt) ? d.attempt : 0;
-  return { state, attempt: raw > 0 ? Math.floor(raw) : 0 };
 }
 
 export function terminalChannel(report: TerminalReport | null): Channel {

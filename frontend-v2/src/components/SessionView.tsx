@@ -16,7 +16,6 @@ import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic
 import type { PermissionDecision } from "../types/events";
 import { ViewSwitch } from "./ViewSwitch";
 import { TextView } from "./TextView";
-import { TerminalView } from "./TerminalView";
 import { FilePreview } from "./FilePreview";
 import { FindInSession } from "./FindInSession";
 import { isLoaded, MAX_JUMP_STEPS } from "./find.logic";
@@ -41,70 +40,9 @@ import type { ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 import { StatusDot } from "./StatusDot";
 import { TerminalNative } from "./TerminalNative";
-import {
-  DEFAULT_TERMINAL_RENDERER,
-  terminalRenderer,
-  type TerminalRenderer,
-} from "../store/device-prefs";
 import { terminalFrameArgs } from "../lib/terminal-url";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 import type { BackgroundWork } from "../types/lobby";
-
-/** The `?native` values that mean yes, and the ones that mean no. */
-const NATIVE_YES = ["1", "true", "yes", "on"];
-const NATIVE_NO = ["0", "false", "no", "off"];
-
-/**
- * Which terminal a URL asks for, or null when it does not say.
- *
- * PRESENCE was the whole test until pass 1 (`.has("native")`), so `?native=0`
- * turned native ON and the flag had no way to say no. That matters because the
- * same flag is the escape hatch in the other direction now that native is the
- * default: the de-iframe plan asks for "a URL override that works in both
- * directions" (docs/plans/2026-09-04-native-terminal-de-iframe-design.md).
- *
- * A bare `?native` reads as yes, the way a valueless flag does, and that is
- * also what it used to do. Anything unrecognised reads as NO ANSWER rather
- * than as a vote, so a typo leaves the default standing instead of silently
- * swapping someone's terminal.
- */
-export function nativeFromSearch(search: string): boolean | null {
-  const raw = new URLSearchParams(search).get("native");
-  if (raw === null) return null;
-  const value = raw.trim().toLowerCase();
-  if (value === "") return true;
-  if (NATIVE_YES.includes(value)) return true;
-  if (NATIVE_NO.includes(value)) return false;
-  return null;
-}
-
-/**
- * WHICH TERMINAL to mount, from the two things that get a say and the default
- * behind them.
- *
- * The order is the whole point, so it is written here rather than spread over
- * the call site:
- *
- *   1. **An explicit `?native` in the URL wins.** One tab, one answer, and it
- *      leaves the stored setting alone, so `?native=0` is a look at the iframe
- *      without giving native up on that device, and `?native=1` is the same
- *      trick in reverse for a device whose setting says iframe.
- *   2. **Then this device's stored choice** (`store/device-prefs.ts`). It is
- *      the only say an installed app has: `manifest.webmanifest` sets
- *      `"start_url": "/"`, so a launch from the home-screen icon carries no
- *      query at all and step 1 cannot speak for it.
- *   3. **Then `DEFAULT_TERMINAL_RENDERER`**, which is native as of the flip.
- *      `term.html` is still installed and is what steps 1 and 2 select when
- *      they say iframe.
- */
-export function wantsNativeTerminal(
-  search: string,
-  stored: TerminalRenderer | null,
-): boolean {
-  const asked = nativeFromSearch(search);
-  if (asked !== null) return asked;
-  return (stored ?? DEFAULT_TERMINAL_RENDERER) === "native";
-}
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -177,14 +115,10 @@ export const SessionView: Component<{
   prefs?: PrefsStore;
   /** surface control-channel errors to the app's toast stack. */
   notify?: (message: string, kind: NotifyKind) => void;
-  /** a chord fired inside the terminal iframe (tl-command) -> lobby dispatcher. */
-  onFrameCommand?: (command: string) => void;
-  /** the terminal iframe's Alt-hold state (tl-kb-alt) -> lobby badge overlay. */
-  onFrameAlt?: (down: boolean) => void;
-  /** the terminal iframe's attention signal (tl-attention) -> lobby tab badge. */
-  onFrameAttention?: (kind: "bell" | "output", session: string | null) => void;
-  /** the terminal iframe's tl-build-stale signal -> lobby's TOP-owned reload. */
-  onFrameBuildStale?: () => void;
+  /** the terminal's attention signal (bell / output while nobody is looking)
+   *  -> lobby tab badge. The lobby owns the tab title and favicon, so the
+   *  terminal reports and the shell decides what to paint. */
+  onTerminalAttention?: (kind: "bell" | "output", session: string | null) => void;
   /** open the session image gallery (🖼) — owned by the lobby shell. */
   onOpenGallery?: () => void;
   /** TRUE while a lobby overlay (palette, shortcuts help, Settings, gallery)
@@ -209,8 +143,8 @@ export const SessionView: Component<{
     onOpen: () => void;
     /** publish this view's transcript stream status UP to the shared model. */
     onTranscript: (s: SseStatus | null) => void;
-    /** the frame's socket, and the two ways to talk to it. */
-    onFrameConn: (r: TerminalReport | null) => void;
+    /** the terminal's socket, and the two ways to talk to it. */
+    onTerminalConn: (r: TerminalReport | null) => void;
     askConn: (ask: () => void) => void;
     retryConn: (retry: () => void) => void;
   };
@@ -239,57 +173,37 @@ export const SessionView: Component<{
    * paste, the terminal bridge — is claimed against this rather than against
    * mount, or a hidden session would answer for the visible one.
    */
-  /**
-   * The terminal the app renders itself, rather than the ttyd iframe. Native
-   * unless the URL or this device says otherwise. `wantsNativeTerminal` above
-   * carries the order they are asked in.
-   *
-   * READ ONCE, which is why this is a plain function over `location` and
-   * `localStorage` and not a signal: swapping the terminal under a live session
-   * mid-render would tear down a pty connection someone is using. So flipping
-   * the setting reaches the NEXT session this tab opens, and the ones already
-   * open keep the terminal they booted with, since every visited session stays
-   * mounted (`store/keepalive.ts`), until the tab is reloaded. The settings
-   * control says so rather than appearing to act at once.
-   */
-  const nativeTerminal = (): boolean => {
-    try {
-      return wantsNativeTerminal(location.search, terminalRenderer());
-    } catch {
-      // Only `location` can throw from in here; `terminalRenderer` answers
-      // `null` rather than throwing when storage is refused. With nothing
-      // readable the answer is the default.
-      return true;
-    }
-  };
-
   const onScreen = () => props.visible !== false;
 
-  // The terminal frame's two levers, captured on mount and published UP only
-  // while this view is the one on screen. Every visited session stays mounted,
-  // so the shell must be talking to the frame a person is actually looking at
-  // — registering at mount would leave it holding whichever mounted last.
-  let frameAsk: () => void = () => {};
-  let frameRetry: () => void = () => {};
+  // The terminal's two levers, captured on mount and published UP only while
+  // this view is the one on screen. Every visited session stays mounted, so the
+  // shell must be talking to the terminal a person is actually looking at —
+  // registering at mount would leave it holding whichever mounted last.
+  let terminalAsk: () => void = () => {};
+  let terminalRetry: () => void = () => {};
+  // The soft-key row's Copy button. A no-op until the terminal has mounted
+  // (xterm arrives through two dynamic imports), which is the honest answer for
+  // a tap that lands before there is a terminal to copy from.
+  let terminalCopy: () => void = () => {};
   createEffect(() => {
     if (!props.status) return;
     if (!onScreen()) {
       // Leaving the screen withdraws this view's terminal from the model, the
       // same way the transcript below withdraws its stream. Without it, going
-      // from one session to another read as a DROP — the outgoing frame's
-      // `working` falling to the incoming frame's `connecting` — and the panel
+      // from one session to another read as a DROP — the outgoing terminal's
+      // `working` falling to the incoming one's `connecting` — and the panel
       // reported "dropped once" about two sockets that were both fine.
-      props.status.onFrameConn(null);
+      props.status.onTerminalConn(null);
       return;
     }
-    props.status.askConn(() => frameAsk());
-    props.status.retryConn(() => frameRetry());
-    // Coming BACK needs an ask. The frame sends one message per real change, so
-    // a terminal that was already open when this view left the screen will not
+    props.status.askConn(() => terminalAsk());
+    props.status.retryConn(() => terminalRetry());
+    // Coming BACK needs an ask. The terminal reports one change at a time, so
+    // one that was already open when this view left the screen will not
     // volunteer anything on return — and the row would sit on "not reporting"
-    // above a working terminal. Harmless before the frame has mounted: the ask
-    // is a no-op then, and the socket reports as it connects anyway.
-    frameAsk();
+    // above a working terminal. Harmless before it has mounted: the ask is a
+    // no-op then, and the socket reports as it connects anyway.
+    terminalAsk();
   });
   // The transcript stream this view owns, published to the shared status model
   // (and withdrawn when the view goes off screen, so the badge never reports a
@@ -374,12 +288,13 @@ export const SessionView: Component<{
 
   // The mirror dot: pty output (or a BEL) that arrived while the TERMINAL view
   // was hidden. There is no event stream to diff for it the way textDot diffs
-  // event ids — the terminal is a live attach, so the signal is the iframe's own
-  // `tl-attention` message. Latch it here and clear it when you look.
+  // event ids — the terminal is a live attach, so the signal is what
+  // terminal/attention.ts decides is news. Latch it here and clear it when you
+  // look.
   const [terminalDot, setTerminalDot] = createSignal(false);
-  const onAttention = (kind: "bell" | "output", from: string | null): void => {
+  const noteAttention = (kind: "bell" | "output", from: string | null): void => {
     if (mode() !== "terminal") setTerminalDot(true);
-    props.onFrameAttention?.(kind, from);
+    props.onTerminalAttention?.(kind, from);
   };
   createEffect(() => {
     if (mode() === "terminal") setTerminalDot(false);
@@ -390,13 +305,10 @@ export const SessionView: Component<{
   // `view.toggle` command, which is what a chord would have run anyway. Text
   // mode is deferred for v1, so the segmented control is enough for it.
 
-  // The listener above only ever sees a keydown that landed in the LOBBY
-  // document; the same chord pressed with focus in the terminal comes back as a
-  // `view.toggle` tl-command through the lobby dispatcher. Publish the toggle so
-  // that dispatcher can reach it without the shell owning the view mode (the
-  // bridge pattern TerminalView already uses for __tlForwardToTerminal). Without
-  // this the chord was strictly one-way: the SPA focuses the iframe the moment
-  // the terminal becomes active, so every press after the first was invisible.
+  // Publish the toggle so the lobby's command dispatcher can reach it without
+  // the shell owning the view mode: `view.toggle` runs from the palette and
+  // from the Shortcuts sheet, neither of which knows which session is mounted.
+  // Same bridge pattern as __tlOpenFind.
   const toggleView = (): boolean => {
     toggleMode();
     return true;
@@ -955,90 +867,55 @@ export const SessionView: Component<{
           />
         </section>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
-          {/* The terminal this app renders itself is the one you get, and the
-              ttyd iframe below is the fallback rather than the default
-              (`wantsNativeTerminal`: the URL flag first, then this device's
-              setting, then native).
+          {/* The terminal the lobby draws itself, and the only one there is
+              since term.html was deleted.
 
-              What that flip does NOT claim is parity. Clickable links, the
-              held-input overlay, flow-control accounting, OSC 52 clipboard and
-              live A−/A+ font resizing are still term.html's alone, and sixel is
-              gone from both terminals on purpose (the de-iframe plan supersedes
-              ADR-0004). The iframe stays installed for one
-              release as the way back, reachable per tab with `?native=0` and
-              per device from Settings → Terminal, which is the only route an
-              installed PWA has: `start_url` is `/`, so a home-screen launch
-              arrives with no query string to carry a flag. */}
-          <Show when={nativeTerminal()} fallback={<TerminalView
-            session={session}
-            owner={props.owner}
-            active={mode() === "terminal" && onScreen()}
-            // The bridges (send/paste/focus/refit) follow the session on screen
-            // even while it is showing its text view, because that is the pty
-            // the composer's "send to terminal" means.
+              What that does NOT claim is parity with the page it replaced.
+              Clickable web links, the held-input decoration overlay,
+              flow-control accounting, OSC 52 clipboard and live A−/A+ font
+              resizing went with it, and sixel went on purpose (the de-iframe
+              plan supersedes ADR-0004). Those are gaps to close here, not a
+              reason to keep a second terminal: a way back that nobody
+              maintains is a second thing to break. */}
+          <TerminalNative
+            args={terminalFrameArgs(session, {
+              cmd: props.creating ? props.newCommand?.() : undefined,
+              dir: props.dir || undefined,
+              owner: props.owner || undefined,
+              watch: watch(),
+            })}
+            watch={watch}
+            // The bridges are named globals, so a hidden session owning them
+            // would take the soft keys and paste with it. They follow the
+            // session on screen even while it shows its TEXT view, because
+            // that is the pty the composer's "send to terminal" means.
             ownsBridges={onScreen()}
-            creating={props.creating}
-            dir={props.dir}
-            watch={watch()}
-            newCommand={props.newCommand}
-            onFrameCommand={props.onFrameCommand}
-            onFrameAlt={props.onFrameAlt}
-            onFrameAttention={onAttention}
-            onFrameBuildStale={props.onFrameBuildStale}
-            // Only the session ON SCREEN speaks for the terminal channel. Every
-            // visited session stays mounted, so without this guard a hidden
-            // tab's frame would keep overwriting the badge for the one being
-            // looked at.
-            onFrameConn={(r) => onScreen() && props.status?.onFrameConn(r)}
-            askConn={(ask) => (frameAsk = ask)}
-            retryConn={(retry) => (frameRetry = retry)}
-          />}>
-            <TerminalNative
-              args={terminalFrameArgs(session, {
-                cmd: props.creating ? props.newCommand?.() : undefined,
-                dir: props.dir || undefined,
-                owner: props.owner || undefined,
-                watch: watch(),
-              })}
-              watch={watch}
-              // The bridges follow the session on screen, exactly as they do
-              // for the iframe: they are named globals, and a hidden session
-              // owning them would take the soft keys and paste with it.
-              ownsBridges={onScreen()}
-              // A DIFFERENT question from ownsBridges, which is `onScreen()`
-              // alone: this one is also false while the TEXT view shows over a
-              // terminal that stays mounted and stays attached. The same
-              // expression the iframe branch passes above, because
-              // terminal/attention.ts's `view` event is exactly its negation
-              // and both halves of it carry weight: the text view over the
-              // terminal, and this session's whole slot CSS-hidden behind
-              // another session.
-              //
-              // The repeated expression is load-bearing, so do not fold the two
-              // branches into a shared memo. terminal.attention.test.ts's
-              // "cites the line SessionView really passes `active` on" pins
-              // attention.ts's SessionView.tsx line citation to the FIRST line
-              // in this file holding that exact text, which is the iframe's.
-              active={mode() === "terminal" && onScreen()}
-              // One attention handler for both terminals, so the [Terminal]
-              // dot and the lobby's tab badge answer to one route. The iframe
-              // reports WHICH session rang, because its signal crosses a
-              // document boundary and the lobby validates the name it is given
-              // (notify/attention.ts); this terminal is in our own document, so
-              // the name is ours to supply and there is nothing to distrust.
-              onAttention={(kind) => onAttention(kind, session)}
-              onConn={(r) => onScreen() && props.status?.onFrameConn(r)}
-              // BOTH levers, as the iframe branch above publishes both. Without
-              // the ask, the badge and Run check could only ever read what a
-              // native terminal had volunteered on its last change, so a
-              // session returning to the screen above an already-open terminal
-              // sat on "not reporting" (ADR-0016).
-              onReady={(control) => {
-                frameRetry = control.reconnect;
-                frameAsk = control.ask;
-              }}
-            />
-          </Show>
+            // A DIFFERENT question from ownsBridges, which is `onScreen()`
+            // alone: this one is also false while the TEXT view shows over a
+            // terminal that stays mounted and stays attached.
+            // terminal/attention.ts's `view` event is exactly its negation,
+            // and both halves carry weight — the text view over the terminal,
+            // and this session's whole slot CSS-hidden behind another session.
+            active={mode() === "terminal" && onScreen()}
+            // WHICH session rang is the caller's to add: this component is
+            // handed `args`, not a name. It is in our own document, so the
+            // name is ours to supply and there is nothing to validate.
+            onAttention={(kind) => noteAttention(kind, session)}
+            // Only the session ON SCREEN speaks for the terminal channel.
+            // Every visited session stays mounted, so without this guard a
+            // hidden tab's terminal would keep overwriting the badge for the
+            // one being looked at.
+            onConn={(r) => onScreen() && props.status?.onTerminalConn(r)}
+            // BOTH levers. Without the ask, the badge and Run check could only
+            // ever read what the terminal had volunteered on its last change,
+            // so a session returning to the screen above an already-open
+            // terminal sat on "not reporting" (ADR-0016).
+            onReady={(control) => {
+              terminalRetry = control.reconnect;
+              terminalAsk = control.ask;
+              terminalCopy = control.copy;
+            }}
+          />
         </section>
       </main>
 
@@ -1056,7 +933,7 @@ export const SessionView: Component<{
       <Show when={coarse() && mode() === "terminal" && onScreen()}>
         <SoftKeys
           send={sendBytesToPty}
-          onCopy={() => window.__tlForwardToTerminal?.("terminal.copy")}
+          onCopy={() => terminalCopy()}
           onPaste={() => doPaste()}
           onDismissKeyboard={dismissKeyboard}
         />

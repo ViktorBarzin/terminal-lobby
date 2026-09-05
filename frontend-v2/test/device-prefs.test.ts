@@ -1,17 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
-  DEFAULT_TERMINAL_RENDERER,
   FLOW_KILL_KEY,
   GESTURES_KILL_KEY,
-  TERMINAL_RENDERER_KEY,
   clearLocalData,
   flowControlWanted,
   gesturesEnabled,
   setFlowControlEnabled,
-  setTerminalRenderer,
-  terminalRenderer,
 } from "../src/store/device-prefs";
 
 beforeEach(() => localStorage.clear());
@@ -42,7 +36,7 @@ describe("flow control — the per-browser kill switch", () => {
     expect(flowControlWanted()).toBe(true);
   });
 
-  it("treats anything else as on, matching the terminal page's test", () => {
+  it("treats anything else as on, matching the page's own test", () => {
     localStorage.setItem(FLOW_KILL_KEY, "yes");
     expect(flowControlWanted()).toBe(true);
   });
@@ -58,15 +52,15 @@ describe("flow control — the per-browser kill switch", () => {
  * awkward inputs, not the happy one.
  */
 describe("the gestures master kill", () => {
-  it("uses the key the terminal page reads, spelled the same way", () => {
-    // Same origin, same key: a flip made for term.html has to reach the native
-    // terminal too, and a typo here would be a switch that silently does nothing.
-    const term = readFileSync(resolve(__dirname, "../..", "frontend/term.html"), "utf8");
+  it("is spelled the way a person types it", () => {
+    // Nothing writes this key: it is set by hand on a device whose gestures are
+    // misbehaving, so the literal IS the interface. A rename here would leave
+    // every written-down instruction pointing at a key nobody reads.
+    //
+    // It used to be checked against frontend/term.html's own copy of the reader
+    // as well, because both documents read the same key off the same origin.
+    // There is one document now, and this is its only reader.
     expect(GESTURES_KILL_KEY).toBe("tl-gestures");
-    expect(term).toContain("const GESTURES_KILL_KEY = 'tl-gestures';");
-    expect(term).toContain(
-      "return localStorage.getItem(GESTURES_KILL_KEY) !== 'off';",
-    );
   });
 
   it("is on when the key is unset", () => {
@@ -100,9 +94,9 @@ describe("the gestures master kill", () => {
   });
 
   it("re-reads on every call, so a flip needs no reload", () => {
-    // term.html calls its own reader from inside the wheel handler, so the next
-    // wheel after a flip already behaves differently. A cached read here would
-    // hold the old answer for the life of the page.
+    // terminal/wheel.ts asks for `smoothOn` on every wheel, so the next wheel
+    // after a flip already behaves differently. A cached read here would hold
+    // the old answer for the life of the page.
     expect(gesturesEnabled()).toBe(true);
     localStorage.setItem(GESTURES_KILL_KEY, "off");
     expect(gesturesEnabled()).toBe(false);
@@ -118,105 +112,6 @@ describe("the gestures master kill", () => {
   });
 });
 
-/**
- * WHICH TERMINAL this browser renders, which is the escape hatch the flip
- * (2026-09-04) rests on.
- *
- * The reason it is a stored setting and not just a URL flag is
- * `manifest.webmanifest`: `start_url` is `/`, so an app launched from a
- * home-screen icon opens with no query string and `?native=0` cannot reach it.
- * On an installed PWA this key is the only way back to the iframe, so the tests
- * here are about it surviving and about it never guessing.
- */
-describe("which terminal this device renders", () => {
-  it("has no answer until this browser gives one", () => {
-    // null, not "native": the absence is what lets the app's default apply,
-    // and a reader that saw "native" here could not tell a choice from a
-    // default (SessionView's precedence needs the difference).
-    expect(terminalRenderer()).toBeNull();
-  });
-
-  it("defaults to the terminal the app renders itself", () => {
-    // The flip. This constant IS the default, since SessionView's
-    // `wantsNativeTerminal` falls back to it, so flipping back is this line.
-    expect(DEFAULT_TERMINAL_RENDERER).toBe("native");
-  });
-
-  it.each(["iframe", "native"] as const)("stores %s and reads it back", (choice) => {
-    setTerminalRenderer(choice);
-    expect(localStorage.getItem(TERMINAL_RENDERER_KEY)).toBe(choice);
-    expect(terminalRenderer()).toBe(choice);
-  });
-
-  it("writes 'native' out rather than deleting the key", () => {
-    // Flow control above means "on" by ABSENCE, because its reader only looks
-    // for "off". This one has two real values, and an explicit "native" has to
-    // outlive the default moving: someone who chose it should keep it.
-    setTerminalRenderer("iframe");
-    setTerminalRenderer("native");
-    expect(localStorage.getItem(TERMINAL_RENDERER_KEY)).toBe("native");
-    expect(terminalRenderer()).toBe("native");
-  });
-
-  it("survives the page going away, being plain localStorage", () => {
-    setTerminalRenderer("iframe");
-    // The read is not cached anywhere: every call goes back to storage, which
-    // is what makes a reload, and a PWA cold launch, find the same answer.
-    expect(terminalRenderer()).toBe("iframe");
-    expect(terminalRenderer()).toBe("iframe");
-  });
-
-  it("treats a value it does not understand as no choice at all", () => {
-    // A key written by a later version, or by hand. Picking a terminal from a
-    // string nobody here can interpret is worse than letting the default stand.
-    for (const v of ["", "IFRAME", "ttyd", "1", "true", "xterm"]) {
-      localStorage.setItem(TERMINAL_RENDERER_KEY, v);
-      expect(terminalRenderer(), v).toBeNull();
-    }
-  });
-
-  it("answers null when storage throws, rather than throwing at the caller", () => {
-    // A browser that refuses storage cannot carry a choice, so it gets the
-    // default. SessionView calls this while rendering; an exception escaping
-    // here would take the session view with it.
-    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("SecurityError");
-    });
-    try {
-      expect(terminalRenderer()).toBeNull();
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("swallows a refused write, leaving the default standing", () => {
-    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("QuotaExceededError");
-    });
-    try {
-      expect(() => setTerminalRenderer("iframe")).not.toThrow();
-    } finally {
-      spy.mockRestore();
-    }
-    expect(terminalRenderer()).toBeNull();
-  });
-
-  it("is wiped by clear-local-data, back to the default", async () => {
-    // The `tl-` prefix is deliberate: Clear local data covers it, so a device
-    // parked on the iframe returns to the default rather than keeping a choice
-    // nobody can remember making.
-    setTerminalRenderer("iframe");
-    await clearLocalData({ alsoRoamed: false, reload: () => {} });
-    expect(localStorage.getItem(TERMINAL_RENDERER_KEY)).toBeNull();
-    expect(terminalRenderer()).toBeNull();
-  });
-});
-
-/**
- * Clear local data wipes THIS browser's terminal-lobby keys. It must take the
- * whole family and nothing else — someone else's key sharing the origin is not
- * ours to delete.
- */
 describe("clearLocalData", () => {
   const seed = () => {
     localStorage.setItem("tl:prefs:v1", "{}");

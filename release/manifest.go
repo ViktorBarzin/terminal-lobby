@@ -110,11 +110,6 @@ type Manifest struct {
 	// was never enabled starts it exactly once; enabling is what brings the box
 	// back after a reboot.
 	Enable []string
-	// HashedTermPage records that the build generates a content-hashed copy of
-	// the terminal page into the asset payload. The lobby resolves the terminal
-	// page by hash and only falls back to /term.html when the meta tag is
-	// absent -- which stamping never leaves it.
-	HashedTermPage bool
 }
 
 // ExternalFile reports whether a watched path is installed by another package.
@@ -134,8 +129,7 @@ func (m Manifest) ExternalFile(dest string) bool {
 // are slow to build, almost never change, and CI's hot path should not pay for
 // them. They arrive as declared dependencies.
 var Package = Manifest{
-	AssetPayload:   "/usr/share/terminal-lobby/assets",
-	HashedTermPage: true,
+	AssetPayload: "/usr/share/terminal-lobby/assets",
 	// Enabled, not just restarted: a unit that was only ever restarted does not
 	// come back after a reboot.
 	Enable: []string{
@@ -195,13 +189,12 @@ var Package = Manifest{
 		{Src: "devvm/clipboard-store-clean", Dest: "/usr/local/bin/clipboard-store-clean", Mode: 0o755},
 
 		{Src: "share/index.html", Dest: "/usr/local/share/ttyd/index.html", Mode: 0o644},
-		{Src: "share/term.html", Dest: "/usr/local/share/ttyd/term.html", Mode: 0o644},
 
-		// The two endpoints the self-update healer polls to learn a version
-		// shipped. Generated at stamp time; without them no open tab ever
-		// updates itself again.
+		// The endpoint the self-update healer polls to learn a version shipped.
+		// Generated at stamp time; without it no open tab ever updates itself
+		// again. There were two until 2026-09-05, the second being the framed
+		// terminal page's own stamp.
 		{Src: "share/build-id", Dest: "/usr/local/share/ttyd/build-id", Mode: 0o644},
-		{Src: "share/term-build-id", Dest: "/usr/local/share/ttyd/term-build-id", Mode: 0o644},
 
 		// The PWA surface, served by clipboard-upload from an exact-path
 		// whitelist -- a missing file here is a 404 the client cannot route around.

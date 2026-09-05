@@ -871,129 +871,54 @@ describe("what the component is told to do", () => {
   });
 });
 
-describe("parity with term.html", () => {
-  const TERM_HTML = resolve(__dirname, "../..", "frontend/term.html");
-  const html = (): string => readFileSync(TERM_HTML, "utf8");
+/**
+ * The numbers and the accepted sets, as literals.
+ *
+ * A "parity with term.html" describe stood here until 2026-09-05 and read that
+ * page for all of it: the per-frame cap, the wheelSpeed validator's accepted
+ * set, both halves of the smooth-wheel gate, the two defaults, the three
+ * deltaMode arms, the unlaid-out-screen measurement, the two `wheelSpeedMult()`
+ * sites, which element the coast-cancelling wheel listener sat on, and the
+ * three passive touch listeners in the one-finger recognizer. The values are
+ * pinned below with the page lines they came from; the rules are asserted above
+ * as this module's own.
+ */
+describe("the numbers and sets the page was tuned to", () => {
+  /**
+   * The per-frame cap. It was SHARED with the touch scroller in the page, and a
+   * port that quietly raised it hands back the runaway coast it was tuned to
+   * stop. terminal.emit.test.ts holds the two modules to one number.
+   */
+  it("uses the per-frame cap the page shipped", () => {
+    // term.html:6082, `const SCROLL_MAX_EVENTS_PER_FEED = 10;`
+    expect(SCROLL_MAX_EVENTS_PER_FEED).toBe(10);
+  });
+
+  /** The accepted set, so a speed the validator refuses cannot be offered. */
+  it("accepts exactly the speeds the page's validator accepted", () => {
+    // term.html's `wheelSpeed: v => (v === 1 || v === 1.5 || v === 2 || v === 3)`
+    expect([...WHEEL_SPEEDS]).toEqual([1, 1.5, 2, 3]);
+    for (const speed of WHEEL_SPEEDS) expect(speedMultiplier(speed)).toBe(speed);
+  });
 
   /**
-   * The per-frame cap lives in two places until term.html retires, and it is
-   * SHARED with the touch scroller there. A port that quietly raised it hands
-   * back the runaway coast it was tuned to stop.
+   * Default ON, and the same speed. The detach is the safety net that lets it
+   * default on, so a default that drifted would ship a red-line surface nobody
+   * had agreed to.
    */
-  it("uses the per-frame cap term.html ships", () => {
-    const m = /const SCROLL_MAX_EVENTS_PER_FEED = (\d+);/.exec(html());
-    expect(m?.[1], "SCROLL_MAX_EVENTS_PER_FEED in term.html").toBeTruthy();
-    expect(Number(m?.[1])).toBe(SCROLL_MAX_EVENTS_PER_FEED);
-  });
-
-  /** The validator, character for character, so the accepted set cannot drift. */
-  it("accepts exactly the speeds term.html's validator accepts", () => {
-    const src = html();
-    const m = /wheelSpeed: v => (v === 1 \|\| v === 1\.5 \|\| v === 2 \|\| v === 3)/.exec(src);
-    expect(m, "the wheelSpeed validator in term.html").toBeTruthy();
-    const accepted = [...(m?.[1] ?? "").matchAll(/v === ([\d.]+)/g)].map((g) => Number(g[1]));
-    expect(accepted).toEqual([...WHEEL_SPEEDS]);
-    for (const speed of accepted) expect(speedMultiplier(speed)).toBe(speed);
-  });
-
-  /** Both halves of the gate, in the order term.html reads them (:6203-6205). */
-  it("gates on the gestures master kill as well as the pref", () => {
-    expect(html()).toContain("return gesturesEnabled() && getPrefs().gestures.wheelSmooth;");
-  });
-
-  /**
-   * Default ON in both front-ends, and the same speed. The detach is the safety
-   * net that lets it default on, so a default that drifted would ship a red-line
-   * surface nobody had agreed to.
-   */
-  it("ships the same defaults as term.html", () => {
-    const src = html();
-    expect(src).toContain("wheelSmooth: true,");
-    expect(src).toContain("wheelSpeed: 1");
+  it("ships the same defaults the page did", () => {
     expect(PREF_DEFAULTS.gestures.wheelSmooth).toBe(true);
     expect(PREF_DEFAULTS.gestures.wheelSpeed).toBe(1);
     expect(speedMultiplier(PREF_DEFAULTS.gestures.wheelSpeed)).toBe(1);
   });
 
   /**
-   * The three deltaMode arms, which is where a port most easily loses a whole
-   * input device: a page wheel measured by the cell height would scroll a
+   * The two deltaMode constants, which is where a port most easily loses a
+   * whole input device: a page wheel measured by the cell height would scroll a
    * twenty-fourth of what it asked for.
    */
-  it("normalizes the same three delta modes term.html does", () => {
-    const src = html();
-    expect(src).toContain("(ev.deltaMode === 1) ? ev.deltaY * xtermCellH()");
-    expect(src).toContain("(ev.deltaMode === 2) ? ev.deltaY * xtermScreenH()");
+  it("names the same two non-pixel delta modes", () => {
     expect(DOM_DELTA_LINE).toBe(1);
     expect(DOM_DELTA_PAGE).toBe(2);
-  });
-
-  /**
-   * The fact the header's ownership section rests on. term.html's one-finger
-   * recognizer (:6490-6556) registers all three touch listeners
-   * `{ passive: true }` and never prevents a default, so nothing there stops a
-   * browser deriving `wheel` events from a finger pan, and such a wheel would be
-   * TRUSTED and clear this module's only gate. Asserted against the source
-   * because a comment is only ever as good as the lines it cites, and an earlier
-   * draft claimed the opposite with every test still green.
-   */
-  /**
-   * The measurement the two clamp comments rest on. Both helpers return a
-   * DOMRect height, and an unlaid-out screen reports 0 for that while
-   * `term.rows` is still nonzero, so cellH measures 0 and screenH measures 0.
-   * Neither can return NaN, which is what an earlier draft of this port claimed
-   * they did.
-   */
-  it("measures an unlaid-out screen as zero, not NaN (:6094-6101)", () => {
-    const src = html();
-    expect(src).toContain(
-      "return (scr && term.rows) ? scr.getBoundingClientRect().height / term.rows : 16;",
-    );
-    expect(src).toContain(
-      "return scr ? scr.getBoundingClientRect().height : (term.rows || 24) * 16;",
-    );
-    // The arithmetic those two lines do on a screen with no layout yet.
-    const unlaidOut = 0;
-    expect(unlaidOut / 24).toBe(0);
-    expect(SCROLL_MAX_EVENTS_PER_FEED * (unlaidOut / 1)).toBe(0);
-  });
-
-  /**
-   * The speed pref is re-read and re-validated at each site rather than held,
-   * which is why this module validates inside `speedMultiplier` rather than at
-   * its boundary. There are TWO sites, not three: the frame's row size (:6214)
-   * and the wheel's cap (:6254), both spelled `xtermCellH() / wheelSpeedMult()`.
-   */
-  it("re-validates the speed at both of its sites, and there are two", () => {
-    const uses = html()
-      .split("\n")
-      .filter((l) => l.includes("wheelSpeedMult()"));
-    expect(uses).toHaveLength(3);
-    expect(uses.filter((l) => l.includes("function wheelSpeedMult()"))).toHaveLength(1);
-    expect(uses.filter((l) => l.includes("xtermCellH() / wheelSpeedMult()"))).toHaveLength(2);
-  });
-
-  /**
-   * Which of the page's wheel listeners is on what. The one that hard-cancels a
-   * touch coast and clears a selection is registered on the terminal HOST
-   * ELEMENT (:6278); the page's only document-level wheel listener is the
-   * diagnostics ring buffer (:5883). The header used to call the first one a
-   * document listener, which would have sent a component looking for a
-   * page-wide listener that is not there.
-   */
-  it("puts the coast-cancelling wheel listener on the terminal element", () => {
-    const src = html();
-    expect(src).toContain("document.getElementById('terminal').addEventListener('wheel', (w) => {");
-    const onDocument = src.split("\n").filter((l) => /^\s*document\.addEventListener\('wheel'/.test(l));
-    expect(onDocument, "document-level wheel listeners").toHaveLength(1);
-    expect(onDocument[0], "the only one is the diagnostics ring").toContain("ring({ k: 'wh'");
-  });
-
-  it("has three passive touch listeners and no preventDefault in the recognizer", () => {
-    // 1-indexed :6490-6556, which is the whole IIFE holding the recognizer.
-    const recognizer = html().split("\n").slice(6489, 6556);
-    expect(recognizer.filter((l) => /addEventListener\('touch/.test(l))).toHaveLength(3);
-    expect(recognizer.filter((l) => l.includes("{ passive: true })"))).toHaveLength(3);
-    expect(recognizer.filter((l) => l.includes("preventDefault"))).toEqual([]);
   });
 });

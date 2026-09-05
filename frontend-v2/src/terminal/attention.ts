@@ -105,9 +105,8 @@
  *           that already existed; TerminalNative.tsx installs it in its mount
  *           body now, and takes it off in `teardown`.
  *   view    `!(mode() === "terminal" && onScreen())`, which is the expression
- *           the iframe branch already passes as TerminalView's `active` prop
- *           (SessionView.tsx:975) and posts down as `tl-view`
- *           (TerminalView.tsx:266-275). Both halves carry weight: the text view
+ *           SessionView passes as the terminal's `active` prop
+ *           (SessionView.tsx:899). Both halves carry weight: the text view
  *           showing over the terminal, and this session's whole slot being
  *           CSS-hidden behind another session. A Solid effect on `active` fires
  *           on mount, and that first event is the native counterpart of the
@@ -115,20 +114,20 @@
  *           session mounted off screen that nobody is looking. The page starts
  *           from `viewHidden = false` (:5735) and learns the truth the same
  *           way, which is why nothing here is seeded at mount.
- *   signal  hand it up the same path the iframe's does: SessionView's
- *           `onAttention`, which dots the [Terminal] segment and calls
- *           `onFrameAttention(kind, session)`. The component writes no title
+ *   signal  hand it up through SessionView's `onAttention`, which dots the
+ *           [Terminal] segment and calls
+ *           `onTerminalAttention(kind, session)`. The component writes no title
  *           and no favicon: those belong to `notify/title.ts` and
  *           `notify/favicon.ts`, and a terminal that painted its own would
- *           fight them. term.html's standalone `'● '` title prefix (:5720-5722)
- *           is the branch for a page with no lobby to tell, and there is no
- *           native terminal outside the lobby.
+ *           fight them. The page's standalone `'● '` title prefix (:5720-5722)
+ *           was the branch for a document with no lobby to tell, and there is
+ *           no terminal outside the lobby now.
  *   re-attach  a fresh `initialAttention()`, if the component ever grows one.
- *           Not an event: a lifetime. The page's kernel dies with its document,
- *           so TerminalView navigating the iframe on an args change resets the
- *           latch, the view flag and the spent pair. TerminalNative reads
- *           `props.args` once inside `onMount` and never re-attaches, so there
- *           is nothing to diverge from today. A component that keeps this state
+ *           Not an event: a lifetime. The page's kernel died with its document,
+ *           so navigating the iframe on an args change reset the latch, the
+ *           view flag and the spent pair. TerminalNative reads `props.args`
+ *           once inside `onMount` and never re-attaches, so there is nothing to
+ *           diverge from today. A component that keeps this state
  *           across a re-attach would carry a one-shot spent before it, and
  *           silence the first output frame after it.
  */

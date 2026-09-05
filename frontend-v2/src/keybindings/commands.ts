@@ -15,10 +15,15 @@ import { track } from "../telemetry/track";
  * The lobby command dispatcher (feature-inventory Cat.2 "tl-command channel +
  * runAppCommand dispatcher"). Ported from the vanilla frontend/index.html
  * `runAppCommand` lobby half (index.html:9037-9111). The lobby owns the sidebar,
- * so it EXECUTES every session command — whether it came from the engine's own
- * capture-phase keydown (focus in the lobby chrome) or was forwarded up from the
- * terminal iframe over the tl-command postMessage channel (focus in the
- * terminal). Terminal-document commands (gallery/paste) are forwarded back DOWN.
+ * so it EXECUTES every session command, whichever route reached it: the
+ * engine's own capture-phase window keydown, the command palette, or a button.
+ *
+ * There used to be a fourth route. A chord pressed inside the terminal could
+ * not reach this document at all, because the terminal was a cross-document
+ * iframe and a keydown does not cross that boundary — so it was matched over
+ * there and forwarded up by NAME over a postMessage channel. The terminal is
+ * drawn in this document now, so its keydowns reach the engine's own listener
+ * and every route below is a local one.
  */
 export interface CommandDeps {
   store: LobbyStore;
@@ -32,8 +37,6 @@ export interface CommandDeps {
   isUnseen?: (s: { name: string; state?: string }) => boolean;
   /** open the SPA session image gallery (🖼) for the selected session. */
   openGallery: () => void;
-  /** post a terminal-document command DOWN to the active iframe; false if none. */
-  forwardToTerminal: (cmd: string) => boolean;
   /** Paste into the terminal, performed in THIS document (clipboard/paste.ts):
    *  the frame cannot read the clipboard while the lobby holds focus. */
   pasteToTerminal: () => boolean;
@@ -153,11 +156,10 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     }
 
     if (cmd === "view.toggle") {
-      // Ctrl/Cmd-J. The lobby only ever sees this command when it was pressed
-      // INSIDE the terminal iframe (a keydown never crosses a frame boundary,
-      // so term.html forwards it up as a tl-command); with focus in the lobby
-      // chrome SessionView's own listener handles the chord directly. Both ends
-      // land on the same toggle, which is what makes the chord two-way.
+      // Ctrl/Cmd-J from the palette or the Shortcuts sheet. The chord itself is
+      // handled by SessionView's own listener; this is the same toggle under
+      // another name, reached through the bridge because the shell does not own
+      // the per-session view mode.
       if (!toggleViewFn()) deps.notify("Open a session first", "error");
       return;
     }
@@ -177,19 +179,16 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     }
 
     if (cmd === "session.new.shell") {
-      // The chord fired INSIDE the terminal iframe and was forwarded up: a
-      // keydown in the frame never reaches the lobby's own listener, so this is
-      // the path Ctrl+J takes whenever the terminal has focus — which is most
-      // of the time.
+      // Ctrl+J. The engine's capture-phase window listener sees the keydown
+      // wherever focus is, the terminal included, so this is the one path.
       deps.toggleDock();
       return;
     }
 
     if (cmd === "terminal.paste") {
-      // The READ happens in the lobby: the async clipboard is gated on document
-      // focus, and a frame whose parent was just clicked does not have it — the
-      // old forward-and-read-there path threw "Document is not focused" and
-      // reported it as denied access for a permission never requested.
+      // The READ happens out here, in the lobby's own routine, rather than at
+      // the terminal: that is where the clipboard permission and the focused
+      // document are, and it is one routine shared with the soft-key button.
       if (!deps.pasteToTerminal()) deps.notify("Open a session first", "error");
       return;
     }

@@ -75,7 +75,7 @@ describe("createNotificationSystem (integration smoke)", () => {
     expect(document.title).toBe("(1●) tmux sessions (wizard)");
 
     // Forwarding an attention signal must not throw (no favicon link in jsdom).
-    expect(() => sys.onFrameAttention("bell", "worktree")).not.toThrow();
+    expect(() => sys.onTerminalAttention("bell", "worktree")).not.toThrow();
 
     sys.dispose();
     disposeRoot();
