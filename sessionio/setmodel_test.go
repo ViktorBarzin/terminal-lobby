@@ -2,13 +2,20 @@ package sessionio
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// pickerSeq keeps two stand-in pickers in one test binary off each other's
+// socket, which `-count=2` and a parallel run both need.
+var pickerSeq atomic.Int64
 
 // The driver against a real tmux and a real pty. The thing under test is the
 // WALK — pin the list at its top, step one row at a time, read the cursor back
@@ -40,8 +47,14 @@ func pickerSessionLagging(t *testing.T, lag string) (*Injector, string) {
 	if err != nil {
 		t.Fatalf("locating the stand-in picker: %v", err)
 	}
-	sock := "sio-picker-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
-	exec.Command("tmux", "-L", sock, "kill-server").Run()
+	// A socket name nothing else can be holding. `-L` names a socket in a
+	// shared directory, and a run that was interrupted — a killed test, an
+	// OOM — leaves the file behind with no server on it: tmux then answers
+	// "server exited unexpectedly" and refuses to start a new one, so the next
+	// run of the same test fails on a name rather than on anything it tested.
+	// Measured 2026-09-05, with 462 stale sockets in that directory.
+	sock := fmt.Sprintf("sio-picker-%d-%d", os.Getpid(), pickerSeq.Add(1))
+	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
 	cmd := "python3 " + script
 	if lag != "" {
 		cmd = "FAKEPICKER_LAG=" + lag + " " + cmd
@@ -50,9 +63,24 @@ func pickerSessionLagging(t *testing.T, lag string) (*Injector, string) {
 		"-x", "120", "-y", "40", cmd).Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
-	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
-	time.Sleep(300 * time.Millisecond)
-	return NewInjectorOnSocket(u.Username, sock), u.Username
+	in := NewInjectorOnSocket(u.Username, sock)
+	// Wait for the stand-in to say it is reading, rather than sleeping at it.
+	// Under load — the whole suite plus a frontend build on the same box —
+	// python3 takes longer to reach raw mode than any fixed sleep worth
+	// writing, and a command typed before then is eaten by the line
+	// discipline: the driver then spends its entire deadline waiting for a
+	// picker nothing ever asked for.
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		pane, err := in.CapturePane(u.Username, "demo")
+		if err == nil && strings.Contains(pane, "PICKER-READY") {
+			return in, u.Username
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the stand-in picker never started; pane:\n%s", pane)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func TestSetModelWalksToTheRowAndCommitsForThisSessionOnly(t *testing.T) {

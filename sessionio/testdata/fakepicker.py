@@ -56,11 +56,20 @@ def read1():
     return b.decode("utf-8", "replace") if b else ""
 
 
+# Printed once the terminal is in raw mode and the read loop is about to
+# start. The test waits for it rather than sleeping: under load python3 takes
+# long enough to boot that a command typed at it beforehand is swallowed by
+# the cooked-mode line discipline, and the driver then waits out its whole
+# deadline for a picker that was never asked for.
+READY = "PICKER-READY"
+
+
 def main():
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
     try:
+        out(READY + "\r\n")
         line = ""
         at = 2  # the picker opens on the model in force, as the real one does
         picking = False
