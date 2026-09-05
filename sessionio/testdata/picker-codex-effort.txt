@@ -1,0 +1,40 @@
+╭──────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.144.3)                           │
+│                                                      │
+│ model:       gpt-5.6-terra medium   /model to change │
+│ directory:   /tmp                                    │
+│ permissions: YOLO mode                               │
+╰──────────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+• You have 3 usage limit resets available. Run /usage to use one.
+
+
+  Select Reasoning Level for gpt-5.6-terra
+
+  1. Low                         Fast responses with lighter reasoning
+› 2. Medium (default) (current)  Balances speed and reasoning depth for everyday tasks
+  3. High                        Greater reasoning depth for complex problems
+  4. Extra high                  Extra high reasoning depth for complex problems
+  5. More reasoning…             Max and Ultra consume usage limits faster
+
+  Press enter to confirm or esc to go back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

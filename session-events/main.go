@@ -267,6 +267,67 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Which model the session answers on, and how hard it thinks.
+	//
+	// It is a POST rather than a flag because neither setting is one: the attach
+	// contract carries a command KEY, not a command line, so both are applied to
+	// a session that is already running by driving the CLI's own picker
+	// (sessionio/setmodel.go). The reply is what the session reports AFTERWARDS,
+	// not an echo of the request — a change can be refused silently, and the
+	// caller has to be able to see that it was.
+	web.HandleFunc("POST /model/{session}", func(w http.ResponseWriter, r *http.Request) {
+		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		var body struct {
+			// Tool is which CLI is running in the pane — the same value the
+			// session list carries. The two have different pickers and there is
+			// nothing on a pane that reliably says which is which, so the
+			// caller names it.
+			Tool string `json:"tool"`
+			// Either may be empty, meaning "leave this one alone".
+			Model  string `json:"model"`
+			Effort string `json:"effort"`
+			// AwaitReady waits for the pane to be able to take input first, for
+			// the same reason POST /prompt has it: a session that has just been
+			// created accepts keys seconds before its TUI reads any.
+			AwaitReady bool `json:"awaitReady"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "bad body (need tool, and a model or an effort)", http.StatusBadRequest)
+			return
+		}
+		h := sessionio.Harness(body.Tool)
+		if h != sessionio.HarnessClaude && h != sessionio.HarnessCodex {
+			http.Error(w, "no model to pick in a "+body.Tool+" session", http.StatusBadRequest)
+			return
+		}
+		if body.AwaitReady {
+			if err := injector.AwaitPromptMark(r.Context(), osUser, session,
+				sessionio.PromptMark(h), PromptReadyWait, PromptReadyPoll); err != nil {
+				http.Error(w, "session is not ready for input", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		// A picker cannot open over a turn in flight: the command would sit in
+		// Claude's own queue and run when the turn ends, by which time the
+		// person who asked has gone. Said now, rather than eight seconds later
+		// as a timeout. An unstamped session — no Claude has run in it — is not
+		// a running one (ADR-0001).
+		if injector.State(osUser, session) == sessionio.StateRunning {
+			http.Error(w, "the session is working — stop it first", http.StatusConflict)
+			return
+		}
+		state, err := injector.SetModel(r.Context(), osUser, session, h,
+			sessionio.ModelState{Model: body.Model, Effort: body.Effort})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		events.Emit("claude.model_set", osUser, telemetry.Attrs{
+			"tl.session": session, "tl.tool": body.Tool,
+			"tl.model": state.Model, "tl.effort": state.Effort, "tl.client": "api",
+		})
+		writeJSON(w, state)
+	})
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	// The session-start hook runs as the OS user on THIS box, so it is hard-gated

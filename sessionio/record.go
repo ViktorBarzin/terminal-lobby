@@ -94,6 +94,10 @@ type Record struct {
 	Subtype          string          `json:"subtype"`          // type "system"
 	HookErrors       json.RawMessage `json:"hookErrors"`       // type "system"
 	IsCompactSummary bool            `json:"isCompactSummary"` // a compaction boundary
+	// Effort is the level the turn reasoned at, written on every assistant
+	// record alongside message.model. The two together are what a session is
+	// running as (see MetaModel).
+	Effort string `json:"effort"`
 
 	// Line is the source line, byte for byte. Callers that forward a record
 	// onward use this rather than re-encoding.
