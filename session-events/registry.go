@@ -354,7 +354,11 @@ type sessionStartBody struct {
 }
 
 // handleSessionStart records the (user, tmux session) → transcript mapping from
-// the SessionStart hook. Localhost only (hooks run as the OS user on the box).
+// the SessionStart hook. Localhost only (hooks run as the OS user on the box),
+// and wrapped in peerOwnsClaim, which is what makes b.User the account that
+// actually opened the connection rather than a name the body chose. Everything
+// downstream depends on that: rg.user() keys state on it and sessionio hands it
+// to `sudo -n -u`.
 func (rg *registry) handleSessionStart() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var b sessionStartBody

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"terminal-lobby/telemetry"
 )
@@ -166,7 +167,7 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "file too large (max 10MB)", http.StatusRequestEntityTooLarge)
 		return
 	}
-	f, err := os.Open(resolved)
+	f, err := openForRead(resolved)
 	if err != nil {
 		pathHTTPError(w, err)
 		return
@@ -267,7 +268,7 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "target is not a regular file", http.StatusBadRequest)
 		return
 	}
-	if err := os.WriteFile(resolved, []byte(body.Content), 0o644); err != nil {
+	if err := writeNoFollow(resolved, []byte(body.Content), 0o644); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "parent directory does not exist", http.StatusNotFound)
 			return
@@ -296,6 +297,11 @@ func pathHTTPError(w http.ResponseWriter, err error) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 	case errors.Is(err, fs.ErrNotExist):
 		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, syscall.ELOOP):
+		// An O_NOFOLLOW open that landed on a symlink. The stat-time answer for
+		// the same file is "not a regular file", so give the same one rather
+		// than a 500: the path is a symlink, which is a client-visible fact.
+		http.Error(w, "not a regular file", http.StatusBadRequest)
 	default:
 		log.Printf("path resolution error: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

@@ -126,8 +126,15 @@ if [[ -n "$owner_arg" && "$owner_arg" != "$os_user" ]] || [[ "$watch_arg" == "ro
     [[ "$my_tty" == /dev/* ]] || my_tty=""
     token=""
     [[ -r /var/lib/tmux-api/internal.token ]] && token="$(cat /var/lib/tmux-api/internal.token)"
-    resp="$(curl -s -m 5 -w $'\n%{http_code}' \
-        -H "X-Internal-Token: ${token}" -H 'Content-Type: application/json' \
+    # The token goes in on STDIN (`-H @-`), never on the command line. /proc here
+    # is mounted without hidepid, so a header in argv is readable out of
+    # /proc/<pid>/cmdline by every account on the box for as long as the request
+    # is in flight, which makes the 0600 mode on the token file worth nothing.
+    # The body stays in argv: it carries no secret, only names the server
+    # already knows.
+    resp="$(printf 'X-Internal-Token: %s\n' "$token" \
+        | curl -s -m 5 -w $'\n%{http_code}' \
+        -H @- -H 'Content-Type: application/json' \
         --data "{\"owner\":\"${target_owner}\",\"name\":\"${name}\",\"guest\":\"${guest}\",\"tty\":\"${my_tty}\",\"requested\":\"${watch_arg}\"}" \
         http://127.0.0.1:7684/internal/attach 2>/dev/null || true)"
     code="$(printf '%s' "$resp" | tail -n1)"
