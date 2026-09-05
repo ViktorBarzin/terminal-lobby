@@ -71,7 +71,15 @@ var (
 	// is the ONE thing a stock Claude pane says about either setting — the
 	// model comes off the transcript instead, since the line under the input
 	// belongs to whatever statusLine command the account configured.
-	reClaudeEffort = regexp.MustCompile(`◈\s*(\w+)\s*·\s*/effort`)
+	//
+	// The shape is one glyph, the level, then `·`. BOTH halves around the level
+	// vary: the glyph ramps with the step (○ ◐ ● ◉ ◈ ✦, measured across all six
+	// on 2026-09-05) and the top step's tail is a sentence rather than
+	// `/effort`. So neither is matched — the anchor is a lone glyph at the head
+	// of the line and a level this build knows, which is also what keeps the
+	// receipt of a change ("…clear it and high takes over") from reading as a
+	// level in force.
+	reClaudeEffort = regexp.MustCompile(`(?m)^\s*\S\s+(low|medium|high|xhigh|max|ultracode)\s+·`)
 	// Codex's footer: the model, the reasoning level, then the directory.
 	reCodexFooter = regexp.MustCompile(`(?m)^\s{0,4}([A-Za-z][\w.\-]*)\s+([a-z][a-z ]*[a-z]|[a-z])\s+·\s+\S`)
 	// The footer every select widget draws. Used to decide whether a picker is
@@ -223,11 +231,13 @@ func EffortLadder(pane string) ([]string, bool) {
 // ClaudeEffortHint reads the effort level off a Claude pane, "" when it says
 // nothing about one.
 func ClaudeEffortHint(pane string) string {
-	m := reClaudeEffort.FindStringSubmatch(pane)
-	if m == nil {
+	// Last match wins: a pane holds scrollback, and the hint is redrawn above
+	// the input on every repaint, so the newest one is the live reading.
+	all := reClaudeEffort.FindAllStringSubmatch(pane, -1)
+	if len(all) == 0 {
 		return ""
 	}
-	return strings.ToLower(m[1])
+	return strings.ToLower(all[len(all)-1][1])
 }
 
 // CodexState reads the model and reasoning level off a codex pane.

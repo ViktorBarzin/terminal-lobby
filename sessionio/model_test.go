@@ -128,6 +128,41 @@ func TestClaudeEffortHintReadsTheLiveLevel(t *testing.T) {
 	}
 }
 
+// THE GLYPH RAMPS WITH THE LEVEL, and the top step does not even end the same
+// way. Read off a live pane on 2026-09-05 by setting each level in turn: a
+// reader keyed to the ◈ of `max` — the level the first capture happened to be
+// on — answered nothing for the other five, so a successful change came back
+// with no effort in it at all.
+func TestClaudeEffortHintReadsEveryStepOfTheRamp(t *testing.T) {
+	for line, want := range map[string]string{
+		"                    ○ low · /effort":                                       "low",
+		"                    ◐ medium · /effort":                                    "medium",
+		"                    ● high · /effort":                                      "high",
+		"                    ◉ xhigh · /effort":                                     "xhigh",
+		"                    ◈ max · /effort":                                       "max",
+		"  ✦ ultracode · xhigh effort + dynamic workflows for maximum thoroughness": "ultracode",
+	} {
+		if got := ClaudeEffortHint("some pane\n" + line + "\n❯ \n"); got != want {
+			t.Errorf("hint %q = %q, want %q", line, got, want)
+		}
+	}
+}
+
+// The hint names a level from the ladder and nothing else. Prose that happens
+// to carry one of those words is not a reading — the receipt of the change is
+// on the pane too, and it names the level in a sentence.
+func TestClaudeEffortHintIgnoresProseThatNamesALevel(t *testing.T) {
+	for _, pane := range []string{
+		"  ⎿  to ultracode (this session only): xhigh + dynamic workflow",
+		"  CLAUDE_CODE_EFFORT_LEVEL=max overrides this session — clear it and high takes over",
+		"Set model to `Sonnet 5` for this session only",
+	} {
+		if got := ClaudeEffortHint(pane); got != "" {
+			t.Errorf("hint on %q = %q, want empty", pane, got)
+		}
+	}
+}
+
 // Codex has no transcript this package can read, so its pane IS the source:
 // the footer carries the model and the reasoning level in one line.
 func TestCodexStateReadsTheFooter(t *testing.T) {
