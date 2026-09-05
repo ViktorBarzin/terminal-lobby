@@ -26,6 +26,7 @@ import {
 } from "../src/store/prefs";
 import type { CommandAvailability } from "../src/lib/new-commands";
 import { DRAFTS_KEY, loadDraft, type DraftAttachment } from "../src/store/drafts";
+import type { ModelState } from "../src/lib/models";
 import { toasts } from "../src/store/toast";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 
@@ -88,6 +89,9 @@ interface Mounted {
  */
 interface Wire {
   delivered: { session: string; lines: readonly string[]; awaitReady: boolean }[];
+  /** Every POST /model the composer made, and what each answered with. */
+  models: { session: string; harness: string; model: string; effort: string }[];
+  modelStates: ModelState[];
   uploads: { files: readonly File[]; session: string }[];
   /** What each upload answers with, in order; the last answer repeats. */
   chips: DraftAttachment[][];
@@ -98,7 +102,7 @@ interface Wire {
 function mount(
   api: FakeApi,
   available: CommandAvailability = {},
-  wire: Wire = { delivered: [], uploads: [], chips: [[]], results: [true] },
+  wire: Wire = emptyWire(),
 ): Mounted {
   let store!: LobbyStore;
   let prefs!: PrefsStore;
@@ -125,6 +129,16 @@ function mount(
           const i = Math.min(wire.uploads.length - 1, wire.chips.length - 1);
           return wire.chips[i] ?? [];
         }}
+        setModel={async (o) => {
+          wire.models.push({
+            session: o.session,
+            harness: o.harness,
+            model: o.model,
+            effort: o.effort,
+          });
+          const i = Math.min(wire.models.length - 1, wire.modelStates.length - 1);
+          return { ok: true, state: wire.modelStates[i] ?? { model: o.model, effort: o.effort } };
+        }}
         deliver={async (o) => {
           wire.delivered.push({
             session: o.session,
@@ -140,7 +154,14 @@ function mount(
   return { store, prefs, container: utils.container, setPreset, unmount: utils.unmount, wire };
 }
 
-const emptyWire = (): Wire => ({ delivered: [], uploads: [], chips: [[]], results: [true] });
+const emptyWire = (): Wire => ({
+  delivered: [],
+  models: [],
+  modelStates: [],
+  uploads: [],
+  chips: [[]],
+  results: [true],
+});
 
 /** Hand a picked file to the composer's tray, the way the file input does. */
 const pickFile = (c: HTMLElement, ...files: File[]): void => {
@@ -573,8 +594,8 @@ describe("<NewSessionComposer> — shell turns the box back into a name box", ()
   });
 });
 
-describe("<NewSessionComposer> — the model it starts on", () => {
-  it("offers the models and binds the roamed pref", async () => {
+describe("<NewSessionComposer> — the model and the effort it starts on", () => {
+  it("offers Claude's models and binds the roamed pref", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
     const sel = pick(m.container, "Model for new session");
@@ -587,6 +608,73 @@ describe("<NewSessionComposer> — the model it starts on", () => {
     expect(sel.value).toBe("default");
     fireEvent.change(sel, { target: { value: "sonnet" } });
     expect(m.prefs.prefs().session.newModel).toBe("sonnet");
+    m.store.dispose();
+  });
+
+  it("offers Claude's effort ladder beside it", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const sel = pick(m.container, "Effort for new session");
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual([
+      "default",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultracode",
+    ]);
+    fireEvent.change(sel, { target: { value: "xhigh" } });
+    expect(m.prefs.prefs().session.newEffort).toBe("xhigh");
+    m.store.dispose();
+  });
+
+  // The bug this whole change starts from: picking codex left a dropdown
+  // offering Opus, Sonnet and Haiku, none of which codex can run.
+  it("swaps both lists for codex's own when the command changes", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Command for new session"), {
+      target: { value: "codex" },
+    });
+
+    expect(Array.from(pick(m.container, "Model for new session").options).map((o) => o.value))
+      .toEqual([
+        "default",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.4-mini",
+      ]);
+    // The ladders differ at the top step alone: ultracode is Claude's, ultra
+    // is codex's, and neither CLI accepts the other's.
+    const efforts = Array.from(
+      pick(m.container, "Effort for new session").options,
+    ).map((o) => o.value);
+    expect(efforts).toContain("ultra");
+    expect(efforts).not.toContain("ultracode");
+    m.store.dispose();
+  });
+
+  // Each harness remembers its own pick, so switching back and forth does not
+  // ask one CLI for the other's model.
+  it("keeps each harness's choice separately", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "opus" } });
+    fireEvent.change(pick(m.container, "Command for new session"), {
+      target: { value: "codex" },
+    });
+    fireEvent.change(pick(m.container, "Model for new session"), {
+      target: { value: "gpt-5.5" },
+    });
+    fireEvent.change(pick(m.container, "Command for new session"), {
+      target: { value: "claude" },
+    });
+
+    expect(pick(m.container, "Model for new session").value).toBe("opus");
+    expect(m.prefs.prefs().session.newCodexModel).toBe("gpt-5.5");
     m.store.dispose();
   });
 });
@@ -612,24 +700,29 @@ describe("<NewSessionComposer> — the first prompt", () => {
     m.store.dispose();
   });
 
-  it("puts the model ahead of the prompt, so it decides who answers", async () => {
+  it("puts the session on the picked model before the prompt reaches it", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
     fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "sonnet" } });
+    fireEvent.change(pick(m.container, "Effort for new session"), { target: { value: "high" } });
 
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
 
     await waitFor(() => expect(w.delivered.length).toBe(1));
-    // Verified against Claude Code 2.1.260 on 2026-09-04: `/model sonnet` SETS
-    // the model, it does not open the picker.
-    expect(w.delivered[0]!.lines).toEqual(["/model sonnet", "Fix the deploy"]);
+    expect(w.models).toEqual([
+      { session: created(api), harness: "claude", model: "sonnet", effort: "high" },
+    ]);
+    // The prompt carries the text and nothing else. The `/model` line it used
+    // to carry saved the choice as the ACCOUNT default (measured 2026-09-04),
+    // so a model picked for one session followed every session after it.
+    expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
     m.store.dispose();
   });
 
-  it("sends no model line on the default, which is the absence of a choice", async () => {
+  it("changes nothing on the default, which is the absence of a choice", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
@@ -639,23 +732,29 @@ describe("<NewSessionComposer> — the first prompt", () => {
     enter(field(m.container)!);
 
     await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.models).toEqual([]);
     expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
     m.store.dispose();
   });
 
-  it("keeps /model away from codex, which would read it as prose", async () => {
+  it("asks codex for a codex model, not for the one Claude was left on", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
     fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "haiku" } });
     fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "codex" } });
+    fireEvent.change(pick(m.container, "Model for new session"), {
+      target: { value: "gpt-5.6-luna" },
+    });
 
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
 
     await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
+    expect(w.models).toEqual([
+      { session: created(api), harness: "codex", model: "gpt-5.6-luna", effort: "" },
+    ]);
     m.store.dispose();
   });
 
@@ -668,21 +767,29 @@ describe("<NewSessionComposer> — the first prompt", () => {
 
     enter(field(m.container)!);
 
-    await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.delivered[0]!.lines).toEqual(["/model opus"]);
+    await waitFor(() => expect(w.models.length).toBe(1));
+    expect(w.models[0]!.model).toBe("opus");
+    expect(w.delivered[0]!.lines).toEqual([]);
     m.store.dispose();
   });
 
-  it("sends nothing at all for an empty box on the default model", async () => {
+  // An effort the box refuses is refused silently: the slider moves and the
+  // session stays where it was. Saying so is the whole reason the reply is what
+  // the session reports rather than an echo of the request.
+  it("says so when the session did not take the effort it was given", async () => {
     const api = new FakeApi();
     const w = emptyWire();
+    w.modelStates = [{ model: "opus", effort: "max" }];
     const m = mount(api, {}, w);
     await m.store.refresh();
+    fireEvent.change(pick(m.container, "Effort for new session"), { target: { value: "low" } });
 
+    type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
 
-    await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.delivered[0]!.lines).toEqual([]);
+    await waitFor(() =>
+      expect(toasts.toasts().map((t) => t.message).join(" ")).toContain("stayed on max"),
+    );
     m.store.dispose();
   });
 

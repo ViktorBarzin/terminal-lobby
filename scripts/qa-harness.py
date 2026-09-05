@@ -99,7 +99,8 @@ Blocked (403):
   5. POST /projects with a non-qa name; PUT/DELETE of a project this run
      did not create
   6. POST /prompt/<s>, /cancel/<s>,
-     /keys/<s>, /answer-text/<s>        unless the run owns s
+     /keys/<s>, /answer-text/<s>,       unless the run owns s
+     /model/<s>
   7. POST /files/write                  unless the NORMALISED path is under
                                         --scratch (see THE SCRATCH below)
   8. WS upgrade whose first ?arg= is neither owned nor a free minted id
@@ -419,7 +420,7 @@ class Guard:
         return None
 
     def check_events(self, method: str, path: str) -> Optional[str]:
-        m = re.match(r"^/(prompt|cancel|keys|answer-text)/([^/]+)", path)
+        m = re.match(r"^/(prompt|cancel|keys|answer-text|model)/([^/]+)", path)
         if m and method == "POST":
             verb, session = m.group(1), unquote(m.group(2))
             if not self.may_drive(session):
@@ -859,12 +860,14 @@ def build_app(args: argparse.Namespace) -> web.Application:
     app.router.add_route("*", "/events/{tail:.*}", events_proxy)
     # Everything the PRODUCTION ingress routes to session-events, verbatim:
     # infra/stacks/terminal/main.tf matches (/events/ || /prompt/ || /cancel/ ||
-    # /earlier/ || /result/ || /pane/ || /keys/). The last four arrived after
-    # this table was written, so a fleet reaching for history, a full tool
-    # result, the pane, or an answer got the SPA's HTML 404 and no way to tell
-    # that apart from a real one. /permission keeps its own handling below —
-    # production has no rule for it, and reproducing that is the point.
-    for prefix in ("prompt", "cancel", "earlier", "result", "pane", "keys", "permission"):
+    # /earlier/ || /result/ || /pane/ || /keys/ || /commands/ || /search/ ||
+    # /answer-text/ || /model/). Several arrived after this table was written,
+    # so a fleet reaching for history, a full tool result, the pane, an answer
+    # or the model chip got the SPA's HTML 404 and no way to tell that apart
+    # from a real one. /permission keeps its own handling below — production
+    # has no rule for it, and reproducing that is the point.
+    for prefix in ("prompt", "cancel", "earlier", "result", "pane", "keys",
+                   "search", "answer-text", "model", "permission"):
         app.router.add_route("*", f"/{prefix}/{{tail:.*}}", control_proxy)
     app.router.add_route("*", "/files/{tail:.*}", files_proxy)
     # Both forms: the inventory is GET /skills exactly, the rest are /skills/<verb>.

@@ -3832,6 +3832,83 @@ body.tl-kb-up {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* ---- The model / effort chip ------------------------------------------
+   Beside the mode chip and shaped like it, because the two answer the same
+   kind of question about the session in front of you. What it says is the
+   session's own reading, so a session that has not answered yet reads
+   "model" rather than a value nobody set. */
+.tl-model {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+}
+.tl-model-chip {
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  cursor: pointer;
+  white-space: nowrap;
+  /* A phone's composer bar holds the mode chip, this, the meter and Send. The
+     model name is the one that grows — "gpt-5.6-terra · medium" — so it is the
+     one that gives way. */
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-model-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* Driving a picker takes about a second, and it is a second in which the
+   session's own pane is being typed into. Saying so beats a chip that looks
+   idle while keys land in it. */
+.tl-model-chip[data-busy] {
+  opacity: 0.6;
+  cursor: progress;
+}
+.tl-model-chip:disabled {
+  cursor: default;
+}
+/* The composer sits at the BOTTOM of the screen, so this menu opens upward —
+   the shared .tl-menu drops from a header. Left-aligned to the chip for the
+   same reason: the chip is on the left of its bar. */
+.tl-model-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: auto;
+  left: 0;
+  min-width: 170px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+.tl-model-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+/* The tick keeps its column whether or not it is drawn, so every label sits on
+   one left edge. */
+.tl-model-tick {
+  display: inline-block;
+  width: 1em;
+  flex: none;
+  color: var(--accent);
+}
+.tl-menu-note {
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  line-height: 1.35;
+  color: var(--text-muted);
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  white-space: normal;
+}
 /* The chip says what this session will do WITHOUT asking, so it is coloured by
    how much that is — read as a traffic light rather than as a label you have to
    parse. The tokens are the theme's own, so every theme gets it.
