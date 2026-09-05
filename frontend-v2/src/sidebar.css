@@ -114,10 +114,19 @@
 .tl-shellbar .tl-settings-btn:hover {
   border-color: var(--accent);
 }
+/* The content column: the session (or the new-session composer) above, the
+   dock below. The DIRECTION is the whole of it. `.tl-dock` is this box's
+   second child, and in flex's default row it landed BESIDE the session as a
+   right-hand strip, contradicting every rule the dock itself carries (column
+   direction, a border-TOP, a row-resize gutter) and Dock.tsx's docblock.
+   Nothing here wants a row: the sidebar is a grid cell of `.tl-shell` (:67),
+   an `<aside>` beside `.tl-shell-content` (App.tsx:812), so it was never a
+   child of this element and no sub-container is needed to keep it one. */
 .tl-shell-body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+  flex-direction: column;
 }
 
 /* ---- Sidebar ----------------------------------------------------------- */
@@ -1167,39 +1176,25 @@
 }
 
 /* ---- Ctrl/Cmd+J scratch-shell dock ------------------------------------- */
-/* A second live terminal under the session surface. The content column is a
-   flex column, so the dock takes a percentage height and the session above
-   keeps the rest. Desktop only — the coarse-pointer rule below removes it
-   outright rather than shrinking it, because one terminal is all a phone has
-   room for (and the chord that opens it is inert there too). */
+/* A second live terminal under the session surface. `.tl-shell-body` (:125) is
+   a flex column, so this takes a percentage height and the session above keeps
+   the rest. Full width by stretch, since a bottom panel has no width of its
+   own to set.
+
+   Desktop only, and that is now decided in ONE place: `createDockStore` reads
+   `(pointer: coarse)` and `Dock.tsx` refuses to mount under it (store/dock.ts,
+   `allowed`). There used to be a `@media (pointer: coarse) { display: none }`
+   here as well, which hid the panel while a second xterm and a second pty went
+   on running inside it, and tmux sizes a window to its SMALLEST attached
+   client, so that hidden attach could shrink the real session. A rule that can
+   only ever hide an element that is never built is a second answer to a
+   question that has one, so it is gone rather than kept beside the gate. */
 .tl-dock {
   position: relative;
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
   min-height: 80px;
-  /* A WIDTH FLOOR, and it is standing in for a fix that belongs elsewhere.
-     Every other rule here describes a bottom panel: column direction, a
-     border-TOP, a row-resize gutter. The dock does not render as one, because
-     `.tl-shell-body` (:117) is a flex ROW so that the sidebar can be a left
-     column, and the dock is its sibling. So it has always landed as a
-     right-hand strip, contradicting Dock.tsx's own docblock.
-     That predates the de-iframe work and the real fix is structural: wrap the
-     session view and the dock in a column sub-container. What the de-iframe
-     work DID change is the width. `TerminalView` was an iframe, and an iframe
-     carries an intrinsic 300px, so `flex: 0 0 auto` in a row resolved to 300px
-     and the strip was at least usable. `TerminalNative` is a div with no
-     intrinsic size, so the same rule collapsed it to content width. Measured at
-     1440x900: 300x129 at x=1140 before. After, the width is whatever the dock
-     header happens to say, so the collapse measures differently per run —
-     93x129 at x=1347 on an empty header, 108x129 at x=1332 on one carrying a
-     session name. Overriding this floor and REMOUNTING reproduces it; clearing
-     it on a live element only reaches 286px, because xterm has already sized
-     its content to 300.
-     300px is therefore not a design choice, it is the number that keeps the
-     shipped behaviour unchanged while the layout question is settled
-     separately. Remove this when the dock becomes a real bottom panel. */
-  min-width: 300px;
   border-top: 1px solid var(--border);
   background: var(--bg-page);
 }
@@ -1240,11 +1235,6 @@
    or the drag dies the moment it crosses into the terminal. */
 .tl-dock-dragging .tl-dock-body {
   pointer-events: none;
-}
-@media (pointer: coarse) {
-  .tl-dock {
-    display: none;
-  }
 }
 
 /* ---- A header narrow enough that every item has to earn its width --------- */

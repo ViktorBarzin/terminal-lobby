@@ -363,14 +363,19 @@ export const App: Component = () => {
   onCleanup(() => healer.dispose());
 
   // ---- Ctrl/Cmd+J scratch shell (the vanilla dock) ------------------------
-  // A second live terminal under the session you are in, roamed as layout.dock.
-  // Desktop only: a coarse pointer has room for one terminal, so the chord is
-  // inert there — the same line the vanilla page draws.
+  // A second live terminal under the session you are in, roamed as layout.dock,
+  // rendered as a bottom panel by <Dock/> at the foot of .tl-shell-body.
+  // Desktop only: a coarse pointer has room for one terminal, the same line the
+  // vanilla page draws. `dock.allowed()` is that one reading (store/dock.ts) and
+  // the mount reads it too, so the chord and the panel cannot disagree about
+  // which devices have a dock.
   const dock = createDockStore({ store });
-  const dockAllowed = createCoarsePointer();
   const onDockKey = (e: KeyboardEvent): void => {
     if (!((e.metaKey || e.ctrlKey) && (e.key === "j" || e.key === "J"))) return;
-    if (dockAllowed()) return; // coarse pointer: no dock
+    // `toggle` refuses on its own, but the chord must stay UNCLAIMED here: a
+    // tablet with a keyboard is a coarse pointer that can still press Ctrl+J,
+    // and preventDefault would swallow the 0x0A the pty is owed.
+    if (!dock.allowed()) return;
     e.preventDefault();
     void dock.toggle();
   };
