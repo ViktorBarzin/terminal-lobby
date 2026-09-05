@@ -30,3 +30,21 @@ mutation guard that confines writes to `qa-*` sessions.
 The header name is `TL_AUTH_HEADER`, which defaults to `X-Forwarded-User`.
 A box configured for a different proxy sets it in `/etc/terminal-lobby.conf`,
 so use whatever that file names when running against a deployed service.
+
+The harness has no lever for pointing it at a LOCAL build: its catch-all goes
+to ttyd, which serves the installed bundle, and `/assets/*` goes to
+clipboard-upload, whose only override is `CLIPBOARD_UPLOAD_ASSET_DIR` on a
+shared systemd service. To drive a build from the working tree, `vite preview`
+carries the same proxy table — `vite.config.ts` exports it for both `server`
+and `preview`, so the whole ingress is reproduced, WS identity header included:
+
+```sh
+cd frontend-v2 && npm run build
+TL_DEV_AUTH=<authentik-user> TL_AUTH_HEADER=X-Authentik-Username \
+  npx vite preview --host 127.0.0.1 --port 7912
+```
+
+Reaching it from the Android emulator wants `adb reverse tcp:7912 tcp:7912`,
+which also keeps the origin on `127.0.0.1` so `isSecureContext` stays true and
+the clipboard API works. One caveat: the SPA registers a service worker, so drop
+it and its caches before trusting that a tab is on the new bundle.
