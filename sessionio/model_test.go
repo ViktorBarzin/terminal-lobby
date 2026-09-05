@@ -148,6 +148,37 @@ func TestClaudeEffortHintReadsEveryStepOfTheRamp(t *testing.T) {
 	}
 }
 
+// THE HINT IS NOT ALWAYS ON SCREEN. Driving the picker means pressing arrows,
+// and enough of them raise a transient "Scroll wheel is sending arrow keys"
+// notice that takes the hint's line. Measured 2026-09-05: a change that
+// succeeded came back with no effort in it, because the reading was taken while
+// that notice was up. Claude's own receipt for the change is on the pane and
+// says the same thing, so it stands in.
+func TestClaudeEffortHintFallsBackToTheReceiptWhenTheLineIsTaken(t *testing.T) {
+	pane := "" +
+		"❯ /effort\n" +
+		"  ⎿  Set effort level to low (this session only): Quick, straightforward\n" +
+		"                    Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll\n" +
+		"❯ \n"
+	if got := ClaudeEffortHint(pane); got != "low" {
+		t.Fatalf("effort = %q, want low from the receipt", got)
+	}
+}
+
+// The HINT still wins where both are on screen, because it reports the level in
+// force and the receipt only reports what was asked for. That is the difference
+// when something on the box overrides the change.
+func TestClaudeEffortHintPrefersTheLiveLineOverTheReceipt(t *testing.T) {
+	pane := "" +
+		"❯ /effort\n" +
+		"  ⎿  Set effort level to low (this session only): Quick, straightforward\n" +
+		"                                                        ◈ max · /effort\n" +
+		"❯ \n"
+	if got := ClaudeEffortHint(pane); got != "max" {
+		t.Fatalf("effort = %q, want the level in force, not the one asked for", got)
+	}
+}
+
 // The hint names a level from the ladder and nothing else. Prose that happens
 // to carry one of those words is not a reading — the receipt of the change is
 // on the pane too, and it names the level in a sentence.
@@ -227,6 +258,22 @@ func TestSwitchPromptIsRecognisedWithoutAPickerFooter(t *testing.T) {
 		t.Fatal("the switch confirmation was not recognised")
 	}
 	if yes != "Yes, switch to Opus 5" {
+		t.Fatalf("the row to answer with = %q", yes)
+	}
+}
+
+// EFFORT raises the same confirmation as the model, under a different heading:
+// "Change effort level?" where the other says "Switch model?". Captured live on
+// 2026-09-05 from the DEPLOYED service, which answered a successful-looking
+// `{}` while the pane sat on this dialog — the effort had not changed and the
+// session was blocked.
+func TestSwitchPromptRecognisesTheEffortConfirmationToo(t *testing.T) {
+	pane := fixture(t, "confirm-claude-effort.txt")
+	yes, ok := SwitchPrompt(pane)
+	if !ok {
+		t.Fatal("the effort confirmation was not recognised")
+	}
+	if yes != "Yes, switch to high" {
 		t.Fatalf("the row to answer with = %q", yes)
 	}
 }

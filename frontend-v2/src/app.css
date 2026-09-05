@@ -3786,9 +3786,11 @@ body.tl-kb-up {
   cursor: pointer;
   white-space: nowrap;
   /* A phone's composer bar holds the mode chip, this, the meter and Send. The
-     model name is the one that grows — "gpt-5.6-terra · medium" — so it is the
-     one that gives way. */
-  max-width: 14ch;
+     model name is the one that grows — a slug runs to
+     "claude-haiku-4-5-20251001 · max" — so it is the one that gives way. The
+     ceiling fits the common slugs on a desktop and ellipsises the rest; the
+     title attribute carries the whole thing either way. */
+  max-width: min(26ch, 40vw);
   overflow: hidden;
   text-overflow: ellipsis;
 }

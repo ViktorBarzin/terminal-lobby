@@ -186,8 +186,13 @@ func (n *Normalizer) modelChange(rec Record) []Event {
 	if rec.Type != RecordAssistant || rec.IsSidechain || rec.Message.Model == "" {
 		return nil
 	}
+	// EXACT comparison, not the family one the receipt path uses. A record
+	// names the slug where a receipt names the family, and the slug is the
+	// better answer — so `claude-opus-5` arriving over a receipt's `opus` is a
+	// reading worth reporting, even though the two name one model. The receipt
+	// path stays family-wise, which is what stops it walking the slug back.
 	now := ModelState{Model: rec.Message.Model, Effort: rec.Effort}
-	if SameModel(now.Model, n.model.Model) && now.Effort == n.model.Effort {
+	if now == n.model {
 		return nil
 	}
 	n.model = now
@@ -234,12 +239,21 @@ func (n *Normalizer) conversation(rec Record) []Event {
 	if role == "user" {
 		if line, settles, ok := harnessRow(blockText(blocks)); ok {
 			var out []Event
-			// A `/model` receipt is the only source that reports a change the
-			// moment it happens: the assistant records that name a model are
-			// written by a TURN, so until the session takes one they all still
-			// name the model that answered before the change (see MetaModel).
+			// A `/model` or `/effort` receipt is the only source that reports a
+			// change the moment it happens: the assistant records that name
+			// either are written by a TURN, so until the session takes one they
+			// all still report what the change replaced (see MetaModel).
+			//
+			// One event for the pair, because that is what a reader is shown
+			// and each receipt speaks for only half of it.
+			moved := false
 			if m, ok := ModelFromReceipt(line); ok && !SameModel(m, n.model.Model) {
-				n.model.Model = m
+				n.model.Model, moved = m, true
+			}
+			if e, ok := EffortFromReceipt(line); ok && e != n.model.Effort {
+				n.model.Effort, moved = e, true
+			}
+			if moved {
 				e := n.emit(KindMeta, at)
 				now := n.model
 				e.Meta, e.Model = MetaModel, &now

@@ -12,9 +12,16 @@ the driver types the command) arrives as ordinary bytes rather than as line
 editing.
 """
 
+import os
 import sys
 import termios
+import time
 import tty
+
+# How long to sit on a keystroke before redrawing. The driver reads the pane
+# between steps, so a repaint slower than its settle makes it read the row it
+# was already on — which is what a loaded box does to a real picker.
+LAG = float(os.environ.get("FAKEPICKER_LAG", "0"))
 
 MODELS = [
     ("Default (recommended)", "Sonnet 5 · Efficient for routine tasks"),
@@ -87,6 +94,8 @@ def main():
                     at = max(0, at - 1)
                 elif key == "B":
                     at = min(len(MODELS) - 1, at + 1)
+                if LAG:
+                    time.sleep(LAG)
                 draw(at)
             elif ch == "s":
                 chose(MODELS[at][0])
