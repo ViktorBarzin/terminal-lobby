@@ -26,6 +26,11 @@ const (
 	// are five or six rows today; the bound exists so a picker that stops
 	// responding ends the walk rather than the deadline.
 	maxWalk = 16
+	// How long to look for the "Switch model?" confirmation after a model has
+	// been committed. Most switches raise none — it needs a conversation with a
+	// warm cache — so this is a glance rather than a wait, and finding nothing
+	// is the expected answer.
+	switchWait = 1500 * time.Millisecond
 	// How many times a saturating key is sent to pin a list at its first row or
 	// a slider at its first step. Neither control wraps (measured), so this is
 	// simply more presses than either has rows.
@@ -80,6 +85,9 @@ func (in *Injector) setClaudeModel(ctx context.Context, osUser, session string, 
 		if err := in.awaitClosed(ctx, osUser, session, "Select model"); err != nil {
 			return ModelState{}, err
 		}
+		if err := in.confirmSwitch(ctx, osUser, session); err != nil {
+			return ModelState{}, err
+		}
 	}
 	if want.Effort != "" {
 		if err := in.setClaudeEffort(ctx, osUser, session, want.Effort); err != nil {
@@ -96,6 +104,45 @@ func (in *Injector) setClaudeModel(ctx context.Context, osUser, session string, 
 	// walk confirmed — the cursor sat on this row before `s` was pressed — is
 	// the evidence. The effort DOES have a hint of its own, so it is read.
 	return ModelState{Model: want.Model, Effort: ClaudeEffortHint(pane)}, nil
+}
+
+// confirmSwitch answers the "Switch model?" dialog, when there is one.
+//
+// It appears only when the conversation already has a warm cache — a session
+// that has taken a turn — and it appears AFTER the picker has committed, so
+// nothing before this point can see it. Left unanswered it sits on the pane
+// blocking the session, with the driver having reported success: measured on
+// 2026-09-05, driving a session from Haiku to Opus from the chip.
+//
+// A short look, not a wait. Most switches raise nothing at all, and spending
+// the picker's whole deadline on every one of them would make the common case
+// the slow one.
+func (in *Injector) confirmSwitch(ctx context.Context, osUser, session string) error {
+	deadline := time.Now().Add(switchWait)
+	for {
+		pane, err := in.CapturePane(osUser, session)
+		if err == nil {
+			yes, ok := SwitchPrompt(pane)
+			if ok {
+				if err := in.walkTo(ctx, osUser, session, yes); err != nil {
+					in.escape(osUser, session)
+					return fmt.Errorf("confirming the switch: %w", err)
+				}
+				if err := in.rawKeys(osUser, session, "Enter"); err != nil {
+					return fmt.Errorf("confirming the switch: %w", err)
+				}
+				return in.awaitClosed(ctx, osUser, session, "Switch model?")
+			}
+		}
+		if !time.Now().Before(deadline) || ctx.Err() != nil {
+			return nil // no confirmation was raised, which is the common case
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(pickerPoll):
+		}
+	}
 }
 
 // setClaudeEffort drives the slider. It is pinned at its first step and then

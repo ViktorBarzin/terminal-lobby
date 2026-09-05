@@ -459,7 +459,19 @@ export const TextView: Component<{
           props.notify?.(r.reason, "error");
           return;
         }
-        setAppliedModel({ state: r.state, against });
+        // MERGED, not replaced. The reply carries only what the change could
+        // establish: an effort pass reads the effort back off the pane and
+        // says nothing about the model, because a stock Claude pane does not
+        // report one. Replacing wholesale blanked half the chip until the
+        // session next answered.
+        const was = modelState();
+        setAppliedModel({
+          state: {
+            model: r.state.model || was?.model,
+            effort: r.state.effort || was?.effort,
+          },
+          against,
+        });
         const got = field === "model" ? r.state.model : r.state.effort;
         const took =
           field === "model"

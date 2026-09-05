@@ -78,6 +78,60 @@ func TestSessionStateCarriesTheModel(t *testing.T) {
 	}
 }
 
+// The `/model` receipt is what makes a change visible BEFORE the session takes
+// another turn. Without it a reader arriving in that window is shown the model
+// that answered last, which is the one the change just replaced.
+func TestNormalizeReportsAModelChangeFromItsReceipt(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line([]byte(`{"type":"assistant","effort":"max","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"hi"}]},"uuid":"a1"}`))
+
+	got := modelEvent(n.Line([]byte(`{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>Set model to ` + "`" + `Sonnet 5` + "`" + ` for this session only</local-command-stdout>"}]},"uuid":"a2"}`)))
+	if got == nil {
+		t.Fatal("the receipt reported no model change")
+	}
+	// The word the picker uses, not the sentence the receipt is written in.
+	if got.Model.Model != "sonnet" {
+		t.Fatalf("model event = %+v", got.Model)
+	}
+	// And the effort in force rides along, because the pair is what a reader
+	// is shown and the receipt says nothing about the other half.
+	if got.Model.Effort != "max" {
+		t.Fatalf("the effort was dropped: %+v", got.Model)
+	}
+}
+
+// "Kept model as X" is what the command answers when the pick was the model
+// already in force. It names the same model, so it is not a change.
+func TestNormalizeIgnoresAReceiptThatChangedNothing(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line([]byte(`{"type":"assistant","message":{"role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"hi"}]},"uuid":"a1"}`))
+	// The assistant record spells it claude-haiku-4-5; the receipt spells it
+	// "Haiku 4.5". Both have to read as haiku or every change would report twice.
+	first := modelEvent(n.Line([]byte(`{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>Kept model as Haiku 4.5</local-command-stdout>"}]},"uuid":"a2"}`)))
+	if first != nil {
+		t.Fatalf("a receipt naming the model already in force reported a change: %+v", first.Model)
+	}
+}
+
+func TestModelFromReceiptReadsEveryShapeTheCommandAnswersWith(t *testing.T) {
+	for line, want := range map[string]string{
+		"Set model to `Sonnet 5` for this session only":                  "sonnet",
+		"Set model to Opus 5 and saved as your default for new sessions": "opus",
+		"Set model to Opus 5 (1M context) and saved as your default":     "opus",
+		"Kept model as Haiku 4.5":                                        "haiku",
+	} {
+		got, ok := ModelFromReceipt(line)
+		if !ok || got != want {
+			t.Errorf("ModelFromReceipt(%q) = %q, %v; want %q", line, got, ok, want)
+		}
+	}
+	for _, line := range []string{"", "Set effort to high", "the model is fine"} {
+		if got, ok := ModelFromReceipt(line); ok {
+			t.Errorf("ModelFromReceipt(%q) = %q, want no match", line, got)
+		}
+	}
+}
+
 func modelEvent(evs []Event) *Event {
 	for i := range evs {
 		if evs[i].Kind == KindMeta && evs[i].Meta == MetaModel {

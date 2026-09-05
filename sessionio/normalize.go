@@ -187,7 +187,7 @@ func (n *Normalizer) modelChange(rec Record) []Event {
 		return nil
 	}
 	now := ModelState{Model: rec.Message.Model, Effort: rec.Effort}
-	if now == n.model {
+	if SameModel(now.Model, n.model.Model) && now.Effort == n.model.Effort {
 		return nil
 	}
 	n.model = now
@@ -234,6 +234,17 @@ func (n *Normalizer) conversation(rec Record) []Event {
 	if role == "user" {
 		if line, settles, ok := harnessRow(blockText(blocks)); ok {
 			var out []Event
+			// A `/model` receipt is the only source that reports a change the
+			// moment it happens: the assistant records that name a model are
+			// written by a TURN, so until the session takes one they all still
+			// name the model that answered before the change (see MetaModel).
+			if m, ok := ModelFromReceipt(line); ok && !SameModel(m, n.model.Model) {
+				n.model.Model = m
+				e := n.emit(KindMeta, at)
+				now := n.model
+				e.Meta, e.Model = MetaModel, &now
+				out = append(out, e)
+			}
 			if line != "" {
 				e := n.emit(KindState, at)
 				e.Body = line

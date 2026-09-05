@@ -176,3 +176,33 @@ func TestCodexEffortIsBehindAnExtraScreenOnlyForMaxAndUltra(t *testing.T) {
 		}
 	}
 }
+
+// Switching the model of a conversation that already has a warm cache raises a
+// SECOND dialog — not the picker, a yes/no about paying to re-read the history
+// — and it carries no select-widget footer. Captured live on 2026-09-05 by
+// moving a session that had taken a turn; a fresh one never shows it, which is
+// why every earlier probe missed it.
+func TestSwitchPromptIsRecognisedWithoutAPickerFooter(t *testing.T) {
+	pane := fixture(t, "confirm-claude-switch.txt")
+	if len(PickerOptions(pane)) != 0 {
+		t.Fatal("the confirmation was read as a picker; it has no picker footer")
+	}
+	yes, ok := SwitchPrompt(pane)
+	if !ok {
+		t.Fatal("the switch confirmation was not recognised")
+	}
+	if yes != "Yes, switch to Opus 5" {
+		t.Fatalf("the row to answer with = %q", yes)
+	}
+}
+
+func TestSwitchPromptIgnoresEveryOtherScreen(t *testing.T) {
+	for _, name := range []string{
+		"picker-claude-model.txt", "picker-claude-effort.txt",
+		"picker-codex-model.txt", "status-claude-idle.txt",
+	} {
+		if _, ok := SwitchPrompt(fixture(t, name)); ok {
+			t.Errorf("%s was read as a switch confirmation", name)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-import { For, Show, type Accessor, type Component } from "solid-js";
+import { For, Show, createSignal, type Accessor, type Component, type JSX } from "solid-js";
 import { createDismissableMenu } from "./menu";
 import {
   DEFAULT_CHOICE,
@@ -42,6 +42,31 @@ export const ModelMenu: Component<{
   inertReason?: string;
 }> = (props) => {
   const menu = createDismissableMenu(() => () => {});
+  let chipEl: HTMLButtonElement | undefined;
+  /**
+   * Where the popup goes, in viewport coordinates.
+   *
+   * It is `fixed` rather than absolutely placed inside the chip, because the
+   * bar it sits in SCROLLS: `.tl-bar-left` is `overflow: auto` so a row of
+   * chips can slide sideways on a narrow screen, and an absolutely-placed
+   * popup inside it is clipped to that box — measured on 2026-09-05, the menu
+   * rendered at the right size and was invisible but for a 4px sliver.
+   * Nothing between here and the root establishes a containing block, so
+   * `fixed` escapes the clip; the coordinates are read when it opens, and it
+   * closes on any outside press.
+   */
+  const [at, setAt] = createSignal<{ left: number; bottom: number } | null>(null);
+  const place = (): JSX.CSSProperties | undefined => {
+    const a = at();
+    return a ? { left: `${a.left}px`, bottom: `${a.bottom}px` } : undefined;
+  };
+  const toggle = (): void => {
+    if (chipEl && !menu.open()) {
+      const r = chipEl.getBoundingClientRect();
+      setAt({ left: r.left, bottom: window.innerHeight - r.top + 6 });
+    }
+    menu.toggle();
+  };
   const summary = (): string => summarise(props.harness, props.state());
   const chosen = (field: ModelField, id: string): boolean =>
     field === "model"
@@ -60,6 +85,7 @@ export const ModelMenu: Component<{
   return (
     <span class="tl-model" ref={menu.anchor}>
       <button
+        ref={chipEl}
         type="button"
         class="tl-model-chip"
         aria-haspopup="menu"
@@ -73,12 +99,17 @@ export const ModelMenu: Component<{
             ? `Model and effort: ${summary()}`
             : "Model and effort — the session has not answered yet")
         }
-        onClick={() => menu.toggle()}
+        onClick={toggle}
       >
         {summary() || "model"}
       </button>
       <Show when={menu.open()}>
-        <div class="tl-menu tl-model-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+        <div
+          class="tl-menu tl-model-menu"
+          role="menu"
+          style={place()}
+          onClick={(e) => e.stopPropagation()}
+        >
           <For each={["model", "effort"] as ModelField[]}>
             {(field) => (
               <>
