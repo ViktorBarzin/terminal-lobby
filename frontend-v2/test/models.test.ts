@@ -5,6 +5,7 @@ import {
   DEFAULT_CHOICE,
   effortsFor,
   isEffortFor,
+  isCurrentModel,
   isModelFor,
   labelFor,
   modelsFor,
@@ -61,6 +62,19 @@ describe("the model catalogue", () => {
     ]);
   });
 
+  // The MATCHER still normalises, because the menu ticks a catalogue row
+  // against whatever spelling the session reported. Only the display stopped
+  // shortening.
+  it("ticks the catalogue row for a slug, however the session spelled it", () => {
+    expect(isCurrentModel("claude", "opus", "claude-opus-5")).toBe(true);
+    expect(isCurrentModel("claude", "haiku", "claude-haiku-4-5-20251001")).toBe(true);
+    expect(isCurrentModel("claude", "sonnet", "sonnet")).toBe(true);
+    expect(isCurrentModel("claude", "opus", "claude-sonnet-5")).toBe(false);
+    expect(isCurrentModel("codex", "gpt-5.6-terra", "gpt-5.6-terra")).toBe(true);
+    expect(isCurrentModel("codex", "gpt-5.6-terra", "gpt-5.6-luna")).toBe(false);
+    expect(isCurrentModel("claude", "opus", undefined)).toBe(false);
+  });
+
   it("validates a stored id against the harness it was stored for", () => {
     expect(isModelFor("claude", "opus")).toBe(true);
     expect(isModelFor("claude", "gpt-5.5")).toBe(false);
@@ -114,30 +128,43 @@ describe("the model catalogue", () => {
  */
 describe("the chip's summary", () => {
   it("names the model and the effort together", () => {
-    expect(summarise("claude", { model: "claude-opus-5", effort: "max" })).toBe("opus · max");
-    expect(summarise("codex", { model: "gpt-5.6-terra", effort: "medium" })).toBe(
-      "5.6-terra · medium",
+    expect(summarise({ model: "claude-opus-5", effort: "max" })).toBe(
+      "claude-opus-5 · max",
+    );
+    expect(summarise({ model: "gpt-5.6-terra", effort: "medium" })).toBe(
+      "gpt-5.6-terra · medium",
     );
   });
 
-  // The transcript names the model in full — `claude-opus-5` — and a chip is
-  // not where a version string belongs.
-  it("shortens the wire name to the one a person uses", () => {
-    expect(summarise("claude", { model: "claude-sonnet-5" })).toBe("sonnet");
-    expect(summarise("claude", { model: "claude-haiku-4-5" })).toBe("haiku");
-    expect(summarise("codex", { model: "gpt-5.4-mini" })).toBe("5.4-mini");
+  // The EXACT slug, not the family name. `claude-opus-5` and
+  // `claude-haiku-4-5-20251001` are different answers to "which model is this",
+  // and the version is the half that a shortened `opus` throws away.
+  it("shows the slug the session reported, verbatim", () => {
+    expect(summarise({ model: "claude-sonnet-5" })).toBe("claude-sonnet-5");
+    expect(summarise({ model: "claude-haiku-4-5-20251001" })).toBe(
+      "claude-haiku-4-5-20251001",
+    );
+    expect(summarise({ model: "gpt-5.4-mini" })).toBe("gpt-5.4-mini");
+  });
+
+  // Until the session takes a turn, the only thing that named the model is the
+  // CLI's own receipt, which says "Sonnet 5" and normalises to the picker's
+  // word. That is what is known, so that is what shows; the slug arrives with
+  // the next turn.
+  it("shows the picker's word while that is all the session has said", () => {
+    expect(summarise({ model: "sonnet", effort: "high" })).toBe("sonnet · high");
   });
 
   // A session that has not answered yet has said nothing about either, and a
   // chip that invented a value would be showing a guess.
   it("says nothing when the session has not said anything", () => {
-    expect(summarise("claude", {})).toBe("");
-    expect(summarise("claude", undefined)).toBe("");
+    expect(summarise({})).toBe("");
+    expect(summarise(undefined)).toBe("");
   });
 
   it("shows whichever half it has", () => {
-    expect(summarise("claude", { effort: "high" })).toBe("high");
-    expect(summarise("claude", { model: "claude-opus-5" })).toBe("opus");
+    expect(summarise({ effort: "high" })).toBe("high");
+    expect(summarise({ model: "claude-opus-5" })).toBe("claude-opus-5");
   });
 });
 

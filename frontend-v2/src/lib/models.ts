@@ -145,17 +145,21 @@ export interface ModelState {
 }
 
 /**
- * The wire name of a model, shortened to the one a person uses.
+ * A model name reduced to its FAMILY, for matching a catalogue row against
+ * whatever spelling the session used.
  *
- * The transcript names Claude's models in full — `claude-opus-5`,
- * `claude-haiku-4-5` — and codex names its own with a `gpt-` prefix every one
- * of them shares. A chip sits beside the permission mode on a 390px screen, so
- * neither spelling fits and neither is what anybody calls them.
+ * The three sources spell one model three ways: the transcript writes the slug
+ * (`claude-opus-5`, `claude-haiku-4-5-20251001`), the CLI's own receipt writes
+ * it for a person ("Sonnet 5", normalised server-side to `sonnet`), and this
+ * catalogue writes the picker's word. The family is what all three agree on.
+ *
+ * It is NOT what the chip shows. Displaying the family threw away the version,
+ * which is half of what "which model is this" means.
  */
-export function shortModel(h: ModelHarness, model: string): string {
+export function modelFamily(h: ModelHarness, model: string): string {
   if (!model) return "";
-  if (h === "codex") return model.replace(/^gpt-/, "");
-  // claude-opus-5 → opus, claude-haiku-4-5 → haiku, opus → opus.
+  if (h === "codex") return model;
+  // claude-opus-5 → opus, claude-haiku-4-5-20251001 → haiku, opus → opus.
   const m = /^claude-([a-z]+)/.exec(model);
   return m ? m[1]! : model;
 }
@@ -174,15 +178,25 @@ export function isCurrentModel(
   reported: string | undefined,
 ): boolean {
   if (!reported) return false;
-  return h === "codex" ? reported === id : shortModel("claude", reported) === id;
+  return h === "codex" ? reported === id : modelFamily("claude", reported) === id;
 }
 
-/** What the chip says: the model and the effort, or whichever half is known. */
-export function summarise(h: ModelHarness, state: ModelState | undefined): string {
+/**
+ * What the chip says: the model and the effort, or whichever half is known.
+ *
+ * The model is reported VERBATIM. `claude-opus-5` and
+ * `claude-haiku-4-5-20251001` are different answers to which model this is, and
+ * a chip that said "opus" and "haiku" could not tell two builds of one family
+ * apart. A slug outruns the chip on a phone, so the stylesheet ellipsises it
+ * and the title carries the whole thing.
+ *
+ * Between a change and the session's next turn the only source is the CLI's own
+ * receipt, which names the family. That is what the session has said, so that
+ * is what shows; the slug arrives with the next turn.
+ */
+export function summarise(state: ModelState | undefined): string {
   if (!state) return "";
-  return [shortModel(h, state.model ?? ""), state.effort ?? ""]
-    .filter((s) => s !== "")
-    .join(" · ");
+  return [state.model ?? "", state.effort ?? ""].filter((s) => s !== "").join(" · ");
 }
 
 /**
