@@ -14,6 +14,20 @@ import (
 // log line, not a lost prompt.
 const promptMark = "❯"
 
+// codexPromptMark is the same evidence for codex, which draws › where Claude
+// draws ❯. Read by PromptMark rather than assumed anywhere, so a caller that
+// does not know the harness still gets Claude's, which is what every caller
+// before the model picker existed was already asking for.
+const codexPromptMark = "›"
+
+// PromptMark is the character a harness draws at its input line.
+func PromptMark(h Harness) string {
+	if h == HarnessCodex {
+		return codexPromptMark
+	}
+	return promptMark
+}
+
 // readyStable is how long the pane must hold still, on top of showing a prompt,
 // before input is sent. Claude Code paints the prompt and then keeps drawing
 // (the restored conversation, the status line); a capture taken mid-repaint is
@@ -52,6 +66,16 @@ func (in *Injector) CapturePane(osUser, session string) (string, error) {
 // strictly better than dropping the prompt, and the operator can see both the
 // session and the log line.
 func (in *Injector) AwaitInputReady(ctx context.Context, osUser, session string, wait, poll time.Duration) error {
+	return in.AwaitPromptMark(ctx, osUser, session, promptMark, wait, poll)
+}
+
+// AwaitPromptMark is AwaitInputReady against a harness other than Claude — the
+// same wait, watching for whatever that TUI draws at its input line
+// (see PromptMark).
+func (in *Injector) AwaitPromptMark(ctx context.Context, osUser, session, mark string, wait, poll time.Duration) error {
+	if mark == "" {
+		mark = promptMark
+	}
 	if wait <= 0 {
 		wait = 30 * time.Second
 	}
@@ -71,7 +95,7 @@ func (in *Injector) AwaitInputReady(ctx context.Context, osUser, session string,
 		// A read that fails is treated as not-ready rather than fatal: a pane
 		// can be momentarily unreadable while the session is being set up, and
 		// the deadline already bounds how long that can go on.
-		if err == nil && strings.Contains(text, promptMark) {
+		if err == nil && strings.Contains(text, mark) {
 			switch {
 			case text != last:
 				last, lastAt = text, time.Now()

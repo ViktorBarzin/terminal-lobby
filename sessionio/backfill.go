@@ -115,6 +115,11 @@ type SessionState struct {
 	At int64 `json:"at"`
 	// Mode is the permission mode in force, from the newest meta that named one.
 	Mode string `json:"mode,omitempty"`
+	// Model is the model and effort the session last answered on. Absent until
+	// it has answered once: the transcript is the only stock source for either
+	// (see MetaModel), and a session that has not taken a turn has written no
+	// record naming them.
+	Model *ModelState `json:"model,omitempty"`
 	// Context is the newest `/context` reading in the session, if anyone ran it.
 	Context *ContextReading `json:"context,omitempty"`
 	// ContextTurnsAgo is how many turns have settled since that reading.
@@ -147,6 +152,10 @@ func (f *FileSource) State(maxPrompts int) SessionState {
 			case MetaPermissionMode:
 				if e.Body != "" {
 					st.Mode = e.Body
+				}
+			case MetaModel:
+				if e.Model != nil {
+					st.Model = e.Model
 				}
 			case MetaContext:
 				if e.Context != nil {
