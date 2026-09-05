@@ -55,6 +55,28 @@ func carryRenameAcrossStores(osUser, oldName, newName string) {
 	renameProjectRefs(osUser, oldName, newName)
 	renameShares(osUser, oldName, newName)
 	renameImageDir(osUser, oldName, newName)
+	renameGridPin(osUser, newName)
+}
+
+// renameGridPin re-points a watched session's grid pin at the name it has now.
+//
+// The other six moves here are STORES keyed by name. This one is state tmux
+// itself holds: PinGrid writes the session name into three hooks, and a rename
+// leaves them naming a session that no longer resolves, so every hook fails into
+// its own `|| true` and nothing resizes the window — while `window-size` stays
+// `manual`, which is what makes the grid freeze rather than merely drift.
+//
+// Found live 2026-09-05: `hjtedz8zrn7h`, renamed from `ux` by the ADR-0019 id
+// migration, sat at 58x38 with a 92x58 client attached and had stopped following
+// the phone it was being read on.
+//
+// Takes the NEW name only: hooks are session-scoped, so they follow the rename;
+// it is the target baked into their text that is stale. A session that was never
+// pinned is left alone by RepinGrid.
+func renameGridPin(osUser, newName string) {
+	if err := repinGrid(osUser, newName); err != nil {
+		log.Printf("grid repin %s for %s failed: %v", newName, osUser, err)
+	}
 }
 
 // renameProjectRefs updates the global project store's (owner, name) session
