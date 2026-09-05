@@ -63,6 +63,12 @@ TL_AUTH_HEADER=X-Forwarded-User
 # the check is off: any caller that can reach the ports below may send
 # TL_AUTH_HEADER and be treated as that user. Set this AND configure your proxy
 # to send it in the same change, or the next restart refuses every request.
+#
+# It covers the five HTTP services (7683 clipboard-upload, 7684 tmux-api, 7685
+# session-events, 7686 file-api, 7688 skills-api) and nothing else. ttyd on
+# 7681 has no way to check a second header, so the secret does not reach the
+# one port that hands out a shell: keep 7681 reachable from the proxy alone,
+# via TL_BIND below or a firewall rule.
 #TL_PROXY_SECRET=
 
 # auto  multi-user when /etc/ttyd-user-map exists, single-user otherwise
@@ -70,11 +76,13 @@ TL_AUTH_HEADER=X-Forwarded-User
 # off   force single-user: everything runs as the invoking user, no sudo
 TL_MULTI_USER=auto
 
-# Listen address for the services. The default admits only a proxy on this same
-# host, which is the arrangement that needs no shared secret at all. Widen it to
-# 0.0.0.0 when the proxy is somewhere else — an ingress in a cluster, say — and
-# set TL_PROXY_SECRET in the same change, because a service reachable from the
-# network trusts TL_AUTH_HEADER from anything that reaches it.
+# Listen address for the services, ttyd included — its unit passes this to
+# ttyd's -i. The default admits only a proxy on this same host, which is the
+# arrangement that needs no shared secret at all. Widen it to 0.0.0.0 when the
+# proxy is somewhere else — an ingress in a cluster, say — and set
+# TL_PROXY_SECRET in the same change, because a service reachable from the
+# network trusts TL_AUTH_HEADER from anything that reaches it. Widening also
+# opens 7681, which the secret cannot cover.
 TL_BIND=127.0.0.1
 `
 }
@@ -160,6 +168,12 @@ var Package = Manifest{
 		// ttyd is launched with -H X-authentik-username, so an unauthenticated
 		// request is refused by the proxy-auth layer with 407, not 401. Verified
 		// against the live service rather than assumed.
+		//
+		// The probe is loopback, and ttyd now listens where TL_BIND says. Both
+		// values a box actually carries — the shipped 127.0.0.1 and the 0.0.0.0
+		// an off-host proxy needs — include loopback. A TL_BIND naming one
+		// specific address would not, and this probe would have to follow it
+		// there.
 		{Unit: "ttyd", Name: "ttyd refuses anonymous", URL: "http://127.0.0.1:7681/", WantStatus: 407},
 	},
 	Files: []File{
@@ -333,12 +347,20 @@ TL_AUTH_HEADER=X-Authentik-Username
 
 # This box was already serving before TL_BIND had a default, and its proxy is
 # not on this host, so narrowing to 127.0.0.1 would take the lobby down. Set to
-# what it was. If your proxy can send a shared secret, set TL_PROXY_SECRET here
-# and have it send X-TL-Proxy-Secret — that is what closes the network path.
+# what it was.
 TL_BIND=0.0.0.0
+
+# Which leaves the ports open to anything that can route here: with no secret,
+# the identity header alone says which user a request acts as, and the caller
+# writes that header. Closing it takes two halves, in this order — have the
+# proxy send X-TL-Proxy-Secret: <value>, then uncomment this line with the same
+# value and restart. Doing it the other way round refuses every request in
+# between, which is why the package cannot set it for you.
+#TL_PROXY_SECRET=
 TLEOF
   chmod 0644 "$TL_LOCAL_CONF"
   echo "terminal-lobby: pinned TL_AUTH_HEADER=X-Authentik-Username in $TL_LOCAL_CONF (existing multi-user box)"
+  echo "terminal-lobby: TL_BIND=0.0.0.0 in $TL_LOCAL_CONF leaves 7681 and 7683-7688 open to the network; set TL_PROXY_SECRET there and have your proxy send X-TL-Proxy-Secret" >&2
 fi
 `
 

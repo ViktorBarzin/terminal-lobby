@@ -49,9 +49,9 @@ Everything lives in `/etc/terminal-lobby.conf`. Your own settings go in
 | variable | default | what it does |
 |---|---|---|
 | `TL_AUTH_HEADER` | `X-Forwarded-User` | the header your proxy puts the username in |
-| `TL_PROXY_SECRET` | unset | a shared secret the proxy must also send, in `X-TL-Proxy-Secret` |
+| `TL_PROXY_SECRET` | unset | a shared secret the proxy must also send, in `X-TL-Proxy-Secret`; covers the five HTTP services, not ttyd |
 | `TL_MULTI_USER` | `auto` | `auto` (multi-user when `/etc/ttyd-user-map` exists), `on`, `off` |
-| `TL_BIND` | `127.0.0.1` | listen address; widen to `0.0.0.0` when the proxy is on another host, and set the secret in the same change |
+| `TL_BIND` | `127.0.0.1` | listen address for the services and ttyd; widen to `0.0.0.0` when the proxy is on another host, and set the secret in the same change |
 
 Any proxy that emits a username header works. Authentik sets
 `X-Authentik-Username`; oauth2-proxy, Caddy, Cloudflare Access and Tailscale
@@ -62,6 +62,13 @@ set `X-Forwarded-User`.
 > send `TL_AUTH_HEADER` and be treated as that user. Either set the secret and
 > have your proxy send it, or set `TL_BIND=127.0.0.1` so only the local proxy
 > can reach them.
+>
+> The secret covers the five HTTP services: 7683 clipboard-upload, 7684
+> tmux-api, 7685 session-events, 7686 file-api, 7688 skills-api. It does not
+> cover ttyd on 7681, which trusts `TL_AUTH_HEADER` and has no second header to
+> check, and 7681 is the port that hands out a shell. ttyd does honour
+> `TL_BIND`, so keep 7681 reachable from the proxy alone: narrow `TL_BIND`, or
+> leave it wide and restrict 7681 at the firewall or the ingress.
 
 ## Single-user and multi-user
 
