@@ -24,6 +24,10 @@ func TestMain(m *testing.M) {
 		Config:     authuser.Config{MultiUser: "on"},
 	}
 	mapPath = actAsGate.MapPath
+	// Every op runs in this process: homeBase points into a temp tree the real
+	// sudo path could never reach, and the suite has no identity of its own to
+	// compare against (see forceInline in privop.go).
+	forceInline = true
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

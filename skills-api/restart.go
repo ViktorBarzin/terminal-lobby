@@ -123,7 +123,7 @@ func claudeCommand(osUser, session string) string {
 // tmuxCmd runs tmux as osUser: directly when that is this service's own user,
 // through the same `sudo -n -H -u` the attach path uses otherwise.
 func tmuxCmd(osUser string, args ...string) *exec.Cmd {
-	if osUser == selfUser || selfUser == "" {
+	if inline(osUser) {
 		return exec.Command(tmuxBinary, args...)
 	}
 	return exec.Command(sudoBinary, append([]string{"-n", "-H", "-u", osUser, tmuxBinary}, args...)...)

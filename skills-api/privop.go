@@ -32,7 +32,20 @@ import (
 // files. Every name it does take is re-validated by skillscan.
 
 // selfUser is the OS user this service runs as; requests for it skip sudo.
+// main refuses to start when it cannot be resolved: an unnamed service cannot
+// tell its own user from anyone else's, and answering "everyone is me" there
+// drops the sudo boundary while still pointing the op at the target's home.
 var selfUser string
+
+// forceInline runs every op in this process instead of re-execing through sudo.
+// TEST SEAM only, in the same family as homeBase and sudoBinary: the handler
+// tests point homeBase at a temp tree and exercise the peer paths inside it,
+// which no real sudo could reach. Production never assigns it.
+var forceInline bool
+
+// inline reports whether an op for osUser may run in this process. Exactly
+// tmux-api's comparison, so all three services now answer this the same way.
+func inline(osUser string) bool { return forceInline || osUser == selfUser }
 
 // sudoBinary is a test seam, as in tmux-api: tests swap it for a stub that
 // records its argv. Production never reassigns it.
@@ -118,7 +131,7 @@ type statRow struct {
 // run performs one op as osUser: inline when that is this service's own user,
 // through sudo otherwise.
 func run(osUser, op string, req request) result {
-	if osUser == selfUser || selfUser == "" {
+	if inline(osUser) {
 		return perform(op, userHome(osUser), req)
 	}
 	body, err := json.Marshal(req)
@@ -279,6 +292,9 @@ func perform(op, home string, req request) result {
 		return result{Status: 200, Output: out, Freed: freed}
 
 	case opInspect:
+		if err := validSource(req.Owner, req.Repo); err != nil {
+			return result{Status: 400, Error: err.Error()}
+		}
 		info, err := inspectSource(home, req.Owner, req.Repo)
 		if err != nil {
 			return result{Status: 400, Error: err.Error()}
@@ -286,6 +302,9 @@ func perform(op, home string, req request) result {
 		return result{Status: 200, Source: &info}
 
 	case opSource:
+		if err := validSource(req.Owner, req.Repo); err != nil {
+			return result{Status: 400, Error: err.Error()}
+		}
 		out, err := installFromSource(home, req.Owner, req.Repo, req.Kind, req.Names)
 		if err != nil {
 			return result{Status: 502, Error: err.Error(), Output: out}

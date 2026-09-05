@@ -89,6 +89,17 @@ var (
 	repoRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 )
 
+// validSource is the charset gate on its own, for the privileged child. The
+// parent reaches it through normalizeSource; the child re-runs it because the
+// sudoers grant lets anyone holding it compose the request themselves, and these
+// two values go into an api.github.com path and into an installer's argv.
+func validSource(owner, repo string) error {
+	if !ownerRe.MatchString(owner) || !repoRe.MatchString(repo) {
+		return fmt.Errorf("%q is not a GitHub owner/repo", owner+"/"+repo)
+	}
+	return nil
+}
+
 // normalizeSource turns what a person pastes into an owner and a repo, or refuses.
 //
 // It accepts the forms people actually paste — owner/repo, the https URL with or
@@ -112,7 +123,7 @@ func normalizeSource(in string) (string, string, error) {
 	s = strings.TrimSuffix(s, "/")
 
 	owner, repo, ok := strings.Cut(s, "/")
-	if !ok || !ownerRe.MatchString(owner) || !repoRe.MatchString(repo) {
+	if !ok || validSource(owner, repo) != nil {
 		return "", "", fmt.Errorf("%q is not a GitHub owner/repo", in)
 	}
 	return owner, repo, nil

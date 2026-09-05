@@ -4,17 +4,20 @@ import (
 	"encoding/base64"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"testing"
 )
 
 func TestCrossUser(t *testing.T) {
-	old := selfUser
-	defer func() { selfUser = old }()
+	old, oldForce := selfUser, forceInline
+	defer func() { selfUser, forceInline = old, oldForce }()
+	forceInline = false
 
-	selfUser = "" // tests + a service that can't resolve its own user → always inline
-	if crossUser("bob") {
-		t.Fatal("empty selfUser must never take the sudo path")
+	selfUser = "" // a service that cannot resolve its own user knows nobody
+	if !crossUser("bob") {
+		t.Fatal("with no known identity, bob's files must still go through " +
+			"sudo: running inline would drop the boundary the design rests on")
 	}
 	selfUser = "wizard"
 	if !crossUser("bob") {
@@ -94,9 +97,9 @@ func TestOpListAndWriteEnvelope(t *testing.T) {
 // is the service unable to read the file itself.
 
 func TestRoutesOnlyOtherUsersThroughSudo(t *testing.T) {
-	old := selfUser
-	t.Cleanup(func() { selfUser = old })
-	selfUser = "wizard"
+	old, oldForce := selfUser, forceInline
+	t.Cleanup(func() { selfUser, forceInline = old, oldForce })
+	selfUser, forceInline = "wizard", false
 
 	if crossUser("wizard") {
 		t.Fatal("the service's OWN user must stay inline — sudo there would " +
@@ -108,15 +111,46 @@ func TestRoutesOnlyOtherUsersThroughSudo(t *testing.T) {
 	}
 }
 
-func TestNeverSudosWhenSelfUserIsUnknown(t *testing.T) {
-	// user.Current() failing must not turn every request into a sudo call
-	// against a user we cannot name.
-	old := selfUser
-	t.Cleanup(func() { selfUser = old })
+func TestUnknownSelfUserNeverRunsAnotherUsersOpInline(t *testing.T) {
+	// TL-12. user.Current() failing used to make crossUser answer false for
+	// everyone, so every cross-user request ran in the service process with the
+	// TARGET user's home as its containment root and no sudo in between. main()
+	// now refuses to start without an identity; this is the second lock.
+	old, oldForce := selfUser, forceInline
+	t.Cleanup(func() { selfUser, forceInline = old, oldForce })
+	forceInline = false
 	selfUser = ""
-	if crossUser("bob") {
-		t.Fatal("with no known self user the service must stay inline, not " +
-			"guess that every request is cross-user")
+	if !crossUser("bob") {
+		t.Fatal("an unknown identity must fail closed: no inline op under " +
+			"someone else's home")
+	}
+}
+
+func TestOwnHomeIsTheRunningUidsHome(t *testing.T) {
+	// TL-8. The privileged child takes its containment root from the password
+	// database, not from argv, so a caller who chose -home /home cannot widen it.
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("no current user here: %v", err)
+	}
+	got, err := ownHome()
+	if err != nil {
+		t.Fatalf("ownHome: %v", err)
+	}
+	if got != me.HomeDir {
+		t.Fatalf("ownHome = %q, want the uid's own home %q", got, me.HomeDir)
+	}
+}
+
+func TestPrivopArgvCarriesNoContainmentRoot(t *testing.T) {
+	// TL-8. The sudoers grant carries no argument spec, so any argv the parent
+	// can build is one an attacker with the same grant can build. The child must
+	// therefore be told WHAT to touch and never WHERE it is allowed to reach.
+	cmd := privopCommand("bob", "read", "/home/bob/notes.txt", false)
+	for _, a := range cmd.Args {
+		if a == "-home" {
+			t.Fatalf("argv still offers a containment root: %v", cmd.Args)
+		}
 	}
 }
 
@@ -125,7 +159,7 @@ func TestPrivopArgvCarriesNoShell(t *testing.T) {
 	// `file-api` as the target user. argv must therefore be a plain exec with
 	// the path passed as its own argument — never a shell string a filename
 	// could break out of.
-	cmd := privopCommand("bob", "read", "/home/bob", "/home/bob/a; rm -rf /", false)
+	cmd := privopCommand("bob", "read", "/home/bob/a; rm -rf /", false)
 	if cmd.Path != sudoBinary {
 		t.Fatalf("expected %s, got %s", sudoBinary, cmd.Path)
 	}

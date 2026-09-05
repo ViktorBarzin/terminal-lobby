@@ -151,3 +151,55 @@ func TestOwnHomeMatchesThePasswordDatabaseForThisUid(t *testing.T) {
 		t.Fatalf("ownHome = %q, password database says %q", got, u.HomeDir)
 	}
 }
+
+// TL-18. catalogue was the one op that took a path and checked nothing.
+// Discover joins the cwd with .claude/skills and .claude/commands, follows
+// symlinked skill entries (commands.go:86), reads every *.md it reaches and
+// returns describe(), which for a file without frontmatter is its first prose
+// line. An unbounded cwd therefore reads a line out of any file of that shape
+// on the box, with this child's uid, including inside a 0750 home the caller
+// cannot open.
+func TestCataloguRefusesACwdOutsideItsOwnHome(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".claude", "projects")
+
+	for _, cwd := range []string{
+		"/etc",
+		filepath.Join(filepath.Dir(home), "someone-else"),
+		"relative/path",
+		filepath.Join(home, "..", ".."),
+	} {
+		res := handlePrivop(privRequest{Op: "catalogue", CWD: cwd}, home, root)
+		if res.OK {
+			t.Errorf("catalogue accepted cwd %q; it must be bounded like every other path here", cwd)
+		}
+	}
+
+	// The shapes that must keep working: no project directory at all (the only
+	// caller today), and a real directory inside this user's home.
+	if res := handlePrivop(privRequest{Op: "catalogue"}, home, root); !res.OK {
+		t.Errorf("an empty cwd is not a path and must still catalogue: %q", res.Err)
+	}
+	proj := filepath.Join(home, "code")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if res := handlePrivop(privRequest{Op: "catalogue", CWD: proj}, home, root); !res.OK {
+		t.Errorf("a directory inside this user's own home must catalogue: %q", res.Err)
+	}
+}
+
+// A symlink inside the home that points out of it is the escape the lexical
+// check alone would miss.
+func TestCataloguRefusesACwdThatSymlinksOutOfTheHome(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".claude", "projects")
+	outside := t.TempDir()
+	link := filepath.Join(home, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if res := handlePrivop(privRequest{Op: "catalogue", CWD: link}, home, root); res.OK {
+		t.Error("a cwd that resolves outside the home must be refused")
+	}
+}

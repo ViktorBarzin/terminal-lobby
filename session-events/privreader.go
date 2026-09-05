@@ -53,10 +53,15 @@ func newPrivReader(osUser string) *privReader {
 	}
 }
 
+// sudoBinary is absolute so the privileged call cannot be pointed at a
+// different program by whatever PATH this unit happens to inherit. file-api and
+// tmux-api pin theirs for the same reason. A var only as a test seam.
+var sudoBinary = "/usr/bin/sudo"
+
 // privopCommand is the exact command line the sudoers grant is written against.
 // Kept as a function so the test and the deployment note cannot drift apart.
 func privopCommand(osUser, exe string) []string {
-	return []string{"sudo", "-n", "-u", osUser, exe, "-privop"}
+	return []string{sudoBinary, "-n", "-u", osUser, exe, "-privop"}
 }
 
 func sudoChild(osUser string) (*privChild, error) {

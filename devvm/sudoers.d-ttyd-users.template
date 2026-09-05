@@ -78,8 +78,11 @@
 #                                      fork per 200 ms per open session. It
 #                                      speaks a fixed request/response protocol
 #                                      on stdin/stdout, takes no arguments, and
-#                                      re-validates every path against its OWN
-#                                      projects root — so the grant, like
+#                                      re-validates every path it is handed
+#                                      against its OWN home: transcripts against
+#                                      the projects root inside it, the
+#                                      catalogue's working directory against the
+#                                      home itself — so the grant, like
 #                                      file-api's, trusts no path from the
 #                                      caller.
 #
