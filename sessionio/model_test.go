@@ -71,6 +71,40 @@ func TestPickerOptionsReadsCodexsAdvancedReasoning(t *testing.T) {
 	}
 }
 
+// A LIST TALLER THAN THE PANE SHOWS A WINDOW OF ITSELF. The lobby's own attach
+// sizes a session to the browser's terminal, and at 80x23 Claude's model picker
+// draws two of its four rows with "… +2 models" under them — numbered 3 and 4,
+// not 1 and 2. Captured live on 2026-09-05 from a session the browser had
+// attached to.
+func TestPickerOptionsReadsAWindowOfALongerList(t *testing.T) {
+	opts := PickerOptions(fixture(t, "picker-claude-model-narrow.txt"))
+	if len(opts) != 2 {
+		t.Fatalf("options = %+v, want the two rows on screen", opts)
+	}
+	if opts[0].Index != 3 || opts[0].Label != "Opus" {
+		t.Errorf("first visible row = %+v, want 3/Opus", opts[0])
+	}
+	if opts[1].Index != 4 || opts[1].Label != "Haiku" || !opts[1].Cursor {
+		t.Errorf("second visible row = %+v, want 4/Haiku with the cursor", opts[1])
+	}
+}
+
+// And the window can be a SINGLE row, which the walk still has to be able to
+// read: a pane one line shorter than this one shows one. A minimum of two
+// answered nothing at all, and the walk called that "the picker closed" and
+// gave up on a picker that was plainly on screen.
+func TestPickerOptionsReadsASingleVisibleRow(t *testing.T) {
+	pane := "" +
+		"   Select model\n" +
+		"   ❯ 3. Opus                   Opus 5 · Best for everyday, complex tasks\n" +
+		"      … +3 models\n" +
+		"   Enter to set as default · s to use this session only · Esc to cancel\n"
+	opts := PickerOptions(pane)
+	if len(opts) != 1 || opts[0].Label != "Opus" || !opts[0].Cursor {
+		t.Fatalf("options = %+v, want the one row on screen", opts)
+	}
+}
+
 // A pane with no picker on it must not produce options, or a driver would send
 // a digit into somebody's conversation.
 func TestPickerOptionsIgnoresAPaneWithNoPicker(t *testing.T) {

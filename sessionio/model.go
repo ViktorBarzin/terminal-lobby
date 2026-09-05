@@ -55,10 +55,17 @@ type PickerOption struct {
 }
 
 var (
-	// A numbered row: an optional cursor glyph, the number, then the label and
-	// its description in two space-separated columns. Claude points with ❯ and
-	// codex with ›; the ASCII > is carried because dialog.go already does.
-	rePickerRow = regexp.MustCompile(`^\s*([❯›>]?)\s*(\d+)\.\s+(\S.*)$`)
+	// A numbered row: an optional cursor glyph, an optional SCROLL MARKER, the
+	// number, then the label and its description in two space-separated
+	// columns. Claude points with ❯ and codex with ›; the ASCII > is carried
+	// because dialog.go already does.
+	//
+	// The scroll markers are ↑ and ↓, and a list taller than the pane puts one
+	// where the cursor would go on its topmost and bottommost visible rows.
+	// Without them here that row parsed as nothing at all, which on a browser
+	// -sized pane left a two-row window reading as one row and a one-row window
+	// reading as no picker (measured 2026-09-05 at 80x23).
+	rePickerRow = regexp.MustCompile(`^\s*([❯›>])?\s*([↑↓])?\s*(\d+)\.\s+(\S.*)$`)
 	// The gap between an option's name and its description. Both CLIs pad the
 	// name column, so the run of spaces is always there; a name never contains
 	// one.
@@ -127,10 +134,15 @@ var codexEffortRows = map[string]string{
 //
 // The numbers must run consecutively, because they are what a caller would act
 // on: prose that happens to contain "1." and "4." is not a picker, and treating
-// it as one would send a keystroke into somebody's conversation. A list taller
-// than the pane shows a WINDOW of itself, so the run is not required to start
-// at 1 — which is also why the driver walks with arrows rather than reading an
-// index and pressing it.
+// it as one would send a keystroke into somebody's conversation. What carries
+// that guard is the FOOTER, which only a select widget draws — so a window
+// showing a single row is still a picker, and refusing to read one made the
+// walk give up on a picker that was on screen.
+//
+// A list taller than the pane shows a WINDOW of itself, so the run is not
+// required to start at 1, and its topmost and bottommost visible rows carry a
+// scroll marker where the cursor would go. That is also why the driver walks
+// with arrows rather than reading an index and pressing it.
 func PickerOptions(pane string) []PickerOption {
 	if !rePickerFooter.MatchString(pane) {
 		return nil
@@ -147,11 +159,11 @@ func pickerRows(pane string) []PickerOption {
 		if m == nil {
 			continue
 		}
-		n, err := strconv.Atoi(m[2])
+		n, err := strconv.Atoi(m[3])
 		if err != nil {
 			continue
 		}
-		label := optionLabel(m[3])
+		label := optionLabel(m[4])
 		if label == "" {
 			continue
 		}
@@ -164,9 +176,6 @@ func pickerRows(pane string) []PickerOption {
 			out = out[:0]
 		}
 		out = append(out, PickerOption{Index: n, Label: label, Cursor: m[1] != ""})
-	}
-	if len(out) < 2 {
-		return nil
 	}
 	return out
 }
