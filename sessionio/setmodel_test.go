@@ -19,6 +19,13 @@ import (
 
 func pickerSession(t *testing.T) (*Injector, string) {
 	t.Helper()
+	return pickerSessionLagging(t, "")
+}
+
+// pickerSessionLagging is pickerSession with the stand-in told to repaint
+// slowly, so the driver reads a row it has already stood on.
+func pickerSessionLagging(t *testing.T, lag string) (*Injector, string) {
+	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
@@ -35,8 +42,12 @@ func pickerSession(t *testing.T) (*Injector, string) {
 	}
 	sock := "sio-picker-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
 	exec.Command("tmux", "-L", sock, "kill-server").Run()
+	cmd := "python3 " + script
+	if lag != "" {
+		cmd = "FAKEPICKER_LAG=" + lag + " " + cmd
+	}
 	if err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", "demo",
-		"-x", "120", "-y", "40", "python3 "+script).Run(); err != nil {
+		"-x", "120", "-y", "40", cmd).Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
 	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
@@ -123,5 +134,28 @@ func TestEffortStepsCountsTheArrowPressesToALevel(t *testing.T) {
 	}
 	if _, ok := effortSteps(ladder, "ultra"); ok {
 		t.Error("codex's top step was found on Claude's ladder")
+	}
+}
+
+// A SLOW REPAINT IS NOT THE END OF THE LIST. The walk reads the cursor back
+// between steps, so a picker that has not redrawn yet answers with the row it
+// was already on — and a walk that read that as "been round the list" reported
+// a model the session plainly offers as one it does not. Measured 2026-09-05
+// against a live picker on a loaded box: `haiku` came back as "not offered
+// here — this session lists Default, Sonnet, Opus, Haiku", naming in its own
+// error the row it had failed to reach.
+func TestSetModelWalksPastASlowRepaint(t *testing.T) {
+	in, osUser := pickerSessionLagging(t, "0.4")
+
+	got, err := in.SetModel(context.Background(), osUser, "demo", HarnessClaude, ModelState{Model: "Haiku"})
+	if err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if got.Model != "Haiku" {
+		t.Fatalf("state = %+v", got)
+	}
+	pane, _ := in.CapturePane(osUser, "demo")
+	if !strings.Contains(pane, "MODEL=Haiku") {
+		t.Fatalf("the walk did not reach Haiku; pane:\n%s", pane)
 	}
 }
