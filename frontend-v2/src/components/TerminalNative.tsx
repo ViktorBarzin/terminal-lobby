@@ -223,9 +223,10 @@ function validFontSize(v: unknown): v is number {
  * this reads is the one that store writes. The BOUNDS are shared (prefs.ts
  * FONT_SIZE_MIN/MAX, term.html:2670).
  *
- * A LIVE pref change reaches term.html through the `__tlPrefsLive` bridge
- * (:9173-9188) and has no route in here yet, so a change made while this
- * terminal is mounted lands on its next mount.
+ * This is the read at MOUNT. A change made while the terminal is already up
+ * arrives on the `__tlPrefsLive` receiver below instead, so the two have to
+ * agree on what a usable size is: both ask `validFontSize` and both discard
+ * rather than clamp.
  */
 function bootPrefs(): Prefs {
   let raw: Record<string, unknown> = {};
@@ -270,10 +271,12 @@ type InputBarPosture = "auto" | "on" | "off";
  * subkey is read here with its own validator the way `bootPrefs` reads the
  * legacy font key. Nothing on this side writes it.
  *
- * Read ONCE per mount. term.html reconciles it live from `applyInputPrefs`
- * (:7483-7488) over the `tl-prefs` message, which is the un-ported
- * `__tlPrefsLive` bridge (:9173-9188), the same gap `bootPrefs` records for
- * the font size, so a posture change lands on this terminal's next mount.
+ * Read ONCE per mount, and this one really is mount-only. term.html reconciles
+ * it live from `applyInputPrefs` (:7483-7488) over the same `tl-prefs` message
+ * that carried the font size, and the `__tlPrefsLive` receiver below takes the
+ * font-size half alone: moving the input bar rebuilds the compose mirror and
+ * the soft-key rows rather than changing a number on xterm, so it is a larger
+ * port than a fit. A posture change therefore lands on the next mount.
  */
 function bootInputBar(): InputBarPosture {
   let bar: unknown;
@@ -1634,10 +1637,11 @@ export const TerminalNative: Component<{
        * WHY IT SHIPS WITH THE FLIP rather than with the rest of pass 2. A
        * pinch is how a person changes text size on a tablet, and the A−/A+
        * buttons are hidden on a coarse pointer for exactly that reason
-       * (SessionView.tsx, the terminal-controls comment). They also do not
-       * reach a mounted native terminal yet — the `__tlPrefsLive` bridge is
-       * not ported — so without this the tablet the flip hands the native
-       * terminal to has no way to resize at all.
+       * (SessionView.tsx, the terminal-controls comment). So this is a tablet's
+       * only way to resize at all, whether or not the stepper's live route
+       * exists: at the flip that route was un-ported and the pinch was the
+       * whole story, and now that `__tlPrefsLive` is back it is still the whole
+       * story on a coarse pointer, because the buttons are not there to press.
        * ---------------------------------------------------------------- */
 
       /**
@@ -2065,10 +2069,11 @@ export const TerminalNative: Component<{
        * page's detach does (:6269-6271): zero the accumulator and cancel the
        * pending frame. Both ride the module's `detached` event, and the only
        * route a live pref change has into a mounted terminal is `__tlPrefsLive`
-       * (:9173-9188), which is not ported, the same gap `bootPrefs` records
-       * for the font size. So a frame already scheduled when the pref goes off
-       * still drains, once, where term.html cancels it. Whoever ports that
-       * bridge owes this a `performWheel({ type: "detached" })`.
+       * (:9173-9188), and the receiver below reads the FONT SIZE out of that
+       * payload and nothing else. The gestures pref is still mount-only here,
+       * so a frame already scheduled when gestures go off still drains, once,
+       * where term.html cancels it. Whoever wires gestures into that receiver
+       * owes this a `performWheel({ type: "detached" })`.
        */
       term.attachCustomWheelEventHandler((e: WheelEvent): boolean =>
         performWheel({ type: "wheel", wheel: e }),
@@ -3234,6 +3239,38 @@ export const TerminalNative: Component<{
       });
       ownWhile(owns, "__tlRefitTerminal", () => {
         refit("fit-wanted");
+        return true;
+      });
+      /**
+       * THE LIVE PREF ROUTE, which is term.html's `applyTermPrefs`
+       * (:9178-9203) reached through the `__tlPrefsLive` bridge (:9173-9188).
+       *
+       * store/prefs.ts:734 calls this AFTER it has persisted, so Settings →
+       * Terminal's A− / A+ reaches an attached terminal instead of waiting for
+       * its next mount. Nothing persists here, or the two writes would chase
+       * each other through the same key.
+       *
+       * THE FIT IS IMMEDIATE, like the pinch's, and for the same reason: the
+       * cell metrics just changed under xterm, so `refit`'s 120ms coalesce
+       * would leave the grid wrong for a visible beat. fit.ts's owes list names
+       * both call sites.
+       *
+       * WHAT DOES NOT COME WITH IT: `maskFitBurst` (:9159-9170), which dimmed
+       * the container to .35 through the metric swap and lifted it 180ms after
+       * the last fit of a burst. A held-down stepper is steppier here than in
+       * the page. That is cosmetic where the resize itself is not, so it is
+       * left rather than half-ported.
+       *
+       * `false` means the size was one xterm should never be given, which is
+       * the same discard-or-ignore `bootPrefs` above applies to a stored value.
+       * The sender treats it as "no terminal took this" and does nothing else,
+       * so a rejected size costs a no-op rather than a broken grid.
+       */
+      ownWhile(owns, "__tlPrefsLive", (p: { fontSize: number }) => {
+        if (!validFontSize(p.fontSize)) return false;
+        if (term.options.fontSize === p.fontSize) return true;
+        term.options.fontSize = p.fontSize;
+        safeFit("fit-wanted");
         return true;
       });
       ownWhile(owns, "__tlKeyboardOffset", (px: number) => {

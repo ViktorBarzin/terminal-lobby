@@ -387,6 +387,7 @@ beforeEach(() => {
     "__tlFocusTerminal",
     "__tlRefitTerminal",
     "__tlKeyboardOffset",
+    "__tlPrefsLive",
   ]) {
     Reflect.deleteProperty(window, key);
   }
@@ -2589,6 +2590,84 @@ describe("the live-theme global survives an out-of-order unmount", () => {
     only.unmount();
     await settle();
     expect(themeLive()).toBe(before);
+  });
+});
+
+/**
+ * THE LIVE FONT-SIZE BRIDGE, the sibling of the theme one above.
+ *
+ * store/prefs.ts calls `window.__tlPrefsLive` AFTER it has persisted a change,
+ * so Settings → Terminal's A− / A+ reaches an attached terminal without
+ * dropping its WebSocket. The iframe host installed it and posted the size
+ * across the boundary; deleting that component took the receiver with it, and
+ * for one day A− / A+ wrote the pref and the terminal kept its size until it
+ * next remounted.
+ *
+ * Two things this pins beyond "the size changed". The receiver must NOT persist,
+ * because the sender already did and a second write would be a loop through the
+ * same key. And it must fit IMMEDIATELY rather than through `refit`, because
+ * the metrics changed under xterm: fit.ts's owes list names the pref path
+ * alongside the pinch as the call sites that do not debounce.
+ *
+ * What is NOT ported with it: `maskFitBurst`, which dimmed the container to .35
+ * through the metric swap and restored it 180ms after the last fit of a burst.
+ * A held-down stepper is therefore visibly steppy here where the page hid the
+ * burst. That is cosmetic, and strictly better than a terminal that does not
+ * resize at all, so it is left for whoever wants the polish.
+ */
+describe("the live font-size bridge (term.html:9173-9203)", () => {
+  const prefsLive = (): ((p: { fontSize: number }) => boolean) | undefined =>
+    window.__tlPrefsLive;
+
+  it("is claimed by a mounted terminal", async () => {
+    await mount();
+    expect(typeof prefsLive()).toBe("function");
+  });
+
+  it("applies the size to xterm and fits at once", async () => {
+    const m = await mount();
+    const fitsBefore = m.fit.fits;
+    expect(m.term.options.fontSize).toBe(15);
+
+    expect(prefsLive()?.({ fontSize: 21 })).toBe(true);
+    expect(m.term.options.fontSize).toBe(21);
+    expect(m.fit.fits).toBe(fitsBefore + 1);
+  });
+
+  it("does not write the pref back, because the sender already did", async () => {
+    await mount();
+    localStorage.removeItem("tl-prefs");
+    prefsLive()?.({ fontSize: 19 });
+    expect(localStorage.getItem("tl-prefs")).toBe(null);
+  });
+
+  it("refuses a size xterm should never be given", async () => {
+    const m = await mount();
+    for (const bad of [0, -3, 99, Number.NaN]) {
+      expect(prefsLive()?.({ fontSize: bad })).toBe(false);
+      expect(m.term.options.fontSize).toBe(15);
+    }
+  });
+
+  it("keeps the newer terminal's receiver when an older one unmounts", async () => {
+    const first = render(() => (
+      <TerminalNative args="arg=qa-prefs-1" watch={() => false} ownsBridges={true} />
+    ));
+    await settle();
+    const afterFirst = prefsLive();
+
+    const second = render(() => (
+      <TerminalNative args="arg=qa-prefs-2" watch={() => false} ownsBridges={true} />
+    ));
+    await settle();
+    expect(prefsLive()).not.toBe(afterFirst);
+    const afterSecond = prefsLive();
+
+    first.unmount();
+    await settle();
+    expect(prefsLive()).toBe(afterSecond);
+
+    second.unmount();
   });
 });
 
