@@ -41,9 +41,10 @@ const LETTER: StepSpec = { min: LETTER_SPACING_MIN, max: LETTER_SPACING_MAX, ste
  * with no migration and no notice.
  *
  * Every row except flow control is roamed, so a change reaches the live
- * terminal without a reload — with one gap that is not this page's to fix:
- * font size is persisted and read at the terminal's next mount, because
- * nothing installs the `__tlPrefsLive` receiver today (store/prefs.ts).
+ * terminal without a reload. Font size gets there through the `__tlPrefsLive`
+ * receiver TerminalNative installs, which the store calls after it persists
+ * (store/prefs.ts). The input-bar posture is the row that still waits for the
+ * terminal's next mount, and the reason is on the read.
  */
 export const TerminalPage: Component<{ prefs: PrefsStore }> = (props) => {
   const p = () => props.prefs.prefs();

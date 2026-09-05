@@ -66,11 +66,15 @@ interface Window {
   // it after persisting a change so the attached terminal applies the new font
   // size immediately instead of at its next mount.
   //
-  // NOTHING INSTALLS IT TODAY. TerminalView owned it and was deleted with the
-  // page it framed; TerminalNative has not picked it up, so A− and A+ write
-  // tl-font-size and the terminal keeps its size until it remounts. Declared
-  // rather than removed because the sender is already here and correct, and the
-  // gap is one `ownWhile` on the receiving side.
+  // Installed by the mounted TerminalNative, through ownWhile so only the
+  // primary terminal claims the name. It was a cross-document post while the
+  // terminal was an iframe, and went briefly missing when that component was
+  // deleted: for one day A− and A+ wrote the pref and the terminal kept its
+  // size until it remounted.
+  //
+  // FONT SIZE ONLY, though the sender passes the whole Prefs doc. The input-bar
+  // posture and the gestures switch are still read at mount, each for its own
+  // reason, both recorded where they are read.
   __tlPrefsLive?: (prefs: { fontSize: number }) => boolean;
   // Set by the mounted SessionView — attach stored files to the TEXT view's
   // composer tray from outside it (design 2026-08-17 decision 14). The 🖼 gallery
