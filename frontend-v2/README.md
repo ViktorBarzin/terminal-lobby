@@ -244,6 +244,14 @@ src/
                          remains the source of truth until the port lands; where a
                          module knowingly differs, the divergence is argued in a
                          comment at the site
+    keepfocus.ts         Whether a tap's compat mousedown may move focus. A tap
+                         focuses the compose mirror at touchend; the mousedown
+                         follows 10-44ms later and is hit-tested where the finger
+                         was, against a layout the keyboard reserve has since
+                         shrunk. Off the grid it lands on something focusable=false
+                         and blurs the mirror, taking the keyboard with it. Inside
+                         the grid dragselect already prevents it, which is why the
+                         top of a phone screen always worked
     reconnect.ts         The backoff ladder as a reducer: attempts, generations
                          (so a late /token or session answer cannot install a
                          socket nobody is waiting for), the 30s proof that only

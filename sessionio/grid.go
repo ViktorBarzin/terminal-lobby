@@ -90,6 +90,86 @@ func (in *Injector) PinGrid(osUser, session string) error {
 	return nil
 }
 
+// RepinGrid re-points a pinned session's hooks at the name it has NOW.
+//
+// PinGrid bakes the session name into all three hooks, so a rename leaves them
+// naming a session that no longer resolves. Each one then fails into its own
+// `|| true` and nothing resizes the window, while `window-size` stays `manual` —
+// the one combination that freezes a grid permanently.
+//
+// Found live 2026-09-05: session `hjtedz8zrn7h`, renamed from `ux` by the
+// ADR-0019 id migration, sat at 58x38 with a 92x58 client attached and hooks
+// reading `resize-window -t =ux:` against a server holding no session `ux`. It
+// had stopped following the phone it was being read on.
+//
+// A session that was NEVER pinned is left alone: pinning one here would take its
+// sizing away from tmux on nothing more than a rename, and the pin exists for
+// watched sessions only.
+//
+// The unpin before the repin is deliberate. `window-size manual` is already set,
+// so PinGrid's capture-pin-restore would faithfully preserve the FROZEN size;
+// clearing the option first lets tmux snap the window back onto its read-write
+// client, and PinGrid then captures that.
+func (in *Injector) RepinGrid(osUser, session string) error {
+	if !gridNameRe.MatchString(session) {
+		return fmt.Errorf("repin grid: unsafe session name %q", session)
+	}
+	pinned, err := in.gridPinned(osUser, session)
+	if err != nil {
+		return err
+	}
+	if !pinned {
+		return nil
+	}
+	if out, err := in.Command(osUser, "set-option", "-u", "-t", exactPane(session),
+		"window-size").CombinedOutput(); err != nil {
+		return fmt.Errorf("repin grid %s: unpin: %v: %s",
+			session, err, strings.TrimSpace(string(out)))
+	}
+	return in.PinGrid(osUser, session)
+}
+
+// GridPinStale reports a pin whose hooks name a session that is no longer this
+// one — the state a rename leaves behind, in which the window can never resize.
+//
+// Both halves are required. `window-size manual` alone is just a pin; hooks
+// naming another session alone cannot happen without it. Together they are the
+// freeze.
+func (in *Injector) GridPinStale(osUser, session string) (bool, error) {
+	if !gridNameRe.MatchString(session) {
+		return false, fmt.Errorf("grid pin: unsafe session name %q", session)
+	}
+	pinned, err := in.gridPinned(osUser, session)
+	if err != nil || !pinned {
+		return false, err
+	}
+	out, err := in.Command(osUser, "show-hooks", "-t", exactPane(session)).Output()
+	if err != nil {
+		return false, fmt.Errorf("grid pin %s: read hooks: %w", session, err)
+	}
+	hooks := string(out)
+	if !strings.Contains(hooks, "resize-window") {
+		// Pinned with no resizer at all: nothing will ever move this window,
+		// which is the same freeze by a shorter route.
+		return true, nil
+	}
+	return !strings.Contains(hooks, "-t "+exactPane(session)+" "), nil
+}
+
+// gridPinned reports whether this session's size is under PinGrid's control.
+//
+// `show-options -qv` without `-g` reads the SESSION-scoped value only, so an
+// unpinned session answers empty even though the global default is `latest`.
+// Nothing else on this box sets `window-size` at session scope.
+func (in *Injector) gridPinned(osUser, session string) (bool, error) {
+	out, err := in.Command(osUser, "show-options", "-qv", "-t", exactPane(session),
+		"window-size").Output()
+	if err != nil {
+		return false, fmt.Errorf("repin grid %s: read window-size: %w", session, err)
+	}
+	return strings.TrimSpace(string(out)) == "manual", nil
+}
+
 // gridHook is the command all three hooks run: resize the window to the last
 // read-write client attached, or leave it exactly as it is when there is none.
 //
