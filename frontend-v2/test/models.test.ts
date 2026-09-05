@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { currentModel } from "../src/components/timeline.logic";
+import type { Event, SessionState } from "../src/types/events";
 import {
   DEFAULT_CHOICE,
   effortsFor,
@@ -136,5 +138,52 @@ describe("the chip's summary", () => {
   it("shows whichever half it has", () => {
     expect(summarise("claude", { effort: "high" })).toBe("high");
     expect(summarise("claude", { model: "claude-opus-5" })).toBe("opus");
+  });
+});
+
+/**
+ * What the chip reads. Two sources fold into one answer: the state frame the
+ * server computes over the whole log, and the events newer than it.
+ */
+describe("the model a session is on", () => {
+  const meta = (id: number, model: string, effort?: string): Event => ({
+    id,
+    kind: "meta",
+    session: "s",
+    meta: "model",
+    model: effort ? { model, effort } : { model },
+  });
+  const seed = (at: number, model?: string, effort?: string): SessionState => ({
+    at,
+    queue: [],
+    prompts: [],
+    ...(model ? { model: effort ? { model, effort } : { model } } : {}),
+  });
+
+  it("says nothing about a session that has not answered", () => {
+    expect(currentModel([], null)).toBeUndefined();
+    expect(currentModel([], seed(3))).toBeUndefined();
+  });
+
+  it("takes the newest reading in the window", () => {
+    const got = currentModel([meta(1, "claude-opus-5", "max"), meta(2, "claude-sonnet-5", "high")]);
+    expect(got).toEqual({ model: "claude-sonnet-5", effort: "high" });
+  });
+
+  // The state frame is folded over the WHOLE log; the window sits below its
+  // cursor, so folding it on top would apply the same readings twice — and on
+  // a reverse open the window arrives newest-first, which would land on the
+  // OLDEST of them.
+  it("prefers the state frame over a window it already accounts for", () => {
+    const got = currentModel([meta(2, "claude-opus-5"), meta(1, "claude-haiku-4-5")], seed(5, "claude-sonnet-5"));
+    expect(got?.model).toBe("claude-sonnet-5");
+  });
+
+  // A change made from the chip is reported by the CLI's own receipt, which
+  // the server folds into the state frame — so a reader arriving before the
+  // session's next turn sees what it is on, not what it last answered on.
+  it("follows a change that has not been answered on yet", () => {
+    const got = currentModel([meta(9, "sonnet")], seed(8, "claude-haiku-4-5", "max"));
+    expect(got?.model).toBe("sonnet");
   });
 });

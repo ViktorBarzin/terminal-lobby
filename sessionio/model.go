@@ -77,6 +77,11 @@ var (
 	// The footer every select widget draws. Used to decide whether a picker is
 	// on screen at all, never to read anything out of it.
 	rePickerFooter = regexp.MustCompile(`(?i)(Enter to set as default|Enter to confirm|Press enter to confirm|←/→ to adjust)`)
+	// What `/model` answers with, once the choice has been made: "Set model to
+	// `Sonnet 5` for this session only", "Set model to Opus 5 and saved as your
+	// default for new sessions", or "Kept model as Haiku 4.5" when the pick was
+	// the model already in force.
+	reModelReceipt = regexp.MustCompile("(?i)(?:set model to|kept model as)\\s+[`\u2018\u2019\"]?([A-Za-z][\\w.-]*)")
 )
 
 // ClaudeEfforts is the effort ladder Claude Code offers, in slider order.
@@ -115,6 +120,12 @@ func PickerOptions(pane string) []PickerOption {
 	if !rePickerFooter.MatchString(pane) {
 		return nil
 	}
+	return pickerRows(pane)
+}
+
+// pickerRows is the parse without the footer guard, for the one dialog that
+// draws numbered rows and no footer (see SwitchPrompt).
+func pickerRows(pane string) []PickerOption {
 	var out []PickerOption
 	for _, line := range strings.Split(pane, "\n") {
 		m := rePickerRow.FindStringSubmatch(stripDialogBorder(line))
@@ -245,6 +256,73 @@ func CodexState(pane string) ModelState {
 	}
 	return st
 }
+
+// SwitchPrompt reads the confirmation Claude Code raises when the model of a
+// conversation that ALREADY HAS A WARM CACHE is changed, and answers with the
+// row that says yes.
+//
+// It is a second dialog, after the picker has committed: "Switch model? … This
+// conversation is cached for the current model." It appears only once a session
+// has taken a turn, which is why a driver tested against fresh sessions never
+// meets it — and it carries none of the select widget's footers, so the picker
+// parser deliberately does not see it. Left unanswered it blocks the session on
+// a dialog nobody is looking at, which is what happened on 2026-09-05.
+//
+// The yes row names the model ("Yes, switch to Opus 5"), so it is returned
+// rather than assumed: the driver walks to that exact label, the same as
+// anywhere else.
+func SwitchPrompt(pane string) (string, bool) {
+	if !strings.Contains(pane, "Switch model?") {
+		return "", false
+	}
+	for _, o := range pickerRows(pane) {
+		if strings.HasPrefix(o.Label, "Yes") {
+			return o.Label, true
+		}
+	}
+	return "", false
+}
+
+// ModelFromReceipt reads the model out of what `/model` answered with, as the
+// word the picker itself uses.
+//
+// It exists because the transcript only names the model on an ASSISTANT
+// record: after a change, the newest one still names the model that answered
+// BEFORE it, and stays that way until the session takes another turn. The
+// receipt is Claude Code's own confirmation and lands immediately, so a reader
+// arriving in that window sees what the session is on rather than what it was
+// on (measured 2026-09-05 — a reload after a switch showed the old model).
+//
+// The receipt spells the model for a person, "Sonnet 5", where every other
+// source spells it `claude-sonnet-5` or `sonnet`. The first word, lowercased,
+// is the one form all three agree on.
+func ModelFromReceipt(line string) (string, bool) {
+	m := reModelReceipt.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	return strings.ToLower(m[1]), true
+}
+
+// shortClaudeModel is a Claude model name reduced to the word every source
+// agrees on: `claude-haiku-4-5-20251001` and the receipt's "Haiku 4.5" both
+// come out as "haiku".
+//
+// The three sources spell the same model three ways — the transcript writes the
+// full id, the receipt writes it for a person, the picker writes one word — so
+// a change is judged on this rather than on the string, or every receipt would
+// look like a change from the record before it.
+func shortClaudeModel(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.TrimPrefix(name, "claude-")
+	if i := strings.IndexAny(name, "- "); i > 0 {
+		name = name[:i]
+	}
+	return name
+}
+
+// SameModel reports whether two spellings name the same Claude model.
+func SameModel(a, b string) bool { return shortClaudeModel(a) == shortClaudeModel(b) }
 
 // CodexEffortLabel names the row to pick for one of codex's levels.
 func CodexEffortLabel(id string) (string, bool) {
