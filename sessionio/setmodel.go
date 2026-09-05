@@ -73,7 +73,7 @@ func (in *Injector) setClaudeModel(ctx context.Context, osUser, session string, 
 		if err := in.openPicker(ctx, osUser, session, "/model", "Select model"); err != nil {
 			return ModelState{}, err
 		}
-		if err := in.walkTo(ctx, osUser, session, want.Model); err != nil {
+		if err := in.walkTo(ctx, osUser, session, want.Model, PickerOptions); err != nil {
 			in.escape(osUser, session)
 			return ModelState{}, err
 		}
@@ -126,7 +126,7 @@ func (in *Injector) confirmSwitch(ctx context.Context, osUser, session string) e
 		if err == nil {
 			yes, ok := SwitchPrompt(pane)
 			if ok {
-				if err := in.walkTo(ctx, osUser, session, yes); err != nil {
+				if err := in.walkTo(ctx, osUser, session, yes, pickerRows); err != nil {
 					in.escape(osUser, session)
 					return fmt.Errorf("confirming the switch: %w", err)
 				}
@@ -201,7 +201,7 @@ func (in *Injector) setCodexModel(ctx context.Context, osUser, session string, w
 		return ModelState{}, err
 	}
 	if want.Model != "" {
-		if err := in.walkTo(ctx, osUser, session, want.Model); err != nil {
+		if err := in.walkTo(ctx, osUser, session, want.Model, PickerOptions); err != nil {
 			in.escape(osUser, session)
 			return ModelState{}, err
 		}
@@ -221,7 +221,7 @@ func (in *Injector) setCodexModel(ctx context.Context, osUser, session string, w
 		if CodexEffortIsAdvanced(want.Effort) {
 			// Max and Ultra are not on this screen. "More reasoning…" is the
 			// row that opens the one they are on.
-			if err := in.walkTo(ctx, osUser, session, "More reasoning…"); err != nil {
+			if err := in.walkTo(ctx, osUser, session, "More reasoning…", PickerOptions); err != nil {
 				in.escape(osUser, session)
 				return ModelState{}, err
 			}
@@ -232,7 +232,7 @@ func (in *Injector) setCodexModel(ctx context.Context, osUser, session string, w
 				return ModelState{}, err
 			}
 		}
-		if err := in.walkTo(ctx, osUser, session, row); err != nil {
+		if err := in.walkTo(ctx, osUser, session, row, PickerOptions); err != nil {
 			in.escape(osUser, session)
 			return ModelState{}, err
 		}
@@ -309,6 +309,13 @@ func (in *Injector) awaitClosed(ctx context.Context, osUser, session, phrase str
 	}
 }
 
+// rowReader is how a screen's numbered rows are read off the pane. A picker
+// has a select-widget footer and PickerOptions insists on it, which is what
+// keeps a stray "1." in prose from being walked. The warm-cache confirmation
+// draws the same rows with no footer at all, so it reads them with the guard
+// off — it has already been identified by SwitchPrompt at that point.
+type rowReader func(pane string) []PickerOption
+
 // walkTo moves the picker's cursor onto a row by NAME.
 //
 // It pins the list at its first row and then steps down one at a time, reading
@@ -317,7 +324,7 @@ func (in *Injector) awaitClosed(ctx context.Context, osUser, session, phrase str
 // is wanted may not be on screen to count to — and pressing a digit is not a
 // move in Claude Code, it is a commit, and the thing it commits is the account
 // default.
-func (in *Injector) walkTo(ctx context.Context, osUser, session, label string) error {
+func (in *Injector) walkTo(ctx context.Context, osUser, session, label string, rows rowReader) error {
 	if err := in.rawKeys(osUser, session, repeat("Up", saturate)...); err != nil {
 		return fmt.Errorf("walking to %q: %w", label, err)
 	}
@@ -339,7 +346,7 @@ func (in *Injector) walkTo(ctx context.Context, osUser, session, label string) e
 		if err != nil {
 			return fmt.Errorf("walking to %q: %w", label, err)
 		}
-		opts := PickerOptions(pane)
+		opts := rows(pane)
 		if len(opts) == 0 {
 			return fmt.Errorf("walking to %q: the picker closed", label)
 		}

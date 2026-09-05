@@ -1,6 +1,9 @@
 package sessionio
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The pickers, read off live panes on 2026-09-05: Claude Code 2.1.261 and
 // codex-cli 0.144.3, both driven through the same tmux send-keys this package
@@ -275,6 +278,31 @@ func TestSwitchPromptRecognisesTheEffortConfirmationToo(t *testing.T) {
 	}
 	if yes != "Yes, switch to high" {
 		t.Fatalf("the row to answer with = %q", yes)
+	}
+}
+
+// The confirmation draws numbered rows with a cursor, exactly like a picker,
+// and carries NO select-widget footer. Anything that walks it therefore has to
+// read the rows without that guard: PickerOptions answers nothing here by
+// design, and a walk built on it reported "the picker closed" and left the
+// change half made.
+func TestSwitchConfirmationHasWalkableRowsButNoPickerFooter(t *testing.T) {
+	for _, name := range []string{"confirm-claude-switch.txt", "confirm-claude-effort.txt"} {
+		pane := fixture(t, name)
+		if len(PickerOptions(pane)) != 0 {
+			t.Errorf("%s: the footer guard let the confirmation through", name)
+		}
+		rows := pickerRows(pane)
+		if len(rows) != 2 {
+			t.Fatalf("%s: rows = %+v, want the two the dialog offers", name, rows)
+		}
+		cur, ok := CursorOption(rows)
+		if !ok {
+			t.Fatalf("%s: no cursor to walk from", name)
+		}
+		if !strings.HasPrefix(cur.Label, "Yes") {
+			t.Errorf("%s: the cursor starts on %q", name, cur.Label)
+		}
 	}
 }
 
