@@ -233,11 +233,11 @@ func TestRecorderSurvivesAServiceThatRefusesTheReading(t *testing.T) {
 	e.sink.waitFor(t, 1)
 }
 
-// No jq means no envelope to post and no way to read the user's settings, but
-// the explicit inner command still runs. PATH is emptied of jq by pointing it
-// at a directory holding only the binaries the pass-through itself needs.
-func TestRecorderSurvivesAMissingJQ(t *testing.T) {
-	e := newRecorderEnv(t)
+// jqFreePath is a PATH holding the binaries the pass-through itself needs and
+// deliberately not jq, so a test can run the script the way a box without jq
+// would.
+func jqFreePath(t *testing.T) string {
+	t.Helper()
 	bin := t.TempDir()
 	for _, name := range []string{"env", "bash", "sh", "printf", "cat", "tmux", "curl"} {
 		p, err := exec.LookPath(name)
@@ -248,13 +248,61 @@ func TestRecorderSurvivesAMissingJQ(t *testing.T) {
 			t.Fatalf("link %s: %v", name, err)
 		}
 	}
+	return bin
+}
+
+// No jq means no envelope to post, but the explicit inner command still runs.
+func TestRecorderSurvivesAMissingJQ(t *testing.T) {
+	e := newRecorderEnv(t)
 	out, code := e.run(t, recorderPayload(t, "statusline_enterprise.json"), `printf 'no jq here'`,
-		"PATH="+bin)
+		"PATH="+jqFreePath(t))
 	if code != 0 || out != "no jq here" {
 		t.Fatalf("exit %d output %q, want 0 and the inner output", code, out)
 	}
 	if n := e.sink.count(); n != 0 {
 		t.Fatalf("posted %d readings without jq to build the envelope", n)
+	}
+}
+
+// Losing the recording is the price of a missing jq. Losing the user's own
+// prompt is not: their statusLine is theirs, and this script only borrowed the
+// slot. So the command is read out of their settings with or without jq.
+func TestRecorderRunsTheUsersStatusLineWithoutJQ(t *testing.T) {
+	e := newRecorderEnv(t)
+	cfg := t.TempDir()
+	settings := `{"statusLine":{"type":"command","command":"printf 'their own prompt'","padding":0}}`
+	if err := os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, code := e.run(t, recorderPayload(t, "statusline_enterprise.json"), "",
+		"CLAUDE_CONFIG_DIR="+cfg, "PATH="+jqFreePath(t))
+	if code != 0 || out != "their own prompt" {
+		t.Fatalf("exit %d output %q, want the user's own statusLine to have run", code, out)
+	}
+}
+
+// The fallback parser refuses what it cannot read rather than running half a
+// command. A command carrying an escaped quote is past what parameter expansion
+// can take apart, and half of somebody's prompt is worse than none of it.
+func TestRecorderFallbackRefusesACommandItCannotParse(t *testing.T) {
+	e := newRecorderEnv(t)
+	cfg := t.TempDir()
+	settings := `{"statusLine":{"command":"printf 'say \"hi\"'"}}`
+	if err := os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, code := e.run(t, recorderPayload(t, "statusline_enterprise.json"), "",
+		"CLAUDE_CONFIG_DIR="+cfg, "PATH="+jqFreePath(t))
+	if code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if out != "" {
+		t.Fatalf("output = %q, want nothing rather than a truncated command", out)
+	}
+	// With jq present the same file runs normally.
+	out, code = e.run(t, recorderPayload(t, "statusline_enterprise.json"), "", "CLAUDE_CONFIG_DIR="+cfg)
+	if code != 0 || out != `say "hi"` {
+		t.Fatalf("with jq: exit %d output %q, want the command from settings.json", code, out)
 	}
 }
 
@@ -387,6 +435,44 @@ func TestRecorderPostsOnlyWhenTheTotalMoves(t *testing.T) {
 	if got := e.sink.at(1).StatusLine.Cost.TotalCostUSD; got != 0.44 {
 		t.Fatalf("second reading = %v, want 0.44", got)
 	}
+}
+
+// Two agent panes in one tmux session are two conversations with two running
+// totals, so the throttle has to remember them separately. A session-scoped
+// option would have each pane comparing against the other's total: the two
+// almost never match, so every render of both panes posts, and on the renders
+// where they do match a real reading is dropped.
+func TestRecorderThrottlesEachPaneOnItsOwnTotal(t *testing.T) {
+	e := newRecorderEnv(t)
+	other, err := exec.Command("tmux", "-L", e.sock, "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", "demo", "sh").Output()
+	if err != nil {
+		t.Fatalf("split-window: %v", err)
+	}
+	paneB := strings.TrimSpace(string(other))
+	if paneB == "" || paneB == e.pane {
+		t.Fatalf("second pane = %q, first = %q", paneB, e.pane)
+	}
+	payload := func(cost string) string {
+		return `{"session_id":"s1","cost":{"total_cost_usd":` + cost + `}}`
+	}
+
+	// The same total in both panes is two readings, not one.
+	e.run(t, payload("1.23"), `printf 'x'`)
+	e.sink.waitFor(t, 1)
+	e.run(t, payload("1.23"), `printf 'x'`, "TMUX_PANE="+paneB)
+	e.sink.waitFor(t, 2)
+
+	// And a pane that has not moved is still dropped.
+	e.run(t, payload("1.23"), `printf 'x'`)
+	e.run(t, payload("1.23"), `printf 'x'`, "TMUX_PANE="+paneB)
+	time.Sleep(settleWindow)
+	if n := e.sink.count(); n != 2 {
+		t.Fatalf("posted %d readings, want 2: each pane throttles on its own total", n)
+	}
+
+	// A pane whose total moves posts again.
+	e.run(t, payload("2.40"), `printf 'x'`, "TMUX_PANE="+paneB)
+	e.sink.waitFor(t, 3)
 }
 
 // The throttle reads the total with shell parameter expansion rather than jq,
