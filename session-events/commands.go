@@ -282,17 +282,46 @@ func (rg *registry) catalogue(osUser, session string) ([]Command, bool) {
 	if !ok {
 		return nil, false
 	}
+	// The cwd is bounded BEFORE either leg walks it. It is stored from the
+	// session-start hook body (registry.go), a route any local account on the
+	// box can post to, and the walk reads the first prose line out of every
+	// .md it reaches under it, so an unbounded cwd is a directed read of any
+	// file of that shape the walker can open. The privileged child checks it
+	// again on its own side, because that is where the privilege is; this is
+	// what bounds the leg that runs Discover inline in the service process.
+	home := filepath.Join(rg.homeBase, osUser)
+	cwd, ok := catalogueCWD(home, info.CWD)
+	if !ok {
+		log.Printf("catalogue: %s/%s: cwd %q is outside %s", osUser, session, info.CWD, home)
+		return nil, true
+	}
 	// Another user's skills and commands live inside their 0750 home, so the
 	// discovery walk has to run as them. An unreachable catalogue costs the
 	// composer only its non-built-in entries, so a failure here is logged and
 	// answered as "none" rather than failing the request.
 	if us.priv != nil {
-		cmds, err := us.priv.Catalogue(info.CWD)
+		cmds, err := us.priv.Catalogue(cwd)
 		if err != nil {
 			log.Printf("catalogue: %s/%s: %v", osUser, session, err)
 			return nil, true
 		}
 		return cmds, true
 	}
-	return Discover(filepath.Join(rg.homeBase, osUser), info.CWD), true
+	return Discover(home, cwd), true
+}
+
+// catalogueCWD bounds the session's working directory against the home whose
+// catalogue is being walked. ok=false is a refusal of the whole catalogue
+// rather than a "walk the home half anyway", because the privileged child
+// fails the entire op on the same input (privop.go) and the two legs of
+// catalogue have to answer the same way. An empty cwd is "no project
+// directory", not a path, and passes through untouched.
+func catalogueCWD(home, cwd string) (string, bool) {
+	if cwd == "" {
+		return "", true
+	}
+	if err := cwdWithin(home, cwd); err != nil {
+		return "", false
+	}
+	return cwd, true
 }

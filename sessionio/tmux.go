@@ -125,8 +125,14 @@ var (
 )
 
 // optionNameRe is the charset a tmux option name may use. Option interpolates
-// the name into a tmux FORMAT string, where #(...) runs a command, so a name is
-// not inert text even though every caller passes a package constant today.
+// the name into a tmux FORMAT string, where #{...} is a directive rather than
+// inert text: measured on tmux 3.4, a name of `}#{pane_current_command}#{`
+// makes display-message print the pane's command, and a name carrying a newline
+// forges the second line Option validates itself against. (`#(...)`, the job
+// syntax, did NOT run under `display-message -p` on 3.4 — a format job needs a
+// client context — so the charset is bounded for what was measured, not for a
+// command execution this call can reach.) Every caller passes a package
+// constant today; the guard is what keeps that true.
 var optionNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-]+$`)
 
 // Command builds a tmux invocation for a verb this package does not wrap. It is
@@ -356,8 +362,12 @@ func (in *Injector) Option(osUser, session, name string) (string, bool) {
 }
 
 // SetOption stamps a tmux session option. It fails if the session does not exist.
-// The `--` matters: tmux permutes flags, so without it a value beginning with
-// "-" is read as an option to set-option rather than as the value.
+//
+// The `--` is defence in depth rather than a fix for a live bug: tmux 3.4 takes
+// the positional after the name as the value however it looks (measured —
+// `set-option -t demo @t3_thread -g` exits 0 and stores "-g"). The marker pins
+// that independently of the tmux version and of any flag a later set-option
+// grows, and it is asserted on the argv, because a value round-trips either way.
 func (in *Injector) SetOption(osUser, session, name, value string) error {
 	if !optionNameRe.MatchString(name) {
 		return fmt.Errorf("sessionio: %q is not a tmux option name", name)
