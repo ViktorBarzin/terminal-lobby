@@ -14,6 +14,7 @@ import {
   type ModelField,
   type ModelHarness,
 } from "../lib/models";
+import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * Roamed preferences — the whole-document, last-writer-wins store that mirrors
@@ -583,30 +584,6 @@ export interface PrefsStore {
   dispose(): void;
 }
 
-function lsGet(key: string): string | null {
-  try {
-    return typeof localStorage !== "undefined"
-      ? localStorage.getItem(key)
-      : null;
-  } catch {
-    return null;
-  }
-}
-function lsSet(key: string, val: string): void {
-  try {
-    localStorage.setItem(key, val);
-  } catch {
-    /* private mode / no storage */
-  }
-}
-function lsRemove(key: string): void {
-  try {
-    localStorage.removeItem(key);
-  } catch {
-    /* no storage */
-  }
-}
-
 function readRawDoc(): Record<string, unknown> {
   try {
     const raw = JSON.parse(lsGet(PREFS_KEY) ?? "null");
@@ -714,7 +691,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
           // re-stamped it mid-flight (its own debounced PUT is coming).
           if (resp.ok && sentMark !== null && lsGet(PREFS_DIRTY_KEY) === sentMark) {
             dirty = false;
-            lsRemove(PREFS_DIRTY_KEY);
+            lsSet(PREFS_DIRTY_KEY, null);
           }
         })
         .catch(() => {

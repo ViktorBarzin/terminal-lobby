@@ -21,6 +21,8 @@
  * always read.
  */
 
+import { lsGet, lsSet } from "../lib/storage";
+
 export const PROMPT_LINES_KEY = "tl:session-prompt-line:v1";
 
 interface PromptLine {
@@ -32,7 +34,7 @@ interface PromptLine {
 /** The whole document, or {} for absent/corrupt/foreign-shaped storage. */
 function readAll(): Record<string, unknown> {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(PROMPT_LINES_KEY) ?? "null");
+    const parsed: unknown = JSON.parse(lsGet(PROMPT_LINES_KEY) ?? "null");
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
@@ -42,11 +44,8 @@ function readAll(): Record<string, unknown> {
 }
 
 function writeAll(doc: Record<string, unknown>): void {
-  try {
-    localStorage.setItem(PROMPT_LINES_KEY, JSON.stringify(doc));
-  } catch {
-    /* private mode / quota — the card simply shows `New session` instead */
-  }
+  // A refused write means the card simply shows `New session` instead.
+  lsSet(PROMPT_LINES_KEY, JSON.stringify(doc));
 }
 
 /** The remembered line for one session, or null. */

@@ -28,6 +28,7 @@
  * poll would otherwise lag by up to 5s: coming back to the tab, or focusing it.
  */
 import { createSignal, type Accessor } from "solid-js";
+import { lsGet, lsSet } from "../lib/storage";
 
 export const VISITS_KEY = "tl:session-visits:v1";
 export const STATES_KEY = "tl:session-states:v1";
@@ -99,7 +100,7 @@ export interface VisitStoreOptions {
 
 function readStore(key: string): Record<string, unknown> {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
+    const parsed: unknown = JSON.parse(lsGet(key) ?? "null");
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
@@ -127,11 +128,7 @@ function loadStates(): Record<string, StateStamp> {
 }
 
 function persistVisits(visits: Record<string, number>): void {
-  try {
-    localStorage.setItem(VISITS_KEY, JSON.stringify(visits));
-  } catch {
-    /* private mode / no storage */
-  }
+  lsSet(VISITS_KEY, JSON.stringify(visits));
 }
 
 /** The IndexedDB the service worker reads the seen set from. */

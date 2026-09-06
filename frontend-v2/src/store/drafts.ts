@@ -1,4 +1,5 @@
 import type { AttachmentKind } from "../lib/attachments";
+import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * Composer drafts, per session, per browser
@@ -41,7 +42,7 @@ export interface Draft {
 /** The whole document, or {} for absent/corrupt/foreign-shaped storage. */
 function readAll(): Record<string, unknown> {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(DRAFTS_KEY) ?? "null");
+    const parsed: unknown = JSON.parse(lsGet(DRAFTS_KEY) ?? "null");
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
@@ -51,11 +52,8 @@ function readAll(): Record<string, unknown> {
 }
 
 function writeAll(doc: Record<string, unknown>): void {
-  try {
-    localStorage.setItem(DRAFTS_KEY, JSON.stringify(doc));
-  } catch {
-    /* private mode / quota — the draft simply does not stick */
-  }
+  // A refused write means the draft simply does not stick.
+  lsSet(DRAFTS_KEY, JSON.stringify(doc));
 }
 
 /**

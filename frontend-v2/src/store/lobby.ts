@@ -47,6 +47,7 @@ import {
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
 import { STATES_KEY } from "./visits";
+import { lsGet, lsSet } from "../lib/storage";
 
 export interface SelectedSession {
   name: string;
@@ -211,7 +212,7 @@ interface StateStamp {
 function loadStates(): Record<string, StateStamp> {
   const out: Record<string, StateStamp> = {};
   try {
-    const raw = localStorage.getItem(STATES_KEY);
+    const raw = lsGet(STATES_KEY);
     if (!raw) return out;
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return out;
@@ -227,11 +228,7 @@ function loadStates(): Record<string, StateStamp> {
 }
 
 function persistStates(states: Record<string, StateStamp>): void {
-  try {
-    localStorage.setItem(STATES_KEY, JSON.stringify(states));
-  } catch {
-    /* private mode / no storage */
-  }
+  lsSet(STATES_KEY, JSON.stringify(states));
 }
 
 export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {

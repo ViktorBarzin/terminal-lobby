@@ -19,6 +19,7 @@ import {
 } from "../mobile/softmods";
 import { keyBytes, type KeyName } from "../mobile/keybytes";
 import { track } from "../telemetry/track";
+import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * Mobile soft-key toolbar (design pillar #2 — Mobile/Touch), ported from the
@@ -51,21 +52,6 @@ const TAP_COMMIT_MAX_TRAVEL_PX = 10;
 const REPEAT_DELAY_MS = 500;
 const REPEAT_INTERVAL_MS = 60;
 const KEY_ROW_EXPANDED_KEY = "tl:input.keyRowExpanded:v1";
-
-function lsGet(key: string): string | null {
-  try {
-    return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
-  } catch {
-    return null;
-  }
-}
-function lsSet(key: string, val: string): void {
-  try {
-    localStorage.setItem(key, val);
-  } catch {
-    /* private mode / no storage */
-  }
-}
 
 export interface SoftKeysProps {
   /** Byte sink — receives the FINAL bytes (modifier remap already applied). */
