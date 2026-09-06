@@ -27,6 +27,7 @@ import type { ConnectionControl } from "../diagnostics/status-store";
 import { PrivacyPage } from "./settings/pages/PrivacyPage";
 import { ActAsPage, type ActAsControl } from "./settings/pages/ActAsPage";
 import { SkillsPage } from "./settings/pages/SkillsPage";
+import { lsGet, lsSet } from "../lib/storage";
 
 export type { ActAsControl } from "./settings/pages/ActAsPage";
 export type { PageId } from "./settings/rail";
@@ -34,22 +35,6 @@ export type { PageId } from "./settings/rail";
 /** Which page the panel reopens on. Per device, and deliberately not roamed:
  *  where you were last in Settings is about this screen, not about you. */
 const LAST_PAGE_KEY = "tl:settings:page";
-
-const readLastPage = (): string | null => {
-  try {
-    return localStorage.getItem(LAST_PAGE_KEY);
-  } catch {
-    return null;
-  }
-};
-
-const writeLastPage = (id: PageId): void => {
-  try {
-    localStorage.setItem(LAST_PAGE_KEY, id);
-  } catch {
-    /* a private window refuses; the panel just opens on the first page */
-  }
-};
 
 /**
  * The Settings overlay: a category rail and one page at a time.
@@ -106,7 +91,7 @@ export const SettingsPanel: Component<{
 
   const rail = createMemo<RailEntry[]>(() => railFor({ admin: !!props.actAs }));
   const [page, setPage] = createSignal<PageId>(
-    resolvePage(railFor({ admin: !!props.actAs }), props.initialPage ?? readLastPage()),
+    resolvePage(railFor({ admin: !!props.actAs }), props.initialPage ?? lsGet(LAST_PAGE_KEY)),
   );
   // The rail can lose an entry under a live panel — an act-as switch drops the
   // admin control — so the shown page is filtered through the rail rather than
@@ -115,7 +100,7 @@ export const SettingsPanel: Component<{
 
   const show = (id: PageId): void => {
     setPage(id);
-    writeLastPage(id);
+    lsSet(LAST_PAGE_KEY, id);
   };
 
   // An opener may ask for a different page while the panel is already open.
