@@ -128,14 +128,23 @@ The lobby works on phones and tablets. The viewport meta declares
 soft keyboard pushes the layout up instead of overlaying it, and the
 xterm pane refits whenever `visualViewport` reports a size change.
 
-**Soft-key toolbar.** On any device that reports `pointer: coarse`, a
-docked toolbar appears above the soft keyboard with keys mobile
-keyboards lack: `Esc`, `Tab`, `Ctrl`, `Alt`, arrow keys, `|`, `` ` ``,
-plus `Copy` / `Paste` / `Kbd` (re-summon keyboard). `Ctrl` and `Alt`
-are one-shot on a single tap and **latch** on a double-tap (within
-400 ms); a small dot on the button indicates latch state. Latched
-modifiers apply to subsequent letters typed on the system soft
-keyboard until you tap the modifier again to release.
+**Soft-key row.** On any device that reports `pointer: coarse`, a
+docked row appears above the soft keyboard in the terminal view, with
+the keys a phone keyboard lacks: `Esc`, `Tab`, the four arrows, then
+`Copy`, `Paste` and a keyboard-dismiss key. One line, eight keys,
+which is as much as a 390px screen holds without scrolling. Arrows
+and `Tab` repeat while held.
+
+It was two lines until 2026-09-06, the second hidden behind a `⋯`
+toggle. What that tier held is gone rather than moved: 28 days of
+`terminal.softkey` telemetry recorded no taps at all on the `/`,
+`-`, `|` and `` ` `` glyphs, which the system keyboard types anyway;
+`⇧Tab` had six, and the permission-mode cycle it existed for has its
+own chip in the Text view's composer; and the soft `Ctrl`/`Alt` pair
+could only remap the row's own pre-baked bytes, none of which begin
+with a letter, so `Ctrl+C` from a phone never worked. Wiring a real
+one means passing the modifier state into the terminal component,
+where a letter typed on the system keyboard can be caught.
 
 **Install as a PWA.** A `manifest.webmanifest` (served from `/`) plus
 the two icons (`/icon-192.png`, `/icon-512.png`) let iOS Safari and

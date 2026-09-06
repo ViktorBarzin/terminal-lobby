@@ -2154,8 +2154,11 @@ label.tl-set-row-label {
 
 /* ---- Mobile: soft-key toolbar + keyboard plumbing (pillar #2) ----------- */
 /* Ported from the vanilla frontend/index.html #soft-keys. Coarse-pointer only;
-   fixed above the soft keyboard via --kb-offset (visualViewport-driven). A flex
-   COLUMN of [overflow tier .sk-extra] over [always-visible .sk-line]. */
+   fixed above the soft keyboard via --kb-offset (visualViewport-driven). ONE
+   row since 2026-09-06: a scrolling .sk-row of keys plus the pinned dismiss
+   key, which sits outside the scroller so it can never scroll out of reach.
+   The gap is 5px rather than the 6px the rest of the app uses, which is what
+   buys the eight keys their room on a 390px screen: 333px against 336px. */
 /* The bottom inset, for the surfaces that stack on top of the keyboard.
    `env(safe-area-inset-bottom)` keeps reporting 34px on an iPhone while the
    keyboard is covering the home indicator, so adding it ON TOP of the keyboard
@@ -2220,13 +2223,13 @@ body.tl-kb-up {
 }
 #soft-keys .sk-line {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
   min-width: 0;
 }
 #soft-keys .sk-row {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
   flex: 1 1 auto;
   min-width: 0;
@@ -2252,26 +2255,10 @@ body.tl-kb-up {
 #soft-keys .sk-row::-webkit-scrollbar {
   height: 0;
 }
-#soft-keys .sk-row.sk-extra {
-  display: none;
-}
-#soft-keys.expanded .sk-row.sk-extra {
-  display: flex;
-}
 #soft-keys .sk-group {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   flex: 0 0 auto;
-}
-#soft-keys .sk-sep {
-  flex: 0 0 1px;
-  align-self: stretch;
-  margin: 6px 5px;
-  background: var(--border-strong);
-  opacity: 0.6;
-}
-#soft-keys .sk-row.sk-primary {
-  gap: 12px;
 }
 #soft-keys button {
   flex: 0 0 auto;
@@ -2294,26 +2281,22 @@ body.tl-kb-up {
   min-width: 36px;
   padding: 0 8px;
 }
+/* Esc and Tab. 6px a side rather than the 10px a wider button gets, and the
+   38px min-width still holds the tap target. Measured on the shared Android
+   emulator at 412px: the phone has no JetBrains Mono, so its fallback renders
+   these two at 43px where desktop Chrome gives them 41px, and at 8px of padding
+   the row lands 1px over the room a 390px screen has. */
+#soft-keys button.sk-word {
+  padding: 0 6px;
+}
+/* The Copy and Paste icons: an inline SVG sits on the text baseline and adds a
+   descender's worth of height to the button, which the row then reserves. */
+#soft-keys button.sk-narrow svg {
+  display: block;
+  margin: 0 auto;
+}
 #soft-keys button:active {
   background: color-mix(in srgb, var(--accent) 25%, var(--bg-card-hover));
-}
-/* Modifier tri-state paint: armed = accent outline, latched = filled + dot. */
-#soft-keys button.sk-mod.armed,
-#soft-keys button.sk-more.armed {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 18%, var(--bg-card-hover));
-}
-#soft-keys button.sk-mod.latched {
-  color: var(--bg-page);
-  background: var(--accent);
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
-}
-#soft-keys button.sk-mod.latched::after {
-  content: "•";
-  margin-left: 4px;
-  font-weight: 700;
 }
 @media (max-width: 375px) {
   #soft-keys button.sk-narrow {

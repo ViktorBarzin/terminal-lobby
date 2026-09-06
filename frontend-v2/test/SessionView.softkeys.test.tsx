@@ -1,11 +1,10 @@
 /**
  * The soft-key toolbar belongs to the TERMINAL view.
  *
- * Its keys are terminal affordances — Esc, ⇧Tab, the arrows, Ctrl/Alt, Copy,
- * Paste. Text mode has a text field and a Send button, not a pty, so on a phone
- * the row (two rows, with the ⋯ tier open) sat above the keyboard doing nothing
- * for the view it was in. Viktor asked for text mode to be just the text area
- * (2026-08-17).
+ * Its keys are terminal affordances — Esc, Tab, the arrows, Copy, Paste. Text
+ * mode has a text field and a Send button, not a pty, so on a phone the row sat
+ * above the keyboard doing nothing for the view it was in. Viktor asked for
+ * text mode to be just the text area (2026-08-17).
  *
  * The toolbar must UNMOUNT rather than hide, because its own cleanup is what
  * hands `--sk-h` back: the views reserve that height (app.css,

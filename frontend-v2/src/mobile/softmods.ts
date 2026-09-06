@@ -17,9 +17,18 @@
  * `latched` alone. `applyMods` performs the byte remap (Ctrl → C0 control char,
  * Alt → ESC-prefix) on the first char of an input string.
  *
- * All functions are PURE (no timers, no DOM): the 400ms auto-revert is a UI
- * concern the component drives with a real setTimeout calling `revertArmed`.
- * This split keeps the whole state machine unit-testable.
+ * All functions are PURE (no timers, no DOM): the auto-revert is a UI concern
+ * whichever component owns the buttons drives with a real setTimeout calling
+ * `revertArmed`. This split keeps the whole state machine unit-testable.
+ *
+ * NO BUTTONS DRIVE IT TODAY. The key row dropped Ctrl and Alt when it flattened
+ * to one line (2026-09-06), because the toolbar could only ever remap its OWN
+ * pre-baked bytes, none of which begin with an ASCII letter, so Ctrl was a
+ * no-op there. `terminal/keys.ts` still reduces through `applyMods` and
+ * `consumeSoftMods`, and that reducer is the place a real Ctrl+C would land:
+ * a letter typed on the SYSTEM soft keyboard arrives as ordinary `onData`
+ * text, which is the only point it can be remapped. What is missing is a
+ * `SoftMods` value reaching `TerminalNative`, which holds `keyState.mods` null.
  */
 
 export type ModState = "idle" | "armed" | "latched";
@@ -29,9 +38,6 @@ export interface SoftMods {
   ctrl: ModState;
   alt: ModState;
 }
-
-/** The double-tap window (ms): a second tap inside it latches; else armed reverts. */
-export const DOUBLE_TAP_MS = 400;
 
 /** A fresh, all-idle modifier set. */
 export function idleMods(): SoftMods {
