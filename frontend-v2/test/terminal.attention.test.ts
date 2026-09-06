@@ -313,8 +313,8 @@ describe("the tab flag is read at the decision", () => {
 });
 
 /**
- * STATE LIFETIME. The page's kernel dies with its document, and TerminalView
- * navigates the iframe on an args change, so the latch and the spent pair reset
+ * STATE LIFETIME. term.html's kernel died with its document, and TerminalView
+ * navigated the iframe on an args change, so the latch and the spent pair reset
  * there. TerminalNative reads `props.args` once inside `onMount` and never
  * re-attaches, so there is nothing to diverge from today; this pins what a
  * component that grows re-attach has to do, since carrying the state over would

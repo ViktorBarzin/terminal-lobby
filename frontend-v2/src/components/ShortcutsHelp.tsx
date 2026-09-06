@@ -91,14 +91,23 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
       [
         [[`${ALT}+Shift+S`], "Toggle sidebar"],
         [["Ctrl+Shift+K"], "Command palette"],
-        // ALWAYS ON by design, on both sides of the iframe boundary and by two
-        // separate mechanisms: SessionView registers an unconditional
-        // capture-phase window listener that never consults the engine, and
-        // term.html carries ctrl+j/meta+j in the terminal page's own
-        // KB_ALWAYS_BINDINGS, evaluated ahead of its `enabled` gate.
+        // ALWAYS ON by design, and this row named the wrong command until
+        // 2026-09-06. It promised the text/terminal view toggle on two
+        // mechanisms that are both gone: a SessionView window listener, dropped
+        // when the dock reclaimed the chord, and term.html's own
+        // KB_ALWAYS_BINDINGS row for ctrl+j/meta+j, deleted with the page on
+        // 2026-09-05. `view.toggle` is in neither binding table, and
+        // App.tsx's `onDockKey` is the ONLY handler in this tree that matches a
+        // J chord, so the chord opens the scratch-shell dock and nothing else.
+        //
+        // Still always-on: `onDockKey` is a raw window listener that never
+        // consults the engine's `enabled` gate. "Desktop only" is its early
+        // return on `dock.allowed()`, which is `!coarse()` (store/dock.ts).
+        // The view toggle keeps the [Text | Terminal] control and the palette,
+        // which is what `test/SessionView.viewswitch.test.tsx` pins.
         [
           [`${MOD}+J`],
-          "Toggle text / terminal view (works in a session; always on)",
+          "Scratch shell at the foot of the screen (desktop only; always on)",
         ],
         // Bare "/" and "?" are a separate window listener in the shell (App),
         // not a table binding, so they never consult the ⚙ toggle either. Only
@@ -123,19 +132,25 @@ export const ShortcutsHelp: Component<{
 
   // Take the keyboard on open, the way the palette does (CommandPalette focuses
   // its input on mount). Without this the overlay inherits whatever had focus,
-  // and inside a session that is the terminal IFRAME — so every key went to the
-  // pty instead of this dialog: Escape / "/" / "?" could not dismiss it (the
-  // shell's window listener never sees a key pressed inside the iframe), Tab
-  // walked back into the app, and the keys themselves landed in the running
-  // shell (a stray Escape interrupts a Claude turn). Deferred so the node is in
-  // the document by the time it runs.
+  // and inside a session that is the terminal — so every key went to the pty
+  // instead of this dialog: Escape / "/" / "?" could not dismiss it, Tab walked
+  // back into the app, and the keys themselves landed in the running shell (a
+  // stray Escape interrupts a Claude turn). When the terminal was an iframe the
+  // shell's window listener could not even see those keys, since they were
+  // pressed in another document. Deferred so the node is in the document by the
+  // time it runs.
   onMount(() => queueMicrotask(() => dialogEl?.focus()));
 
-  // ...and hold it. palette-controller.runItem() closes the palette — which
-  // hands focus back to the terminal — BEFORE running the action that opens
-  // this overlay, and TerminalView's handback finishes a frame or two later
-  // (term.html's requestTerminalFocus fires on rAF/50ms). So the iframe can
-  // pull focus out from under the mount focus above; take it back while open.
+  // ...and hold it, against anything that takes focus while the overlay is up.
+  //
+  // The case this was written for has gone. palette-controller.runItem() still
+  // closes the palette, which hands focus back to the terminal, BEFORE running
+  // the action that opens this overlay. The handback is synchronous now
+  // (`__tlFocusTerminal` is `term.focus()`), so it completes before the mount
+  // focus above rather than a frame or two after it. TerminalView's handback
+  // landed on rAF/50ms (term.html's `requestTerminalFocus`) and could pull
+  // focus out from under the mount. Whether any other focus theft still needs
+  // this guard has not been established.
   const onFocusOut = (): void => {
     // focusout fires BEFORE the new target is focused, and a dismiss unmounts
     // us — both need the deferral to read the settled state.
@@ -155,8 +170,8 @@ export const ShortcutsHelp: Component<{
     }
     // aria-modal="true" promises assistive tech that Tab cannot leave the
     // dialog, and nothing inside it is focusable — so Tab would walk straight
-    // out into the app behind (the terminal iframe included) while the overlay
-    // is still up. Keep it here; the keys above and the backdrop are the exits.
+    // out into the app behind (the terminal included) while the overlay is
+    // still up. Keep it here; the keys above and the backdrop are the exits.
     if (e.key === "Tab") {
       e.preventDefault();
       e.stopPropagation();

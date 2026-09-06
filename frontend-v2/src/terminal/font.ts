@@ -4,8 +4,8 @@
  * the component preventDefaults, applies the size, draws the readout.
  *
  * Lifted from frontend/term.html (the A−/A+ stepper, `applyFontSize`, and the
- * two pinch recognizers) ahead of the native xterm component, which has to
- * answer a pinch exactly the way the iframe does or the gesture changes feel
+ * two pinch recognizers) ahead of the native xterm component, which had to
+ * answer a pinch exactly the way that page did or the gesture would change feel
  * between builds. The rules below are that page's, including the ones that read
  * like accidents — they are load-bearing, and each says why.
  *
@@ -147,7 +147,9 @@ export function isPinch(ratio: number): boolean {
 export interface PinchGates {
   /** The gestures master kill AND the device-local pinch flag (default ON). */
   armed: boolean;
-  /** `visualViewport.scale` of the TOP window — the tab zooms, not the frame. */
+  /** `visualViewport.scale` of the TOP window, which is the thing that zooms.
+   *  The caller reads it off `window.top`; see `pageScale` in TerminalNative
+   *  for why that read is kept now that the lobby is the top document. */
   pageScale: number;
   /** Every finger of the gesture came down on the terminal surface. */
   onSurface: boolean;

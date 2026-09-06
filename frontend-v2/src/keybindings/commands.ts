@@ -37,15 +37,16 @@ export interface CommandDeps {
   isUnseen?: (s: { name: string; state?: string }) => boolean;
   /** open the SPA session image gallery (🖼) for the selected session. */
   openGallery: () => void;
-  /** Paste into the terminal, performed in THIS document (clipboard/paste.ts):
-   *  the frame cannot read the clipboard while the lobby holds focus. */
+  /** Paste into the terminal, read by the app (clipboard/paste-into-terminal.ts).
+   *  A chord fired from the lobby has no native `paste` event to ride, so the
+   *  clipboard is read here and only the text is handed to xterm. */
   pasteToTerminal: () => boolean;
   /** Ctrl/Cmd+J — open, hide or show the scratch-shell dock. */
   toggleDock: () => void;
   /** flip the mounted session between its text and terminal view; false if no
    *  SessionView is mounted. Defaults to the `window.__tlToggleView` bridge the
-   *  mounted SessionView installs (same pattern as __tlForwardToTerminal) — the
-   *  lobby shell does not own the per-session view mode. */
+   *  mounted SessionView installs (same pattern as `__tlDoPaste`) — the lobby
+   *  shell does not own the per-session view mode. */
   toggleView?: () => boolean;
   /** open the find-in-session overlay on the mounted text view; false if
    *  there is none. Same `window.__tlOpenFind` bridge shape as toggleView —
@@ -156,10 +157,11 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     }
 
     if (cmd === "view.toggle") {
-      // Ctrl/Cmd-J from the palette or the Shortcuts sheet. The chord itself is
-      // handled by SessionView's own listener; this is the same toggle under
-      // another name, reached through the bridge because the shell does not own
-      // the per-session view mode.
+      // From the palette or the Shortcuts sheet, which are the only ways in.
+      // The SessionView listener this used to name went when the dock reclaimed
+      // Ctrl/Cmd-J (App.tsx's `onDockKey`), so `view.toggle` has no chord.
+      // Reached through the bridge because the shell does not own the
+      // per-session view mode.
       if (!toggleViewFn()) deps.notify("Open a session first", "error");
       return;
     }

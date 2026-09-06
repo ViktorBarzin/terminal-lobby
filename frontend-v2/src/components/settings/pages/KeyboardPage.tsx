@@ -14,9 +14,16 @@ export interface KeybindingsControl {
  *
  * The hint names the four chords that outlive the switch, because the label
  * used to imply the switch governed everything: the always-on kill chord
- * (KB_ALWAYS_BINDINGS), the bare "/" and "?" help openers — a shell window
- * listener rather than a table binding — and the view toggle, which SessionView
- * and term.html each register outside the gate.
+ * (KB_ALWAYS_BINDINGS), the bare "/" and "?" help openers, which are a shell
+ * window listener rather than a table binding, and Ctrl/Cmd+J.
+ *
+ * Ctrl/Cmd+J is the scratch-shell dock, not the view toggle this hint named
+ * until 2026-09-06. It read "which SessionView and term.html each register
+ * outside the gate": term.html went on 2026-09-05, and no SessionView listener
+ * registers it either. App.tsx's `onDockKey` is the only handler in the tree
+ * that matches a J chord, it never reads the `enabled` gate, and it returns
+ * early on a coarse pointer, which is where "on a desktop" comes from.
+ * ShortcutsHelp carries the same correction and the longer note.
  */
 export const KeyboardPage: Component<{ keybindings: KeybindingsControl }> = (props) => {
   const alt = () => props.keybindings.altLabel ?? "Alt";
@@ -34,8 +41,8 @@ export const KeyboardPage: Component<{ keybindings: KeybindingsControl }> = (pro
             Press <kbd>/</kbd> for the full list. Off sends these keys to the
             terminal instead. Four chords stay on either way: <kbd>/</kbd> and{" "}
             <kbd>?</kbd> (that list), <kbd>{alt()}+Shift+Backspace</kbd> (kill the
-            attached session, asks first) and <kbd>{ctrl()}+J</kbd> (toggle text /
-            terminal view).
+            attached session, asks first) and <kbd>{ctrl()}+J</kbd> (the scratch
+            shell, on a desktop).
           </>
         }
       >

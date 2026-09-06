@@ -35,9 +35,10 @@ describe("worst-of", () => {
   });
 
   /**
-   * The point of the fourth state. A terminal that has not reported yet — a
-   * booting iframe, a cached older build with no such message, someone reading
-   * term.html directly — must never paint the badge as if something failed.
+   * The point of the fourth state. A terminal that has not reported yet — one
+   * still booting, or none on screen at all, since `askTerminalConn` is a no-op
+   * until a TerminalNative replaces it — must never paint the badge as if
+   * something failed.
    */
   it("never counts an unknown channel as a fault", () => {
     expect(worst([ch("terminal", "unknown"), ch("build", "working")])).toBe("working");

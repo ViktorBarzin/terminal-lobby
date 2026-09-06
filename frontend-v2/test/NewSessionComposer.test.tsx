@@ -427,9 +427,9 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
   });
 
   it("KEEPS the slot after a create, for the attach to claim", async () => {
-    // create() only STARTS the attach — the iframe still has to connect and
-    // reach ttyd — so releasing here reliably wins the race and the create
-    // falls back to a cold start.
+    // create() only STARTS the attach — the terminal's socket still has to
+    // connect and reach ttyd — so releasing here reliably wins the race and the
+    // create falls back to a cold start.
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "alpha" } }));
     const api = new FakeApi();
     withProjects(api);

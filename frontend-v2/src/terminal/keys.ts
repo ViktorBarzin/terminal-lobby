@@ -144,11 +144,12 @@ export interface KeyWorld {
   /**
    * The keybinding layer matched this event exactly and in context
    * (term.html:8526, `tlKb.matchesAppChord(e)`; here the engine's own
-   * `matchesAppChord`, engine.ts:112-119).
+   * `matchesAppChord`, which delegates to `matchesAppChordPure`).
    *
    * A boolean rather than the binding, because the command has ALREADY RUN by
    * the time xterm consults this handler. The engine installs a capture-phase
-   * `window` keydown listener (engine.ts:197); xterm's own is capture-phase too
+   * `window` keydown listener (engine.ts's `init`, `addEventListener("keydown",
+   * onKeydown, true)`); xterm's own is capture-phase too
    * but on the helper textarea (@xterm/xterm 6.0.0 registers `textarea`,
    * `"keydown"`, capture `true` in its core browser terminal), a descendant, and
    * capture descends. So the only thing left to decide is that the key must not
@@ -158,18 +159,18 @@ export interface KeyWorld {
    * keybinding layer is off is the one shortcut this field invites, and it is
    * wrong twice over:
    *   - `matchesAppChord` walks the ALWAYS-ON table BEFORE the `enabled` gate
-   *     (bindings.logic.ts:302-309, and term.html:3528-3533 in the same order),
+   *     (bindings.logic.ts:277-282, and term.html:3528-3533 in the same order),
    *     so an always-on chord matches with the layer off. Here that table is
    *     one row, `alt+shift+backspace` -> `session.kill.current`
-   *     (bindings.logic.ts:129-131), whose `when` is "lobbyOpen &&
-   *     !overlayOpen" (bindings.logic.ts:58) and whose `lobbyOpen` is
-   *     hardcoded true by `keyContext` (bindings.logic.ts:250), so it holds
+   *     (bindings.logic.ts:136-138), whose `when` is "lobbyOpen &&
+   *     !overlayOpen" (bindings.logic.ts:65) and whose `lobbyOpen` is
+   *     hardcoded true by `keyContext` (bindings.logic.ts's `keyContext`), so it holds
    *     whenever no overlay is up. term.html has a second row, `ctrl+j`
    *     (`meta+j` on a Mac) -> `session.new.shell` (term.html:3382-3391),
-   *     which this build dropped along with the dock (bindings.logic.ts:15-19).
+   *     which this build dropped along with the dock (bindings.logic.ts:15-26).
    *   - the gate defaults to ON anyway. `normalizeKeybindings` starts from
    *     `{ enabled: true }` and only a stored `enabled: false` turns it off
-   *     (bindings.logic.ts:164-167, term.html:3427-3430).
+   *     (bindings.logic.ts's `normalizeKeybindings`, term.html:3427-3430).
    * term.html:8524-8525 says "layer disabled (the default) -> matchesAppChord
    * is null for every event and nothing changes"; both halves of that are
    * false, and it is the sentence this field's contract inherited. What it
@@ -497,8 +498,8 @@ function fromSelection(decision: KeyDecision): KeyReduction {
       // TS2322 on the assignment below, naming the member nobody handled
       // (Type '{ action: "fifth" }' is not assignable to type 'never')
       // rather than a complaint about the signature that says nothing about
-      // which decision is new. battery.ts:179-183 is the same arm over its
-      // events, and its `act` has an explicit return type too.
+      // which decision is new. battery.ts's `default` arm is the same shape
+      // over its events, and its `act` has an explicit return type too.
       const unhandled: never = decision;
       void unhandled;
       return { passToTerminal: true, leg: "pty", actions: NOTHING };

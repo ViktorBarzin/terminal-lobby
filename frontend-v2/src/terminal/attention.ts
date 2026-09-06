@@ -106,7 +106,7 @@
  *           body now, and takes it off in `teardown`.
  *   view    `!(mode() === "terminal" && onScreen())`, which is the expression
  *           SessionView passes as the terminal's `active` prop
- *           (SessionView.tsx:926). Both halves carry weight: the text view
+ *           (SessionView.tsx:936). Both halves carry weight: the text view
  *           showing over the terminal, and this session's whole slot being
  *           CSS-hidden behind another session. A Solid effect on `active` fires
  *           on mount, and that first event is the native counterpart of the
@@ -134,7 +134,8 @@
 
 /**
  * What the lobby is being told about. The same two words the `tl-attention`
- * message carries, so the wiring hands this straight to `onFrameAttention`.
+ * message carried, so the wiring hands this straight through: TerminalNative's
+ * `onAttention` prop, feeding SessionView's `onTerminalAttention`.
  *
  * The lobby does treat them differently, which is why one signal is not enough:
  * a bell latches the favicon badge as well as the title prefix, output latches
@@ -150,9 +151,12 @@ export type AttentionKind = "bell" | "output";
 export interface AttentionState {
   /**
    * The terminal is not the thing on screen, though the tab may be: the lobby
-   * is showing its text view, or another session entirely. term.html learns
-   * this from the lobby's `tl-view` message because a CSS-hidden frame's own
-   * `document.hidden` stays false.
+   * is showing its text view, or another session entirely. Fed as the `view`
+   * event from TerminalNative's own effect, as `props.active !== true`.
+   *
+   * term.html had to learn it from the lobby's `tl-view` message instead,
+   * because a CSS-hidden frame's own `document.hidden` stays false. That is
+   * still why the flag exists rather than being read off `document`.
    */
   readonly viewHidden: boolean;
   /**

@@ -183,7 +183,7 @@ describe("the value that lands on the host", () => {
    * absolute `vv.height - ...` because its terminal fills a whole iframe; here
    * `.tl-views.tl-kb-inline` has already taken the toolbar and the safe area
    * out of the container and deliberately left the keyboard IN
-   * (app.css:2446-2448), so the number that belongs on the host is how much of
+   * (app.css:2387-2389), so the number that belongs on the host is how much of
    * THAT box the keyboard covers.
    */
   it("shrinks the container by the reserve", () => {
@@ -203,7 +203,7 @@ describe("the value that lands on the host", () => {
    * writes once per distinct reserve, so the box has to keep tracking
    * `innerHeight` on its own between writes. It does, because the container
    * chain resolves to `#root { height: var(--app-vh) }` and `--app-vh` IS
-   * `window.innerHeight` (app.css:30-34, mobile/viewport.ts:276). An absolute
+   * `window.innerHeight` (app.css:30-34, mobile/viewport.ts:287). An absolute
    * `hostHeightStyle` would silently stop tracking the window while the
    * reserve sat still, which is the reason the dedupe below is safe here and
    * was not there.
@@ -293,7 +293,7 @@ describe("the terminal reading the viewport for itself", () => {
    * BECAUSE a per-session one did not run until a session was opened). What is
    * missing is not the install, it is the message: `onKeyboard` fires only when
    * the height the shell measured DIFFERS from the last one it sent
-   * (mobile/viewport.ts:259-262). A terminal that mounts while the keyboard is
+   * (mobile/viewport.ts:270-273). A terminal that mounts while the keyboard is
    * already up is never told, because nothing changed: a session opened with
    * the keyboard up, a switch back to the terminal view, `?native=1` on a tab
    * that started on the list. Its host keeps the stylesheet's `height: 100%`
@@ -376,8 +376,9 @@ describe("a height forwarded by the shell", () => {
    * The two readings are not two sources natively, they are one measurement
    * taken twice: the shell computes
    * `keyboardOffset(window.innerHeight, vv.height, vv.offsetTop)`
-   * (mobile/viewport.ts:27-33, :242-244) on the same window this terminal
-   * reads, and that is the module's own `own` character for character. So a
+   * (mobile/viewport.ts's `keyboardOffset`, called from its `writeOffset`) on
+   * the same window this terminal reads, and that is the module's own `own`
+   * character for character. So a
    * forwarded number can never legitimately exceed a fresh own reading, and any
    * excess is age. Keeping it in state and taking `max(own, remembered)` pins
    * the reserve at the STALE maximum, and a live reading of 0 cannot give the
@@ -583,11 +584,11 @@ describe("a panned visual viewport", () => {
    *
    * The arithmetic, from the CSS pinned in the parity block below:
    *   the container's bottom edge is `layout - --sk-h - --safe-b`
-   *     (app.css:2446-2448, and `#root` is `height: var(--app-vh)` =
+   *     (app.css:2387-2389, and `#root` is `height: var(--app-vh)` =
    *     `window.innerHeight`, app.css:30-34);
    *   the toolbar's top edge is `layout - --kb-offset - --safe-b - --sk-h`
-   *     (app.css:2300, `bottom: calc(var(--kb-offset) + var(--safe-b))`);
-   *   `--kb-offset` is the shell's `keyboardOffset(...)` (mobile/viewport.ts:244),
+   *     (app.css:2240, `bottom: calc(var(--kb-offset) + var(--safe-b))`);
+   *   `--kb-offset` is the shell's `keyboardOffset(...)` (mobile/viewport.ts:255),
    *     which carries `offsetTop` the same way `own` does.
    * So a shrink of `own` puts the host's bottom edge exactly on the toolbar's
    * top edge, whatever the pan. A shrink of `own + offsetTop`, which is what

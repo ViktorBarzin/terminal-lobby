@@ -179,9 +179,9 @@ export const NetworkPage: Component<{ connection?: ConnectionControl }> = (props
         </div>
       </Group>
 
-      {/* Data used — wire bytes for THIS browser profile. The terminal runs in
-          an iframe with its own socket, so its share arrives by postMessage
-          and is folded into the same store this reads. */}
+      {/* Data used — wire bytes for THIS browser profile. The terminal's socket
+          is opened in this document, so diag.js's wrapper over window.WebSocket
+          counts it straight into the store this reads, with everything else. */}
       <Group title="Data used">
         <div class="tl-netusage">
           {/* Periods first, one selectable row each. The selection scopes

@@ -243,7 +243,7 @@ describe("createPrefsStore — prefs.changed carries the value, not the key name
   });
 });
 
-describe("createPrefsStore — live push into the terminal iframe", () => {
+describe("createPrefsStore — live push into the terminal", () => {
   beforeEach(() => {
     localStorage.clear();
     tracked.length = 0;

@@ -10,7 +10,7 @@ import { fetchWithDeadline } from "./http";
  *
  * 1. The session may not exist yet. Creating one reaches no server — the
  *    browser mints the id and ttyd's `tmux new-session -A` brings it into being
- *    when the terminal iframe attaches (ADR-0019) — so the first POST can
+ *    when the terminal's WebSocket attaches (ADR-0019) — so the first POST can
  *    arrive before there is anything to inject into. session-events runs no
  *    registry lookup on POST /prompt, so that failure happens inside `tmux
  *    send-keys` and comes back as 502, not 404.

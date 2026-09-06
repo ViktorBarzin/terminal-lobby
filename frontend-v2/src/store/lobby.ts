@@ -183,7 +183,8 @@ export interface LobbyStoreOptions {
    * docked shell may be hidden from the sidebar.
    *
    * The dock store publishes the same answer as `allowed`, but it is built out
-   * of THIS store (App.tsx:372) and so cannot be passed to this constructor.
+   * of THIS store (App's `createDockStore({ store })`) and so cannot be passed
+   * to this constructor.
    * App therefore reads the coarse-pointer query directly, as it already does
    * for the soft-keys reserve at :221. Both go through `watchQuery` on one
    * media query, so they are two views of a single browser fact rather than two
@@ -391,8 +392,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * tmux-api's migration renames every session that predates ids, once, on the
    * release that ships them (tmux-api/migrate_ids.go). A tab open at that
    * moment holds a name that is about to stop existing, and it holds it in the
-   * iframe's `?arg=`: ttyd spawns a fresh `tmux new-session -A -s <name>` per
-   * websocket, so the next reconnect would CREATE the old name as an empty
+   * terminal's `?arg=` (built by `terminalFrameArgs`, handed to TerminalNative):
+   * ttyd spawns a fresh `tmux new-session -A -s <name>` per websocket, so the
+   * next reconnect would CREATE the old name as an empty
    * session and leave the person looking at a blank shell while their
    * conversation ran on under the id.
    *
@@ -514,9 +516,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       const known = new Set(sRes.value.map((s) => s.name));
       const stillPending = pending().filter((p) => !known.has(p.name));
       // Pending names count as live. A create's session does not exist
-      // server-side until the iframe attaches and ttyd runs tmux-user-attach,
-      // and GET /sessions is behind a 5-second cache, so the burst polls at
-      // 700/1600/3000ms routinely report a list without it — pruning against
+      // server-side until the terminal's socket attaches and ttyd runs
+      // tmux-user-attach, and GET /sessions is behind a 5-second cache, so the
+      // burst polls at 700/1600/3000ms routinely report a list without it —
+      // pruning against
       // that alone would delete the prompt line the card is there to show.
       prunePromptLines([...known, ...stillPending.map((p) => p.name)]);
       if (stillPending.length !== pending().length) setPending(stillPending);
@@ -741,9 +744,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * Create a session, giving it a fresh id for a name.
    *
    * The name is minted here rather than asked for: creation reaches no server
-   * at all — the session comes into being when the terminal iframe attaches and
-   * ttyd runs `tmux new-session -A` — so the browser has to have a name before
-   * anything else can. It is an opaque id and it never changes (ADR-0019).
+   * at all — the session comes into being when the terminal's WebSocket
+   * attaches and ttyd runs `tmux new-session -A` — so the browser has to have a
+   * name before anything else can. It is an opaque id and it never changes
+   * (ADR-0019).
    *
    * Nothing is refused. An empty box is a real instruction — it makes a session
    * with no prompt, which reads `New session` until a summary arrives — and two
@@ -798,7 +802,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       setPending((p) => p.filter((s) => s.name !== n));
     }
     select(n);
-    // Stamping the title needs the session to EXIST, and only the iframe's
+    // Stamping the title needs the session to EXIST, and only the terminal's
     // attach creates it. The refresh burst is already the "has it appeared
     // yet" poll, so the stamp rides along with it.
     //
@@ -814,7 +818,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * Stamp a title onto a session the lobby has just asked ttyd to create.
    *
    * Retries on the same cadence as quickRefreshBurst because the session does
-   * not exist until the iframe's WebSocket lands, and a 404 here means "not yet"
+   * not exist until the terminal's WebSocket lands, and a 404 here means "not yet"
    * rather than "no". Gives up quietly after the last attempt: the session is
    * running and usable, it is just showing its name.
    */
@@ -860,9 +864,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    *
    * Only the title moves. The name is an opaque id fixed at creation
    * (ADR-0019), so nothing downstream is keyed by anything this touches: no
-   * layout to mirror, no per-browser record to carry, and no re-navigation of
-   * the terminal iframe. Two sessions may end up reading the same, which is
-   * fine now that no name is derived from the text.
+   * layout to mirror, no per-browser record to carry, and nothing to
+   * re-navigate: TerminalNative reads `props.args` once at mount and never
+   * re-attaches. Two sessions may end up reading the same, which is fine now
+   * that no name is derived from the text.
    */
   async function rename(name: string, title: string): Promise<boolean> {
     const t = cleanTitle(title);

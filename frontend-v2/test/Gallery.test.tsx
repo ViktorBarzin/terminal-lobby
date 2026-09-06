@@ -177,11 +177,11 @@ describe("<Gallery> — a file the browser cannot decode", () => {
 
 /**
  * QA #2: opened from inside a session, the overlay left `document.activeElement`
- * on the terminal IFRAME — a separate document, whose keydowns never reach this
- * one. So the panel painted, Escape went to the pty instead of dismissing the
- * gallery (and interrupted whatever was running), and the only way out was the
- * mouse. The overlay has to TAKE the keyboard when it opens and hand it back
- * when it closes — the contract ShortcutsHelp already carries.
+ * on the terminal IFRAME — a separate document, whose keydowns never reached
+ * this one. So the panel painted, Escape went to the pty instead of dismissing
+ * the gallery (and interrupted whatever was running), and the only way out was
+ * the mouse. The overlay has to TAKE the keyboard when it opens and hand it
+ * back when it closes — the contract ShortcutsHelp already carries.
  */
 describe("<Gallery> — the overlay takes the keyboard while it is open", () => {
   const w = window as Window & { __tlFocusTerminal?: () => boolean };
@@ -220,8 +220,11 @@ describe("<Gallery> — the overlay takes the keyboard while it is open", () => 
 
   it("takes focus back when the terminal handback steals it after open", async () => {
     // gallery.open is reachable from the palette, and palette.runItem() closes
-    // the palette — refocusing the terminal — BEFORE running the action, so the
-    // iframe's handback lands a frame or two AFTER this overlay mounted.
+    // the palette — refocusing the terminal — BEFORE running the action. The
+    // handback is synchronous now (`__tlFocusTerminal` is `term.focus()`), so it
+    // completes before this overlay mounts; TerminalView's landed on rAF/50ms
+    // inside term.html and could arrive a frame or two after. The steal is
+    // faked here so the guard is still exercised.
     const { store, dispose } = stubStore([img("a.png")]);
     const { container } = render(() => (
       <>

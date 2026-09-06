@@ -12,9 +12,13 @@ beforeEach(() => localStorage.clear());
 
 /**
  * Flow control is a PER-BROWSER kill switch, not a roamed pref: the same
- * posture the vanilla page gave it, and the terminal iframe picks a flip up
- * live through a `storage` event (another window wrote the key), releasing a
- * paused stream immediately.
+ * posture the vanilla page gave it. It exists to rescue a wedged stream on the
+ * machine that is wedged, so roaming it would carry a local rescue everywhere.
+ *
+ * These tests cover the key and its read. Nothing in the native terminal
+ * consumes the answer yet — flow-control accounting is one of the things
+ * SessionView lists as having gone with term.html on 2026-09-05 — so a flip
+ * currently changes what this function returns and nothing else.
  */
 describe("flow control — the per-browser kill switch", () => {
   it("is on when the key is unset", () => {

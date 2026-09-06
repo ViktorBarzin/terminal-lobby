@@ -4,9 +4,9 @@ import { registerServiceWorker } from "../src/pwa/register";
 /**
  * The page's half of the tap handshake.
  *
- * sw.js can no longer tell a lobby from a terminal iframe by URL alone — it
- * tried, and an unrelated change to a page URL silently killed tap routing
- * twice — so it now asks, and moves on to the next window when nobody answers.
+ * sw.js cannot pick the right window by URL alone — it tried, and an unrelated
+ * change to a page URL silently killed tap routing twice — so it asks, and moves
+ * on to the next window when nobody answers.
  * This reply is what makes that work, which makes it load-bearing rather than
  * decorative: without it every tap costs a 400 ms timeout per candidate.
  */

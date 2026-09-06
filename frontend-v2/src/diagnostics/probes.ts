@@ -103,9 +103,10 @@ export function buildProbes(deps: ProbeDeps): CheckProbe[] {
   return [
     {
       id: "terminal",
-      // Silence here means the frame is not reporting — a booting iframe, a
-      // cached older build, no terminal on screen at all. None of those is a
-      // dead socket, and calling them one would be the panel's first lie.
+      // Silence here means the terminal is not reporting — one still booting,
+      // or none on screen at all, since `askTerminalConn` is a no-op until a
+      // TerminalNative replaces it. Neither is a dead socket, and calling them
+      // one would be the panel's first lie.
       timeoutState: "unknown",
       timeoutDetail: "not reporting",
       run: async (signal) => terminalChannel(await deps.askTerminal(signal)),

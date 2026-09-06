@@ -22,18 +22,24 @@ import {
  * opaque (it only guards the envelope); the client validates-or-defaults every
  * KNOWN field on read.
  *
- * This SPA deliberately owns only a SUBSET of the fields the vanilla terminal
- * page also reads (fontSize, session.newCommand, notify.*). Because that page
- * still runs inside the terminal iframe (xterm stays external), a whole-doc
- * write here MUST NOT drop the fields it doesn't know about — so, unlike the
- * vanilla `normalizePrefs` which drops unknown keys, this store PRESERVES every
- * unknown top-level key AND unknown subkey on write-back (composeDoc). Known
- * fields are still validate-or-defaulted for use.
+ * This SPA deliberately owns only a SUBSET of the doc's fields (fontSize,
+ * session.newCommand, notify.*), so a whole-doc write here MUST NOT drop the
+ * fields it doesn't know about — unlike the vanilla `normalizePrefs`, which
+ * drops unknown keys, this store PRESERVES every unknown top-level key AND
+ * unknown subkey on write-back (composeDoc). Known fields are still
+ * validate-or-defaulted for use.
+ *
+ * The reason for that used to be the terminal page reading the same doc from
+ * inside its iframe. It survived the page: the doc roams through the server,
+ * which deliberately does not know the fields either, so an older build reading
+ * and re-PUTting would otherwise delete a newer build's (tmux-api's own
+ * `TestValidatePrefsAcceptsObjectAndKeepsUnknownKeys` states that contract from
+ * the Go side). The push sender also reads `notify.*` out of the roamed doc.
  *
  * Adoption is local-wins-until-first-load: a persisted `tl:prefs-dirty:v1`
  * marker (set on any local change, cleared only when a PUT acks) keeps an
- * unacked local change winning over the server doc across reloads and across the
- * sibling iframe's own boot GET.
+ * unacked local change winning over the server doc across reloads and across
+ * any other client's boot GET.
  */
 
 export type NewCommand = "default" | "claude" | "codex" | "shell";
@@ -724,16 +730,21 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   }
 
   /**
-   * Tell the attached terminal iframe about a change we have already persisted.
-   * term.html reads localStorage as the truth and treats the payload as the
-   * failed-write fallback, so this MUST run after persist().
+   * Tell the attached terminal about a change we have already persisted.
+   *
+   * MUST run after persist(). term.html read localStorage as the truth and
+   * treated the payload as the failed-write fallback; the native receiver takes
+   * fontSize from the PAYLOAD and reads no storage at all, so the ordering now
+   * holds for its reason: the receiver persists nothing, or the two writes would
+   * chase each other through the same key. It says so itself, beside its
+   * `__tlPrefsLive` install in TerminalNative.
    */
   function pushLive(next: Prefs): void {
     if (typeof window === "undefined") return;
     try {
       window.__tlPrefsLive?.(next);
     } catch {
-      /* a detached frame must never break a pref write */
+      /* no terminal mounted, or one that threw: never break a pref write */
     }
   }
 

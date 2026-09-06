@@ -56,8 +56,8 @@ export interface SwipeOptions {
 /**
  * Watch `root` for a session-switching swipe. Returns a cleanup.
  *
- * Pointer events rather than touch events so a stylus works too; the terminal
- * iframe swallows its own pointers, which is correct — a swipe over the pty is
+ * Pointer events rather than touch events so a stylus works too; xterm's
+ * element swallows its own pointers, which is correct — a swipe over the pty is
  * for the pty.
  */
 export function installSwipe(root: HTMLElement, opts: SwipeOptions): () => void {

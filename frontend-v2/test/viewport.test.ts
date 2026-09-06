@@ -54,18 +54,19 @@ it("cancels its pending frame on cleanup", () => {
 });
 
 /**
- * Forwarding the keyboard height across the frame boundary.
+ * Publishing the keyboard height to the terminal.
  *
- * The terminal lives in an iframe, and an iframe's visualViewport does not move
- * when the soft keyboard opens — only the top window's does. The lobby used to
- * reserve the space by shrinking the iframe's CONTAINER, which pulled the frame
- * out from under the tap that had just opened the keyboard: the delayed compat
- * mousedown then landed on a non-focusable shell element and blurred the field,
- * so the keyboard flashed shut for taps below ~54% of the screen (2026-08-17).
- * The height is forwarded into the frame instead, so the frame never moves.
+ * The lobby used to reserve the space by shrinking the terminal's CONTAINER,
+ * which pulled the terminal out from under the tap that had just opened the
+ * keyboard: the delayed compat mousedown then landed on a non-focusable shell
+ * element and blurred the field, so the keyboard flashed shut for taps below
+ * ~54% of the screen (2026-08-17). The height is handed to the terminal instead
+ * — a cross-document post while term.html was framed, `onKeyboard` into
+ * `__tlKeyboardOffset` since 2026-09-05 — and the terminal shrinks its own host,
+ * so nothing moves under the finger.
  */
 
-describe("viewport — the keyboard height is published to the frame", () => {
+describe("viewport — the keyboard height is published to the terminal", () => {
   function withFakeViewport(height: number, run: () => void): void {
     const real = Object.getOwnPropertyDescriptor(window, "visualViewport");
     Object.defineProperty(window, "visualViewport", {
@@ -100,8 +101,8 @@ describe("viewport — the keyboard height is published to the frame", () => {
 
   it("publishes only on a CHANGE — the keyboard fires a burst of events", () => {
     // The keyboard animates over ~250ms and fires resize/scroll throughout.
-    // Posting into the frame on every one of them would have the terminal
-    // re-fit (and tmux resize) repeatedly for one keyboard.
+    // Publishing on every one of them would have the terminal re-fit (and tmux
+    // resize) repeatedly for one keyboard.
     const seen: number[] = [];
     withFakeViewport(window.innerHeight - 300, () => {
       const stop = installViewportSync({ onKeyboard: (px) => seen.push(px) });

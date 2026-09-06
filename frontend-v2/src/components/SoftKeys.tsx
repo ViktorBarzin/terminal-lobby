@@ -24,7 +24,8 @@ import { track } from "../telemetry/track";
  * Mobile soft-key toolbar (design pillar #2 — Mobile/Touch), ported from the
  * vanilla frontend/index.html `#soft-keys` (~10869-11421). Coarse-pointer only;
  * the parent mounts it and reserves a REAL CSS height via `body.has-soft-keys`
- * so the surface above it shrinks (FitAddon-honest for the terminal iframe).
+ * so the surface above it shrinks by a real height, which is what lets the
+ * terminal's FitAddon measure a true box.
  *
  * Two tiers (IR.3 layout):
  *   - always-visible `.sk-line` = the primary row (Esc ⇧Tab · arrows) + the
@@ -36,7 +37,9 @@ import { track } from "../telemetry/track";
  * Byte contract: pre-baked bytes (keybytes.ts) run through `applyMods` (the
  * armed/latched Ctrl/Alt remap) then the injected `send` sink, then
  * `consumeSoftMods` drops one-shot modifiers. The sink is where the parent
- * routes bytes — to the terminal iframe (postMessage bridge) or the composer.
+ * routes bytes: to the pty via SessionView's `sendBytesToPty`, which calls the
+ * `window.__tlSendToTerminal` bridge TerminalNative owns, or to the composer.
+ * It was a postMessage into the terminal iframe until 2026-09-05.
  *
  * Wiring disciplines ported verbatim:
  *   - preventDefault on pointerdown for EVERY key (keep focus on the input so

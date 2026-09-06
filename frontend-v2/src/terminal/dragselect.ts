@@ -126,7 +126,7 @@
  *   rows, cols     `term.rows`, `term.cols`.
  *   mouseTracking  `term.modes.mouseTrackingMode`.
  *   isMac          term.html's test is an include list over
- *                  `navigator.platform` (:5817); `keybindings/engine.ts:83-92`
+ *                  `navigator.platform` (:5817); `keybindings/engine.ts`
  *                  already has a `detectMac()` that tries
  *                  `userAgentData.platform` first and matches /mac/i.
  *   now            term.html reads `Date.now()` at all five of these points
@@ -546,7 +546,7 @@ function isGhost(last: HijackRelease | null, e: PressEvent, now: number): boolea
  *
  * Case (a), the button coming up unseen, applies everywhere. term.html names
  * two sources (:5906-5909): a release past the window edge, and a release over
- * the lobby sidebar while the page runs in the lobby iframe. Only the first
+ * the lobby sidebar while that page ran in the lobby's iframe. Only the first
  * survives the port, since a native terminal shares the lobby's document
  * (ADR-0017) and a release over the sidebar reaches these listeners. Case (b),
  * a stall then travel, is gated on Macs (:5938) because three-finger-drag is a

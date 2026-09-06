@@ -148,19 +148,25 @@ describe("<SessionView> — the Watch toggle", () => {
 
   /**
    * The end of the chain inside the browser: the toggle has to reach the
-   * terminal iframe's URL as arg5. Losing it here means a client that asked to
-   * watch attaches read-WRITE and takes the grid — the exact failure the whole
-   * feature exists to prevent.
+   * terminal's attach args as arg5 (term.html read them off its iframe URL;
+   * TerminalNative takes them as a prop). Losing it here means a client that
+   * asked to watch attaches read-WRITE and takes the grid — the exact failure
+   * the whole feature exists to prevent.
    */
   it("passes the request down to the terminal attach", async () => {
     localStorage.setItem(WATCH_KEY_PREFIX + "main", "ro");
     render(() => <SessionView session="main" />);
 
-    // jsdom never navigates contentWindow.location.replace, so asserting on the
-    // iframe's src would pass vacuously. Assert the seam instead: what the view
-    // asked the URL builder for. buildTerminalArgs's own output — that this lands
-    // on arg5 with every earlier slot filled — is pinned in terminal-url.test.ts
-    // and executed against the shipped term.html in test_watch_mode_e2e.py.
+    // There is no iframe src to assert on: the terminal is drawn in this
+    // document and the args go to TerminalNative as a prop. Asserting on a src
+    // was already vacuous before that, since jsdom never navigates
+    // contentWindow.location.replace. Either way the seam is the thing to
+    // assert: what the view asked the URL builder for. buildTerminalArgs's own
+    // output — that this lands on arg5 with every earlier slot filled — is
+    // pinned in terminal-url.test.ts. scripts/test_watch_mode_e2e.py used to
+    // execute the same shape against the shipped term.html; its leg 1 still
+    // opens frontend/term.html, which 2c64552 deleted, so that cross-check is
+    // failing rather than covering this.
     await waitFor(() => expect(terminalFrameArgs).toHaveBeenCalled());
     const calls = vi.mocked(terminalFrameArgs).mock.calls;
     const withWatch = calls.filter(([, opts]) => opts?.watch === true);

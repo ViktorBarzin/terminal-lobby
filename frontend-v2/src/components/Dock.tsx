@@ -7,10 +7,10 @@ import type { DockStore } from "../store/dock";
  * The Ctrl/Cmd+J scratch shell, in a persistent panel under the session you are
  * working in (docs/2026-07-17-ctrl-j-shell-dock-design.md).
  *
- * It is a SECOND live terminal, not a view of the first: the top frame keeps
- * its session attached while you use the shell. Hiding the panel leaves the
- * shell running — that is why Ctrl+J cycles create → hide → show rather than
- * tearing the terminal down each time.
+ * It is a SECOND live terminal, not a view of the first: the session above
+ * keeps its own terminal attached while you use the shell. Hiding the panel
+ * leaves the shell running — that is why Ctrl+J cycles create → hide → show
+ * rather than tearing the terminal down each time.
  *
  * Desktop only, and this is where that is decided: `d.allowed()` is false
  * under `(pointer: coarse)`, so the `Show` below builds no terminal at all.

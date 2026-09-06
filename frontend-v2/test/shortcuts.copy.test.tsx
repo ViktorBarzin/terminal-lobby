@@ -17,16 +17,18 @@ import { PREF_DEFAULTS, type Prefs, type PrefsStore } from "../src/store/prefs";
  * being able to destroy a session is defensible; saying otherwise is not. These
  * tests hold the copy to what the code actually does.
  *
- * Ctrl/Cmd+J is a third exemption, and the one the copy used to miss:
- * SessionView registers it as an unconditional capture-phase window listener,
- * and term.html carries it in the iframe's own KB_ALWAYS_BINDINGS ahead of the
- * `enabled` gate — so the view toggle keeps firing with the layer off, from
- * both the lobby and inside the terminal.
+ * Ctrl/Cmd+J is a third exemption, and the one the copy used to miss. It is the
+ * scratch-shell dock: App.tsx's `onDockKey` is a raw window listener that never
+ * reads the gate, so the chord fires with the layer off wherever the focus is,
+ * on a fine pointer. The copy called it the view toggle until 2026-09-06, on
+ * two mechanisms that are gone: a SessionView listener, dropped when the dock
+ * reclaimed the chord, and term.html's own KB_ALWAYS_BINDINGS row, deleted with
+ * the page on 2026-09-05.
  *
  * The overlays also owe the terminal its keyboard back when they close — the
  * palette declares that contract and the help overlay never had one. It owes
- * the keyboard in the other direction too: opened while the terminal iframe
- * holds focus, every key went to the pty instead of the dialog, so the overlay
+ * the keyboard in the other direction too: opened while the terminal held
+ * focus, every key went to the pty instead of the dialog, so the overlay
  * could only be dismissed with the mouse and a stray Escape interrupted the
  * running turn.
  */
@@ -34,8 +36,8 @@ import { PREF_DEFAULTS, type Prefs, type PrefsStore } from "../src/store/prefs";
 /**
  * Every chord that survives the ⚙ "App shortcuts" opt-out, measured against the
  * running build with the layer off: "/" and "?" open this help,
- * Alt+Shift+Backspace prompts the kill confirm, Ctrl+J toggles the view. Each
- * one has to carry the marker in the table, and nothing else may.
+ * Alt+Shift+Backspace prompts the kill confirm, Ctrl+J opens the scratch-shell
+ * dock. Each one has to carry the marker in the table, and nothing else may.
  */
 const ALWAYS_ON_CHORDS = ["/", "?", "Alt+Shift+Backspace", "Ctrl+J"];
 
@@ -72,11 +74,16 @@ describe("shortcuts help — the always-on exemptions are stated", () => {
     expect(slash?.[1].toLowerCase()).toContain("always on");
   });
 
-  it("marks the view-toggle row as always on", () => {
+  it("marks the scratch-shell dock row as always on", () => {
     const rows = buildShortcutGroups("Alt", false).flatMap(([, r]) => r);
-    const toggle = rows.find(([keys]) => keys.includes("Ctrl+J"));
-    expect(toggle, "a Ctrl+J row").toBeDefined();
-    expect(toggle?.[1].toLowerCase()).toContain("always on");
+    const dock = rows.find(([keys]) => keys.includes("Ctrl+J"));
+    expect(dock, "a Ctrl+J row").toBeDefined();
+    expect(dock?.[1].toLowerCase()).toContain("always on");
+    // ...and says what the chord does. It named the view toggle until
+    // 2026-09-06, which no listener in the tree has performed since the dock
+    // reclaimed the chord.
+    expect(dock?.[1].toLowerCase()).toContain("shell");
+    expect(dock?.[1].toLowerCase()).not.toContain("terminal view");
   });
 
   it("marks EXACTLY the rows that survive the toggle — no more, no fewer", () => {
@@ -127,11 +134,14 @@ describe("Settings — the App shortcuts checkbox says what it does not cover", 
     expect(text).toContain("stay on either way");
   });
 
-  it("names the view toggle too — the exemption the hint used to omit", () => {
-    expect(keyboardGroupText("Alt")).toContain("ctrl+j");
+  it("names Ctrl+J too, and names it as the scratch shell", () => {
+    const text = keyboardGroupText("Alt");
+    expect(text).toContain("ctrl+j");
+    expect(text).toContain("scratch shell");
+    expect(text).not.toContain("terminal view");
   });
 
-  it("localizes the view toggle to Cmd on a Mac", () => {
+  it("localizes the Ctrl+J exemption to Cmd on a Mac", () => {
     expect(keyboardGroupText("Option")).toContain("cmd+j");
   });
 });
@@ -185,8 +195,8 @@ function openHelp(refocus?: () => void) {
   help.open();
   const utils = render(() => (
     <>
-      {/* stands in for the terminal iframe: something outside that can hold
-          — and steal back — the keyboard. */}
+      {/* stands in for the terminal: something outside the dialog that can
+          hold — and steal back — the keyboard. */}
       <input class="tl-test-steal" />
       <Show when={help.isOpen()}>
         <ShortcutsHelp controller={help} altLabel="Alt" isMac={false} />
@@ -255,8 +265,11 @@ describe("shortcuts help — the overlay takes the keyboard while it is open", (
 
   it("takes focus back when the terminal handback steals it after open", async () => {
     // palette-controller.runItem() closes (and refocuses the terminal) BEFORE
-    // running the action that opens this overlay, and TerminalView's handback
-    // lands a frame later — so the iframe can pull focus out from under us.
+    // running the action that opens this overlay. TerminalView's handback landed
+    // a frame later, so it could pull focus out from under us;
+    // `__tlFocusTerminal` is synchronous now and that particular race is gone.
+    // The steal below is simulated, so what this pins is the guard's behaviour
+    // against any late steal rather than that one cause.
     const { container } = openHelp();
     const dialog = await helpReady(container);
     const steal = container.querySelector(".tl-test-steal") as HTMLInputElement;

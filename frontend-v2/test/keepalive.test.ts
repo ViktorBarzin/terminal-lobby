@@ -2,10 +2,10 @@
  * The rules for what stays mounted between session switches.
  *
  * Two of them are easy to get wrong, and both put the 1,797 ms cover back on a
- * switch that was meant to be free: reordering the list moves an iframe in the
- * DOM, which reloads it, and replacing an entry object makes `<For>` rebuild the
- * row it belongs to. So the tests below pin identity as hard as they pin the
- * TTL.
+ * switch that was meant to be free: reordering the list moves a session's node
+ * in the DOM, which tears its terminal down and rebuilds it, and replacing an
+ * entry object makes `<For>` rebuild the row it belongs to. So the tests below
+ * pin identity as hard as they pin the TTL.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -30,7 +30,7 @@ describe("keeping a session mounted", () => {
     expect(next.seen[keyOf({ name: "alpha" })]).toBe(T0);
   });
 
-  it("never reorders, because moving an iframe reloads it", () => {
+  it("never reorders, because moving a session's node rebuilds its terminal", () => {
     let state = visited(["alpha", "beta", "gamma"]);
     state = keepSelected(state, { name: "alpha" }, T0 + 9_000);
     state = keepSelected(state, { name: "beta" }, T0 + 10_000);

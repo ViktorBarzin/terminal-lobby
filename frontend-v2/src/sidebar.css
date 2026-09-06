@@ -120,8 +120,9 @@
    right-hand strip, contradicting every rule the dock itself carries (column
    direction, a border-TOP, a row-resize gutter) and Dock.tsx's docblock.
    Nothing here wants a row: the sidebar is a grid cell of `.tl-shell` (:67),
-   an `<aside>` beside `.tl-shell-content` (App.tsx:812), so it was never a
-   child of this element and no sub-container is needed to keep it one. */
+   an `<aside class="tl-shell-sidebar">` beside `.tl-shell-content` in App's
+   JSX, so it was never a child of this element and no sub-container is needed
+   to keep it one. */
 .tl-shell-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -1161,7 +1162,8 @@
     position: relative;
     display: inline-flex;
   }
-  /* Above the terminal iframe, which paints in a layer of its own. */
+  /* Above the terminal. xterm's own stylesheet stacks its screen, decoration
+     and helper layers up to z-index 11, so the popup needs to clear those. */
   .tl-bar-menu .tl-menu {
     z-index: 30;
   }
@@ -1231,8 +1233,13 @@
   min-height: 0;
   position: relative;
 }
-/* While the gutter is being dragged the pointer must not land in the iframe,
-   or the drag dies the moment it crosses into the terminal. */
+/* While the gutter is being dragged the pointer must not land in the terminal,
+   or the drag can die the moment it crosses into it. Dock.tsx tracks the drag
+   with `pointermove` on WINDOW, and xterm's element has its own pointerdown /
+   pointermove / pointerup handlers and takes pointer capture, so it is a
+   plausible sink for events the drag needs. Until 2026-09-05 the terminal was a
+   separate document, which swallowed them outright; the mechanism this guards
+   against changed with the port and has not been re-measured since. */
 .tl-dock-dragging .tl-dock-body {
   pointer-events: none;
 }

@@ -14,9 +14,17 @@
  *
  * v2 deviation from the vanilla table (documented, deliberate): the vanilla
  * always-on `Ctrl+J`/`Cmd+J -> session.new.shell` (open the scratch-shell dock)
- * is DROPPED here — v2 has no dock yet, and Ctrl/Cmd+J is instead the text<->
- * terminal view toggle owned by SessionView. The dock chord returns when the
- * dock pillar lands.
+ * is in neither table here. It was dropped while v2 had no dock, on the note
+ * that Ctrl/Cmd+J was the text/terminal view toggle instead and that the dock
+ * chord would come back with the dock pillar.
+ *
+ * The dock landed and took the chord back, as `onDockKey` in App.tsx rather
+ * than as a table row. `view.toggle` is in neither table, no listener here
+ * matches its chord, and `onDockKey` is the only handler in the tree that
+ * matches a J chord at all, so the view toggle has no chord: it runs from the
+ * [Text | Terminal] control and from the palette. ShortcutsHelp and
+ * settings/pages/KeyboardPage told the user otherwise until 2026-09-06 and now
+ * name the dock. Neither table changed.
  */
 import {
   eventMatchesChord,
@@ -218,8 +226,10 @@ export interface KeyContext {
 /**
  * Build the when-context from the shell's overlay state — the ONE place that
  * decides what "an overlay owns the keyboard" means, shared by the window
- * keydown listener and the Ctrl/Cmd+J view toggle. Keeping it here rather than
+ * keydown listener and App's bare "/" help opener. Keeping it here rather than
  * inline in the shell is what makes that definition testable and single.
+ * SessionView's always-on Ctrl/Cmd+J was a third reader until the dock
+ * reclaimed the chord.
  *
  * A third reader lived here until 2026-09-05: a chord pressed inside the
  * terminal could not produce a keydown in this document, so it was matched
