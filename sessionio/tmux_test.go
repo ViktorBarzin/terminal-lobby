@@ -454,3 +454,26 @@ func TestSetOptionAcceptsAValueThatLooksLikeAFlag(t *testing.T) {
 		t.Errorf("read back (%q,%v), want (%q,true)", got, ok, "-not-a-flag")
 	}
 }
+
+// The two binaries are a seam a caller may pin, so a service that already keeps
+// its own test-overridable paths can hand them over instead of rebuilding the
+// sudo rule. Empty means this package's own absolute defaults.
+func TestCommandTakesTheCallersBinaries(t *testing.T) {
+	in := NewInjector("wizard")
+	in.Binary, in.Sudo = "/opt/stub/tmux", "/opt/stub/sudo"
+
+	if own := in.Command("wizard", "list-sessions"); own.Args[0] != "/opt/stub/tmux" {
+		t.Errorf("own-user argv = %v, want the caller's tmux", own.Args)
+	}
+	other := in.Command("bob", "list-sessions")
+	want := []string{"/opt/stub/sudo", "-n", "-u", "bob", "/opt/stub/tmux", "list-sessions"}
+	if strings.Join(other.Args, " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", other.Args, want)
+	}
+
+	bare := NewInjector("wizard").Command("bob", "list-sessions")
+	fallback := []string{sudoBinary, "-n", "-u", "bob", tmuxBinary, "list-sessions"}
+	if strings.Join(bare.Args, " ") != strings.Join(fallback, " ") {
+		t.Errorf("unset argv = %v, want the package defaults %v", bare.Args, fallback)
+	}
+}

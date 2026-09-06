@@ -78,6 +78,28 @@ type Options interface {
 type Injector struct {
 	selfUser string
 	socket   string
+	// Binary and Sudo let a caller that already pins its own absolute paths
+	// hand them over rather than rebuild the sudo rule around them — tmux-api
+	// keeps both as package vars its tests swap for stubs. Empty means this
+	// package's own defaults, which is every other caller.
+	Binary string
+	Sudo   string
+}
+
+// binary and sudo resolve the two programs a call runs: the caller's pins when
+// it set them, this package's absolute defaults otherwise.
+func (in *Injector) binary() string {
+	if in.Binary != "" {
+		return in.Binary
+	}
+	return tmuxBinary
+}
+
+func (in *Injector) sudo() string {
+	if in.Sudo != "" {
+		return in.Sudo
+	}
+	return sudoBinary
 }
 
 // NewInjector binds to the user's DEFAULT tmux socket — the one every real
@@ -118,9 +140,9 @@ func (in *Injector) Command(osUser string, args ...string) *exec.Cmd {
 	}
 	full = append(full, args...)
 	if osUser == in.selfUser {
-		return exec.Command(tmuxBinary, full...)
+		return exec.Command(in.binary(), full...)
 	}
-	return exec.Command(sudoBinary, append([]string{"-n", "-u", osUser, tmuxBinary}, full...)...)
+	return exec.Command(in.sudo(), append([]string{"-n", "-u", osUser, in.binary()}, full...)...)
 }
 
 // exactPane targets the named session and NOTHING ELSE, for the verbs whose

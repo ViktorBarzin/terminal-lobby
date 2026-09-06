@@ -130,6 +130,25 @@ func TranscriptCWD(path string) string {
 	return ""
 }
 
+// ResolveCWD is where a conversation is actually happening: the transcript's
+// own cwd, with tmux's session_path as the fallback for a transcript that has
+// not been written to yet.
+//
+// It lives here because BOTH writers of the binding index apply it and they
+// have to agree, or one session gets filed in two places. The bridge
+// resurrects by it: `tmux new -s work -c ~/code/tl` then `cd .worktrees/x &&
+// claude` is routine, and filing by session_path resurrects the session in the
+// PARENT directory, under a project slug that holds a different conversation's
+// transcripts. The syncer adopts by it: the same wrong answer files the thread
+// under the wrong T3 project (decision 8). session_path is only where a NEW
+// window in that session would start, which is why it loses to the transcript.
+func ResolveCWD(transcript, tmuxDir string) string {
+	if cwd := TranscriptCWD(transcript); cwd != "" {
+		return cwd
+	}
+	return tmuxDir
+}
+
 // transcriptFirstLines bounds how far into a transcript TranscriptCWD looks.
 const transcriptFirstLines = 16
 

@@ -255,14 +255,20 @@ func runPrivop(osUser, op, path string, all bool, stdin []byte) privopResult {
 	return res
 }
 
-// exeSelf resolves this binary's path for the sudo re-exec. The sudoers grant
-// is keyed on /usr/local/bin/file-api, so production resolves there; the
-// os.Executable fallback keeps a dev build self-consistent.
+// installPath is where the package puts this binary, and so the path the
+// sudoers grant is keyed on. privop_test pins it against the grant template,
+// because a re-exec sudo has not been told to permit fails as a permission
+// error with nothing to point at.
+const installPath = "/usr/local/bin/file-api"
+
+// exeSelf resolves this binary's path for the sudo re-exec. Production resolves
+// to installPath, which is what the grant names; the os.Executable fallback
+// keeps a dev build self-consistent.
 func exeSelf() string {
 	if p, err := os.Executable(); err == nil {
 		return p
 	}
-	return "/usr/local/bin/file-api"
+	return installPath
 }
 
 // --- child side: this process is already running AS the target user ---------

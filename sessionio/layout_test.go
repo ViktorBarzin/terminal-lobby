@@ -284,3 +284,27 @@ func TestSessionMapRefusesASuppliedTranscriptOutsideTheProjectsRoot(t *testing.T
 		}
 	}
 }
+
+// ResolveCWD is the rule both writers of the binding index apply, so it lives
+// here rather than once in each of them. The transcript wins; tmux's
+// session_path is the fallback for a transcript with nothing in it yet.
+func TestResolveCWDPrefersTheTranscriptOverTmux(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.jsonl")
+	body := `{"type":"user","cwd":"/home/wizard/code/tl/.worktrees/x","message":{"role":"user","content":"hi"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := ResolveCWD(path, "/home/wizard/code/tl"); got != "/home/wizard/code/tl/.worktrees/x" {
+		t.Errorf("ResolveCWD = %q, want the transcript's cwd", got)
+	}
+	empty := filepath.Join(t.TempDir(), "empty.jsonl")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := ResolveCWD(empty, "/home/wizard/code/tl"); got != "/home/wizard/code/tl" {
+		t.Errorf("ResolveCWD on an empty transcript = %q, want tmux's answer", got)
+	}
+	if got := ResolveCWD("", "/home/wizard/code/tl"); got != "/home/wizard/code/tl" {
+		t.Errorf("ResolveCWD with no transcript = %q, want tmux's answer", got)
+	}
+}

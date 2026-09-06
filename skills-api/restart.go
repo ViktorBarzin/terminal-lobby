@@ -128,6 +128,14 @@ func claudeCommand(osUser, session string) string {
 
 // tmuxCmd runs tmux as osUser: directly when that is this service's own user,
 // through the same `sudo -n -H -u` the attach path uses otherwise.
+//
+// sessionio.Injector.Command is the same rule and this stays separate from it
+// anyway: taking that edge for one five-line function would add a require and
+// replace pair, a transitive dependency on the transcript reader, and a
+// sessionio path to this service's container build, to delete five lines. The
+// argv also differs: this one passes -H and sessionio's does not, so the two
+// are not interchangeable as they stand, and which of them is right for a
+// respawned pane has not been measured.
 func tmuxCmd(osUser string, args ...string) *exec.Cmd {
 	if inline(osUser) {
 		return exec.Command(tmuxBinary, args...)
