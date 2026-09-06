@@ -391,11 +391,17 @@ func setNetworkHeader(w http.ResponseWriter, r *http.Request) {
 	if _, busy := warming.LoadOrStore(key, true); busy {
 		return
 	}
+	// Both seams are read HERE, on the request goroutine, and handed to the
+	// warmer. The warmer outlives the request by up to netLookupTimeout, so
+	// reading the package vars inside it races any test that swaps a seam and
+	// restores it in a defer. Nothing about the caching changes: production
+	// never reassigns either var, so the captured values are the live ones.
+	resolver, cache := netinfoResolver, netinfoCache
 	go func() {
 		defer warming.Delete(key)
 		ctx, cancel := context.WithTimeout(context.Background(), netLookupTimeout)
 		defer cancel()
-		netinfoCache.put(key, resolveNetwork(ctx, ip, netinfoResolver))
+		cache.put(key, resolveNetwork(ctx, ip, resolver))
 	}()
 }
 
