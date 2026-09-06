@@ -4,7 +4,9 @@
  *   - session-events — the normalized event stream + prompt/cancel control
  *     channel, served at the ROOT paths /events, /prompt, /cancel (see
  *     session-events/main.go). Its web-mediated PERMISSION broker was removed
- *     in 575d4f5 — see permissionUrl() below.
+ *     in 575d4f5, and the URL builder that fed it went on 2026-09-06 — the
+ *     reasoning it carried now lives in PermissionPanel.tsx, which is the rest
+ *     of the client half.
  *   - tmux-api — the lobby data API (sessions, layout, whoami, projects …),
  *     reached under the /api/sessions/* prefix (the PROD ingress is
  *     `PathPrefix /api/sessions/` → tmux-api, stripping the whole prefix so
@@ -118,22 +120,6 @@ export function eventsUrl(session: string, lastEventId: number): string {
   const turns = openWindowTurns(effectiveTier());
   if (turns !== 20) params.push(`turns=${turns}`);
   return withActAs(`${u}?${params.join("&")}`);
-}
-
-/**
- * POST target for resolving a permission request by its reqId (session-events).
- *
- * @deprecated DEAD ROUTE — session-events no longer serves it. 575d4f5 removed
- * the web-mediated PreToolUse permission broker: it answered "ask" for any
- * session nobody was watching in Text mode, and a PreToolUse "ask" OVERRIDES
- * the allowlist rather than deferring to it, so it forced a prompt on every
- * tool call in every session on the shared devvm. The prod ingress no longer
- * routes it either. Kept — with PermissionPanel.tsx — so a future re-enable
- * behind a per-session gate does not have to rebuild the client half; calling
- * it today gets a 404.
- */
-export function permissionUrl(reqId: string): string {
-  return `${API_BASE}/permission/${encodeURIComponent(reqId)}`;
 }
 
 /** POST target to inject a prompt into the session's Claude (session-events).

@@ -8,7 +8,6 @@ import {
   eventsUrl,
   promptUrl,
   cancelUrl,
-  permissionUrl,
   PREFS_PATH,
 } from "../src/lib/config";
 
@@ -41,7 +40,6 @@ describe("config — tmux-api prefix (PROD ingress: PathPrefix /api/sessions/ ->
     expect(eventsUrl("s", 0)).toBe("/events/s?rev=1");
     expect(promptUrl("s")).toBe("/prompt/s");
     expect(cancelUrl("s")).toBe("/cancel/s");
-    expect(permissionUrl("r")).toBe("/permission/r");
   });
 
   it("clipboard + file-api keep their own prefixes (not moved by the fix)", () => {
