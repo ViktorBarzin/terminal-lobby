@@ -620,6 +620,9 @@ src/
     favicon.ts           Canvas-rendered favicon badge
     appbadge.ts          PWA icon badge — how many sessions are waiting
     attention.ts         Bell / output-while-hidden latches from the terminal
+    focus.ts             PURE: which session THIS device is showing, and when to
+                         say so again — the report that lets the server withhold
+                         a push about the session already on your screen
     opt-in.ts            Per-browser notification opt-in flag
     notifications.ts     Wires the above + push into the running app
   pwa/

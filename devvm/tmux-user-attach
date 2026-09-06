@@ -131,6 +131,34 @@ resolve_cmd() {
     fi
 }
 
+# Append the model and effort flags to the resolved command line.
+#
+# The two CLIs spell them differently, so the KEY decides: there is no shared
+# flag to write once. A key with no command — `default`, an unknown one — gets
+# nothing, because tmux's own default-command decides what runs there and this
+# script has no command line to add to.
+#
+# Appended LAST, after anything the user's own commands file already set, so a
+# choice made in the lobby wins over one written into that file. Verified
+# against Claude Code 2.1.263 on 2026-09-06: given two of the same flag the
+# last one is what starts (`--model opus --model haiku` booted Haiku).
+launch_flags() {
+    local key="$1"
+    [[ -n "$cmd" ]] || return 0
+    case "$key" in
+        claude)
+            [[ -n "$model" ]] && cmd+=" --model $model"
+            [[ -n "$effort" ]] && cmd+=" --effort $effort"
+            ;;
+        codex)
+            [[ -n "$model" ]] && cmd+=" -m $model"
+            # codex takes the reasoning level as config rather than a flag.
+            [[ -n "$effort" ]] && cmd+=" -c model_reasoning_effort=$effort"
+            ;;
+    esac
+    return 0
+}
+
 # --probe: which keys would actually start something, one `key<TAB>0|1` line
 # each. tmux-api serves this to the lobby so the new-session dropdown can grey
 # out a command the box cannot run, instead of offering it and handing back a
@@ -175,7 +203,30 @@ fi
 
 cmd_key="${3:-}"
 [[ "$cmd_key" =~ $CMD_RE ]] || cmd_key=""
+
+# $4/$5 = the MODEL and EFFORT a new session launches on, as flags on the
+# command rather than a `/model` typed into it once it is up. Measured on this
+# box 2026-09-06: launching with them costs what launching without costs
+# (2.40/2.54/2.84s bare against 2.49/2.42/4.49s flagged), while driving the
+# CLI's own picker afterwards costs 3.83/4.20/3.99s.
+#
+# Both are whitelisted TOKENS, and that is the whole of their safety: the
+# resolved command line runs through `$SHELL -lic "$cmd"`, so a value carrying a
+# quote, a space, a `$` or a `;` would be code. The classes below admit none of
+# those — the same discipline CMD_RE applies to the command key. Anything
+# outside them becomes empty, which is exactly "no choice was made".
+#
+# A model name has to cover both vocabularies: `opus` and `gpt-5.6-terra`, so
+# dots and dashes are in and nothing else is.
+MODEL_RE='^[a-z0-9][a-z0-9._-]{0,31}$'
+EFFORT_RE='^[a-z]{1,12}$'
+model="${4:-}"
+[[ "$model" =~ $MODEL_RE ]] || model=""
+effort="${5:-}"
+[[ "$effort" =~ $EFFORT_RE ]] || effort=""
+
 resolve_cmd "$cmd_key"
+launch_flags "$cmd_key"
 # tmux args after the session flags: nothing (default-command decides),
 # an explicit plain login shell, or the mapped command via login+
 # interactive shell (-l loads profile/PATH, -i loads rc functions like
@@ -254,7 +305,12 @@ fi
 # change in behaviour. `new-session -A` below then needs no special case: it
 # finds the freshly renamed session and attaches it, ignoring -c and the
 # command as it always does for a session that already exists.
-if [[ "$cmd_key" == claude ]]; then
+#
+# A slot is warmed with NO model or effort flags, and a running Claude cannot be
+# re-flagged — so a create that asked for either must not claim one. It takes
+# the cold path instead, which is the cheaper of the two: ~2.4s to boot with the
+# flags against ~9ms to claim and then ~4s driving the picker to the same place.
+if [[ "$cmd_key" == claude && -z "$model$effort" ]]; then
     slot="$(pool_slot_name "$start_dir")"
     if [[ "$name" != "$slot" ]] && tmux rename-session -t "=$slot" "$name" 2>/dev/null; then
         # Read the mark BEFORE clearing it: it decides whether a refill is owed.

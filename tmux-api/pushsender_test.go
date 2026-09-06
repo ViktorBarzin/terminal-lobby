@@ -732,55 +732,130 @@ func TestPushSenderOneOutstandingNotificationPerSession(t *testing.T) {
 // A session finishing while the person is typing into it does not ring: they
 // are watching it. The activity gate cannot express this, because typing is
 // what ARMS a push — so the fastest turns were exactly the ones interrupting.
-func TestPushSenderSkipsASessionYouAreSittingAt(t *testing.T) {
+// The session you have on screen does not buzz the phone in your hand — and it
+// does not stop the OTHER device from telling you either. Viktor, 2026-09-06:
+// "I want to still receive them but only for sessions that I'm not focused on
+// right now."
+func TestPushSenderSkipsOnlyTheDeviceLookingAtIt(t *testing.T) {
 	rec := &pushRecorder{hits: map[string]int{}}
 	srv := rec.server(t)
 	store := newPushStore(t.TempDir())
-	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)}); err != nil {
+	for _, d := range []string{"/phone", "/desk"} {
+		if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + d, Keys: genSubKeys(t)}); err != nil {
+			t.Fatalf("upsert %s: %v", d, err)
+		}
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+	sender.focus = newFocusStore()
+	// The desktop is showing "main". The phone is showing the lobby list.
+	sender.focus.report("alice", srv.URL+"/desk", "main")
+	sender.focus.report("alice", srv.URL+"/phone", "")
+
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+
+	if got := rec.hit("/desk"); got != 0 {
+		t.Errorf("the device with it on screen was told anyway: got %d, want 0", got)
+	}
+	if got := rec.hit("/phone"); got != 1 {
+		t.Errorf("the device that could not see it was not told: got %d, want 1", got)
+	}
+}
+
+// Looking at one session says nothing about another one finishing.
+func TestPushSenderStillTellsYouAboutTheOtherSessions(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/phone", Keys: genSubKeys(t)}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	stub := &stubStater{}
 	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
-	now := time.Now()
-	sender.now = func() time.Time { return now }
+	sender.focus = newFocusStore()
+	sender.focus.report("alice", srv.URL+"/phone", "main")
 
-	// Typed five seconds ago: they are right there.
-	stub.set(map[string]string{"main": stateRunning})
-	stub.setAct(map[string]int64{"main": now.Add(-5 * time.Second).Unix()})
+	stub.set(map[string]string{"main": stateRunning, "other": stateRunning})
 	sender.tick()
-	stub.set(map[string]string{"main": stateDone})
+	stub.set(map[string]string{"main": stateDone, "other": stateDone})
 	sender.tick()
-	if got := rec.hit("/d"); got != 0 {
-		t.Fatalf("rang about the session under their hands: got %d, want 0", got)
-	}
 
-	// Ten minutes later, same session finishes again. They have wandered off.
-	now = now.Add(10 * time.Minute)
-	stub.set(map[string]string{"main": stateRunning})
-	sender.tick()
-	stub.set(map[string]string{"main": stateDone})
-	sender.tick()
-	if got := rec.hit("/d"); got != 1 {
-		t.Fatalf("after they left: got %d, want 1", got)
+	if got := rec.hit("/phone"); got != 1 {
+		t.Fatalf("got %d pushes, want exactly 1 — the session that was not on screen", got)
 	}
 }
 
-// The throttle decides on its own inputs, so the two rules can be read without
-// a tmux or a push server.
+// A device that never reports is told everything: an old build, or a phone with
+// the app shut, must not go quiet.
+func TestPushSenderTellsADeviceThatReportsNothing(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/quiet", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+	sender.focus = newFocusStore()
+
+	stub.set(map[string]string{"main": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+
+	if got := rec.hit("/quiet"); got != 1 {
+		t.Fatalf("got %d, want 1", got)
+	}
+}
+
+// Attaching is not typing, and opening the app attaches every session you have
+// visited today. The whole chain has to hold that line: a client whose activity
+// stamp is its attach stamp must not silence anything.
+func TestPushSenderRingsForASessionYouOnlyReattached(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/phone", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+	sender.focus = newFocusStore()
+
+	// What the stater reports for a session the lobby just re-attached: nothing,
+	// because latestActivity drops a client that has never been typed into.
+	stub.set(map[string]string{"main": stateRunning})
+	stub.setAct(map[string]int64{})
+	sender.tick()
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+
+	if got := rec.hit("/phone"); got != 1 {
+		t.Fatalf("a re-attached session stayed silent: got %d, want 1", got)
+	}
+}
+
+// The throttle decides on its own inputs, so the rule can be read without a
+// tmux or a push server.
 func TestThrottledReasons(t *testing.T) {
 	now := time.Now()
 	p := &pushSender{
-		seenAct:     map[string]map[string]int64{"u": {"warm": now.Add(-2 * time.Second).Unix(), "cold": now.Add(-time.Hour).Unix()}},
+		// Typed into two seconds ago, and that no longer withholds anything:
+		// where the person is LOOKING is a report from the device, not a guess
+		// from a keystroke (pushfocus.go).
+		seenAct:     map[string]map[string]int64{"u": {"warm": now.Add(-2 * time.Second).Unix()}},
 		outstanding: map[string]map[string]bool{"u": {"rung": true}},
 	}
 	for _, tc := range []struct{ name, session, want string }{
-		{"typing right now", "warm", "at-keyboard"},
-		{"long since touched", "cold", ""},
 		{"already has a notification", "rung", "already-notified"},
+		{"touched a moment ago, but nothing outstanding", "warm", ""},
 		{"never seen at all", "fresh", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := p.throttled("u", tc.session, now); got != tc.want {
+			if got := p.throttled("u", tc.session); got != tc.want {
 				t.Fatalf("throttled(%s) = %q, want %q", tc.session, got, tc.want)
 			}
 		})
