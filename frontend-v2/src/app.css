@@ -47,29 +47,6 @@ body {
 }
 
 /* ---- Shell ------------------------------------------------------------- */
-.tl-app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-.tl-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  background: var(--bg-sidebar);
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
-}
-.tl-header-left,
-.tl-header-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
 .tl-brand {
   font-weight: 600;
 }
@@ -1380,10 +1357,6 @@ label.tl-set-row-label {
 }
 .tl-tool-toggle:hover {
   background: var(--hover-tint);
-}
-.tl-tool-caret {
-  color: var(--text-muted);
-  width: 12px;
 }
 .tl-tool-name {
   font-family: var(--font-mono);
@@ -3373,13 +3346,6 @@ body.tl-kb-up {
   font-size: calc(13px * var(--tl-text-scale, 1));
   text-align: left;
   min-height: 32px;
-}
-.tl-question-answerable {
-  cursor: pointer;
-}
-.tl-question-answerable:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .tl-question-option[data-chosen="true"] {
   border-color: var(--ok, #3fb950);

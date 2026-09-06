@@ -7,7 +7,6 @@ import {
   deleteProject,
   deriveSidebar,
   materializeGroup,
-  moveGroup,
   moveSession,
   moveSessionToAnchor,
   removeSessionFromLayout,
@@ -130,7 +129,6 @@ export interface LobbyStore {
   kill(name: string): Promise<void>;
   /** Move into `group`; with an anchor, immediately above/below that card. */
   move(name: string, group: string, anchor?: DropAnchor): Promise<void>;
-  moveGroupBy(groupName: string, dir: -1 | 1): Promise<void>;
   reorderGroupsTo(from: number, to: number): Promise<void>;
   createProject(name: string, dir?: string): Promise<boolean>;
   /** Ask for a Claude session started ahead of a create, in this directory.
@@ -922,10 +920,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (!ok && handBack) opts.setSessionOrder?.(wasOrder);
   }
 
-  async function moveGroupBy(groupName: string, dir: -1 | 1): Promise<void> {
-    await saveLayout(moveGroup(layout(), groupName, dir));
-  }
-
   async function reorderGroupsTo(from: number, to: number): Promise<void> {
     await saveLayout(reorderGroups(layout(), from, to));
   }
@@ -1080,7 +1074,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     rename,
     kill,
     move,
-    moveGroupBy,
     reorderGroupsTo,
     createProject,
     prewarm,
