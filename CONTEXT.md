@@ -532,7 +532,12 @@ are kept apart all the way down, because Claude Code reports dollars and a
 ChatGPT plan reports none.
 _Avoid_: usage (taken: **Data used** owns it, and Codex's rollout spends the
 same word on tokens alone, in `total_token_usage`), cost tracking, billing
-(nothing here bills anyone)
+(nothing here bills anyone). The ban is on what a person reads and on new
+names. The recording path was built under the vendor's own word for the slot it
+sits in and keeps it, so `devvm/tl-usage-record`, `POST /hooks/usage`,
+`TL_USAGE_ENDPOINT` and `@tl_usage_cost` all say "usage" and all mean spend.
+Renaming them would mean changing the managed-settings entry in the infra repo
+in the same breath, so they stand — grep for `usage` and expect both meanings.
 
 **Spend**:
 Dollars, and only for Claude Code, which computes `total_cost_usd` itself and
@@ -584,11 +589,20 @@ _Avoid_: sample, event, tick
 
 **Day rollup**:
 The per-day total a **reading** rolls its difference into. The rollups are the
-complete record and the session rows are the detail view of the last 30 days,
-which is what lets a row be dropped at 30 days without re-adding anything and
-lets **All time** be answered from the days alone.
+complete record, which is what lets **All time** be answered from the days
+alone; the session rows are the detail view of the last 30 days.
 _Avoid_: aggregate, bucket (taken: a **bucket** is one of Data used's five
 features)
+
+**Retired row**:
+A session row past the 30-day window. It keeps the conversation's id and its
+running totals and loses its name and model, and the page stops listing it. The
+totals are why it stays: the next **reading** from that conversation is
+differenced against them, and a row that had been deleted outright would make a
+resumed conversation contribute its whole history to the day it came back. The
+row cap (2,000, retired rows included) is the one place a baseline is dropped
+for good.
+_Avoid_: expired, archived, tombstone (nothing here marks a deletion)
 
 ### Release
 

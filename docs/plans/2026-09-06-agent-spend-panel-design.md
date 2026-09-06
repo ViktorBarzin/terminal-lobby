@@ -117,9 +117,14 @@ means inventing a budget the user never set.
 
 `/var/lib/tmux-api/spend/<user>.json`, matching the per-user JSON files
 already at `/var/lib/tmux-api/{prefs,push-subs,titles,layout,assignments}`.
-Per-session rows are kept 30 days and then folded into a per-day total; the
-day totals are a few bytes each and are kept indefinitely, which is what
-makes All time possible.
+Per-session rows are listed for 30 days; every reading has already rolled its
+difference into a per-day total, and the day totals are a few bytes each and are
+kept indefinitely, which is what makes All time possible.
+
+A row past 30 days is retired rather than deleted: it keeps the conversation's
+running totals as the baseline the next reading is differenced against and loses
+its name and model. Deleting it would make a conversation resumed later
+contribute its whole history to the day it came back.
 
 ## Scope and boundaries
 
