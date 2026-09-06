@@ -10,7 +10,9 @@ package main
 // must not have. tmux-persist recreates sessions after a reboot or an OOM from
 // a snapshot of names, cwds and claude uuids — a title is none of those, so
 // without this file every recovery would hand back a sidebar of bare session
-// names, which since ADR-0019 are opaque ids nobody can read.
+// names. Since ADR-0022 a titled session's name reads as words again, but an
+// untitled one's is a minted id, and a name that survived a restore is no
+// proof of a title either way: this file is what says what it was called.
 //
 // So: the same shape as the killed-assignment memory next door (assignments.go)
 // — one small JSON document per OS user, holding the one fact that has to

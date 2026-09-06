@@ -183,14 +183,14 @@ src/
     title.ts             Normalizes a display TITLE: control characters to a
                          space, whitespace runs collapsed, capped at 64 code
                          points. Mirrors Go's slug.CleanTitle, which tmux-api
-                         runs on every title it stores. It used to derive a
-                         session NAME from the title too; ADR-0019 ended that
-                         and session-id.ts mints the name instead
+                         runs on every title it stores. The session NAME is
+                         derived from the title too (ADR-0022), but server-side
+                         in Go, where the collision check can see every session
     session-id.ts        Mints a session's NAME: 12 characters of lowercase
                          Crockford base32 from crypto.getRandomValues, and the
-                         test that says a name is one of ours. The name is an
-                         opaque id that never moves (ADR-0019), minted here
-                         because creating a session reaches no server. Mirrored
+                         test that says a name is one of ours. A session is
+                         minted with an id here because creating one reaches no
+                         server; its first title renames it (ADR-0022). Mirrored
                          by tmux-api/sessionid.go, which the one-time migration
                          reads to tell a migrated session from a named one
     file-api.ts          file-api client (list/read/write; maps 404/413/400).

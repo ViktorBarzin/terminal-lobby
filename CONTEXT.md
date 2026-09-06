@@ -18,16 +18,35 @@ may be a plain shell. Carries a **name**, which nobody reads, and a
 _Avoid_: terminal, tab, thread
 
 **Name** (of a session):
-The tmux session name: an opaque 12-character id, minted by the browser when
-the session is created and **never changed afterwards**. The identity
-everything is keyed by — tmux targets, URL segments, store keys, the
-session-images directory, the `?arg=` attach contract, the push tag — and
-nothing a person is expected to read, which is what lets it stop moving.
-Unique within one OS user's tmux server, so a cross-user reference needs
-the owner too. Sessions predating the migration carried human names derived
-from their titles; ADR-0019 has why that ended.
-_Avoid_: slug (nothing is slugged any more), label, and any surface that
-shows a name where it could show a **title**
+The tmux session name. An opaque 12-character id, minted by the browser when
+the session is created, and **derived from the title from the first title
+onwards** — `Deploy the thing` becomes `deploy-the-thing`, with a `-2` suffix
+when a sibling already holds it. What everything is keyed by: tmux targets,
+URL segments, store keys, the session-images directory, the `?arg=` attach
+contract, the push tag. Unique within one OS user's tmux server, so a
+cross-user reference needs the owner too. It is what `tmux ls`, the status
+bar and the terminal window title show, which is why it reads as words;
+ADR-0022 has the reasoning, and ADR-0019 has the interval when it did not.
+Because it moves, anything recording a session across time keys by tmux's
+own `session_id` instead, which a rename does not change. That only serves
+something which has SEEN the session, and the first rename lands seconds
+after creation — often before any poll has listed the session under the id
+the browser minted. So the first rename away from an id also records that id
+as the session's **birth name**, which is what lets a browser holding the
+name it minted find the session under the name it has now.
+_Avoid_: label; and any surface that shows a name where it could show a
+**title**
+
+**Birth name**:
+The minted id a session was created with, kept on the session (the `@tl_born`
+tmux option, served as `bornAs`) once the first title has renamed it away from
+that id. Written once and only for an id: a session renamed from a readable
+**name** has been listed under it all along, and overwriting would replace the
+one name a stranded browser is holding. Present only on a session that has
+been renamed, which is why nothing may treat it as the session's identity —
+`session_id` is that. It answers one question: *what is the session that used
+to be called this?*
+_Avoid_: original name, old name, alias
 
 **Title**:
 The display text for a session — spaces, punctuation, emoji, any script, up

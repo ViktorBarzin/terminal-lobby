@@ -1,5 +1,14 @@
 # A session name is an id, not a label
 
+> **Superseded in part by
+> [ADR-0022](0022-a-session-name-reads-as-words-again.md) (2026-09-06).** A
+> title carries the tmux name with it again, because `tmux ls`, the status bar,
+> the window title and `choose-tree` all show a name and none of them can show a
+> title. What survives from this ADR: a session is still CREATED with a minted
+> id in the browser, reaching no server, and an untitled session still answers to
+> that id. What it costed out is answered in ADR-0022's table.
+
+
 Session titles (2026-08-16) made the tmux name a derived value: you typed a
 title, the name was slugged from it, and the name was re-derived on every
 retitle so `tmux ls` stayed legible from a shell. That worked because retitling

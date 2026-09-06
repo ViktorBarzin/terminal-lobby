@@ -953,3 +953,136 @@ describe("<NewSessionComposer> — the / menu", () => {
     m.store.dispose();
   });
 });
+
+/**
+ * Paste and drop on the new-session screen.
+ *
+ * The image clipboard (clipboard/attach.ts) is installed by SessionView and
+ * gated on that session being ON SCREEN. On this screen none is — App renders
+ * this composer only while nothing is selected — so a pasted screenshot was
+ * handled by nobody at all and the gesture did nothing. Viktor, 2026-09-06:
+ * "uploading image (via paste) on new session screen doesn't work".
+ *
+ * Reproduced against a local build before the fix: a paste carrying an 8x8 PNG
+ * onto the focused field left `.tl-tray-item` at 0.
+ *
+ * Both intakes land in the same memory-only tray the Attach button fills —
+ * there is no session to upload into until Enter is pressed.
+ */
+describe("<NewSessionComposer> — pasted and dropped files", () => {
+  const created = (api: FakeApi): string => api.puts[0]!.ungrouped[0]!;
+
+  /** A document-level paste carrying one image, as a browser delivers it. */
+  const pasteImage = (f: File): Event => {
+    const e = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "clipboardData", {
+      value: { items: [{ type: f.type, getAsFile: () => f }] },
+    });
+    document.dispatchEvent(e);
+    return e;
+  };
+
+  /** A window-level drop carrying files, as a browser delivers it. */
+  const dropFiles = (...files: File[]): Event => {
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { files } });
+    window.dispatchEvent(e);
+    return e;
+  };
+
+  const trayNames = (c: HTMLElement): string[] =>
+    [...c.querySelectorAll(".tl-tray-name")].map((el) => el.textContent ?? "");
+
+  it("holds a pasted image, the way it holds a picked one", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    pasteImage(aFile("pasted.png"));
+    await waitFor(() =>
+      expect(m.container.querySelector(".tl-tray-item")).not.toBeNull(),
+    );
+    expect(w.uploads).toEqual([]); // nothing to upload into yet
+    m.store.dispose();
+  });
+
+  it("sends the pasted image up with the prompt when the session is created", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    w.chips = [
+      [
+        {
+          path: "/var/lib/clipboard-store/wizard/s/pasted-a1.png",
+          name: "pasted-a1.png",
+          kind: "image",
+        },
+      ],
+    ];
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    pasteImage(aFile("pasted.png"));
+    await waitFor(() =>
+      expect(m.container.querySelector(".tl-tray-item")).not.toBeNull(),
+    );
+    type(field(m.container)!, "what is wrong here?");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.uploads.length).toBe(1);
+    expect(w.uploads[0]!.session).toBe(created(api));
+    expect(w.uploads[0]!.files.map((f) => f.name)).toEqual(["pasted.png"]);
+    expect(w.delivered[0]!.lines).toEqual([
+      "/var/lib/clipboard-store/wizard/s/pasted-a1.png\nwhat is wrong here?",
+    ]);
+    m.store.dispose();
+  });
+
+  it("holds dropped files too, images and documents alike", async () => {
+    const api = new FakeApi();
+    const m = mount(api, {}, emptyWire());
+    await m.store.refresh();
+
+    const e = dropFiles(aFile("shot.png"), aFile("notes.txt", "text/plain"));
+    await waitFor(() =>
+      expect(trayNames(m.container)).toEqual(["shot.png", "notes.txt"]),
+    );
+    // Without this the browser navigates away to the dropped file.
+    expect(e.defaultPrevented).toBe(true);
+    m.store.dispose();
+  });
+
+  it("lets a text paste through to the field it landed in", async () => {
+    const api = new FakeApi();
+    const m = mount(api, {}, emptyWire());
+    await m.store.refresh();
+
+    const e = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "clipboardData", {
+      value: { items: [{ type: "text/plain", getAsFile: () => null }] },
+    });
+    document.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(false);
+    expect(m.container.querySelector(".tl-tray-item")).toBeNull();
+    m.store.dispose();
+  });
+
+  it("declines the gesture while the box is naming a shell, which has no tray", async () => {
+    const api = new FakeApi();
+    const m = mount(api, {}, emptyWire());
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Command for new session"), {
+      target: { value: "shell" },
+    });
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+
+    const e = pasteImage(aFile("pasted.png"));
+    // Nowhere to put it: better to leave the paste to the browser than to
+    // swallow it into a tray that is not on screen.
+    expect(e.defaultPrevented).toBe(false);
+    expect(m.container.querySelector(".tl-tray-item")).toBeNull();
+    m.store.dispose();
+  });
+});
