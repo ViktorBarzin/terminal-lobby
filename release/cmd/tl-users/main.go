@@ -14,11 +14,15 @@
 // revoked user's session titles and transcript ids stop being restorable to
 // whoever holds that OS name next.
 //
-// It exists for installs with NO roster. Where a roster owns those files —
-// the homelab devvm, where t3-provision-users.sh reconciles them hourly —
-// apply refuses. Two writers of one file is the shape that revoked two users'
-// terminals on 2026-08-29, and a tool that quietly became the second one would
-// be the same bug wearing a different hat.
+// The map and the grant exist for installs with NO roster. Where a roster owns
+// those two files — the homelab devvm, where t3-provision-users.sh reconciles
+// them hourly — apply leaves both alone. Two writers of one file is the shape
+// that revoked two users' terminals on 2026-08-29, and a tool that quietly
+// became the second one would be the same bug wearing a different hat.
+//
+// The deploy grant is outside that: nothing else writes /etc/sudoers.d/tl-reconcile,
+// and the box that most needs it is the roster-owned one. So -deploy-grant works
+// there too, writing that one file and saying who still owns the other two.
 package main
 
 import (
@@ -64,12 +68,16 @@ func main() {
 	}
 	cmd := flag.Arg(0)
 
-	svc := *service
-	if svc == "" {
-		svc = currentUser()
-	}
+	svc := resolveServiceUser(*service, os.Getenv("SUDO_USER"), currentUser())
 	if svc == "" {
 		die("cannot determine the service user; pass -service-user")
+	}
+	// A deploy grant naming root is not a grant. Root needs no sudo, and the
+	// deploy key is issued to a named account, so this would install cleanly,
+	// print success, and leave `sudo -n /usr/local/bin/tl-reconcile` refused.
+	if *deploy && svc == "root" {
+		die("a deploy grant for root grants nothing: root needs no sudo, and the deploy key\n" +
+			"is issued to a named account. Pass -service-user <the account in authorized_keys>.")
 	}
 
 	raw, err := os.ReadFile(*usersPath)
@@ -109,6 +117,15 @@ func main() {
 		}
 		for _, gone := range dropped {
 			from, to := release.RevokedStateDir(*root+release.SnapshotStore, gone, today())
+			// Say what apply would actually do. tombstoneState returns
+			// silently when the snapshot directory is absent, so predicting a
+			// rename of a directory that is not there tells an operator that
+			// root-owned state belonging to someone else is about to move
+			// when nothing is.
+			if _, err := os.Stat(from); err != nil {
+				fmt.Printf("  %q is on the map and not in this declaration: apply would drop the grant;\n    nothing to rename (%s does not exist)\n", gone, from)
+				continue
+			}
 			fmt.Printf("  %q is on the map and not in this declaration: apply would rename\n    %s -> %s\n", gone, from, to)
 		}
 		fmt.Printf("\n--- %s ---\n%s", mapDest, userMap)
@@ -122,39 +139,77 @@ func main() {
 				die("the deploy grant this would write is not valid sudoers: %v", err)
 			}
 		}
-		fmt.Println("\nthe grant parses; `tl-users apply` would install both files")
+		// What apply would install from here, which depends on who owns the
+		// two roster files. A dry run that names a different set of files than
+		// the real run writes is worth nothing.
+		rosterOwner := ""
+		if !*force {
+			rosterOwner = release.RosterOwns(mapDest, sudoersDest)
+		}
+		switch {
+		case rosterOwner != "" && *deploy:
+			fmt.Printf("\nthe grants parse; %s says a roster owns %s and %s, so apply would install %s alone\n",
+				rosterOwner, mapDest, sudoersDest, deployDest)
+		case rosterOwner != "":
+			fmt.Printf("\nthe grant parses; %s says a roster owns %s and %s, so apply would refuse\n",
+				rosterOwner, mapDest, sudoersDest)
+		case *deploy:
+			fmt.Println("\nthe grants parse; `tl-users apply -deploy-grant` would install all three files")
+		default:
+			fmt.Println("\nthe grant parses; `tl-users apply` would install both files")
+		}
 
 	case "apply":
+		// The roster owns the map and the ttyd-users grant, and nothing else.
+		// The deploy grant is a third file with a different writer and a
+		// different lifetime, so a roster-owned box is not a reason to refuse
+		// it — it is the box class that needs it most, and -force would be the
+		// wrong way past, since it would rewrite the two live files too.
+		rosterOwner := ""
 		if owner := release.RosterOwns(mapDest, sudoersDest); owner != "" && !*force {
+			rosterOwner = owner
+		}
+		if rosterOwner != "" && !*deploy {
 			die("%s says it is generated from %s, so a roster owns these files.\n"+
 				"Declare users there instead — it also creates the accounts.\n"+
-				"Pass -force only if you are certain the roster is gone.", owner, release.RosterMarker)
+				"Pass -force only if you are certain the roster is gone.", rosterOwner, release.RosterMarker)
 		}
-		// The grant is validated BEFORE either file moves. An invalid sudoers
+		rosterFiles := rosterOwner == ""
+
+		// Every grant is validated BEFORE anything moves. An invalid sudoers
 		// file is not a degraded feature: it breaks every sudo call on the box,
 		// including the one needed to repair it.
-		if err := validateSudoers(sudoers); err != nil {
-			die("refusing to install: %v", err)
+		if rosterFiles {
+			if err := validateSudoers(sudoers); err != nil {
+				die("refusing to install: %v", err)
+			}
 		}
 		if *deploy {
 			if err := validateSudoers(deployGrant); err != nil {
 				die("refusing to install the deploy grant: %v", err)
 			}
 		}
-		for _, missing := range accountsMissingOnThisHost(users) {
-			fmt.Fprintf(os.Stderr, "warning: %q has no account on this host; create it or that user cannot attach\n", missing)
-		}
-		if err := writeFile(mapDest, userMap, 0o644); err != nil {
-			die("%v", err)
-		}
-		if err := writeFile(sudoersDest, sudoers, 0o440); err != nil {
-			die("%v", err)
+		if rosterFiles {
+			for _, missing := range accountsMissingOnThisHost(users) {
+				fmt.Fprintf(os.Stderr, "warning: %q has no account on this host; create it or that user cannot attach\n", missing)
+			}
+			if err := writeFile(mapDest, userMap, 0o644); err != nil {
+				die("%v", err)
+			}
+			if err := writeFile(sudoersDest, sudoers, 0o440); err != nil {
+				die("%v", err)
+			}
 		}
 		if *deploy {
 			if err := writeFile(deployDest, deployGrant, 0o440); err != nil {
 				die("%v", err)
 			}
 			fmt.Printf("wrote %s: %s may run tl-reconcile as root\n", deployDest, svc)
+		}
+		if !rosterFiles {
+			fmt.Printf("%s says it is generated from %s, so %s and %s are the roster's; left alone.\n",
+				rosterOwner, release.RosterMarker, mapDest, sudoersDest)
+			return
 		}
 		for _, gone := range dropped {
 			tombstoneState(*root, gone)
@@ -255,6 +310,24 @@ func accountsMissingOnThisHost(users []release.User) []string {
 		}
 	}
 	return missing
+}
+
+// resolveServiceUser picks the account every grant is rendered for: the flag if
+// given, otherwise whoever invoked sudo, otherwise the current user.
+//
+// SUDO_USER comes before `id -un` because `sudo tl-users apply` is the
+// documented invocation — installing a 0440 sudoers file needs root — and under
+// sudo `id -un` is root. Root is the wrong name in both grants: the units do
+// not run as root, and the deploy key is issued to a named account, so a root
+// deploy grant installs cleanly and changes nothing about what that key may do.
+func resolveServiceUser(flagVal, sudoUser, idUn string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if sudoUser != "" {
+		return sudoUser
+	}
+	return idUn
 }
 
 func currentUser() string {

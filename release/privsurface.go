@@ -99,8 +99,9 @@ var Grants = []Grant{
 			"two people's accounts on one machine.",
 	},
 	{
-		Path:     DeploySudoersPath,
-		Writer:   "`tl-users apply -deploy-grant`, or the operator, once per box",
+		Path: DeploySudoersPath,
+		Writer: "`sudo tl-users apply -deploy-grant -service-user <account>`, or the operator, " +
+			"once per box. That run writes this file alone where a roster owns the other two.",
 		Template: "devvm/sudoers.d-tl-reconcile.template",
 		Validate: true,
 		Why: "The forced command on the deploy SSH key runs `sudo -n /usr/local/bin/tl-reconcile`, " +
