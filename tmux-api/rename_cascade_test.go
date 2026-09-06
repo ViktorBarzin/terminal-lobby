@@ -270,6 +270,10 @@ func TestCarryRenameSurvivesARepinFailure(t *testing.T) {
 // the session. ADR-0022 renames a fresh session within seconds, often before any
 // poll has listed it under the id the browser minted.
 func TestCarryRenameStampsTheBirthName(t *testing.T) {
+	// actAs, or tmuxCmd shells out to `sudo -n -u wizard` and the stub never
+	// runs — which is exactly how the last batch of tests here came to pass
+	// only on a box whose user is called wizard (2aa111e).
+	actAs(t, "wizard")
 	argv := withTmuxStub(t, "exit 0")
 
 	carryRenameAcrossStores("wizard", "824smya2cmz5", "remove-changed-files-panel")
@@ -290,6 +294,7 @@ func TestCarryRenameStampsTheBirthName(t *testing.T) {
 // follow the rename by session_id — and writing it would replace the minted id a
 // stranded tab is actually holding.
 func TestBirthNameIsOnlyRecordedForAMintedId(t *testing.T) {
+	actAs(t, "wizard")
 	argv := withTmuxStub(t, "exit 0")
 
 	carryRenameAcrossStores("wizard", "deploy", "deploy-the-thing")
@@ -303,6 +308,7 @@ func TestBirthNameIsOnlyRecordedForAMintedId(t *testing.T) {
 // already happened by the time this runs, and a session with no birth name is
 // exactly as findable as one from before the option existed.
 func TestCarryRenameSurvivesABirthNameFailure(t *testing.T) {
+	actAs(t, "wizard")
 	withTmuxStub(t, "exit 1")
 
 	carryRenameAcrossStores("wizard", "824smya2cmz5", "new-name")
