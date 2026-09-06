@@ -21,7 +21,9 @@ import { fetchWithDeadline } from "../lib/http";
 export const PUSH_SUBS_API = "/api/sessions/push-subscriptions";
 export const VAPID_PUBLIC_API = "/api/sessions/push/vapid-public";
 export const PUSH_TEST_API = "/api/sessions/push/test";
-export const PUSH_FOCUS_API = "/api/sessions/push/focus";
+// Not exported: nothing outside this module talks to it. The three above are,
+// because the connection probes and the tests reach for them.
+const PUSH_FOCUS_API = "/api/sessions/push/focus";
 
 function pushSupported(): boolean {
   return (

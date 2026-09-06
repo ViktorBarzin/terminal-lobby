@@ -24,7 +24,6 @@ vi.mock("../src/pwa/push", () => ({
   PUSH_SUBS_API: "/api/sessions/push-subscriptions",
   VAPID_PUBLIC_API: "/api/sessions/push/vapid-public",
   PUSH_TEST_API: "/api/sessions/push/test",
-  PUSH_FOCUS_API: "/api/sessions/push/focus",
   deviceSubscriptionState: () => Promise.resolve(h.delivers),
   reportFocus: (session: string) => {
     h.reports.push(session);
