@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
@@ -426,13 +427,60 @@ func TestCommandPinsItsBinariesByAbsolutePath(t *testing.T) {
 	}
 }
 
-// TL-22, the latent half. Option interpolates the name into a tmux FORMAT, and
-// #(...) in a format is command expansion, so a name is not inert text. Every
-// caller passes a package constant today; the guard is what keeps that true.
-func TestOptionRefusesANameThatWouldRunACommand(t *testing.T) {
+// recordingInjector returns an Injector whose tmux is a stub that records the
+// argv of every call, plus a reader of what it recorded. It is the seam for the
+// assertions that have to be about what was RUN rather than about what came
+// back, which is every assertion where "tmux failed" and "we refused" would
+// otherwise look identical.
+func recordingInjector(t *testing.T) (*Injector, func() [][]string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "argv")
+	stub := filepath.Join(dir, "tmux")
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >>" + logPath +
+		"; done\nprintf -- '--END--\\n' >>" + logPath + "\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	in := NewInjector("wizard")
+	// Both seams point at the stub so a call that unexpectedly takes the sudo
+	// branch shows up as a wrong argv rather than as a silent miss.
+	in.Binary, in.Sudo = stub, stub
+	return in, func() [][]string {
+		t.Helper()
+		b, err := os.ReadFile(logPath)
+		if err != nil {
+			return nil // nothing ran at all
+		}
+		var runs [][]string
+		var cur []string
+		for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
+			if line == "--END--" {
+				runs = append(runs, cur)
+				cur = nil
+				continue
+			}
+			cur = append(cur, line)
+		}
+		return runs
+	}
+}
+
+// TL-22, the latent half. Option interpolates the name into a tmux FORMAT
+// string, where #{...} is a directive rather than inert text: measured on tmux
+// 3.4, a name of `}#{pane_current_command}#{` makes `display-message -p` print
+// the pane's command, so an unchecked name reads whatever the format language
+// can reach and can break the two-line reply Option validates itself against.
+//
+// The assertion is on the ARGV, not on the return value. Option answers
+// ("", false) for every failed tmux call, which is also what a missing session
+// gives, so "tmux was never run" is the only thing that separates a refusal
+// from a tmux that happened to error.
+func TestOptionRefusesANameThatWouldRunACommand(t *testing.T) {
+	in, argv := recordingInjector(t)
 	for _, name := range []string{
 		"}#(touch /tmp/tl-tl22)#{",
+		"}#{pane_current_command}#{",
 		"@thread #{pane_id}",
 		"",
 	} {
@@ -440,18 +488,34 @@ func TestOptionRefusesANameThatWouldRunACommand(t *testing.T) {
 			t.Errorf("Option(%q) = (%q,%v), want a refusal", name, v, ok)
 		}
 	}
+	if runs := argv(); len(runs) != 0 {
+		t.Fatalf("a refused name still reached tmux: %v", runs)
+	}
+	// The recorder is what makes the assertion above mean anything, so prove a
+	// name the guard ALLOWS does reach it.
+	in.Option("wizard", "demo", OptionThread)
+	if runs := argv(); len(runs) != 1 {
+		t.Fatalf("the recorder saw %d runs for a legal name, want 1, so the refusals above prove nothing", len(runs))
+	}
 }
 
-// TL-22, the other latent half. SetOption passed its value as a bare positional,
-// so a value beginning with "-" would be permuted into a flag by getopt.
-func TestSetOptionAcceptsAValueThatLooksLikeAFlag(t *testing.T) {
-	in, osUser, _ := scratchSession(t)
-	if err := in.SetOption(osUser, "demo", OptionThread, "-not-a-flag"); err != nil {
+// TL-22, the other latent half. The `--` is defence in depth rather than a fix
+// for a live bug: tmux 3.4 stores the positional after the name verbatim
+// however it looks (measured — `set-option -t demo @t3_thread -g` stores "-g").
+// So a round-trip through a real tmux passes with the `--` deleted, and the
+// argv is the only place the marker is visible.
+func TestSetOptionPinsTheValueBehindAnEndOfFlagsMarker(t *testing.T) {
+	in, argv := recordingInjector(t)
+	if err := in.SetOption("wizard", "demo", OptionThread, "-not-a-flag"); err != nil {
 		t.Fatalf("SetOption: %v", err)
 	}
-	got, ok := in.Option(osUser, "demo", OptionThread)
-	if !ok || got != "-not-a-flag" {
-		t.Errorf("read back (%q,%v), want (%q,true)", got, ok, "-not-a-flag")
+	runs := argv()
+	if len(runs) != 1 {
+		t.Fatalf("tmux ran %d times, want 1: %v", len(runs), runs)
+	}
+	want := []string{"set-option", "-t", "=demo:", "--", OptionThread, "-not-a-flag"}
+	if strings.Join(runs[0], " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", runs[0], want)
 	}
 }
 
