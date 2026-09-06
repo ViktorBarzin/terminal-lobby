@@ -258,9 +258,9 @@ func TestAFigureGoingBackwardsDoesNotSubtractFromTheDay(t *testing.T) {
 	}
 }
 
-// Retention: a row nobody has written to in 30 days is dropped. Nothing is lost
-// with it, because every reading already rolled its difference into a day.
-func TestSessionRowsOlderThanThirtyDaysAreDroppedAndTheDaysKeepTheMoney(t *testing.T) {
+// Retention: a row nobody has written to in 30 days stops being listed. Its
+// money stays in the days, and the row itself stays as a baseline.
+func TestSessionRowsOlderThanThirtyDaysStopBeingListedAndTheDaysKeepTheMoney(t *testing.T) {
 	s := New(t.TempDir())
 	old := noon(t, "2026-07-01")
 	recent := old.Add(SessionTTL + time.Hour)
@@ -272,8 +272,9 @@ func TestSessionRowsOlderThanThirtyDaysAreDroppedAndTheDaysKeepTheMoney(t *testi
 
 	mustRecord(t, s, claudeReading(recent, "new", "conv-new", 1.00, 100, 1))
 	doc := mustLoad(t, s, "alice")
-	if len(doc.Sessions) != 1 || doc.Sessions[0].SessionID != "conv-new" {
-		t.Fatalf("after the fold: %+v, want only conv-new", doc.Sessions)
+	live := LiveRows(doc.Sessions)
+	if len(live) != 1 || live[0].SessionID != "conv-new" {
+		t.Fatalf("after the fold: %+v, want only conv-new listed", live)
 	}
 	if got := dayCost(doc); got != 10.00 {
 		t.Fatalf("day rollups after the fold: got %v, want 10.00", got)
@@ -511,4 +512,171 @@ func TestTheDocumentOnDiskIsReadableJSON(t *testing.T) {
 	if doc.Version != Version || len(doc.Sessions) != 1 || doc.Sessions[0].CostUSD != 1.25 {
 		t.Fatalf("round trip: %+v", doc)
 	}
+}
+
+// Retention must not become an accounting error. A row the fold retired has
+// already put its money in the days, so when that conversation reports again
+// the store differences against what it last held rather than treating the
+// whole running total as new spend.
+//
+// The trim takes the least recently seen, which is never a conversation that is
+// rendering: two live ones alternating keep their baselines however tight the
+// cap is, and each is counted once.
+func TestConversationsRenderingAlternatelyKeepTheirBaselineThroughTheTrim(t *testing.T) {
+	s := New(t.TempDir())
+	s.maxRows = 3
+	at := noon(t, "2026-09-06")
+
+	// One conversation that reports once and then goes quiet, plus two that
+	// keep rendering at $10 and $1.
+	mustRecord(t, s, claudeReading(at, "done", "conv-done", 0.50, 0, 0))
+	for i := 0; i < 4; i++ {
+		step := time.Duration(i*2+1) * time.Second
+		mustRecord(t, s,
+			claudeReading(at.Add(step), "big", "conv-big", 10.00, 0, 0),
+			claudeReading(at.Add(step+time.Second), "small", "conv-small", 1.00, 0, 0),
+		)
+	}
+
+	doc := mustLoad(t, s, "alice")
+	if got := dayCost(doc); !closeEnough(got, 11.50) {
+		t.Fatalf("all time: got %v, want 11.50 (each conversation counted once)", got)
+	}
+	if len(doc.Sessions) > s.maxRows {
+		t.Fatalf("rows: got %d, want at most the cap %d", len(doc.Sessions), s.maxRows)
+	}
+}
+
+// The residual, stated as a test rather than left to be discovered: the cap is
+// the one place a baseline is genuinely dropped, and a conversation that speaks
+// again after that contributes its running total afresh. It takes more
+// conversations than the cap, passing through the document, before the old one
+// reports again.
+func TestAConversationThatOutlivedItsBaselineIsCountedAgain(t *testing.T) {
+	s := New(t.TempDir())
+	s.maxRows = 2
+	at := noon(t, "2026-09-06")
+
+	mustRecord(t, s, claudeReading(at, "work", "conv-1", 5.00, 0, 0))
+	// Two other conversations push conv-1 out of the document entirely.
+	mustRecord(t, s,
+		claudeReading(at.Add(time.Second), "a", "conv-a", 0, 0, 0),
+		claudeReading(at.Add(2*time.Second), "b", "conv-b", 0, 0, 0),
+	)
+	if _, ok := rowFor(mustLoad(t, s, "alice"), "conv-1"); ok {
+		t.Fatal("conv-1 still has a baseline, so this test no longer describes the cap")
+	}
+
+	mustRecord(t, s, claudeReading(at.Add(3*time.Second), "work", "conv-1", 5.00, 0, 0))
+	if got := dayCost(mustLoad(t, s, "alice")); !closeEnough(got, 10.00) {
+		t.Fatalf("all time: got %v, want 10.00 — the documented cost of an evicted baseline", got)
+	}
+}
+
+// The same arithmetic across the retention window: a conversation resumed after
+// its row aged out adds only what it has spent since.
+func TestAConversationResumedAfterItsRowExpiredIsNotCountedTwice(t *testing.T) {
+	s := New(t.TempDir())
+	start := noon(t, "2026-07-01")
+	later := start.Add(SessionTTL + time.Hour)
+
+	mustRecord(t, s, claudeReading(start, "work", "conv-1", 10.00, 1000, 10))
+	// Another conversation's write is what runs the fold that retires conv-1.
+	mustRecord(t, s, claudeReading(later, "other", "conv-2", 0, 0, 0))
+	mustRecord(t, s, claudeReading(later.Add(time.Minute), "work", "conv-1", 10.50, 1200, 12))
+
+	doc := mustLoad(t, s, "alice")
+	if got := dayCost(doc); !closeEnough(got, 10.50) {
+		t.Fatalf("all time: got %v, want 10.50 (the running total, not twice it)", got)
+	}
+	if got := dayTokens(doc); got.Input != 1200 {
+		t.Fatalf("all time input tokens: got %d, want 1200", got.Input)
+	}
+}
+
+// A retired row is a baseline and nothing else: no name, no model, and the
+// reader leaves it out of the session list.
+func TestARetiredRowKeepsTheTotalsAndDropsTheDetail(t *testing.T) {
+	s := New(t.TempDir())
+	start := noon(t, "2026-07-01")
+	later := start.Add(SessionTTL + time.Hour)
+
+	mustRecord(t, s, claudeReading(start, "work", "conv-1", 10.00, 1000, 10))
+	mustRecord(t, s, claudeReading(later, "other", "conv-2", 1.00, 0, 0))
+
+	doc := mustLoad(t, s, "alice")
+	if got := len(LiveRows(doc.Sessions)); got != 1 {
+		t.Fatalf("live session rows: got %d, want 1", got)
+	}
+	row, ok := rowFor(doc, "conv-1")
+	if !ok {
+		t.Fatal("conv-1 kept no baseline, so a later reading from it would count twice")
+	}
+	if !row.Folded {
+		t.Fatal("conv-1 is still a live row after the retention window")
+	}
+	if row.Key != "" || row.Model != "" {
+		t.Fatalf("retired row kept detail: %+v", row)
+	}
+	if row.CostUSD != 10.00 {
+		t.Fatalf("retired row total: got %v, want 10.00", row.CostUSD)
+	}
+}
+
+// Reporting again un-retires the row, so the conversation is back in the
+// session list under whatever name it now runs in.
+func TestAResumedConversationBecomesALiveRowAgain(t *testing.T) {
+	s := New(t.TempDir())
+	start := noon(t, "2026-07-01")
+	later := start.Add(SessionTTL + time.Hour)
+
+	mustRecord(t, s,
+		claudeReading(start, "work", "conv-1", 10.00, 0, 0),
+		claudeReading(later, "other", "conv-2", 1.00, 0, 0),
+		claudeReading(later.Add(time.Minute), "renamed", "conv-1", 10.50, 0, 0),
+	)
+	doc := mustLoad(t, s, "alice")
+	row, ok := rowFor(doc, "conv-1")
+	if !ok || row.Folded {
+		t.Fatalf("conv-1 after reporting again: %+v, want a live row", row)
+	}
+	if row.Key != "renamed" {
+		t.Fatalf("row name: got %q, want renamed", row.Key)
+	}
+}
+
+// The cap counts retired rows too, so the document stays bounded however many
+// conversations pass through it.
+func TestTheCapBoundsRetiredRowsAsWell(t *testing.T) {
+	s := New(t.TempDir())
+	s.maxRows = 4
+	start := noon(t, "2026-07-01")
+	for i := 0; i < 20; i++ {
+		at := start.AddDate(0, 0, i*3) // three days apart: most of them age out
+		mustRecord(t, s, claudeReading(at, "work", fmt.Sprintf("conv-%d", i), 0.10, 0, 0))
+	}
+	doc := mustLoad(t, s, "alice")
+	if len(doc.Sessions) > s.maxRows {
+		t.Fatalf("rows: got %d, want at most the cap %d", len(doc.Sessions), s.maxRows)
+	}
+	if got := dayCost(doc); !closeEnough(got, 2.00) {
+		t.Fatalf("all time: got %v, want 2.00", got)
+	}
+}
+
+func rowFor(d Doc, id string) (SessionRow, bool) {
+	for _, r := range d.Sessions {
+		if r.SessionID == id {
+			return r, true
+		}
+	}
+	return SessionRow{}, false
+}
+
+func dayTokens(d Doc) Tokens {
+	var out Tokens
+	for _, day := range d.Days {
+		out = out.add(day.Tokens)
+	}
+	return out
 }
