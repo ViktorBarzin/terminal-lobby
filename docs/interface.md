@@ -133,7 +133,14 @@ docked row appears above the soft keyboard in the terminal view, with
 the keys a phone keyboard lacks: `Tab`, `Esc`, the four arrows, then
 `Copy`, `Paste` and a keyboard-dismiss key. One line, eight keys,
 which is as much as a 390px screen holds without scrolling. Arrows
-and `Tab` repeat while held.
+and `Tab` repeat while held. The two clipboard keys carry a caption
+under their icon; every other key says what it is on its face.
+
+`Copy` does not need a selection, and on touch it never has one: a
+drag scrolls the terminal by design, so no range is ever made. With
+nothing selected the button copies the **visible screen**, fetched
+from the server as a pane capture, and toasts "Screen copied". There
+is no way yet to copy a single line or path from a phone.
 
 It was two lines until 2026-09-06, the second hidden behind a `⋯`
 toggle. What that tier held is gone rather than moved: 28 days of
