@@ -365,6 +365,11 @@ func main() {
 	// loopback authenticates a host, and every lobby user has a shell on this
 	// host, so the "user" in the body was previously anyone's to choose.
 	root.HandleFunc("POST /hooks/session-start", localhostOnly(peerOwnsClaim(rg.handleSessionStart())))
+	// What a Claude Code session has spent, posted by devvm/tl-usage-record from
+	// the statusLine slot (usage.go). Same two gates as its neighbour, for the
+	// same reason. The recorder is a discard for now; the on-disk store under
+	// /var/lib/tmux-api/spend replaces it without the handler changing.
+	root.HandleFunc("POST /hooks/usage", localhostOnly(peerOwnsClaim(handleUsage(discardRecorder{}))))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
