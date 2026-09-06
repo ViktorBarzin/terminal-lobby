@@ -277,6 +277,7 @@ func main() {
 	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/netinfo", handleNetinfo)
+	http.HandleFunc("/agent-spend", handleAgentSpend)
 	http.HandleFunc("/telemetry", handleTelemetry)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
 	http.HandleFunc("/push/focus", handlePushFocus)

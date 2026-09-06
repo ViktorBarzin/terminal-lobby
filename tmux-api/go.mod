@@ -22,6 +22,11 @@ require terminal-lobby/authuser v0.0.0
 
 replace terminal-lobby/authuser => ../authuser
 
-require terminal-lobby/slug v0.0.0
+require (
+	terminal-lobby/slug v0.0.0
+	terminal-lobby/spendstore v0.0.0
+)
 
 replace terminal-lobby/slug => ../slug
+
+replace terminal-lobby/spendstore => ../spendstore
