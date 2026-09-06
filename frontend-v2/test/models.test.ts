@@ -137,13 +137,25 @@ describe("the model catalogue", () => {
 
   // A settings row sits under a heading that says what it sets. The composer's
   // controls have no heading — they are a row of bare values read as one
-  // sentence — so the noun travels with the value there and not here.
-  it("labels a value for a heading and phrases it for a bare row", () => {
+  // sentence — so an EFFORT carries its noun there and not here.
+  //
+  // A model carries none, in either place. `claude-opus-5` is unmistakably a
+  // model, and the word after it was doing no work.
+  it("says a slug once and gives an effort its noun", () => {
     expect(labelFor("claude", "model", "claude-opus-5")).toBe("claude-opus-5");
-    expect(phraseFor("claude", "model", "claude-opus-5")).toBe("claude-opus-5 model");
+    expect(phraseFor("claude", "model", "claude-opus-5")).toBe("claude-opus-5");
+    expect(phraseFor("codex", "model", "gpt-5.6-terra")).toBe("gpt-5.6-terra");
     expect(labelFor("claude", "effort", "xhigh")).toBe("Extra high");
     expect(phraseFor("claude", "effort", "xhigh")).toBe("Extra high effort");
+  });
+
+  // The one row that keeps the noun: it has no slug to speak for it, and the
+  // two controls sit side by side. A bare "default" beside "default effort"
+  // does not say which of the two it is answering.
+  it("keeps the noun on the row that has no slug", () => {
+    expect(phraseFor("claude", "model", "default")).toBe("default model");
     expect(phraseFor("codex", "model", "default")).toBe("default model");
+    expect(phraseFor("claude", "effort", "default")).toBe("default effort");
   });
 
   it("falls back to the id itself for a value the catalogue has never heard of", () => {

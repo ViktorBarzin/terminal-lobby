@@ -72,14 +72,17 @@ const HELD_PATH_PREFIX = "held:";
  * does, the card reads the first line of what was typed here.
  *
  * Four controls sit under the field, and the row reads as one sentence: "in
- * code · run Claude · Opus model · max effort". The PROJECT is where the
+ * code · run Claude · claude-opus-5 · max effort". The PROJECT is where the
  * session lands, defaulting to the last one created in and overridable for one
  * create by the `+` on a sidebar group. The COMMAND is which tool runs, the
  * same roamed `session.newCommand` the terminal attach reads, so what is picked
  * here is what starts. The MODEL and the EFFORT belong to whichever CLI the
- * command names — the two share no vocabulary — and are applied to the session
- * once it is up rather than as launch flags, which is what keeps the pre-warm
- * pool usable for every model (lib/models.ts).
+ * command names — the two share no vocabulary — and leave as `--model` and
+ * `--effort` flags on the process the attach starts (lib/terminal-url.ts).
+ *
+ * The model is the one value in that sentence with no noun after it. A slug is
+ * already unmistakably a model, where "Max" beside "claude-opus-5" would be
+ * anybody's guess, so the effort keeps its noun and the model does not.
  *
  * Choosing `shell` turns the box back into a NAME box: a shell has no
  * conversation to prompt or to summarise, and it is the case where someone most
