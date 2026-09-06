@@ -639,6 +639,7 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
     expect(Array.from(pick(m.container, "Model for new session").options).map((o) => o.value))
       .toEqual([
         "default",
+        "gpt-6-astra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",

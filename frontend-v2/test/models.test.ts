@@ -23,7 +23,9 @@ import {
  * Every Claude id is an EXACT SLUG, measured against `claude --model <slug>` on
  * 2026-09-06 (Claude Code 2.1.263), and every one of them is a row in the CLI's
  * own picker because managed settings declares it (`modelPicker.options`).
- * Codex's ids are what codex-cli 0.144.3 offered, which were already slugs.
+ * Codex's ids are what codex-cli 0.153.4 offered, which were already slugs, and
+ * each was run through `codex exec -m`. The list gained gpt-6-astra when the
+ * box was moved off 0.144.3, where the model did not exist at all.
  */
 describe("the model catalogue", () => {
   it("offers each harness its own models", () => {
@@ -37,6 +39,7 @@ describe("the model catalogue", () => {
     ]);
     expect(modelsFor("codex").map((m) => m.id)).toEqual([
       "default",
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
