@@ -97,3 +97,100 @@ describe("createTracker", () => {
   });
 });
 
+/**
+ * The device dimension (2026-09-06).
+ *
+ * Every notification event was attributed to a USER and nothing else. Viktor
+ * has more than one device, so a `notify.stash_written` from his phone and a
+ * `notify.stash_read` from his laptop looked like one chain, and the two could
+ * not be told apart in the journal at all. Stamping the installation id on the
+ * batcher rather than at each call site means no event can be added later that
+ * forgets it.
+ */
+describe("createTracker stamps the device", () => {
+  const DEVICE = "0123456789abcdef0123456789abcdef";
+
+  const flushOne = async (fill: (t: ReturnType<typeof createTracker>) => void) => {
+    const posts: { events: { name: string; attrs: Record<string, unknown> }[] }[] = [];
+    const t = createTracker({
+      post: async (b) => void posts.push(b as never),
+      autoFlush: false,
+      deviceId: () => DEVICE,
+    });
+    fill(t);
+    await t.flush();
+    t.dispose();
+    return posts[0]!.events;
+  };
+
+  it("puts tl.device on every event in the batch", async () => {
+    const evs = await flushOne((t) => {
+      t.track("app.loaded", {});
+      t.track("notify.stash_read", { "tl.reason": "acted" });
+    });
+    expect(evs.map((e) => e.attrs["tl.device"])).toEqual([DEVICE, DEVICE]);
+  });
+
+  it("keeps the attributes the call site passed", async () => {
+    const [ev] = await flushOne((t) => t.track("session.selected", { "tl.session": "abc123" }));
+    expect(ev!.attrs).toEqual({ "tl.session": "abc123", "tl.device": DEVICE });
+  });
+
+  // The attribute names the device that emitted the event, so it has to be the
+  // batcher's answer and not a call site's. A caller passing one is a bug, and
+  // a bug that silently wins would make the dimension untrustworthy everywhere.
+  it("wins over a tl.device a call site tried to set", async () => {
+    const [ev] = await flushOne((t) =>
+      t.track("app.error", { "tl.kind": "test", "tl.device": "somebody-elses-device" }),
+    );
+    expect(ev!.attrs["tl.device"]).toBe(DEVICE);
+  });
+
+  // sendBeacon carries the last events a tab ever emits. Those are the ones a
+  // pagehide-at-tap investigation reads, so they need the dimension too.
+  it("stamps the beacon batch as well", () => {
+    const beacon = vi.fn(() => true);
+    const t = createTracker({ autoFlush: false, beacon, deviceId: () => DEVICE });
+    t.track("notify.clicked", { "tl.session": "abc123" });
+    t.flushSync();
+    const [, body] = beacon.mock.calls[0] as unknown as [string, string];
+    expect(JSON.parse(body).events[0].attrs["tl.device"]).toBe(DEVICE);
+    t.dispose();
+  });
+
+  // A blocked or empty store must cost the dimension, never an event: telemetry
+  // is not allowed to throw into a call site (see the module header).
+  it("still records the event when the id cannot be read", async () => {
+    const posts: { events: { name: string; attrs: Record<string, unknown> }[] }[] = [];
+    const t = createTracker({
+      post: async (b) => void posts.push(b as never),
+      autoFlush: false,
+      deviceId: () => {
+        throw new Error("storage blocked");
+      },
+    });
+    t.track("app.loaded", {});
+    await t.flush();
+    expect(posts[0]!.events[0]!.name).toBe("app.loaded");
+    expect(posts[0]!.events[0]!.attrs["tl.device"]).toBeUndefined();
+    t.dispose();
+  });
+});
+
+/**
+ * notify.tap is emitted by sw.js, not by this batcher (a worker cannot reach
+ * it), but the name lives in the union so the TypeScript catalog and the Go one
+ * can be diffed by docs.truth.test.ts. The branch values are the contract with
+ * the click handler.
+ */
+describe("notify.tap", () => {
+  it("is a name the union accepts, with a branch attribute", async () => {
+    const posts: { events: { name: string; attrs: Record<string, unknown> }[] }[] = [];
+    const t = createTracker({ post: async (b) => void posts.push(b as never), autoFlush: false });
+    t.track("notify.tap", { "tl.session": "abc123", "tl.kind": "acked", "tl.count": 1 });
+    await t.flush();
+    expect(posts[0]!.events[0]!.name).toBe("notify.tap");
+    expect(posts[0]!.events[0]!.attrs["tl.kind"]).toBe("acked");
+    t.dispose();
+  });
+});

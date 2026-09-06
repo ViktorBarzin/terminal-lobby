@@ -97,7 +97,10 @@ export const SessionCard: Component<{
     (props.store.selected()?.owner ?? "") === (foreign() ? s().owner ?? "" : "");
 
   const [editing, setEditing] = createSignal(false);
-  const menu = createDismissableMenu(() => props.store.hold());
+  // Placed: the popup is measured against the window rather than hung off the
+  // bottom of this row, which is what a row near the end of a long list needs
+  // (see .tl-menu-placed in sidebar.css).
+  const menu = createDismissableMenu(() => props.store.hold(), { placed: true });
   const [dropEdge, setDropEdge] = createSignal<"above" | "below" | null>(null);
   let releaseHold: (() => void) | null = null;
   let inputEl: HTMLInputElement | undefined;
@@ -359,6 +362,21 @@ export const SessionCard: Component<{
       axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
       // Down the list: this row is out of it, and it must not trail a scroll.
       if (axis === "y") cancelSwipe();
+      // Across: the row is about to take an inline transform, and the actions
+      // popup is a `position: fixed` child of it (.tl-menu-placed). A
+      // transformed element becomes the containing block for its fixed
+      // descendants, so the window coordinates placeMenu computed would stop
+      // meaning window coordinates and start being measured from this row —
+      // measured in Chrome, a popup sitting at top 300 in a 900px window landed
+      // at 1084 the instant the card took a translateX, and .tl-card carries a
+      // 160ms transform transition, so it stays wrong for that long after the
+      // finger comes up. There is a live path to it: a hold opens the menu and
+      // deliberately leaves it open when the finger lifts, so the next finger
+      // down and across on the same row swipes underneath an open menu. Closing
+      // is what the drag one branch over does (startDrag), for the same reason
+      // and to the same end — the gesture has taken the row, and the menu is
+      // not part of it.
+      if (axis === "x") menu.close();
     }
     if (axis !== "x") return;
     // Follow the finger, and stop trailing well before the row leaves the
@@ -757,7 +775,14 @@ export const SessionCard: Component<{
         {/* Rename and Kill lead the menu: they are the actions actually
             reached for (Viktor, 2026-08-02). Rename stays first so the
             destructive one is not the item under the opening cursor. */}
-        <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
+        <div
+          class="tl-menu tl-menu-placed"
+          role="menu"
+          ref={menu.popup}
+          style={menu.style()}
+          onClick={stopMenuClick}
+          onKeyDown={stopMenuActivationKey}
+        >
           <button class="tl-menu-item" role="menuitem" onClick={() => beginRename()}>
             Rename
           </button>

@@ -13,12 +13,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+
+	"terminal-lobby/slug"
 )
 
 // stubPrefs is a prefsLoader returning a fixed prefs document (empty ⇒ "{}",
@@ -348,12 +351,12 @@ func TestPushSenderIgnoresUsersWithoutSubs(t *testing.T) {
 	sender.tick() // must not panic; nobody subscribed
 }
 
-// The marshaled payload is EXACTLY the shape frontend/sw.js parses: keys
+// The marshaled payload is EXACTLY the shape frontend-v2/public/sw.js parses: keys
 // title, body, tag, session, badge and nothing else. A drift here breaks
 // background notifications silently, so pin it.
 func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 3, nil), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 3, nil, ""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -377,7 +380,7 @@ func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 // renotify).
 func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildDonePayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil), &got); err != nil {
+	if err := json.Unmarshal(buildDonePayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil, ""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -391,7 +394,7 @@ func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 		t.Fatalf("done payload shape drift:\n got %v\nwant %v", got, want)
 	}
 	var aw map[string]any
-	_ = json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil), &aw)
+	_ = json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil, ""), &aw)
 	if got["tag"] != aw["tag"] {
 		t.Fatalf("done tag %q != awaiting tag %q — coalescing would break", got["tag"], aw["tag"])
 	}
@@ -575,7 +578,7 @@ func TestPushSenderUsesSharedClient(t *testing.T) {
 // stale count on the user's home screen.
 func TestPushPayloadCarriesZeroBadge(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 0, nil), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 0, nil, ""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	if _, ok := got["badge"]; !ok {
@@ -669,7 +672,7 @@ func TestWaitingListReturnsNilPastTheCap(t *testing.T) {
 func TestPushPayloadCarriesTheNamedSet(t *testing.T) {
 	var got map[string]any
 	w := waitingList(map[string]string{"one": stateAwaiting, "two": stateDone})
-	if err := json.Unmarshal(buildPushPayload("One", "one", 2, w), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("One", "one", 2, w, ""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	wait, ok := got["waiting"].(map[string]any)
@@ -901,5 +904,262 @@ func TestStatesAndTitles(t *testing.T) {
 	}
 	if _, ok := titles["q4m8vwx2rt5n"]; ok {
 		t.Errorf("an untitled session is in the titles map: %v", titles)
+	}
+}
+
+// --- Declarative Web Push (iOS/iPadOS 18.4+, Safari 18.4+) -------------------
+
+// The origin the tests navigate to: the live deployment, so the assertions read
+// like the wire does.
+const testPushOrigin = "https://terminal.viktorbarzin.me"
+
+// A subscription recorded before this change carries no origin, and every such
+// device must keep getting EXACTLY the bytes it got before. This pins the whole
+// document, not a key set: a stray declarative key, or a reordered flat one,
+// fails here.
+func TestPayloadWithoutAnOriginIsUnchangedOnTheWire(t *testing.T) {
+	const want = `{"title":"Worktree cleanup needs input","body":"Claude is awaiting your input.","tag":"tl-k7m2q9x4tp0v","session":"k7m2q9x4tp0v","badge":3}`
+	if got := string(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 3, nil, "")); got != want {
+		t.Fatalf("origin-less payload drifted:\n got %s\nwant %s", got, want)
+	}
+}
+
+// With an origin the message ALSO carries the declarative half, which is what
+// lets iOS 18.4+ open the session itself. Every key is pinned: WebKit drops the
+// whole message (banner included) on a navigate it cannot parse, and the worker
+// reads its own fields back off event.notification.data because event.data is
+// null on that path.
+func TestPushPayloadIsDeclarativeWhenTheOriginIsKnown(t *testing.T) {
+	w := waitingList(map[string]string{"k7m2q9x4tp0v": stateAwaiting, "b3n8h1x5r2wq": stateDone})
+	var got map[string]any
+	raw := buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 2, w, testPushOrigin)
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	if got["web_push"] != float64(8030) {
+		t.Fatalf("web_push = %v, want 8030 (the only version WebKit accepts)", got["web_push"])
+	}
+	// mutable true is what keeps our service worker in the loop. Without it
+	// WebKit shows the banner itself and never starts the worker, taking the
+	// device-side badge count with it (ADR-0015).
+	if got["mutable"] != true {
+		t.Fatalf("mutable = %v, want true", got["mutable"])
+	}
+	note, ok := got["notification"].(map[string]any)
+	if !ok {
+		t.Fatalf("no notification object in %v", got)
+	}
+	want := map[string]any{
+		"title":     "Worktree cleanup needs input",
+		"body":      "Claude is awaiting your input.",
+		"navigate":  testPushOrigin + "/?session=k7m2q9x4tp0v",
+		"tag":       "tl-k7m2q9x4tp0v",
+		"app_badge": float64(2),
+		"data": map[string]any{
+			"session": "k7m2q9x4tp0v",
+			"waiting": map[string]any{
+				"a": []any{"k7m2q9x4tp0v"},
+				"d": []any{"b3n8h1x5r2wq"},
+			},
+		},
+	}
+	if !reflect.DeepEqual(note, want) {
+		t.Fatalf("declarative notification drift:\n got %v\nwant %v", note, want)
+	}
+	// The flat keys stay exactly as they are: they serve Chrome, Android and
+	// every Apple device below 18.4, none of which read the nested copy.
+	for k, v := range map[string]any{
+		"title":   "Worktree cleanup needs input",
+		"body":    "Claude is awaiting your input.",
+		"tag":     "tl-k7m2q9x4tp0v",
+		"session": "k7m2q9x4tp0v",
+		"badge":   float64(2),
+	} {
+		if !reflect.DeepEqual(got[k], v) {
+			t.Fatalf("flat %q = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
+// The finished wording navigates to the same session and keeps the shared tag,
+// so a later awaiting push still replaces a finished one on the declarative
+// path as well as the classic one.
+func TestDonePayloadNavigatesToTheSession(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal(buildDonePayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil, testPushOrigin), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	note := got["notification"].(map[string]any)
+	if note["navigate"] != testPushOrigin+"/?session=k7m2q9x4tp0v" {
+		t.Fatalf("navigate = %v", note["navigate"])
+	}
+	if note["title"] != "Worktree cleanup finished" || note["body"] != "Claude finished its turn." {
+		t.Fatalf("done wording drift: %v", note)
+	}
+	if note["tag"] != got["tag"] {
+		t.Fatalf("nested tag %v != flat tag %v", note["tag"], got["tag"])
+	}
+}
+
+// app_badge omitted leaves the icon alone, so CLEARING it needs an explicit
+// zero — the same three-state rule the flat badge pointer already encodes.
+func TestDeclarativeBadgeCarriesAnExplicitZero(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 0, nil, testPushOrigin), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	note := got["notification"].(map[string]any)
+	v, ok := note["app_badge"]
+	if !ok {
+		t.Fatal("app_badge absent at zero — the icon would keep a stale count")
+	}
+	if v != float64(0) {
+		t.Fatalf("app_badge = %v, want 0", v)
+	}
+}
+
+// fullWaitingSet is a name list at the cap: every name the NAME_RE maximum of
+// 32 bytes, split evenly between awaiting and done.
+func fullWaitingSet() (*waitList, []string) {
+	states := map[string]string{}
+	names := make([]string, 0, waitingListCap)
+	for i := 0; i < waitingListCap; i++ {
+		name := fmt.Sprintf("%s%03d", strings.Repeat("w", 29), i) // 32 bytes, the NAME_RE max
+		names = append(names, name)
+		if i%2 == 0 {
+			states[name] = stateAwaiting
+		} else {
+			states[name] = stateDone
+		}
+	}
+	return waitingList(states), names
+}
+
+// A payload has to fit whatever a session is CALLED, and a title is bounded in
+// runes (slug.MaxTitleRunes, 64) rather than in bytes. encoding/json escapes
+// `<`, `>` and `&` to six bytes each and CleanTitle keeps all three, so 64 of
+// them cost 384 bytes where 64 emoji cost 256 — and the declarative half repeats
+// the title and the whole waiting list. RFC 8291 guarantees only 4096 bytes of
+// ENCRYPTED body and aes128gcm spends 103 of those on framing, so anything past
+// maxPushPayloadBytes is a push a service may refuse: send() logs the failure
+// and the notification never arrives.
+func TestWorstCasePayloadFitsTheEncryptedBudget(t *testing.T) {
+	w, names := fullWaitingSet()
+	if w == nil {
+		t.Fatal("a full-cap set must still send the list")
+	}
+	titles := map[string]string{
+		"emoji":     strings.Repeat("\U0001f6e0", slug.MaxTitleRunes), // 64 runes of 4 bytes
+		"escaped":   strings.Repeat("<", slug.MaxTitleRunes),          // 6 bytes each once marshalled
+		"ampersand": strings.Repeat("&", slug.MaxTitleRunes),
+	}
+	for kind, title := range titles {
+		for _, build := range []struct {
+			name string
+			fn   func(string) []byte
+		}{
+			{"awaiting", func(tt string) []byte { return buildPushPayload(tt, names[0], 999, w, testPushOrigin) }},
+			{"done", func(tt string) []byte { return buildDonePayload(tt, names[0], 999, w, testPushOrigin) }},
+			{"flat", func(tt string) []byte { return buildPushPayload(tt, names[0], 999, w, "") }},
+		} {
+			t.Run(kind+"/"+build.name, func(t *testing.T) {
+				if got := len(build.fn(title)); got > maxPushPayloadBytes {
+					t.Fatalf("worst-case %s payload is %d bytes, over the %d-byte budget", build.name, got, maxPushPayloadBytes)
+				}
+			})
+		}
+	}
+}
+
+// What the sender gives up when a payload will not fit: the name list, and only
+// the name list. The notification itself still goes out, and the device draws
+// the server's total instead of subtracting what it has already read (ADR-0015)
+// — counting high rather than not arriving.
+func TestOversizePayloadDropsTheWaitingListAndStillSends(t *testing.T) {
+	w, names := fullWaitingSet()
+	title := strings.Repeat("<", slug.MaxTitleRunes)
+	got := buildPushPayload(title, names[0], 999, w, testPushOrigin)
+	if len(got) > maxPushPayloadBytes {
+		t.Fatalf("payload is %d bytes, over the %d-byte budget", len(got), maxPushPayloadBytes)
+	}
+	var p struct {
+		Title        string    `json:"title"`
+		Session      string    `json:"session"`
+		Badge        *int      `json:"badge"`
+		Waiting      *waitList `json:"waiting"`
+		Notification *struct {
+			Navigate string `json:"navigate"`
+			Data     *struct {
+				Waiting *waitList `json:"waiting"`
+			} `json:"data"`
+		} `json:"notification"`
+	}
+	if err := json.Unmarshal(got, &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.Waiting != nil {
+		t.Error("the flat waiting list should have been dropped")
+	}
+	if p.Notification == nil || p.Notification.Data == nil {
+		t.Fatal("the declarative half must survive: it carries the navigate URL")
+	}
+	if p.Notification.Data.Waiting != nil {
+		t.Error("the declarative waiting list should have been dropped too")
+	}
+	if p.Badge == nil || *p.Badge != 999 {
+		t.Errorf("badge = %v, want the server total to take over", p.Badge)
+	}
+	if p.Session != names[0] || p.Notification.Navigate == "" {
+		t.Errorf("the tap must still route: session=%q navigate=%q", p.Session, p.Notification.Navigate)
+	}
+}
+
+// A device that never recorded an origin gets the flat payload alone, which is
+// half the bytes, so the same set of names that overflows a declarative message
+// fits there. Capping by name count for everyone took the badge subtraction off
+// those devices for nothing.
+func TestFlatPayloadKeepsTheWaitingListAtTheCap(t *testing.T) {
+	w, names := fullWaitingSet()
+	title := strings.Repeat("<", slug.MaxTitleRunes)
+	var p struct {
+		Waiting *waitList `json:"waiting"`
+	}
+	if err := json.Unmarshal(buildPushPayload(title, names[0], 999, w, ""), &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.Waiting == nil {
+		t.Fatalf("a flat payload of %d names should still carry the list", waitingListCap)
+	}
+	if len(p.Waiting.Awaiting)+len(p.Waiting.Done) != waitingListCap {
+		t.Errorf("carried %d names, want %d", len(p.Waiting.Awaiting)+len(p.Waiting.Done), waitingListCap)
+	}
+}
+
+// The origin is per SUBSCRIPTION, not per user: one person's phone may know it
+// while a browser that subscribed before this change does not. So the payload
+// is built inside the fan-out loop, once per device, with that device's origin.
+func TestSendBuildsOnePayloadPerSubscriptionOrigin(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/phone", Keys: genSubKeys(t), Origin: testPushOrigin}); err != nil {
+		t.Fatalf("upsert phone: %v", err)
+	}
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/legacy", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert legacy: %v", err)
+	}
+	sender := newPushSender(store, stubPrefs{}, &stubStater{}, testVAPID(t))
+
+	var seen []string
+	sent, _ := sender.send("alice", "k7m2q9x4tp0v", func(origin string) []byte {
+		seen = append(seen, origin)
+		return buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil, origin)
+	}, kindDone)
+	if sent != 2 {
+		t.Fatalf("sent %d, want 2", sent)
+	}
+	sort.Strings(seen)
+	if !reflect.DeepEqual(seen, []string{"", testPushOrigin}) {
+		t.Fatalf("origins seen = %v, want [\"\" %s]", seen, testPushOrigin)
 	}
 }

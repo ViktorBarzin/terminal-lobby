@@ -12,9 +12,18 @@ package telemetry
 // the catalog table in docs/adr/0006-usage-telemetry.md.
 //
 // Attribute conventions: tl.session, tl.project, tl.from, tl.to, tl.key,
-// tl.kind, tl.count, tl.ms, tl.reason, tl.client. NEVER conversation content,
-// prompt text, file contents or keystrokes — an event says WHICH feature ran,
-// not what was typed into it.
+// tl.kind, tl.count, tl.ms, tl.reason, tl.client, tl.device. NEVER conversation
+// content, prompt text, file contents or keystrokes — an event says WHICH
+// feature ran, not what was typed into it.
+//
+// tl.device is a random per-installation id the browser mints and keeps in
+// localStorage (frontend-v2/src/telemetry/device.ts); the service worker reads
+// the same id from IndexedDB db 'tl-device', store 'meta', key 'id', because a
+// worker cannot reach localStorage. It names a BROWSER INSTALLATION and nothing
+// about the person: the user is already attributed server-side, and without a
+// device dimension one person's phone and laptop are one indistinguishable
+// series — which is why a stash written on the phone could not be joined to the
+// read that consumed it.
 var knownEvents = map[string]bool{
 	// -- app lifecycle (browser) --------------------------------------------
 	"app.loaded":        true, // a lobby tab booted (tl.client, tl.build)
@@ -169,6 +178,15 @@ var knownEvents = map[string]bool{
 	// two make it answerable from the journal after the fact.
 	"notify.stash_written": true, // sw.js wrote, or failed to write, the tap record (tl.kind=ok|fail)
 	"notify.stash_read":    true, // boot read it, and what it decided (tl.reason)
+	// The tap itself, as the SERVICE WORKER saw it. notificationclick emitted
+	// nothing at all, so the one question the whole bug turns on — did the
+	// handler run, and which arm did it take — was answerable only from a
+	// WebKit bug thread. tl.kind is that arm: acked (a lobby answered the
+	// switch message), posted (every lobby was posted to and none answered),
+	// opened (no lobby was open, so openWindow was called), focused (a
+	// session-less test tap: foreground only), failed (the chosen arm could not
+	// be carried out). tl.session, tl.count = window clients seen.
+	"notify.tap": true,
 	// Whether the app-icon count could actually be DRAWN. iOS may not expose the
 	// Badging API inside a service worker at all, in which case the badge can
 	// never be painted while the app is shut — which is the one case it exists

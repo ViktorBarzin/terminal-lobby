@@ -19,7 +19,7 @@ STAGE="$BUILD/stage"
 TREE="$BUILD/tree"
 TOOLS="$BUILD/tools"
 rm -rf "$BUILD"
-mkdir -p "$STAGE/bin" "$STAGE/share" "$STAGE/devvm" "$STAGE/frontend" "$TOOLS"
+mkdir -p "$STAGE/bin" "$STAGE/share" "$STAGE/devvm" "$STAGE/frontend" "$STAGE/frontend-v2/public" "$TOOLS"
 CHUNKS="$BUILD/chunks"
 mkdir -p "$CHUNKS"
 
@@ -153,8 +153,16 @@ if [ -f scripts/test_frontend_compat.py ]; then
 fi
 
 # --- devvm helper scripts and units, PWA surface, webfonts -----------------
+# tl-pkg reads each manifest Src out of this tree, so a source directory the
+# manifest names has to arrive here at the path it has in the checkout.
+# frontend/ carries diag.js and the six webfonts; frontend-v2/public/ carries
+# the PWA surface (sw.js, the manifest, the three icons), which the manifest
+# stopped taking from frontend/ on 2026-09-06 when the second copy of those five
+# files was deleted. release's TestEveryStagedSourceDirectoryIsCopiedIntoTheStage
+# asserts these two lines still cover every Src.
 cp -a devvm/. "$STAGE/devvm/"
 cp -a frontend/. "$STAGE/frontend/"
+cp -a frontend-v2/public/. "$STAGE/frontend-v2/public/"
 
 # --- assemble --------------------------------------------------------------
 "$TOOLS/tl-pkg" \

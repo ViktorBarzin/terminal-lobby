@@ -95,8 +95,18 @@ const OWNED_PREFIXES = ["tl:", "tl-", "tmux-"];
  * Every IndexedDB database this app owns. The big one is `tl-transcripts`, up
  * to twelve sessions at two thousand events each, which the prefix sweep below
  * never touched because it only ever looked at localStorage.
+ *
+ * `tl-device` holds the telemetry installation id, mirrored out of localStorage
+ * so the service worker can stamp the same value (telemetry/device.ts). The
+ * prefix sweep already takes the localStorage copy, so leaving the mirror would
+ * hand the worker an id the page had stopped using until the reload rewrote it.
  */
-const OWNED_DATABASES = ["tl-transcripts", "tl-notif", "tl-badge"];
+const OWNED_DATABASES = [
+  "tl-transcripts",
+  "tl-notif",
+  "tl-badge",
+  "tl-device",
+];
 
 /** How long one deleteDatabase gets before the wipe gives up on it. */
 const IDB_DELETE_TIMEOUT_MS = 1_500;
