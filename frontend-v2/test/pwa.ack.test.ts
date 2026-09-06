@@ -50,7 +50,7 @@ function send(
 describe("notification-tap acknowledgement", () => {
   it("activates the session and tells the worker it landed", async () => {
     const sw = stubServiceWorker();
-    const onActivateSession = vi.fn();
+    const onActivateSession = vi.fn(() => true);
     const handle = registerServiceWorker({ onActivateSession });
 
     const reply = await send(sw, { type: "tl-activate-session", session: "myprotein" });
@@ -62,7 +62,7 @@ describe("notification-tap acknowledgement", () => {
 
   it("stays silent for a message that is not a switch", async () => {
     const sw = stubServiceWorker();
-    const onActivateSession = vi.fn();
+    const onActivateSession = vi.fn(() => true);
     const handle = registerServiceWorker({ onActivateSession });
 
     expect(await send(sw, { type: "something-else", session: "myprotein" })).toBeNull();
@@ -72,7 +72,7 @@ describe("notification-tap acknowledgement", () => {
 
   it("refuses a malformed session name, and does not acknowledge one", async () => {
     const sw = stubServiceWorker();
-    const onActivateSession = vi.fn();
+    const onActivateSession = vi.fn(() => true);
     const handle = registerServiceWorker({ onActivateSession });
 
     expect(
@@ -82,9 +82,27 @@ describe("notification-tap acknowledgement", () => {
     handle.dispose();
   });
 
+  /**
+   * A window that will not take the switch — a lens tab acting as another user
+   * — must not answer either. sw.js reads the silence as "not a lobby" and posts
+   * to the next window; an ack would end the fan-out there and the clear behind
+   * it would take the record the reader's own window was going to route on.
+   */
+  it("neither acknowledges nor clears when the page refuses the switch", async () => {
+    const sw = stubServiceWorker();
+    const onActivateSession = vi.fn(() => false);
+    const handle = registerServiceWorker({ onActivateSession });
+
+    const reply = await send(sw, { type: "tl-activate-session", session: "myprotein" });
+
+    expect(onActivateSession).toHaveBeenCalledWith("myprotein");
+    expect(reply).toBeNull();
+    handle.dispose();
+  });
+
   it("still switches when an older worker posts without a port", async () => {
     const sw = stubServiceWorker();
-    const onActivateSession = vi.fn();
+    const onActivateSession = vi.fn(() => true);
     const handle = registerServiceWorker({ onActivateSession });
 
     await send(sw, { type: "tl-activate-session", session: "health" }, false);
