@@ -347,14 +347,17 @@ _Avoid_: chat box, prompt bar
 The prompt field for a session that does not exist yet, shown wherever nothing
 is selected and on a phone as the landing view. You type what you want to do,
 press Enter, and the session is created with your text as its first prompt.
-Three choices sit under it: which **project** it lands in, which command runs,
-and which model. Choosing a plain shell turns it back into a name box, because
-a shell has no prompt to receive.
+Four choices sit under it: which **project** it lands in, which command runs,
+which model, and how hard it thinks. Choosing a plain shell turns it back into
+a name box, because a shell has no prompt to receive.
 _Avoid_: create row, new-session form, session wizard
 
 **First prompt**:
 What the **New-session composer** sends to a session it has just created: the
-model line, when one was picked, and then the message itself. It waits for the
+message, and nothing else. It carried a `/model` line ahead of the message
+until 2026-09-06; the model and the effort are now flags on the process the
+attach starts, so they cost no round trip and leave no command in a
+conversation nobody has begun. It waits for the
 session to be READY rather than merely reachable — a session tmux has made
 accepts input for seconds before the Claude in its pane is ready to read any,
 and text sent into that window is dropped with `POST /prompt` still answering
