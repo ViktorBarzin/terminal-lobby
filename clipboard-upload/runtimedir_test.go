@@ -106,3 +106,46 @@ func TestCleanupSweepIsNotRoot(t *testing.T) {
 		}
 	}
 }
+
+// The container is the third deployment this repo ships and it has no systemd.
+// TL-7 moved the transfer directory to /run, which in debian:bookworm-slim is
+// root-owned 0755, while docker/entrypoint.sh starts every service under the
+// unprivileged `dev` account. So main()'s MkdirAll fails, the log.Fatalf fires,
+// and the entrypoint's "a service exited" watchdog takes the whole container
+// down before it serves a request. The image has to install the directory the
+// same way it installs the store, and nothing but this test couples the Go
+// default to that line.
+func TestContainerInstallsTheTransferDirectory(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, "install -d") &&
+			strings.Contains(line, "-o dev -g dev") &&
+			strings.Contains(line, fileDir) {
+			return
+		}
+	}
+	t.Errorf("no `install -d -o dev -g dev` line in the Dockerfile creates %s; the container runs clipboard-upload as dev, which cannot create it under root-owned /run, so the service dies at startup and takes the container with it", fileDir)
+}
+
+// Every ReadWritePaths entry carries the '-' prefix, so a directory that has
+// never been created is not a startup failure. The store was the one entry
+// without it: nothing installs /var/lib/clipboard-store (packaging/build-deb.sh
+// has no install -d for it, and clipboard-upload only warns when its own
+// MkdirAll fails), so on a box where the store has never been written
+// ProtectSystem=strict fails the unit's namespace setup and the entire sweep
+// stops running, including the 7-day ageing of the transfer directories.
+// clipboard-store-clean guards each path with `[ -d ... ]` already.
+func TestCleanupReadWritePathsToleratesMissingDirectories(t *testing.T) {
+	rw := unitSetting(t, "clipboard-cleanup.service", "ReadWritePaths")
+	if rw == "" {
+		t.Fatal("clipboard-cleanup.service names no ReadWritePaths")
+	}
+	for _, entry := range strings.Fields(rw) {
+		if !strings.HasPrefix(entry, "-") {
+			t.Errorf("ReadWritePaths entry %q has no '-' prefix; ProtectSystem=strict fails the unit's namespace setup when that directory does not exist yet, and the sweep never runs", entry)
+		}
+	}
+}

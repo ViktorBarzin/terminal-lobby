@@ -18,9 +18,13 @@ User=wizard
 # The sandbox tl-session-watch already demonstrates, minus the root that one
 # genuinely needs. ProtectSystem=strict makes the whole tree read-only, so the
 # directories the sweep deletes from are named back in; the '-' prefix means a
-# directory that has never been created is not a startup failure
-# (/tmp/clipboard-images holds only pre-store leftovers and is absent on a box
-# installed after the store landed).
+# directory that has never been created is not a startup failure. It is on all
+# four: /tmp/clipboard-images holds only pre-store leftovers and is absent on a
+# box installed after the store landed, and nothing installs the store either,
+# since the package has no install -d for it and clipboard-upload only warns
+# when its own MkdirAll fails. Without the prefix, a box where the store has
+# never been written fails this unit's namespace setup and the whole sweep
+# stops running. clipboard-store-clean guards each path with [ -d ... ] already.
 #
 # PrivateTmp is deliberately NOT set. The sweep's last step ages out the
 # transfer directories, two of which are the /tmp paths those files used before
@@ -28,7 +32,7 @@ User=wizard
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/clipboard-store -/run/clipboard-files -/tmp/clipboard-files -/tmp/clipboard-images
+ReadWritePaths=-/var/lib/clipboard-store -/run/clipboard-files -/tmp/clipboard-files -/tmp/clipboard-images
 PrivateDevices=yes
 ProtectControlGroups=yes
 ProtectKernelTunables=yes
