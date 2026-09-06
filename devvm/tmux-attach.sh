@@ -44,10 +44,39 @@ elif [[ -n "$auth_local" && -r "$MAP" ]]; then
     ' "$MAP")
 fi
 
-logger -t ttyd-attach "attach: TTYD_USER='${auth_user:-<none>}' arg='${1:-<none>}' os_user='${os_user:-<unresolved>}'"
+# Journal integrity (TL-23). The two request-controlled values on the line below
+# arrive raw: $1 is the URL's ?arg= and TTYD_USER is the identity header. The
+# NAME_RE gate that constrains $1 sits 20-odd lines further down, past a DENIED
+# branch that exits before ever reaching it, so an unauthenticated request used
+# to choose journal content outright. That matters because the telemetry
+# selector is `|= "TLEVENT"`, which matches on line CONTENT rather than on the
+# syslog tag, so a crafted arg could plant a record attributed to anyone.
+#
+# Each value is folded to its own charset before it is printed. A case/if, no
+# fork and no jq: ttyd runs this once per WebSocket connection. The two
+# placeholders stay distinct so the line still tells "no header arrived" apart
+# from "a header arrived that we decline to print". LOG_USER_RE is a printing
+# rule only, never an authorization gate — the map lookup above is that.
+LOG_USER_RE='^[a-zA-Z0-9_@.-]{1,64}$'
+lv=""
+fold_log() {
+    if [[ -z "$1" ]]; then
+        lv="<none>"
+    elif [[ "$1" =~ $2 ]]; then
+        lv="$1"
+    else
+        lv="<invalid>"
+    fi
+}
+fold_log "$auth_user" "$LOG_USER_RE"
+log_user="$lv"
+fold_log "${1:-}" "$NAME_RE"
+log_arg="$lv"
+
+logger -t ttyd-attach "attach: TTYD_USER='$log_user' arg='$log_arg' os_user='${os_user:-<unresolved>}'"
 
 if [[ -z "$os_user" ]] || ! id "$os_user" >/dev/null 2>&1; then
-    logger -t ttyd-attach "DENIED: no os_user mapping for TTYD_USER='${auth_user:-<missing>}'"
+    logger -t ttyd-attach "DENIED: no os_user mapping for TTYD_USER='$log_user'"
     cat <<EOF
 
   Access denied
