@@ -47,6 +47,11 @@ import {
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
 import { STATES_KEY } from "./visits";
+import { carryWatch } from "./watchmode";
+import { carryViewMode } from "./viewmode";
+import { carryDraft } from "./drafts";
+import { lensTarget } from "../lib/act-as";
+import { ACT_AS } from "../lib/config";
 import { lsGet, lsSet } from "../lib/storage";
 
 export interface SelectedSession {
@@ -400,23 +405,93 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * the window where a tab holds a stale name is one round trip for a typed
    * title and one poll for a summary.
    *
-   * tmux's session id is the only thing that survives a rename, so it is what
-   * identifies "the same session under a new name". Matching on anything else
-   * (creation time, position) would eventually follow the wrong one.
+   * What counts as "the same session under a new name" is `renamesBetween`,
+   * which matches on tmux's session id and, for a session no poll ever listed
+   * under its old name, on the birth name the server records.
    *
    * Re-selecting is also what drops the stale mount: App prunes a kept
    * SessionView whose name has left the session list, and the selection moving
    * is what makes that effect run (components/App.tsx, prune).
    */
+  /**
+   * Carry the per-browser records a rename would otherwise strand.
+   *
+   * ADR-0022 made renaming an ordinary background event again: a title lands
+   * and tmux-api derives a name from it, seconds into a fresh session's first
+   * turn, with nobody having asked. Anything keyed by the session NAME has to
+   * follow. The six server-side stores do (`carryRenameAcrossStores`), and
+   * store/visits.ts sidesteps it by keying on tmux's session id — but three
+   * records live in this browser under the name, and this is the only place
+   * that knows the rename happened at all.
+   *
+   * Watch mode is the one that MISBEHAVES rather than merely forgets, and it is
+   * why this exists: the view remounts under the new name, re-takes the join
+   * decision, and reads the session it is itself driving as one somebody else
+   * is driving (store/watchmode.ts `carryWatch` has the mechanism). The other
+   * two just lose something — the view a session was being read in, and an
+   * unsent message.
+   *
+   * OWN SESSIONS ONLY. A foreign row's id comes from another user's tmux
+   * server, where the same `$41` names an unrelated session, so matching ids
+   * across the two accounts would move this user's records onto a stranger's
+   * name. Same reason `followRenamedSelection` will not follow one.
+   */
+  function carryRenamedRecords(prev: readonly Session[], next: readonly Session[]): void {
+    // The same namespace the views record under, so a decision made about bob's
+    // session through a lens is carried against bob's session and not your own.
+    const as = lensTarget(whoami(), ACT_AS);
+    for (const [was, now] of renamesBetween(prev, next)) {
+      carryWatch(was, now, as);
+      carryViewMode(was, now);
+      carryDraft(was, now);
+    }
+  }
+
+  /**
+   * Which sessions changed name between two polls, as [old, new] pairs.
+   *
+   * TWO LINKS, and the second is the one that matters most. tmux's session id
+   * survives a rename, so a session seen in BOTH lists is matched on that. But
+   * a fresh session is renamed as soon as its first title lands (ADR-0022) —
+   * seconds in, while GET /sessions is behind a 5-second cache — so it is quite
+   * ordinary for the minted id never to appear in a list at all, and then there
+   * is no earlier row to match. That is what `bornAs` is for: the server records
+   * the name the session was created with, which is exactly the name this tab is
+   * holding.
+   *
+   * A birth name is believed only when nothing in the new list still ANSWERS to
+   * it. A session that is still listed has not been renamed, whatever some other
+   * session claims to have been born as.
+   *
+   * OWN SESSIONS ONLY. A foreign row's id comes from another user's tmux server,
+   * where the same `$41` names an unrelated session, so matching ids across the
+   * two accounts would pair up sessions that have nothing to do with each other.
+   */
+  function renamesBetween(
+    prev: readonly Session[],
+    next: readonly Session[],
+  ): Array<[string, string]> {
+    const mine = (s: Session) => !s.owner || s.owner === me();
+    const wasNamed = new Map<string, string>();
+    for (const s of prev) if (s.id && mine(s)) wasNamed.set(s.id, s.name);
+    const live = new Set(next.filter(mine).map((s) => s.name));
+    const moved: Array<[string, string]> = [];
+    for (const s of next) {
+      if (!mine(s)) continue;
+      const was = (s.id ? wasNamed.get(s.id) : undefined) ?? s.bornAs;
+      if (was === undefined || was === s.name || live.has(was)) continue;
+      moved.push([was, s.name]);
+    }
+    return moved;
+  }
+
   function followRenamedSelection(prev: readonly Session[], next: readonly Session[]): void {
     const sel = selected();
     if (!sel || sel.owner) return; // foreign sessions are not ours to follow
     if (next.some((s) => s.name === sel.name)) return; // still there
-    const id = prev.find((s) => s.name === sel.name)?.id;
-    if (!id) return; // never saw an id for it — a server that predates the field
-    const moved = next.find((s) => s.id === id);
+    const moved = renamesBetween(prev, next).find(([was]) => was === sel.name);
     if (!moved) return; // genuinely gone, not renamed
-    applySelection(moved.name, undefined);
+    applySelection(moved[1], undefined);
   }
 
   /** Stamp state transitions and prune dead sessions (vanilla trackStateChanges). */
@@ -507,6 +582,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       const list = withPromptLines(sRes.value);
       trackStates(list);
       // Before setSessions, which is what makes `sessions` the OLD list here.
+      // The carry runs FIRST: moving the selection is what mounts a view under
+      // the new name, and that view reads the records this call moves.
+      carryRenamedRecords(sessions, sRes.value);
       followRenamedSelection(sessions, sRes.value);
       // Reconcile by name rather than replace: a re-parsed but unchanged
       // payload must write nothing, or every memo downstream recomputes and

@@ -120,6 +120,16 @@ func TestStripTitleGlyph(t *testing.T) {
 	}
 }
 
+// titleStamps counts how many times the recorded argv wrote @title.
+//
+// Counting `set-option` would be shorter and wrong: a rename writes the birth
+// name with one too (sessionio.OptionBornAs), so every test about the TITLE
+// rule has to say which option it means.
+func titleStamps(t *testing.T, argvFile string) int {
+	t.Helper()
+	return strings.Count(recordedArgv(t, argvFile), "\n"+sessionTitleOption+"\n")
+}
+
 func TestAutoTitleStampsTheFirstSummary(t *testing.T) {
 	now := time.Now()
 	argv, rec := autoTitleFixture(t, "exit 0")
@@ -258,7 +268,9 @@ func TestAutoTitleRunsAgainAfterATitleIsCleared(t *testing.T) {
 	cleared := []Session{claudeSession("k7m2q9x4tpz3", "✳ Tashkent trip planning", 20*time.Second, now)}
 	autoTitleSessions("wizard", cleared, now.Add(8*time.Second))
 
-	if got := strings.Count(recordedArgv(t, argv), "set-option"); got != 2 {
+	// Counting @title rather than set-option: a rename now also stamps the
+	// birth name (sessionio.OptionBornAs), and this test is about the title.
+	if got := titleStamps(t, argv); got != 2 {
 		t.Errorf("stamped %d times; a cleared title did not go back to auto:\n%s", got, recordedArgv(t, argv))
 	}
 	if cleared[0].Title != "Tashkent trip planning" {
@@ -385,8 +397,8 @@ func TestAutoTitleRetriesAfterARefusedStamp(t *testing.T) {
 	if evs := autonamed(t, rec); len(evs) != 1 {
 		t.Errorf("emitted %d events after the retry landed, want 1", len(evs))
 	}
-	if got := strings.Count(recordedArgv(t, argv), "set-option"); got != 2 {
-		t.Errorf("ran set-option %d times, want the refusal and then the retry", got)
+	if got := titleStamps(t, argv); got != 2 {
+		t.Errorf("wrote @title %d times, want the refusal and then the retry", got)
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("the stub never ran: %v", err)

@@ -232,7 +232,8 @@ func parseSessions(out []byte) []Session {
 			PanePID:      panePID,
 			Command:      parts[9],
 			Title:        parts[10],
-			PaneTitle:    parts[11],
+			BornAs:       parts[11],
+			PaneTitle:    parts[12],
 		})
 	}
 	return sessions

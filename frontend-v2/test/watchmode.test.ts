@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { loadWatch, saveWatch, WATCH_KEY_PREFIX } from "../src/store/watchmode";
+import {
+  carryWatch,
+  clearResolvedWatch,
+  loadWatch,
+  publishResolvedWatch,
+  resolvedWatchFor,
+  saveWatch,
+  WATCH_KEY_PREFIX,
+} from "../src/store/watchmode";
 
 /**
  * Watch-mode storage. The three-state contract and the automatic rule live in
@@ -72,5 +80,61 @@ describe("watch mode — where the choice is kept", () => {
     });
     expect(() => saveWatch("foo", true)).not.toThrow();
     set.mockRestore();
+  });
+});
+
+/**
+ * A RENAME MUST NOT LOSE THE DECISION.
+ *
+ * A session is created with a minted id and renamed the moment its first title
+ * lands (ADR-0022), which for a fresh session is seconds into the first turn.
+ * Every record here is kept under the NAME, and the automatic rule cannot
+ * re-take the decision on the far side of a rename: this client is attached
+ * read-write, `driven` counts it, and so the session this device is itself
+ * driving reads as one somebody else is driving.
+ */
+describe("watch mode — carrying a session's choice through a rename", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    clearResolvedWatch("old");
+    clearResolvedWatch("new");
+  });
+
+  it("moves an explicit choice onto the new name", () => {
+    saveWatch("old", true);
+    carryWatch("old", "new");
+    expect(loadWatch("new")).toBe(true);
+    expect(loadWatch("old")).toBeUndefined();
+  });
+
+  it("writes down what an open view had already resolved", () => {
+    // Nobody chose: the view took the session on as a driver, which is the
+    // answer the rule would still give if the rename had not hidden the
+    // session from it.
+    publishResolvedWatch("old", false);
+    carryWatch("old", "new");
+    expect(loadWatch("new")).toBe(false);
+    expect(resolvedWatchFor("new")).toBe(false);
+  });
+
+  it("leaves a session nothing is open on to the automatic rule", () => {
+    // No stored choice and no live view means no client of ours holds the
+    // session, so `driven` describes other people and is right on its own.
+    carryWatch("old", "new");
+    expect(loadWatch("new")).toBeUndefined();
+    expect(Object.keys(localStorage)).toEqual([]);
+  });
+
+  it("carries a lens's choice inside the lens namespace", () => {
+    saveWatch("old", false, "bob");
+    carryWatch("old", "new", "bob");
+    expect(loadWatch("new", "bob")).toBe(false);
+    expect(loadWatch("new")).toBeUndefined();
+  });
+
+  it("is inert when the name did not actually move", () => {
+    saveWatch("old", true);
+    carryWatch("old", "old");
+    expect(loadWatch("old")).toBe(true);
   });
 });
