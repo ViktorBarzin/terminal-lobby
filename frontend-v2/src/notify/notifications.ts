@@ -12,6 +12,9 @@
  *     running→done transitions (gated by opt-in + permission + roamed prefs + the
  *     per-session away gate — and skipped entirely on a device the server pushes
  *     to, which is the single notifier there);
+ *   - tell the server which session THIS device has on screen (notify/focus.ts),
+ *     which is how the server applies the same per-session rule to the pushes it
+ *     sends, per device rather than per person;
  *   - repaint the tab title + favicon badge from the session list and the
  *     attention latch (the terminal's bell/output signals, cleared on
  *     visibility/focus return);
@@ -20,14 +23,7 @@
  * Everything push/notification-related is BEST-EFFORT: a dark server (vapid 404),
  * a browser without SW/PushManager, or a denied permission all degrade quietly.
  */
-import {
-  createSignal,
-  createEffect,
-  onCleanup,
-  onMount,
-  untrack,
-  type Accessor,
-} from "solid-js";
+import { createSignal, createEffect, onCleanup, onMount, untrack, type Accessor } from "solid-js";
 import {
   applyAttentionSignal,
   clearAttention,
@@ -38,11 +34,7 @@ import { createFaviconBadger, faviconKind } from "./favicon";
 import { composeTitle, type TitleSession } from "./title";
 import { applyAppBadge, waitingCount } from "./appbadge";
 import { createVisitStore } from "../store/visits";
-import {
-  computeTransitions,
-  snapshotStates,
-  type StateMap,
-} from "./transitions";
+import { computeTransitions, snapshotStates, type StateMap } from "./transitions";
 import { fireNotification } from "./fire";
 import { notifyOptedIn, setNotifyOptIn } from "./opt-in";
 import {
@@ -56,11 +48,13 @@ import {
 } from "../pwa/register";
 import {
   deviceSubscriptionState,
+  reportFocus,
   subscribePush,
   testAllDevices,
   unsubscribePush,
   type DeviceSubscriptionState,
 } from "../pwa/push";
+import { FOCUS_TICK_MS, focusedSession, shouldReport, type FocusReport } from "./focus";
 import { track } from "../telemetry/track";
 import { ACT_AS } from "../lib/config";
 
@@ -170,19 +164,17 @@ function computeBellMode(): BellMode {
   return "hidden";
 }
 
-export function createNotificationSystem(
-  opts: NotificationSystemOptions,
-): NotificationSystem {
+export function createNotificationSystem(opts: NotificationSystemOptions): NotificationSystem {
   const bellMode = computeBellMode();
 
   const [optedIn, setOptedIn] = createSignal(notifyOptedIn());
-  const [permission, setPermission] = createSignal<
-    NotificationPermission | "unsupported"
-  >(hasNotificationApi ? Notification.permission : "unsupported");
+  const [permission, setPermission] = createSignal<NotificationPermission | "unsupported">(
+    hasNotificationApi ? Notification.permission : "unsupported",
+  );
   const [attention, setAttention] = createSignal<AttentionState>(emptyAttention);
-  const [deviceState, setDeviceState] = createSignal<
-    DeviceSubscriptionState | "checking"
-  >("checking");
+  const [deviceState, setDeviceState] = createSignal<DeviceSubscriptionState | "checking">(
+    "checking",
+  );
 
   // Is the SERVER notifying this device (a subscription it has actually stored)?
   // While true the page fires NO OS notifications — the server push is the single
@@ -196,6 +188,43 @@ export function createNotificationSystem(
   const syncPushDelivery = async (): Promise<void> => {
     lastPushCheck = Date.now();
     setPushDelivers((await deviceSubscriptionState()) === "yes");
+  };
+
+  // ---- tell the server what this device is showing -----------------------
+  // So the push sender can withhold the session on screen from THIS device and
+  // still tell every other one (notify/focus.ts has the why). Only a device the
+  // server actually pushes to has anything to report.
+  let lastFocus: FocusReport | null = null;
+  let focusInFlight = false;
+  // Something moved while a report was in the air. One request at a time keeps
+  // two POSTs from landing out of order and leaving the server holding the
+  // session you just left — but dropping the newer one would do exactly that
+  // for a whole tick, so it is deferred rather than lost.
+  let focusMovedAgain = false;
+  const reportFocusNow = (selected: string | null): void => {
+    if (!untrack(pushDelivers)) return;
+    if (focusInFlight) {
+      focusMovedAgain = true;
+      return;
+    }
+    const next = focusedSession({
+      visible: !hasDoc || !document.hidden,
+      focused: !hasDoc || document.hasFocus(),
+      selected,
+    });
+    const now = Date.now();
+    if (!shouldReport(lastFocus, next, now)) return;
+    focusInFlight = true;
+    void reportFocus(next).then((ok) => {
+      focusInFlight = false;
+      // Only a report the server took counts as said. A failed one leaves the
+      // record alone so the next tick tries again rather than believing it.
+      if (ok) lastFocus = { session: next, at: now };
+      if (focusMovedAgain) {
+        focusMovedAgain = false;
+        reportFocusNow(untrack(opts.selected));
+      }
+    });
   };
 
   const bellOn = () => optedIn() && permission() === "granted";
@@ -367,11 +396,7 @@ export function createNotificationSystem(
     prevStates = snap;
     if (prev === null) return; // first post-load snapshot seeds quietly
     // all-or-nothing browser gates (untracked — not reactive deps)
-    if (
-      !untrack(optedIn) ||
-      !hasNotificationApi ||
-      Notification.permission !== "granted"
-    ) {
+    if (!untrack(optedIn) || !hasNotificationApi || Notification.permission !== "granted") {
       return;
     }
     const prefs = untrack(opts.notifyPrefs);
@@ -473,10 +498,7 @@ export function createNotificationSystem(
   });
 
   // ---- attention latch (from the terminal) -------------------------------
-  const onTerminalAttention = (
-    kind: "bell" | "output",
-    session: string | null,
-  ): void => {
+  const onTerminalAttention = (kind: "bell" | "output", session: string | null): void => {
     setAttention((s) =>
       applyAttentionSignal(s, {
         kind,
@@ -493,9 +515,16 @@ export function createNotificationSystem(
   const onLook = (): void => {
     setAttention((s) => clearAttention(s));
     visits.stamp(untrack(opts.selected));
+    reportFocusNow(untrack(opts.selected));
   };
+  // A blur is a look-away: on the desktop the window can stay visible behind
+  // another one, and reading a session there is not reading it.
+  const onLookAway = (): void => reportFocusNow(untrack(opts.selected));
   const onVisibility = (): void => {
-    if (!hasDoc || document.hidden) return;
+    if (!hasDoc || document.hidden) {
+      onLookAway(); // going away is announced, not waited out
+      return;
+    }
     onLook();
     // A tap that iOS turned into a plain foreground, with no notificationclick
     // and no reload, leaves its only trace in the stash. This is where a
@@ -506,13 +535,27 @@ export function createNotificationSystem(
     // push still covers it.
     if (Date.now() - lastPushCheck > PUSH_RECHECK_MS) void syncPushDelivery();
   };
+  // The session on screen changed, or this device just learned the server pushes
+  // to it. Both are things to say at once; the tick below only covers the case
+  // with no event at all, a page left open on one session for hours.
+  createEffect(() => {
+    const delivers = pushDelivers(); // tracked
+    const selected = opts.selected(); // tracked
+    if (!delivers) return;
+    reportFocusNow(selected);
+  });
+  let focusTimer: ReturnType<typeof setInterval> | undefined;
   onMount(() => {
     if (hasDoc) document.addEventListener("visibilitychange", onVisibility);
     if (hasWin) window.addEventListener("focus", onLook);
+    if (hasWin) window.addEventListener("blur", onLookAway);
+    focusTimer = setInterval(() => reportFocusNow(untrack(opts.selected)), FOCUS_TICK_MS);
   });
   onCleanup(() => {
     if (hasDoc) document.removeEventListener("visibilitychange", onVisibility);
     if (hasWin) window.removeEventListener("focus", onLook);
+    if (hasWin) window.removeEventListener("blur", onLookAway);
+    if (focusTimer !== undefined) clearInterval(focusTimer);
   });
 
   // ---- bell toggle (the ONLY requestPermission site) ---------------------
