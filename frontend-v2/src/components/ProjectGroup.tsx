@@ -60,7 +60,9 @@ export const ProjectGroup: Component<{
   const canUp = () => seqPos().pos > 0;
   const canDown = () => seqPos().pos >= 0 && seqPos().pos < seqPos().len - 1;
 
-  const menu = createDismissableMenu(() => props.store.hold());
+  // Placed against the window, same as a session card's ⋯: a collapsed project
+  // sitting low in the sidebar had the same popup running off the bottom of it.
+  const menu = createDismissableMenu(() => props.store.hold(), { placed: true });
   /** How many of this group's finished sessions have not been read. */
   const unseenCount = (): number =>
     props.isUnseen ? props.group.sessions.filter((sn) => props.isUnseen!(sn)).length : 0;
@@ -280,7 +282,14 @@ export const ProjectGroup: Component<{
             ⋯
           </button>
           <Show when={menu.open()}>
-            <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
+            <div
+              class="tl-menu tl-menu-placed"
+              role="menu"
+              ref={menu.popup}
+              style={menu.style()}
+              onClick={stopMenuClick}
+              onKeyDown={stopMenuActivationKey}
+            >
               <Show when={!isUngrouped()}>
                 <button class="tl-menu-item" role="menuitem" onClick={() => void rename()}>Rename project</button>
               </Show>
