@@ -111,6 +111,11 @@ src/
                          same-origin credentials. Without a deadline a fetch on
                          a half-open connection never settles, which is what a
                          phone hands us when the radio drops a socket
+    storage.ts           MinStorage plus localStorageOrNull(). Four modules
+                         each carried the same two lines, and reading the
+                         localStorage property is itself what throws when a
+                         browser has partitioned or blocked it, so it must be
+                         caught rather than tested for
     focus-trap.ts        The modal dialog contract — Tab wraps at both ends,
                          focus lands on the dialog and returns to its opener.
                          Shared by Settings, Skills and the file preview
