@@ -772,7 +772,10 @@
    all four clipping ancestors at once (.tl-sidebar-scroll's overflow-y,
    .tl-shell-sidebar, #root and body) with no portal, because none of them
    carries a transform, filter, contain or will-change and so none of them
-   re-roots the containing block a fixed element resolves against.
+   re-roots the containing block a fixed element resolves against. The one place
+   that can stop being true is .tl-card itself, which takes an inline transform
+   while a finger swipes or drags it; both gestures close the menu first, and
+   menu.logic.ts explains what happens when they do not.
 
    The price is that left and top now have to be computed, which happens in
    createDismissableMenu once the popup is in the document and can be measured.

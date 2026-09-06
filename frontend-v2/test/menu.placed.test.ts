@@ -134,41 +134,55 @@ describe("what moving the viewport under a placed popup does to it", () => {
   /**
    * A placed popup is fixed, so it is put somewhere once and then stays there
    * while the row it belongs to slides away underneath. Closing is the answer
-   * to that. The exception is the popup's own scroll: capturing on the document
-   * hears every scroll in the page, so a popup that has hit its `max-height`
-   * and grown a scrollbar would dismiss itself the first time anyone used it.
+   * to that — but only when the row really did move, which is why these tests
+   * build the real nesting. The listener captures on the document, so it hears
+   * every scroll on the page, and the app has plenty that have nothing to do
+   * with the sidebar.
+   *
+   * `list > anchor > popup` is the shape the sidebar has: `.tl-sidebar-scroll`
+   * is the scroller, the card is inside it, and the popup is inside the card.
+   * `other` stands for the transcript pane, which on a desktop is a sibling of
+   * the whole sidebar.
    */
-  function placedMenu(): { menu: DismissableMenu; popup: HTMLElement; dispose: () => void } {
+  function placedMenu(): {
+    menu: DismissableMenu;
+    list: HTMLElement;
+    popup: HTMLElement;
+    other: HTMLElement;
+    dispose: () => void;
+  } {
+    const list = document.createElement("div");
     const anchor = document.createElement("div");
     const popup = document.createElement("div");
+    const other = document.createElement("div");
     popup.appendChild(document.createElement("button"));
     anchor.appendChild(popup);
-    document.body.appendChild(anchor);
+    list.appendChild(anchor);
+    document.body.appendChild(list);
+    document.body.appendChild(other);
 
     let menu!: DismissableMenu;
     const dispose = createRoot((d) => {
       menu = createDismissableMenu(() => () => {}, { placed: true });
       return () => {
         d();
-        anchor.remove();
+        list.remove();
+        other.remove();
       };
     });
     menu.anchor(anchor);
     menu.popup(popup);
     menu.toggle();
-    return { menu, popup, dispose };
+    return { menu, list, popup, other, dispose };
   }
 
   it("closes when the list under it scrolls", () => {
-    const { menu, dispose } = placedMenu();
+    const { menu, list, dispose } = placedMenu();
     expect(menu.open()).toBe(true);
 
-    const list = document.createElement("div");
-    document.body.appendChild(list);
     list.dispatchEvent(new Event("scroll", { bubbles: false }));
 
     expect(menu.open()).toBe(false);
-    list.remove();
     dispose();
   });
 
@@ -176,6 +190,21 @@ describe("what moving the viewport under a placed popup does to it", () => {
     const { menu, dispose } = placedMenu();
     window.dispatchEvent(new Event("resize"));
     expect(menu.open()).toBe(false);
+    dispose();
+  });
+
+  it("stays open when a pane somewhere else in the page scrolls", () => {
+    // The transcript is the one that matters. MessagesTimeline pins itself to
+    // the bottom by writing scrollTop on every chunk that lands, and on a
+    // desktop it is a sibling of the sidebar in the same document, so a running
+    // session scrolls it several times a second while the menu is open — and
+    // hold() pauses the lobby poll, not the transcript. Measured in Chrome: a
+    // programmatic scrollTop on an unrelated overflow-y:auto pane reaches this
+    // capturing listener with target set to that pane. Closing on it left no
+    // way to reach Rename or Kill at all while a session was producing output.
+    const { menu, other, dispose } = placedMenu();
+    other.dispatchEvent(new Event("scroll", { bubbles: false }));
+    expect(menu.open()).toBe(true);
     dispose();
   });
 

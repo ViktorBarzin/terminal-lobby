@@ -12,11 +12,20 @@
  *
  * A `position: fixed` popup is measured against the window instead, which
  * escapes all four clipping ancestors at once (`.tl-sidebar-scroll`'s
- * overflow-y, `.tl-shell-sidebar`, `#root` and `body`) without a portal — no
- * ancestor of `.tl-card` carries a transform, filter, contain or will-change,
- * so nothing re-roots the fixed containing block. The cost is that fixed has no
- * opinion about the row it belongs to: left and top have to be computed, in JS,
- * every time the menu opens.
+ * overflow-y, `.tl-shell-sidebar`, `#root` and `body`) without a portal. That
+ * rests on nothing above the popup carrying a transform, filter, contain or
+ * will-change, any of which would make that element the containing block a
+ * fixed descendant resolves against — and the stylesheets have none. The RUNNING
+ * card is the exception worth knowing about: `.tl-card` takes an inline
+ * `translateX` while a finger trails it sideways and a `translateY` while it is
+ * being dragged to reorder, and the popup is a child of that card. Measured in
+ * Chrome, a popup sitting at top 300 in a 900px window landed at 1084 the
+ * instant the card took a translateX. Both gesture paths close the menu before
+ * they touch the transform (SessionCard's axis lock and startDrag), which is
+ * what keeps the premise true whenever a popup is actually open.
+ *
+ * The cost of fixed is that it has no opinion about the row it belongs to: left
+ * and top have to be computed, in JS, every time the menu opens.
  *
  * This file is that computation and nothing else. It takes plain numbers and
  * returns plain numbers: no DOM, no `window`, no reading a stylesheet. Two
