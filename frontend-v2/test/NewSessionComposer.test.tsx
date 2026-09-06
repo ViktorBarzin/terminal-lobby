@@ -27,7 +27,6 @@ import {
 } from "../src/store/prefs";
 import type { CommandAvailability } from "../src/lib/new-commands";
 import { DRAFTS_KEY, loadDraft, type DraftAttachment } from "../src/store/drafts";
-import type { ModelState } from "../src/lib/models";
 import { toasts } from "../src/store/toast";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 
@@ -90,9 +89,6 @@ interface Mounted {
  */
 interface Wire {
   delivered: { session: string; lines: readonly string[]; awaitReady: boolean }[];
-  /** Every POST /model the composer made, and what each answered with. */
-  models: { session: string; harness: string; model: string; effort: string }[];
-  modelStates: ModelState[];
   uploads: { files: readonly File[]; session: string }[];
   /** What each upload answers with, in order; the last answer repeats. */
   chips: DraftAttachment[][];
@@ -138,16 +134,6 @@ function mount(
           const i = Math.min(wire.uploads.length - 1, wire.chips.length - 1);
           return wire.chips[i] ?? [];
         }}
-        setModel={async (o) => {
-          wire.models.push({
-            session: o.session,
-            harness: o.harness,
-            model: o.model,
-            effort: o.effort,
-          });
-          const i = Math.min(wire.models.length - 1, wire.modelStates.length - 1);
-          return { ok: true, state: wire.modelStates[i] ?? { model: o.model, effort: o.effort } };
-        }}
         deliver={async (o) => {
           wire.delivered.push({
             session: o.session,
@@ -165,8 +151,6 @@ function mount(
 
 const emptyWire = (): Wire => ({
   delivered: [],
-  models: [],
-  modelStates: [],
   uploads: [],
   chips: [[]],
   results: [true],
@@ -712,7 +696,11 @@ describe("<NewSessionComposer> — the first prompt", () => {
     m.store.dispose();
   });
 
-  it("puts the session on the picked model before the prompt reaches it", async () => {
+  // The model and the effort leave by a different door now: they are flags on
+  // the process the attach starts, read out of the preference this row writes
+  // (lib/terminal-url.ts, App.newLaunch). So what the composer owes them is a
+  // written preference, and the prompt path owes them nothing at all.
+  it("sends the prompt and nothing else, whatever the model row says", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
@@ -724,32 +712,15 @@ describe("<NewSessionComposer> — the first prompt", () => {
     enter(field(m.container)!);
 
     await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.models).toEqual([
-      { session: created(api), harness: "claude", model: "sonnet", effort: "high" },
-    ]);
-    // The prompt carries the text and nothing else. The `/model` line it used
-    // to carry saved the choice as the ACCOUNT default (measured 2026-09-04),
-    // so a model picked for one session followed every session after it.
+    // No `/model` line. It used to lead the prompt, and it both cost a round
+    // trip and showed up as a command in a conversation nobody had started.
     expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
+    expect(m.prefs.prefs().session.newModel).toBe("sonnet");
+    expect(m.prefs.prefs().session.newEffort).toBe("high");
     m.store.dispose();
   });
 
-  it("changes nothing on the default, which is the absence of a choice", async () => {
-    const api = new FakeApi();
-    const w = emptyWire();
-    const m = mount(api, {}, w);
-    await m.store.refresh();
-
-    type(field(m.container)!, "Fix the deploy");
-    enter(field(m.container)!);
-
-    await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.models).toEqual([]);
-    expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
-    m.store.dispose();
-  });
-
-  it("asks codex for a codex model, not for the one Claude was left on", async () => {
+  it("writes codex's choice under codex's own keys", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
@@ -764,13 +735,13 @@ describe("<NewSessionComposer> — the first prompt", () => {
     enter(field(m.container)!);
 
     await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.models).toEqual([
-      { session: created(api), harness: "codex", model: "gpt-5.6-luna", effort: "" },
-    ]);
+    expect(m.prefs.prefs().session.newCodexModel).toBe("gpt-5.6-luna");
+    // Claude's own choice is untouched beside it.
+    expect(m.prefs.prefs().session.newModel).toBe("haiku");
     m.store.dispose();
   });
 
-  it("applies a picked model even when the box is empty", async () => {
+  it("sends nothing at all for an empty box", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
@@ -779,29 +750,8 @@ describe("<NewSessionComposer> — the first prompt", () => {
 
     enter(field(m.container)!);
 
-    await waitFor(() => expect(w.models.length).toBe(1));
-    expect(w.models[0]!.model).toBe("opus");
+    await waitFor(() => expect(w.delivered.length).toBe(1));
     expect(w.delivered[0]!.lines).toEqual([]);
-    m.store.dispose();
-  });
-
-  // An effort the box refuses is refused silently: the slider moves and the
-  // session stays where it was. Saying so is the whole reason the reply is what
-  // the session reports rather than an echo of the request.
-  it("says so when the session did not take the effort it was given", async () => {
-    const api = new FakeApi();
-    const w = emptyWire();
-    w.modelStates = [{ model: "opus", effort: "max" }];
-    const m = mount(api, {}, w);
-    await m.store.refresh();
-    fireEvent.change(pick(m.container, "Effort for new session"), { target: { value: "low" } });
-
-    type(field(m.container)!, "Fix the deploy");
-    enter(field(m.container)!);
-
-    await waitFor(() =>
-      expect(toasts.toasts().map((t) => t.message).join(" ")).toContain("stayed on max"),
-    );
     m.store.dispose();
   });
 
