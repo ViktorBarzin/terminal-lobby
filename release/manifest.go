@@ -110,6 +110,10 @@ type Manifest struct {
 	// tab on the previous build — or a rollback — still requests the old names.
 	AssetPayload string
 	// External lists paths a unit watches that another package installs.
+	//
+	// It is the narrow case: watched, so a restart depends on it. The wider
+	// list of things this package depends on without installing them —
+	// including the two that run as root — is PrivilegedDeps.
 	External []string
 	// Checks is what the box runs after installing, to decide whether to keep
 	// the version or revert to the previous one.
@@ -244,6 +248,12 @@ var Package = Manifest{
 		// /etc/terminal-lobby.users would make the package a writer of identity
 		// data, which is the thing that revoked two users' terminals.
 		{Src: "devvm/terminal-lobby.users.template", Dest: "/usr/share/terminal-lobby/terminal-lobby.users.template", Mode: 0o644, Unmanaged: true},
+		// The two sudo grants, as references beside the users template and for
+		// the same reason. Both name accounts, so both are rendered on the box
+		// and neither is installed onto its live path. Grants says who writes
+		// each one.
+		{Src: "devvm/sudoers.d-ttyd-users.template", Dest: "/usr/share/terminal-lobby/sudoers.d-ttyd-users.template", Mode: 0o644, Unmanaged: true},
+		{Src: "devvm/sudoers.d-tl-reconcile.template", Dest: "/usr/share/terminal-lobby/sudoers.d-tl-reconcile.template", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tmux.conf.system", Dest: "/etc/tmux.conf", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-pool-warm@.service", Dest: "/etc/systemd/user/tl-pool-warm@.service", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-prewarm@.service", Dest: "/etc/systemd/user/tl-prewarm@.service", Mode: 0o644, Unmanaged: true},
@@ -377,6 +387,14 @@ set -e
 # never runs sudo — so its absence is not a failure.
 if [ -e /etc/sudoers.d/ttyd-users ] && ! visudo -cf /etc/sudoers.d/ttyd-users >/dev/null; then
   echo "terminal-lobby: /etc/sudoers.d/ttyd-users is malformed; refusing to configure" >&2
+  exit 1
+fi
+
+# The deploy grant, same treatment. It is the file behind the forced command on
+# the deploy key, so a malformed one takes away the way this box is updated —
+# and the update that would repair it. Absent on a box that takes no CI deploys.
+if [ -e /etc/sudoers.d/tl-reconcile ] && ! visudo -cf /etc/sudoers.d/tl-reconcile >/dev/null; then
+  echo "terminal-lobby: /etc/sudoers.d/tl-reconcile is malformed; refusing to configure" >&2
   exit 1
 fi
 
