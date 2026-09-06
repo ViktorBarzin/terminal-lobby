@@ -1,0 +1,114 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+
+  // The repo's first linter, curated rather than recommended.
+  //
+  // `recommended: true` over this tree ships 1,422 diagnostics (measured
+  // 2026-09-06 across 409 files). Four of them are correctness and all four
+  // are false positives. A gate that arrives carrying 1,422 entries is a gate
+  // someone turns off, so every rule below was enabled only after it measured
+  // zero on the code it covers, and every one was proven to fire against a
+  // synthetic violation rather than assumed live.
+  //
+  // What this is, honestly: a formatter, plus the two accessibility rules that
+  // found the 25 mouse-only controls B14 fixed, plus a cheap import-cycle
+  // gate. Its measured bug-finding yield over this tree is zero. Any pitch
+  // that sells it as a bug finder will be judged against that number.
+  //
+  // Counts for the rules deliberately left off, so nobody re-derives them
+  // (src / test):
+  //   style/noNonNullAssertion    93 / 992
+  //   style/useTemplate           54 /  73
+  //   a11y/useButtonType          38 /   5   `<form>` appears twice in src, so
+  //                                          a missing type= has almost
+  //                                          nothing to submit.
+  //   the four aria rules         27 between them, inside the 1,422 above.
+  //
+  // Eslint was measured against this and lost. `eslint-plugin-solid`'s
+  // headline rule is no-destructure, and this codebase never destructures
+  // props (both greps return 0). `typescript-eslint`'s no-floating-promises is
+  // the one thing eslint would genuinely add, and it does not justify a
+  // type-aware pass over 110k lines on its own.
+
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true,
+    "defaultBranch": "master"
+  },
+
+  "files": {
+    "includes": ["src/**", "test/**", "public/**", "*.ts", "*.json"]
+  },
+
+  // Assist off. Biome 2 folds source assists into `check`, and the only one
+  // that fires over this tree is organizeImports, at 319 files. Import order
+  // is not formatting, nobody asked for it, and folding it into the ratchet
+  // would make every touched file's diff bigger than the change in it. Off,
+  // so `check` here means format plus lint and nothing else.
+  "assist": { "enabled": false },
+
+  // lineWidth 100 is not a taste call. A tree-wide reformat rewrites 260 of
+  // 409 files at 100, 347 at 80 and 330 at 120, so 100 is the width this code
+  // was already written to. Formatting lands by ratchet, `npm run
+  // format:changed`, never in one sweep, so git blame survives.
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "suspicious": {
+        // Zero violations today, and proven against a synthetic two-file
+        // cycle, so the zero means the rule works rather than that it is
+        // asleep. Closes the class permanently and costs nothing to keep.
+        "noImportCycles": "error",
+        "noDoubleEquals": "error",
+        // src only, see the override.
+        "noExplicitAny": "off"
+      },
+      "correctness": {
+        // src only, see the override.
+        "noEmptyCharacterClassInRegex": "off"
+      },
+      // The two rules that found B14's 25 mouse-only controls. They arrive
+      // green because B14 landed first, which is the point of that order.
+      "a11y": {
+        "useKeyWithClickEvents": "error",
+        "noStaticElementInteractions": "error"
+      }
+    }
+  },
+
+  "overrides": [
+    {
+      // Two rules that are clean in src and not in test, for reasons about
+      // test code rather than about the rule:
+      //
+      //   noExplicitAny                  0 in src, 48 in test, all of them
+      //                                  doubles standing in for a browser
+      //                                  API.
+      //   noEmptyCharacterClassInRegex   0 in src, 2 in test, both `[^]` used
+      //                                  on purpose as a dot-all class in
+      //                                  terminal.font.test.ts's doc-comment
+      //                                  extractor. Not the regex mistake this
+      //                                  rule usually catches.
+      "includes": ["src/**/*"],
+      "linter": {
+        "rules": {
+          // An override does not inherit the top-level `recommended: false`.
+          // Without this line the block quietly turns the whole recommended
+          // set back on, which is 1,422 diagnostics.
+          "recommended": false,
+          "suspicious": { "noExplicitAny": "error" },
+          "correctness": { "noEmptyCharacterClassInRegex": "error" }
+        }
+      }
+    }
+  ]
+}

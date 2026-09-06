@@ -125,6 +125,19 @@ jobs:
           # 2026-09-02 and the second config went with them, so there is one
           # answer to "does this typecheck" again.
           npm run typecheck
+          # The repo's first linter, added 2026-09-06. It is curated, not
+          # recommended: six rules that all measured zero before they were
+          # switched on, so this gate arrives green and stays cheap. The full
+          # reasoning and the counts for the rules left off are in
+          # frontend-v2/biome.jsonc.
+          npm run lint
+          # Unused value exports. Neither biome nor eslint does this analysis,
+          # which is why knip is a second tool rather than a biome rule.
+          npm run lint:exports
+          # Formatting by ratchet, on the files a branch changed and never
+          # tree-wide. On a master push origin/master is the commit being
+          # built, so this is a no-op here and does its work on branches.
+          npm run format:changed
           npm run test
 
       - name: test (python)

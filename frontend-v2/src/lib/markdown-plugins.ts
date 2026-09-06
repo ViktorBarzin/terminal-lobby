@@ -44,7 +44,6 @@ export function remarkPluginsFor(hasLookbehind: boolean): PluggableList {
  */
 export const engineHasLookbehind: boolean = (() => {
   try {
-    // eslint-disable-next-line no-new
     new RegExp("(?<=a)b");
     return true;
   } catch {

@@ -40,7 +40,6 @@ export function makeTimeoutSignal(ms: number): AbortSignal {
 /** What `URL.canParse(url, base)` answers, without the Safari 17 method. */
 export function canParseURL(url: string, base?: string): boolean {
   try {
-    // eslint-disable-next-line no-new
     new URL(url, base);
     return true;
   } catch {
