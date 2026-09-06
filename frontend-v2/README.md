@@ -679,6 +679,8 @@ src/
     notifications.ts     Wires the above + push into the running app
   pwa/
     register.ts          Registers /sw.js + the notification-tap handoff
+    tap.ts               PURE: which pending notification a launch belongs to,
+                         and the reason the journal is told
     push.ts              Web Push subscribe/heal (best-effort)
     vapid.ts             VAPID base64url → Uint8Array
   mobile/
@@ -728,6 +730,7 @@ src/
     healer.logic.ts      PURE self-update kernel (ADR-0007)
     healer.ts            Its controller: poll own served bytes, TOP-owned reload
   telemetry/track.ts     Batched usage events → tmux-api /telemetry (ADR-0006)
+  telemetry/device.ts    Per-installation id stamped on every event, mirrored to IndexedDB for sw.js
   telemetry/diag.ts      Typed seam onto the shared frontend/diag.js core (ADR-0008)
   theme/theme.css        The 9-theme CSS-var token layer (ported verbatim)
   theme/theme.ts         Live theme switch + xterm ITheme derivation

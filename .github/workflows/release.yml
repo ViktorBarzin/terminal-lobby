@@ -159,6 +159,35 @@ jobs:
           python3 -m pip install --quiet pytest pytest-asyncio aiohttp
           python3 -m pytest scripts/test_qa_harness.py -q
 
+      # A real browser taps a real notification, and the app has to land on the
+      # session the banner named.
+      #
+      # This gate exists because the cheap version of it does not work.
+      # Notification tap routing has been fixed six times since 2026-07-17 and
+      # regressed after every one; each fix was verified against a mocked
+      # navigator.serviceWorker and a stubbed shade, and that suite stayed green
+      # through all six, because what broke was the handshake between a real
+      # service worker, a real notification and a real page. So this one serves
+      # the built bundle with the shipped public/sw.js, delivers a push through
+      # the browser's own plumbing, and dispatches a real NotificationEvent at
+      # the shipped handler.
+      #
+      # It runs after `test (frontend)` because that step's npm ci is what the
+      # bundle build here needs; the suite builds frontend-v2/dist itself.
+      #
+      # `--with-deps` because a bare runner is missing the shared libraries
+      # Chromium links against. The suite drives the FULL Chromium in new
+      # headless mode, not chromium-headless-shell: measured 2026-09-06, the
+      # shell refuses the notifications permission outright, reading "denied" in
+      # both page and worker after a grant, so `playwright install chromium` is
+      # doing more here than fetching a browser.
+      - name: test (notification tap, real browser)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pytest playwright
+          python3 -m playwright install --with-deps chromium
+          python3 -m pytest scripts/test_notification_tap_e2e.py -q
+
       - name: version
         id: version
         run: |

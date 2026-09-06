@@ -39,14 +39,13 @@ import { fireNotification } from "./fire";
 import { sessionConfirmLabel } from "../types/lobby";
 import { notifyOptedIn, setNotifyOptIn } from "./opt-in";
 import {
-  readPendingSessions,
   clearPendingSessions,
-  pickTappedSession,
-  type PendingNotif,
+  displayedTags,
+  navigatedSession,
+  readPendingSessions,
   registerServiceWorker,
-  stashExpired,
-  stashIsActionable,
 } from "../pwa/register";
+import { pickTap, spentSessions, type StoredRecord, type TapReason } from "../pwa/tap";
 import {
   deviceSubscriptionState,
   reportFocus,
@@ -249,9 +248,13 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
 
   const sw = registerServiceWorker({
     onActivateSession: (name) => {
-      if (lens) return;
+      // Refusing rather than swallowing: the worker takes silence as "not a
+      // lobby" and posts the switch to the next window, and the record stays
+      // put for the reader's own tab to route on.
+      if (lens) return false;
       track("notify.clicked", { "tl.session": name });
       opts.onActivateSession(name);
+      return true;
     },
   });
   onCleanup(() => sw.dispose());
@@ -268,12 +271,13 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
   // already was. Reproduced: notification for `issues`, restored at
   // `trip-casia`, landed on `trip-casia`.
   //
-  // So the stash wins. `stashIsActionable` is the only authority on whether it
-  // is worth acting on, and it is already tight — a push-time receipt counts for
-  // two minutes, an older one only once its banner has gone, which on iOS means
-  // it was tapped or dismissed. The tap is why the app is opening; a restored
-  // URL is not intent. This also makes the cold path agree with the warm one,
-  // where the postMessage switch has always overridden whatever was on screen.
+  // So the stash wins. `pickTap` (pwa/tap.ts) is the only authority on whether
+  // it is worth acting on, and it is tight — a push-time receipt counts for two
+  // minutes on its own, an older one only once its banner has gone, which on
+  // iOS means it was tapped or dismissed. The tap is why the app is opening; a
+  // restored URL is not intent. This also makes the cold path agree with the
+  // warm one, where the postMessage switch has always overridden whatever was
+  // on screen.
   //
   // The trade-off, stated: deliberately opening a deep link to session B within
   // that window of a push about session A lands on A. One tap corrects it, and
@@ -303,73 +307,103 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
   // Same trade-off as at boot, and the same guard: foregrounding by tapping the
   // app ICON within the fresh-receipt window lands on the notified session
   // instead. A push had just arrived, so that is a defensible place to be, and
-  // stashIsActionable rejects an older receipt whose banner is still on screen.
-  const landOnStashedTapWith = async (records: readonly PendingNotif[]): Promise<void> => {
-    const reason = (r: string): void => void track("notify.stash_read", { "tl.reason": r });
-    // Which of them was tapped is decided by which banner has GONE — iOS clears
-    // the one you tapped and leaves the rest. A single slot could not tell them
-    // apart, and with three pushes inside a minute it routinely held a session
-    // Viktor was already looking at, so his tap read `already` and did nothing.
-    const pick = await pickTappedSession(records);
-    if (!pick) {
-      // Two different diagnoses, and telling them apart is the whole point of
-      // reporting: every record past its window is `stale`, while live records
-      // whose banners are all still on screen mean the app was opened by its
-      // icon rather than by a tap.
-      const stale: string[] = [];
-      for (const r of records) if (!(await stashIsActionable(r))) stale.push(r.session);
-      reason(stale.length === records.length ? "stale" : "untapped");
-      // Forget only what is genuinely finished with. This used to delete every
-      // record the actionable test refused, which includes the ones whose
-      // banner is STILL ON SCREEN — the reader had not tapped them yet. So
-      // opening the app by its icon, or just switching back to it, erased the
-      // record behind every notification still sitting in the shade, and the
-      // tap that came minutes later found nothing and went nowhere.
+  // an older receipt whose banner is still on screen is refused.
+  // Whether this foregrounding has already reported a verdict that routed
+  // nowhere. Cleared on the way out (onLookAway), so the next return reports
+  // again. `acted` and `already` need no latch: both consume the record.
+  let quietReported = false;
+
+  const landOnStashedTapWith = async (records: readonly StoredRecord[]): Promise<void> => {
+    const reason = (r: TapReason): void => void track("notify.stash_read", { "tl.reason": r });
+    const now = Date.now();
+    // ONE read of the shade, with no tag filter, for the whole decision. Which
+    // record was tapped is decided by which banner has GONE: iOS clears the one
+    // you tapped and leaves the rest. Deciding and reporting used to be two
+    // separate passes over the records, so the journal could say `stale` about a
+    // tap that had been refused for another reason entirely.
+    // The `?session=` of a Declarative Web Push navigate URL, when the OS opened
+    // us on one. iOS 18.4+ dispatches no notificationclick for those, so this
+    // query is the only first-hand answer to which banner was tapped; pickTap
+    // still refuses it without a live record behind it, so a query left over
+    // from an earlier tap cannot route twice.
+    const pick = pickTap(records, await displayedTags(), now, navigatedSession());
+    // Consume what this launch settled and forget what is genuinely finished
+    // with, in ONE write. A receipt whose banner is still on screen is neither:
+    // the reader has not tapped it yet, and deleting it is what left the tap
+    // minutes later with nothing to route on. Over 72 hours on that build only
+    // 30 of 237 stash reads routed, and 44 came back `absent` with 16 of those
+    // written inside the window.
+    //
+    // Awaited, not fired and forgotten: the next wake is queued behind this
+    // call, and it must not read a record this one has already acted on.
+    const spent = spentSessions(records, now, pick.session);
+    if (spent.length) await clearPendingSessions(spent);
+
+    if (pick.session === null) {
+      // `stale` (every row past its window) and `untapped` (live rows whose
+      // banners are all still on screen, so the app was opened by its icon) are
+      // two different diagnoses, and telling them apart is the whole point of
+      // reporting.
       //
-      // The numbers say that is the common case, not an edge. Over 72 hours on
-      // the deployed build only 30 of 237 stash reads routed; 44 came back
-      // `absent`, and 16 of those had a record written less than 15 minutes
-      // earlier, so their window had not run out. Pushes for one session are a
-      // median of 956 s apart and Viktor answers them minutes later, while the
-      // unconditional window is 120 s, so nearly every real tap lands in the
-      // range this was clearing. The 2026-09-02 check passed because it tapped
-      // within seconds: 21 of its 27 routed reads were under that 120 s.
-      const spent = records.filter((r) => stashExpired(r)).map((r) => r.session);
-      if (spent.length) void clearPendingSessions(spent);
+      // Reported ONCE per return to the foreground. One foregrounding fires
+      // visibilitychange, window focus and sometimes pageshow, each of which
+      // reads the stash, and a record that routes nowhere survives all three —
+      // spentSessions keeps a live receipt whose banner is still up on purpose.
+      // Reporting per read would multiply `untapped` and `stale` by however many
+      // events that platform happens to fire, which is the one number the six
+      // previous attempts at this bug were judged against.
+      if (!quietReported) {
+        quietReported = true;
+        reason(pick.reason);
+      }
       return;
     }
-    const session = pick.session;
-    // Consume the one acted on (and the legacy slot) so it cannot replay.
-    void clearPendingSessions([session]);
-    if (opts.selected() === session) {
+    if (opts.selected() === pick.session) {
       reason("already"); // the app is already where the tap wanted
       return;
     }
-    reason("acted");
-    track("notify.clicked", { "tl.session": session });
-    opts.onActivateSession(session);
+    reason(pick.reason);
+    track("notify.clicked", { "tl.session": pick.session });
+    opts.onActivateSession(pick.session);
   };
 
-  /** Read the record and act on it, if there is one. */
-  const landOnStashedTap = async (): Promise<void> => {
+  /**
+   * Read the stash and act on it, if there is anything to act on.
+   *
+   * `reportAbsent` is boot's alone. Boot distinguishes "the write never landed"
+   * from "no tap", which is the question the worker's notify.stash_written is
+   * paired with; a wake finding an empty store says nothing, because one
+   * foregrounding can fire three of them. The same three are why a verdict that
+   * routes nowhere is latched and reported once (landOnStashedTapWith): an empty
+   * store costs one getAll and no telemetry, but a surviving record would
+   * otherwise report on every read.
+   */
+  const readAndLand = async (reportAbsent: boolean): Promise<void> => {
     if (lens) return;
-    const records = await readPendingSessions();
-    if (records.length === 0) return; // nothing waiting; no event on every focus
-    await landOnStashedTapWith(records);
-  };
-
-  onMount(async () => {
-    if (lens) return;
-    // Boot reports `absent` where the foreground path stays quiet: at boot it
-    // distinguishes "the write never landed" from "no tap", which is the
-    // question the worker's notify.stash_written is paired with.
     const records = await readPendingSessions();
     if (records.length === 0) {
-      track("notify.stash_read", { "tl.reason": "absent" });
+      if (reportAbsent) track("notify.stash_read", { "tl.reason": "absent" });
       return;
     }
     await landOnStashedTapWith(records);
-  });
+  };
+
+  /**
+   * One read at a time. A single return to the foreground can fire
+   * visibilitychange, window focus and pageshow, and two reads racing each other
+   * would both see the same record and both route on it. Chaining also means a
+   * wake that arrives mid-read sees the store the previous one left behind.
+   * `.then(run, run)` so one throw cannot stop every later wake.
+   */
+  let landing: Promise<void> = Promise.resolve();
+  const landOnStashedTap = (reportAbsent = false): Promise<void> => {
+    if (lens) return landing;
+    const run = () => readAndLand(reportAbsent);
+    landing = landing.then(run, run);
+    return landing;
+  };
+
+  onMount(() => void landOnStashedTap(true));
 
   // Self-heal the background subscription every load (the desktop-silent fix):
   // subscribePush is idempotent, so a lapsed/rotated endpoint is refreshed
@@ -521,20 +555,26 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
     setAttention((s) => clearAttention(s));
     visits.stamp(untrack(opts.selected));
     reportFocusNow(untrack(opts.selected));
+    // A tap that iOS turned into a plain foreground, with no notificationclick
+    // and no reload, leaves its only trace in the stash. Every way back into the
+    // app has to look for it: this handler runs for window focus, which a
+    // foregrounding can fire on its own without visibilitychange, and that
+    // return read nothing at all. The reads are serialised and an empty store
+    // costs one getAll and no telemetry, so extra callers are cheap.
+    void landOnStashedTap();
   };
   // A blur is a look-away: on the desktop the window can stay visible behind
   // another one, and reading a session there is not reading it.
-  const onLookAway = (): void => reportFocusNow(untrack(opts.selected));
+  const onLookAway = (): void => {
+    quietReported = false; // the next return to the app is a new question
+    reportFocusNow(untrack(opts.selected));
+  };
   const onVisibility = (): void => {
     if (!hasDoc || document.hidden) {
       onLookAway(); // going away is announced, not waited out
       return;
     }
-    onLook();
-    // A tap that iOS turned into a plain foreground, with no notificationclick
-    // and no reload, leaves its only trace in the stash. This is where a
-    // resident PWA finds it.
-    void landOnStashedTap();
+    onLook(); // which is also where the stash is read
     // Re-confirm on return-to-foreground (throttled): a long-lived tab whose
     // endpoint the server pruned would otherwise stay silent forever, believing
     // push still covers it.
@@ -549,16 +589,23 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
     if (!delivers) return;
     reportFocusNow(selected);
   });
+  // A bfcache restore fires pageshow and nothing else, which on iOS is a
+  // plausible way back into a resident PWA. It is not a LOOK (no attention latch
+  // to drop, no focus to report yet), only another place a pending tap can be
+  // sitting.
+  const onPageShow = (): void => void landOnStashedTap();
   let focusTimer: ReturnType<typeof setInterval> | undefined;
   onMount(() => {
     if (hasDoc) document.addEventListener("visibilitychange", onVisibility);
     if (hasWin) window.addEventListener("focus", onLook);
+    if (hasWin) window.addEventListener("pageshow", onPageShow);
     if (hasWin) window.addEventListener("blur", onLookAway);
     focusTimer = setInterval(() => reportFocusNow(untrack(opts.selected)), FOCUS_TICK_MS);
   });
   onCleanup(() => {
     if (hasDoc) document.removeEventListener("visibilitychange", onVisibility);
     if (hasWin) window.removeEventListener("focus", onLook);
+    if (hasWin) window.removeEventListener("pageshow", onPageShow);
     if (hasWin) window.removeEventListener("blur", onLookAway);
     if (focusTimer !== undefined) clearInterval(focusTimer);
   });
