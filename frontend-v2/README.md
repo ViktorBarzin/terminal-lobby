@@ -523,6 +523,10 @@ src/
                          name box, because a shell has no prompt to receive
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
+    menu.logic.ts        PURE placement for a fixed ⋯ popup: which side of the
+                         row it opens on, where its left edge lands, how tall it
+                         may grow. jsdom does no layout, so this is the only
+                         place the decision can be tested
     overlay.ts           A backdrop's press-to-dismiss, on the node rather than
                          as a handler, since the surface is not a control
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
