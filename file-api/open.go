@@ -35,6 +35,13 @@ func readNoFollow(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// writeLeaf is writeNoFollow behind a var, as a test seam and nothing else.
+// The ELOOP that the handlers map to 400 arrives only when a symlink appears at
+// the leaf AFTER their Lstat, which no test can stage on a real filesystem, so
+// swapping this out is the only way to assert what they do with it. Production
+// always runs writeNoFollow.
+var writeLeaf = writeNoFollow
+
 // writeNoFollow is os.WriteFile with the same refusal: it creates the file when
 // it is missing and truncates it when it is not, but a symlink sitting at the
 // leaf gets ELOOP rather than a write through it.

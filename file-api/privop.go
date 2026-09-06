@@ -159,12 +159,13 @@ func opWrite(home, path string, content []byte) privopResult {
 	if info, err := os.Lstat(resolved); err == nil && !info.Mode().IsRegular() {
 		return privopResult{Status: http.StatusBadRequest, Error: "target is not a regular file"}
 	}
-	if err := writeNoFollow(resolved, content, 0o644); err != nil {
+	if err := writeLeaf(resolved, content, 0o644); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return privopResult{Status: http.StatusNotFound, Error: "parent directory does not exist"}
 		}
-		log.Printf("write %s: %v", resolved, err)
-		return privopResult{Status: http.StatusInternalServerError, Error: "internal error"}
+		// Same shared map as the inline leg, so a raced symlink leaf is a 400
+		// on this side too rather than an opaque internal error.
+		return errResult(err)
 	}
 	return privopResult{Status: http.StatusNoContent}
 }
@@ -202,7 +203,7 @@ func errResult(err error) privopResult {
 	case errors.Is(err, syscall.ELOOP):
 		return privopResult{Status: http.StatusBadRequest, Error: "not a regular file"}
 	default:
-		log.Printf("path resolution error: %v", err)
+		log.Printf("file op error: %v", err)
 		return privopResult{Status: http.StatusInternalServerError, Error: "internal error"}
 	}
 }

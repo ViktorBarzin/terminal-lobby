@@ -268,13 +268,15 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "target is not a regular file", http.StatusBadRequest)
 		return
 	}
-	if err := writeNoFollow(resolved, []byte(body.Content), 0o644); err != nil {
+	if err := writeLeaf(resolved, []byte(body.Content), 0o644); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "parent directory does not exist", http.StatusNotFound)
 			return
 		}
-		log.Printf("write %s: %v", resolved, err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		// Everything else goes through the shared map, so a symlink that lands
+		// on the leaf after the Lstat above answers with the same 400 a
+		// stat-time symlink gets, and only a genuinely unknown error is a 500.
+		pathHTTPError(w, err)
 		return
 	}
 	events.Emit("file.saved", osUser, telemetry.Attrs{
@@ -303,7 +305,7 @@ func pathHTTPError(w http.ResponseWriter, err error) {
 		// than a 500: the path is a symlink, which is a client-visible fact.
 		http.Error(w, "not a regular file", http.StatusBadRequest)
 	default:
-		log.Printf("path resolution error: %v", err)
+		log.Printf("file op error: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
 }

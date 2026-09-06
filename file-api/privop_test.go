@@ -46,6 +46,18 @@ func TestOpReadEnvelopeRoundTrip(t *testing.T) {
 	}
 }
 
+// The cross-user leg answers through the same map, so the raced symlink leaf is
+// a 400 there too rather than the child reporting an internal error.
+func TestOpWriteRacedSymlinkLeafIs400(t *testing.T) {
+	home := t.TempDir()
+	stubWriteLeafELOOP(t)
+
+	res := opWrite(home, filepath.Join(home, "note.txt"), []byte("clobbered"))
+	if res.Status != http.StatusBadRequest {
+		t.Fatalf("raced symlink leaf: status=%d err=%q, want 400", res.Status, res.Error)
+	}
+}
+
 func TestOpReadEnvelopeErrors(t *testing.T) {
 	home := t.TempDir()
 	if res := opReadEnvelope(home, filepath.Join(home, "nope")); res.Status != http.StatusNotFound {
