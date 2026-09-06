@@ -20,8 +20,11 @@ import (
 )
 
 // listenAddr — :7686, the next free port after clipboard-upload (:7683),
-// tmux-api (:7684), and session-events (:7685).
-const listenAddr = "0.0.0.0:7686"
+// tmux-api (:7684), and session-events (:7685). Loopback by default: with
+// no config file present, the identity header is all that authenticates a
+// request, so the port must not be on the network until an operator says
+// so (TL-3).
+const listenAddr = "127.0.0.1:7686"
 
 func main() {
 	// -privop marks the privileged child (re-exec'd via sudo -u <user>): it runs
@@ -65,9 +68,11 @@ func main() {
 	// sets no environment — production stays :7686. Mirrors TMUX_API_ADDR /
 	// CLIPBOARD_UPLOAD_ADDR.
 	addr := listenAddr
-	// TL_BIND narrows the listener. The default is unchanged; an operator who
-	// puts the proxy on the same host can set 127.0.0.1 and remove the LAN
-	// path entirely without needing a shared secret.
+	// TL_BIND is the listen address. The compiled default is loopback, so a
+	// process that reaches no configuration at all stays off the network;
+	// the shipped conffile says the same. Widening to 0.0.0.0 for a proxy on
+	// another host is the operator's explicit act, made in the file where
+	// TL_PROXY_SECRET is set alongside it.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
 		if _, port, err := net.SplitHostPort(addr); err == nil {
 			addr = net.JoinHostPort(b, port)

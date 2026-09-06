@@ -18,9 +18,11 @@ EnvironmentFile=-/etc/terminal-lobby.local.conf
 Environment=TL_AUTH_HEADER=X-Forwarded-User
 # Same fallback for the listen address, and it is load-bearing rather than
 # tidy: systemd substitutes an unset ${TL_BIND} as an EMPTY argument, and ttyd
-# refuses to start on `-i ""`. 0.0.0.0 is what ttyd did before it read the
-# variable at all, so a box with no config file keeps the behaviour it had.
-Environment=TL_BIND=0.0.0.0
+# refuses to start on `-i ""`. Loopback, matching the shipped conffile and the
+# five services' compiled defaults, so a box that reaches no config file at all
+# fails closed. Widening is the operator's explicit act, made in
+# /etc/terminal-lobby.local.conf where TL_PROXY_SECRET is set alongside it.
+Environment=TL_BIND=127.0.0.1
 # Truecolor hint for the spawned tmux client (Task 1.14). INERT on the
 # current tmux 3.4 — upstream only added "Set and check COLORTERM as a
 # hint for RGB colour" in tmux 3.6 — so /etc/tmux.conf (terminal-features

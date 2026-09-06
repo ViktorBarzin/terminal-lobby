@@ -24,8 +24,10 @@ import (
 
 // listenAddr — :7688. :7687 is deliberately skipped: it belonged to the retired
 // terminal-dev ttyd and a stale bookmark reaching a new service on that port is
-// a worse outcome than leaving a gap.
-const listenAddr = "0.0.0.0:7688"
+// a worse outcome than leaving a gap. Loopback by default: with no config
+// file present, the identity header is all that authenticates a request, so
+// the port must not be on the network until an operator says so (TL-3).
+const listenAddr = "127.0.0.1:7688"
 
 // routes is the service's whole HTTP surface, in one place so a test cannot
 // exercise a mux that has drifted from the one main() serves — which is exactly
@@ -80,9 +82,11 @@ func main() {
 	// unit sets no environment, so production stays :7688. Mirrors
 	// FILE_API_ADDR / TMUX_API_ADDR.
 	addr := listenAddr
-	// TL_BIND narrows the listener. The default is unchanged; an operator who
-	// puts the proxy on the same host can set 127.0.0.1 and remove the LAN
-	// path entirely without needing a shared secret.
+	// TL_BIND is the listen address. The compiled default is loopback, so a
+	// process that reaches no configuration at all stays off the network;
+	// the shipped conffile says the same. Widening to 0.0.0.0 for a proxy on
+	// another host is the operator's explicit act, made in the file where
+	// TL_PROXY_SECRET is set alongside it.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
 		if _, port, err := net.SplitHostPort(addr); err == nil {
 			addr = net.JoinHostPort(b, port)
