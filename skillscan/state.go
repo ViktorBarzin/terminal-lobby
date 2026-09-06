@@ -504,48 +504,14 @@ const (
 	Differs Verdict = "differs"
 )
 
-// Compare classifies theirs against mine. Both are skill directory paths.
-func Compare(mine, theirs string) (Verdict, error) {
-	theirHash, err := Hash(theirs)
-	if err != nil {
-		return "", err
-	}
-	myHash, err := Hash(mine)
-	if errors.Is(err, fs.ErrNotExist) {
-		return Absent, nil
-	}
-	if err != nil {
-		// Anything unreadable on our side is treated as "not comparable", which
-		// the panel shows as a collision rather than silently overwriting.
-		return Differs, nil
-	}
-	if myHash == theirHash {
-		return Same, nil
-	}
-	return Differs, nil
-}
-
-// Diff renders the SKILL.md difference between two skills, mine first, in the
-// familiar -/+ shape. Empty when the files agree.
+// DiffText renders the difference between two SKILL.md bodies, mine first, in
+// the familiar -/+ shape. Empty when the two agree.
 //
-// SKILL.md alone because it is the file that says what a skill does and the one
-// worth reading before taking somebody's scripts; the panel reports the rest of
-// the tree as counts.
-func Diff(mine, theirs string) (string, error) {
-	a, err := readSkillMd(mine)
-	if err != nil {
-		return "", err
-	}
-	b, err := readSkillMd(theirs)
-	if err != nil {
-		return "", err
-	}
-	return DiffText(a, b), nil
-}
-
-// DiffText is Diff over two SKILL.md bodies already in hand. skills-api reads
-// each side through a separate privileged child, so it holds the text rather
-// than two directories it could open itself.
+// skills-api reads each side through a separate privileged child, so it holds
+// the text rather than two directories it could open itself. SKILL.md alone
+// because it is the file that says what a skill does and the one worth reading
+// before taking somebody's scripts; the panel reports the rest of the tree as
+// counts.
 func DiffText(mine, theirs string) string {
 	mine = strings.ReplaceAll(mine, "\r\n", "\n")
 	theirs = strings.ReplaceAll(theirs, "\r\n", "\n")
@@ -557,18 +523,6 @@ func DiffText(mine, theirs string) string {
 
 // maxDiffLines bounds a diff so one rewritten skill cannot flood a response.
 const maxDiffLines = 200
-
-func readSkillMd(dir string) (string, error) {
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", err
-	}
-	body, err := os.ReadFile(filepath.Join(real, "SKILL.md"))
-	if err != nil {
-		return "", err
-	}
-	return strings.ReplaceAll(string(body), "\r\n", "\n"), nil
-}
 
 // unified emits a -/+/context listing over the longest common subsequence,
 // truncated at max lines so one rewritten skill cannot flood a response.

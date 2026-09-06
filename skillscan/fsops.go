@@ -11,15 +11,13 @@ import (
 	"time"
 )
 
-// Copy installs src as dst: the copyable set only, with modes normalised to
+// copyWith installs src as dst: the copyable set only, with modes normalised to
 // 0644/0755 so the result hashes identically to its source whatever the two
 // users' umasks are.
 //
 // It refuses an existing destination. Replacing a skill is two decisions — back
 // the old one up, then write the new one — and the caller makes both, so a copy
 // can never be the thing that lost somebody's edits.
-func Copy(src, dst string) error { return copyWith(src, dst, DefaultLimits) }
-
 func copyWith(src, dst string, lim Limits) error {
 	if _, err := os.Lstat(dst); err == nil {
 		return fmt.Errorf("%s already exists", dst)

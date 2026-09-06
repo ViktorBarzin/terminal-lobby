@@ -19,7 +19,7 @@ func TestCopyReproducesTheTreeWithNormalisedModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(root, "dst")
-	if err := Copy(src, dst); err != nil {
+	if err := copyWith(src, dst, DefaultLimits); err != nil {
 		t.Fatal(err)
 	}
 	// Same content, and the same hash — so an install records a hash the source
@@ -64,8 +64,8 @@ func TestCopyRefusesAnExistingDestination(t *testing.T) {
 	root := t.TempDir()
 	src := skill(t, root, "src", map[string]string{"SKILL.md": "b\n"})
 	dst := skill(t, root, "dst", map[string]string{"SKILL.md": "mine\n"})
-	if err := Copy(src, dst); err == nil {
-		t.Fatal("Copy must refuse to overwrite; the caller backs up first")
+	if err := copyWith(src, dst, DefaultLimits); err == nil {
+		t.Fatal("copyWith must refuse to overwrite; the caller backs up first")
 	}
 	body, _ := os.ReadFile(filepath.Join(dst, "SKILL.md"))
 	if string(body) != "mine\n" {
@@ -87,7 +87,7 @@ func TestCopySkipsSymlinksPointingOutsideTheSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(root, "dst")
-	if err := Copy(src, dst); err != nil {
+	if err := copyWith(src, dst, DefaultLimits); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(dst, "escape.txt")); !os.IsNotExist(err) {
@@ -108,7 +108,7 @@ func TestCopyFollowsASymlinkedSkillDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(root, "dst")
-	if err := Copy(link, dst); err != nil {
+	if err := copyWith(link, dst, DefaultLimits); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Lstat(dst)

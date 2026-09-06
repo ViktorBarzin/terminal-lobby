@@ -304,14 +304,10 @@ func TestPluginsIsEmptyWithoutAClaudeDirectory(t *testing.T) {
 
 // --- diff -------------------------------------------------------------------
 
-func TestDiffShowsChangedLinesWithContext(t *testing.T) {
-	root := t.TempDir()
-	mine := skill(t, root, "mine", map[string]string{"SKILL.md": "alpha\nbeta\ngamma\n"})
-	theirs := skill(t, root, "theirs", map[string]string{"SKILL.md": "alpha\nBETA\ngamma\ndelta\n"})
-	d, err := Diff(mine, theirs)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestDiffTextShowsChangedLinesWithContext(t *testing.T) {
+	mine := "alpha\nbeta\ngamma\n"
+	theirs := "alpha\nBETA\ngamma\ndelta\n"
+	d := DiffText(mine, theirs)
 	for _, want := range []string{"-beta", "+BETA", "+delta"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("diff missing %q:\n%s", want, d)
@@ -320,37 +316,8 @@ func TestDiffShowsChangedLinesWithContext(t *testing.T) {
 	if strings.Contains(d, "-alpha") {
 		t.Errorf("unchanged lines must not be marked:\n%s", d)
 	}
-	same, err := Diff(mine, mine)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if same != "" {
-		t.Errorf("identical skills produce no diff, got:\n%s", same)
-	}
-}
-
-func TestCompareClassifiesAPeerSkillAgainstMine(t *testing.T) {
-	home := t.TempDir()
-	root := Root(home)
-	skill(t, root, "tdd", map[string]string{"SKILL.md": "mine\n"})
-	skill(t, root, "file-issue", map[string]string{"SKILL.md": "shared\n"})
-	peer := t.TempDir()
-	skill(t, peer, "tdd", map[string]string{"SKILL.md": "theirs\n"})
-	skill(t, peer, "file-issue", map[string]string{"SKILL.md": "shared\n"})
-	skill(t, peer, "diagnose", map[string]string{"SKILL.md": "new\n"})
-
-	for name, want := range map[string]Verdict{
-		"tdd":        Differs,
-		"file-issue": Same,
-		"diagnose":   Absent,
-	} {
-		got, err := Compare(filepath.Join(root, name), filepath.Join(peer, name))
-		if err != nil {
-			t.Fatalf("Compare(%s): %v", name, err)
-		}
-		if got != want {
-			t.Errorf("Compare(%s) = %s, want %s", name, got, want)
-		}
+	if same := DiffText(mine, mine); same != "" {
+		t.Errorf("identical bodies produce no diff, got:\n%s", same)
 	}
 }
 
