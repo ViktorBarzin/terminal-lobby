@@ -1343,30 +1343,6 @@ label.tl-set-row-label {
 .tl-row-tool[data-status="error"] {
   border-color: var(--danger);
 }
-.tl-tool-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-}
-.tl-tool-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  border: 0;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  padding: 7px 10px;
-  cursor: pointer;
-  text-align: left;
-}
-.tl-tool-toggle:hover {
-  background: var(--hover-tint);
-}
 .tl-tool-name {
   font-family: var(--font-mono);
   font-weight: 500;
@@ -3144,8 +3120,12 @@ body.tl-kb-up {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   min-width: 0;
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
+/* No font-size here on purpose. `font: inherit` is a shorthand, so it resets
+   font-size, and the toggle picks up the head's 13px by inheritance instead. */
 .tl-tool-toggle {
   display: flex;
   align-items: center;
@@ -3159,6 +3139,9 @@ body.tl-kb-up {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+.tl-tool-toggle:hover {
+  background: var(--hover-tint);
 }
 .tl-tool-glyph {
   flex: none;
@@ -4583,7 +4566,12 @@ body.tl-kb-up {
 .tl-skill-plain:hover {
   color: var(--text-primary);
 }
-.tl-skill-meta {
+/* Scoped to the panel. `.tl-skill-meta` is also the transcript skill row
+   (rows.tsx), and unscoped this copy is later in the file, so its
+   `white-space: nowrap` reached that row too. Scoping raises specificity from
+   (0,1,0) to (0,2,0); harmless only because `.tl-skill-file-foot
+   .tl-skill-meta` below is later at the same specificity and still wins. */
+.tl-skills-page .tl-skill-meta {
   font-size: calc(11px * var(--tl-text-scale, 1));
   white-space: nowrap;
 }
