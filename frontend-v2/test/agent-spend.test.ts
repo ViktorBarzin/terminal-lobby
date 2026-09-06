@@ -7,6 +7,9 @@ import {
   formatTokens,
   formatUsd,
   liveWindows,
+  sidebarFigure,
+  type AgentSpend,
+  type CodexWindow,
 } from "../src/lib/agent-spend";
 
 /**
@@ -115,5 +118,85 @@ describe("formatResetsIn", () => {
   it("says nothing when there is no reset, or it has gone", () => {
     expect(formatResetsIn(undefined, now)).toBe("");
     expect(formatResetsIn(inSecs(-60), now)).toBe("");
+  });
+});
+
+/**
+ * The one figure the sidebar footer has room for. It follows the attached
+ * session's tool because that is the number the person is currently spending:
+ * dollars for Claude Code, which computes them, and the tighter of the two
+ * limits for Codex, which reports no dollars at all.
+ */
+describe("sidebarFigure", () => {
+  const now = 1_788_730_000_000;
+  const soon = Math.floor(now / 1000) + 3600;
+  const gone = Math.floor(now / 1000) - 60;
+
+  const claudeDoc = (costUsd: number): AgentSpend => ({
+    period: "today",
+    claude: {
+      costUsd,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+      models: [],
+      sessions: [],
+    },
+  });
+  const codexDoc = (windows: CodexWindow[]): AgentSpend => ({
+    period: "today",
+    codex: { windows, sessions: [] },
+  });
+  const win = (usedPercent: number, resetsAtSec?: number): CodexWindow => ({
+    label: "5-hour limit",
+    windowMinutes: 300,
+    usedPercent,
+    resetsAtSec,
+  });
+
+  it("gives a Claude session today's spend, in dollars", () => {
+    expect(sidebarFigure("claude", claudeDoc(4.12), now)).toBe("$4.12");
+  });
+
+  it("says a fraction of a cent is not nothing", () => {
+    expect(sidebarFigure("claude", claudeDoc(0.004), now)).toBe("<$0.01");
+  });
+
+  it("gives a Codex session the TIGHTER of its two windows", () => {
+    const doc = codexDoc([
+      win(4, soon),
+      { label: "weekly limit", windowMinutes: 10080, usedPercent: 31, resetsAtSec: soon },
+    ]);
+    expect(sidebarFigure("codex", doc, now)).toBe("31%");
+  });
+
+  it("ignores a Codex window that has already reset", () => {
+    const doc = codexDoc([win(80, gone), { ...win(12, soon), label: "weekly limit" }]);
+    expect(sidebarFigure("codex", doc, now)).toBe("12%");
+  });
+
+  it.each([
+    ["a Claude document", claudeDoc(4.12)],
+    ["a Codex document", codexDoc([win(31, soon)])],
+  ] as const)("shows nothing for a shell session holding %s", (_what, doc) => {
+    expect(sidebarFigure("shell", doc, now)).toBe("");
+  });
+
+  it("shows nothing when nothing is attached", () => {
+    expect(sidebarFigure(undefined, claudeDoc(4.12), now)).toBe("");
+  });
+
+  it("shows nothing before the first read, or when that tool has no section", () => {
+    expect(sidebarFigure("claude", null, now)).toBe("");
+    expect(sidebarFigure("claude", codexDoc([win(31, soon)]), now)).toBe("");
+    expect(sidebarFigure("codex", claudeDoc(4.12), now)).toBe("");
+  });
+
+  it("shows nothing for a Codex account whose windows have all gone", () => {
+    expect(sidebarFigure("codex", codexDoc([win(80, gone)]), now)).toBe("");
+    expect(sidebarFigure("codex", codexDoc([]), now)).toBe("");
+  });
+
+  it("rounds a percentage rather than carrying its decimal into three characters", () => {
+    expect(sidebarFigure("codex", codexDoc([win(2.4, soon)]), now)).toBe("2%");
+    expect(sidebarFigure("codex", codexDoc([win(99.6, soon)]), now)).toBe("100%");
   });
 });

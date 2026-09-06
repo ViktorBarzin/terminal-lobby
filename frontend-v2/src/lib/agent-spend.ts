@@ -13,6 +13,7 @@
  */
 import { agentSpendUrl } from "./config";
 import { fetchWithDeadline } from "./http";
+import type { SessionTool } from "../types/lobby";
 
 /** The spans the page offers, in the server's own vocabulary. */
 export type SpendPeriod = "today" | "7d" | "month" | "all";
@@ -185,6 +186,34 @@ export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
   return String(n);
+}
+
+/**
+ * The one figure the sidebar footer has room for, or "" for nothing to show.
+ *
+ * It follows the ATTACHED session's tool rather than summing the two, because
+ * they are not the same kind of number: Claude Code computes dollars and a
+ * ChatGPT plan reports none, so the honest figure for a Codex session is how
+ * much of a limit is gone. The tighter of the two Codex windows is the one that
+ * will stop you first, which is what makes it the one worth a single slot.
+ *
+ * `doc` is today's document. Anything else — a shell session, no session, a
+ * tool the server has never seen report — is "": the footer draws nothing at
+ * all rather than a zero, which would claim a measurement nobody took.
+ */
+export function sidebarFigure(
+  tool: SessionTool | undefined,
+  doc: AgentSpend | null,
+  nowMs: number,
+): string {
+  if (tool === "claude" && doc?.claude) return formatUsd(doc.claude.costUsd);
+  if (tool === "codex" && doc?.codex) {
+    const live = liveWindows(doc.codex.windows, nowMs);
+    if (live.length === 0) return "";
+    const tightest = live.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+    return `${Math.round(tightest.usedPercent)}%`;
+  }
+  return "";
 }
 
 /**
