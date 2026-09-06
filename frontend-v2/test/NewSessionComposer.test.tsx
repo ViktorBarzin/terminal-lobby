@@ -597,13 +597,16 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
     const sel = pick(m.container, "Model for new session");
     expect(Array.from(sel.options).map((o) => o.value)).toEqual([
       "default",
-      "opus",
-      "sonnet",
-      "haiku",
+      "claude-opus-5",
+      "claude-opus-5[1m]",
+      "claude-sonnet-5",
+      "claude-haiku-4-5-20251001",
+      "claude-opus-4-8",
+      "claude-fable-5",
     ]);
     expect(sel.value).toBe("default");
-    fireEvent.change(sel, { target: { value: "sonnet" } });
-    expect(m.prefs.prefs().session.newModel).toBe("sonnet");
+    fireEvent.change(sel, { target: { value: "claude-sonnet-5" } });
+    expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
     m.store.dispose();
   });
 
@@ -658,7 +661,7 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
   it("keeps each harness's choice separately", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "opus" } });
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "claude-opus-5" } });
     fireEvent.change(pick(m.container, "Command for new session"), {
       target: { value: "codex" },
     });
@@ -669,7 +672,7 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
       target: { value: "claude" },
     });
 
-    expect(pick(m.container, "Model for new session").value).toBe("opus");
+    expect(pick(m.container, "Model for new session").value).toBe("claude-opus-5");
     expect(m.prefs.prefs().session.newCodexModel).toBe("gpt-5.5");
     m.store.dispose();
   });
@@ -705,7 +708,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "sonnet" } });
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "claude-sonnet-5" } });
     fireEvent.change(pick(m.container, "Effort for new session"), { target: { value: "high" } });
 
     type(field(m.container)!, "Fix the deploy");
@@ -715,7 +718,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     // No `/model` line. It used to lead the prompt, and it both cost a round
     // trip and showed up as a command in a conversation nobody had started.
     expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
-    expect(m.prefs.prefs().session.newModel).toBe("sonnet");
+    expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
     expect(m.prefs.prefs().session.newEffort).toBe("high");
     m.store.dispose();
   });
@@ -725,7 +728,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "haiku" } });
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "claude-haiku-4-5-20251001" } });
     fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "codex" } });
     fireEvent.change(pick(m.container, "Model for new session"), {
       target: { value: "gpt-5.6-luna" },
@@ -737,7 +740,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     await waitFor(() => expect(w.delivered.length).toBe(1));
     expect(m.prefs.prefs().session.newCodexModel).toBe("gpt-5.6-luna");
     // Claude's own choice is untouched beside it.
-    expect(m.prefs.prefs().session.newModel).toBe("haiku");
+    expect(m.prefs.prefs().session.newModel).toBe("claude-haiku-4-5-20251001");
     m.store.dispose();
   });
 
@@ -746,7 +749,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "opus" } });
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "claude-opus-5" } });
 
     enter(field(m.container)!);
 

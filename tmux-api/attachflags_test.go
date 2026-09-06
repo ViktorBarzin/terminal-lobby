@@ -76,11 +76,33 @@ func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func TestAttachPassesTheModelAndEffortAsFlags(t *testing.T) {
-	got := runAttach(t, "flagcase", "/tmp", "claude", "opus", "max")
-	for _, want := range []string{"--model opus", "--effort max"} {
+	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5", "max")
+	for _, want := range []string{"--model 'claude-opus-5'", "--effort 'max'"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("command line is missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// The context-window suffix is the one model name that is not plain
+// alphanumerics, and it has to survive two things: a whitelist that used to
+// end at `-`, and the shell the command line is handed to, where `[1m]` is a
+// glob. A bare `--model claude-opus-5[1m]` expands away the moment a file in
+// the start directory matches, which is why the flag is quoted.
+func TestAttachCarriesTheContextWindowSuffix(t *testing.T) {
+	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5[1m]", "max")
+	if !strings.Contains(got, "--model 'claude-opus-5[1m]'") {
+		t.Errorf("the 1M suffix did not reach the command line:\n%s", got)
+	}
+}
+
+// A pinned build carries a date, which is 25 characters before anything is
+// added. The whitelist has to admit the longest real name, not just the short
+// ones.
+func TestAttachCarriesADatedBuild(t *testing.T) {
+	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-haiku-4-5-20251001", "low")
+	if !strings.Contains(got, "--model 'claude-haiku-4-5-20251001'") {
+		t.Errorf("a dated build did not reach the command line:\n%s", got)
 	}
 }
 
@@ -88,7 +110,7 @@ func TestAttachPassesTheModelAndEffortAsFlags(t *testing.T) {
 // a flag. One shared spelling would start a codex that ignores the choice.
 func TestAttachSpellsCodexsFlagsCodexsWay(t *testing.T) {
 	got := runAttach(t, "flagcase", "/tmp", "codex", "gpt-5.6-terra", "high")
-	for _, want := range []string{"-m gpt-5.6-terra", "-c model_reasoning_effort=high"} {
+	for _, want := range []string{"-m 'gpt-5.6-terra'", "-c model_reasoning_effort='high'"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("command line is missing %q:\n%s", want, got)
 		}
@@ -113,6 +135,11 @@ func TestAttachRefusesAnythingOutsideTheWhitelist(t *testing.T) {
 		"OPUS",
 		"-rf",
 		strings.Repeat("o", 33),
+		// The bracket class the 1M suffix opened, offered without closing it
+		// and with something other than a short token inside.
+		"claude-opus-5[1m",
+		"claude-opus-5[1m]x",
+		"claude-opus-5[$(id)]",
 	} {
 		got := runAttach(t, "flagcase", "/tmp", "claude", bad, "max")
 		if strings.Contains(got, "--model") {
@@ -120,7 +147,7 @@ func TestAttachRefusesAnythingOutsideTheWhitelist(t *testing.T) {
 		}
 		// The rest of the line still has to be built: a refused model is "no
 		// choice", not a refused session.
-		if !strings.Contains(got, "--effort max") {
+		if !strings.Contains(got, "--effort 'max'") {
 			t.Errorf("model %q took the effort with it:\n%s", bad, got)
 		}
 		if strings.Contains(got, "tl-pwned") {

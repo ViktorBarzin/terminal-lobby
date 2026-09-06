@@ -147,13 +147,17 @@ launch_flags() {
     [[ -n "$cmd" ]] || return 0
     case "$key" in
         claude)
-            [[ -n "$model" ]] && cmd+=" --model $model"
-            [[ -n "$effort" ]] && cmd+=" --effort $effort"
+            # Single-quoted, because `claude-opus-5[1m]` is a glob to the shell
+            # this line is handed to and would expand away the moment a file in
+            # the start directory happened to match. MODEL_RE admits no quote,
+            # so the quoting cannot be escaped from.
+            [[ -n "$model" ]] && cmd+=" --model '$model'"
+            [[ -n "$effort" ]] && cmd+=" --effort '$effort'"
             ;;
         codex)
-            [[ -n "$model" ]] && cmd+=" -m $model"
+            [[ -n "$model" ]] && cmd+=" -m '$model'"
             # codex takes the reasoning level as config rather than a flag.
-            [[ -n "$effort" ]] && cmd+=" -c model_reasoning_effort=$effort"
+            [[ -n "$effort" ]] && cmd+=" -c model_reasoning_effort='$effort'"
             ;;
     esac
     return 0
@@ -216,9 +220,12 @@ cmd_key="${3:-}"
 # those — the same discipline CMD_RE applies to the command key. Anything
 # outside them becomes empty, which is exactly "no choice was made".
 #
-# A model name has to cover both vocabularies: `opus` and `gpt-5.6-terra`, so
-# dots and dashes are in and nothing else is.
-MODEL_RE='^[a-z0-9][a-z0-9._-]{0,31}$'
+# A model name has to cover both vocabularies: `claude-haiku-4-5-20251001` and
+# `gpt-5.6-terra`, so dots and dashes are in. The optional bracketed tail is
+# Claude's context-window suffix, `claude-opus-5[1m]` — the one model name here
+# that is not plain alphanumerics, and the reason the flag is single-quoted
+# below rather than pasted bare into the command line.
+MODEL_RE='^[a-z0-9][a-z0-9._-]{0,31}(\[[a-z0-9]{1,4}\])?$'
 EFFORT_RE='^[a-z]{1,12}$'
 model="${4:-}"
 [[ "$model" =~ $MODEL_RE ]] || model=""
