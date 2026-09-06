@@ -220,3 +220,31 @@ describe("<SessionCard> — the relative time answers 'when was this last driven
     expect(container.querySelector(".tl-card-time")?.textContent ?? "").not.toMatch(/2h/);
   });
 });
+
+/**
+ * The same shape as the project header: the card is a `role="button"` whose
+ * Enter selects the session, and the ⋯ menu lives inside it. A key pressed on a
+ * menu item belongs to the item.
+ */
+describe("<SessionCard> ⋯ menu — a key inside it stays inside it", () => {
+  it("does not select the session when Enter is pressed on a menu item", async () => {
+    const select = vi.fn();
+    const store = { ...stubStore(), select } as unknown as LobbyStore;
+    const { container } = render(() => (
+      <SessionCard
+        store={store}
+        session={session()}
+        groupName=""
+        tick={() => 0}
+        confirm={() => true}
+      />
+    ));
+    openMenu(container);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+
+    fireEvent.keyDown(menuItem(container, "Rename")!, { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(select).not.toHaveBeenCalled();
+  });
+});

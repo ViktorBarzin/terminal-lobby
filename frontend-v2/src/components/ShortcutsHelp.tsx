@@ -1,5 +1,6 @@
 import { createSignal, For, onMount, type Accessor, type Component } from "solid-js";
 import { track } from "../telemetry/track";
+import { dismissOnPress } from "./overlay";
 
 /**
  * The keyboard-shortcuts help overlay (feature-inventory Cat.2 "Keyboard-
@@ -172,13 +173,11 @@ export const ShortcutsHelp: Component<{
   return (
     <div
       class="tl-cmdpalette-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.controller.close();
-      }}
-      onKeyDown={onKeyDown}
+      ref={dismissOnPress(() => props.controller.close(), { surfaceOnly: true })}
     >
       <div
         ref={dialogEl}
+        onKeyDown={onKeyDown}
         class="tl-schelp"
         role="dialog"
         aria-modal="true"

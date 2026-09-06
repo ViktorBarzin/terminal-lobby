@@ -408,3 +408,31 @@ describe("restore picker — behaviour", () => {
     );
   });
 });
+
+/**
+ * Dismissal. A press on the backdrop closes the picker, and Escape is the
+ * keyboard half of that gesture — the picker was the one overlay without it,
+ * so a keyboard user had to find the Close button at the foot.
+ */
+describe("restore picker — dismissal", () => {
+  it("closes on a press on the backdrop, not on a press on the panel", async () => {
+    let closed = 0;
+    const { container } = mount(new FakeApi(), { onClose: () => (closed += 1) });
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+
+    fireEvent.click(container.querySelector(".tl-restore")!);
+    expect(closed).toBe(0);
+
+    fireEvent.click(container.querySelector(".tl-cmdpalette-backdrop")!);
+    expect(closed).toBe(1);
+  });
+
+  it("closes on Escape", async () => {
+    let closed = 0;
+    mount(new FakeApi(), { onClose: () => (closed += 1) });
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(closed).toBe(1);
+  });
+});

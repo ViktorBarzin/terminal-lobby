@@ -1,6 +1,7 @@
 import { For, Show, createSignal, onMount, type Component } from "solid-js";
 import type { SearchHit } from "../types/events";
 import { hitLabel, hitWhen } from "./find.logic";
+import { dismissOnPress } from "./overlay";
 
 /**
  * Find something in this session.
@@ -75,12 +76,14 @@ export const FindInSession: Component<{
   return (
     <div
       class="tl-cmdpalette-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
-      onKeyDown={onKey}
+      ref={dismissOnPress(() => props.onClose(), { surfaceOnly: true })}
     >
-      <div class="tl-cmdpalette tl-find" role="dialog" aria-label="Find in session">
+      <div
+        class="tl-cmdpalette tl-find"
+        role="dialog"
+        aria-label="Find in session"
+        onKeyDown={onKey}
+      >
         <div class="tl-find-bar">
           <input
             ref={inputEl}
@@ -118,23 +121,27 @@ export const FindInSession: Component<{
           </Show>
           <For each={hits()}>
             {(h, i) => (
-              <div
+              <button
+                type="button"
                 class="tl-cp-item tl-find-hit"
                 classList={{ "tl-cp-sel": sel() === i() }}
                 role="option"
                 aria-selected={sel() === i()}
+                // The query input keeps the focus and ↑↓ move the selection;
+                // the row is a button so Enter and Space work on it too.
+                tabindex={-1}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setSel(i())}
                 onClick={() => void jump(h)}
               >
-                <div class="tl-find-meta">
+                <span class="tl-find-meta">
                   <span class="tl-find-where">{hitLabel(h)}</span>
                   <Show when={hitWhen(h.at)}>
                     <span class="tl-find-when">{hitWhen(h.at)}</span>
                   </Show>
-                </div>
-                <div class="tl-find-snippet">{h.snippet}</div>
-              </div>
+                </span>
+                <span class="tl-find-snippet">{h.snippet}</span>
+              </button>
             )}
           </For>
         </div>

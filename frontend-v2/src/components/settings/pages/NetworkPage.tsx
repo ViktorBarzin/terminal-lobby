@@ -226,22 +226,48 @@ export const NetworkPage: Component<{ connection?: ConnectionControl }> = (props
           >
             <div class="tl-netusage-breakdown">
               <For each={usage().networks}>
-                {(n) => (
-                  <div
-                    class="tl-netusage-row"
-                    classList={{
-                      "is-on": usage().net === n.id,
-                      "is-tappable": n.selectable,
-                    }}
-                    onClick={() => n.selectable && pickNet(n.id)}
-                  >
-                    <span class="tl-netusage-name">{n.label}</span>
-                    <span class="tl-netusage-bytes">{formatBytes(n.bytes)}</span>
-                    <span class="tl-netusage-bar" aria-hidden="true">
-                      <span style={{ width: netBarWidth(n.bytes) }} />
-                    </span>
-                  </div>
-                )}
+                {(n) => {
+                  const cells = () => (
+                    <>
+                      <span class="tl-netusage-name">{n.label}</span>
+                      <span class="tl-netusage-bytes">{formatBytes(n.bytes)}</span>
+                      <span class="tl-netusage-bar" aria-hidden="true">
+                        <span style={{ width: netBarWidth(n.bytes) }} />
+                      </span>
+                    </>
+                  );
+                  // Only a selectable row is a control, so only a selectable
+                  // row is announced and reached as one. The rest are figures.
+                  return (
+                    <Show
+                      when={n.selectable}
+                      fallback={
+                        <div
+                          class="tl-netusage-row"
+                          classList={{ "is-on": usage().net === n.id }}
+                        >
+                          {cells()}
+                        </div>
+                      }
+                    >
+                      <div
+                        class="tl-netusage-row is-tappable"
+                        classList={{ "is-on": usage().net === n.id }}
+                        role="button"
+                        tabindex={0}
+                        aria-pressed={usage().net === n.id}
+                        onClick={() => pickNet(n.id)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter" && e.key !== " ") return;
+                          e.preventDefault(); // Space would scroll the panel
+                          pickNet(n.id);
+                        }}
+                      >
+                        {cells()}
+                      </div>
+                    </Show>
+                  );
+                }}
               </For>
             </div>
           </Show>

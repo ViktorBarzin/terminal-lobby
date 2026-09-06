@@ -469,3 +469,33 @@ describe("<ProjectGroup> — the + routes to the composer", () => {
     store.dispose();
   });
 });
+
+/**
+ * The ⋯ menu is rendered inside the header, and the header is a `role="button"`
+ * with an Enter/Space handler of its own. That handler calls preventDefault(),
+ * which cancels the menu button's synthesised click — so before the menu held
+ * the key back, Enter on "Rename project" collapsed the group and never ran the
+ * item at all. The mouse path was fine; there simply was no keyboard one.
+ */
+describe("<ProjectGroup> ⋯ menu — a key inside it stays inside it", () => {
+  it("does not collapse the group when Enter is pressed on a menu item", async () => {
+    const api = new FakeApi();
+    twoProjects(api);
+    const { container, getAllByLabelText, store } = mount(api);
+    await store.refresh();
+    await waitFor(() => expect(titles(container)).toEqual(["alpha", "bravo"]));
+
+    fireEvent.click(getAllByLabelText("Group actions")[1]!); // bravo's menu
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    const open = container.querySelectorAll(".tl-group-body").length;
+
+    const rename = [...container.querySelectorAll(".tl-menu-item")].find(
+      (b) => b.textContent === "Rename project",
+    )!;
+    fireEvent.keyDown(rename, { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(container.querySelectorAll(".tl-group-body").length).toBe(open);
+    store.dispose();
+  });
+});

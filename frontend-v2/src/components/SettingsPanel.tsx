@@ -28,6 +28,7 @@ import { PrivacyPage } from "./settings/pages/PrivacyPage";
 import { ActAsPage, type ActAsControl } from "./settings/pages/ActAsPage";
 import { SkillsPage } from "./settings/pages/SkillsPage";
 import { lsGet, lsSet } from "../lib/storage";
+import { dismissOnPress } from "./overlay";
 
 export type { ActAsControl } from "./settings/pages/ActAsPage";
 export type { PageId } from "./settings/rail";
@@ -181,9 +182,7 @@ export const SettingsPanel: Component<{
   return (
     <div
       class="tl-settings-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
+      ref={dismissOnPress(() => props.onClose(), { surfaceOnly: true })}
     >
       <div
         ref={dialogEl}
