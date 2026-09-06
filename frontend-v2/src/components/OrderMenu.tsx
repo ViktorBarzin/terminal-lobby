@@ -4,7 +4,7 @@ import {
   SESSION_ORDER_TEXT,
   SESSION_ORDERS,
   type SessionOrder,
-} from "./order.logic";
+} from "../logic/order.logic";
 
 /**
  * The session list's ordering picker, in the sidebar header.

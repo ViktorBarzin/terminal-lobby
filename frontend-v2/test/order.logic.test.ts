@@ -26,7 +26,7 @@ import {
   SESSION_ORDERS,
   sortSessions,
   type SessionOrder,
-} from "../src/components/order.logic";
+} from "../src/logic/order.logic";
 import { deriveSidebar } from "../src/components/lobby.logic";
 import { emptyLayout, type Layout, type Session } from "../src/types/lobby";
 

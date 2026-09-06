@@ -32,7 +32,7 @@ import {
   isSlashCommand,
   sameCommand,
   type PendingPrompt,
-} from "../components/compose.logic";
+} from "../logic/compose.logic";
 import { fetchWithDeadline } from "../lib/http";
 
 /**

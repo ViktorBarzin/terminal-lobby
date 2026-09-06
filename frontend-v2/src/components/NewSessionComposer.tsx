@@ -33,7 +33,7 @@ import { PromptField } from "./PromptField";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt } from "../lib/first-prompt";
 import { uploadAttachments } from "../clipboard/attach-files";
-import { composeMessage } from "./compose.logic";
+import { composeMessage } from "../logic/compose.logic";
 import { attachmentKind } from "../lib/attachments";
 import { parkDraft, type DraftAttachment } from "../store/drafts";
 import { showToast } from "../store/toast";

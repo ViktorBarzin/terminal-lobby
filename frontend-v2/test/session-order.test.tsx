@@ -27,7 +27,7 @@ import {
   type PrefsStore,
 } from "../src/store/prefs";
 import { flatSessionOrder } from "../src/keybindings/navigation.logic";
-import type { SessionOrder } from "../src/components/order.logic";
+import type { SessionOrder } from "../src/logic/order.logic";
 import { emptyLayout, type Layout, type Session, type Whoami } from "../src/types/lobby";
 
 const sess = (name: string, over: Partial<Session> = {}): Session => ({

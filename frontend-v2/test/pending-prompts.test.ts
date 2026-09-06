@@ -12,7 +12,7 @@
  * recorded at all, so for those this is not a stand-in but the whole account.
  */
 import { describe, it, expect } from "vitest";
-import { isSlashCommand, sameCommand } from "../src/components/compose.logic";
+import { isSlashCommand, sameCommand } from "../src/logic/compose.logic";
 import { withPendingPrompts } from "../src/components/timeline.logic";
 import type { Event } from "../src/types/events";
 

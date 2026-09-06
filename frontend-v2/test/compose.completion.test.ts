@@ -4,7 +4,7 @@ import {
   composeMessage,
   modeFromPane,
   modeLabel,
-} from "../src/components/compose.logic";
+} from "../src/logic/compose.logic";
 
 const files = ["main.go", "main_test.go", "registry.go", "sub/"];
 

@@ -358,6 +358,15 @@ src/
                          ids are per-transcript, so a session whose transcript
                          was replaced would otherwise resume above the new log
                          and freeze on the old conversation
+  logic/                 PURE rules with no framework in them, read by the stores
+                         and by the components. It sits UNDER both, so neither
+                         layer has to import up into the other
+    compose.logic.ts     PURE `/` and `@` completion + the mode cycle
+    order.logic.ts       PURE session ordering: newest-first by created or by
+                         last DRIVEN time (never session_activity, which a
+                         read-only attach bumps), and the capture that freezes
+                         the visible order into the layout when a drag hands the
+                         list back to manual
   store/
     session.ts           SSE → Solid store of events + prompt/cancel control
     catalogue.ts         Reads GET /commands into {commands, ok}. `ok` exists
@@ -465,16 +474,10 @@ src/
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
-    order.logic.ts       PURE session ordering: newest-first by created or by
-                         last DRIVEN time (never session_activity, which a
-                         read-only attach bumps), and the capture that freezes
-                         the visible order into the layout when a drag hands the
-                         list back to manual
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot
     TextView.tsx         Text mode: timeline above the composer
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
-    compose.logic.ts     PURE `/` and `@` completion + the mode cycle
     rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / working / …)
