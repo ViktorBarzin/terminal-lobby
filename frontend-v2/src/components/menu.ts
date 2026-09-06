@@ -207,20 +207,36 @@ export function createDismissableMenu(
    * that scrolls, and a scroll event does not bubble, so a listener sitting on
    * the document in the bubble phase would never hear it.
    *
-   * Capture is also why the popup has to exempt itself. Capturing on the
-   * document hears EVERY scroll in the page, including the popup scrolling
-   * inside its own `max-height` — measured in Chrome, a scroll of the popup
-   * arrives here with `target` set to the popup. Without this check the safety
-   * net would defeat itself: a menu too tall for the room beside its row gets
-   * `overflow-y: auto` precisely so it can be scrolled, and the first scroll
-   * would dismiss it. A scroll of the popup is the reader reading, not the row
-   * moving out from under them, so it is not a reason to close. `contains`
-   * counts the element itself, which is what a scroll of the popup reports.
+   * Capturing on the document also hears every OTHER scroll on the page, and
+   * almost none of them have anything to do with this row. So the question is
+   * not "did something scroll" but "did the row move": whatever scrolled has to
+   * be an ancestor of the anchor for the row to have gone anywhere. A pane
+   * elsewhere in the document scrolled some other part of the page and left
+   * this one exactly where the popup was fitted to it.
+   *
+   * That distinction is load-bearing twice over.
+   *
+   * The transcript is the loud one. `MessagesTimeline` pins itself to the
+   * bottom by writing `scrollTop` on every chunk that lands, and on a desktop
+   * it is a sibling of the sidebar inside the same document, so a session that
+   * is producing output scrolls it several times a second. `store.hold()` stops
+   * the lobby poll and nothing else, so opening this menu does not slow those
+   * writes down. Measured in Chrome: a programmatic `scrollTop` on an unrelated
+   * `overflow-y: auto` pane reaches a capturing document listener with `target`
+   * set to that pane, which closed the menu within a frame of it opening and
+   * left no way at all to reach Rename or Kill while a session was running.
+   *
+   * The quiet one is the popup scrolling inside its own `max-height`, which
+   * arrives here with `target` set to the popup. That is the reader reading
+   * rather than the row moving, and the safety net that hands a clamped menu
+   * `overflow-y: auto` would defeat itself if the first scroll dismissed it.
+   *
+   * Neither pane contains the anchor, so one rule covers both.
    */
-  const onViewportMoved = (e: Event): void => {
+  const onScrolled = (e: Event): void => {
     if (!open()) return;
     const t = e.target;
-    if (popupEl && t instanceof Node && popupEl.contains(t)) return;
+    if (anchorEl && t instanceof Node && !t.contains(anchorEl)) return;
     close();
   };
 
@@ -228,16 +244,19 @@ export function createDismissableMenu(
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
     if (opts.placed) {
-      document.addEventListener("scroll", onViewportMoved, true);
-      window.addEventListener("resize", onViewportMoved);
+      document.addEventListener("scroll", onScrolled, true);
+      // A resize moves the box the popup was fitted into whatever the cause —
+      // a rotation, a window drag, the browser chrome coming and going — so
+      // there is nothing to sort here the way there is for a scroll.
+      window.addEventListener("resize", close);
     }
   });
   onCleanup(() => {
     document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("keydown", onKeyDown, true);
     if (opts.placed) {
-      document.removeEventListener("scroll", onViewportMoved, true);
-      window.removeEventListener("resize", onViewportMoved);
+      document.removeEventListener("scroll", onScrolled, true);
+      window.removeEventListener("resize", close);
     }
     release?.();
     release = null;
