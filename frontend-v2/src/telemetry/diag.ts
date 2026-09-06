@@ -15,7 +15,8 @@
 
 import { BUILD_ID } from "../lib/config";
 import { currentNetworkId } from "../diagnostics/network";
-import { commitWindow, type WindowBytes } from "../diagnostics/usage";
+import type { WindowBytes } from "../diagnostics/usage";
+import { commitWindow } from "../diagnostics/usage-store";
 
 /** The subset of the core's surface this app calls directly. */
 export interface Diagnostics {

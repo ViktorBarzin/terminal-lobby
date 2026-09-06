@@ -35,7 +35,8 @@
 
 import { apiUrl } from "../lib/config";
 import { localStorageOrNull, type MinStorage } from "../lib/storage";
-import { NET_UNKNOWN, commitNetName } from "./usage";
+import { NET_UNKNOWN } from "./usage";
+import { commitNetName } from "./usage-store";
 
 /** What the server reports about the network a request came from. */
 export interface NetworkInfo {

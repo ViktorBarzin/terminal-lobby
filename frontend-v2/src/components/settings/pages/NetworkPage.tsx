@@ -7,14 +7,16 @@ import {
 } from "../../../diagnostics/connection";
 import {
   aggregate,
-  commitResetSince,
-  formatBytes,
-  readStore,
-  resetStore,
   type Bucket,
   type PeriodKey,
   type UsageAggregate,
 } from "../../../diagnostics/usage";
+import {
+  commitResetSince,
+  formatBytes,
+  readStore,
+  resetStore,
+} from "../../../diagnostics/usage-store";
 import {
   currentNetwork,
   networkIsStale,
