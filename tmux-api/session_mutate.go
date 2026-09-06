@@ -58,6 +58,14 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		copyModeSession(w, r, osUser, name)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "grid" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		sizeSessionGrid(w, r, osUser, name)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "capture" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

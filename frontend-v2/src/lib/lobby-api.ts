@@ -197,6 +197,41 @@ export async function setSessionTitle(name: string, title: string): Promise<void
 }
 
 /**
+ * POST /api/sessions/{name}/grid {cols, rows} — the device reading this session
+ * says what size it is, so a pinned tmux window can follow it.
+ *
+ * WHY THIS EXISTS. tmux sizes a window from its clients, and a session any
+ * read-only attach has pinned re-reads them on exactly three events: a client
+ * attaching, detaching or resizing. Switching back to a session the lobby kept
+ * mounted is none of the three — the ttyd client never detached and its pty is
+ * the size it always was — so the window keeps whatever the last device to
+ * attach left it at. Measured 2026-09-06: a desktop reading `f1` at 231x62 sat
+ * inside a 60-column window because a phone had joined, and reloading the page
+ * was the only fix, because a reload is an attach.
+ *
+ * A HINT, like `prewarm`: the server answers 204 whether it moved anything or
+ * not, leaves an unpinned session to tmux, and refuses when nobody is driving.
+ * Every failure here is swallowed. The terminal is readable either way — just
+ * at the wrong width — so none of it is worth interrupting anyone for.
+ *
+ * NEVER CALL THIS WHILE WATCHING. A read-only client taking the size is the one
+ * thing the pin exists to prevent, and the server cannot tell two devices of the
+ * same person apart: they arrive with one identity header and neither carries
+ * the tmux client it belongs to. The caller declining is what keeps the promise.
+ */
+export async function setSessionGrid(name: string, cols: number, rows: number): Promise<void> {
+  try {
+    await req(`/sessions/${encodeURIComponent(name)}/grid`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cols, rows }),
+    });
+  } catch {
+    /* best effort, see above */
+  }
+}
+
+/**
  * POST/DELETE /api/sessions/prewarm — ask for, or release, a Claude session
  * started ahead of the create it is for.
  *

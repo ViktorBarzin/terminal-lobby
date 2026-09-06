@@ -162,7 +162,12 @@ The size of a session's tmux window, in columns and rows. Owned exclusively by
 its **read-write** clients: a Watch-mode client consumes the Grid and never
 changes it, including when no read-write client is attached at all. Enforced by
 pinning (`window-size manual` plus hooks that re-derive the size from the live
-client list), applied on the first read-only attach and never reverted.
+client list, newest activity first), applied on the first read-only attach and
+never reverted. Among several read-write clients the Grid belongs to the one
+being used, which is what tmux's own `window-size latest` does — but the hooks
+only fire on a client attaching, detaching or resizing, so a device that is
+merely READING a session claims the Grid explicitly
+(`POST /sessions/{name}/grid`).
 _Avoid_: window size (means the browser's), canvas, viewport
 
 **Co-ownership**:
