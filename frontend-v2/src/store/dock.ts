@@ -109,7 +109,7 @@ export function createDockStore(opts: DockStoreOptions): DockStore {
   async function toggle(): Promise<void> {
     // The refusal lives HERE and not only at App's Ctrl+J listener, because
     // that listener is not the only caller: `session.new.shell` reaches
-    // `toggle` through the command table (keybindings/commands.ts:181, wired to
+    // `toggle` through the command table (keybindings/commands.ts:182, wired to
     // `toggleDock` in App.tsx), which any binding or palette row dispatching
     // that command would take without passing App's early return. A gate on one
     // caller is not a gate.

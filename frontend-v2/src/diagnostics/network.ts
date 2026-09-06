@@ -27,10 +27,13 @@
  * unattributed row is honest, and one that is quietly wrong is not.
  *
  * WHAT THIS MODULE OWNS. The current network, as module state rather than a
- * store: the fold path that consumes it runs inside a diagnostics callback and
- * inside the terminal iframe's message handler, and neither is a component with
- * access to a context. Every decision here is a pure function over its inputs,
- * so the state is a cache in front of the logic rather than the logic itself.
+ * store: the fold path that consumes it runs inside a diagnostics callback
+ * (telemetry/diag.ts's `onWindow`, the one caller of `commitWindow`), which is
+ * not a component and has no access to a context. There was a second path until
+ * 2026-09-05, the terminal iframe's message handler, which is why this is
+ * module state and not a signal. Every decision here is a pure function over
+ * its inputs, so the state is a cache in front of the logic rather than the
+ * logic itself.
  */
 
 import { apiUrl } from "../lib/config";

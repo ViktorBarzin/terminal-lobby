@@ -156,11 +156,16 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   });
 
   /**
-   * QA #11: the Ctrl/Cmd+J listener is an unconditional capture-phase window
-   * keydown — it fired with the command palette up and focus in its input,
-   * flipping the view behind the overlay and leaving the palette itself
-   * standing. The shell publishes which overlay owns the keyboard; the
-   * always-on toggle has to stand down while one does.
+   * QA #11, as it was found: the Ctrl/Cmd+J listener here was an unconditional
+   * capture-phase window keydown, so it fired with the command palette up and
+   * focus in its input, flipping the view behind the overlay and leaving the
+   * palette standing. The shell published which overlay owned the keyboard so
+   * the always-on toggle could stand down while one did.
+   *
+   * That listener went when the dock reclaimed the chord, so this now pins the
+   * stronger property the next case states outright: no Ctrl+J reaches the view
+   * toggle, overlay or not. `overlayOpen` is passed for the same reason it is
+   * still declared on the component, and nothing reads it.
    */
   it("does not toggle the view on Ctrl+J while an overlay owns the keyboard", () => {
     const { container } = render(() => (

@@ -77,7 +77,7 @@ export function forgetPromptLine(session: string): void {
 /**
  * How long a line is kept regardless of the live list.
  *
- * A session does not exist server-side until the terminal iframe attaches and
+ * A session does not exist server-side until the terminal's socket attaches and
  * ttyd runs `tmux new-session -A`, and GET /sessions answers from a 5-second
  * cache, so for the first seconds of a create every poll reports a list without
  * it. The store passes its optimistic pending names in as live, which covers

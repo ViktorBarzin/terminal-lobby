@@ -309,7 +309,7 @@ export const App: Component = () => {
         buildProbes({
           askTerminal: (signal) =>
             new Promise<TerminalReport | null>((resolve) => {
-              // The check's own 5s cap is what ends this if the frame never
+              // The check's own 5s cap is what ends this if no terminal ever
               // answers; aborting resolves early so nothing is left waiting.
               signal.addEventListener("abort", () => {
                 awaitingConn = null;
@@ -705,10 +705,12 @@ export const App: Component = () => {
     toggleDock: () => void dock.toggle(),
   });
 
-  // The shell's when-context, built in ONE place (keyContext) and read by both
-  // key paths: the engine's window keydown and SessionView's always-on
-  // Ctrl/Cmd+J. Each of those used to decide for itself what an open overlay
-  // meant, so a chord refused on one path fired on another.
+  // The shell's when-context, built in ONE place (keyContext) and read by every
+  // key path: the engine's window keydown and the bare "/" listener below. Each
+  // used to decide for itself what an open overlay meant, so a chord refused on
+  // one path fired on another. SessionView's always-on Ctrl/Cmd+J was a third
+  // reader until the dock reclaimed the chord; it still takes `overlayOpen` as
+  // a prop and no longer reads it.
   const keyCtx = createMemo(() =>
     keyContext({
       paletteOpen: palette.isOpen(),

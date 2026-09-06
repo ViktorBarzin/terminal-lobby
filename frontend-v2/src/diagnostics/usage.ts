@@ -41,8 +41,12 @@
  * WHAT THIS MODULE OWNS. Persistence and arithmetic only: day, month and
  * network bucketing, pruning, aggregation over periods, and formatting. Which
  * network is current lives in network.ts; measurement lives in
- * frontend/diag.js, shared verbatim with term.html so the terminal iframe can
- * count its own WebSocket.
+ * frontend/diag.js, inlined into the lobby's <head> and bound once
+ * (telemetry/diag.ts:72-95). The terminal's socket is opened in that same
+ * document, so the wrapper diag.js puts over `window.WebSocket` counts it
+ * alongside everything else. term.html bound its own copy and posted each
+ * closed window up to the lobby (a2dbd86:frontend/term.html:2285-2292) until
+ * 2026-09-05; there is no hop left for a window to go missing on.
  */
 
 /** The five feature buckets the panel reports, each named after something that

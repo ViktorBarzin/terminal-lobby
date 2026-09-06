@@ -149,9 +149,9 @@ describe("pasteIntoTerminal — when the browser refuses read()", () => {
 
   it("tells a touch user the gesture that actually works on their device", async () => {
     // The async clipboard is not the only way in: a native long-press paste
-    // inside the terminal fires a paste event in the frame, which term.html
-    // already handles, and needs no permission at all. Naming a keyboard chord
-    // to someone holding a phone is a dead end.
+    // inside the terminal fires a paste event on the terminal's host, which
+    // TerminalNative handles itself, and needs no permission at all. Naming a
+    // keyboard chord to someone holding a phone is a dead end.
     const { toasts, d } = deps({
       clipboard: {
         read: async () => {

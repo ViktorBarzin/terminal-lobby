@@ -333,10 +333,10 @@ describe("keyContext — one reading of who owns the keyboard", () => {
 });
 
 /**
- * QA #3: a chord pressed INSIDE the terminal iframe never reaches this window —
- * frontend/term.html matches it against ITS OWN copy of the table, evaluated
- * against the TERMINAL page's context (which knows nothing about the lobby's
- * overlays), and forwards the command NAME up over `tl-command`. The lobby then
+ * QA #3: a chord pressed INSIDE the terminal iframe never reached this window —
+ * frontend/term.html matched it against ITS OWN copy of the table, evaluated
+ * against the TERMINAL page's context (which knew nothing about the lobby's
+ * overlays), and forwarded the command NAME up over `tl-command`. The lobby then
  * ran it directly, so every when-clause was simply skipped on that path: with
  * the gallery open and focus in the terminal, Alt+Shift+] switched session and
  * took the gallery with it. Re-checking the clause by command name closes it.

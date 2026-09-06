@@ -107,9 +107,10 @@ describe("slow-request coordinator", () => {
 /**
  * Telemetry must never raise a slow-request warning.
  *
- * Both the lobby and the framed terminal page wrap fetch and track what passes
- * through, and both paint their own sticky "Some requests are slow" toast — so
- * a stalled telemetry beacon produced TWO warnings, listing
+ * The lobby wraps fetch and tracks what passes through, and paints a sticky
+ * "Some requests are slow" toast off it. term.html wrapped fetch as well and
+ * painted its own until 2026-09-05 — so a stalled telemetry beacon produced TWO
+ * warnings, listing
  * POST /api/sessions/telemetry, over a session that was working fine. Telemetry
  * is fire-and-forget by design (its own module swallows every failure), so it
  * does not belong in a surface the user is meant to act on.

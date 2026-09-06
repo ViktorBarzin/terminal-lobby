@@ -2,7 +2,7 @@
  * Session-navigation pure logic (feature-inventory Cat.2 "Alt-hold numbered
  * chips + Alt+1..9/Alt+0 attach-Nth" and the dev-flow next/prev/next-awaiting
  * hops). Ported from the vanilla frontend/index.html runAppCommand branches
- * (index.html:9037-9111) + syncAltBadges labelling (9127). No DOM, no Solid.
+ * (index.html:9037-9111) + syncAltBadges labelling (9133). No DOM, no Solid.
  *
  * The flat order is the VISIBLE sidebar order (paint order — own groups in
  * groupSeq order, then the Shared-with-me foreign list), the same order the

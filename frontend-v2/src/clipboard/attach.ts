@@ -8,16 +8,20 @@ import { track } from "../telemetry/track";
 /**
  * The DOM glue for the paste path + drop-target (feature-inventory Cat.4 "Paste
  * path", Cat.1 "Drop-target overlay", Cat.8 "Drag-and-drop file upload").
- * Ported from the vanilla frontend/index.html handlers, adapted for the SPA:
- * the terminal is a cross-document iframe, so an uploaded image's path is sent
- * DOWN to the pty over the tl-input bridge (`sendToPty`, wired to
- * window.__tlSendToTerminal by the mounted TerminalView) instead of a local
- * xterm sendInput.
+ * Ported from the vanilla frontend/index.html handlers, adapted for the SPA: an
+ * uploaded image's path is typed at the pty over the `sendToPty` seam, wired to
+ * `window.__tlSendToTerminal`, the bridge the mounted TerminalNative owns,
+ * rather than through a local xterm sendInput.
  *
  * Scoped to a mounted SessionView (a session is attached, so there is a pty to
- * send to). Pastes/drops that land INSIDE the terminal iframe are handled by
- * the ttyd page's own listeners (a separate document); this covers the SPA
- * chrome (text mode, gallery, composer).
+ * send to). The paste listener is on the DOCUMENT and capture-phase, so it sees
+ * a paste that landed on the terminal as well as one on the SPA chrome (text
+ * mode, gallery, composer), and it runs before TerminalNative's own host
+ * listener because it sits higher on the capture path. The split is deliberate,
+ * and TerminalNative documents its half beside `onPasteEvent`: an image is this
+ * module's, text is the terminal's. Until 2026-09-05 the terminal was a
+ * separate document, and a paste inside it was handled entirely by that page's
+ * own listeners, out of this module's reach.
  */
 export interface ImageClipboardDeps {
   /** the attached session name (the upload's per-session store bucket). */
@@ -36,7 +40,7 @@ export interface ImageClipboardDeps {
    * Absent → the pty, which is the behaviour the terminal view keeps unchanged.
    */
   composerOwns?: () => boolean;
-  /** send text (an uploaded path) to the pty; true if a frame received it. */
+  /** send text (an uploaded path) to the pty; true if a terminal received it. */
   sendToPty: (text: string) => boolean;
   /** FALSE while this client only WATCHES the session, which refuses both
    *  intakes. The upload is why it is refused up front rather than left to fail

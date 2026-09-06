@@ -62,8 +62,8 @@ export const SessionView: Component<{
    *  without re-mounting the terminal. */
   label?: string;
   /** FALSE while an ancestor is display:none — the phone layout hides the whole
-   *  session pane to give the list the screen. It folds into TerminalView's
-   *  `active`, so the frame is told it is hidden and stops fitting: a fit
+   *  session pane to give the list the screen. It folds into TerminalNative's
+   *  `active`, so the terminal knows it is hidden and stops fitting: a fit
    *  measured against a 0x0 box would resize the REAL tmux window, and tmux
    *  sizes a window to its smallest attached client — every other client on
    *  that session would be dragged down with it. Defaults to visible. */
@@ -129,10 +129,16 @@ export const SessionView: Component<{
   /** open the session image gallery (🖼) — owned by the lobby shell. */
   onOpenGallery?: () => void;
   /** TRUE while a lobby overlay (palette, shortcuts help, Settings, gallery)
-   *  owns the keyboard. The Ctrl/Cmd+J view toggle below is an always-on window
-   *  listener that answers to no when-clause, so the shell's shared context has
-   *  to travel down to it — flipping the view BEHIND an overlay is invisible and
-   *  leaves the overlay standing. */
+   *  owns the keyboard. It travelled down for the Ctrl/Cmd+J view toggle, an
+   *  always-on window listener here that answered to no when-clause and so
+   *  needed the shell's shared context: flipping the view BEHIND an overlay is
+   *  invisible and leaves the overlay standing. That listener went when the
+   *  dock reclaimed the chord, and nothing in this component reads the prop
+   *  now. App still passes it (App.tsx's `overlayOpen`) and
+   *  test/SessionView.viewswitch.test.tsx still pins that Ctrl+J does not
+   *  toggle the view, with or without an overlay. Kept rather than removed
+   *  because dropping it edits the shell's wiring, which is more than the
+   *  comment sweep it was found in. */
   overlayOpen?: () => boolean;
   /** Every OTHER session, for the bar's tap-to-switch picker (phone only). */
   otherSessions?: () => { name: string; owner?: string; label?: string }[];
@@ -433,8 +439,9 @@ export const SessionView: Component<{
 
   // ---- mobile input subsystem (design pillar #2 — Mobile/Touch) -----------
   // Coarse-pointer only. The soft-key toolbar + mobile compose route bytes into
-  // the LIVE session pty via the terminal iframe (both views stay mounted, so
-  // the pty is alive even while text mode shows). `body.has-soft-keys` reserves
+  // the LIVE session pty through `sendBytesToPty` below (both views stay
+  // mounted, so the pty is alive even while text mode shows).
+  // `body.has-soft-keys` reserves
   // a REAL height so the view surface shrinks above the toolbar.
   const coarse = createCoarsePointer();
   // The phone bar carries a back control and a view switch and still has to
@@ -478,14 +485,14 @@ export const SessionView: Component<{
   // Paste path + full-screen drop-target: an image paste/drop uploads to the
   // per-session clipboard store and the returned path is typed into the pty via
   // the tl-input bridge (window.__tlSendToTerminal); non-image drops ride /tmp.
-  // Scoped to the mounted session (there IS a pty to send to). On the iframe
-  // branch this covers the SPA chrome only (text mode, gallery), because a
-  // paste that lands inside the frame belongs to the ttyd page's listeners, in a
-  // separate document this one cannot see. On the native branch there is no
-  // boundary left, so the same document listener sees every paste: it takes the
-  // image and passes text through (clipboard/attach.ts `onPaste`), and
-  // TerminalNative's own host listener, lower down the capture path, is what
-  // then puts the text on the pty.
+  // Scoped to the mounted session (there IS a pty to send to). There is no
+  // document boundary any more, so the one document listener sees every paste:
+  // it takes the image and passes text through (clipboard/attach.ts `onPaste`),
+  // and TerminalNative's own host listener, lower down the capture path, is what
+  // then puts the text on the pty. Until 2026-09-05 this covered the SPA chrome
+  // only (text mode, gallery), because a paste that landed inside the frame
+  // belonged to the ttyd page's listeners, in a document this one could not
+  // see.
   const image = installImageClipboard({
     session: () => session,
     sendToPty: (t) => window.__tlSendToTerminal?.(t) ?? false,
@@ -509,11 +516,12 @@ export const SessionView: Component<{
   });
   onCleanup(image.dispose);
 
-  // Paste is performed HERE, in the lobby document, and only the result is
-  // sent down — the frame cannot read the clipboard, because the async
-  // clipboard is gated on document focus and clicking a lobby control focuses
-  // the lobby (clipboard/paste.ts). Published on the window so the command
-  // palette and the Paste chord reach the same routine as the button.
+  // Paste is performed HERE, by the app, and only the resulting text is handed
+  // to xterm. A chord or a button fired from the lobby has no native `paste`
+  // event to ride, so the clipboard has to be read, and the async clipboard is
+  // gated on document focus (clipboard/paste-into-terminal.ts). Published on the
+  // window so the command palette and the Paste chord reach the same routine as
+  // the button.
   const doPaste = (): boolean => {
     // The button is disabled while watching, but this routine is also the
     // command palette's Paste, the Paste chord and the soft-keys' Paste — all of
@@ -852,9 +860,11 @@ export const SessionView: Component<{
       </div>
 
       {/* tl-kb-inline: while the TERMINAL view shows, this container does NOT
-          reserve room for the soft keyboard — the frame does it internally, so
-          the frame never moves out from under the tap that opened the keyboard.
-          The Text view keeps the reservation: its composer is out here. */}
+          reserve room for the soft keyboard. TerminalNative takes it off its own
+          host instead (its `__tlKeyboardOffset` bridge, via
+          terminal/viewport.ts), so the terminal never moves out from under the
+          tap that opened the keyboard. The Text view keeps the reservation: its
+          composer is out here. */}
       <main class="tl-views" classList={{ "tl-kb-inline": mode() === "terminal" }}>
         <section class="tl-view" classList={{ "tl-hidden": mode() !== "text" }} aria-hidden={mode() !== "text"}>
           <TextView

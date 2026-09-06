@@ -1,8 +1,9 @@
 /**
  * ttyd wire protocol — every frame this client sends and receives, as bytes.
  *
- * Ported from frontend/term.html, which has driven ttyd in production since the
- * iframe terminal shipped. This module is the whole protocol and nothing else:
+ * Ported from frontend/term.html, which drove ttyd in production from the day
+ * the framed terminal shipped until it was deleted on 2026-09-05. This module is
+ * the whole protocol and nothing else:
  * no socket, no xterm, no DOM, no timers. Bytes in, bytes out, so the byte
  * layout can be pinned by tests instead of by a person watching a terminal.
  *
@@ -334,9 +335,9 @@ export function decodeServerFrame(data: unknown): ServerFrame | null {
       return { type: "output", payload };
     case MSG_SET_TITLE:
       // ttyd sends one per connect, carrying '<command> (<hostname>)'. The
-      // client deliberately does NOT apply it: the page already set the
-      // meaningful 'tmux: <user>/<session>' title, and letting the frame win
-      // replaces a name a person chose with a generic one.
+      // client deliberately does NOT apply it: the lobby owns document.title
+      // (notify/notifications.ts), and letting ttyd's win replaces a name a
+      // person chose with a generic one.
       return { type: "title", title: decoder.decode(payload) };
     case MSG_SET_PREFS: {
       const raw = decoder.decode(payload);

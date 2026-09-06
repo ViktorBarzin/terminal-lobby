@@ -19,20 +19,20 @@
  *  - Re-theming live is `term.options.theme = ...` followed by
  *    `term.refresh(0, term.rows - 1)`. That is a pure repaint: selection,
  *    scroll position and mouse semantics survive it, which is the whole
- *    reason the iframe no longer reloads on a theme switch.
+ *    reason a theme switch no longer reloads the terminal.
  *  - Publish that re-read as `window.__tlThemeLive`, and keep it published for
  *    as long as the terminal is mounted. It is the only door to the terminal
  *    for BOTH re-theme triggers (`TERMINAL_RETHEME_TRIGGERS` below names them;
  *    term.html funnels the two into one `liveRetheme()`, 9302-9309):
  *
  *      1. an explicit pick — `setTheme()` in src/theme/theme.ts, once it has
- *         persisted the choice and swapped the body class (inside the iframe
- *         term.html reaches the same place from its `tl-theme` message branch,
+ *         persisted the choice and swapped the body class (framed, term.html
+ *         reached the same place from its `tl-theme` message branch,
  *         9355-9360);
  *      2. an OS light/dark flip while the stored theme is `'system'` — the
  *         pre-paint boot script's `prefers-color-scheme` listener swaps the
  *         body class itself and then calls the global (term.html:2004-2008,
- *         the SPA shell ships its own copy at frontend-v2/index.html:163-176 —
+ *         the SPA shell ships its own copy at frontend-v2/index.html:156-169 —
  *         reformatted, comment-free, and WITHOUT term.html's
  *         `else if (/[?&]arg=/.test(location.search)) location.reload()`
  *         fallback, which is why trigger 2 has no other route in).

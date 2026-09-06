@@ -30,7 +30,7 @@ import { PaperclipIcon } from "./Icons";
  *
  * The panel TAKES the keyboard on open and hands it back on close, the way
  * ShortcutsHelp does. Opened from inside a session it used to inherit the
- * terminal IFRAME's focus — a separate document, whose keydowns never reach
+ * terminal iframe's focus — a separate document, whose keydowns never reached
  * this one — so the Escape listener below could not fire, the key went to the
  * pty instead (interrupting whatever was running), and the mouse was the only
  * way out.
@@ -104,10 +104,15 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
   onCleanup(() => document.removeEventListener("keydown", onKey, true));
 
   // Take the keyboard on open (deferred so the node is in the document), and
-  // hold it: gallery.open is reachable from the palette, and runItem() closes
-  // the palette — handing focus BACK to the terminal — before running the
-  // action, so the iframe's handback (rAF/50ms inside term.html) lands after
-  // this mount and would pull focus straight out again.
+  // hold it against anything that takes focus while the overlay is up.
+  //
+  // The case this was written for has gone. gallery.open is reachable from the
+  // palette, and runItem() still closes the palette — handing focus BACK to the
+  // terminal — before running the action. The handback is synchronous now
+  // (`__tlFocusTerminal` is `term.focus()`), so it completes before this mount
+  // rather than after it. TerminalView's handback landed on rAF/50ms inside
+  // term.html and pulled focus straight out again. Same guard as ShortcutsHelp,
+  // and the same open question about whether anything else still needs it.
   let panelEl: HTMLDivElement | undefined;
   onMount(() => queueMicrotask(() => panelEl?.focus()));
   const onFocusOut = (): void => {

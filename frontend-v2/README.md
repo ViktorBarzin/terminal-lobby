@@ -5,10 +5,14 @@ and since the 2026-08-16 cutover **the lobby**. The build is one inlined HTML
 file; `scripts/deploy-v2.sh` installs it as `index.html`, which `ttyd` serves
 (`-I`, port 7681) at `terminal.viktorbarzin.me`.
 
-The vanilla `frontend/` is no longer deployed. It stays in the tree as the
-rollback target and as the parity reference `scripts/test_frontend_compat.py`
-compares against. The `terminal-dev.viktorbarzin.me` canary that carried this
-app before the cutover was retired the same day.
+The vanilla `frontend/index.html` went in d728124 on 2026-08-29, so there is no
+second lobby to fall back to. What is left under `frontend/` still ships:
+`packaging/build-deb.sh` inlines `diag.js` into the stamped page (:74) and
+copies the whole directory into the package (:157), service worker, webfonts,
+icons and manifest with it. `scripts/test_frontend_compat.py` no longer compares
+anything against that directory either; its subject is the built SPA. The
+`terminal-dev.viktorbarzin.me` canary that carried this app before the cutover
+was retired the same day.
 
 ## What this is
 
@@ -24,16 +28,59 @@ tmux/Claude session:
   this app: `TerminalNative.tsx` mounts xterm (a lazy import) and speaks ttyd's
   binary WebSocket protocol over `/token` and `/ws`. It was an iframe pointed at
   a separate `/term.html` page until 2026-09-05, which is why so many modules
-  here carry `term.html:NNNN` citations: they are provenance for the port, and
-  they index that page at the commit that removed it. The `?arg=` positional
-  contract — name, command, **project dir**, owner — lives in
-  `lib/terminal-url.ts`. xterm stays **external** (never bundled), per the
-  deploy decision.
+  here carry citations into that page. The `?arg=` positional contract — name,
+  command, **project dir**, owner — lives in `lib/terminal-url.ts`. xterm stays
+  **external** (never bundled), per the deploy decision.
 
 The switch is a segmented **`[ Text | Terminal ]`** control: **full-swap XOR**,
 both views **permanently mounted** (CSS-hidden, never unmounted), `Cmd/Ctrl-J`
 toggles, per-session/per-device `{mode}` in localStorage, activity dot on the
 inactive segment.
+
+### Reading a `term.html:NNNN` citation
+
+`frontend/term.html` (10,441 lines) and
+`frontend-v2/src/components/TerminalView.tsx` (525 lines) were both deleted in
+2c64552 on 2026-09-05. A citation of either file refers to it as it stood at
+that commit's **parent**, a2dbd86, which is the last commit where the line
+numbers resolve:
+
+```bash
+git show a2dbd86:frontend/term.html | sed -n '8394,8420p'
+git show a2dbd86:frontend-v2/src/components/TerminalView.tsx | sed -n '420,424p'
+```
+
+A bare `index.html:NNNN` in `src/keybindings/` or `ShortcutsHelp.tsx` is a third
+deleted file, the vanilla lobby `frontend/index.html` (removed in d728124 on
+2026-08-29). Those line numbers are older than the removal: they were written
+during the keybinding port and resolve at **65893d5** (2026-07-19), not at the
+removal's parent, where the file had grown by 2,000 lines.
+
+```bash
+git show 65893d5:frontend/index.html | sed -n '3303,3311p'   # tlKb
+```
+
+Two citations into that file carry their own commit inline
+(`31696d9:frontend/index.html:15024`) because they were written against a later
+state of it. Where a citation names a commit, that commit wins over this
+section.
+
+Most citations are the bare form `(:NNNN)` with no filename: across `src/` and
+`test/` there are 668 of those against 379 that spell `term.html:NNNN` out. The
+bare one takes its file from a nearby "term.html's own..." or "TerminalView's..."
+in the same paragraph, so read the sentence around it rather than the parenthesis
+alone.
+
+They are kept on purpose. Every ported behaviour was justified against a
+specific range of that page, and the citations are the record of why the native
+code is shaped the way it is. Because both files are frozen at a2dbd86, these
+line numbers cannot drift.
+
+Citations into files that are still live in this tree are a different case: a
+line number there goes stale the next time someone edits above it, silently.
+Prefer naming the symbol (`bindings.logic.ts`'s `normalizeKeybindings`) over a
+line range when you add one, and treat a live-file line number you find as a
+hint to grep with rather than an address to trust.
 
 ## Commands
 

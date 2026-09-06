@@ -128,6 +128,24 @@ import { gesturesEnabled } from "../store/device-prefs";
 import { showToast } from "../store/toast";
 import { apiUrl } from "../lib/config";
 
+/**
+ * READING THE `term.html:NNNN` CITATIONS BELOW, of which this file carries more
+ * than any other. `frontend/term.html` (10,441 lines) and
+ * `TerminalView.tsx` (525 lines) were both deleted in 2c64552 on 2026-09-05, so
+ * a citation of either refers to it as it stood at that commit's PARENT,
+ * a2dbd86, the last commit where the line numbers resolve:
+ *
+ *   git show a2dbd86:frontend/term.html | sed -n '8394,8420p'
+ *   git show a2dbd86:frontend-v2/src/components/TerminalView.tsx | sed -n '420,424p'
+ *
+ * Most are the bare form `(:NNNN)`, which takes its file from a nearby
+ * "term.html's own..." or "TerminalView's..." in the same paragraph rather than
+ * from the parenthesis. They are provenance: each ported behaviour was justified
+ * against a specific range of that page, and these are the record of why the
+ * code here is shaped the way it is. frontend-v2/README.md says the same thing
+ * for the whole tree.
+ */
+
 /** Every fit trigger waits this long first (term.html:8471-8481, `refit`). */
 const REFIT_DEBOUNCE_MS = 120;
 
@@ -145,9 +163,10 @@ const HELD_SAY_MS = 5000;
  * The device-local "I dismissed the input bar here" override
  * (term.html:3208-3211, `tl:input.barHidden:v1`, read by `inputBarHiddenHere`).
  *
- * Same origin as this app, so a person who hid the bar with the iframe's ⌨ soft
- * key already has this set, and a native mirror that ignored it would hand them
- * back the surface they dismissed with nothing on this side to dismiss it again:
+ * Same origin as this app, so a person who hid the bar with the framed page's ⌨
+ * soft key already has this set, and a native mirror that ignored it would hand
+ * them back the surface they dismissed with nothing on this side to dismiss it
+ * again:
  * the SPA's own ⌨ key is a keyboard-DISMISS (SoftKeys.tsx, "Dismiss the soft
  * keyboard"), not a bar toggle. Device-local on purpose in the page too: the
  * roamed `input.bar` is what the settings row writes, so an accidental tap on
@@ -376,10 +395,10 @@ function haptic(): void {
 /**
  * THE PAGE'S OWN ZOOM LEVEL, which is a TOP-WINDOW property.
  *
- * term.html reads `window.top` because it usually runs as the lobby's
- * same-origin iframe, whose own `visualViewport.scale` stays 1 however far the
- * tab is zoomed (:7812-7824). This SPA is normally the top document itself, so
- * the two reads agree here — the top-window read is kept because it is the one
+ * term.html read `window.top` because it ran as the lobby's same-origin iframe,
+ * whose own `visualViewport.scale` stays 1 however far the tab is zoomed
+ * (:7812-7824). This SPA is the top document itself, so the two reads agree
+ * here — the top-window read is kept because it is the one
  * that is correct in both shapes, and because mobile/textzoom.ts already ports
  * it that way for the text view's pinch.
  *
@@ -411,10 +430,12 @@ function pageScale(): number {
  * up rather than adopting the server's. And the store holds `rawDoc` in memory,
  * so a settings edit made later in the same page life composes over its own
  * older copy and the pinched size is lost from the doc it writes. That second
- * one is not new: term.html writes these keys directly today, on the same
- * origin, and the store learns nothing about it either (it dispatches
- * `tl-prefs-change` on the IFRAME's window). Both close when the pref bridge
- * is ported in both directions.
+ * one was not new when this was written: term.html wrote these keys directly
+ * too, on the same origin, and the store learned nothing about it either (it
+ * dispatched `tl-prefs-change` on the frame's own window). That half went with
+ * the page on 2026-09-05, and the inbound direction is wired as `__tlPrefsLive`
+ * below. What is written here still does not reach the store, so the first
+ * paragraph's cost stands.
  */
 function persistFontSize(size: number): void {
   let raw: Record<string, unknown> = {};
@@ -442,7 +463,7 @@ function persistFontSize(size: number): void {
 /**
  * Is something else in the lobby holding the keyboard right now?
  *
- * The inline rename box, the composer, a palette input. `TerminalView` declines
+ * The inline rename box, the composer, a palette input. `TerminalView` declined
  * its own auto-focus on this exact test (TerminalView.tsx:288-297) after the
  * steal tore the rename box down: that box ends the rename on blur, so a focus
  * arriving a frame later closed it the instant it appeared. A focused terminal
@@ -540,12 +561,13 @@ function heldWord(
 /**
  * The terminal, rendered by this app rather than by an iframe.
  *
- * WHY THIS EXISTS. `TerminalView` mounts `frontend/term.html` in a cross-document
- * iframe, so everything the shell wants to know about the terminal — is it
- * connected, what is it retrying, what did the user select — has to cross a
- * postMessage boundary one message type at a time, and everything term.html
- * wants from the shell (theme, prefs, keyboard) has to cross back. This mounts
- * xterm directly, so those become ordinary function calls.
+ * WHY THIS EXISTS. `TerminalView` mounted `frontend/term.html` in a
+ * cross-document iframe, so everything the shell wanted to know about the
+ * terminal — is it connected, what is it retrying, what did the user select —
+ * had to cross a postMessage boundary one message type at a time, and
+ * everything term.html wanted from the shell (theme, prefs, keyboard) had to
+ * cross back. This mounts xterm directly, so those are ordinary function
+ * calls.
  *
  * WHAT IT DOES. Attaches, reconnects, types, takes the focus at boot, pastes
  * through `term.paste` from the bridge and from the paste chord, reports the
@@ -607,11 +629,14 @@ export const TerminalNative: Component<{
    * FALSE for a secondary terminal. The window-level bridges below are named
    * globals, so two mounted terminals would fight over them and the soft keys,
    * paste and focus handback would start driving the wrong pty — the same
-   * reason TerminalView takes this flag.
+   * reason TerminalView took this flag.
    *
-   * It doubles as the ON SCREEN signal the fit guard needs, because at the one
-   * call site it IS `onScreen()` (SessionView.tsx) and the lobby keeps every
-   * visited session mounted and CSS-hidden. See the effect below.
+   * It doubles as the ON SCREEN signal the fit guard needs, because at the
+   * session call site it IS `onScreen()` (SessionView's
+   * `ownsBridges={onScreen()}`) and the lobby keeps every visited session
+   * mounted and CSS-hidden. The dock is the other call site and passes a
+   * literal `false` (Dock.tsx), so it never claims the bridges and never
+   * answers that question either. See the effect below.
    */
   ownsBridges?: boolean;
   /**
@@ -621,8 +646,8 @@ export const TerminalNative: Component<{
    * A DIFFERENT question from `ownsBridges`, which is `onScreen()` alone and
    * stays true while the text view shows over a terminal that is still mounted
    * and still attached. `terminal/attention.ts`'s `view` event is exactly the
-   * negation of this flag, and the iframe branch passes the same expression as
-   * TerminalView's `active` prop (SessionView.tsx).
+   * negation of this flag. It is the same expression SessionView used to pass
+   * as `TerminalView`'s `active` prop.
    *
    * Read by the attention effect below, which fires on mount, so a session
    * that mounts off screen is told nobody is looking straight away.
@@ -764,8 +789,11 @@ export const TerminalNative: Component<{
    * this terminal's own `.tl-view` while the text view shows), so every other
    * mounted session's bar is not rendered at all and reads `offsetHeight` 0,
    * which is how term.html's own formulas read a hidden bar (:8450-8452). The
-   * dock's second terminal is `TerminalView`, an iframe with its own bar
-   * inside it, so it cannot stack with this one either.
+   * dock's second terminal is this same component (Dock.tsx, `ownsBridges`
+   * false), and it cannot stack a bar with this one for a different reason:
+   * `barPosture` is "off" unless `coarsePointer`, and a dock only exists where
+   * the pointer is fine (`dock.allowed()` is `!coarse()`, store/dock.ts). So a
+   * docked terminal renders no bar at all.
    */
   const barPosture: InputBarPosture = coarsePointer ? bootInputBar() : "off";
   const barEngaged = barPosture !== "off" && stored(INPUT_BAR_HIDDEN_KEY) !== "1";
@@ -1210,8 +1238,8 @@ export const TerminalNative: Component<{
         return true;
       };
 
-      // THE SEED, which is the hole item 1 of viewport.ts's header describes and
-      // the shipped page has as well: `onKeyboard` fires only when the height
+      // THE SEED, which is the hole item 1 of viewport.ts's header describes,
+      // and term.html had it too: `onKeyboard` fires only when the height
       // the shell measured DIFFERS from the last one it sent
       // (mobile/viewport.ts), so a session opened while the keyboard is already
       // up is never told and its bottom rows, the prompt among them, sit behind
@@ -1237,34 +1265,35 @@ export const TerminalNative: Component<{
       // one page per terminal, always the thing in front of the user. This app
       // keeps every visited session mounted and CSS-hides the rest
       // (store/keepalive.ts, App.tsx:835-842), and inside a visible session it
-      // keeps this terminal mounted behind the TEXT view as well
-      // (SessionView.tsx:957). Either way the host is `display: none`
-      // (app.css:1121-1123), so it measures 0x0 and the fit above refuses it.
-      // That makes "the boot fit found a box" the same question as "is this
-      // terminal on screen", answered by measuring rather than by guessing.
+      // keeps this terminal mounted behind the TEXT view as well (its
+      // `.tl-view` section takes `tl-hidden` rather than unmounting). Either
+      // way the host is `display: none` (app.css:1121-1123), so it measures
+      // 0x0 and the fit above refuses it. That makes "the boot fit found a box"
+      // the same question as "is this terminal on screen", answered by
+      // measuring rather than by guessing.
       //
       // `ownsBridges` is NOT that question: SessionView deliberately keeps it
       // true while the text view shows, because that is the pty the composer's
-      // send-to-terminal means (SessionView.tsx:1004-1007), and text is the
-      // default view on a coarse pointer. Focusing on it would take the soft
-      // keyboard off the composer.
+      // send-to-terminal means (its `ownsBridges={onScreen()}`), and text is
+      // the default view on a coarse pointer. Focusing on it would take the
+      // soft keyboard off the composer.
       //
-      // The second gate is the shipped terminal's own: TerminalView declines
-      // its auto-focus while a lobby text field holds the keyboard
-      // (TerminalView.tsx:280-305), for a reason it records at the site. This
-      // is the same check, so the two branches steal focus in the same cases.
+      // The second gate is inherited: TerminalView declined its auto-focus
+      // while a lobby text field held the keyboard (TerminalView.tsx:280-305),
+      // for a reason it recorded at the site. This is the same check, kept
+      // because the reason outlived the component.
       //
       // Nothing re-focuses from here afterwards. A terminal that booted hidden
       // is focused by a click, or by `__tlFocusTerminal`
       // (keybindings/refocus.ts) when an overlay hands the keyboard back.
-      // TerminalView also focuses when the TERMINAL VIEW becomes the active
-      // one (an effect on `props.active`, TerminalView.tsx:307-311), and this
-      // branch does not, so a mode switch from text to terminal still leaves
-      // this unfocused. NOT for want of the prop: SessionView passes the same
-      // `active={mode() === "terminal" && onScreen()}` to both branches
-      // (SessionView.tsx:975 and :1022), and this component's only reader of it
-      // is the attention module's `view` gate (`viewHidden`). Closing the gap
-      // is an effect here, not a prop upstream.
+      // TerminalView ALSO focused when the terminal view became the active one
+      // (an effect on `props.active`, TerminalView.tsx:307-311). That effect
+      // was not ported, so a mode switch from text to terminal still leaves
+      // this unfocused. NOT for want of the prop: SessionView passes
+      // `active={mode() === "terminal" && onScreen()}` here (its `active=`),
+      // and this component's only reader of it is the attention module's `view`
+      // gate (`viewHidden`). Closing the gap is an effect here, not a prop
+      // upstream.
       if (bootFitted && !typingElsewhere()) term.focus();
 
       /**
@@ -2786,8 +2815,9 @@ export const TerminalNative: Component<{
       /**
        * Text into this terminal, however it arrived. The Paste button, the
        * soft keys and the palette reach `__tlPasteToTerminal` below, which
-       * SessionView hands the clipboard text the LOBBY read
-       * (SessionView.tsx:592-599); a Ctrl/Cmd-V or a long-press Paste reaches
+       * SessionView hands the clipboard text the LOBBY read (its `doPaste`,
+       * through the `sendPasteText` it passes `pasteIntoTerminal`); a
+       * Ctrl/Cmd-V or a long-press Paste reaches
        * the event listener under it.
        *
        * term.paste, NOT a raw send: it wraps the text in bracketed paste when
@@ -3103,8 +3133,8 @@ export const TerminalNative: Component<{
        * the same named path the toolbar bridge uses, so paste has one
        * implementation rather than one for the chord and another for the button.
        *
-       * For context on why the iframe needed no such thing: term.html's own
-       * document paste listener (:8932-8944) lives in the FRAMED document. This
+       * For context on why the framed page needed no such thing: term.html's own
+       * document paste listener (:8932-8944) lived in the FRAMED document. This
        * app has a document listener too (clipboard/attach.ts), and it takes
        * IMAGE items only, passing a text paste through for the focused field,
        * which is right for the composer.
@@ -3200,10 +3230,10 @@ export const TerminalNative: Component<{
         if (w[THEME_LIVE_GLOBAL] === live) w[THEME_LIVE_GLOBAL] = previous;
       };
 
-      // THE SAME BRIDGES TerminalView installs, pointing at this terminal
-      // instead of at an iframe. Everything upstream — paste, the soft keys, a
-      // dropped file, the composer's "send to terminal" — already calls these
-      // globals, so the native path inherits all of it without any caller
+      // THE SAME BRIDGES TerminalView used to install, pointing at this
+      // terminal instead of at an iframe. Everything upstream — paste, the soft
+      // keys, a dropped file, the composer's "send to terminal" — already calls
+      // these globals, so the native path inherits all of it without any caller
       // knowing which terminal it is talking to. Each returns a boolean because
       // the callers treat false as "no terminal took this".
       const owns = (): boolean => props.ownsBridges !== false;
@@ -3245,10 +3275,10 @@ export const TerminalNative: Component<{
        * THE LIVE PREF ROUTE, which is term.html's `applyTermPrefs`
        * (:9178-9203) reached through the `__tlPrefsLive` bridge (:9173-9188).
        *
-       * store/prefs.ts:734 calls this AFTER it has persisted, so Settings →
-       * Terminal's A− / A+ reaches an attached terminal instead of waiting for
-       * its next mount. Nothing persists here, or the two writes would chase
-       * each other through the same key.
+       * store/prefs.ts's `pushLive` calls this AFTER it has persisted, so
+       * Settings → Terminal's A− / A+ reaches an attached terminal instead of
+       * waiting for its next mount. Nothing persists here, or the two writes
+       * would chase each other through the same key.
        *
        * THE FIT IS IMMEDIATE, like the pinch's, and for the same reason: the
        * cell metrics just changed under xterm, so `refit`'s 120ms coalesce
@@ -3359,8 +3389,8 @@ export const TerminalNative: Component<{
     attachment = null;
     teardown?.();
     teardown = null;
-    // The frame is gone, so whatever it last said about its socket stops being
-    // true — same handover the iframe makes (ADR-0016).
+    // This terminal is going away, so whatever it last said about its socket
+    // stops being true — the same handover TerminalView made (ADR-0016).
     props.onConn?.({ state: "closed", attempt: 0 });
   });
 
@@ -3369,17 +3399,17 @@ export const TerminalNative: Component<{
       <div class="tl-terminal-native" ref={host} />
       {/* WHAT SIZE THE PINCH HAS REACHED, which is term.html's `#font-pill`
           (:1041-1053). `.tl-size-pill` is this app's own pill and the TEXT
-          view's pinch already draws the same sentence with it
-          (TextView.tsx:426-430), so the two gestures read identically instead
+          view's pinch already draws the same sentence with it (TextView's own
+          `.tl-size-pill`), so the two gestures read identically instead
           of through two stylesheets.
 
           WHERE IT LANDS. The class is `position: absolute` (app.css) and every
           sibling here is a child of `.tl-view`, which is
           `position: absolute; inset: 0` over the view area — so the pill sits
           12px below the top of the TERMINAL, where the page's `position: fixed`
-          10px sat 10px below the top of the iframe. It reserves no space and
-          takes no pointer events, so a claimed gesture cannot lose a finger to
-          it.
+          10px sat 10px below the top of the framed page. It reserves no space
+          and takes no pointer events, so a claimed gesture cannot lose a finger
+          to it.
 
           NO FADE, where the page fades opacity over 150ms: the class carries no
           transition, and `Show` removes the node rather than hiding it. The

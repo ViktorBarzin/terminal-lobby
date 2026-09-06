@@ -48,7 +48,8 @@ describe("firstImageBlob — paste image-vs-text discrimination", () => {
 /**
  * The uploaded path is TYPED AT THE PTY INPUT LINE and deliberately left there —
  * that is how a user attaches an image to the prompt they are about to write
- * (frontend-v2/README.md:237-238; the drop overlay says so too). It is not
+ * (frontend-v2/README.md's "Images in" bullet; the drop overlay says so too).
+ * It is not
  * submitted, and nothing clears the line afterwards.
  *
  * So whatever arrives next lands on the SAME line, immediately after the path:

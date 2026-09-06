@@ -245,8 +245,9 @@ describe("lobby store", () => {
 
   it("create: the prompt's first line survives a poll that does not know the session yet", async () => {
     // The burst polls at 700/1600/3000ms, and the session does not exist
-    // server-side until the iframe attaches and ttyd runs tmux-user-attach —
-    // behind a 5-second /sessions cache. So the create's own polls report a
+    // server-side until the terminal's socket attaches and ttyd runs
+    // tmux-user-attach — behind a 5-second /sessions cache. So the create's own
+    // polls report a
     // list WITHOUT it. Needs another live session in that list: an empty one is
     // "no information" and prunes nothing, which is what used to hide this.
     const api = new FakeApi();
@@ -355,8 +356,8 @@ describe("lobby store", () => {
 
   it("rename: sets the title and leaves the name where it is", async () => {
     // The name is an id now (ADR-0019). A retitle is one POST /title and
-    // nothing else moves: no rename, no layout mirror, no re-navigation of the
-    // terminal iframe.
+    // nothing else moves: no rename, no layout mirror, and nothing that would
+    // re-attach the terminal (a re-navigation of its iframe, before 2026-09-05).
     const api = new FakeApi();
     api.sessionsVal = [sess("a")];
     api.layoutVal = { ...emptyLayout(), ungrouped: ["a"] };
@@ -421,7 +422,8 @@ describe("lobby store", () => {
   it("follows the selection through tmux-api's one-time rename to ids", async () => {
     // The migration is the only rename left (tmux-api/migrate_ids.go), and it
     // runs on live sessions. A tab open at that moment holds the old name in
-    // its iframe's ?arg=, and ttyd re-runs `tmux new-session -A` on every
+    // the `?arg=` its terminal attached with, and ttyd re-runs
+    // `tmux new-session -A` on every
     // reconnect — so without this the next reconnect creates the old name as an
     // empty session and the conversation is left running under the id.
     const api = new FakeApi();

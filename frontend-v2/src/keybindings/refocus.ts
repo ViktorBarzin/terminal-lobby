@@ -11,7 +11,8 @@
  * `window.__tlFocusTerminal` is what fulfils it, and this is the one call site
  * everything else uses. It was a cross-document bridge when the terminal was an
  * iframe; TerminalNative publishes it now, through `ownWhile` so that only the
- * primary terminal claims the name (TerminalNative.tsx:3231). It survived the
+ * primary terminal claims the name (its `ownWhile(owns, "__tlFocusTerminal",
+ * ...)`, cited by symbol because the line number drifts). It survived the
  * de-iframe work while `__tlForwardToTerminal` did not, because focus is a
  * question every overlay asks from anywhere in the shell, where forwarding keys
  * had exactly one caller and became a prop.

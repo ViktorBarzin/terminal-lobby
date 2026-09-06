@@ -9,12 +9,17 @@
  * frontend/term.html had these rules interleaved with DOM and socket handling
  * across 8,199 lines, where none of them could be tested without a browser.
  *
- * WHAT IT DELIBERATELY DOES NOT DO YET. Input beyond keystrokes (paste, the
- * soft keys, the compose mirror), selection and copy, pinch-to-zoom, sixel
- * images, and the held-key glyph overlay all stay with term.html until later
- * stages. This attaches, reconnects, resizes and types — enough to run a
- * terminal and to be judged against the iframe on the thing that matters most,
- * which is whether it survives a bad network.
+ * WHAT THIS MODULE OWNS, which is narrower than the terminal. It attaches,
+ * reconnects, resizes and types. Input beyond keystrokes (paste, the soft keys,
+ * the compose mirror), selection and copy, and pinch-to-zoom were staged after
+ * this one and live in TerminalNative, wired to the pure modules beside this
+ * file rather than added here.
+ *
+ * This file was written while term.html was still the shipped page, to be
+ * judged against it on the thing that mattered most, which was whether it
+ * survived a bad network. It won that and the page was deleted on 2026-09-05.
+ * The gaps still open against it are listed in SessionView, beside the
+ * `<TerminalNative>` mount, which is the one place that record is kept.
  */
 
 import {
@@ -93,9 +98,10 @@ export interface AttachDeps {
    *   - THE ASK. `reportNow` below calls `deps.onPhase(askedPhase(), …)`
    *     directly, bypassing `dispatch` and its change test, and `askedPhase()`
    *     answers "open" for an open socket. Two things ask: the ADR-0016
-   *     panel's Run check (App.tsx:304), and SessionView every time a session
-   *     comes back on screen (SessionView.tsx:292, inside an effect gated on
-   *     `onScreen()`). The second is the frequent one, since it is ordinary
+   *     panel's Run check (App's `runCheck`, through `askTerminalConn`), and
+   *     SessionView every time a session comes back on screen (its
+   *     `props.status.askConn(() => terminalAsk())`, inside an effect gated
+   *     on `onScreen()`). The second is the frequent one, since it is ordinary
    *     navigation rather than a deliberate check.
    *   - THE STABILITY PROOF. `dispatch` counts an attempt-count change as a
    *     phase change, and reconnect.ts's `proved-stable` returns `attempts: 0`

@@ -26,13 +26,13 @@
  * left of `syncViewport` to port. Pass 1 wired the receiving half, and the CSS
  * carries most of the rest:
  *   - `--kb-offset` is the shell's, published from its own visualViewport
- *     reading (mobile/viewport.ts:246). The shell IS the top window, so
+ *     reading (mobile/viewport.ts:257). The shell IS the top window, so
  *     term.html's "the lobby forwards the real height" has no analogue pointing
  *     the other way and `max(own, forwarded)` collapses to `own` for that
  *     property. Nothing here writes it.
  *   - term.html's `tbH` term, the soft-key toolbar coming out of the terminal,
- *     is `--sk-h` inside `.tl-views` margin-bottom (app.css:2432-2448,
- *     published at mobile/viewport.ts:267). The container the host fills is
+ *     is `--sk-h` inside `.tl-views` margin-bottom (app.css:2372-2389,
+ *     published at mobile/viewport.ts:278). The container the host fills is
  *     already toolbar-free and safe-area-free.
  *   - term.html's `cbH` term IS NOT THIS MODULE'S, and it is not absent either.
  *     An earlier version of this line said nothing sits over the terminal's
@@ -43,7 +43,7 @@
  *     gates as the reserve this module decides. So a reader wiring a new caller
  *     owes that term as well as `shrinkPx`. The TEXT view's composer is a
  *     different surface again, inside a sibling `.tl-view`
- *     (SessionView.tsx:922-956), and never over the terminal.
+ *     (SessionView's `<TextView>` section), and never over the terminal.
  *   - both of the page's gates are already in that bridge, as
  *     `window.visualViewport && coarsePointer`.
  *   - the fit that has to follow a height change is TerminalNative's, debounced
@@ -62,28 +62,28 @@
  *    a per-session one did not run until a session was opened). What is missing
  *    is not the install, it is the message: `onKeyboard` fires only when the
  *    height the shell measured DIFFERS from the last one it sent
- *    (mobile/viewport.ts:259-262). A terminal that mounts later is never told,
+ *    (mobile/viewport.ts:270-273). A terminal that mounts later is never told,
  *    because nothing changed: a session opened while the keyboard is already
- *    up, a switch back to the terminal view, `?native=1` on a tab that started
- *    on the list. Its host keeps the stylesheet's `height: 100%` and the bottom
- *    rows, the prompt among them, sit behind the keyboard until the keyboard
- *    next moves.
+ *    up, or a switch back to the terminal view. (A third case, `?native=1` on a
+ *    tab that started on the list, went with the escape hatch on 2026-09-05.)
+ *    Its host keeps the stylesheet's `height: 100%` and the bottom rows, the
+ *    prompt among them, sit behind the keyboard until the keyboard next moves.
  *
- *    THE SHIPPED PAGE HAS THE SAME HOLE, and an earlier draft of this header
- *    claimed the opposite. term.html does seed, by calling `syncViewport()` at
- *    boot (:8490) off a live read, and STANDALONE that seed reserves the
- *    keyboard, because the page's own visualViewport shrank. FRAMED, which is
- *    the only configuration the lobby ships, it reserves nothing: the frame's
- *    own reading is 0 (:8402-8404) and `framedKb` starts at 0 (:8425), so
- *    `keyboardReserve` answers `offset` 0 and `shrink` 0 and the boot height is
- *    the no-keyboard one. Nor is there a second seed. `keyboardToFrame`
- *    (TerminalView.tsx:420-424) is reachable only through `__tlKeyboardOffset`
- *    (bound at :469), whose single caller is App.tsx:195, which the shell
- *    invokes only when `kb !== lastKb` (mobile/viewport.ts:259-262), and the
- *    iframe's own `onLoad` (TerminalView.tsx:500) seeds the Alt state and
- *    nothing else. So on an iPad with the keyboard already up the prompt sits
- *    behind it until the keyboard next moves, in the shipped page as much as in
- *    the native path.
+ *    TERM.HTML HAD THE SAME HOLE, and an earlier draft of this header claimed
+ *    the opposite. That page did seed, by calling `syncViewport()` at boot
+ *    (:8490) off a live read, and STANDALONE that seed reserved the keyboard,
+ *    because the page's own visualViewport shrank. FRAMED, which is the only
+ *    configuration the lobby ever shipped, it reserved nothing: the frame's own
+ *    reading is 0 (:8402-8404) and `framedKb` starts at 0 (:8425), so
+ *    `keyboardReserve` answered `offset` 0 and `shrink` 0 and the boot height
+ *    was the no-keyboard one. Nor was there a second seed. `keyboardToFrame`
+ *    (TerminalView.tsx:420-424) was reachable only through `__tlKeyboardOffset`
+ *    (bound at :469), whose single caller was the `onKeyboard` hook on App.tsx's
+ *    `installViewportSync` call, which the shell invokes only when
+ *    `kb !== lastKb` (mobile/viewport.ts, `writeOffset`), and the iframe's own
+ *    `onLoad` (TerminalView.tsx:500) seeded the Alt state and nothing else. So
+ *    on an iPad with the keyboard already up the prompt sat behind it until the
+ *    keyboard next moved, in that page as much as in the native path here.
  *
  *    `observed` is the viewport asked from here, and a mount asks it. It closes
  *    a hole both paths have, rather than reproducing something the page does.
@@ -106,10 +106,11 @@
  *    term.html's `framedKb` (:8425) is deliberately left behind. Natively the
  *    two readings are not two sources, they are one measurement taken twice:
  *    the shell computes `keyboardOffset(window.innerHeight, vv.height,
- *    vv.offsetTop)` (mobile/viewport.ts:27-33, :242-244) on the same window
- *    this terminal reads, character for character the `own` below. So a
- *    remembered forwarded number can never legitimately exceed a fresh `own`
- *    reading, and any excess is age: taking `max(own, remembered)` would pin
+ *    vv.offsetTop)` (mobile/viewport.ts's `keyboardOffset`, called from its
+ *    `writeOffset`) on the same window this terminal reads, character for
+ *    character the `own` below. So a remembered forwarded number can never
+ *    legitimately exceed a fresh `own` reading, and any excess is age: taking
+ *    `max(own, remembered)` would pin
  *    the reserve at the STALE maximum, where a live reading of 0 cannot give
  *    the rows back. Nor would that be a one-frame lag. `__tlKeyboardOffset` is
  *    a global claimed via `ownWhile` (TerminalNative's `__tlKeyboardOffset`)
@@ -136,21 +137,22 @@
  *    Android emulator's measured 312px off a container that had already shrunk
  *    itself.
  *
- * WHY THE ANSWER IS A SHRINK AND NOT A PIXEL HEIGHT. term.html writes an
- * absolute `vv.height - shrink - tbH - cbH` because its `terminalEl` fills a
- * whole iframe: the frame's layout viewport IS the terminal's box. Here the
+ * WHY THE ANSWER IS A SHRINK AND NOT A PIXEL HEIGHT. term.html wrote an
+ * absolute `vv.height - shrink - tbH - cbH` because its `terminalEl` filled a
+ * whole iframe: that frame's layout viewport WAS the terminal's box. Here the
  * host sits inside a `.tl-view`, `position: absolute; inset: 0` within
  * `.tl-views.tl-kb-inline` (app.css:1110-1120), which has the toolbar and the
  * safe area out of its bottom already and deliberately leaves the keyboard IN
- * (app.css:2437-2448), so what the caller needs is how much of THAT box the
- * keyboard covers.
+ * (app.css:2387-2389, `body.has-soft-keys .tl-views.tl-kb-inline`), so what the
+ * caller needs is how much of THAT box the keyboard covers.
  *
  * An absolute `vv.height` written onto the host would miss that box by
  * `--sk-h + --safe-b + the session bar - offsetTop`. Four terms, not the two an
  * earlier draft of this header named and called exact. `.tl-views` is the flex
- * remainder BELOW `.tl-session-bar` (SessionView.tsx:659 and :921,
- * sidebar.css:804-818), so the bar's height is out of the box as well, and
- * `vv.height` has already taken the pan off itself. Three of the four are the
+ * remainder BELOW `.tl-session-bar` (both are children of `.tl-session-view`,
+ * whose `flex-direction: column` is in sidebar.css beside the bar's own rule),
+ * so the bar's height is out of the box as well, and `vv.height` has already
+ * taken the pan off itself. Three of the four are the
  * container chain. The fourth, `offsetTop`, is where this module and the page's
  * formula genuinely disagree, which the divergence block below settles against
  * two measured edges.
@@ -173,13 +175,13 @@
  * `own` is the number that composes with THIS app's layout, and the check is
  * two edges meeting:
  *   the container's bottom edge is `layout - --sk-h - --safe-b`
- *     (app.css:2446-2448), and `#root` is `height: var(--app-vh)`, which is
- *     `window.innerHeight` (app.css:30-34, mobile/viewport.ts:276), so the box
+ *     (app.css:2387-2389), and `#root` is `height: var(--app-vh)`, which is
+ *     `window.innerHeight` (app.css:30-34, mobile/viewport.ts:287), so the box
  *     is layout-anchored;
  *   the toolbar is fixed at `bottom: calc(var(--kb-offset) + var(--safe-b))`
- *     (app.css:2300), so its top edge is
+ *     (app.css:2240), so its top edge is
  *     `layout - --kb-offset - --safe-b - --sk-h`;
- *   `--kb-offset` is the shell's `keyboardOffset(...)` (mobile/viewport.ts:244),
+ *   `--kb-offset` is the shell's `keyboardOffset(...)` (mobile/viewport.ts:255),
  *     which carries `offsetTop` exactly as `own` does.
  * So a shrink of `own` puts the host's bottom edge on the toolbar's top edge
  * whatever the pan, and `own + offsetTop` would leave an `offsetTop`-tall gap
@@ -189,12 +191,13 @@
  * ONE CONSEQUENCE OF THE SEED THAT NOTHING UNDER test/ CAN SETTLE. Writing a
  * shrink moves the host's bottom edge up, and natively that box is the tap
  * target's own ancestor, where term.html shrank its `#terminal` inside an
- * iframe that stayed put. That is the shape of the bug app.css:2437-2445
- * records against the CONTAINER version: a tap below ~54% of the screen blurred
- * the field and flashed the keyboard shut (measured 390x844, dated 2026-08-17
- * at term.html:8406-8411). Shrinking the HOST is what the shipped page already
- * does through this bridge, in its gate and its height write, so the seed adds a
- * moment when that happens rather than a new mechanism. It still wants the
+ * iframe that stayed put. That is the shape of the bug app.css records against
+ * the CONTAINER version, in the comment above
+ * `body.has-soft-keys .tl-views.tl-kb-inline`: a tap below ~54% of the screen
+ * blurred the field and flashed the keyboard shut (measured 390x844, dated
+ * 2026-08-17 at term.html:8406-8411). Shrinking the HOST is what term.html did
+ * through this same bridge, in its gate and its height write, so the seed adds
+ * a moment when that happens rather than a new mechanism. It still wants the
  * Android emulator or a real phone to confirm, and no unit test here can.
  *
  * WHAT THE COMPONENT STILL OWES, per action. The module decides and the
@@ -419,12 +422,12 @@ export function keyboardReserve(
  *
  * The one place that knows the host's height is RELATIVE: the container has the
  * toolbar and the safe area out of it already and the keyboard still in
- * (app.css:2446-2448), so the reserve is a shrink off it. Relative is also what
+ * (app.css:2387-2389), so the reserve is a shrink off it. Relative is also what
  * lets the box keep tracking `window.innerHeight` between writes, which matters
  * because the reduction above writes once per distinct reserve where the page
  * rewrote an absolute pixel height every call: the container chain resolves to
  * `#root { height: var(--app-vh) }` and `--app-vh` IS `window.innerHeight`
- * (app.css:30-34, mobile/viewport.ts:276).
+ * (app.css:30-34, mobile/viewport.ts:287).
  *
  * Empty at 0 so the box goes back to the stylesheet's `height: 100%` instead of
  * carrying an inline `calc(100% - 0px)`, which is what the bridge's height

@@ -1492,10 +1492,10 @@ describe("the boot focus (term.html:5614-5617)", () => {
   });
 
   /**
-   * The second gate, and the shipped terminal's own rule: `TerminalView`
-   * declines its auto-focus while a lobby text field has the keyboard
+   * The second gate, and a rule this component inherited: `TerminalView`
+   * declined its auto-focus while a lobby text field had the keyboard
    * (TerminalView.tsx:280-305), after that steal tore down the inline rename
-   * box. Both branches now steal focus in the same cases.
+   * box. The two branches agreed on it, and this one is the branch left.
    */
   it("declines to a lobby text field that already has the keyboard", async () => {
     const field = document.createElement("input");
@@ -1743,11 +1743,11 @@ describe("refused and held input become something a person can see", () => {
  * The badge reports what the terminal volunteers, and the terminal volunteers
  * a phase only when it CHANGES (attach.ts `dispatch`). So a session view
  * coming back on screen, and Run check in the ADR-0016 panel, both have to be
- * able to ask, and on the iframe branch they can, because `askConn` is passed
- * there. This is the native branch's half of the same lever.
+ * able to ask. TerminalView passed `askConn` up for that; this component owes
+ * the same lever, and there is no second branch to fall back on any more.
  */
 describe("the connection ask (term.html:9822-9873)", () => {
-  it("hands up BOTH levers, as the iframe branch does", async () => {
+  it("hands up BOTH levers, as TerminalView did", async () => {
     const m = await mountOpen();
     expect(m.control().reconnect).toBeTypeOf("function");
     expect(m.control().ask).toBeTypeOf("function");
@@ -1818,7 +1818,7 @@ describe("the connection ask (term.html:9822-9873)", () => {
  * toolbar and compose-bar heights, is pass 2.
  *
  * The shrink cannot come from the container: `.tl-views.tl-kb-inline`
- * deliberately leaves the keyboard out of that reservation (app.css:2437-2448)
+ * deliberately leaves the keyboard out of that reservation (app.css:2387-2389)
  * because shrinking it moved the terminal out from under the tap that had just
  * opened the keyboard.
  *
@@ -1826,8 +1826,10 @@ describe("the connection ask (term.html:9822-9873)", () => {
  * most of this block runs on a faked touch device. The gates have to be here
  * because the shell forwards this height whatever the machine is:
  * `installViewportSync` takes `visualViewport ?? null`, falls back to
- * `window.innerHeight`, and still seeds and publishes (viewport.ts:242, :261,
- * :332).
+ * `window.innerHeight`, and still seeds and publishes (mobile/viewport.ts,
+ * `writeOffset`'s `vv ? vv.height : window.innerHeight`, its
+ * `opts.onKeyboard?.(kb)`, and the bare `writeOffset()` that seeds before the
+ * teardown is returned).
  */
 describe("the soft-keyboard offset (term.html:9407-9422)", () => {
   const height = (m: Mounted): string => m.term.host?.style.height ?? "(no host)";
@@ -4033,7 +4035,7 @@ describe("the compose mirror (term.html:7077-7509)", () => {
 
   /**
    * The DEVICE-LOCAL dismissal, `tl:input.barHidden:v1` (term.html:3208-3211).
-   * Same origin as this app, so a person who hid the bar with the iframe's ⌨
+   * Same origin as this app, so a person who hid the bar with term.html's ⌨
    * soft key must not have it handed back by the native terminal, and this
    * app's own ⌨ key is a keyboard-dismiss, so there would be nothing to
    * dismiss it with a second time.
@@ -4313,8 +4315,9 @@ describe("the compose mirror (term.html:7077-7509)", () => {
    * (:9822-9824) is none of them, so the ADR-0016 Run check and a session view
    * coming back on screen leave the field alone there. Hanging the reset off
    * `onPhase("open")` did not: `reportNow` re-fires that phase for the SAME
-   * socket, and SessionView asks on every return to the screen
-   * (SessionView.tsx:292, inside an effect gated on `onScreen()`), so the field
+   * socket, and SessionView asks on every return to the screen (its
+   * `props.status.askConn(() => terminalAsk())`, inside an effect gated on
+   * `onScreen()`), so the field
    * was blanked mid-word by ordinary navigation. mirror.ts:56-63 says what
    * goes with such a write: a live QuickType or Gboard suggestion.
    *

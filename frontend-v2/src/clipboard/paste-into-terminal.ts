@@ -3,25 +3,34 @@ import { track } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
 
 /**
- * Paste-into-terminal, read in the LOBBY document.
+ * Paste-into-terminal, read by the app rather than off a native paste event.
  *
- * The terminal page owns a perfectly good paste routine, and for a standalone
- * /term.html tab it is still the right one. It cannot serve the FRAMED case:
- * the async clipboard is gated on `document.hasFocus()`, and clicking a control
- * in the lobby focuses the LOBBY, so a read performed inside the frame throws
+ * WHEN THIS RUNS. A native paste never reaches here. ⌘/Ctrl-V with the terminal
+ * focused, or a long-press and the system Paste item, fires a `paste` event on
+ * the terminal's host element, which TerminalNative handles itself and which
+ * needs no clipboard permission. This routine serves the paste the APP starts,
+ * where there is no such event to ride: the command palette, a keybinding while
+ * focus sits somewhere in the lobby, the soft-key Paste button. Those have to
+ * ask `navigator.clipboard` for the text.
+ *
+ * WHY THE APP READS IT AND NOT THE TERMINAL. The async clipboard is gated on
+ * `document.hasFocus()`. Until 2026-09-05 the terminal was a second document in
+ * an iframe, and clicking a control in the lobby focuses the LOBBY, so a read
+ * performed inside the frame threw
  *
  *   NotAllowedError: Document is not focused.
  *
  * Chrome only shows its clipboard prompt for a focused document, so the user
  * was told access was denied for a permission they had never been asked for.
- * Measured with clipboard-read already granted: the lobby reads fine
- * (hasFocus true), the frame throws (hasFocus false) even though transient
- * activation does reach it.
+ * Measured with clipboard-read already granted: the lobby read fine (hasFocus
+ * true), the frame threw (hasFocus false) even though transient activation did
+ * reach it. There is one document now, so the gate is no longer split in two
+ * and the read happens where the app already is.
  *
- * So the lobby reads, and only the RESULT crosses the frame boundary:
- *  - text goes down as `tl-paste`, which the terminal page hands to
- *    `term.paste()` — bracketed paste plus \r\n normalization, so a multiline
- *    paste cannot execute line-by-line in a shell the way raw input would;
+ * Either way only the RESULT reaches the terminal:
+ *  - text goes to xterm's `term.paste()` through the `__tlPasteToTerminal`
+ *    bridge — bracketed paste plus \r\n normalization, so a multiline paste
+ *    cannot execute line-by-line in a shell the way raw input would;
  *  - an image goes to the same upload intake the drop and picker paths use, so
  *    it lands in the session store and its path is typed at the prompt.
  */
@@ -29,7 +38,7 @@ import { isCoarsePointer } from "../mobile/pointer";
 export interface PasteIntoTerminalDeps {
   /** the clipboard to read (defaults to navigator.clipboard). */
   clipboard?: Clipboard;
-  /** hand text to the terminal page's term.paste() over the tl-paste bridge. */
+  /** hand text to xterm's term.paste(), over the __tlPasteToTerminal bridge. */
   sendPasteText: (text: string) => boolean;
   /** the shared upload intake, for an image sitting on the clipboard. */
   uploadFiles: (files: File[], via?: "drop" | "picker") => Promise<void>;
@@ -67,10 +76,10 @@ function blobText(blob: Blob): Promise<string> {
  * The message shown when the read itself failed.
  *
  * The advice has to match the device. There is a second way into the terminal
- * that needs no permission at all: a NATIVE paste inside the frame fires a
- * `paste` event that term.html already handles. On a desktop that is ⌘/Ctrl-V;
- * on a phone it is a long-press on the terminal and the system Paste item.
- * Naming a keyboard chord to someone holding a phone is a dead end.
+ * that needs no permission at all: a NATIVE paste fires a `paste` event on the
+ * terminal's host, which TerminalNative handles there. On a desktop that is
+ * ⌘/Ctrl-V; on a phone it is a long-press on the terminal and the system Paste
+ * item. Naming a keyboard chord to someone holding a phone is a dead end.
  */
 function readFailure(err: unknown, coarse: boolean, surface: Surface): string {
   const e = err as { name?: string; message?: string } | null;

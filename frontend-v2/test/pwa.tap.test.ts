@@ -12,8 +12,13 @@ import { fileURLToPath } from "node:url";
  * args off the page URL and onto iframe.name, because the URL is a cache key
  * and a session in the query made every session a fresh 1.8 MB download. The
  * worker picked the lobby out of clients.matchAll() by "has no ?arg=", so the
- * now-bare terminal iframe started reading as the lobby, took a message it has
+ * now-bare terminal iframe started reading as the lobby, took a message it had
  * no listener for, and the handler returned having done nothing.
+ *
+ * A current build has no terminal iframe to be confused by — term.html went on
+ * 2026-09-05 — but the worker still has to pick between lobby tabs, and a
+ * browser holding an old install can still hand it a stale client. The
+ * ask-and-answer below is what settles both.
  *
  * So these tests drive the worker the way a tap does — real source, fake
  * clients — and the first one fails against that shipped code.

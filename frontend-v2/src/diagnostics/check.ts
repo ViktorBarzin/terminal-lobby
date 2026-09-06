@@ -33,8 +33,8 @@ export interface CheckProbe {
   /**
    * What a timeout MEANS for this channel. Defaults to `down` — no answer in
    * five seconds is a fault for anything that answers over the network. A
-   * channel whose silence means something softer overrides it: the terminal
-   * iframe not replying means it is not reporting, not that the socket died.
+   * channel whose silence means something softer overrides it: the terminal not
+   * answering means it is not reporting, not that the socket died.
    */
   timeoutState?: ChannelState;
   timeoutDetail?: string;

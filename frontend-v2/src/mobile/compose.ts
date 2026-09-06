@@ -12,9 +12,9 @@
  * paste is soft, and only the trailing CR submits.
  *
  * `splitComposeSubmit` returns the two pieces separately (the caller sends them
- * as two distinct writes / postMessages) precisely so the submit can never be
- * folded into the bracketed block. Pure + string-only, so it is unit-testable
- * and reusable by both the terminal-forward path and any injection path.
+ * as two distinct writes) precisely so the submit can never be folded into the
+ * bracketed block. Pure + string-only, so it is unit-testable and reusable by
+ * both the terminal-forward path and any injection path.
  */
 
 /** DEC bracketed-paste start marker. */

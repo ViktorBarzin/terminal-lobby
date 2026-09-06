@@ -156,7 +156,7 @@ describe("phone flip — which viewports it claims", () => {
 describe("phone flip — the TS query and the CSS block agree", () => {
   it("uses the identical media query in sidebar.css", () => {
     // Drift here is not cosmetic: CSS that hides the session pane while the TS
-    // still believes it is on screen leaves the terminal iframe fitting itself
+    // still believes it is on screen leaves the terminal fitting itself
     // against a 0x0 box, and tmux sizes a window to its SMALLEST attached
     // client — every other device on that session gets dragged down with it.
     expect(readCss()).toContain(`@media ${FLIP_QUERY}`);

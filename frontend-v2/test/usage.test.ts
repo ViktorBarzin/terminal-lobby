@@ -115,8 +115,10 @@ function resetSinceAt(when: Date): UsageStore {
 }
 
 /**
- * The store is written by every lobby tab and by the terminal iframe's window
- * totals relayed through its parent, and read by one settings panel. These are
+ * The store is written by every lobby tab and read by one settings panel. Until
+ * 2026-09-05 term.html bound its own copy of diag.js and relayed each closed
+ * window up to the lobby; the terminal's socket is opened in this document now,
+ * so there is one writer per tab. These are
  * the pure halves: folding, aggregation and pruning, with storage injected the
  * way connection.ts already does it.
  */
@@ -352,8 +354,9 @@ describe("usage store — persistence", () => {
 });
 
 describe("committing a window", () => {
-  // What diag.js's onWindow actually calls, from the lobby and — relayed over
-  // postMessage — from the terminal iframe.
+  // What diag.js's onWindow actually calls. One binding per tab now; term.html
+  // bound a second copy and relayed its windows over postMessage until
+  // 2026-09-05.
   it("persists a window so the panel can read it back", async () => {
     const s = store();
     await commitWindow({ term: 500, app: 100 }, NET_UNKNOWN, at("2026-08-28T10:00:00"), s);

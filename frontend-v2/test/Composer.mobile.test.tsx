@@ -29,7 +29,7 @@ describe("<Composer> — send routing", () => {
   });
 
   // Sending used to fork on a coarse pointer and post the bytes into the
-  // terminal IFRAME. In Text mode that iframe has not attached — the attach is
+  // terminal IFRAME. In Text mode that frame had not attached — the attach is
   // lazy — so the post was dropped, the field was cleared, and the message went
   // nowhere: type on a phone, press send, watch the text vanish. There is one
   // route now, on every device.

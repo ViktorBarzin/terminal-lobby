@@ -80,8 +80,9 @@ describe("the prompt-line store", () => {
   });
 
   it("keeps a line the poll cannot know about yet", () => {
-    // A session does not exist server-side until the iframe attaches and ttyd
-    // runs `tmux new-session -A`, and GET /sessions answers from a 5-second
+    // A session does not exist server-side until the terminal's socket
+    // attaches and ttyd runs `tmux new-session -A`, and GET /sessions answers
+    // from a 5-second
     // cache — so the create burst's own polls report a list without it. Pruning
     // against that would delete the line the card is there to show.
     rememberPromptLine("aaaaaaaaaaaa", "one");

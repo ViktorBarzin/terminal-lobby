@@ -28,13 +28,13 @@ import type { ModelField, ModelHarness, ModelState } from "../lib/models";
  *
  * Sending goes through ONE route on every device: `onSend` (the session control
  * channel, session-events /prompt). It used to fork on `sendToTerminal` for a
- * coarse pointer and post the bytes into the terminal IFRAME instead — and in
- * Text mode that iframe has not attached yet, because the attach is
- * deliberately lazy. sendBytesToFrame returns false with no contentWindow and
- * nothing upstream looked at the result, so the field was cleared and the
- * message went nowhere: typing on a phone, pressing send, and watching the text
- * vanish. The control channel needs no attached iframe, is the same path the
- * desktop has always used, and reports whether it landed.
+ * coarse pointer and post the bytes into the terminal iframe instead, and in
+ * Text mode that frame had not attached yet, because the attach is deliberately
+ * lazy. `sendBytesToFrame` (TerminalView.tsx:387) returned false with no
+ * contentWindow and nothing upstream looked at the result, so the field was
+ * cleared and the message went nowhere: typing on a phone, pressing send, and
+ * watching the text vanish. The control channel needs no attached terminal, is
+ * the same path the desktop has always used, and reports whether it landed.
  */
 /** What a caller outside the composer may put into the message being written. */
 export type ComposerSinks = PromptFieldSinks;
@@ -57,7 +57,7 @@ export const Composer: Component<{
   onSend: (text: string) => Promise<boolean>;
   onStop: () => void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
-  /** Forward raw pty bytes to the live terminal iframe. No longer used for
+  /** Forward raw pty bytes to the live terminal. No longer used for
    *  SENDING — kept for callers that hand bytes to the pty for other reasons,
    *  e.g. answering a prompt the transcript cannot express. */
   sendToTerminal?: (bytes: string) => void;

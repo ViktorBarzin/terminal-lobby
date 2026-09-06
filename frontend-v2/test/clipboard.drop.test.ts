@@ -119,7 +119,8 @@ describe("installImageClipboard — dropped paths are separated from what follow
  * 0006-usage-telemetry.md:108 attributes "paste/drop" to BOTH lobbies, and the
  * same table's server-side carve-out ("kills, renames, moves, shares, saves and
  * uploads are emitted server-side only") does not cover drop. The vanilla page
- * emits `image.dropped` with the FILE COUNT (frontend/index.html:13563); v2
+ * emits `image.dropped` with the FILE COUNT
+ * (31696d9:frontend/index.html:15024); v2
  * emitted nothing, because the only `track()` in the subsystem sat in the paste
  * path behind a `filename` argument no call site ever passed.
  *

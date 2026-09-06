@@ -7,11 +7,14 @@ import type { HelpController } from "../src/components/ShortcutsHelp";
 /**
  * The lobby command dispatcher's VIEW-TOGGLE branch.
  *
- * A chord pressed with focus inside the terminal iframe cannot reach the SPA's
- * own listeners (a keydown never crosses a frame boundary), so frontend/term.html
- * forwards it up as a `tl-command` and App hands it to this dispatcher. Ctrl/Cmd+J
- * used to dead-end here: the chord arrived, no branch claimed it, and the view
- * never toggled — while the key was still swallowed on the terminal side.
+ * A chord pressed with focus inside the terminal iframe could not reach the
+ * SPA's own listeners (a keydown never crosses a frame boundary), so
+ * frontend/term.html forwarded it up as a `tl-command` and App handed it to this
+ * dispatcher. Ctrl/Cmd+J used to dead-end here: the chord arrived, no branch
+ * claimed it, and the view never toggled — while the key was still swallowed on
+ * the terminal side. The terminal is drawn in this document now, so the chord
+ * reaches the engine's own listener and arrives at this dispatcher locally; the
+ * branch it needed is the same one either way.
  */
 
 const noop = (): void => {};

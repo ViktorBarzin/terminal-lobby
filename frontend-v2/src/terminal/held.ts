@@ -34,8 +34,8 @@
  *   Esc, a battery suspend, or the session it belonged to going away.
  *
  * Ported from frontend/term.html (`heldInput`, `offerHeldInput`,
- * `heldGraphemes`), which stays the shipped page until the native xterm
- * component replaces the iframe.
+ * `heldGraphemes`), which was the shipped page when this was written and was
+ * deleted on 2026-09-05.
  */
 
 /** How much a hold may carry. A queue that grows without bound is a queue that replays a paste into the wrong prompt. */

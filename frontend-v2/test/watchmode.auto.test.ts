@@ -74,7 +74,7 @@ describe("watch storage — three states", () => {
  * dependency on it therefore feeds back on itself: attach read-write -> the next
  * poll reports the session as driven -> the rule flips this client to watch ->
  * the re-attach leaves only a read-only client -> driven goes false -> it flips
- * back. Once per poll, forever, re-navigating the terminal iframe each time.
+ * back. Once per poll, forever, re-attaching the terminal each time.
  *
  * The fix is that joining is a decision made ONCE, when this view takes the
  * session on. What happens to the client set afterwards — including as a direct

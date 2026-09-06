@@ -68,16 +68,27 @@ export interface ViewportSyncOptions {
   /** Debounce window for onRefit (ms). Default 120 (matches the vanilla fit). */
   refitDebounceMs?: number;
   /**
-   * The covered height, whenever it CHANGES — for surfaces that cannot measure
-   * it themselves.
+   * The covered height, whenever it CHANGES — for surfaces that nothing closer
+   * will tell.
    *
-   * The terminal is an iframe, and an iframe's visualViewport does not move when
-   * the keyboard opens: only the top window's does. So the frame cannot see the
-   * keyboard, and it has to be told (TerminalView posts it as `tl-kb`).
+   * The terminal sits in this same document and reads `visualViewport` for
+   * itself, but nothing local tells it WHEN to. The container deliberately does
+   * not shrink for the keyboard (`body.has-soft-keys .tl-views.tl-kb-inline`,
+   * app.css, because shrinking it moved the terminal out from under the tap
+   * that had just opened the keyboard), so the host's box is unchanged and its
+   * ResizeObserver stays quiet. These listeners are what notice, and they are
+   * installed once for the whole app rather than per session. So the height is
+   * pushed: App.tsx's `installViewportSync` call hands it to
+   * `window.__tlKeyboardOffset`, the bridge TerminalNative owns while mounted.
+   *
+   * Until 2026-09-05 the terminal was an iframe, and a framed page's own
+   * visualViewport does not move when the keyboard opens at all, so this
+   * forward was the only reading it could ever have (TerminalView posted it as
+   * `tl-kb`). The push outlived the frame. What changed is why it is needed.
    *
    * On CHANGE rather than on every event: the keyboard animates over ~250ms and
-   * fires resize/scroll throughout, and each post makes the frame re-fit and
-   * tmux resize.
+   * fires resize/scroll throughout, and each one makes the terminal re-decide
+   * its height, re-fit, and tmux resize.
    */
   onKeyboard?: (px: number) => void;
   /** Quiet period before the settle re-measure (ms). Default 350. */
@@ -106,7 +117,7 @@ export function installViewportSync(opts: ViewportSyncOptions = {}): () => void 
   // in the meantime.
   const settleMs = opts.settleMs ?? 350;
   // The last height published to onKeyboard. -1 rather than 0 so the seeding
-  // write always reports once, telling the frame where it stands before the
+  // write always reports once, telling the terminal where it stands before the
   // first keyboard ever opens.
   let lastKb = -1;
   // The tallest layout viewport seen in this orientation — what the app gets

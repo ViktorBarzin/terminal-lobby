@@ -50,9 +50,10 @@
  *             sends none regardless, and that is the airtight reason: the only
  *             thing that tells the pty a size after boot is `term.onResize`
  *             (term.html:8372-8377), which cannot fire when no fit ran. Not the
- *             tmux argument this comment used to make: keepalive.ts:17-18
- *             states that same rule, tmux sizing a window to its LATEST active
- *             client, and draws the opposite conclusion from it, that a hidden
+ *             tmux argument this comment used to make: store/keepalive.ts's
+ *             docblock states that same rule, tmux sizing a window to its
+ *             LATEST active client, and draws the opposite conclusion from it,
+ *             that a hidden
  *             client holding an older size does NOT shrink the pane the visible
  *             one is using. Worth a log line; the debt now stands.
  *   nothing:  the guard was asked and had nothing to answer. Silent.
