@@ -176,9 +176,11 @@ export const SessionCard: Component<{
   const commitRename = async () => {
     const next = inputEl?.value ?? "";
     endRename();
-    // The box edits the TITLE, and only the title — the name is an id that
-    // never moves (ADR-0019). An empty one clears it, handing the session back
-    // to whatever summary lands next.
+    // The box edits the TITLE. The tmux name follows it server-side
+    // (ADR-0022), which is what keeps `tmux ls` readable, but nothing here has
+    // to know: the poll brings the new name back and the selection follows it
+    // by session id. An empty one clears the title, handing the session back to
+    // whatever summary lands next; the name stays where it is.
     if (next !== titleDraft()) await props.store.rename(s().name, next);
   };
 

@@ -14,10 +14,13 @@ package main
 // every other member's sidebar, revoke its guests without telling either side,
 // and strand its pictures.
 //
-// ADR-0019 made a session's name a minted id that never moves, so renaming is
-// a rare, deliberate act again. Two callers are left, and both need all six
-// stores carried: the one-time migration that gives every pre-ADR session an id
-// (migrate_ids.go), and POST /sessions/{name}/rename.
+// ADR-0019 made a session's name a minted id and renaming a rare, deliberate
+// act. ADR-0022 put the derivation back — a title carries the tmux name with
+// it, so `tmux ls` and the status bar read as words — which makes this the
+// ordinary path again rather than an exceptional one. Three callers, all of
+// which need every one of the six stores carried: name_from_title.go on each
+// title that lands, the one-time migration that gave every pre-ADR session an
+// id (migrate_ids.go), and POST /sessions/{name}/rename.
 //
 // Everything here is best-effort and logged rather than fatal. The tmux rename
 // has already landed by the time any of this runs, so returning an error would

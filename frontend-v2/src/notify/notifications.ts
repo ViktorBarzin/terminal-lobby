@@ -436,9 +436,10 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
   // A `tl:session-renamed` listener used to patch them by name, and it only
   // ever fired for a rename made in THIS tab: one from a second tab, the phone,
   // or a shell looked like a session vanishing and a stranger arriving, so the
-  // visit was pruned and work you had already read came back unread. Nothing
-  // renames a lobby session any more (ADR-0019), and the id keying covers the
-  // migration and the restore path's collision rename.
+  // visit was pruned and work you had already read came back unread. A title
+  // carries the tmux name with it again (ADR-0022), so renames are ordinary
+  // rather than rare, and keying by tmux's session id — which a rename does not
+  // change — is what makes that a non-event here.
   // Report whether the icon could actually be drawn, ONCE per distinct outcome.
   // The paint is best-effort and silent, which also meant nobody could tell a
   // drawn badge from a missing API — and on iOS that is the whole question,
