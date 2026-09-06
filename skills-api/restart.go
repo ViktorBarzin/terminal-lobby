@@ -110,8 +110,14 @@ func splitPaneInfo(out string) (cwd, state string) {
 // zsh wrapper function some accounts define is not loaded, so relying on the
 // name alone would find nothing.
 //
-// The flags mirror devvm/start-claude.sh, which is how every session on this box
-// already starts, plus --continue.
+// The flags are this function's own. devvm/start-claude.sh is a sample this
+// package installs nowhere, and the launcher a session on this box actually
+// starts under is the roster's copy in each user's home, which pins
+// --session-id per launch. Nothing here reproduces that, so a pane respawned
+// with --name and --continue resumes whichever conversation tmux-persist's
+// fallback picks for that OS user, which after a reboot need not be the one the
+// pane had. Stamping the resumed conversation id is unfinished, tracked as
+// TL-26. Do not close it by putting a fresh --session-id next to --continue.
 func claudeCommand(osUser, session string) string {
 	bin := "claude"
 	if u, err := user.Lookup(osUser); err == nil && u.HomeDir != "" {
