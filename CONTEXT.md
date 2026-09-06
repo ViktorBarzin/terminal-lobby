@@ -33,11 +33,14 @@ shows a name where it could show a **title**
 The display text for a session — spaces, punctuation, emoji, any script, up
 to 64 characters. The only name a session has that anyone reads, and what
 every surface shows: sidebar cards, the tab title, the command palette, the
-dock, push bodies, confirmations. Usually a **summary** the lobby adopted
-rather than text a person typed, and a person may replace it at any time.
-Stored on the session itself (the `@title` tmux option), so everyone who can
-see the session sees the same title, and a durable copy re-stamps it after a
-restore. Clearing it hands the session back to the summary. A session with
+dock, push bodies, confirmations, the restore picker. Usually a **summary**
+the lobby adopted rather than text a person typed, and a person may replace
+it at any time. Stored on the session itself (the `@title` tmux option), so
+everyone who can see the session sees the same title, and a durable copy
+(tmux-api `titles.go`) re-stamps it after a restore. That copy is also what
+the restore picker reads: it lists sessions that are not running, and a tmux
+option died with them. It outlives a deliberate kill too, because the picker
+can restore from a snapshot older than the kill. Clearing it hands the session back to the summary. A session with
 no title yet shows the first line of the prompt it was created with, or
 `New session` — except where a question has to name ONE session and the
 answer cannot be taken back, such as a kill confirmation, which falls back

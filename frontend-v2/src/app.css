@@ -3001,6 +3001,15 @@ body.tl-kb-up {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* The session id, kept on the row but demoted: the title is what you read. */
+.tl-restore-id {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+  opacity: 0.75;
+  user-select: text;
+}
 .tl-restore-dest {
   flex: 0 0 auto;
   font-size: calc(11px * var(--tl-text-scale, 1));
