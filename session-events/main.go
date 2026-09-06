@@ -225,6 +225,30 @@ func main() {
 	// plugins they have switched on. The composer offers them beside the
 	// built-ins it ships, so an unreachable catalogue costs completion of
 	// /help and /clear nothing.
+	// The catalogue for a directory rather than a session, for the new-session
+	// composer's `/` menu — there is no session to name yet.
+	//
+	// Under /commands/ ON PURPOSE, not at a bare /commands. The production
+	// ingress matches PathPrefix(`/commands/`) with the trailing slash, so a
+	// bare path would miss the rule, fall through to ttyd and 404 — which is
+	// exactly how /build-id spent its life. A path under the existing prefix
+	// needs no ingress change to work.
+	//
+	// `_new` cannot collide with the {session} pattern below. Go's mux prefers
+	// the literal over the wildcard, and a session name is a 12-character base32
+	// id (ADR-0019) whose alphabet has no underscore, so nothing can be called
+	// this. The leading underscore follows the pool slots' convention for a name
+	// no client can mint.
+	web.HandleFunc("GET /commands/_new", func(w http.ResponseWriter, r *http.Request) {
+		cmds, ok := rg.catalogueForDir(osUserFrom(r.Context()), r.URL.Query().Get("dir"))
+		if !ok {
+			// Only reachable for a dir outside the caller's home, which is a
+			// refusal rather than an empty catalogue.
+			http.Error(w, "directory not readable", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, cmds)
+	})
 	web.HandleFunc("GET /commands/{session}", func(w http.ResponseWriter, r *http.Request) {
 		cmds, ok := rg.catalogue(osUserFrom(r.Context()), r.PathValue("session"))
 		if !ok {
