@@ -230,7 +230,7 @@ describe("the Copy lever the soft keys use", () => {
     fireEvent.click(segments(container)[1]!); // [Terminal]
     const copy = document
       .getElementById("soft-keys")
-      ?.querySelector<HTMLButtonElement>('button[aria-label="Copy"]');
+      ?.querySelector<HTMLButtonElement>('button[aria-label="Copy the visible screen"]');
     expect(copy, "the soft-key row's Copy button").toBeTruthy();
     fireEvent.click(copy!);
     expect(native.copies).toBe(1);
@@ -248,7 +248,7 @@ describe("the Copy lever the soft keys use", () => {
     fireEvent.click(segments(container)[1]!); // [Terminal]
     const copy = document
       .getElementById("soft-keys")
-      ?.querySelector<HTMLButtonElement>('button[aria-label="Copy"]');
+      ?.querySelector<HTMLButtonElement>('button[aria-label="Copy the visible screen"]');
     expect(copy).toBeTruthy();
     expect(() => fireEvent.click(copy!)).not.toThrow();
     expect(native.copies).toBe(0);
