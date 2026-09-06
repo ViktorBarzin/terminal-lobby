@@ -193,8 +193,12 @@ const STORE = "sessions";
  * The IndexedDB adapter. Returns null wherever IndexedDB is unavailable or
  * refuses to open, which the cache above treats as "no cache" rather than as an
  * error — this is an optimisation, and it is never allowed to be a dependency.
+ *
+ * Module-private on purpose. Every caller goes through sharedIndexedDbBackend()
+ * below, because a second handle on the same database would keep
+ * clearLocalData's delete blocked.
  */
-export function indexedDbBackend(): CacheBackend | null {
+function indexedDbBackend(): CacheBackend | null {
   if (typeof indexedDB === "undefined") return null;
 
   let opening: Promise<IDBDatabase> | null = null;
