@@ -57,6 +57,11 @@ var knownEvents = map[string]bool{
 	"session.moved":     true, // between projects / reordered (tl.from, tl.to)
 	"session.killed":    true,
 	"session.restored":  true, // tmux-persist restore (tl.count)
+	// A session whose grid pin had gone stale, repinned by the sweep in
+	// tmux-api/repair_grid_pins.go so the terminal resizes again. Emitted per
+	// repaired session, so a run over many users emits many; tl.client says
+	// which pass did it. tl.session, tl.client=sweep.
+	"session.grid_repinned": true,
 
 	// -- skills & plugins (skills-api) --------------------------------------
 	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)
@@ -65,6 +70,7 @@ var knownEvents = map[string]bool{
 	"plugin.uninstalled":       true, // marketplace plugin removed and its cache reclaimed (tl.key)
 	"plugin.installed":         true, // installed from a source repo (tl.key, tl.from, tl.kind=source)
 	"skill.toggled":            true, // enabledPlugins write (tl.key, tl.kind=on|off)
+	"skill.edited":             true, // the editor wrote a skill file (tl.key)
 	"plugin.updated":           true, // marketplace plugin updated (tl.key)
 	"session.claude_restarted": true, // respawned a pane to load a new skill set (tl.session)
 
@@ -84,6 +90,12 @@ var knownEvents = map[string]bool{
 	// -- sharing ------------------------------------------------------------
 	"share.granted": true, // (tl.kind = ro|rw)
 	"share.revoked": true,
+	// The other side of a share: which way a member chose to JOIN a session
+	// they can reach, read-only or read-write (tl.to = ro|rw, tl.session).
+	// tl.as is set when the joiner is acting as another user, which makes
+	// "an admin chose to type in someone else's session" one query rather
+	// than a join against the attach line. Browser-emitted (v2 lobby).
+	"watch.switched": true,
 
 	// -- acting as another user (admin) -------------------------------------
 	// The audit trail for the act-as switch. user.id is always the REAL caller
@@ -109,6 +121,7 @@ var knownEvents = map[string]bool{
 	"image.dropped":        true,
 	"image.shown":          true, // show-image / sixel render
 	"file.transferred":     true, // non-image drop
+	"file.attached":        true, // a file kept beside a session (tl.session, tl.count = bytes, tl.client)
 
 	// -- file preview & quick edit -----------------------------------------
 	"file.previewed":   true, // (tl.kind = md|html|svg|code|text)
@@ -160,6 +173,7 @@ var knownEvents = map[string]bool{
 	// -- the Claude conversation (session-events) --------------------------
 	"claude.prompt_sent":   true,
 	"claude.cancelled":     true,
+	"claude.answered":      true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
 	"claude.state_changed": true, // running/awaiting/done transition (tl.to)
 	"events.stream_opened": true, // SSE attach (tl.bytes, tl.count = the opening backfill)
 	"events.stream_closed": true,
