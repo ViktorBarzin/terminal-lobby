@@ -133,9 +133,22 @@ export const App: Component = () => {
   const [sessionStatus, setSessionStatus] = createSignal<SseStatus | null>(null);
   createEffect(() => status.setTranscript(sessionStatus()));
 
+  // Whether the Ctrl+J dock can render here. The dock store answers the same
+  // question from its own `allowed`, but it is built at :372 out of `store`, so
+  // it cannot be handed to `store`'s own constructor. Both read one media query
+  // through `watchQuery`, so the two accessors are views of a single browser
+  // fact rather than two mechanisms that could drift; the drift this design
+  // avoids is a CSS rule answering it alongside the JS, which is why the
+  // `@media (pointer: coarse)` display:none came out.
+  const dockCoarse = createCoarsePointer();
+
   const store = createLobbyStore({
     initialSelected: readInitialSelection(),
     notify,
+    // A phone renders no dock, so it must not hide the docked shell from the
+    // list: `layout.dock` roams, and hiding a card that has no panel to hide
+    // behind leaves the session running and unreachable.
+    dockAllowed: () => !dockCoarse(),
     // Opening a session on a phone IS the navigation: show the terminal. Fires
     // even when the same session is re-tapped, which is how you get back to a
     // terminal you left to browse the list.
