@@ -36,6 +36,7 @@ import { applyAppBadge, waitingCount } from "./appbadge";
 import { createVisitStore } from "../store/visits";
 import { computeTransitions, snapshotStates, type StateMap } from "./transitions";
 import { fireNotification } from "./fire";
+import { sessionConfirmLabel } from "../types/lobby";
 import { notifyOptedIn, setNotifyOptIn } from "./opt-in";
 import {
   readPendingSessions,
@@ -413,7 +414,11 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
       // <kind>" log line, the journal shows at a glance whether an edge alerted
       // once or twice on a device.
       track("notify.shown", { "tl.kind": hasReg ? "sw" : "page" });
-      void fireNotification(f.session, f.kind, {
+      // The banner reads the title; the name only addresses it. A session that
+      // has left the list between the poll and here has nothing but its name,
+      // which is what sessionConfirmLabel answers for an untitled one anyway.
+      const s = list.find((x) => x.name === f.session);
+      void fireNotification(f.session, sessionConfirmLabel(s ?? { name: f.session }), f.kind, {
         hasRegistration: hasReg,
         onActivate: opts.onActivateSession,
       });
