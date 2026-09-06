@@ -136,6 +136,10 @@ of the files themselves rather than probing for a roster, so it works on a
 machine that has never heard of this homelab. `-force` overrides, and should be
 needed only if the roster is genuinely gone.
 
+`-deploy-grant` is outside that guard. `/etc/sudoers.d/tl-reconcile` has no
+other writer, so that run writes it on a roster-owned box too and leaves the
+map and `ttyd-users` alone. See `docs/deployment.md`.
+
 Single-user installs need none of this: one account needs no map and no sudo.
 
 ## Why the package does not ship the sudo grant
