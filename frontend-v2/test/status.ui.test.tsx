@@ -191,6 +191,23 @@ describe("the Right now panel", () => {
     cleanup();
   });
 
+  // The panel used to word its own ladder: "5 min ago", and no day unit at all,
+  // so a check made yesterday read "31h ago". It shares the sidebar's ladder
+  // now, which is where this wording comes from.
+  it("dates the last check in the same words the rest of the app uses", () => {
+    // A whole second past the boundary, because the ladder floors: an interval a
+    // millisecond short of five minutes now reads "4m ago", and render overhead
+    // is enough to put it there.
+    const at = Date.now() - 5 * 60_000 - 1_000;
+    const label = () => {
+      const { container } = render(() => <RightNow conn={control({ checkedAt: () => at })} />);
+      const text = container.querySelector(".tl-set-hint-static")?.textContent ?? "";
+      cleanup();
+      return text;
+    };
+    expect(label()).toContain("Checked 5m ago");
+  });
+
   it("says what dropped since the page loaded", () => {
     const { container } = render(() => (
       <RightNow

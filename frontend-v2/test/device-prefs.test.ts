@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
 import {
   FLOW_KILL_KEY,
   GESTURES_KILL_KEY,
@@ -162,6 +162,81 @@ describe("clearLocalData", () => {
     expect(body.fontSize).toBeDefined();
     expect(body.cursorStyle).toBe("block");
     expect(body.gestures.wheelSmooth).toBe(true);
+  });
+
+  /**
+   * A fake indexedDB whose deletes never complete on their own. jsdom has no
+   * IndexedDB at all, so the stub is also what makes the sweep reachable here.
+   */
+  const fakeIDB = (behaviour: "blocked" | "abort" | "success" | "throw") => {
+    const asked: string[] = [];
+    const idb = {
+      deleteDatabase(name: string) {
+        asked.push(name);
+        if (behaviour === "throw") throw new DOMException("denied");
+        const req = new EventTarget() as EventTarget & { result: unknown };
+        if (behaviour !== "blocked") {
+          queueMicrotask(() => req.dispatchEvent(new Event(behaviour)));
+        }
+        return req;
+      },
+    };
+    const prev = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+    Object.defineProperty(globalThis, "indexedDB", { value: idb, configurable: true });
+    onTestFinished(() => {
+      if (prev) Object.defineProperty(globalThis, "indexedDB", prev);
+      else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+    });
+    return asked;
+  };
+
+  it("deletes the three databases this app owns", async () => {
+    const asked = fakeIDB("success");
+    const reload = vi.fn();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 50 });
+    expect(asked.sort()).toEqual(["tl-badge", "tl-notif", "tl-transcripts"]);
+    expect(reload).toHaveBeenCalled();
+  });
+
+  /**
+   * The one that matters. `deleteDatabase` fires `blocked` and then sits there
+   * for as long as another context holds the database open, and two of the
+   * three ARE held open: tl-transcripts by a module-level memo in
+   * transcript-cache, tl-notif by the service worker. A sweep that waits for
+   * those never reloads, and the user is left staring at a dead button.
+   */
+  it("still reloads when every delete blocks", async () => {
+    fakeIDB("blocked");
+    const reload = vi.fn();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 20 });
+    expect(reload).toHaveBeenCalled();
+  });
+
+  // A transaction can abort WITHOUT ever firing error. No `abort` listener and
+  // the promise stays pending for the whole timeout, or forever if the timeout
+  // were dropped.
+  it("still reloads when a delete aborts without an error", async () => {
+    fakeIDB("abort");
+    const reload = vi.fn();
+    const started = Date.now();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 5_000 });
+    expect(reload).toHaveBeenCalled();
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
+  it("still clears the rest when indexedDB itself refuses", async () => {
+    seed();
+    fakeIDB("throw");
+    const reload = vi.fn();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 20 });
+    expect(localStorage.getItem("tl:prefs:v1")).toBeNull();
+    expect(reload).toHaveBeenCalled();
+  });
+
+  it("does not fall over on a browser with no indexedDB at all", async () => {
+    const reload = vi.fn();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 20 });
+    expect(reload).toHaveBeenCalled();
   });
 
   it("still clears this browser when the server reset fails", async () => {

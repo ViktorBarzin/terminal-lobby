@@ -205,10 +205,37 @@ func TranscriptModel(path string) string {
 // WithinProjects reports whether path is a transcript inside root. Guards both
 // what is stamped and what is read back.
 func WithinProjects(root, path string) bool {
-	if filepath.Ext(path) != ".jsonl" {
-		return false
+	return filepath.Ext(path) == ".jsonl" && PathWithin(root, path)
+}
+
+// PathWithin reports whether path resolves to somewhere inside root.
+//
+// The one containment body. It used to exist twice: this side compared the
+// paths as text, and the privileged reader in session-events resolved symlinks
+// first, so the same stamp could be accepted here and refused there. The
+// resolving version is the one that is right — a symlink planted inside the
+// root, which the session's own OS user can write, points wherever it likes and
+// passes a text comparison.
+//
+// BOTH sides are resolved. Resolving only the path would break every box where
+// ~/.claude is itself a symlink, which is an ordinary dotfiles layout, not an
+// exotic one.
+//
+// A path that does not resolve falls back to its lexical form, and that
+// fallback is deliberate: Claude writes the transcript AFTER the hook stamps
+// the session, so a file that is not there yet is an ordinary state. Dropping
+// the fallback would make the stamp path refuse every new session. The read
+// that follows reports the absence itself.
+func PathWithin(root, path string) bool {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		clean = resolved
 	}
-	rel, err := filepath.Rel(root, path)
+	realRoot := root
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		realRoot = resolved
+	}
+	rel, err := filepath.Rel(realRoot, clean)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 

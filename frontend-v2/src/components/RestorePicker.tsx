@@ -9,6 +9,7 @@ import {
   type Component,
 } from "solid-js";
 import type { Snapshot, SnapshotList, SnapshotRow } from "../types/lobby";
+import { agoLabel } from "./lobby.logic";
 import { dismissOnPress } from "./overlay";
 
 /**
@@ -72,10 +73,7 @@ export function snapshotDate(ts: string): Date | null {
 export function formatAgo(ts: string, now: Date = new Date()): string {
   const d = snapshotDate(ts);
   if (!d) return "";
-  const mins = Math.max(0, Math.round((now.getTime() - d.getTime()) / 60000));
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  return hrs < 24 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
+  return agoLabel(now.getTime() - d.getTime());
 }
 
 export function shortCwd(cwd: string, home?: string): string {
@@ -131,10 +129,7 @@ export function rowNote(row: SnapshotRow): { text: string; warn: boolean } {
  *  on memory, which is exactly when a recovery can re-trigger the OOM it
  *  follows. Returns null when there is nothing worth saying, including when the
  *  server could not read the number (-1). */
-export function memoryWarning(
-  list: SnapshotList | null,
-  selectedCount: number,
-): string | null {
+export function memoryWarning(list: SnapshotList | null, selectedCount: number): string | null {
   if (!list || selectedCount <= 0) return null;
   const avail = list.memAvailableMb;
   if (avail <= 0 || avail >= 4096) return null;
@@ -230,7 +225,13 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
   };
 
   const selectAll = (): void => {
-    setChecked(new Set(rows().filter((r) => r.action !== "skip").map((r) => r.name)));
+    setChecked(
+      new Set(
+        rows()
+          .filter((r) => r.action !== "skip")
+          .map((r) => r.name),
+      ),
+    );
   };
 
   const restore = async (): Promise<void> => {

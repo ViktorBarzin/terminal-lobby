@@ -29,7 +29,12 @@ var (
 	setprivBinary = "/usr/bin/setpriv"
 	cgroupRoot    = "/sys/fs/cgroup"
 	procRoot      = "/proc"
-	userMap       = "/etc/ttyd-user-map"
+	// The literal, not authuser.DefaultMapPath. This watcher is a leaf that
+	// reads the map as a file; taking an edge to the identity gate for one
+	// string would put a service that never authenticates a request downstream
+	// of the package that does. The path is defined in authuser/resolve.go and
+	// they must agree.
+	userMap = "/etc/ttyd-user-map"
 	// The TOMBSTONE file, not the manifest. tmux-persist-forget appends here on a
 	// deliberate kill and leaves the manifest row alone until the next 5-minute
 	// save, so an orphaned manifest row cannot tell a kill from a death in the

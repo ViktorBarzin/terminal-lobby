@@ -27,7 +27,7 @@ export const PrivacyPage: Component<{
   const doClear = async (): Promise<void> => {
     const ok = confirmFn()(
       "Clear this browser's terminal-lobby data (theme, font size, sidebar " +
-        "layout, gestures, notification opt-in)" +
+        "layout, gestures, notification opt-in, and cached session transcripts)" +
         (alsoRoamed() ? " AND reset the settings that roam to your other devices" : "") +
         ", then reload?\n\nYour tmux sessions are not affected.",
     );

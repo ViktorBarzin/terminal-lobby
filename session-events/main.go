@@ -15,13 +15,14 @@ import (
 	"syscall"
 	"time"
 
+	"terminal-lobby/authuser"
 	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
 
 func main() {
 	addr := flag.String("addr", ":7685", "listen address")
-	mapPath := flag.String("usermap", "/etc/ttyd-user-map", "Authentik→OS-user map")
+	mapPath := flag.String("usermap", authuser.DefaultMapPath, "identity→OS-user map")
 	homeBase := flag.String("home-base", "/home", "base dir holding per-user homes")
 	poll := flag.Duration("poll", 200*time.Millisecond, "transcript tail interval")
 	hb := flag.Duration("heartbeat", 20*time.Second, "SSE heartbeat interval")
