@@ -17,9 +17,16 @@
 //
 // That gives one invariant worth stating plainly: the day rollups are the
 // complete record, and the session rows are the detail view of the last 30
-// days. Every reading rolls its difference into the day it was taken, so
-// dropping an old session row loses nothing, and All time is answerable from
-// the days alone.
+// days. Every reading rolls its difference into the day it was taken, so All
+// time is answerable from the days alone.
+//
+// Differencing is also why retention RETIRES a row rather than deleting it. The
+// row is what the next reading is differenced against, so a conversation whose
+// row had been deleted would contribute its whole running total a second time
+// the moment it reported again — $50 of history landing on today. Past the
+// retention window a row therefore keeps its identity and its totals and loses
+// its detail (Folded, below); the reader leaves those out of the session list,
+// and reporting again makes one live once more.
 //
 // Design: docs/plans/2026-09-06-agent-spend-panel-design.md.
 package spendstore
@@ -46,15 +53,20 @@ const (
 	// Dir matches the other per-user stores under /var/lib/tmux-api.
 	Dir = "/var/lib/tmux-api/spend"
 
-	// SessionTTL is how long a session row survives after its last reading.
-	// Past that it is dropped and only its day rollups remain, which is what
-	// keeps the document from growing with every conversation ever opened.
+	// SessionTTL is how long a session row keeps its detail after its last
+	// reading. Past that the row is retired: the name and the model go, the
+	// running totals stay as the baseline the next reading is differenced
+	// against, and the page stops listing it.
 	SessionTTL = 30 * 24 * time.Hour
 
-	// MaxSessionRows bounds the rows even inside the retention window, the way
-	// titlesKeep and assignmentsKeep bound their stores. The trim drops the
-	// ones written to longest ago and costs no money: their spend is already in
-	// the day it happened.
+	// MaxSessionRows bounds the rows, retired ones included, the way titlesKeep
+	// and assignmentsKeep bound their stores. The trim drops the ones written
+	// to longest ago, which are retired rows first because a retired row is by
+	// definition older than every live one. Dropping a baseline is the one
+	// place this store can still count a figure twice: a conversation that
+	// reports again after its baseline is gone contributes its running total
+	// afresh. That needs more than MaxSessionRows conversations to pass through
+	// the document before the old one speaks again.
 	MaxSessionRows = 2000
 
 	dateLayout = "2006-01-02"
@@ -163,6 +175,11 @@ type Doc struct {
 // SessionRow is one conversation's latest figures. Cost is its running total;
 // Tokens is what it was carrying at the last reading, which goes down after a
 // compaction and is a snapshot rather than a sum.
+//
+// Folded marks a row the retention pass has retired. It carries the totals and
+// nothing else — Key and Model are cleared — because its only remaining job is
+// to be the baseline the next reading from that conversation is differenced
+// against. Readers show live rows and leave folded ones out.
 type SessionRow struct {
 	SessionID string            `json:"sessionId"`
 	Key       string            `json:"key"`
@@ -172,6 +189,20 @@ type SessionRow struct {
 	CostUSD   float64           `json:"costUsd"`
 	FirstSeen int64             `json:"firstSeenSec"`
 	LastSeen  int64             `json:"lastSeenSec"`
+	Folded    bool              `json:"folded,omitempty"`
+}
+
+// LiveRows is the session rows a reader should show: the ones retention has not
+// retired. Retired rows stay in the document as baselines, and a page listing
+// them would show a conversation with no name under a period it did not run in.
+func LiveRows(rows []SessionRow) []SessionRow {
+	out := make([]SessionRow, 0, len(rows))
+	for _, r := range rows {
+		if !r.Folded {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // DayRow is one day's total for one tool on one model, in the local day the
@@ -285,10 +316,12 @@ func apply(doc *Doc, r Reading, maxRows int) {
 		found = true
 		prevCost, prevTokens = doc.Sessions[i].CostUSD, doc.Sessions[i].Tokens
 		row := &doc.Sessions[i]
-		// A renamed session keeps its row and takes the new name.
+		// A renamed session keeps its row and takes the new name, and a retired
+		// one becomes live again: it is being worked in.
 		row.Key, row.Model, row.Tool = r.TmuxSession, r.Model, r.Tool
 		row.CostUSD, row.Tokens = r.CostUSD, r.Tokens
 		row.LastSeen = r.At.Unix()
+		row.Folded = false
 		break
 	}
 	if !found {
@@ -336,19 +369,26 @@ func addToDay(doc *Doc, r Reading, cost float64, tokens Tokens) {
 	})
 }
 
-// fold drops the session rows the retention window has passed, and trims the
-// rest to the cap. Both are pure drops: the spend is already in the days. It
-// runs on every write rather than on a timer, so there is nothing to schedule
-// and a store nobody writes to never needs sweeping.
+// fold retires the session rows the retention window has passed, and trims the
+// whole list to the cap. It runs on every write rather than on a timer, so
+// there is nothing to schedule and a store nobody writes to never needs
+// sweeping.
+//
+// Retiring a row keeps its identity and its totals and drops its detail. The
+// totals are what the next reading from that conversation is differenced
+// against, so deleting them outright would make a resumed conversation
+// contribute its whole running total a second time. The trim is the one place
+// a baseline does go, and it takes the least recently seen first.
 func fold(doc *Doc, now time.Time, maxRows int) {
 	cutoff := now.Add(-SessionTTL).Unix()
-	kept := doc.Sessions[:0]
-	for _, row := range doc.Sessions {
-		if row.LastSeen >= cutoff {
-			kept = append(kept, row)
+	for i := range doc.Sessions {
+		row := &doc.Sessions[i]
+		if row.Folded || row.LastSeen >= cutoff {
+			continue
 		}
+		row.Folded = true
+		row.Key, row.Model = "", ""
 	}
-	doc.Sessions = kept
 	if maxRows > 0 && len(doc.Sessions) > maxRows {
 		sort.SliceStable(doc.Sessions, func(i, j int) bool {
 			return doc.Sessions[i].LastSeen < doc.Sessions[j].LastSeen
