@@ -152,3 +152,86 @@ func TestTokensAddAndSubtract(t *testing.T) {
 		t.Fatalf("sub: got %+v, want %+v", got, want)
 	}
 }
+
+// The session rows are filtered by the same periods as the day rollups, and
+// their timestamps are instants rather than dates. CoversTime is that bridge,
+// and it judges the day in the caller's own location so a reader in one zone
+// and a writer in another agree on which day a row belongs to.
+func TestCoversTimeJudgesTheDayInTheCallersLocation(t *testing.T) {
+	now, _ := time.ParseInLocation("2006-01-02 15:04:05", "2026-09-15 12:00:00", time.Local)
+	for _, tc := range []struct {
+		name   string
+		period Period
+		at     time.Time
+		want   bool
+	}{
+		{"today covers this morning", PeriodToday, now.Add(-3 * time.Hour), true},
+		{"today does not cover yesterday", PeriodToday, now.AddDate(0, 0, -1), false},
+		{"7 days covers the sixth day back", PeriodSevenDays, now.AddDate(0, 0, -6), true},
+		{"7 days stops at the seventh", PeriodSevenDays, now.AddDate(0, 0, -7), false},
+		{"this month covers the first", PeriodThisMonth, now.AddDate(0, 0, -14), true},
+		{"this month stops at last month", PeriodThisMonth, now.AddDate(0, 0, -15), false},
+		{"all time covers a year ago", PeriodAllTime, now.AddDate(-1, 0, 0), true},
+		{"an instant in another zone is judged as the same day", PeriodToday, now.UTC(), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.period.CoversTime(tc.at, now); got != tc.want {
+				t.Fatalf("%s covers %s: got %v, want %v", tc.period, tc.at, got, tc.want)
+			}
+		})
+	}
+}
+
+// The Settings page shows what each model cost under the heading figure, so the
+// split has to survive a conversation that moved between models mid-way.
+func TestModelsForSplitsTheSamePeriodByModel(t *testing.T) {
+	now, _ := time.ParseInLocation("2006-01-02", "2026-09-15", time.Local)
+	doc := daysDoc(
+		DayRow{Date: "2026-09-15", Tool: sessionio.HarnessClaude, Model: "claude-opus-5", Tokens: Tokens{Input: 10}, CostUSD: 1},
+		DayRow{Date: "2026-09-14", Tool: sessionio.HarnessClaude, Model: "claude-opus-5", Tokens: Tokens{Input: 20}, CostUSD: 2},
+		DayRow{Date: "2026-09-14", Tool: sessionio.HarnessClaude, Model: "claude-haiku-4-5", Tokens: Tokens{Input: 40}, CostUSD: 0.5},
+		DayRow{Date: "2026-09-14", Tool: sessionio.HarnessCodex, Model: "gpt-6-astra", Tokens: Tokens{Input: 80}},
+		DayRow{Date: "2026-08-01", Tool: sessionio.HarnessClaude, Model: "claude-opus-5", Tokens: Tokens{Input: 160}, CostUSD: 99},
+	)
+
+	got := doc.ModelsFor(PeriodSevenDays, now)
+	want := []ModelTotal{
+		{Tool: sessionio.HarnessClaude, Model: "claude-opus-5", Tokens: Tokens{Input: 30}, CostUSD: 3},
+		{Tool: sessionio.HarnessClaude, Model: "claude-haiku-4-5", Tokens: Tokens{Input: 40}, CostUSD: 0.5},
+		{Tool: sessionio.HarnessCodex, Model: "gpt-6-astra", Tokens: Tokens{Input: 80}},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("models: got %d rows, want %d (%+v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// Two models that cost the same must not swap places between renders.
+func TestModelsForOrdersTiesByName(t *testing.T) {
+	now, _ := time.ParseInLocation("2006-01-02", "2026-09-15", time.Local)
+	doc := daysDoc(
+		DayRow{Date: "2026-09-15", Tool: sessionio.HarnessClaude, Model: "zeta", CostUSD: 1},
+		DayRow{Date: "2026-09-15", Tool: sessionio.HarnessClaude, Model: "alpha", CostUSD: 1},
+	)
+	got := doc.ModelsFor(PeriodToday, now)
+	if len(got) != 2 || got[0].Model != "alpha" || got[1].Model != "zeta" {
+		t.Fatalf("tie order: got %+v", got)
+	}
+}
+
+// A period that covers nothing is an empty slice rather than a nil one, so the
+// endpoint serializes [] and the page has a list to render as empty.
+func TestModelsForEmptyPeriodIsNotNil(t *testing.T) {
+	now, _ := time.ParseInLocation("2006-01-02", "2026-09-15", time.Local)
+	got := daysDoc(DayRow{Date: "2025-01-01", Tool: sessionio.HarnessClaude, Model: "m", CostUSD: 1}).ModelsFor(PeriodToday, now)
+	if got == nil {
+		t.Fatal("ModelsFor returned nil, want an empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %+v, want no rows", got)
+	}
+}
