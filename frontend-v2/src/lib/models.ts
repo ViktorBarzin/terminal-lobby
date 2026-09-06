@@ -104,7 +104,15 @@ const anyDefault = (noun: string): ModelOption => ({
  * The Claude rows are the slugs measured against `claude --model <slug>` on
  * 2026-09-06 (Claude Code 2.1.263), and they must stay in step with the
  * `modelPicker.options` block in managed settings, which is what makes them
- * rows in the CLI's own picker.
+ * rows in the CLI's own picker. The codex rows are what its own picker listed
+ * on codex-cli 0.153.4 the same day, each one run through `codex exec -m`.
+ *
+ * `gpt-6-astra` is a reminder that a stale CLI is indistinguishable from a
+ * model that does not exist. It is codex's DEFAULT on 0.153.4 and was absent
+ * from 0.144.3, which this box ran for eight weeks — so the model was missing
+ * from the picker, from the binary and from every probe, and looked like it had
+ * never shipped. The devvm now tracks latest and refreshes daily
+ * (infra playbooks/devvm.yml, codex-update.timer).
  *
  * Three slugs the CLI knows are deliberately absent. `claude-sonnet-5[1m]` is
  * accepted and then ignored — the session boots as plain "Sonnet 5", with no
@@ -136,6 +144,7 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
   codex: {
     model: [
       anyDefault("model"),
+      slug("gpt-6-astra"),
       slug("gpt-5.6-sol"),
       slug("gpt-5.6-terra"),
       slug("gpt-5.6-luna"),
