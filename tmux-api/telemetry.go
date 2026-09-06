@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"terminal-lobby/telemetry"
@@ -52,29 +53,47 @@ type intakeBucket struct {
 	last   time.Time
 }
 
+// bucketPool holds one bucket per OS user behind a lock. The intake is an HTTP
+// handler, one goroutine per request, so both the map and the counters inside
+// it are reached concurrently: two tabs of the same person race on one
+// bucket's tokens, and two different people race on the map itself. The map
+// write only runs for an OS user nobody has reported for yet, which is why an
+// unlocked map survived the ordinary day and would throw on the reconnect
+// burst after a restart.
+type bucketPool struct {
+	mu      sync.Mutex
+	buckets map[string]*intakeBucket
+}
+
+func newBucketPool() *bucketPool {
+	return &bucketPool{buckets: map[string]*intakeBucket{}}
+}
+
 var (
-	intakeBuckets = map[string]*intakeBucket{}
-	diagBuckets   = map[string]*intakeBucket{}
+	intakeBuckets = newBucketPool()
+	diagBuckets   = newBucketPool()
 )
 
 // allowIntake is a token bucket per OS user: intakeRatePerMinute events a
 // minute, burstable to one minute's worth.
 func allowIntake(osUser string, want int) bool {
-	return allowFrom(intakeBuckets, osUser, want, intakeRatePerMinute)
+	return intakeBuckets.allow(osUser, want, intakeRatePerMinute)
 }
 
 // allowDiag is the same shape over a separate pool, so the two channels cannot
 // spend each other's budget.
 func allowDiag(osUser string, want int) bool {
-	return allowFrom(diagBuckets, osUser, want, diagRatePerMinute)
+	return diagBuckets.allow(osUser, want, diagRatePerMinute)
 }
 
-func allowFrom(buckets map[string]*intakeBucket, osUser string, want, perMinute int) bool {
+func (p *bucketPool) allow(osUser string, want, perMinute int) bool {
 	now := telemetryNow()
-	b := buckets[osUser]
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	b := p.buckets[osUser]
 	if b == nil {
 		b = &intakeBucket{tokens: float64(perMinute), last: now}
-		buckets[osUser] = b
+		p.buckets[osUser] = b
 	}
 	if elapsed := now.Sub(b.last).Minutes(); elapsed > 0 {
 		b.tokens += elapsed * float64(perMinute)

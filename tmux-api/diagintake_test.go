@@ -25,7 +25,7 @@ func withDiagClock(t *testing.T, at *time.Time) {
 	t.Helper()
 	oldNow, oldBuckets := telemetryNow, diagBuckets
 	telemetryNow = func() time.Time { return *at }
-	diagBuckets = map[string]*intakeBucket{}
+	diagBuckets = newBucketPool()
 	t.Cleanup(func() { telemetryNow, diagBuckets = oldNow, oldBuckets })
 }
 
