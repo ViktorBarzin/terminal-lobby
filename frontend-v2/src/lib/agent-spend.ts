@@ -120,12 +120,21 @@ export interface AgentSpend {
   codex?: CodexSpend;
 }
 
-/** Read what the tools have consumed over one period. */
+/**
+ * Read what the tools have consumed over one period.
+ *
+ * `tool` asks for one section only. The sidebar figure follows the attached
+ * session's tool and shows one number, and the two halves cost different things
+ * to build — the Codex half walks rollout files and asks tmux for panes — so
+ * naming the tool is what keeps a Claude figure from paying for a Codex read on
+ * every poll. The Settings page omits it and gets both.
+ */
 export async function fetchAgentSpend(
   period: SpendPeriod,
   signal?: AbortSignal,
+  tool?: SessionTool,
 ): Promise<AgentSpend> {
-  const res = await fetchWithDeadline(agentSpendUrl(period), { signal });
+  const res = await fetchWithDeadline(agentSpendUrl(period, tool), { signal });
   if (!res.ok) throw new Error(`agent-spend ${res.status}`);
   return (await res.json()) as AgentSpend;
 }

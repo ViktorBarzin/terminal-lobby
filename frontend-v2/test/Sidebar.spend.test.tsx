@@ -163,6 +163,21 @@ describe("the sidebar spend figure", () => {
     store.dispose();
   });
 
+  // The figure shows one number out of one section, and building the other one
+  // costs the server a walk over the user's rollout files plus two tmux calls.
+  it("asks for the attached tool's section only", async () => {
+    const claude = await attached("claude", claudeToday(4.12));
+    await waitFor(() => expect(claude.urls.length).toBe(1));
+    expect(claude.urls[0]).toContain("tool=claude");
+    claude.store.dispose();
+    cleanup();
+
+    const codex = await attached("codex", codexNow());
+    await waitFor(() => expect(codex.urls.length).toBe(1));
+    expect(codex.urls[0]).toContain("tool=codex");
+    codex.store.dispose();
+  });
+
   it("shows nothing, and asks nothing, for a plain shell", async () => {
     const { container, urls, store } = await attached("shell", claudeToday(4.12));
     await Promise.resolve();
@@ -206,6 +221,44 @@ describe("the sidebar spend figure", () => {
     for (let i = 0; i < 4; i++) await store.refresh();
     expect(urls.length).toBe(1);
     store.dispose();
+  });
+
+  // A tab left open all day polls this figure, and every request merges the
+  // caller's signal with a fresh deadline by adding a listener to it. A signal
+  // that lives as long as the sidebar collects one of those per read, and each
+  // holds its merged controller alive with it.
+  it("does not pile abort listeners onto one signal as it reads", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const perTarget = new Map<EventTarget, number>();
+    const realAdd = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function (
+      this: EventTarget,
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (type === "abort") perTarget.set(this, (perTarget.get(this) ?? 0) + 1);
+      return realAdd.call(this, type, listener, options);
+    };
+    try {
+      const { container, urls, store } = await attached("claude", claudeToday(4.12));
+      // Waiting for the FIGURE, not just the request: a read that is still in
+      // flight is skipped rather than repeated, so the next poll would prove
+      // nothing.
+      await waitFor(() => expect(figure(container)?.textContent).toBe("$4.12"));
+      for (let i = 0; i < 5; i++) {
+        vi.setSystemTime(Date.now() + 31_000);
+        await store.refresh();
+        await waitFor(() => expect(urls.length).toBe(i + 2));
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const worst = Math.max(0, ...perTarget.values());
+      expect(worst).toBeLessThanOrEqual(2);
+      store.dispose();
+    } finally {
+      EventTarget.prototype.addEventListener = realAdd;
+      vi.useRealTimers();
+    }
   });
 
   it("says nothing rather than an error when the read fails", async () => {

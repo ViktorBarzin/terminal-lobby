@@ -47,18 +47,29 @@ export const SpendFigure: Component<{
   // started over.
   const [nowMs, setNowMs] = createSignal(Date.now());
 
-  const abort = new AbortController();
-  onCleanup(() => abort.abort());
+  // One controller PER READ, and the current one kept only so unmounting can
+  // cancel it. A single long-lived signal handed to a repeating fetch is a slow
+  // leak: the transport merges the caller's signal with a fresh deadline by
+  // adding a listener to it, and a listener that is only removed when the abort
+  // fires means one retained listener, and one retained merged controller, per
+  // read for as long as the tab is open.
+  let inFlight: AbortController | null = null;
+  onCleanup(() => inFlight?.abort());
 
   let lastReadAt = 0;
   let reading = false;
 
-  const load = async (): Promise<void> => {
+  const load = async (tool: SessionTool): Promise<void> => {
     if (reading) return;
     reading = true;
     lastReadAt = Date.now();
+    const abort = new AbortController();
+    inFlight = abort;
     try {
-      const next = await fetchAgentSpend("today", abort.signal);
+      // One section, named: the figure reads a single number out of the
+      // attached tool's half, and the other half costs the server a rollout
+      // walk and two tmux calls to build.
+      const next = await fetchAgentSpend("today", abort.signal, tool);
       setDoc(next);
       setNowMs(Date.now());
     } catch {
@@ -66,6 +77,7 @@ export const SpendFigure: Component<{
       // stays as it was, and the Settings page says what went wrong.
     } finally {
       reading = false;
+      if (inFlight === abort) inFlight = null;
     }
   };
 
@@ -79,7 +91,7 @@ export const SpendFigure: Component<{
     // for a shell, so there is no reason to have read one.
     if (tool !== "claude" && tool !== "codex") return;
     if (Date.now() - lastReadAt < MIN_READ_MS) return;
-    void load();
+    void load(tool);
   });
 
   const figure = (): string => sidebarFigure(props.tool(), doc(), nowMs());

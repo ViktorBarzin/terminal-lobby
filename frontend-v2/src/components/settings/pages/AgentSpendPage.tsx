@@ -45,6 +45,13 @@ import { Group, Readout } from "../controls";
 /** What a session row shows for a name: its title when the lobby knows one. */
 type TitleLookup = Accessor<ReadonlyArray<{ name: string; title?: string }>>;
 
+/**
+ * How often the page re-reads the wall clock. Nothing is fetched on this tick:
+ * it decides whether a window has reset and how long is left on the ones that
+ * have not, and half a minute is finer than either of those needs.
+ */
+const CLOCK_TICK_MS = 30_000;
+
 export const AgentSpendPage: Component<{
   /** The caller's live sessions, so a row can show a title rather than an id.
    *  Absent in a tab that has no session list yet; rows then show the id. */
@@ -54,27 +61,39 @@ export const AgentSpendPage: Component<{
   const [doc, setDoc] = createSignal<AgentSpend | null>(null);
   const [error, setError] = createSignal("");
   const [loading, setLoading] = createSignal(true);
-  // Read once per period rather than polled: both sources move when a turn
-  // completes, and a panel that reflowed while being read would be worse than
-  // one that is a minute old.
+  // The figures are read once per period rather than polled: both sources move
+  // when a turn completes, and a panel that reflowed while being read would be
+  // worse than one that is a minute old. The CLOCK is a different matter, and
+  // ticks on its own — a window that resets under an open panel has to stop
+  // being drawn, and "resets in 4m" has to stop saying 4m an hour later.
   const [nowMs, setNowMs] = createSignal(Date.now());
+  const clock = setInterval(() => setNowMs(Date.now()), CLOCK_TICK_MS);
+  onCleanup(() => clearInterval(clock));
 
   const abort = new AbortController();
   onCleanup(() => abort.abort());
 
+  // Which read is the current one. Periods are switched by clicking, the
+  // requests differ in how much work the server does for them, and nothing
+  // promises they come back in order — so an answer that is no longer the one
+  // being waited for is dropped rather than drawn under the wrong heading.
+  let latest = 0;
+
   const load = async (p: SpendPeriod): Promise<void> => {
+    const seq = ++latest;
     setLoading(true);
     try {
       const next = await fetchAgentSpend(p, abort.signal);
+      if (seq !== latest) return;
       setDoc(next);
       setNowMs(Date.now());
       setError("");
     } catch (e) {
-      if (abort.signal.aborted) return;
+      if (abort.signal.aborted || seq !== latest) return;
       setDoc(null);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (seq === latest) setLoading(false);
     }
   };
 
@@ -143,7 +162,7 @@ export const AgentSpendPage: Component<{
             <div class="tl-spend-figure">
               <b>{formatUsd(c().costUsd)}</b>
               <span class="tl-spend-figure-note">
-                {periodNote(period())} · {formatTokens(c().tokens.input + c().tokens.output)} tokens
+                {periodNote(period())} · <ApproxTokens n={c().tokens.input + c().tokens.output} />
               </span>
             </div>
 
@@ -168,7 +187,7 @@ export const AgentSpendPage: Component<{
                   {(m) => (
                     <SpendRow
                       name={m.model}
-                      meta={`${formatTokens(m.tokens.input + m.tokens.output)} tokens`}
+                      meta={<ApproxTokens n={m.tokens.input + m.tokens.output} />}
                       value={formatUsd(m.costUsd)}
                     />
                   )}
@@ -191,21 +210,27 @@ export const AgentSpendPage: Component<{
                     <SpendRow
                       session
                       name={sessionLabel(s.session)}
-                      meta={[s.model, `${formatTokens(s.tokens.input + s.tokens.output)} tokens`]
-                        .filter(Boolean)
-                        .join(" · ")}
+                      meta={
+                        <>
+                          {s.model ? `${s.model} · ` : ""}
+                          {formatTokens(s.tokens.input + s.tokens.output)} tokens in context
+                        </>
+                      }
                       value={formatUsd(s.costUsd)}
                     />
                   )}
                 </For>
               </div>
             </Show>
-            {/* A session's figure is its running total since it started, which
-                is a different question from the period's own arithmetic above.
-                Saying so is cheaper than explaining the mismatch later. */}
+            {/* Three different questions sit close together here, and each
+                answer is worth one clause: the dollars are Claude Code's, a
+                session's figure is its whole life rather than the period's, and
+                the token totals are a sum of differences that a compaction
+                takes a bite out of. */}
             <div class="tl-set-hint tl-set-hint-static">
               A session's figure is what it has cost since it started, so it can be larger than the
-              period above it. Claude Code computes these.
+              period above it. Claude Code computes these. Token counts are approximate: they are
+              read from the context a session is carrying, which drops when it is compacted.
             </div>
           </Group>
         )}
@@ -290,12 +315,32 @@ const Meter: Component<{ label: string; percent: number; note?: string }> = (pro
   </div>
 );
 
+/**
+ * A token figure with the marker the Network page uses for a number it cannot
+ * measure exactly.
+ *
+ * The dollars beside these come from Claude Code's own arithmetic. The tokens
+ * do not: a reading reports the context the session is carrying, that figure
+ * goes DOWN after a compaction, and the store rolls up the differences between
+ * readings — so what a compaction discarded is not in the total. Marking it is
+ * cheaper than a footnote per row, and the same ≈ already means this two pages
+ * away.
+ */
+const ApproxTokens: Component<{ n: number }> = (props) => (
+  <>
+    <span class="tl-netusage-approx" aria-label="approximate">
+      ≈
+    </span>{" "}
+    {formatTokens(props.n)} tokens
+  </>
+);
+
 /** One line item: what it is, what it was doing, what it came to. `session`
  *  marks the rows that are conversations rather than models, which is how the
  *  two lists are told apart from outside. */
 const SpendRow: Component<{
   name: string;
-  meta?: string;
+  meta?: JSX.Element;
   value: JSX.Element;
   session?: boolean;
 }> = (props) => (
