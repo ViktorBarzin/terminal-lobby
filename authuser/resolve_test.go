@@ -65,6 +65,25 @@ func TestDefaultHeaderIsXForwardedUser(t *testing.T) {
 	}
 }
 
+// A service that only wants to know whether a request carries an identity at
+// all asks the gate, and the gate's answer has to be the SAME name it resolves
+// by. Five services used to keep their own const naming the compiled default,
+// and on a box where TL_AUTH_HEADER is X-Authentik-Username that const reads
+// empty on every request.
+func TestGateAuthHeaderTracksTheConfiguredName(t *testing.T) {
+	g := resolveGate(t, Config{}, "", "")
+	if got := g.AuthHeader(); got != DefaultAuthHeader {
+		t.Fatalf("unconfigured gate AuthHeader() = %q, want %q", got, DefaultAuthHeader)
+	}
+	g.Config = Config{AuthHeader: "X-Authentik-Username"}
+	if got := g.AuthHeader(); got != "X-Authentik-Username" {
+		t.Fatalf("configured gate AuthHeader() = %q, want X-Authentik-Username", got)
+	}
+	if got, want := g.AuthHeader(), g.Config.Header(); got != want {
+		t.Fatalf("AuthHeader() = %q but the gate resolves by %q", got, want)
+	}
+}
+
 func TestAnyHeaderNameCanCarryTheIdentity(t *testing.T) {
 	for _, name := range []string{"X-Forwarded-User", "X-Authentik-Username", "X-Remote-User"} {
 		g := resolveGate(t, Config{AuthHeader: name}, "", "")

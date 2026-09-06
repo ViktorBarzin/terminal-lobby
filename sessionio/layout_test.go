@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -147,6 +148,64 @@ func TestSessionMapRefusesTranscriptOutsideTheUsersProjects(t *testing.T) {
 	// A traversing cwd/session id cannot be stamped in the first place.
 	if err := sm.Put(SessionInfo{TmuxSession: "demo", CWD: "/x", ClaudeID: "../../../../etc/passwd"}); err == nil {
 		t.Fatal("put accepted a session id that escapes the projects root")
+	}
+}
+
+// The lexical check said yes to this and the privileged one said no, which is
+// the whole reason the two collapsed into one body. A symlink planted INSIDE
+// the projects root, pointing at a file outside it, is a path that passes
+// filepath.Rel and still reads someone else's transcript. The user's own
+// account can write that link — the stamp store and the projects tree are both
+// theirs — so it is the realistic shape of the escape, not a contrived one.
+//
+// The two roots are BOTH resolved, because on a box where ~/.claude is itself a
+// symlink (a dotfiles checkout, a moved home) resolving only the path would
+// make every valid transcript fail containment.
+func TestWithinProjectsFollowsALinkOutOfTheRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege on Windows")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "projects")
+	outside := filepath.Join(base, "elsewhere")
+	for _, d := range []string{root, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret := filepath.Join(outside, "someone-else.jsonl")
+	if err := os.WriteFile(secret, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "innocent.jsonl")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	if WithinProjects(root, link) {
+		t.Fatal("a link inside the root pointing out of it was accepted")
+	}
+
+	// A real transcript still passes, and so does one that does not exist yet:
+	// Claude writes the file after the hook stamps the session, so an unwritten
+	// path is an ordinary state rather than an escape.
+	real := filepath.Join(root, "real.jsonl")
+	if err := os.WriteFile(real, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !WithinProjects(root, real) {
+		t.Fatal("a real transcript inside the root was refused")
+	}
+	if !WithinProjects(root, filepath.Join(root, "not-written-yet.jsonl")) {
+		t.Fatal("a transcript Claude has not written yet was refused")
+	}
+
+	// The root itself reached through a symlink still contains its own files.
+	linkedRoot := filepath.Join(base, "projects-link")
+	if err := os.Symlink(root, linkedRoot); err != nil {
+		t.Fatal(err)
+	}
+	if !WithinProjects(linkedRoot, real) {
+		t.Fatal("a symlinked projects root refused a transcript inside it")
 	}
 }
 

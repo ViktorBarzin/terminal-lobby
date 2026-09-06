@@ -345,6 +345,11 @@ const LocalConfigPath = "/etc/terminal-lobby.local.conf"
 //
 // TL_LOCAL_CONF and TL_USER_MAP are overridable so the test can run this
 // against a fake root rather than asserting on the text of it.
+//
+// The path below is a literal rather than authuser.DefaultMapPath because this
+// is shell text the package SHIPS, not Go the package runs, and the packaging
+// module does not otherwise depend on the identity gate. It is defined in
+// authuser/resolve.go and the two must agree.
 const MigrateConfigSnippet = `
 : "${TL_LOCAL_CONF:=/etc/terminal-lobby.local.conf}"
 : "${TL_USER_MAP:=/etc/ttyd-user-map}"

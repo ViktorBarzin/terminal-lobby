@@ -9,7 +9,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"terminal-lobby/sessionio"
 )
@@ -195,23 +194,13 @@ func cwdWithin(home, cwd string) error {
 	return pathWithin(home, cwd)
 }
 
-// pathWithin is the containment check both of the above share: resolve what
-// exists, then compare against the resolved root.
+// pathWithin is the containment check both of the above share. The body lives
+// in sessionio now, and the exported WithinProjects there calls the same one,
+// so the boundary a stamp is written against and the boundary this privileged
+// child reads against can no longer disagree. What stays here is the wording of
+// the refusal, which the callers log.
 func pathWithin(root, path string) error {
-	clean := filepath.Clean(path)
-	// Resolve what exists, so a symlink planted inside the root cannot widen
-	// the grant. A transcript that does not exist YET is an ordinary state —
-	// Claude has not written it — so fall back to the lexical form there and
-	// let the read report the absence itself.
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		clean = resolved
-	}
-	realRoot := root
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		realRoot = resolved
-	}
-	rel, err := filepath.Rel(realRoot, clean)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !sessionio.PathWithin(root, path) {
 		return fmt.Errorf("privop: %q is outside %s", path, root)
 	}
 	return nil

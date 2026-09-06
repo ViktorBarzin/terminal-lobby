@@ -85,6 +85,13 @@ func (c Config) Header() string {
 	return c.AuthHeader
 }
 
+// AuthHeader is the identity header name this gate resolves by. The one
+// question a service should ask when it wants to know whether a request
+// carries an identity at all, because the answer is guaranteed to match what
+// Resolve reads. Reaching for DefaultAuthHeader instead names the COMPILED
+// default, which is the wrong name on every box that configures TL_AUTH_HEADER.
+func (g *Gate) AuthHeader() string { return g.Config.Header() }
+
 // ConfigFromEnv reads the TL_* variables. Every unit sources the same
 // EnvironmentFile, so all six processes see identical values.
 func ConfigFromEnv() Config {

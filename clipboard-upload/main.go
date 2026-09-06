@@ -146,7 +146,7 @@ var actAsGate = &authuser.Gate{
 // authHeader is the identity header this build resolves by default. The name is
 // configuration now (TL_AUTH_HEADER), so nothing in the request path may name
 // the constant: the handler that asks whether a request carries an identity at
-// all asks actAsGate.Config.Header(), which is what the gate itself resolves
+// all asks actAsGate.AuthHeader(), which is the name the gate itself resolves
 // by. What is left is the tests, which run against an unconfigured gate.
 const authHeader = authuser.DefaultAuthHeader
 
@@ -356,7 +356,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	// identity, and the proxy secret with it once one is configured.
 	var osUser string
 	switch {
-	case r.Header.Get(actAsGate.Config.Header()) != "":
+	case r.Header.Get(actAsGate.AuthHeader()) != "":
 		osUser = resolveOSUser(w, r)
 		if osUser == "" {
 			return
