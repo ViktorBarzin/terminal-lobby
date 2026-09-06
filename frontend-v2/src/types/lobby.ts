@@ -244,6 +244,10 @@ export interface SnapshotList {
 /** One session inside a snapshot, already resolved against what is live. */
 export interface SnapshotRow {
   name: string;
+  /** What a person reads for this row. A name is an opaque id (ADR-0019), so
+   *  without this the picker is a list of 12-character strings. Absent when the
+   *  session was never titled — then the name is all there is. */
+  title?: string;
   cwd: string;
   uuid?: string;
   state: "missing" | "live_same" | "live_other_conv" | "live_no_claude";
