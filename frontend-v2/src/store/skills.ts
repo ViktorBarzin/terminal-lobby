@@ -66,7 +66,6 @@ export interface SkillsStore {
   load: () => Promise<void>;
   toggleExpanded: (owner: string, name: string) => void;
   showDiff: (owner: string, name: string) => Promise<void>;
-  clearDiff: () => void;
   install: (owner: string, name: string, replace?: boolean) => Promise<void>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   remove: (name: string) => Promise<void>;
@@ -212,7 +211,6 @@ export function createSkillsStore(): SkillsStore {
         toasts.push({ kind: "error", message: message(e) });
       }
     },
-    clearDiff: () => setDiff(null),
     install: async (owner, name, replace = false) =>
       act(rowKey(owner, name), async () => {
         const res = await installSkill(owner, name, replace);

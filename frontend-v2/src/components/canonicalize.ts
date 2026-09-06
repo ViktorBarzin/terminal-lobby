@@ -2,7 +2,7 @@
  * Tool call → canonical item, ported from T3 Code.
  *
  * Upstream: t3code apps/server/src/provider/Layers/ClaudeAdapter.ts
- *   (classifyToolItemType, isReadOnlyToolName, extractPlanStepsFromTodoInput)
+ *   (classifyToolItemType, extractPlanStepsFromTodoInput)
  * at 6bc6cb6b, MIT licensed:
  *
  *   MIT License · Copyright (c) 2026 T3 Tools Inc.
@@ -114,19 +114,6 @@ export function classifyToolItemType(toolName: string): ItemType {
   }
   if (normalized.includes("image")) return "image_view";
   return "dynamic_tool_call";
-}
-
-/** Ported from ClaudeAdapter.isReadOnlyToolName. */
-export function isReadOnlyToolName(toolName: string): boolean {
-  const normalized = toolName.toLowerCase();
-  return (
-    normalized === "read" ||
-    normalized.includes("read file") ||
-    normalized.includes("view") ||
-    normalized.includes("grep") ||
-    normalized.includes("glob") ||
-    normalized.includes("search")
-  );
 }
 
 export interface TodoStep {
