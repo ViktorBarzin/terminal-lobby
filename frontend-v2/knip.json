@@ -1,0 +1,67 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+
+  // Unused-export analysis. Neither biome nor eslint does this, which is why
+  // knip is here as a second tool rather than folded into the linter.
+  //
+  // One config, not one per area. Both audit findings proposed the same tool
+  // and the same CI step and differed only in which directory they scoped the
+  // seeding to, so scoping it to a directory would just move the noise.
+  //
+  // VALUES only. `types` and `nsTypes` are excluded because knip reports about
+  // 49 exported interfaces with no external importer (`StatusStoreOptions`,
+  // `TextZoomDeps`, `FireOptions` and friends). Those are cheap documentation
+  // of a parameter's shape and worth keeping, and reporting them is what turns
+  // the seeding cost from 51 decisions into about 100. Decided 2026-09-06.
+  //
+  // `test/` is in `project` and its files are entries through knip's vitest
+  // plugin, so a src export whose only importer is a test counts as used.
+  // Leaving 231 test files out is where the noise would come from.
+
+  "entry": ["public/sw.js"],
+  "project": ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}", "public/*.js"],
+  "exclude": ["types", "nsTypes", "enumMembers", "classMembers"],
+
+  // The seed, 51 unused value exports across 28 files, measured 2026-09-06.
+  //
+  // These are listed rather than deleted because deleting them is a different
+  // decision per symbol and belongs to whoever owns the file, not to the
+  // commit that installs the tool. Most are constants exported so a test or a
+  // future caller can name them; `lobby-api.ts` is a client surface whose
+  // callers went with an earlier refactor.
+  //
+  // The entry is per FILE, so it also hides any NEW unused export in that
+  // file. When you next touch one of these files, clear its exports and delete
+  // its line. Every file not listed here is gated from today, which is the
+  // whole point: the ratchet only ever gets shorter.
+  "ignoreIssues": {
+    "src/components/QuestionCard.tsx": ["exports"], // hasDescriptions
+    "src/components/answer.logic.ts": ["exports"], // ANSWERED_MARK, PANE_CHECK_DELAYS_MS
+    "src/components/canonicalize.ts": ["exports"], // failed
+    "src/components/rows.tsx": ["exports"], // ITEM_GLYPH, ITEM_NOUN, clockTime, formatCharCount, formatDuration, formatTokens
+    "src/components/settings/controls.tsx": ["exports"], // ScopeChip
+    "src/diagnostics/connection.ts": ["exports"], // sampleNavigation
+    "src/diagnostics/status-store.ts": ["exports"], // LOG_MAX
+    "src/diagnostics/status.ts": ["exports"], // SESSIONS_DOWN_AFTER_MS
+    "src/diagnostics/usage.ts": ["exports"], // dayKey, lastMonthLabel, monthKey, periodTotals
+    "src/keybindings/chords.logic.ts": ["exports"], // MOD_WORDS
+    "src/keybindings/navigation.logic.ts": ["exports"], // ATTACH_PREFIX
+    "src/lib/first-prompt.ts": ["exports"], // LINE_GAP_MS
+    "src/lib/lobby-api.ts": ["exports"], // getLayout, getSnapshot, killSession, listSnapshots, normalizeLayout, prewarm, releasePrewarm, setSessionTitle
+    "src/lib/markdown-plugins.ts": ["exports"], // engineHasLookbehind
+    "src/lib/models.ts": ["exports"], // shortModel
+    "src/logic/compose.logic.ts": ["exports"], // MID_MAX_RANK, MIN_MIDPROMPT_QUERY, isSubsequence
+    "src/mobile/swipe.ts": ["exports"], // SWIPE_RATIO
+    "src/mobile/textzoom.ts": ["exports"], // TEXT_SIZE_KEY
+    "src/notify/favicon.ts": ["exports"], // renderBadgedFavicon
+    "src/notify/opt-in.ts": ["exports"], // NOTIFY_KEY
+    "src/pwa/register.ts": ["exports"], // notifyConstructorUsable, readAndClearPendingSession
+    "src/store/prefs.ts": ["exports"], // DEFAULT_NEW_COMMAND
+    "src/store/toast.ts": ["exports"], // MAX_STACK
+    "src/store/viewmode.ts": ["exports"], // loadMode, saveMode
+    "src/store/visits.ts": ["exports"], // SEEN_DB, SEEN_KEY, SEEN_STORE, visitKeyFor
+    "src/store/watchmode.ts": ["exports"], // watchKey
+    "src/terminal/keys.ts": ["exports"], // DISCARD_HELD_TOAST_MS
+    "src/theme/theme.ts": ["exports"] // readTerminalTheme
+  }
+}

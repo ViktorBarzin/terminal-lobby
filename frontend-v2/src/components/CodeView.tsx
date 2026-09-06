@@ -163,7 +163,6 @@ export const CodeView: Component<{ code: string; language?: string }> = (
       }
     >
       <pre class="tl-code tl-codeview hljs" data-lang={props.language || undefined}>
-        {/* eslint-disable-next-line solid/no-innerhtml */}
         <code innerHTML={markup()} />
       </pre>
     </Show>
