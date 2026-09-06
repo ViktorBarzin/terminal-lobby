@@ -5,8 +5,22 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
+
+// stubWriteLeafELOOP stages the one case the real filesystem cannot: a symlink
+// renamed over the leaf between the handler's Lstat and the open, which comes
+// back from the open as ELOOP. Anything a test can set up statically is a
+// symlink the Lstat already sees, so this is how the raced answer gets asserted.
+func stubWriteLeafELOOP(t *testing.T) {
+	t.Helper()
+	old := writeLeaf
+	writeLeaf = func(path string, _ []byte, _ os.FileMode) error {
+		return &fs.PathError{Op: "open", Path: path, Err: syscall.ELOOP}
+	}
+	t.Cleanup(func() { writeLeaf = old })
+}
 
 // TL-9. resolveWithin hands back a plain string and nothing pins the inode, so
 // between the check and the open a co-owner with `rwx` on the directory can

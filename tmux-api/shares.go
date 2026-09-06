@@ -344,9 +344,11 @@ var (
 // route sits on the same listener as the public ones and TL_BIND is wide for the
 // cluster ingress — before that check the endpoint answered anything that could
 // route to the box. The shared token must match, which separates the box's own
-// attach script from everything else running on the box; it is readable from
-// the process table of an attach that is in flight, so the peer check is what
-// carries the network boundary. Neither gate proves an identity: body.Guest and
+// attach script from everything else running on the box. The token file is 0600
+// inside a 0700 directory, and devvm/tmux-attach.sh hands it to curl on stdin
+// (`-H @-`) rather than in argv, so no other account can lift it out of /proc
+// while an attach is in flight. The peer check and the file mode carry the
+// boundary together. Neither gate proves an identity: body.Guest and
 // body.Owner are what the caller SAYS it is, and the admin branch below trusts
 // body.Guest for exactly that reason.
 //
