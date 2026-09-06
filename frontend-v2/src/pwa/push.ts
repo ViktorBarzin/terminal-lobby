@@ -21,6 +21,9 @@ import { fetchWithDeadline } from "../lib/http";
 export const PUSH_SUBS_API = "/api/sessions/push-subscriptions";
 export const VAPID_PUBLIC_API = "/api/sessions/push/vapid-public";
 export const PUSH_TEST_API = "/api/sessions/push/test";
+// Not exported: nothing outside this module talks to it. The three above are,
+// because the connection probes and the tests reach for them.
+const PUSH_FOCUS_API = "/api/sessions/push/focus";
 
 function pushSupported(): boolean {
   return (
@@ -84,6 +87,35 @@ export async function unsubscribePush(): Promise<void> {
     });
   } catch {
     /* best-effort; the server prunes dead endpoints on 404/410 */
+  }
+}
+
+/**
+ * Tell the server which session THIS device has on screen, so the push sender
+ * can withhold that one from this device and still tell every other device
+ * (tmux-api pushfocus.go). `session` is "" when the app is showing no session.
+ *
+ * Keyed by this browser's push endpoint, which is also what makes it a no-op on
+ * a device the server does not push to: no subscription, nothing to say.
+ *
+ * Returns whether the server took it, so the caller can retry on the next tick
+ * rather than believing a report that never landed. Best-effort like the rest of
+ * this module: every failure is a `false`, never a throw.
+ */
+export async function reportFocus(session: string): Promise<boolean> {
+  try {
+    if (!pushSupported()) return false;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return false;
+    const resp = await fetchWithDeadline(PUSH_FOCUS_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: sub.endpoint, session }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
   }
 }
 

@@ -17,6 +17,13 @@ on:
       - '**/*.md'
       - '.github/workflows/ttyd.yml'
       - '.github/workflows/viu.yml'
+      # The container image is built by container.yml out of its own inputs,
+      # and packaging/build-deb.sh reads none of them. A push touching only
+      # these was cutting a .deb version whose contents had not moved.
+      - 'Dockerfile'
+      - 'docker/**'
+      - '.github/workflows/container.yml'
+      - 'scripts/devserve/**'
   workflow_dispatch: {}
 
 permissions:
@@ -43,6 +50,23 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: lts/* }
 
+      # A NUL byte anywhere in a source file makes git call the whole file
+      # binary, so `git grep` skips it and says nothing. One file had been
+      # invisible to every grep-driven refactor that way. Biome does not see it
+      # either, because a NUL in a string is legal JS, so the instrument that
+      # catches this is git's own heuristic.
+      - name: no binary source files
+        run: |
+          set -euo pipefail
+          binary=$(comm -23 \
+            <(git ls-files '*.ts' '*.tsx' '*.js' '*.go' '*.css' | sort) \
+            <(git grep -Il '' -- '*.ts' '*.tsx' '*.js' '*.go' '*.css' | sort))
+          if [ -n "$binary" ]; then
+            echo "git reads these tracked sources as binary, so git grep skips them:"
+            echo "$binary"
+            exit 1
+          fi
+
       # The tests that exist today start gating releases. They have never run in
       # CI, because there has never been CI. All of them, not only the Go ones:
       # the frontend is where a regression is most likely and least visible, and
@@ -50,12 +74,45 @@ jobs:
       - name: test (go)
         run: |
           set -euo pipefail
-          for mod in release telemetry skillscan authuser sessionio slug \
-                     tmux-api clipboard-upload session-events file-api skills-api \
-                     t3-bridge t3-sync tl-session-watch; do
-            [ -f "$mod/go.mod" ] || continue
+          # Derived, not typed. What this replaces was 14 hand-written names
+          # guarded by `[ -f "$mod/go.mod" ] || continue`, which skips a name
+          # with no module and says nothing about a module with no name. So the
+          # guard was loud in the harmless direction and silent in the other:
+          # tl-session-watch/go.mod was added 2026-09-01, reached the list
+          # 2026-09-04, and four commits landed on the module in between with
+          # nothing here compiling or testing it.
+          mods=$(git ls-files '*/go.mod' | xargs -n1 dirname | sort)
+          # A derivation that returns nothing would pass this job in silence,
+          # which is the same hole as the typed list with none of its noise.
+          # The floor sits well under 14, so adding or dropping a module needs
+          # no edit here, and well over zero, so a broken derivation stops.
+          if [ "$(printf '%s\n' "$mods" | grep -c .)" -lt 10 ]; then
+            echo "expected at least 10 Go modules, the derivation found:"
+            printf '%s\n' "$mods"
+            exit 1
+          fi
+          for mod in $mods; do
             echo "==> $mod"
-            (cd "$mod" && go vet ./... && go test ./...)
+            (
+              cd "$mod"
+              # gofmt comes with the toolchain setup-go already installs, so
+              # the gate costs no new dependency. Drift is otherwise invisible
+              # until it turns up as noise in somebody else's diff.
+              unformatted=$(gofmt -l .)
+              if [ -n "$unformatted" ]; then
+                echo "not gofmt-clean, fix with: (cd $mod && gofmt -w .)"
+                printf '%s\n' "$unformatted"
+                exit 1
+              fi
+              go vet ./...
+              # -race, not a bare run. The detector was red in tmux-api for a
+              # warmer goroutine that outlived its request, and it stayed
+              # quiet about a rate limiter no test had exercised from two
+              # goroutines. Both are fixed, so the flag turns on here with
+              # them. It costs about 17s on the biggest module against a few
+              # seconds without.
+              go test -race ./...
+            )
           done
 
       - name: test (frontend)
@@ -68,6 +125,28 @@ jobs:
           # 2026-09-02 and the second config went with them, so there is one
           # answer to "does this typecheck" again.
           npm run typecheck
+          # The repo's first linter, added 2026-09-06. It is curated, not
+          # recommended: six rules that all measured zero before they were
+          # switched on, so this gate arrives green and stays cheap. The full
+          # reasoning and the counts for the rules left off are in
+          # frontend-v2/biome.jsonc.
+          npm run lint
+          # Unused value exports. Neither biome nor eslint does this analysis,
+          # which is why knip is a second tool rather than a biome rule.
+          npm run lint:exports
+          # No formatting gate here, on purpose. `npm run format:changed` is a
+          # ratchet: it compares against a base ref and checks only the files a
+          # branch changed. This workflow runs on pushes to master and nothing
+          # else, so its base would be the commit being built and the check
+          # would have nothing to compare. Running it here would report a pass
+          # on every push while catching nothing, which is a worse signal than
+          # no step. It stays a local check contributors run before opening a
+          # PR (CONTRIBUTING.md). Wiring it up for real means a workflow that
+          # can name the base of the change it is building -- a pull_request
+          # trigger, or a push event's `before` sha -- passed as
+          # TL_FORMAT_SINCE. That gate is red until the files this repo has
+          # already drifted on are formatted, so it lands with that work, not
+          # before it.
           npm run test
 
       - name: test (python)

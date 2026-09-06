@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"terminal-lobby/telemetry"
 )
@@ -63,7 +64,7 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 	// requests (the common case) fall through to the inline path below,
 	// unchanged.
 	if crossUser(osUser) {
-		res := runPrivop(osUser, "list", userHome(osUser), r.URL.Query().Get("dir"),
+		res := runPrivop(osUser, "list", r.URL.Query().Get("dir"),
 			r.URL.Query().Get("all") == "1", nil)
 		writeEnvelope(w, res, "")
 		return
@@ -133,7 +134,7 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 	}
 	if crossUser(osUser) {
 		p := r.URL.Query().Get("path")
-		res := runPrivop(osUser, "read", userHome(osUser), p, false, nil)
+		res := runPrivop(osUser, "read", p, false, nil)
 		if res.Status == http.StatusOK {
 			// The same signal the inline path records, from the requested
 			// extension — the child never sees the telemetry pipe.
@@ -166,7 +167,7 @@ func handleRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "file too large (max 10MB)", http.StatusRequestEntityTooLarge)
 		return
 	}
-	f, err := os.Open(resolved)
+	f, err := openForRead(resolved)
 	if err != nil {
 		pathHTTPError(w, err)
 		return
@@ -244,7 +245,7 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 	// file in someone else's home, which they could then not edit from a
 	// shell — worse than refusing.
 	if crossUser(osUser) {
-		res := runPrivop(osUser, "write", userHome(osUser), body.Path, false,
+		res := runPrivop(osUser, "write", body.Path, false,
 			[]byte(body.Content))
 		if res.Status == http.StatusOK {
 			events.Emit("file.saved", osUser, telemetry.Attrs{
@@ -267,13 +268,15 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "target is not a regular file", http.StatusBadRequest)
 		return
 	}
-	if err := os.WriteFile(resolved, []byte(body.Content), 0o644); err != nil {
+	if err := writeLeaf(resolved, []byte(body.Content), 0o644); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "parent directory does not exist", http.StatusNotFound)
 			return
 		}
-		log.Printf("write %s: %v", resolved, err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		// Everything else goes through the shared map, so a symlink that lands
+		// on the leaf after the Lstat above answers with the same 400 a
+		// stat-time symlink gets, and only a genuinely unknown error is a 500.
+		pathHTTPError(w, err)
 		return
 	}
 	events.Emit("file.saved", osUser, telemetry.Attrs{
@@ -296,8 +299,13 @@ func pathHTTPError(w http.ResponseWriter, err error) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 	case errors.Is(err, fs.ErrNotExist):
 		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, syscall.ELOOP):
+		// An O_NOFOLLOW open that landed on a symlink. The stat-time answer for
+		// the same file is "not a regular file", so give the same one rather
+		// than a 500: the path is a symlink, which is a client-visible fact.
+		http.Error(w, "not a regular file", http.StatusBadRequest)
 	default:
-		log.Printf("path resolution error: %v", err)
+		log.Printf("file op error: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
 }

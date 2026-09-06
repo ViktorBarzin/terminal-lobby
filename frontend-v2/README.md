@@ -158,6 +158,11 @@ src/
                          same-origin credentials. Without a deadline a fetch on
                          a half-open connection never settles, which is what a
                          phone hands us when the radio drops a socket
+    storage.ts           MinStorage plus localStorageOrNull(). Four modules
+                         each carried the same two lines, and reading the
+                         localStorage property is itself what throws when a
+                         browser has partitioned or blocked it, so it must be
+                         caught rather than tested for
     focus-trap.ts        The modal dialog contract — Tab wraps at both ends,
                          focus lands on the dialog and returns to its opener.
                          Shared by Settings, Skills and the file preview
@@ -246,7 +251,14 @@ src/
                          answered offline can be asked on the device itself.
                          Three buckets measured from Navigation/Resource Timing;
                          the WebSocket and SSE streams are modelled, and labelled
-                         as modelled wherever they are shown
+                         as modelled wherever they are shown. The arithmetic
+                         half only, since the split
+    usage-store.ts       The half of Data used that touches localStorage: read,
+                         write, reset, and the Web-Locked read-modify-write the
+                         shared key needs. Coerces rather than trusts, so a
+                         hand-edited or half-written payload becomes zeroes
+                         instead of a NaN in every total, and lifts schema 1
+                         and 2 into the `earlier` row rather than dropping them
     network.ts           Which network this device is on, so Data used can say
                          where a month went. The browser cannot say (Safari ships
                          no Network Information API, where it exists a wired
@@ -393,6 +405,18 @@ src/
                          ids are per-transcript, so a session whose transcript
                          was replaced would otherwise resume above the new log
                          and freeze on the old conversation
+  logic/                 PURE rules with no framework in them, read by the
+                         stores and by the components, so the stores no longer
+                         import up into components for these. lobby.logic.ts
+                         has not moved yet, so order.logic.ts still takes one
+                         type from it and store/lobby.ts still reads it from
+                         components/
+    compose.logic.ts     PURE `/` and `@` completion + the mode cycle
+    order.logic.ts       PURE session ordering: newest-first by created or by
+                         last DRIVEN time (never session_activity, which a
+                         read-only attach bumps), and the capture that freezes
+                         the visible order into the layout when a drag hands the
+                         list back to manual
   store/
     session.ts           SSE → Solid store of events + prompt/cancel control
     catalogue.ts         Reads GET /commands into {commands, ok}. `ok` exists
@@ -499,17 +523,13 @@ src/
                          name box, because a shell has no prompt to receive
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
+    overlay.ts           A backdrop's press-to-dismiss, on the node rather than
+                         as a handler, since the surface is not a control
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
-    order.logic.ts       PURE session ordering: newest-first by created or by
-                         last DRIVEN time (never session_activity, which a
-                         read-only attach bumps), and the capture that freezes
-                         the visible order into the layout when a drag hands the
-                         list back to manual
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot
     TextView.tsx         Text mode: timeline above the composer
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
-    compose.logic.ts     PURE `/` and `@` completion + the mode cycle
     rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / working / …)
@@ -647,6 +667,9 @@ src/
     favicon.ts           Canvas-rendered favicon badge
     appbadge.ts          PWA icon badge — how many sessions are waiting
     attention.ts         Bell / output-while-hidden latches from the terminal
+    focus.ts             PURE: which session THIS device is showing, and when to
+                         say so again — the report that lets the server withhold
+                         a push about the session already on your screen
     opt-in.ts            Per-browser notification opt-in flag
     notifications.ts     Wires the above + push into the running app
   pwa/

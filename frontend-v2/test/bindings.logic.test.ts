@@ -115,6 +115,45 @@ describe("the help overlay tells the truth about the always-on layer", () => {
   });
 });
 
+/**
+ * Every chord the table binds is enumerated in the help.
+ *
+ * The bug this pins: the overlay says it lists the shortcuts, and it omitted
+ * Alt+Shift+U and Alt+Shift+F. Alt+Shift+F is the ONLY keyboard entry to Find
+ * in session, so the one chord nobody could guess was the one not written down.
+ *
+ * Asserted in one direction on purpose. Five help rows correspond to no binding
+ * at all — Alt (hold), Mod+J, "/", "?" and Esc are painted by separate window
+ * listeners or by the browser — so a both-ways check would fail on those five
+ * every run and teach nothing about an undocumented chord.
+ */
+describe("the help overlay enumerates every bound chord", () => {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+
+  // The help paints "Alt+1 – Alt+9" as one row rather than nine, so a range
+  // stands for each chord between its ends.
+  const expand = (key: string): string[] => {
+    const m = /^(.+?)(\d)[–-](.+?)(\d)$/.exec(norm(key));
+    if (!m) return [norm(key)];
+    const [, lowPrefix, low, highPrefix, high] = m;
+    if (!lowPrefix || !low || !highPrefix || !high || lowPrefix !== highPrefix) return [norm(key)];
+    const [from, to] = [Number(low), Number(high)];
+    return Array.from({ length: to - from + 1 }, (_, i) => `${lowPrefix}${from + i}`);
+  };
+
+  const documented = new Set(
+    buildShortcutGroups(altLabel(false), false)
+      .flatMap(([, rows]) => rows)
+      .flatMap(([keys]) => keys.flatMap(expand)),
+  );
+
+  it.each(
+    [...KB_DEFAULT_BINDINGS, ...KB_ALWAYS_BINDINGS].map((b) => [b.key, b.command] as const),
+  )("%s (%s) has a help row", (key) => {
+    expect(documented.has(norm(key))).toBe(true);
+  });
+});
+
 describe("matchesAppChord — gating", () => {
   it("matches an enabled default chord in context (Ctrl+Shift+K -> palette.toggle)", () => {
     const b = matchesAppChord(ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }), input());

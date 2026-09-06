@@ -35,9 +35,7 @@ const row = (over: Partial<SnapshotRow> & { name: string }): SnapshotRow => ({
 });
 
 const ROWS: Record<string, SnapshotRow[]> = {
-  "20260814T130500": [
-    row({ name: "portal", state: "live_same", action: "skip", default: false }),
-  ],
+  "20260814T130500": [row({ name: "portal", state: "live_same", action: "skip", default: false })],
   "20260814T125000": [
     row({ name: "T3" }),
     row({
@@ -92,9 +90,7 @@ const clickSnapshot = (container: HTMLElement, n: number): void => {
 };
 
 const mount = (api: RestorePickerApi, over: Record<string, unknown> = {}) =>
-  render(() => (
-    <RestorePicker api={api} home="/home/wizard" onClose={() => {}} {...over} />
-  ));
+  render(() => <RestorePicker api={api} home="/home/wizard" onClose={() => {}} {...over} />);
 
 describe("restore picker — pure helpers", () => {
   it("parses a snapshot id as UTC", () => {
@@ -118,6 +114,30 @@ describe("restore picker — pure helpers", () => {
     expect(formatAgo("20260814T125000", new Date(base.getTime() + 48 * 3600_000))).toBe("2d ago");
   });
 
+  // The three bands the rounded ladder got wrong, pinned here because nothing
+  // else covers them. Under 60s the picker used to round to a minute and say
+  // "0m ago" or "1m ago" for something seconds old; over 24h it rounded to the
+  // nearest day, so 36h read "2d ago" for a snapshot taken yesterday afternoon.
+  // The sidebar has floored since it was ported, and this is the wording all
+  // three surfaces now share.
+  it("floors every unit, so nothing reads older or rounder than it is", () => {
+    const base = new Date(Date.UTC(2026, 7, 14, 12, 50, 0));
+    const at = (ms: number) => formatAgo("20260814T125000", new Date(base.getTime() + ms));
+    expect(at(30 * 1000)).toBe("30s ago");
+    expect(at(59 * 1000)).toBe("59s ago");
+    expect(at(90 * 1000)).toBe("1m ago");
+    expect(at(25 * 3600_000)).toBe("1d ago");
+    expect(at(36 * 3600_000)).toBe("1d ago");
+  });
+
+  it("floors a snapshot stamped in the viewer's future at zero", () => {
+    // Same clock-skew guard the sidebar carries: the stamp comes off the
+    // server's clock and `now` off the viewer's, so a trailing viewer must not
+    // see a negative age.
+    const base = new Date(Date.UTC(2026, 7, 14, 12, 50, 0));
+    expect(formatAgo("20260814T125000", new Date(base.getTime() - 240_000))).toBe("0s ago");
+  });
+
   it("shortens paths under home only", () => {
     expect(shortCwd("/home/wizard/code", "/home/wizard")).toBe("~/code");
     expect(shortCwd("/srv/nfs", "/home/wizard")).toBe("/srv/nfs");
@@ -126,11 +146,17 @@ describe("restore picker — pure helpers", () => {
 
   it("explains each row state, flagging the two that do something else", () => {
     expect(rowNote(row({ name: "a" })).text).toBe("");
-    expect(rowNote(row({ name: "a", state: "live_same", action: "skip" })).text)
-      .toBe("already running");
+    expect(rowNote(row({ name: "a", state: "live_same", action: "skip" })).text).toBe(
+      "already running",
+    );
 
     const conflict = rowNote(
-      row({ name: "chesscom", state: "live_other_conv", action: "suffixed", target: "chesscom-1250" }),
+      row({
+        name: "chesscom",
+        state: "live_other_conv",
+        action: "suffixed",
+        target: "chesscom-1250",
+      }),
     );
     expect(conflict.text).toContain("chesscom-1250");
     expect(conflict.warn).toBe(true);
@@ -148,7 +174,12 @@ describe("restore picker — diff first", () => {
     row({ name: "matrix", state: "live_same", action: "skip", default: false }),
     row({ name: "repowise" }),
     row({ name: "portal", state: "live_same", action: "skip", default: false }),
-    row({ name: "chesscom", state: "live_other_conv", action: "suffixed", target: "chesscom-1250" }),
+    row({
+      name: "chesscom",
+      state: "live_other_conv",
+      action: "suffixed",
+      target: "chesscom-1250",
+    }),
   ];
 
   it("separates what a restore would do from what is already running", () => {
@@ -167,7 +198,9 @@ describe("restore picker — diff first", () => {
   // A session you killed is a difference from what is live, so it belongs with
   // the changes — unticked, but visible without scrolling.
   it("counts a deliberately killed session as a change", () => {
-    const { changed } = orderRows([row({ name: "Wrongmove", default: false, killedAt: 1786711920 })]);
+    const { changed } = orderRows([
+      row({ name: "Wrongmove", default: false, killedAt: 1786711920 }),
+    ]);
     expect(changed.map((r) => r.name)).toEqual(["Wrongmove"]);
   });
 
@@ -263,8 +296,7 @@ describe("restore picker — behaviour", () => {
     await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
     // The newest snapshot is entirely live, so there is nothing to select.
     expect((getByText("Restore") as HTMLButtonElement).disabled).toBe(true);
-    expect(container.querySelector(".tl-restore-status")?.textContent)
-      .toContain("already running");
+    expect(container.querySelector(".tl-restore-status")?.textContent).toContain("already running");
   });
 
   it("select none clears, select all takes only what is restorable", async () => {
@@ -275,9 +307,7 @@ describe("restore picker — behaviour", () => {
     await waitFor(() => expect(screen.getByText("T3")).toBeTruthy());
 
     fireEvent.click(getByText("select none"));
-    await waitFor(() =>
-      expect((getByText("Restore") as HTMLButtonElement).disabled).toBe(true),
-    );
+    await waitFor(() => expect((getByText("Restore") as HTMLButtonElement).disabled).toBe(true));
 
     fireEvent.click(getByText("select all"));
     await waitFor(() => expect(getByText(/^Restore 4 selected$/)).toBeTruthy());
@@ -403,8 +433,37 @@ describe("restore picker — behaviour", () => {
     api.listSnapshots = async () => ({ snapshots: [], memAvailableMb: -1, perSessionMb: 550 });
     const { container } = mount(api);
     await waitFor(() =>
-      expect(container.querySelector(".tl-restore-status")?.textContent)
-        .toContain("No session snapshots saved yet"),
+      expect(container.querySelector(".tl-restore-status")?.textContent).toContain(
+        "No session snapshots saved yet",
+      ),
     );
+  });
+});
+
+/**
+ * Dismissal. A press on the backdrop closes the picker, and Escape is the
+ * keyboard half of that gesture — the picker was the one overlay without it,
+ * so a keyboard user had to find the Close button at the foot.
+ */
+describe("restore picker — dismissal", () => {
+  it("closes on a press on the backdrop, not on a press on the panel", async () => {
+    let closed = 0;
+    const { container } = mount(new FakeApi(), { onClose: () => (closed += 1) });
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+
+    fireEvent.click(container.querySelector(".tl-restore")!);
+    expect(closed).toBe(0);
+
+    fireEvent.click(container.querySelector(".tl-cmdpalette-backdrop")!);
+    expect(closed).toBe(1);
+  });
+
+  it("closes on Escape", async () => {
+    let closed = 0;
+    mount(new FakeApi(), { onClose: () => (closed += 1) });
+    await waitFor(() => expect(screen.getByText("portal")).toBeTruthy());
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(closed).toBe(1);
   });
 });

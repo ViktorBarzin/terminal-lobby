@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,8 +33,63 @@ func withTelemetryClock(t *testing.T, at *time.Time) {
 	t.Helper()
 	oldNow, oldBuckets := telemetryNow, intakeBuckets
 	telemetryNow = func() time.Time { return *at }
-	intakeBuckets = map[string]*intakeBucket{}
+	intakeBuckets = newBucketPool()
 	t.Cleanup(func() { telemetryNow, intakeBuckets = oldNow, oldBuckets })
+}
+
+// The intake runs one goroutine per request, so the buckets are reached
+// concurrently by one person's two tabs and by two different people at once.
+// Both directions are checked: the same OS user racing on one bucket's
+// counters, and distinct users racing on the map that holds the buckets.
+func TestIntakeBucketsConcurrent(t *testing.T) {
+	at := time.Now()
+	oldNow, oldIntake, oldDiag := telemetryNow, intakeBuckets, diagBuckets
+	telemetryNow = func() time.Time { return at }
+	intakeBuckets, diagBuckets = newBucketPool(), newBucketPool()
+	t.Cleanup(func() { telemetryNow, intakeBuckets, diagBuckets = oldNow, oldIntake, oldDiag })
+
+	// A pinned clock refills nothing, so the arithmetic is exact: the budget is
+	// one minute's worth and each grant spends one token.
+	granted := make([]bool, intakeRatePerMinute)
+	var wg sync.WaitGroup
+	for i := range granted {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			granted[i] = allowIntake("wiz", 1)
+		}(i)
+	}
+	wg.Wait()
+	for i, ok := range granted {
+		if !ok {
+			t.Fatalf("request %d refused, want every one granted: the budget covers them all", i)
+		}
+	}
+	// Spent to the last token, so the next one is refused. A lost update under
+	// concurrency surfaces right here, as a grant that should not exist.
+	if allowIntake("wiz", 1) {
+		t.Fatalf("request %d granted, want a refusal once the minute is spent", intakeRatePerMinute+1)
+	}
+
+	// Distinct users insert distinct keys. That write is the one Go throws
+	// "concurrent map writes" over, rather than quietly miscounting.
+	const users = 64
+	fresh := make([]bool, users*2)
+	for i := 0; i < users; i++ {
+		user := fmt.Sprintf("user%02d", i)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			fresh[i*2] = allowIntake(user, 1)
+			fresh[i*2+1] = allowDiag(user, 1)
+		}(i)
+	}
+	wg.Wait()
+	for i, ok := range fresh {
+		if !ok {
+			t.Fatalf("first request of a fresh user refused (slot %d), want a full bucket", i)
+		}
+	}
 }
 
 func telemetryReq(t *testing.T, body, authUser string) *http.Request {

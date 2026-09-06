@@ -5,15 +5,19 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Cross-user file access.
@@ -31,10 +35,26 @@ import (
 
 // selfUser is the service's own OS user (set in main from user.Current()). When
 // a request's mapped OS user equals this, ops run inline.
+//
+// main refuses to start when it cannot be resolved, and crossUser treats an
+// empty one as "this service knows nobody", so an unresolved identity can never
+// quietly turn a cross-user request into an inline one. That fall-through used
+// to exist, and it took the sudo boundary with it while leaving the containment
+// root pointed at the TARGET user's home.
 var selfUser string
 
-// crossUser reports whether osUser's files must be reached via sudo.
-func crossUser(osUser string) bool { return selfUser != "" && osUser != selfUser }
+// forceInline makes every op run in this process instead of re-execing through
+// sudo. It is a TEST SEAM in the same family as homeBase and sudoBinary, set
+// once by TestMain: the handler tests point homeBase at a temp tree and
+// exercise the other-user paths inside it, which no real sudo could reach.
+// Production never assigns it, and a production process without an identity
+// does not get as far as serving a request.
+var forceInline bool
+
+// crossUser reports whether osUser's files must be reached via sudo. The
+// comparison is exactly tmux-api's, so the three services now answer this one
+// question the same way.
+func crossUser(osUser string) bool { return !forceInline && osUser != selfUser }
 
 // privopResult is the envelope the privileged child returns on stdout, and the
 // shape the shared op cores fill for both the inline and cross-user paths.
@@ -108,7 +128,7 @@ func opReadEnvelope(home, path string) privopResult {
 	if status != http.StatusOK {
 		return privopResult{Status: status, Error: msg}
 	}
-	data, err := os.ReadFile(resolved)
+	data, err := readNoFollow(resolved)
 	if err != nil {
 		return errResult(err)
 	}
@@ -139,12 +159,13 @@ func opWrite(home, path string, content []byte) privopResult {
 	if info, err := os.Lstat(resolved); err == nil && !info.Mode().IsRegular() {
 		return privopResult{Status: http.StatusBadRequest, Error: "target is not a regular file"}
 	}
-	if err := os.WriteFile(resolved, content, 0o644); err != nil {
+	if err := writeLeaf(resolved, content, 0o644); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return privopResult{Status: http.StatusNotFound, Error: "parent directory does not exist"}
 		}
-		log.Printf("write %s: %v", resolved, err)
-		return privopResult{Status: http.StatusInternalServerError, Error: "internal error"}
+		// Same shared map as the inline leg, so a raced symlink leaf is a 400
+		// on this side too rather than an opaque internal error.
+		return errResult(err)
 	}
 	return privopResult{Status: http.StatusNoContent}
 }
@@ -179,8 +200,10 @@ func errResult(err error) privopResult {
 		return privopResult{Status: http.StatusBadRequest, Error: "invalid path"}
 	case errors.Is(err, fs.ErrNotExist):
 		return privopResult{Status: http.StatusNotFound, Error: "not found"}
+	case errors.Is(err, syscall.ELOOP):
+		return privopResult{Status: http.StatusBadRequest, Error: "not a regular file"}
 	default:
-		log.Printf("path resolution error: %v", err)
+		log.Printf("file op error: %v", err)
 		return privopResult{Status: http.StatusInternalServerError, Error: "internal error"}
 	}
 }
@@ -201,16 +224,22 @@ var sudoBinary = "/usr/bin/sudo"
 // binary as the target user, so every value has to arrive as its own argv
 // element. Nothing here is ever interpolated into a shell string — a filename
 // containing `;` is one argument, not two commands.
-func privopCommand(osUser, op, home, path string, all bool) *exec.Cmd {
-	args := []string{"-n", "-u", osUser, exeSelf(), "-privop", op, "-home", home, "-path", path}
+//
+// argv carries no containment root. The grant `wizard ALL=(emo) NOPASSWD:
+// /usr/local/bin/file-api` has no argument spec, so anyone holding it can pass
+// any argv, and a `-home` the caller chose would let the child measure the
+// requested path against a root of the caller's choosing. The child reads its
+// own home from the password database instead.
+func privopCommand(osUser, op, path string, all bool) *exec.Cmd {
+	args := []string{"-n", "-u", osUser, exeSelf(), "-privop", op, "-path", path}
 	if all {
 		args = append(args, "-all")
 	}
 	return exec.Command(sudoBinary, args...)
 }
 
-func runPrivop(osUser, op, home, path string, all bool, stdin []byte) privopResult {
-	cmd := privopCommand(osUser, op, home, path, all)
+func runPrivop(osUser, op, path string, all bool, stdin []byte) privopResult {
+	cmd := privopCommand(osUser, op, path, all)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -227,21 +256,51 @@ func runPrivop(osUser, op, home, path string, all bool, stdin []byte) privopResu
 	return res
 }
 
-// exeSelf resolves this binary's path for the sudo re-exec. The sudoers grant
-// is keyed on /usr/local/bin/file-api, so production resolves there; the
-// os.Executable fallback keeps a dev build self-consistent.
+// installPath is where the package puts this binary, and so the path the
+// sudoers grant is keyed on. privop_test pins it against the grant template,
+// because a re-exec sudo has not been told to permit fails as a permission
+// error with nothing to point at.
+const installPath = "/usr/local/bin/file-api"
+
+// exeSelf resolves this binary's path for the sudo re-exec. Production resolves
+// to installPath, which is what the grant names; the os.Executable fallback
+// keeps a dev build self-consistent.
 func exeSelf() string {
 	if p, err := os.Executable(); err == nil {
 		return p
 	}
-	return "/usr/local/bin/file-api"
+	return installPath
 }
 
 // --- child side: this process is already running AS the target user ---------
 
+// ownHome is the containment root of the user this CHILD is running as, read
+// from the password database rather than from argv or $HOME. sudo's environment
+// handling is a configuration detail, and the caller is on the other side of the
+// boundary, so neither gets a say in what this process will agree to touch.
+// session-events' child derives its root the same way.
+func ownHome() (string, error) {
+	u, err := user.LookupId(strconv.Itoa(os.Getuid()))
+	if err != nil {
+		return "", fmt.Errorf("privop: cannot resolve uid %d: %w", os.Getuid(), err)
+	}
+	if u.HomeDir == "" {
+		return "", fmt.Errorf("privop: user %s has no home directory", u.Username)
+	}
+	return u.HomeDir, nil
+}
+
 // runPrivopMain is the -privop entrypoint. It performs one op with the user's
 // own filesystem view and writes the envelope to stdout.
-func runPrivopMain(op, home, path string, all bool) {
+func runPrivopMain(op, path string, all bool) {
+	home, err := ownHome()
+	if err != nil {
+		// No root, no op. The parent turns any non-200 into its own 500.
+		json.NewEncoder(os.Stdout).Encode(privopResult{
+			Status: http.StatusInternalServerError, Error: "internal error"})
+		log.Print(err)
+		return
+	}
 	var res privopResult
 	switch op {
 	case "list":

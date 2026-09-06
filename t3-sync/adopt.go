@@ -123,29 +123,13 @@ func (a *Adopter) Candidates() ([]Candidate, error) {
 		out = append(out, Candidate{
 			TmuxName:   s.Name,
 			Title:      title,
-			CWD:        candidateCWD(stamp, s.Dir),
+			CWD:        sessionio.ResolveCWD(stamp, s.Dir),
 			ClaudeID:   claudeID,
 			Transcript: stamp,
 			ThreadID:   thread,
 		})
 	}
 	return out, nil
-}
-
-// candidateCWD is where the conversation is actually happening.
-//
-// The transcript's own `cwd` wins over tmux's session_path, which is only where
-// a NEW window in that session would start: `claude` is routinely run from a
-// subdirectory, and filing the thread by the wrong one puts it in the wrong T3
-// project (decision 8). tmux's answer is the fallback for a transcript that has
-// not been written to yet. The bridge applies the same rule on its side
-// (t3-bridge/attach.go resolveCWD), from the same shared reader, so the two
-// writers of one index cannot disagree about where a session lives.
-func candidateCWD(transcript, tmuxDir string) string {
-	if cwd := sessionio.TranscriptCWD(transcript); cwd != "" {
-		return cwd
-	}
-	return tmuxDir
 }
 
 // Adopt files a candidate under a T3 workspace, creates its thread, records the

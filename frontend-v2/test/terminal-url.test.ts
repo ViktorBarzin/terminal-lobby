@@ -170,3 +170,58 @@ describe("projectDirFor — the layout directory a session should be born in", (
     ).toBe("arg=qa-vdirs&arg=default&arg=%2Ftmp%2Fqa-harness-scratch");
   });
 });
+
+/**
+ * arg6/arg7 — the model and the effort a NEW session launches on.
+ *
+ * They are flags on the process rather than a `/model` typed into it once it is
+ * up. Measured 2026-09-06 on this box: launching with them costs the same 2.4s
+ * as launching without (2.40/2.54/2.84 bare against 2.49/2.42/4.49 flagged),
+ * while driving the picker afterwards costs 3.83/4.20/3.99s on a browser-sized
+ * pane. So the flags are free and the drive is not.
+ *
+ * They are the DEEPEST slots, which is the whole of what these tests pin:
+ * everything before them has to be emitted or the value lands on the wrong $n.
+ */
+describe("buildTerminalArgs — the model and effort a new session starts on", () => {
+  it("puts the model at arg6, filling every slot before it", () => {
+    const u = buildTerminalArgs("foo", { cmd: "claude", dir: "/srv/p", model: "opus" });
+    expect(u).toBe("arg=foo&arg=claude&arg=%2Fsrv%2Fp&arg=&arg=&arg=opus");
+    expect(u.match(/arg=/g)?.length).toBe(6);
+  });
+
+  it("puts the effort at arg7, with an empty model slot when only it is set", () => {
+    const u = buildTerminalArgs("foo", { cmd: "claude", effort: "max" });
+    expect(u).toBe("arg=foo&arg=claude&arg=default&arg=&arg=&arg=&arg=max");
+    expect(u.match(/arg=/g)?.length).toBe(7);
+  });
+
+  it("carries both, and the watch request still lands on arg5", () => {
+    const u = buildTerminalArgs("foo", {
+      cmd: "codex",
+      dir: "/srv/p",
+      watch: true,
+      model: "gpt-5.6-terra",
+      effort: "high",
+    });
+    expect(u).toBe(
+      "arg=foo&arg=codex&arg=%2Fsrv%2Fp&arg=&arg=ro&arg=gpt-5.6-terra&arg=high",
+    );
+  });
+
+  it("keeps a foreign attach's owner on arg4", () => {
+    const u = buildTerminalArgs("foo", { cmd: "claude", owner: "bob", model: "sonnet" });
+    expect(u).toBe("arg=foo&arg=claude&arg=default&arg=bob&arg=&arg=sonnet");
+  });
+
+  // The default IS the absence of a choice, and the shallow shapes above have
+  // to stay byte-identical: every existing attach in the app builds one.
+  it("emits nothing extra when neither is chosen", () => {
+    expect(buildTerminalArgs("foo", { cmd: "claude", model: "", effort: "" })).toBe(
+      "arg=foo&arg=claude",
+    );
+    expect(buildTerminalArgs("foo", { cmd: "claude", dir: "/srv/p" })).toBe(
+      "arg=foo&arg=claude&arg=%2Fsrv%2Fp",
+    );
+  });
+});

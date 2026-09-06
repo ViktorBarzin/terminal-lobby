@@ -22,7 +22,8 @@ import { isLoaded, MAX_JUMP_STEPS } from "./find.logic";
 import { createPreviewStore } from "../store/preview";
 import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
-import { createDismissableMenu } from "./menu";
+import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
+import { dismissOnPress } from "./overlay";
 import { installImageClipboard } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
 import { ownWhile } from "../lib/ownwhile";
@@ -111,6 +112,11 @@ export const SessionView: Component<{
   lens?: () => string;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
+  /** The model and effort a NEWLY-CREATED session launches on, as flags on the
+   *  command (lib/terminal-url.ts). Like `newCommand`, only meaningful while
+   *  `creating`: `tmux new-session -A` ignores the command for a session that
+   *  already exists, so an attach to a live one carries neither. */
+  newLaunch?: () => { model: string; effort: string };
   /** Which CLI this session is running, from the session list's own `tool`
    *  (tmux-api reads it off the pane's process tree). It decides which model
    *  and effort lists the composer's chip offers, and a session running a plain
@@ -629,7 +635,7 @@ export const SessionView: Component<{
               <span class="tl-session-caret">▾</span>
             </button>
             <Show when={picker.open()}>
-              <div class="tl-menu tl-session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+              <div class="tl-menu tl-session-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
                 <For each={props.otherSessions?.() ?? []}>
                   {(other) => (
                     <button
@@ -801,7 +807,7 @@ export const SessionView: Component<{
               ⋯
             </button>
             <Show when={barMenu.open()}>
-              <div class="tl-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+              <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
                 <button
                   class="tl-menu-item"
                   role="menuitem"
@@ -840,11 +846,17 @@ export const SessionView: Component<{
                 </button>
                 {/* The shell's own items (Settings). display:contents keeps the
                     menu's layout while giving their clicks somewhere to bubble
-                    to — the shell has no handle on this menu to close it. */}
-                <span
-                  style={{ display: "contents" }}
-                  onClick={() => barMenu.close()}
-                >
+                    to — the shell has no handle on this menu to close it.
+
+                    Every row in there is a real <button>, so Enter and Space
+                    both produce a click and the click is the only thing that
+                    needs to close the menu. A key handler here would be worse
+                    than redundant: Space activates a button on its KEYUP, and
+                    the click is that keyup's default action, so closing on the
+                    keyup would unmount the row before its own click existed.
+                    The listener goes on through a ref for the same reason the
+                    overlay backdrops do — the wrapper is not a control. */}
+                <span style={{ display: "contents" }} ref={dismissOnPress(() => barMenu.close())}>
                   {props.menuExtra}
                 </span>
               </div>
@@ -917,6 +929,8 @@ export const SessionView: Component<{
           <TerminalNative
             args={terminalFrameArgs(session, {
               cmd: props.creating ? props.newCommand?.() : undefined,
+              model: props.creating ? props.newLaunch?.().model : undefined,
+              effort: props.creating ? props.newLaunch?.().effort : undefined,
               dir: props.dir || undefined,
               owner: props.owner || undefined,
               watch: watch(),

@@ -39,13 +39,40 @@ stamp() {
     # which stamp "running" — emitting per call would put thousands of
     # no-op events a day into a shared 30-day log store. Reading the current
     # value first costs one tmux show-option, which this script already does
-    # elsewhere. Only $1 (a fixed word from the case below) and the tmux
-    # session name are interpolated; tmux rejects newlines in session names.
-    local prev
+    # elsewhere.
+    #
+    # Every value spliced into the line below is folded to [A-Za-z0-9_-] first,
+    # the same charset id_ok enforces further down. Newlines were never the
+    # exposure here; quotes were, and the two sources differ in how far a quote
+    # gets (both measured on a private tmux socket, 2026-09-05):
+    #
+    #   the session name       `tmux rename-session` keeps a quote, a brace and
+    #                          a comma verbatim but maps ':' and '.' to '_', so
+    #                          the record stops decoding rather than carrying a
+    #                          forged field. Integrity loss, not attribution.
+    #   @claude_state          a tmux OPTION value, so nothing is mapped. Set
+    #                          from any shell on the user's own tmux server to
+    #                            x"},"user.id":"victim","z":{"a":"b
+    #                          it closed the attrs object and produced a VALID
+    #                          record whose top-level user.id read `victim`,
+    #                          because encoding/json takes the last duplicate
+    #                          key. That is a row in the shared 30-day store
+    #                          attributed to someone else.
+    #
+    # Folding is a case statement rather than jq because this runs on every
+    # state transition in every session on the box.
     prev="$(tmux show-option -qv -t "$TMUX_PANE" @claude_state 2>/dev/null || true)"
     tmux set-option -t "$TMUX_PANE" @claude_state "$1" >/dev/null 2>&1 || true
     if [ "$prev" != "$1" ]; then
-        logger -t claude-tmux-state "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event.name\":\"claude.state_changed\",\"service.name\":\"claude-tmux-state\",\"user.id\":\"$(id -un)\",\"attrs\":{\"tl.session\":\"$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null)\",\"tl.from\":\"${prev:-none}\",\"tl.to\":\"$1\",\"tl.client\":\"hook\"}}" 2>/dev/null || true
+        sess="$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null || true)"
+        case "$sess" in
+        "" | *[!A-Za-z0-9_-]*) sess=invalid ;;
+        esac
+        from="${prev:-none}"
+        case "$from" in
+        *[!A-Za-z0-9_-]*) from=invalid ;;
+        esac
+        logger -t claude-tmux-state "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event.name\":\"claude.state_changed\",\"service.name\":\"claude-tmux-state\",\"user.id\":\"$(id -un)\",\"attrs\":{\"tl.session\":\"$sess\",\"tl.from\":\"$from\",\"tl.to\":\"$1\",\"tl.client\":\"hook\"}}" 2>/dev/null || true
     fi
 }
 
@@ -109,7 +136,7 @@ json_field() {
     jv=""
     case "$payload" in
     *"\"$1\":\""*)
-        jv="${payload#*\"$1\":\"}"
+        jv="${payload#*\""$1"\":\"}"
         jv="${jv%%\"*}"
         ;;
     esac
@@ -123,8 +150,8 @@ json_tag() {
     jv=""
     case "$payload" in
     *"<$1>"*)
-        jv="${payload#*<$1>}"
-        jv="${jv%%</$1>*}"
+        jv="${payload#*<"$1">}"
+        jv="${jv%%</"$1">*}"
         ;;
     esac
 }
@@ -341,13 +368,13 @@ Stop)
     # KIND of each id, which the payload does not give us for a workflow.
     bg_prune
     bg_read
-    if [ -n "$bg" ]; then stamp running; else stamp done; fi
+    if [ -n "$bg" ]; then stamp running; else stamp "done"; fi
     ;;
 SessionStart)
     # A fresh claude owes nothing, whatever the option survived from the
     # process that died in this session.
     bg_write ""
-    stamp done
+    stamp "done"
     ;;
 Notification)
     handle_notify

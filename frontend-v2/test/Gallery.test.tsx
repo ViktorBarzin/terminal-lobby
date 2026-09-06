@@ -302,3 +302,27 @@ describe("attaching from the gallery", () => {
     dispose();
   });
 });
+
+/**
+ * The lightbox closes wherever you press it. That press is attached to the node
+ * rather than written as an onClick, because the surface is not a control: it
+ * has no role, it takes no tab stop, and its keyboard equivalent is the Escape
+ * this component binds on mount.
+ */
+describe("<Gallery> lightbox dismissal", () => {
+  it("steps back to the grid on a press anywhere on the surface", async () => {
+    const { store, dispose } = stubStore([img("pasted-1.png")], "lightbox");
+    const { container } = render(() => <Gallery store={store} />);
+    fireEvent.click(lightbox(container));
+    await waitFor(() => expect(container.querySelector(".tl-lightbox")).toBeNull());
+    dispose();
+  });
+
+  it("and on Escape, with no pointer at all", async () => {
+    const { store, dispose } = stubStore([img("pasted-1.png")], "lightbox");
+    const { container } = render(() => <Gallery store={store} />);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(container.querySelector(".tl-lightbox")).toBeNull());
+    dispose();
+  });
+});

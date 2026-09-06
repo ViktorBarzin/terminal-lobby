@@ -133,7 +133,6 @@ function stubStore(over: Partial<SkillsStore> = {}) {
       calls.push(`diff:${owner}/${name}`);
       setDiff({ owner, name, verdict: "differs", diff: " same\n-mine\n+theirs" });
     }),
-    clearDiff: () => setDiff(null),
     install: vi.fn(async (owner, name, replace) => {
       calls.push(`install:${owner}/${name}${replace ? ":replace" : ""}`);
     }),

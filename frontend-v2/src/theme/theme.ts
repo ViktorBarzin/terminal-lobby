@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { track } from "../telemetry/track";
+import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * Theme controller. The canonical name list + the class/meta applier live in
@@ -40,12 +41,8 @@ export const THEME_LABELS: Record<string, string> = {
 };
 
 function storedTheme(): string {
-  try {
-    const t = localStorage.getItem(THEME_KEY);
-    return t && THEMES.includes(t) ? t : DEFAULT_THEME;
-  } catch {
-    return DEFAULT_THEME;
-  }
+  const t = lsGet(THEME_KEY);
+  return t && THEMES.includes(t) ? t : DEFAULT_THEME;
 }
 
 /** Pure-TS fallback for environments without the index.html boot script. */
@@ -90,11 +87,7 @@ export function setTheme(next: string): void {
   // stays unconditional: a re-click must still repair localStorage and re-push
   // to __tlThemeLive.
   if (t !== theme()) track("theme.changed", { "tl.to": t });
-  try {
-    localStorage.setItem(THEME_KEY, t);
-  } catch {
-    /* private mode / no storage */
-  }
+  lsSet(THEME_KEY, t);
   apply(t);
   setThemeSignal(t);
   if (typeof window !== "undefined" && window.__tlThemeLive) {

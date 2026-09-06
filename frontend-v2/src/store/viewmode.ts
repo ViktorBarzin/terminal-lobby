@@ -1,5 +1,6 @@
 import { createEffect, createSignal, type Accessor } from "solid-js";
 import { track } from "../telemetry/track";
+import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * Per-session, per-device view mode (design pillar #2 switch): persist just
@@ -32,25 +33,15 @@ export function defaultMode(): ViewMode {
 }
 
 export function loadMode(session: string): ViewMode {
-  const fallback = defaultMode();
-  try {
-    const stored = localStorage.getItem(KEY_PREFIX + session);
-    if (stored === "text" || stored === "terminal") return stored;
-    return fallback;
-  } catch {
-    return fallback;
-  }
+  const stored = lsGet(KEY_PREFIX + session);
+  if (stored === "text" || stored === "terminal") return stored;
+  return defaultMode();
 }
 
 export function saveMode(session: string, mode: ViewMode): void {
   track("view.switched", { "tl.to": mode, "tl.session": session });
-  try {
-    // Prune the default so storage only records deviations (T3 partialize idea).
-    if (mode === defaultMode()) localStorage.removeItem(KEY_PREFIX + session);
-    else localStorage.setItem(KEY_PREFIX + session, mode);
-  } catch {
-    /* private mode / no storage */
-  }
+  // Prune the default so storage only records deviations (T3 partialize idea).
+  lsSet(KEY_PREFIX + session, mode === defaultMode() ? null : mode);
 }
 
 export function createViewMode(

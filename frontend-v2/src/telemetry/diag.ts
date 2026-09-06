@@ -13,9 +13,11 @@
  * calls to a function it never defined, which is what that drift costs.
  */
 
-import { BUILD_ID } from "../lib/config";
+import { BUILD_ID, telemetryUrl } from "../lib/config";
 import { currentNetworkId } from "../diagnostics/network";
-import { commitWindow, type WindowBytes } from "../diagnostics/usage";
+import type { WindowBytes } from "../diagnostics/usage";
+import { commitWindow } from "../diagnostics/usage-store";
+import { lsGet, lsSet } from "../lib/storage";
 
 /** The subset of the core's surface this app calls directly. */
 export interface Diagnostics {
@@ -39,19 +41,14 @@ const KILL_KEY = "tl-diagnostics";
 export function diagnosticsWanted(): boolean {
   try {
     if (new URLSearchParams(location.search).get("diag") === "0") return false;
-    return localStorage.getItem(KILL_KEY) !== "off";
   } catch {
     return true;
   }
+  return lsGet(KILL_KEY) !== "off";
 }
 
 export function setDiagnosticsEnabled(on: boolean): void {
-  try {
-    if (on) localStorage.removeItem(KILL_KEY);
-    else localStorage.setItem(KILL_KEY, "off");
-  } catch {
-    /* a browser that refuses storage keeps the default */
-  }
+  lsSet(KILL_KEY, on ? null : "off");
 }
 
 /** A handle that does nothing, for when the core is absent (dev server, a
@@ -74,7 +71,7 @@ export function startDiagnostics(): Diagnostics {
     const core = (globalThis as unknown as { tlDiag?: TlDiagGlobal }).tlDiag;
     if (!core) return inert;
     handle = core.bind({
-      url: "/api/sessions/telemetry",
+      url: telemetryUrl(),
       client: "lobby-v2",
       role: "lobby",
       build: BUILD_ID,

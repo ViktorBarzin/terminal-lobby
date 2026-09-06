@@ -2,7 +2,7 @@ import { For, Show, type Component } from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import { MAX_QUEUED_SHOWN, type PendingPermission } from "./timeline.logic";
 import { PermissionPanel } from "./PermissionPanel";
-import { modeLabel, type SlashCommand } from "./compose.logic";
+import { modeLabel, type SlashCommand } from "../logic/compose.logic";
 import type { DraftAttachment } from "../store/drafts";
 import { ContextMeter } from "./ContextMeter";
 import type { ContextState } from "./context.logic";

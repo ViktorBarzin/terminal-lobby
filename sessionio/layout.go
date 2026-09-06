@@ -130,6 +130,25 @@ func TranscriptCWD(path string) string {
 	return ""
 }
 
+// ResolveCWD is where a conversation is actually happening: the transcript's
+// own cwd, with tmux's session_path as the fallback for a transcript that has
+// not been written to yet.
+//
+// It lives here because BOTH writers of the binding index apply it and they
+// have to agree, or one session gets filed in two places. The bridge
+// resurrects by it: `tmux new -s work -c ~/code/tl` then `cd .worktrees/x &&
+// claude` is routine, and filing by session_path resurrects the session in the
+// PARENT directory, under a project slug that holds a different conversation's
+// transcripts. The syncer adopts by it: the same wrong answer files the thread
+// under the wrong T3 project (decision 8). session_path is only where a NEW
+// window in that session would start, which is why it loses to the transcript.
+func ResolveCWD(transcript, tmuxDir string) string {
+	if cwd := TranscriptCWD(transcript); cwd != "" {
+		return cwd
+	}
+	return tmuxDir
+}
+
 // transcriptFirstLines bounds how far into a transcript TranscriptCWD looks.
 const transcriptFirstLines = 16
 
@@ -186,10 +205,49 @@ func TranscriptModel(path string) string {
 // WithinProjects reports whether path is a transcript inside root. Guards both
 // what is stamped and what is read back.
 func WithinProjects(root, path string) bool {
-	if filepath.Ext(path) != ".jsonl" {
+	return filepath.Ext(path) == ".jsonl" && PathWithin(root, path)
+}
+
+// PathWithin reports whether path resolves to somewhere inside root.
+//
+// The one containment body. It used to exist twice: this side compared the
+// paths as text, and the privileged reader in session-events resolved symlinks
+// first, so the same stamp could be accepted here and refused there. The
+// resolving version is the one that is right — a symlink planted inside the
+// root, which the session's own OS user can write, points wherever it likes and
+// passes a text comparison.
+//
+// BOTH sides are resolved. Resolving only the path would break every box where
+// ~/.claude is itself a symlink, which is an ordinary dotfiles layout, not an
+// exotic one.
+//
+// A path that does not resolve falls back to its lexical form, and that
+// fallback is deliberate: Claude writes the transcript AFTER the hook stamps
+// the session, so a file that is not there yet is an ordinary state. Dropping
+// the fallback would make the stamp path refuse every new session. The read
+// that follows reports the absence itself.
+//
+// A RELATIVE path is refused outright, before anything is resolved. The lexical
+// version got that for free, because filepath.Rel of an absolute root against a
+// relative path errors, and the audit leans on it: a dash-leading stamp value
+// cannot reach `tmux set-option`, which tmux.go emits with no `--`, because
+// such a value is not absolute. EvalSymlinks does not preserve it — it returns
+// an ABSOLUTE result the moment it walks a link whose target is absolute, so
+// "-x/a.jsonl" under a cwd holding `-x -> <root>` would otherwise land inside
+// the root and be accepted, with the caller passing the original string on.
+func PathWithin(root, path string) bool {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
 		return false
 	}
-	rel, err := filepath.Rel(root, path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		clean = resolved
+	}
+	realRoot := root
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		realRoot = resolved
+	}
+	rel, err := filepath.Rel(realRoot, clean)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 

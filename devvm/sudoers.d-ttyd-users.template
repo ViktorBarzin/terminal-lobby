@@ -10,11 +10,34 @@
 # The names below are placeholders. Edit the real file on the box, or let the
 # roster reconcile write it.
 #
+# Revocation is immediate but partial. Drop a name here and from
+# /etc/ttyd-user-map and they stop attaching at once, because every privileged
+# wrapper re-validates against the map before it does anything. What stays is
+# what they accumulated outside their home: /var/lib/tmux-persist/snapshots/<user>
+# keeps their session titles and transcript ids, root-owned, and re-adding the
+# same OS name would make months-old snapshots restorable to whoever holds that
+# account next. `tl-users apply` renames a dropped user's snapshots to
+# <user>.revoked-<date>; a roster-driven box has to do that itself. The home
+# directory is userdel's business either way. release/privsurface.go carries the
+# full list.
+#
 # wizard (the user running ttyd.service + tmux-api.service) needs to run
 # tmux as the OS user that backs each Authentik identity. Keep the grant
 # scoped to each named target user — never `(ALL)` — and to a fixed set of
 # audited binaries:
-#   /usr/bin/tmux               tmux-api polls `tmux list-sessions`
+#   /usr/bin/tmux                      tmux-api polls `tmux list-sessions`.
+#                                      sudoers constrains no argument on this
+#                                      line, and tmux takes a command to run, so
+#                                      the grant is by construction a shell as
+#                                      the target user (`tmux new-session -d
+#                                      '<cmd>'`). There is nothing to fix behind
+#                                      that: tmux-user-attach, on the next line
+#                                      and in the same grant, exists to hand the
+#                                      web user an interactive shell as that
+#                                      same user. Read the per-binary list as an
+#                                      audit trail of which binary runs as whom,
+#                                      not as isolation the attach grant has
+#                                      already spent.
 #   /usr/local/bin/tmux-user-attach   ttyd attach (re-homes the server into
 #                                      the user's systemd scope; see script)
 #   /usr/local/bin/tmux-user-dirlist  tmux-api GET /dirs (project dir picker).
@@ -24,8 +47,16 @@
 #                                      Runs as root because it drives
 #                                      tmux-persist's single-user restore (reads
 #                                      the root-owned manifest + runuser into the
-#                                      target user). Self-validates its one arg
-#                                      against /etc/ttyd-user-map.
+#                                      target user). Self-validates every
+#                                      argument it takes, and it takes more than
+#                                      one: a user against /etc/ttyd-user-map, an
+#                                      action against a closed case set, an
+#                                      optional snapshot timestamp against
+#                                      ^[0-9]{8}T[0-9]{6}$, and N session names
+#                                      against the session-name charset. Each
+#                                      reaches tmux-persist as its own argv
+#                                      entry, and a short argv fails closed under
+#                                      `set -e`.
 #   /usr/local/bin/tmux-persist-forget tmux-api DELETE /sessions/<name>: writes
 #                                      a TOMBSTONE for the killed session into
 #                                      the root-owned 0600
@@ -51,15 +82,30 @@
 #   /usr/local/bin/skills-api         skills-api re-execs ITSELF as the mapped
 #                                      user (`-privop <op>`, request on stdin) so
 #                                      each half of a skill install runs as the
-#                                      user it belongs to: peer homes are 0700,
-#                                      so the owner cannot write into the
-#                                      recipient's home and the recipient cannot
-#                                      read the owner's. The child takes ONE op
-#                                      name in argv and nothing else — no home,
-#                                      no path, no third-party user — resolves
+#                                      user it belongs to, so each half writes
+#                                      with that user's ownership and reads with
+#                                      their access rather than the service's.
+#                                      Do not read a home mode off this comment:
+#                                      nothing in this package sets or checks
+#                                      one. Measured on the devvm 2026-09-05,
+#                                      peer homes are 0750 with per-user primary
+#                                      groups, and it is the group ownership, not
+#                                      the mode, that stops one user writing into
+#                                      another's home. The service account's own
+#                                      home is 0711 with ~/.claude at 0775, so
+#                                      the read direction is open there. Those
+#                                      modes belong to the roster provisioner.
+#                                      The child takes ONE op name in argv and
+#                                      nothing else — no home, no path, no
+#                                      third-party user — resolves
 #                                      its own home from its uid rather than
-#                                      $HOME (sudo leaves the caller's HOME in
-#                                      place), and re-validates every skill name
+#                                      $HOME (right, but not for the reason it
+#                                      reads like: /etc/sudoers sets `Defaults
+#                                      env_reset`, which already sets HOME from
+#                                      the TARGET user. The uid lookup is what
+#                                      keeps that true without depending on a
+#                                      Defaults line this package does not own),
+#                                      and re-validates every skill name
 #                                      it is given. So this grant, like the two
 #                                      below, takes no path it trusts. It also
 #                                      covers `claude plugin update` for that
@@ -78,8 +124,11 @@
 #                                      fork per 200 ms per open session. It
 #                                      speaks a fixed request/response protocol
 #                                      on stdin/stdout, takes no arguments, and
-#                                      re-validates every path against its OWN
-#                                      projects root — so the grant, like
+#                                      re-validates every path it is handed
+#                                      against its OWN home: transcripts against
+#                                      the projects root inside it, the
+#                                      catalogue's working directory against the
+#                                      home itself — so the grant, like
 #                                      file-api's, trusts no path from the
 #                                      caller.
 #
@@ -111,11 +160,12 @@
 # tmux-attach.sh sources the decision from tmux-api's /internal/attach rather
 # than from any client argument. Removing a user from /etc/ttyd-user-map is
 # still what revokes everything here.
-wizard ALL=(<os_user>) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
-wizard ALL=(<os_user>) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
+wizard ALL=(<os_user_1>) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
+wizard ALL=(<os_user_2>) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach, /usr/local/bin/tmux-user-dirlist, /usr/local/bin/file-api, /usr/local/bin/session-events, /usr/local/bin/skills-api
 
-# Restore button (POST /restore): run the validated root wrapper. It accepts a
-# single OS-user arg and re-checks it against /etc/ttyd-user-map, so this grant
+# Restore button (POST /restore): run the validated root wrapper. It takes a
+# user, an action, an optional snapshot timestamp and N session names, validates
+# each of them, and re-checks the user against /etc/ttyd-user-map, so this grant
 # can only ever restore a real terminal user's OWN saved sessions. Target is
 # root (not a per-user target) because tmux-persist itself does the per-user
 # runuser + reads the root-owned manifest.
@@ -123,8 +173,13 @@ wizard ALL=(<os_user>) NOPASSWD: /usr/bin/tmux, /usr/local/bin/tmux-user-attach,
 # tmux-user-setfacl (project co-ownership): applies/removes POSIX ACLs on a
 # shared project dir for its members. Root because the tree holds files owned by
 # several members (only root can setfacl all of them + fully revoke). The
-# wrapper self-validates its args (canonical dir strictly under a home, real
-# users, inode cap) so this grant can't become an arbitrary-path ACL writer.
+# wrapper self-validates its args so this grant can't become an arbitrary-path
+# ACL writer: the dir must be canonical and strictly under the OWNER's home,
+# where the owner is argv[4] and their home comes from getent passwd rather
+# than from the path; owner and grantees are re-checked against
+# /etc/ttyd-user-map; only regular files and directories inside the tree reach
+# setfacl, so a symlink planted in it can't redirect the ACL to its target; and
+# a grant is inode-capped (a revoke deliberately is not).
 #
 # tmux-persist-forget (the other half of a deliberate kill): appends one
 # tombstone row to /var/lib/tmux-persist/<user>.forgotten.tsv, root-owned 0600.

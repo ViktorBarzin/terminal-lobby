@@ -52,9 +52,10 @@ Legs:
                     against a partial-freeze regression that a total-freeze
                     check would miss). Exit 0 iff output was seen.
 
-Defaults target the dev harness's ttyd child
-(`python3 scripts/dev-harness.py --scratch --ttyd-bin out/ttyd`):
-ws://127.0.0.1:7996/ws, scratch tmux server `-L tl-dev`, session `main`.
+Defaults target a scratch ttyd: ws://127.0.0.1:7996/ws, scratch tmux server
+`-L tl-dev`, session `main`. scripts/dev-harness.py used to start that child;
+it was deleted, so start the scratch ttyd yourself, or use the production
+flags below.
 Against production ttyd:
   flowprobe.py --url ws://127.0.0.1:7681/ws \
       --header 'X-Authentik-Username: alice' --tmux-socket ''

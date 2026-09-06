@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, onMount, type Component } from "solid-js";
 import type { PaletteController } from "../keybindings/palette-controller";
+import { dismissOnPress } from "./overlay";
 
 /**
  * The command-palette overlay (feature-inventory Cat.2 "Command palette"). A thin
@@ -36,12 +37,14 @@ export const CommandPalette: Component<{ controller: PaletteController }> = (pro
   return (
     <div
       class="tl-cmdpalette-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) c.close(true);
-      }}
-      onKeyDown={onKey}
+      ref={dismissOnPress(() => c.close(true), { surfaceOnly: true })}
     >
-      <div class="tl-cmdpalette" role="dialog" aria-label="Command palette">
+      <div
+        class="tl-cmdpalette"
+        role="dialog"
+        aria-label="Command palette"
+        onKeyDown={onKey}
+      >
         <input
           ref={inputEl}
           class="tl-cp-input"
@@ -63,7 +66,8 @@ export const CommandPalette: Component<{ controller: PaletteController }> = (pro
                 </Match>
                 <Match when={row.kind === "item" ? row : false} keyed>
                   {(r) => (
-                    <div
+                    <button
+                      type="button"
                       class="tl-cp-item"
                       classList={{
                         "tl-cp-sel": c.selIdx() === r.index,
@@ -71,6 +75,11 @@ export const CommandPalette: Component<{ controller: PaletteController }> = (pro
                       }}
                       role="option"
                       aria-selected={c.selIdx() === r.index}
+                      // Out of the tab order: the query input keeps the focus
+                      // and ↑↓ move the selection, as a listbox does. Being a
+                      // button is what gives the row its own Enter and Space
+                      // once anything does focus it.
+                      tabindex={-1}
                       onMouseDown={(e) => e.preventDefault()}
                       onMouseEnter={() => c.setSel(r.index)}
                       onClick={() => c.runItem(r.item)}
@@ -79,7 +88,7 @@ export const CommandPalette: Component<{ controller: PaletteController }> = (pro
                       <Show when={r.item.meta}>
                         <span class="tl-cp-meta">{r.item.meta}</span>
                       </Show>
-                    </div>
+                    </button>
                   )}
                 </Match>
               </Switch>

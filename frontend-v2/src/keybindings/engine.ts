@@ -10,6 +10,7 @@ import {
   type ResolvedBinding,
 } from "./bindings.logic";
 import type { ChordEventLike } from "./chords.logic";
+import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * The keybinding ENGINE — the DOM glue around the pure bindings.logic layer
@@ -44,21 +45,6 @@ export interface KeybindingEngine {
     runCommand: (cmd: string) => void;
   }) => void;
   dispose: () => void;
-}
-
-function lsGet(key: string): string | null {
-  try {
-    return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
-  } catch {
-    return null;
-  }
-}
-function lsSet(key: string, val: string): void {
-  try {
-    localStorage.setItem(key, val);
-  } catch {
-    /* private mode / no storage */
-  }
 }
 
 function readKbDoc(): KbDoc {

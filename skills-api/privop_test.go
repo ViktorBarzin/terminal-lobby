@@ -184,3 +184,79 @@ func TestChildIgnoresTheEnvironmentsHome(t *testing.T) {
 		t.Fatal("the child followed $HOME; it must resolve its home from its uid")
 	}
 }
+
+// TL-12. An unresolved identity used to mean "run everything here": with
+// selfUser empty, run() performed the op inline against homeBase/<osUser>, so
+// the sudo boundary the design rests on disappeared without a word in the log.
+// main now refuses to start without an identity, and the decision below is the
+// second lock. tmux-api has always compared the two names and nothing else;
+// this is file-api and skills-api agreeing with it.
+func TestUnknownSelfUserNeverRunsAnotherUsersOpInline(t *testing.T) {
+	oldSelf, oldForce := selfUser, forceInline
+	t.Cleanup(func() { selfUser, forceInline = oldSelf, oldForce })
+	forceInline = false
+
+	selfUser = ""
+	if inline("bob") {
+		t.Fatal("an unknown identity must fail closed: no inline op under " +
+			"another user's home")
+	}
+	selfUser = "wizard"
+	if inline("bob") {
+		t.Fatal("bob's skills are unreadable from wizard's process; that op " +
+			"belongs on the far side of sudo")
+	}
+	if !inline("wizard") {
+		t.Fatal("the service's own user must stay inline")
+	}
+}
+
+// TL-30. The child re-validates every name it is handed, because the sudoers
+// grant lets anyone holding it write the request themselves. Owner and repo
+// were the two values that skipped the check: they only ever passed the charset
+// gate in the parent's normalizeSource, and reach an api.github.com path from
+// here.
+func TestPrivopChildRevalidatesOwnerAndRepo(t *testing.T) {
+	home := t.TempDir()
+	for _, req := range []request{
+		{Owner: "-oProxyCommand", Repo: "skills"},
+		{Owner: "mattpocock", Repo: "../../etc"},
+		{Owner: "", Repo: "skills"},
+		{Owner: "matt pocock", Repo: "skills"},
+	} {
+		for _, op := range []string{opInspect, opSource} {
+			res := perform(op, home, req)
+			// The message matters as much as the status: inspectSource also
+			// answers 400 when GitHub refuses, and that answer means the
+			// request already left the box.
+			if res.Status != 400 || !strings.Contains(res.Error, "is not a GitHub owner/repo") {
+				t.Errorf("%s %q/%q: status %d %q, want the charset refusal before anything is fetched",
+					op, req.Owner, req.Repo, res.Status, res.Error)
+			}
+		}
+	}
+}
+
+// The grant carries no argument spec, so every argv the parent can build is one
+// anybody holding the same grant can build. That makes the argv itself the
+// thing to pin: one op name, passed as its own element, and nothing the caller
+// could use to point the child at another user's home.
+func TestPrivopArgvCarriesOnlyTheOp(t *testing.T) {
+	old := sudoBinary
+	t.Cleanup(func() { sudoBinary = old })
+	sudoBinary = "/usr/bin/sudo"
+
+	cmd := privopCommand("bob", "install")
+	if cmd.Path != sudoBinary {
+		t.Fatalf("Path = %q, want the pinned sudo", cmd.Path)
+	}
+	want := []string{"/usr/bin/sudo", "-n", "-u", "bob", exeSelf(), "-privop", "install"}
+	if strings.Join(cmd.Args, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv = %v, want %v", cmd.Args, want)
+	}
+	for _, a := range cmd.Args {
+		if a == "-home" || a == "-path" || a == "-c" || a == "sh" || a == "/bin/sh" {
+			t.Fatalf("argv offers the caller a root or a shell: %v", cmd.Args)
+		}
+	}
+}

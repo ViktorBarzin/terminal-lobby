@@ -110,8 +110,19 @@ func splitPaneInfo(out string) (cwd, state string) {
 // zsh wrapper function some accounts define is not loaded, so relying on the
 // name alone would find nothing.
 //
-// The flags mirror devvm/start-claude.sh, which is how every session on this box
-// already starts, plus --continue.
+// The flags are this function's own. devvm/start-claude.sh is a sample this
+// package installs nowhere, and the launcher a session on this box actually
+// starts under is the roster's copy in each user's home, which pins
+// --session-id per launch. Nothing here stamps a conversation id, so which
+// conversation a respawned pane lands on is decided outside this function.
+// tmux-persist reads, in order, the @claude_transcript stamp Claude Code's own
+// SessionStart hook leaves on the tmux session, then an explicit --session-id
+// or --resume in argv, then a transcript whose own recorded name matches the
+// tmux session, which is what the --name below supplies. Only its last resort,
+// the newest .jsonl by mtime in the cwd-slug directory, is arbitrary. Whether a
+// --continue pane can still mis-map after a reboot was not traced to the end,
+// tracked as TL-26. Do not close it by putting a fresh --session-id next to
+// --continue.
 func claudeCommand(osUser, session string) string {
 	bin := "claude"
 	if u, err := user.Lookup(osUser); err == nil && u.HomeDir != "" {
@@ -122,8 +133,16 @@ func claudeCommand(osUser, session string) string {
 
 // tmuxCmd runs tmux as osUser: directly when that is this service's own user,
 // through the same `sudo -n -H -u` the attach path uses otherwise.
+//
+// sessionio.Injector.Command is the same rule and this stays separate from it
+// anyway: taking that edge for one five-line function would add a require and
+// replace pair, a transitive dependency on the transcript reader, and a
+// sessionio path to this service's container build, to delete five lines. The
+// argv also differs: this one passes -H and sessionio's does not, so the two
+// are not interchangeable as they stand, and which of them is right for a
+// respawned pane has not been measured.
 func tmuxCmd(osUser string, args ...string) *exec.Cmd {
-	if osUser == selfUser || selfUser == "" {
+	if inline(osUser) {
 		return exec.Command(tmuxBinary, args...)
 	}
 	return exec.Command(sudoBinary, append([]string{"-n", "-H", "-u", osUser, tmuxBinary}, args...)...)

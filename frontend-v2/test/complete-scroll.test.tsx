@@ -11,7 +11,7 @@
  * could not tell a correct scroll from no scroll at all.
  */
 import { describe, it, expect } from "vitest";
-import { scrollTopFor } from "../src/components/compose.logic";
+import { scrollTopFor } from "../src/logic/compose.logic";
 
 // A menu showing four 40px rows.
 const VIEW = 160;

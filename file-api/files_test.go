@@ -352,6 +352,21 @@ func TestHandleWriteSymlinkEscapeRejected(t *testing.T) {
 	}
 }
 
+// TL-9. A raced symlink leaf must read to the client as the same "not a regular
+// file" 400 a symlink caught at stat time gets. A 500 there would say the box
+// broke, when what happened is that the write was refused on purpose.
+func TestHandleWriteRacedSymlinkLeafIs400(t *testing.T) {
+	_, home := setupUser(t)
+	stubWriteLeafELOOP(t)
+
+	rec := httptest.NewRecorder()
+	handleWrite(rec, writeReq(t, filepath.Join(home, "note.txt"), "clobbered", true))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("raced symlink leaf: got %d (%s), want 400",
+			rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleWriteInvalidJSON400(t *testing.T) {
 	setupUser(t)
 	rec := httptest.NewRecorder()

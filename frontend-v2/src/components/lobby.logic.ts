@@ -447,19 +447,37 @@ export function stabilizeModel(
 // ---- Display helpers -----------------------------------------------------
 
 /**
- * Ported verbatim from the vanilla app (frontend/index.html relativeTime),
- * plus a floor at zero: `epochSec` is stamped by the server clock and
- * `Date.now()` reads the viewer's, so a viewer whose clock trails the server's
- * sees freshly-active sessions in its own future and would render "-239s ago".
- * `!epochSec` stays a blank cell — that is the no-timestamp case, not age 0.
+ * How long ago, in the words a person would use.
+ *
+ * The ONE ladder. Three surfaces used to word the same interval three ways —
+ * the sidebar floored, the restore picker rounded, and the Settings network
+ * panel said "5 min ago" and had no day unit at all, so a check made yesterday
+ * read "31h ago". A person moving between them was reading different numbers
+ * for the same moment.
+ *
+ * Every unit floors, and the age floors at zero. Rounding up reads as older
+ * than the thing is: 36 hours became "2d ago" for a snapshot taken yesterday
+ * afternoon, and anything under half a minute became "0m ago". The zero floor
+ * is a clock-skew guard — an age is measured between a timestamp from the
+ * server's clock and a `now` from the viewer's, so a viewer whose clock trails
+ * puts fresh events in its own future and would otherwise render "-239s ago".
  */
-export function relativeTime(epochSec: number): string {
-  if (!epochSec) return "";
-  const diff = Math.max(0, Math.floor(Date.now() / 1000) - epochSec);
+export function agoLabel(elapsedMs: number): string {
+  const diff = Math.max(0, Math.floor(elapsedMs / 1000));
   if (diff < 60) return diff + "s ago";
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";
   if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
   return Math.floor(diff / 86400) + "d ago";
+}
+
+/**
+ * A session card's last-activity cell. Ported from the vanilla app
+ * (frontend/index.html relativeTime). `!epochSec` stays a blank cell — that is
+ * the no-timestamp case, not age 0.
+ */
+export function relativeTime(epochSec: number): string {
+  if (!epochSec) return "";
+  return agoLabel(Date.now() - epochSec * 1000);
 }
 
 /** m:ss (or h:mm:ss) elapsed for the running-session working timer. */

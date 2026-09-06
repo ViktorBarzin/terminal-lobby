@@ -15,7 +15,8 @@ import {
   writeStoredNetwork,
   type NetworkInfo,
 } from "../src/diagnostics/network";
-import { NET_UNKNOWN, USAGE_STORAGE_KEY, readStore } from "../src/diagnostics/usage";
+import { NET_UNKNOWN, USAGE_STORAGE_KEY } from "../src/diagnostics/usage";
+import { readStore } from "../src/diagnostics/usage-store";
 
 /**
  * Which network this device is on. The browser cannot say — Safari ships no

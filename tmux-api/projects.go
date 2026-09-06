@@ -391,6 +391,10 @@ func createProject(w http.ResponseWriter, r *http.Request, osUser string) {
 		http.Error(w, "project dir must be an absolute path", http.StatusBadRequest)
 		return
 	}
+	if body.Dir != "" && !callerOwnsDir(body.Dir, osUser) {
+		http.Error(w, "project dir must be under your own home directory", http.StatusBadRequest)
+		return
+	}
 	p := GlobalProject{
 		ID:        newProjectID(),
 		Name:      name,
@@ -428,6 +432,10 @@ var (
 	errProjectNotFound = errors.New("project not found")
 	errNotMember       = errors.New("not a project member")
 	errSessionTaken    = errors.New("session already assigned to a project")
+	// errDirNotOwned is the caller naming, or granting ACLs on, a directory
+	// outside their own home. A 400 rather than a 403: the value is bad, and
+	// the caller is a member either way.
+	errDirNotOwned = errors.New("project dir must be under your own home directory")
 )
 
 func indexByID(ps *ProjectSet, id string) int {
@@ -440,14 +448,18 @@ func indexByID(ps *ProjectSet, id string) int {
 }
 
 // projectErrStatus maps an update() error to an HTTP response. Sentinels become
-// 404/403; anything else is an opaque 500 (input is pre-validated in the handler
-// so a validation failure here would be a genuine surprise).
+// 404/403/400; anything else is an opaque 500. Most input is pre-validated in
+// the handler, so a validation failure here would be a genuine surprise — the
+// exception is errDirNotOwned, which needs the stored project in hand and so
+// can only be decided under the store lock.
 func projectErrStatus(w http.ResponseWriter, osUser, action string, err error) {
 	switch {
 	case errors.Is(err, errProjectNotFound):
 		http.Error(w, "project not found", http.StatusNotFound)
 	case errors.Is(err, errNotMember):
 		http.Error(w, "not a project member", http.StatusForbidden)
+	case errors.Is(err, errDirNotOwned):
+		http.Error(w, errDirNotOwned.Error(), http.StatusBadRequest)
 	default:
 		logAndFail(w, "%s for %s failed: %v", action, osUser, err)
 	}
@@ -556,7 +568,7 @@ func addMember(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		if !projectMember(ps.Projects[i], target) {
 			ps.Projects[i].Members = append(ps.Projects[i].Members, Member{OSUser: target, AddedBy: osUser})
 			if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
-				grant = &coownOp{"grant", p.Dir, []string{target}}
+				grant = &coownOp{"grant", p.Dir, []string{target}, coownOwnerFunc(p)(p.Dir)}
 			}
 		}
 		return nil
@@ -580,7 +592,7 @@ func removeMember(w http.ResponseWriter, osUser, id, target string) {
 	var revoke *coownOp
 	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" && projectMember(p, target) {
-			revoke = &coownOp{"revoke", p.Dir, []string{target}}
+			revoke = &coownOp{"revoke", p.Dir, []string{target}, coownOwnerFunc(p)(p.Dir)}
 		}
 		members := ps.Projects[i].Members[:0]
 		for _, m := range ps.Projects[i].Members {
@@ -721,6 +733,25 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		wasCoOwned = ps.Projects[i].CoOwned
 		oldDir = ps.Projects[i].Dir
+		// The caller must own the tree root would write an ACL on, checked
+		// against the dir the project holds AFTER this patch. A body of
+		// {"coOwned":true} names no dir at all, so checking only body.Dir let
+		// a member flip the flag and have root grant on whatever was stored —
+		// including a dir a project created before this check put under
+		// someone else's home (TL-2). Reading it here, under the store lock,
+		// means the dir checked is the dir the grant will run on.
+		effDir := oldDir
+		if body.Dir != nil {
+			effDir = *body.Dir
+		}
+		nowCoOwned := wasCoOwned
+		if body.CoOwned != nil {
+			nowCoOwned = *body.CoOwned
+		}
+		grants := nowCoOwned && (!wasCoOwned || effDir != oldDir)
+		if effDir != "" && (body.Dir != nil || grants) && !callerOwnsDir(effDir, osUser) {
+			return errDirNotOwned
+		}
 		if body.Name != nil {
 			ps.Projects[i].Name = strings.TrimSpace(*body.Name)
 		}
@@ -741,7 +772,7 @@ func patchProject(w http.ResponseWriter, r *http.Request, osUser, id string) {
 		return
 	}
 	// Apply/remove filesystem ACLs if co-ownership or the dir changed (async).
-	for _, op := range coownOpsForPatch(wasCoOwned, oldDir, updated.CoOwned, updated.Dir, memberUsers(updated)) {
+	for _, op := range coownOpsForPatch(wasCoOwned, oldDir, updated.CoOwned, updated.Dir, memberUsers(updated), coownOwnerFunc(updated)) {
 		runCoownAsync(op)
 	}
 	// One PATCH can carry several edits; each is its own event so a dashboard
@@ -776,7 +807,7 @@ func deleteProject(w http.ResponseWriter, osUser, id string) {
 	var revoke *coownOp
 	err := updateProject(id, osUser, func(ps *ProjectSet, i int) error {
 		if p := ps.Projects[i]; p.CoOwned && p.Dir != "" {
-			revoke = &coownOp{"revoke", p.Dir, memberUsers(p)}
+			revoke = &coownOp{"revoke", p.Dir, memberUsers(p), coownOwnerFunc(p)(p.Dir)}
 		}
 		ps.Projects = append(ps.Projects[:i], ps.Projects[i+1:]...)
 		return nil

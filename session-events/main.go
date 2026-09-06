@@ -15,13 +15,18 @@ import (
 	"syscall"
 	"time"
 
+	"terminal-lobby/authuser"
 	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
 
 func main() {
-	addr := flag.String("addr", ":7685", "listen address")
-	mapPath := flag.String("usermap", "/etc/ttyd-user-map", "Authentik→OS-user map")
+	// Loopback by default, like the four sibling services: with no config
+	// file present, the identity header is all that authenticates a request,
+	// so the port must not be on the network until an operator says so
+	// (TL-3). TL_BIND below is what widens it.
+	addr := flag.String("addr", "127.0.0.1:7685", "listen address")
+	mapPath := flag.String("usermap", authuser.DefaultMapPath, "identity→OS-user map")
 	homeBase := flag.String("home-base", "/home", "base dir holding per-user homes")
 	poll := flag.Duration("poll", 200*time.Millisecond, "transcript tail interval")
 	hb := flag.Duration("heartbeat", 20*time.Second, "SSE heartbeat interval")
@@ -220,6 +225,30 @@ func main() {
 	// plugins they have switched on. The composer offers them beside the
 	// built-ins it ships, so an unreachable catalogue costs completion of
 	// /help and /clear nothing.
+	// The catalogue for a directory rather than a session, for the new-session
+	// composer's `/` menu — there is no session to name yet.
+	//
+	// Under /commands/ ON PURPOSE, not at a bare /commands. The production
+	// ingress matches PathPrefix(`/commands/`) with the trailing slash, so a
+	// bare path would miss the rule, fall through to ttyd and 404 — which is
+	// exactly how /build-id spent its life. A path under the existing prefix
+	// needs no ingress change to work.
+	//
+	// `_new` cannot collide with the {session} pattern below. Go's mux prefers
+	// the literal over the wildcard, and a session name is a 12-character base32
+	// id (ADR-0019) whose alphabet has no underscore, so nothing can be called
+	// this. The leading underscore follows the pool slots' convention for a name
+	// no client can mint.
+	web.HandleFunc("GET /commands/_new", func(w http.ResponseWriter, r *http.Request) {
+		cmds, ok := rg.catalogueForDir(osUserFrom(r.Context()), r.URL.Query().Get("dir"))
+		if !ok {
+			// Only reachable for a dir outside the caller's home, which is a
+			// refusal rather than an empty catalogue.
+			http.Error(w, "directory not readable", http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, cmds)
+	})
 	web.HandleFunc("GET /commands/{session}", func(w http.ResponseWriter, r *http.Request) {
 		cmds, ok := rg.catalogue(osUserFrom(r.Context()), r.PathValue("session"))
 		if !ok {
@@ -332,8 +361,10 @@ func main() {
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	// The session-start hook runs as the OS user on THIS box, so it is hard-gated
 	// to loopback (defense in depth alongside the ingress not routing /hooks/*
-	// publicly).
-	root.HandleFunc("POST /hooks/session-start", localhostOnly(rg.handleSessionStart()))
+	// publicly) and, on top of that, to the account that opened the connection:
+	// loopback authenticates a host, and every lobby user has a shell on this
+	// host, so the "user" in the body was previously anyone's to choose.
+	root.HandleFunc("POST /hooks/session-start", localhostOnly(peerOwnsClaim(rg.handleSessionStart())))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {

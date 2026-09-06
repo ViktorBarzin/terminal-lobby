@@ -8,15 +8,21 @@ import (
 	"unicode/utf8"
 )
 
-// vectors.json pins FromTitle's output. It used to be read by the frontend's
-// suite too, so a Go/TypeScript divergence failed here or there; the browser
-// stopped deriving names with ADR-0019 and this is the only reader left.
-// t3-bridge is what FromTitle still serves.
+// vectors.json pins both derivations. `cases` pins FromTitle, which only Go
+// reads now: the browser stopped deriving names with ADR-0019 and t3-bridge is
+// what FromTitle still serves. `cleanTitleCases` pins CleanTitle, which the
+// browser DOES still have its own copy of (frontend-v2/src/lib/title.ts), so
+// those cases are read by frontend-v2/test/title.test.ts as well and the two
+// suites cannot drift apart by editing one list.
 type vectorFile struct {
 	Cases []struct {
 		Title string `json:"title"`
 		Want  string `json:"want"`
 	} `json:"cases"`
+	CleanTitleCases []struct {
+		In   string `json:"in"`
+		Want string `json:"want"`
+	} `json:"cleanTitleCases"`
 }
 
 func loadVectors(t *testing.T) vectorFile {
@@ -29,7 +35,7 @@ func loadVectors(t *testing.T) vectorFile {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatalf("parsing the shared vectors: %v", err)
 	}
-	if len(v.Cases) == 0 {
+	if len(v.Cases) == 0 || len(v.CleanTitleCases) == 0 {
 		t.Fatal("the shared vectors are empty")
 	}
 	return v
@@ -84,22 +90,9 @@ func TestFromTitleIsIdempotentOverItsOwnOutput(t *testing.T) {
 }
 
 func TestCleanTitle(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"Deploy the thing", "Deploy the thing"},
-		{"  padded  ", "padded"},
-		{"collapses   inner   runs", "collapses inner runs"},
-		{"tab\tand\nnewline", "tab and newline"},
-		{"bell\aand\x1bescape", "bell and escape"},
-		{"c1\u0085control", "c1 control"}, // NEL - a C1 control
-		{"", ""},
-		{"   ", ""},
-		{"кирилица остава", "кирилица остава"},
-		{"emoji 🚀 stays", "emoji 🚀 stays"},
-		{"pipe | stays", "pipe | stays"},
-	}
-	for _, c := range cases {
-		if got := CleanTitle(c.in); got != c.want {
-			t.Errorf("CleanTitle(%q) = %q, want %q", c.in, got, c.want)
+	for _, c := range loadVectors(t).CleanTitleCases {
+		if got := CleanTitle(c.In); got != c.Want {
+			t.Errorf("CleanTitle(%q) = %q, want %q", c.In, got, c.Want)
 		}
 	}
 }

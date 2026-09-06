@@ -1,0 +1,15 @@
+# Commits git blame should skip: bulk reformats and nothing else.
+#
+# Empty on purpose. Formatting lands by ratchet
+# (`cd frontend-v2 && npm run format:changed`), so no commit in this repo's
+# history is a pure reformat and there is nothing yet to skip. The file exists
+# so that if a tree-wide `biome format --write` ever does land, its sha has a
+# home and blame keeps working the same day rather than a year later.
+#
+# Turn it on for your clone with:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# GitHub and Forgejo both honour the file without that step.
+#
+# One sha per line, full 40 characters, with a comment saying what it was.

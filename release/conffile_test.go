@@ -160,9 +160,14 @@ func TestEveryIdentityAwareUnitSourcesTheConfig(t *testing.T) {
 	}
 }
 
-// The default an operator gets with no configuration at all must be the one
-// that needs no shared secret. A service on 0.0.0.0 with TL_PROXY_SECRET unset
-// trusts the identity header from anything that can reach it.
+// The default an operator gets with no configuration at all must keep the ports
+// off the network. A service on 0.0.0.0 with TL_PROXY_SECRET unset trusts the
+// identity header from anything that can reach it.
+//
+// This is not the same as "needs no shared secret". A loopback bind stops a
+// caller on the network and nothing else: every OS user on the box reaches
+// loopback, so on a multi-user install the secret is still the only thing that
+// separates one local account from another. See TL-27.
 func TestShippedDefaultBindsLoopback(t *testing.T) {
 	for _, line := range strings.Split(DefaultConfig(), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "TL_BIND=") {

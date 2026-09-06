@@ -15,6 +15,7 @@ import { badgeLabel } from "../store/gallery.logic";
 import { clipboardImgUrl } from "../lib/config";
 import { refocusTerminal } from "../keybindings/refocus";
 import { PaperclipIcon } from "./Icons";
+import { dismissOnPress } from "./overlay";
 
 /**
  * The session image-gallery overlay (feature-inventory Cat.8). A pure view over
@@ -134,10 +135,7 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
     <>
       <div
         class="tl-gallery-backdrop"
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={(e) => {
-          if (e.target === e.currentTarget) s.stepBack(); // backdrop only
-        }}
+        ref={dismissOnPress(() => s.stepBack(), { surfaceOnly: true, keepFocus: true })}
       >
         <div
           ref={panelEl}
@@ -235,11 +233,7 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
 
       <Show when={s.view() === "lightbox" && current()}>
         {(img) => (
-          <div
-            class="tl-lightbox"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => s.stepBack()}
-          >
+          <div class="tl-lightbox" ref={dismissOnPress(() => s.stepBack(), { keepFocus: true })}>
             <Show
               when={!isBroken(img().name)}
               fallback={

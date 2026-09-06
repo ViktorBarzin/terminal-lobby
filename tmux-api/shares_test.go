@@ -21,6 +21,20 @@ func withInternalToken(t *testing.T, tok string) {
 	t.Cleanup(func() { internalToken = old })
 }
 
+// internalAttachReq builds a request the way devvm/tmux-attach.sh does: from the
+// box itself, carrying the shared token. /internal/attach is loopback-gated
+// (TL-17), so a request that does not say where it came from is answered 403
+// before any of the authorization below runs. Pass token "" for the no-token
+// case.
+func internalAttachReq(body, token string) *http.Request {
+	r := projectsReq(http.MethodPost, "/internal/attach", body, "")
+	r.RemoteAddr = "127.0.0.1:41000"
+	if token != "" {
+		r.Header.Set("X-Internal-Token", token)
+	}
+	return r
+}
+
 func TestValidateShareSet(t *testing.T) {
 	base := func() ShareSet {
 		return ShareSet{Version: 1, Shares: []Share{{Owner: "wizard", Name: "s1", Guest: "bob", Mode: "ro"}}}
@@ -170,14 +184,13 @@ func TestInternalAttach(t *testing.T) {
 
 	// missing token → 403
 	rec = httptest.NewRecorder()
-	handleInternalAttach(rec, projectsReq(http.MethodPost, "/internal/attach", body, ""))
+	handleInternalAttach(rec, internalAttachReq(body, ""))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("no token: got %d, want 403", rec.Code)
 	}
 
 	// with token → 200 + mode, tty recorded
-	req := projectsReq(http.MethodPost, "/internal/attach", body, "")
-	req.Header.Set("X-Internal-Token", "secret-tok")
+	req := internalAttachReq(body, "secret-tok")
 	rec = httptest.NewRecorder()
 	handleInternalAttach(rec, req)
 	if rec.Code != http.StatusOK {
@@ -194,8 +207,7 @@ func TestInternalAttach(t *testing.T) {
 	}
 
 	// no matching share → 403 (deny attach)
-	req = projectsReq(http.MethodPost, "/internal/attach", `{"owner":"`+me+`","name":"nope","guest":"`+other+`","tty":"/dev/pts/7"}`, "")
-	req.Header.Set("X-Internal-Token", "secret-tok")
+	req = internalAttachReq(`{"owner":"`+me+`","name":"nope","guest":"`+other+`","tty":"/dev/pts/7"}`, "secret-tok")
 	rec = httptest.NewRecorder()
 	handleInternalAttach(rec, req)
 	if rec.Code != http.StatusForbidden {

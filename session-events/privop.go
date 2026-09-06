@@ -9,7 +9,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"terminal-lobby/sessionio"
 )
@@ -156,9 +155,18 @@ func handlePrivop(req privRequest, home, root string) privResponse {
 		return privResponse{OK: true, Matches: matches}
 
 	case "catalogue":
-		// No path check: Discover only ever reads .claude/{skills,commands}
-		// under the home this child owns and under the session's own working
-		// directory, and it answers with entries rather than file contents.
+		// The cwd is bounded like every other path here. Discover joins it with
+		// .claude/skills and .claude/commands, follows symlinked skill entries
+		// (commands.go:86), reads every *.md it reaches and returns describe(),
+		// which for a file without frontmatter is its first prose line. So file
+		// content does cross back, and an unbounded cwd would make this child a
+		// directed read of any file of that shape on the box. An empty cwd is
+		// "no project directory", which is what every caller sends today.
+		if req.CWD != "" {
+			if err := cwdWithin(home, req.CWD); err != nil {
+				return fail("%v", err)
+			}
+		}
 		return privResponse{OK: true, Commands: Discover(home, req.CWD)}
 
 	default:
@@ -172,20 +180,27 @@ func transcriptWithin(root, path string) error {
 	if !filepath.IsAbs(path) || filepath.Ext(path) != ".jsonl" {
 		return fmt.Errorf("privop: %q is not an absolute transcript path", path)
 	}
-	clean := filepath.Clean(path)
-	// Resolve what exists, so a symlink planted inside the root cannot widen
-	// the grant. A transcript that does not exist YET is an ordinary state —
-	// Claude has not written it — so fall back to the lexical form there and
-	// let the read report the absence itself.
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		clean = resolved
+	return pathWithin(root, path)
+}
+
+// cwdWithin bounds catalogue's session working directory to this child's own
+// home. Same containment as transcriptWithin, without the .jsonl requirement,
+// because what is being bounded is a directory to walk rather than a file to
+// read.
+func cwdWithin(home, cwd string) error {
+	if !filepath.IsAbs(cwd) {
+		return fmt.Errorf("privop: %q is not an absolute directory", cwd)
 	}
-	realRoot := root
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		realRoot = resolved
-	}
-	rel, err := filepath.Rel(realRoot, clean)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	return pathWithin(home, cwd)
+}
+
+// pathWithin is the containment check both of the above share. The body lives
+// in sessionio now, and the exported WithinProjects there calls the same one,
+// so the boundary a stamp is written against and the boundary this privileged
+// child reads against can no longer disagree. What stays here is the wording of
+// the refusal, which the callers log.
+func pathWithin(root, path string) error {
+	if !sessionio.PathWithin(root, path) {
 		return fmt.Errorf("privop: %q is outside %s", path, root)
 	}
 	return nil

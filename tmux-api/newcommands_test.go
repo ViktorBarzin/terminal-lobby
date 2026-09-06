@@ -17,16 +17,16 @@ import (
 // else's output and must not become an answer about a command.
 func TestParseProbeIgnoresEverythingButAnswers(t *testing.T) {
 	out := strings.Join([]string{
-		"Welcome to your shell!",         // a banner
-		"claude\t1",                      // an answer
-		"codex\t0",                       // an answer
-		"shell\t1",                       // an answer
-		"some-key\twhat",                 // a key with a non-answer
-		"UPPERCASE\t1",                   // outside the key charset
-		"aaaaaaaaaaaaaaaaaaaaaaaa\t1",    // longer than a key may be
-		"claude 1",                       // space, not a tab
-		"",                               // blank
-		"[oh-my-zsh] plugins loaded",     // more banner
+		"Welcome to your shell!",      // a banner
+		"claude\t1",                   // an answer
+		"codex\t0",                    // an answer
+		"shell\t1",                    // an answer
+		"some-key\twhat",              // a key with a non-answer
+		"UPPERCASE\t1",                // outside the key charset
+		"aaaaaaaaaaaaaaaaaaaaaaaa\t1", // longer than a key may be
+		"claude 1",                    // space, not a tab
+		"",                            // blank
+		"[oh-my-zsh] plugins loaded",  // more banner
 	}, "\n")
 
 	got := parseProbe([]byte(out))

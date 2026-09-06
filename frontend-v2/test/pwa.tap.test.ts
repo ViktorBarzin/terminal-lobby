@@ -92,7 +92,6 @@ function loadWorker(
       openWindow,
     },
   };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function("self", "indexedDB", "MessageChannel", "setTimeout", "URL", "atob", SRC)(
     self,
     fakeIndexedDB(seen),
@@ -237,22 +236,31 @@ describe("push badge", () => {
 });
 
 /**
- * The two copies of the worker.
+ * The two copies of every PWA asset.
  *
- * `frontend-v2/public/sw.js` is the one vite serves and the one these tests
- * drive; `frontend/sw.js` is the one the Debian package actually installs to
- * /usr/local/share/ttyd/sw.js (release/manifest.go). Nothing else keeps them in
- * step, and the natural place to edit is the copy that does NOT ship — so an
- * edit to one alone means either the fix never reaches the box, or dev and
- * production quietly disagree about how a notification tap is routed.
+ * `frontend-v2/public/` is what vite serves and what these tests drive;
+ * `frontend/` is what the Debian package installs to /usr/local/share/ttyd
+ * (release/manifest.go). Nothing else keeps the pairs in step, and the natural
+ * place to edit is the copy that does NOT ship — so an edit to one alone means
+ * either the fix never reaches the box, or dev and production quietly disagree.
+ *
+ * ADR-0014 diagnosed exactly this for sw.js and pinned sw.js alone. The other
+ * four assets have the same two copies and had no pin, so a new icon or a
+ * changed `start_url` in frontend-v2/public/ passed CI, rendered on the dev
+ * server, and shipped nothing.
  */
-describe("the shipped worker", () => {
-  it("is byte-identical to the one under test", () => {
-    const shipped = readFileSync(
-      resolve(dirname(fileURLToPath(import.meta.url)), "../../frontend/sw.js"),
-      "utf8",
-    );
-    expect(shipped).toBe(SRC);
+describe("the shipped PWA assets", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const bytes = (p: string) => readFileSync(resolve(here, p));
+
+  it.each([
+    "sw.js",
+    "manifest.webmanifest",
+    "icon-192.png",
+    "icon-512.png",
+    "icon-512-maskable.png",
+  ])("frontend/%s is byte-identical to frontend-v2/public/%s", (name) => {
+    expect(bytes(`../../frontend/${name}`).equals(bytes(`../public/${name}`))).toBe(true);
   });
 });
 

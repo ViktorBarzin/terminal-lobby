@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -150,6 +151,92 @@ func TestSessionMapRefusesTranscriptOutsideTheUsersProjects(t *testing.T) {
 	}
 }
 
+// The lexical check said yes to this and the privileged one said no, which is
+// the whole reason the two collapsed into one body. A symlink planted INSIDE
+// the projects root, pointing at a file outside it, is a path that passes
+// filepath.Rel and still reads someone else's transcript. The user's own
+// account can write that link — the stamp store and the projects tree are both
+// theirs — so it is the realistic shape of the escape, not a contrived one.
+//
+// The two roots are BOTH resolved, because on a box where ~/.claude is itself a
+// symlink (a dotfiles checkout, a moved home) resolving only the path would
+// make every valid transcript fail containment.
+func TestWithinProjectsFollowsALinkOutOfTheRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege on Windows")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "projects")
+	outside := filepath.Join(base, "elsewhere")
+	for _, d := range []string{root, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret := filepath.Join(outside, "someone-else.jsonl")
+	if err := os.WriteFile(secret, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "innocent.jsonl")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	if WithinProjects(root, link) {
+		t.Fatal("a link inside the root pointing out of it was accepted")
+	}
+
+	// A real transcript still passes, and so does one that does not exist yet:
+	// Claude writes the file after the hook stamps the session, so an unwritten
+	// path is an ordinary state rather than an escape.
+	real := filepath.Join(root, "real.jsonl")
+	if err := os.WriteFile(real, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !WithinProjects(root, real) {
+		t.Fatal("a real transcript inside the root was refused")
+	}
+	if !WithinProjects(root, filepath.Join(root, "not-written-yet.jsonl")) {
+		t.Fatal("a transcript Claude has not written yet was refused")
+	}
+
+	// The root itself reached through a symlink still contains its own files.
+	linkedRoot := filepath.Join(base, "projects-link")
+	if err := os.Symlink(root, linkedRoot); err != nil {
+		t.Fatal(err)
+	}
+	if !WithinProjects(linkedRoot, real) {
+		t.Fatal("a symlinked projects root refused a transcript inside it")
+	}
+
+	// A RELATIVE path is refused whatever it resolves to. The lexical check got
+	// this for free — filepath.Rel of an absolute root against a relative path
+	// errors — and the audit leans on it: a dash-leading stamp value cannot
+	// reach `tmux set-option`, which tmux.go emits with no `--`, because a value
+	// like "-x/a.jsonl" is not absolute. EvalSymlinks would hand back an
+	// absolute result the moment it walked a link with an absolute target, so
+	// the refusal has to be stated rather than inherited.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	if err := os.Symlink(root, filepath.Join(base, "-x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"-x/real.jsonl", "projects/real.jsonl", "real.jsonl"} {
+		if WithinProjects(root, rel) {
+			t.Fatalf("relative path %q was accepted", rel)
+		}
+	}
+}
+
 func TestSessionMapUnstampedSessionDoesNotResolve(t *testing.T) {
 	opts := siotest.NewFakeOptions("wizard/plain-shell")
 	sm := NewSessionMap("wizard", "/home/wizard/.claude/projects", opts)
@@ -282,5 +369,29 @@ func TestSessionMapRefusesASuppliedTranscriptOutsideTheProjectsRoot(t *testing.T
 		if err == nil {
 			t.Fatalf("supplied transcript %q was accepted", bad)
 		}
+	}
+}
+
+// ResolveCWD is the rule both writers of the binding index apply, so it lives
+// here rather than once in each of them. The transcript wins; tmux's
+// session_path is the fallback for a transcript with nothing in it yet.
+func TestResolveCWDPrefersTheTranscriptOverTmux(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.jsonl")
+	body := `{"type":"user","cwd":"/home/wizard/code/tl/.worktrees/x","message":{"role":"user","content":"hi"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := ResolveCWD(path, "/home/wizard/code/tl"); got != "/home/wizard/code/tl/.worktrees/x" {
+		t.Errorf("ResolveCWD = %q, want the transcript's cwd", got)
+	}
+	empty := filepath.Join(t.TempDir(), "empty.jsonl")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := ResolveCWD(empty, "/home/wizard/code/tl"); got != "/home/wizard/code/tl" {
+		t.Errorf("ResolveCWD on an empty transcript = %q, want tmux's answer", got)
+	}
+	if got := ResolveCWD("", "/home/wizard/code/tl"); got != "/home/wizard/code/tl" {
+		t.Errorf("ResolveCWD with no transcript = %q, want tmux's answer", got)
 	}
 }

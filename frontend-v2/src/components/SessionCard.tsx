@@ -10,7 +10,7 @@ import { sessionConfirmLabel, sessionLabel, sessionTitleDraft, type Session } fr
 import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
 import { backgroundLabel, formatWorking, relativeTime, stateLabel } from "./lobby.logic";
-import { createDismissableMenu } from "./menu";
+import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import { StateDot } from "./StateDot";
 import {
   resolveWatch,
@@ -755,7 +755,7 @@ export const SessionCard: Component<{
         {/* Rename and Kill lead the menu: they are the actions actually
             reached for (Viktor, 2026-08-02). Rename stays first so the
             destructive one is not the item under the opening cursor. */}
-        <div class="tl-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+        <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
           <button class="tl-menu-item" role="menuitem" onClick={() => beginRename()}>
             Rename
           </button>

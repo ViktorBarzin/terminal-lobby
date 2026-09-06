@@ -78,11 +78,18 @@ RUN set -eux; \
 # ever calls sudo — which is why no sudo is installed.
 RUN useradd --create-home --shell /bin/bash dev
 
-# Projects, layout, titles and pasted images live here. The services run as dev
-# and cannot create a directory under /var/lib themselves, so a missing one is
-# not an error they can recover from — it just makes every write fail with a
-# line in the log and no sign in the interface.
-RUN install -d -o dev -g dev -m 0755 /var/lib/tmux-api /var/lib/clipboard-store
+# Projects, layout, titles and pasted images live here, and so does the
+# ephemeral transfer directory an over-cap document lands in. The services run
+# as dev and cannot create a directory under /var/lib or /run themselves, both
+# of which are root-owned 0755 in the base image.
+#
+# A missing store is not an error they can recover from: it just makes every
+# write fail with a line in the log and no sign in the interface. A missing
+# /run/clipboard-files is fatal, by design. On the devvm systemd creates that
+# one as clipboard-upload's RuntimeDirectory before ExecStart (TL-7), so its
+# absence there means the unit is broken and the service says so loudly. A
+# container has no systemd, which is why the image installs it here instead.
+RUN install -d -o dev -g dev -m 0755 /var/lib/tmux-api /var/lib/clipboard-store /run/clipboard-files
 
 COPY --from=build /out/ /usr/local/bin/
 COPY --from=web /src/frontend-v2/dist/ /usr/local/share/ttyd/

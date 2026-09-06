@@ -17,5 +17,28 @@ ExecStart=/usr/local/bin/clipboard-upload
 Restart=always
 User=wizard
 
+# The ephemeral transfer directory an over-cap document lands in. It was
+# /tmp/clipboard-files, created by the service itself with MkdirAll, which
+# returns nil for an existing directory of any owner and any mode: a local user
+# with an @reboot job could create it first and then read or replace every file
+# a lobby user transferred (TL-7). systemd creates this one, owned by User=,
+# before ExecStart runs, so there is no window to win.
+#
+# 0755, not 0700, and that is the whole point of stating it: the path this
+# directory produces is handed to the user's own shell, which does not run as
+# the service account. ADR-0005 decided shell-level reads across accounts are
+# permitted here; squatting is closed by systemd owning the creation, not by
+# the mode. Preserve=yes because Restart=always would otherwise delete files
+# the 7-day sweep still owns on every restart, which /tmp never did.
+RuntimeDirectory=clipboard-files
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+
+# Stated rather than inherited from systemd's default (TL-16). 0022 gives the
+# store 0755 directories and 0644 files, which is the mode ADR-0005 argues for.
+# Changing it is an ADR change first: show-image has to keep working for a user
+# who is not the service account.
+UMask=0022
+
 [Install]
 WantedBy=multi-user.target

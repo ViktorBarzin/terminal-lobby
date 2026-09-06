@@ -1,10 +1,10 @@
 import { For, Show, type Accessor, type Component } from "solid-js";
-import { createDismissableMenu } from "./menu";
+import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import {
   SESSION_ORDER_TEXT,
   SESSION_ORDERS,
   type SessionOrder,
-} from "./order.logic";
+} from "../logic/order.logic";
 
 /**
  * The session list's ordering picker, in the sidebar header.
@@ -52,7 +52,7 @@ export const OrderMenu: Component<{
         <span class="tl-order-label">{current().short}</span>
       </button>
       <Show when={menu.open()}>
-        <div class="tl-menu tl-order-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+        <div class="tl-menu tl-order-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
           <div class="tl-menu-label">Order sessions</div>
           <For each={SESSION_ORDERS}>
             {(order) => (

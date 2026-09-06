@@ -59,6 +59,13 @@ export interface CacheBackend {
   remove(session: string): Promise<void>;
   /** Every session held, for eviction. Order is not guaranteed. */
   list(): Promise<ReadonlyArray<{ session: string; touchedAt: number }>>;
+  /**
+   * Release whatever handle the backend holds. `deleteDatabase` blocks
+   * indefinitely on an open connection, so "clear local data" has to be able to
+   * let go before it deletes. Reopening is lazy, so a backend closed while the
+   * page lives keeps working.
+   */
+  close(): Promise<void>;
 }
 
 /** Keep the newest slice; the oldest fall off the front. */
@@ -186,8 +193,12 @@ const STORE = "sessions";
  * The IndexedDB adapter. Returns null wherever IndexedDB is unavailable or
  * refuses to open, which the cache above treats as "no cache" rather than as an
  * error — this is an optimisation, and it is never allowed to be a dependency.
+ *
+ * Module-private on purpose. Every caller goes through sharedIndexedDbBackend()
+ * below, because a second handle on the same database would keep
+ * clearLocalData's delete blocked.
  */
-export function indexedDbBackend(): CacheBackend | null {
+function indexedDbBackend(): CacheBackend | null {
   if (typeof indexedDB === "undefined") return null;
 
   let opening: Promise<IDBDatabase> | null = null;
@@ -231,5 +242,38 @@ export function indexedDbBackend(): CacheBackend | null {
       tx<CacheRecord[]>("readonly", (s) => s.getAll() as IDBRequest<CacheRecord[]>).then((all) =>
         all.map((r) => ({ session: r.session, touchedAt: r.touchedAt })),
       ),
+    close: async () => {
+      const pending = opening;
+      // Dropped BEFORE the await, so a read racing the close reopens rather
+      // than picking the handle that is about to go.
+      opening = null;
+      if (!pending) return;
+      try {
+        (await pending).close();
+      } catch {
+        /* an open that never succeeded holds nothing to close */
+      }
+    },
   };
+}
+
+/**
+ * The tab's one transcript backend.
+ *
+ * It is a module singleton because the handle has to be reachable from
+ * somewhere other than the session store: `clearLocalData` in device-prefs.ts
+ * deletes `tl-transcripts`, and IndexedDB will not delete a database anything
+ * still holds open.
+ */
+let sharedBackend: CacheBackend | null | undefined;
+
+export function sharedIndexedDbBackend(): CacheBackend | null {
+  if (sharedBackend === undefined) sharedBackend = indexedDbBackend();
+  return sharedBackend;
+}
+
+/** Let go of the transcript database, if this tab ever opened it. Deliberately
+ *  does NOT create a backend just to close it. */
+export async function closeSharedTranscriptDb(): Promise<void> {
+  await sharedBackend?.close();
 }

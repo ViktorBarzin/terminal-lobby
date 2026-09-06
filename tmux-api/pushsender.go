@@ -49,8 +49,9 @@ type sessionStater interface {
 	// read returns the session name→state map, the session name→display title
 	// map (absent for a session nobody and nothing has titled), and the session
 	// name → unix time of the newest input from any tmux client attached to it.
-	// Sessions with no attached client are simply absent from the last map —
-	// the sender remembers the max it has ever seen.
+	// A session nobody has TYPED into is simply absent from the last map — no
+	// attached client, or one that only ever attached (driven.go
+	// latestActivity) — and the sender remembers the max it has ever seen.
 	//
 	// One method rather than three because all three come out of the same tmux
 	// reads, and asking separately forked `list-clients` twice per user per
@@ -105,10 +106,12 @@ type vapidConfig struct {
 // on — gated by that user's roamed notify prefs. A per-user last-state map
 // makes it fire only on the edge, never repeatedly while a session holds a
 // state; the first observation of a user seeds silently (mirrors the
-// frontend's first-poll-after-load rule). It deliberately does NOT gate on
-// window focus: that is the whole point of background push (the tab may be
-// closed), and the shared tag `tl-<session>` coalesces with any foreground
-// notification so the user is alerted at most once.
+// frontend's first-poll-after-load rule).
+//
+// The one thing it withholds is a session a device already has on screen, and
+// only from THAT device (pushfocus.go): background push exists for the tab that
+// is closed, so a desktop watching a session must not silence the phone in your
+// pocket. A device that reports nothing is told everything.
 type pushSender struct {
 	store  *pushStore
 	prefs  prefsLoader
@@ -127,30 +130,14 @@ type pushSender struct {
 	// not engaged with yet — the "one per thread" memory. Cleared when the
 	// session goes back to running.
 	outstanding map[string]map[string]bool
-	// now is the clock, injectable so the throttle can be tested without
-	// sleeping for a quarter of an hour. Nil means time.Now.
-	now func() time.Time
+	// focus is what each DEVICE says it is showing right now (pushfocus.go).
+	// Read per subscription in send: a device looking at the session stays
+	// quiet, every other device is told. Nil means nothing is ever suppressed.
+	focus *focusStore
 }
-
-// clock reads the sender's clock, defaulting to the real one.
-func (p *pushSender) clock() time.Time {
-	if p.now != nil {
-		return p.now()
-	}
-	return time.Now()
-}
-
-// stillAtTheKeyboard is how recently typing into a session means the person is
-// sitting in front of it.
-//
-// A notification about the thing already on their screen is pure noise, and the
-// activity gate cannot express this on its own: typing is what ARMS a push, so
-// without this the fastest turns — the ones finishing while they watch — are
-// exactly the ones that ring.
-const stillAtTheKeyboard = 60 * time.Second
 
 // throttled says whether a push for this user/session should be suppressed, and
-// why. Pure apart from the clock, so both rules are testable without a tmux.
+// why. Pure, so the rule is testable without a tmux.
 //
 // ONE OUTSTANDING NOTIFICATION PER SESSION (Viktor, 2026-09-02: "I'd like 1
 // notification per thread at most"). A session that has already rung and has
@@ -167,12 +154,21 @@ const stillAtTheKeyboard = 60 * time.Second
 //
 // A suppressed push does NOT consume the activity credit: markPushed is skipped,
 // so nothing is silenced beyond this one edge.
-func (p *pushSender) throttled(u, name string, now time.Time) string {
-	if act, ok := p.seenAct[u][name]; ok && act > 0 {
-		if now.Sub(time.Unix(act, 0)) < stillAtTheKeyboard {
-			return "at-keyboard"
-		}
-	}
+//
+// A SECOND RULE USED TO LIVE HERE, and it is worth saying why it is gone
+// (Viktor, 2026-09-06: "I stopped receiving mobile notifications if the app is
+// open. I want to still receive them but only for sessions that I'm not focused
+// on right now"). It held a push for 60 seconds after any client_activity on the
+// session, standing in for "the person is sitting in front of this one". tmux
+// stamps client_activity at ATTACH, and the lobby keeps every session you visit
+// mounted with an attached client, so opening the app renewed that stamp on all
+// of them at once: over the four days to 2026-09-06 it held 118 pushes, every
+// held push in the window, four of them while Viktor was asleep. The page now
+// says what it is showing (pushfocus.go) and send suppresses per DEVICE, which
+// answers the same question with a fact instead of a proxy — and answers it for
+// the device that is looking rather than for everybody. Removing it took the
+// sender's clock with it: nothing left here is time-based.
+func (p *pushSender) throttled(u, name string) string {
 	if p.outstanding[u][name] {
 		return "already-notified"
 	}
@@ -180,7 +176,7 @@ func (p *pushSender) throttled(u, name string, now time.Time) string {
 }
 
 // markSent records that this session now has a notification outstanding.
-func (p *pushSender) markSent(u, name string, now time.Time) {
+func (p *pushSender) markSent(u, name string) {
 	if p.outstanding == nil {
 		p.outstanding = map[string]map[string]bool{}
 	}
@@ -235,6 +231,7 @@ func newPushSender(store *pushStore, prefs prefsLoader, stater sessionStater, va
 		stater:    stater,
 		vapid:     vapid,
 		client:    newPushHTTPClient(),
+		focus:     focusStoreInstance,
 		last:      map[string]map[string]string{},
 		seenAct:   map[string]map[string]int64{},
 		pushedAct: map[string]map[string]int64{},
@@ -429,7 +426,6 @@ func (p *pushSender) tick() {
 		np := p.notifyPrefsFor(u)   // one prefs read per user per tick
 		badge := waitingCount(cur)  // one icon count per user per tick
 		waiting := waitingList(cur) // and the same set by name, for the device to filter
-		now := p.clock()
 		for name, st := range cur {
 			was := prev[name] // "" when the session was absent last poll
 			// Back to running means something was submitted to this session,
@@ -442,12 +438,12 @@ func (p *pushSender) tick() {
 				// running→awaiting (and any non-awaiting→awaiting, incl. a
 				// newly-appeared already-awaiting session — unchanged edge).
 				if np.onAwaiting && p.userTypedSinceLastPush(u, name) {
-					if why := p.throttled(u, name, now); why != "" {
+					if why := p.throttled(u, name); why != "" {
 						log.Printf("push sender: held %s for %s (session=%s, %s)", kindAwaiting, u, name, why)
 						break
 					}
 					p.markPushed(u, name)
-					p.markSent(u, name, now)
+					p.markSent(u, name)
 					p.notify(u, name, titles[name], kindAwaiting, badge, waiting)
 				}
 			case st == stateDone && was == stateRunning:
@@ -455,12 +451,12 @@ func (p *pushSender) tick() {
 				// (was=="") or any non-running→done stays silent, so a
 				// SessionStart hook stamping "done" never fires.
 				if np.onDone && p.userTypedSinceLastPush(u, name) {
-					if why := p.throttled(u, name, now); why != "" {
+					if why := p.throttled(u, name); why != "" {
 						log.Printf("push sender: held %s for %s (session=%s, %s)", kindDone, u, name, why)
 						break
 					}
 					p.markPushed(u, name)
-					p.markSent(u, name, now)
+					p.markSent(u, name)
 					p.notify(u, name, titles[name], kindDone, badge, waiting)
 				}
 			}
@@ -558,6 +554,12 @@ func (p *pushSender) send(osUser, session string, payload []byte, kind string) (
 		TTL:             pushTTL,
 	}
 	for _, sub := range subs {
+		// The one device with this session on screen already knows. Every other
+		// device is told, because the person may not be holding this one.
+		if p.focus != nil && p.focus.watching(osUser, sub.Endpoint, session) {
+			log.Printf("push sender: held %s for %s (session=%s, on-screen-here)", kind, osUser, session)
+			continue
+		}
 		resp, err := webpush.SendNotification(payload, &webpush.Subscription{
 			Endpoint: sub.Endpoint,
 			Keys:     webpush.Keys{P256dh: sub.Keys.P256dh, Auth: sub.Keys.Auth},
@@ -574,6 +576,11 @@ func (p *pushSender) send(osUser, session string, payload []byte, kind string) (
 			if _, err := p.store.remove(osUser, sub.Endpoint); err != nil {
 				log.Printf("push sender: pruning a gone endpoint for %s failed: %v", osUser, err)
 			} else {
+				// The device is gone; its last word about what it was showing
+				// must not outlive it and silence a future device here.
+				if p.focus != nil {
+					p.focus.forget(osUser, sub.Endpoint)
+				}
 				pruned++
 				log.Printf("push sender: pruned a gone endpoint for %s (push service returned %d)", osUser, status)
 			}

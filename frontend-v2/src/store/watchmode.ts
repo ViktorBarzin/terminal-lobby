@@ -6,6 +6,7 @@ import {
   type Accessor,
 } from "solid-js";
 import { track } from "../telemetry/track";
+import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * Watch mode — per-session, per-device: attach this client read-only, so it
@@ -62,14 +63,10 @@ export type WatchChoice = boolean | undefined;
 const [rev, setRev] = createSignal(0);
 
 export function loadWatch(session: string, as = ""): WatchChoice {
-  try {
-    const v = localStorage.getItem(watchKey(session, as));
-    if (v === "ro") return true;
-    if (v === "rw") return false;
-    return undefined;
-  } catch {
-    return undefined;
-  }
+  const v = lsGet(watchKey(session, as));
+  if (v === "ro") return true;
+  if (v === "rw") return false;
+  return undefined;
 }
 
 /** Reactive read of the stored choice — re-runs when any choice changes. */
@@ -89,12 +86,7 @@ export function saveWatch(session: string, choice: WatchChoice, as = ""): void {
       ...(as ? { "tl.as": as } : {}),
     });
   }
-  try {
-    if (choice === undefined) localStorage.removeItem(watchKey(session, as));
-    else localStorage.setItem(watchKey(session, as), choice ? "ro" : "rw");
-  } catch {
-    /* private mode / no storage */
-  }
+  lsSet(watchKey(session, as), choice === undefined ? null : choice ? "ro" : "rw");
   setRev((n) => n + 1);
 }
 

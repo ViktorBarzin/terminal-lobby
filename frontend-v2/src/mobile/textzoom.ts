@@ -31,6 +31,7 @@
  * nested rules from compounding.
  */
 import { FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN } from "../store/prefs";
+import { lsGet, lsSet } from "../lib/storage";
 
 /** Chromium: how many two-finger moves before deciding pinch-or-pan. */
 export const CLASSIFY_MOVE = 3;
@@ -65,21 +66,14 @@ export function scaleFor(size: number): number {
 }
 
 export function loadTextSize(): number {
-  try {
-    const raw = localStorage.getItem(TEXT_SIZE_KEY);
-    return raw ? clampTextSize(Number(raw)) : FONT_SIZE_DEFAULT;
-  } catch {
-    return FONT_SIZE_DEFAULT;
-  }
+  const raw = lsGet(TEXT_SIZE_KEY);
+  return raw ? clampTextSize(Number(raw)) : FONT_SIZE_DEFAULT;
 }
 
+/** A refused write still leaves the gesture working for this view's lifetime. */
 export function saveTextSize(size: number): void {
-  try {
-    if (clampTextSize(size) === FONT_SIZE_DEFAULT) localStorage.removeItem(TEXT_SIZE_KEY);
-    else localStorage.setItem(TEXT_SIZE_KEY, String(clampTextSize(size)));
-  } catch {
-    /* private mode: the gesture still works for this view's lifetime */
-  }
+  const clamped = clampTextSize(size);
+  lsSet(TEXT_SIZE_KEY, clamped === FONT_SIZE_DEFAULT ? null : String(clamped));
 }
 
 /** Two fingers, as far apart as they are. */

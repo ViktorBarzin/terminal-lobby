@@ -94,3 +94,26 @@ describe("dropping a mount", () => {
     expect(pruneKept(state, null, T0 + 1, KEEP_TTL_MS, new Set(["alpha", "beta"]))).toBe(state);
   });
 });
+
+describe("keyOf's separator", () => {
+  /**
+   * The separator is U+0000, and it is written in the source as an escape
+   * sequence rather than a literal byte, because a literal one makes git and
+   * grep treat the whole file as binary and skip it. The escape parses to the
+   * same byte, so keys already in localStorage keep matching. This test is what
+   * says so: it compares against the code point, not against the source text.
+   */
+  it("joins owner and name with U+0000", () => {
+    expect(keyOf({ owner: "wizard", name: "alpha" })).toBe(
+      `wizard${String.fromCharCode(0)}alpha`,
+    );
+  });
+
+  it("leaves an empty owner in front of the separator", () => {
+    expect(keyOf({ name: "alpha" })).toBe(`${String.fromCharCode(0)}alpha`);
+  });
+
+  it("cannot be forged by a name that contains the separator's printed form", () => {
+    expect(keyOf({ name: "\\u0000alpha" })).not.toBe(keyOf({ name: "alpha" }));
+  });
+});

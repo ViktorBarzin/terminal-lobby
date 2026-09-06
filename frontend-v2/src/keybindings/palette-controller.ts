@@ -8,6 +8,7 @@ import {
 } from "./palette.logic";
 import { track } from "../telemetry/track";
 import { VISITS_KEY } from "../store/visits";
+import { lsGet } from "../lib/storage";
 
 /**
  * The reactive controller behind the command palette (feature-inventory Cat.2
@@ -69,7 +70,7 @@ export interface PaletteController {
 
 function readVisitTimes(): Record<string, number> {
   try {
-    const obj = JSON.parse(localStorage.getItem(VISITS_KEY) ?? "null");
+    const obj = JSON.parse(lsGet(VISITS_KEY) ?? "null");
     return obj && typeof obj === "object" && !Array.isArray(obj)
       ? (obj as Record<string, number>)
       : {};

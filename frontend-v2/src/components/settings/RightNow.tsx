@@ -8,16 +8,8 @@ import {
   type ChannelId,
 } from "../../diagnostics/status";
 import type { ConnectionControl } from "../../diagnostics/status-store";
+import { agoLabel } from "../lobby.logic";
 import { Group } from "./controls";
-
-/** How long ago, in the words a person would use. */
-function ago(ms: number): string {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} min ago`;
-  return `${Math.round(m / 60)}h ago`;
-}
 
 function forHowLong(ms: number): string {
   const m = Math.round(ms / 60000);
@@ -41,7 +33,7 @@ function forHowLong(ms: number): string {
  */
 export const RightNow: Component<{ conn: ConnectionControl }> = (props) => {
   const rows = () => scope(props.conn.channels(), SESSION_CHANNELS);
-  // Ticks so "checked 2 min ago" does not sit frozen while the panel is open.
+  // Ticks so "Checked 2m ago" does not sit frozen while the panel is open.
   const [now, setNow] = createSignal(Date.now());
   onMount(() => {
     const t = setInterval(() => setNow(Date.now()), 15_000);
@@ -55,7 +47,7 @@ export const RightNow: Component<{ conn: ConnectionControl }> = (props) => {
     // makes a reader distrust the rest of the panel.
     if (props.conn.checking()) return "Checking now";
     const at = props.conn.checkedAt();
-    return at === null ? "Not checked yet" : `Checked ${ago(now() - at)}`;
+    return at === null ? "Not checked yet" : `Checked ${agoLabel(now() - at)}`;
   };
 
   const history = (id: ChannelId) => {

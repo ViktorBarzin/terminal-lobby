@@ -2,11 +2,15 @@ import {
   createMemo,
   createSignal,
   For,
+  onCleanup,
+  onMount,
   Show,
   type Accessor,
   type Component,
 } from "solid-js";
 import type { Snapshot, SnapshotList, SnapshotRow } from "../types/lobby";
+import { agoLabel } from "./lobby.logic";
+import { dismissOnPress } from "./overlay";
 
 /**
  * The restore picker (2026-08-14). Port of the vanilla lobby's
@@ -69,10 +73,7 @@ export function snapshotDate(ts: string): Date | null {
 export function formatAgo(ts: string, now: Date = new Date()): string {
   const d = snapshotDate(ts);
   if (!d) return "";
-  const mins = Math.max(0, Math.round((now.getTime() - d.getTime()) / 60000));
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  return hrs < 24 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
+  return agoLabel(now.getTime() - d.getTime());
 }
 
 export function shortCwd(cwd: string, home?: string): string {
@@ -128,10 +129,7 @@ export function rowNote(row: SnapshotRow): { text: string; warn: boolean } {
  *  on memory, which is exactly when a recovery can re-trigger the OOM it
  *  follows. Returns null when there is nothing worth saying, including when the
  *  server could not read the number (-1). */
-export function memoryWarning(
-  list: SnapshotList | null,
-  selectedCount: number,
-): string | null {
+export function memoryWarning(list: SnapshotList | null, selectedCount: number): string | null {
   if (!list || selectedCount <= 0) return null;
   const avail = list.memAvailableMb;
   if (avail <= 0 || avail >= 4096) return null;
@@ -151,6 +149,18 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
   const [checked, setChecked] = createSignal<Set<string>>(new Set());
   const [status, setStatus] = createSignal("Loading…");
   const [busy, setBusy] = createSignal(false);
+
+  // Escape closes, as it does on the palette, the settings panel, the gallery
+  // and the file preview. Capture, so it lands here rather than in whatever
+  // held the keyboard before the picker opened.
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    props.onClose();
+  };
+  onMount(() => document.addEventListener("keydown", onKey, true));
+  onCleanup(() => document.removeEventListener("keydown", onKey, true));
 
   const snapshots: Accessor<Snapshot[]> = () => list()?.snapshots ?? [];
   const selectedCount = (): number => checked().size;
@@ -215,7 +225,13 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
   };
 
   const selectAll = (): void => {
-    setChecked(new Set(rows().filter((r) => r.action !== "skip").map((r) => r.name)));
+    setChecked(
+      new Set(
+        rows()
+          .filter((r) => r.action !== "skip")
+          .map((r) => r.name),
+      ),
+    );
   };
 
   const restore = async (): Promise<void> => {
@@ -268,9 +284,7 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
   return (
     <div
       class="tl-cmdpalette-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
+      ref={dismissOnPress(() => props.onClose(), { surfaceOnly: true })}
     >
       <div class="tl-schelp tl-restore" role="dialog" aria-label="Restore from snapshot">
         <h2 class="tl-schelp-title">Restore from snapshot</h2>

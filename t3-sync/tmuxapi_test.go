@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"terminal-lobby/authuser"
 )
 
 // fakeTmuxAPI is an httptest stand-in for tmux-api. It answers the two routes
@@ -231,5 +233,31 @@ someone=withextras:and:colons
 
 	if _, ok := AuthUserForOSUser(filepath.Join(dir, "missing"), "wizard"); ok {
 		t.Error("a missing map file reported a mapping")
+	}
+}
+
+// The syncer is a loopback CLIENT of tmux-api, so it has to name the identity
+// header the same way the server resolves it. Both answers come from authuser
+// now; a second copy here would 401 every call on a box that configures
+// TL_AUTH_HEADER, silently, because a 401 from tmux-api looks like any other
+// failed sync.
+func TestTmuxAuthHeaderAgreesWithTheGate(t *testing.T) {
+	t.Setenv("TL_AUTH_HEADER", "")
+	if got, want := tmuxAuthHeader(), authuser.DefaultAuthHeader; got != want {
+		t.Fatalf("unconfigured tmuxAuthHeader() = %q, want %q", got, want)
+	}
+	t.Setenv("TL_AUTH_HEADER", "  X-Authentik-Username  ")
+	want := authuser.ConfigFromEnv().Header()
+	if got := tmuxAuthHeader(); got != want {
+		t.Fatalf("configured tmuxAuthHeader() = %q, want %q", got, want)
+	}
+	if want != "X-Authentik-Username" {
+		t.Fatalf("gate trimmed to %q, want X-Authentik-Username", want)
+	}
+}
+
+func TestDefaultUserMapPathIsTheGates(t *testing.T) {
+	if DefaultUserMapPath != authuser.DefaultMapPath {
+		t.Fatalf("t3-sync map path %q, gate %q", DefaultUserMapPath, authuser.DefaultMapPath)
 	}
 }

@@ -44,10 +44,48 @@ elif [[ -n "$auth_local" && -r "$MAP" ]]; then
     ' "$MAP")
 fi
 
-logger -t ttyd-attach "attach: TTYD_USER='${auth_user:-<none>}' arg='${1:-<none>}' os_user='${os_user:-<unresolved>}'"
+# Journal integrity (TL-23). Three request-controlled values reach a logger
+# call in this script before any charset gate has constrained them: $1, the
+# URL's ?arg=; TTYD_USER, the identity header; and $3, the ?arg= start
+# directory printed on the spawn line at the bottom of the file. The NAME_RE
+# gate that constrains $1 sits 20-odd lines further down, past a DENIED branch
+# that exits before ever reaching it, and the start directory is only ever
+# gated on a leading / and a length cap, because it is a path rather than a
+# name. That matters because the telemetry selector is `|= "TLEVENT"`, which
+# matches on line CONTENT rather than on the syslog tag, so a crafted arg can
+# plant a record attributed to anyone.
+#
+# Each of the three is folded to its own charset at the point where it is
+# printed. A case/if, no fork and no jq: ttyd runs this once per WebSocket
+# connection. The two placeholders stay distinct so the line still tells "no
+# header arrived" apart from "a header arrived that we decline to print".
+# Everything else that gets logged is already gated where it is parsed: the
+# session name by NAME_RE, the command key by CMD_RE, the owner by NAME_RE, the
+# watch mode by MODE_RE.
+#
+# A fold is a printing rule only, never an authorization gate. The map lookup
+# above is that, and a folded copy is never the value that reaches exec.
+LOG_USER_RE='^[a-zA-Z0-9_@.-]{1,64}$'
+LOG_DIR_RE='^/[A-Za-z0-9_./-]{0,4095}$'
+lv=""
+fold_log() {
+    if [[ -z "$1" ]]; then
+        lv="<none>"
+    elif [[ "$1" =~ $2 ]]; then
+        lv="$1"
+    else
+        lv="<invalid>"
+    fi
+}
+fold_log "$auth_user" "$LOG_USER_RE"
+log_user="$lv"
+fold_log "${1:-}" "$NAME_RE"
+log_arg="$lv"
+
+logger -t ttyd-attach "attach: TTYD_USER='$log_user' arg='$log_arg' os_user='${os_user:-<unresolved>}'"
 
 if [[ -z "$os_user" ]] || ! id "$os_user" >/dev/null 2>&1; then
-    logger -t ttyd-attach "DENIED: no os_user mapping for TTYD_USER='${auth_user:-<missing>}'"
+    logger -t ttyd-attach "DENIED: no os_user mapping for TTYD_USER='$log_user'"
     cat <<EOF
 
   Access denied
@@ -116,6 +154,23 @@ owner_arg="${4:-}"
 watch_arg="${5:-}"
 [[ "$watch_arg" =~ $MODE_RE ]] || watch_arg=""
 
+# ---- the model and effort a NEW session launches on ----------------------
+# A 6th and 7th ?arg=, forwarded to tmux-user-attach, which turns them into
+# flags on the command it starts. They are whitelisted TOKENS and nothing else:
+# the command line they join is run through `$SHELL -lic`, so a value carrying a
+# quote, a space or a `$` would be code rather than a name. Both classes are
+# re-checked there — this gate is the first of two, in the same belt-and-braces
+# the command key already gets.
+#
+# Like the command key, they are inert for a session that already exists:
+# `tmux new-session -A` ignores the command entirely when it attaches.
+MODEL_ARG_RE='^[a-z0-9][a-z0-9._-]{0,31}$'
+EFFORT_ARG_RE='^[a-z]{1,12}$'
+model_arg="${6:-}"
+[[ "$model_arg" =~ $MODEL_ARG_RE ]] || model_arg=""
+effort_arg="${7:-}"
+[[ "$effort_arg" =~ $EFFORT_ARG_RE ]] || effort_arg=""
+
 # The server is consulted for a FOREIGN attach (as before) and now also for any
 # attach that asks to watch — including your own session, which is the
 # two-device case and has no share row to authorize it.
@@ -126,8 +181,15 @@ if [[ -n "$owner_arg" && "$owner_arg" != "$os_user" ]] || [[ "$watch_arg" == "ro
     [[ "$my_tty" == /dev/* ]] || my_tty=""
     token=""
     [[ -r /var/lib/tmux-api/internal.token ]] && token="$(cat /var/lib/tmux-api/internal.token)"
-    resp="$(curl -s -m 5 -w $'\n%{http_code}' \
-        -H "X-Internal-Token: ${token}" -H 'Content-Type: application/json' \
+    # The token goes in on STDIN (`-H @-`), never on the command line. /proc here
+    # is mounted without hidepid, so a header in argv is readable out of
+    # /proc/<pid>/cmdline by every account on the box for as long as the request
+    # is in flight, which makes the 0600 mode on the token file worth nothing.
+    # The body stays in argv: it carries no secret, only names the server
+    # already knows.
+    resp="$(printf 'X-Internal-Token: %s\n' "$token" \
+        | curl -s -m 5 -w $'\n%{http_code}' \
+        -H @- -H 'Content-Type: application/json' \
         --data "{\"owner\":\"${target_owner}\",\"name\":\"${name}\",\"guest\":\"${guest}\",\"tty\":\"${my_tty}\",\"requested\":\"${watch_arg}\"}" \
         http://127.0.0.1:7684/internal/attach 2>/dev/null || true)"
     code="$(printf '%s' "$resp" | tail -n1)"
@@ -182,13 +244,19 @@ EOF
     fi
 fi
 
-logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$start_dir' cmd='${cmd_key:-<none>}' self='$(id -un)'"
+# Print-only copy of the start directory, folded like the two values above.
+# $start_dir itself is untouched and is what the exec below passes on.
+fold_log "$start_dir" "$LOG_DIR_RE"
+log_dir="$lv"
+
+logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$log_dir' cmd='${cmd_key:-<none>}' model='${model_arg:-<none>}' effort='${effort_arg:-<none>}' self='$(id -un)'"
 
 # Launch via tmux-user-attach so the tmux *server* is parented to the OS
 # user's own systemd manager (user@<uid>.service), not the ttyd.service
 # cgroup. Without this, a `systemctl restart ttyd` kills every session.
 if [[ "$os_user" == "$(id -un)" ]]; then
-    exec /usr/local/bin/tmux-user-attach "$name" "$start_dir" "$cmd_key"
+    exec /usr/local/bin/tmux-user-attach "$name" "$start_dir" "$cmd_key" "$model_arg" "$effort_arg"
 else
-    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach "$name" "$start_dir" "$cmd_key"
+    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach \
+        "$name" "$start_dir" "$cmd_key" "$model_arg" "$effort_arg"
 fi

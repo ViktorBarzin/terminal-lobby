@@ -17,9 +17,21 @@ curl -H "X-Forwarded-User: $(whoami)" http://localhost:7684/sessions
 routes (`/upload` — pastes, uploads and dropped files alike — plus
 `/list`, `/img/…` and `/file/…`). Identity is now required on both
 upload fields, since a document joins the same per-user store; only a
-document over the 25MB cap still lands in `/tmp/clipboard-files`. Locally it needs a writable
-`/var/lib/clipboard-store` (`sudo install -d -o $USER
-/var/lib/clipboard-store`) — without it only the store routes 500.
+document over the 25MB cap still lands in `/run/clipboard-files`. Locally
+it needs both of those directories, and it can create neither for itself,
+since `/var/lib` and `/run` are root-owned:
+
+```bash
+sudo install -d -o $USER /var/lib/clipboard-store   # missing: the store routes 500
+sudo install -d -o $USER /run/clipboard-files       # missing: the service exits at startup
+```
+
+A missing transfer directory is fatal because on the devvm systemd creates it
+as the unit's `RuntimeDirectory` before `ExecStart` (TL-7), so a service that
+starts without it is a broken unit, not a dev box missing a directory. `/run` is
+a tmpfs, so a local box needs that second command again after a reboot. The
+container image installs both at build time (`Dockerfile`), since it has no
+systemd to create either.
 
 For end-to-end frontend work there's a loopback harness:
 `python3 scripts/qa-harness.py` puts the production routing (auth header

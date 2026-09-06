@@ -8,7 +8,9 @@ What the pieces are and how a request reaches a terminal.
 |---|---|---|---|
 | `frontend-v2/` (SolidJS + Vite) | `index.html` served by ttyd on the DevVM; its hashed assets by clipboard-upload under `/assets/` | 7681 | **The lobby.** It renders the terminal itself: `TerminalNative` mounts xterm in the lobby's own document and attaches over `/token` + `/ws` (`docs/adr/0020-one-terminal-in-one-document.md`); backends are tmux-api / clipboard / session-events / file-api. Build: `npm run build` — a small `index.html` plus content-hashed chunks, so the heavy libraries load on demand rather than inlined into one file |
 | `tmux-api/` (Go) | DevVM systemd service | 7684 | `GET /sessions` (incl. per-session `state` + `project`), `DELETE /sessions/<n>`, `POST /sessions/<n>/rename`, `GET /whoami`, `POST /restore` (blanket, or a `{snapshot, sessions[]}` body from the picker), `GET /snapshots` (the session-snapshot series, plus the newest snapshot already resolved and the live count behind the deltas — one call opens the restore picker) + `GET /snapshots/<ts>` (one snapshot resolved against what is live, for switching to an older version), `GET`/`PUT /layout` (per-user sidebar layout, stored under `/var/lib/tmux-api/layout/`), `GET /netinfo` (which network the caller is on — a private address is the house's own, a public one resolves to its operator through Team Cymru DNS, cached; feeds the WiFi/cellular split in Data used) |
-| `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session attachment store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded/dropped images, and documents up to 25MB under a `file-` prefix, replying `{path, stored}` — `stored:false` means it stayed an ephemeral `/tmp/clipboard-files` transfer, which is what a document over the cap does. `POST /register` records `show-image` renders (localhost). `GET /list` serves the gallery and lists the `pasted-`/`displayed-` prefixes only, so a document is never drawn as a thumbnail; `GET /img/…` serves image bytes and refuses anything that does not sniff as an image; `GET /file/…` serves a stored document with sniffing disabled, forcing a download for anything that could execute as markup. Per-user isolation via the configured identity header → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
+| `clipboard-upload/` (Go) | DevVM systemd service | 7683 | Per-session attachment store (`/var/lib/clipboard-store/<user>/<session>/`): `POST /upload` persists pasted/uploaded/dropped images, and documents up to 25MB under a `file-` prefix, replying `{path, stored}` — `stored:false` means it stayed an ephemeral `/run/clipboard-files` transfer, which is what a document over the cap does. `POST /register` records `show-image` renders (localhost). `GET /list` serves the gallery and lists the `pasted-`/`displayed-` prefixes only, so a document is never drawn as a thumbnail; `GET /img/…` serves image bytes and refuses anything that does not sniff as an image; `GET /file/…` serves a stored document with sniffing disabled, forcing a download for anything that could execute as markup. Per-user isolation via the configured identity header → `/etc/ttyd-user-map`, like tmux-api. See `docs/adr/0005-session-image-store.md` |
+| `session-events/` (Go) | DevVM systemd service | 7685 | **The text-mode backend.** It reads a session's Claude Code transcript and its tmux pane, and writes back into the session: `GET /events/<session>` (the transcript as events, which is what people and the agent actually said, `docs/adr/0018-the-transcript-is-what-people-said.md`), `GET /earlier` (older turns), `GET /result/<session>/<toolId>` (one tool result in full), `GET /search`, `GET /pane` (the live pane), `GET /commands`, `POST /prompt`, `POST /answer-text` and `POST /keys` (a blocking prompt answered by key injection, `docs/adr/0010-blocking-prompts-answered-by-key-injection.md`), `POST /cancel`, `POST /model`. `POST /hooks/*` is where Claude Code's own hooks report in; it is gated to loopback in code, and the ingress must not route it. Per-user isolation via the identity header → `/etc/ttyd-user-map`, like tmux-api |
+| `file-api/` (Go) | DevVM systemd service | 7686 | **The file preview and editor backend.** `GET /files/list`, `GET /files/read`, `POST /files/write`, with every path confined to the caller's `/home/<user>` by the four checks in `file-api/paths.go`. A request that maps to a different OS user than the service runs as re-execs this binary under `sudo -u <user>` (`-privop`), so validation and the file operation both happen as that user inside their `0750` home; a same-user request runs inline (`file-api/privop.go`) |
 | `skills-api/` (Go) | DevVM systemd service | 7688 | **The skill manager's backend** — reached from the **Skills** overlay on the shell bar, beside Settings (`docs/adr/0011-skills-move-between-users-by-copy.md`). `GET /skills` answers the whole Settings group in one round trip — this account's skills and marketplace plugins, then every other terminal account's skills with a `same`/`differs`/`absent` verdict against your own — and `/skills/view` (a skill's `SKILL.md`, its file list and where it lives on disk), `/skills/edit` (write one of your OWN skill files back — no `owner` field, so a peer's skill cannot be written through it), `/skills/diff`, `/skills/install`, `/skills/toggle`, `/skills/remove` (keeps a backup), `/skills/delete` (permanent — the skill, its backups, its enabled state and its provenance), `/skills/plugin-update`, `/skills/plugin-uninstall`, `/skills/restart`, and `/skills/source/inspect` + `/skills/source/install` (bring a skill or plugin in from a GitHub repo — one read-only look, then that project's own installer run as the caller; `docs/adr/0012-installing-from-a-source-runs-its-installer-as-you.md`) do the rest. Unlike its siblings one request acts as TWO users: peer homes are `0700`, so an install packs the owner's skill in one privileged child (`sudo -n -u <user> skills-api -privop pack`) and unpacks it in the recipient's. Filesystem semantics live in `skillscan/` |
 | `skillscan/` (Go) | Shared package | — | What a skill IS on disk: scan, inspect, hash, compare, diff, pack/unpack, backup, and the two bits of state the manager keeps — Claude Code's own `enabledPlugins` key in `settings.json`, and `.manager.json` beside the skills for provenance. The hash covers content, path and the executable bit only, because users here have different umasks and hashing the full mode would report every shared skill as divergent |
 | `devvm/tmux-attach.sh` | DevVM, invoked by ttyd | — | Validates `X-authentik-username`, maps to OS user via `/etc/ttyd-user-map`, `sudo -u <user> tmux new-session -A` |
@@ -16,10 +18,75 @@ What the pieces are and how a request reaches a terminal.
 | `devvm/tmux-restore-user` | DevVM, invoked by `tmux-api` via sudo (`POST /restore`, `GET /snapshots*`) | — | The tmux-persist gateway behind the Restore picker. Validates the user against `/etc/ttyd-user-map`, then runs one of `tmux-persist restore\|picker\|snapshots\|snapshot\|restore-selection`. `open` is the picker's one call: the series, the live count and the newest snapshot resolved, from one process. The bare one-argument form still means "restore now". Snapshot ids and session names are re-validated here because the sudo grant places no restriction on argv. Idempotent — live sessions are left alone. Useful after an OOM kills sessions without a reboot (the boot-only restore never fires) |
 | `devvm/show-image` | DevVM, `/usr/local/bin/show-image`, run inside sessions | — | Puts an image in front of whoever is at the terminal without drawing it there. Inside tmux, two channels for two audiences: a localhost `POST /register` files it in the session's image library and a `tmux display-message` notice names it on the status line of every client attached to the session, which is what reaches the person, while stdout carries the `/clipboard/img/<session>/<name>` path it landed on (prefixed with `$TL_LOBBY_URL` when a deployment sets one), which is what reaches the agent whose tool call captured it. The 🖼 gallery is where the image is viewed. It used to open a temporary split pane running `viu` (sixel); that came out on 2026-09-04 with the sixel flow (`docs/adr/0004-sixel-images-in-the-terminal.md`) and took the inline picture away from every client, a real sixel terminal inside tmux included, and the registration became synchronous in the same change, since it is now the whole job and the reply is the only place the stored name exists. Outside tmux: plain `viu`, a human at a real terminal. See `docs/adr/0005-session-image-store.md` |
 | `devvm/ttyd.service`, `tmux-api.service`, `clipboard-upload.service` | DevVM | — | systemd units. `ttyd` :7681 serves the lobby. (`ttyd-v2` :7687 served the retired terminal-dev canary, removed 2026-08-16; `ttyd-ro` :7682 served the read-only host, removed 2026-08-29.) |
-| `devvm/clipboard-cleanup.service` + `.timer` + `clipboard-store-clean` | DevVM | — | Daily retention sweep: store dirs live while their session does (live tmux or saved layout) + 30-day `.deleted-at` grace; `_unsorted` 90 d; `/tmp/clipboard-files` 7 d |
+| `devvm/clipboard-cleanup.service` + `.timer` + `clipboard-store-clean` | DevVM | — | Daily retention sweep: store dirs live while their session does (live tmux or saved layout) + 30-day `.deleted-at` grace; `_unsorted` 90 d; `/run/clipboard-files` 7 d |
 | `devvm/sudoers.d-ttyd-users` | `/etc/sudoers.d/ttyd-users` on DevVM | — | The per-user sudo grant every attach depends on. Hand-maintained here; validated with `visudo -cf` on install |
 | *(not in this repo)* `/etc/ttyd-user-map`, `/etc/ttyd-admins` | `/etc/` on DevVM | — | The Authentik → OS-user mapping and the admin list, **generated** from `infra/scripts/workstation/roster.yaml` by the hourly `t3-provision-users` reconcile. Read by every service here; written by nothing here (see "Per-user setup") |
 | `devvm/start-claude.sh` | Per-user, e.g. `/home/bob/` | — | Optional Claude-Code launcher invoked by tmux `default-command` |
+
+## Go modules
+
+Fourteen Go modules, joined by 18 `replace` edges to five shared libraries.
+Every edge is imported by non-test code, so none of them is dead.
+
+```mermaid
+flowchart LR
+  subgraph libs["shared libraries"]
+    telemetry["telemetry - 5 consumers"]
+    authuser["authuser - 6 consumers"]
+    sessionio["sessionio - 4 consumers"]
+    slug["slug - 2 consumers"]
+    skillscan["skillscan - 1 consumer"]
+  end
+  subgraph shipped["services built into the image"]
+    tmuxapi["tmux-api"]
+    fileapi["file-api"]
+    sessionevents["session-events"]
+    skillsapi["skills-api"]
+    clipboard["clipboard-upload"]
+  end
+  subgraph standalone["standalone binaries"]
+    t3bridge["t3-bridge"]
+    t3sync["t3-sync"]
+    watch["tl-session-watch"]
+    release["release"]
+  end
+
+  tmuxapi --> telemetry
+  tmuxapi --> authuser
+  tmuxapi --> sessionio
+  tmuxapi --> slug
+  fileapi --> telemetry
+  fileapi --> authuser
+  sessionevents --> telemetry
+  sessionevents --> authuser
+  sessionevents --> sessionio
+  skillsapi --> telemetry
+  skillsapi --> authuser
+  skillsapi --> skillscan
+  clipboard --> telemetry
+  clipboard --> authuser
+  t3bridge --> sessionio
+  t3bridge --> slug
+  t3sync --> authuser
+  t3sync --> sessionio
+```
+
+`tl-session-watch` and `release` stand alone: they require no local module, and
+nothing requires them.
+
+Three places have to agree on this graph, and each is derived or tested rather
+than trusted:
+
+| Where | What it lists | What holds it right |
+|---|---|---|
+| each `go.mod` | its own `replace` edges | the compiler |
+| `.github/workflows/release.yml`, the `test (go)` step | every module to build and test | `release/releaseworkflow_test.go`, which walks the tree for `go.mod` files and compares |
+| `.github/workflows/container.yml`, the `paths` filter | every directory whose change has to rebuild the image | `release/containerfilter_test.go`, which takes the transitive closure of the Dockerfile's service list over the `replace` edges and compares in both directions |
+
+The container filter is the one worth naming. A paths filter that omits a
+directory does not fail. It does not fire, and the published image keeps the
+library it was built with, so a fix in a shared module reaches the `.deb` and
+not the container.
 
 ## How a request flows
 

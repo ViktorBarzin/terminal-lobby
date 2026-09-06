@@ -20,7 +20,7 @@ import {
   type PendingPermission,
   type TimelineRow,
 } from "./timeline.logic";
-import { modeFromPane, type PendingPrompt, type SlashCommand } from "./compose.logic";
+import { modeFromPane, type PendingPrompt, type SlashCommand } from "../logic/compose.logic";
 import type { Catalogue } from "../store/catalogue";
 import { contextState } from "./context.logic";
 import { planAnswer, planPaneStep, runAnswer, type DraftAnswer } from "./answer.logic";
