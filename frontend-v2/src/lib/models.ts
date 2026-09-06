@@ -55,9 +55,12 @@ export interface ModelOption {
   readonly label: string;
   /**
    * for the composer's bare row of values, which has no heading. "code" beside
-   * "Claude" beside "Opus" says nothing about which is the project, which is
-   * the command and which is the model; reading the row as a sentence is what
-   * tells you — "in code · run Claude · Opus model · max effort".
+   * "Claude" beside "Max" says nothing about which is the project, which is
+   * the command and which is the effort; reading the row as a sentence is what
+   * tells you — "in code · run Claude · claude-opus-5 · max effort".
+   *
+   * A MODEL needs no noun, because a slug is already unmistakably one. The
+   * effort rows do: "Max" beside "claude-opus-5" would be anybody's guess.
    */
   readonly phrase: string;
 }
@@ -67,6 +70,9 @@ const opt = (id: string, label: string, noun: string): ModelOption => ({
   label,
   phrase: `${label} ${noun}`,
 });
+
+/** A model row: the slug, said once, in all three places. */
+const slug = (id: string): ModelOption => ({ id, label: id, phrase: id });
 
 /** The choice that means "no choice", worded for both places it appears. */
 const anyDefault = (noun: string): ModelOption => ({
@@ -100,12 +106,12 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
   claude: {
     model: [
       anyDefault("model"),
-      opt("claude-opus-5", "claude-opus-5", "model"),
-      opt("claude-opus-5[1m]", "claude-opus-5[1m]", "model"),
-      opt("claude-sonnet-5", "claude-sonnet-5", "model"),
-      opt("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001", "model"),
-      opt("claude-opus-4-8", "claude-opus-4-8", "model"),
-      opt("claude-fable-5", "claude-fable-5", "model"),
+      slug("claude-opus-5"),
+      slug("claude-opus-5[1m]"),
+      slug("claude-sonnet-5"),
+      slug("claude-haiku-4-5-20251001"),
+      slug("claude-opus-4-8"),
+      slug("claude-fable-5"),
     ],
     effort: [
       anyDefault("effort"),
@@ -120,11 +126,11 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
   codex: {
     model: [
       anyDefault("model"),
-      opt("gpt-5.6-sol", "gpt-5.6-sol", "model"),
-      opt("gpt-5.6-terra", "gpt-5.6-terra", "model"),
-      opt("gpt-5.6-luna", "gpt-5.6-luna", "model"),
-      opt("gpt-5.5", "gpt-5.5", "model"),
-      opt("gpt-5.4-mini", "gpt-5.4-mini", "model"),
+      slug("gpt-5.6-sol"),
+      slug("gpt-5.6-terra"),
+      slug("gpt-5.6-luna"),
+      slug("gpt-5.5"),
+      slug("gpt-5.4-mini"),
     ],
     effort: [
       anyDefault("effort"),
