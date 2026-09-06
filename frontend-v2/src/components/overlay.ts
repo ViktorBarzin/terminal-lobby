@@ -10,6 +10,10 @@
  *
  * The listener needs no removal: it lives on the overlay's own node, which the
  * dismiss unmounts.
+ *
+ * The phone bar's overflow menu uses it for the same shape without a backdrop:
+ * a display:contents wrapper that closes the menu when a click bubbles out of
+ * one of the shell's rows.
  */
 export interface DismissOptions {
   /** Ignore a press that landed on the panel inside rather than on the surface. */

@@ -211,6 +211,38 @@ describe("<SessionView> — the phone bar's overflow menu", () => {
     expect(container.querySelector(".tl-menu")).toBeNull();
   });
 
+  it("leaves the menu standing for the keyup that Space activates a row with", () => {
+    // A <button> activates on Enter's keydown but on Space's KEYUP, and the
+    // click is that keyup's default action, dispatched only after every keyup
+    // listener has run. So a handler up the tree that closed the menu on Space
+    // would unmount the row before the row's own click existed: the press would
+    // shut the menu and run nothing. Closing belongs to the click alone.
+    stubViewport(PHONE);
+    const onPick = vi.fn();
+    const { container } = render(() => (
+      <SessionView
+        session="qa-mobile"
+        menuExtra={
+          <button class="tl-menu-item" onClick={onPick}>
+            Settings
+          </button>
+        }
+      />
+    ));
+    container.querySelector<HTMLButtonElement>(".tl-bar-menu-btn")!.click();
+    const settings = [...container.querySelectorAll<HTMLButtonElement>(".tl-menu-item")].find(
+      (e) => (e.textContent || "").trim() === "Settings",
+    )!;
+    settings.dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true }));
+    expect(container.querySelector(".tl-menu")).not.toBeNull();
+    expect(onPick).not.toHaveBeenCalled();
+    // jsdom never synthesises the activation click from a key, so stand in for
+    // the browser and check the row still does its job once the click lands.
+    settings.click();
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".tl-menu")).toBeNull();
+  });
+
   it("closes on Escape, like every other overlay", () => {
     stubViewport(PHONE);
     const { container } = render(() => <SessionView session="qa-mobile" />);
