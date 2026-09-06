@@ -64,12 +64,17 @@ set (OS users), a blanket session-**attach mode** (ro/rw), and a
 appears in every member's sidebar. Governance is co-equal — any member may
 rename, re-dir, add/remove members, set the mode, or delete it (delete
 dissolves the grouping, never kills sessions). Two stores hold a project
-between them: identity, directory, membership, attach mode and co-ownership
-live in the global project store (`/var/lib/tmux-api/projects.json`,
+between them: identity, membership, attach mode and co-ownership live in the
+global project store (`/var/lib/tmux-api/projects.json`,
 `tmux-api/projects.go`), shared by every member. A member's own ordering of
 projects, and of the sessions inside each one, lives in that member's layout
 document (`/var/lib/tmux-api/layout/<user>.json`, `tmux-api/layout.go`), which
-is what `PUT /layout` writes. A session belongs to at most one project.
+is what `PUT /layout` writes. The directory is the one field both stores
+carry. `GlobalProject.Dir` belongs to the `/projects` surface, which the SPA
+has not been ported to; `Project.Dir` in the member's layout document is the
+one the lobby drives, written by `PUT /layout` and validated there
+(`layout.go:250-256`), and read by the prewarm matcher (`prewarm.go:129`).
+A session belongs to at most one project.
 _Avoid_: group, folder, workspace
 
 **Member**:
