@@ -14,7 +14,7 @@ import {
   type SelectedSession,
 } from "../store/lobby";
 import { canActAs } from "../lib/mode";
-import { NAME_RE, sessionLabel, type Layout } from "../types/lobby";
+import { NAME_RE, sessionLabel, type Layout, type SessionTool } from "../types/lobby";
 import {
   EMPTY_KEEP,
   KEEP_TTL_MS,
@@ -30,7 +30,8 @@ import { SettingsPanel, type PageId } from "./SettingsPanel";
 import { openerAction } from "./settings/rail";
 import { Toaster } from "./Toaster";
 import { startNetworkWatch } from "../diagnostics/network";
-import { createPrefsStore } from "../store/prefs";
+import { createPrefsStore, modelChoiceFor } from "../store/prefs";
+import { modelHarness, modelRequest } from "../lib/models";
 import { createSkillsStore } from "../store/skills";
 import { SkillsIcon } from "./Icons";
 import { toasts } from "../store/toast";
@@ -554,6 +555,25 @@ export const App: Component = () => {
   const newCommand = () =>
     effectiveCommand(prefs.prefs().session.newCommand, cmdAvail(), NEW_SESSION_COMMANDS);
 
+  /**
+   * The model and effort a session created right now would launch on, as FLAGS
+   * on the process (lib/terminal-url.ts) rather than a `/model` driven into it
+   * once it is up.
+   *
+   * Read here rather than carried from the composer because the attach is what
+   * brings a session into being, and it happens after the composer has gone:
+   * creating selects, and selecting unmounts it. The preference it wrote is
+   * still the answer, and reading it at the moment of the attach is what makes
+   * that true without passing anything along.
+   *
+   * Empty for a shell and for a default choice — both mean "add no flag".
+   */
+  const newLaunch = (): { model: string; effort: string } => {
+    const h = modelHarness(newCommand() as SessionTool);
+    if (!h) return { model: "", effort: "" };
+    return modelRequest(h, modelChoiceFor(prefs.prefs(), h)) ?? { model: "", effort: "" };
+  };
+
   // A selected session the poll has never returned does not exist in tmux yet:
   // `store.create` only writes the layout, and the session comes into being when
   // a terminal attaches. That one terminal must attach immediately; every other
@@ -976,6 +996,7 @@ export const App: Component = () => {
                     creating={shown() && selectedIsCreating()}
                     dir={shown() ? selectedDir() : undefined}
                     newCommand={newCommand}
+                    newLaunch={newLaunch}
                     tool={() => store.sessions.find((s) => s.name === k.name)?.tool}
                     prefs={prefs}
                     notify={notify}
