@@ -195,6 +195,17 @@ would disappear the first time anyone followed the README. Credentials and
 config live in `~/.claude`, which is inside the mount and so persists. Claude
 signs in on first run, and it accounts for about 335MB of the image.
 
+Settings → Agent spend stays empty here. Claude Code hands its cost figures to
+whatever sits in its statusLine slot and to nothing else, and the image owns no
+Claude configuration to point at a recorder: `~/.claude` belongs to the mounted
+home, and writing into it would make the image the first install shape that
+edits a user's Claude config for them. Filling the page takes two things the
+image does not carry: a copy of `devvm/tl-usage-record` from this repo, named as
+`statusLine.command` in your own `~/.claude/settings.json`, and `jq`, which the
+recorder needs and no-ops without. It posts the reading and then runs whatever
+statusLine was there before. Reasoning:
+`docs/adr/0022-agent-spend-via-a-statusline-wrapper.md`.
+
 Codex is the one option in that dropdown with nothing behind it, and the lobby
 says so: it greys the option out and labels it "not installed", because
 `tmux-api` asks the box what it can run before offering it. Give Codex, or any
