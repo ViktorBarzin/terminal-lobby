@@ -124,8 +124,16 @@ export function restartTargets(
     });
 }
 
-/** Human size for a row: skills are small, so KB with no decimals is enough. */
-export function humanBytes(bytes: number): string {
+/**
+ * Human size for a row: skills are small, so KB with no decimals is enough.
+ *
+ * `zero` is the wording for nothing at all. A row wants "0 B", because an empty
+ * skill still has a real size; the toast that reports reclaimed space wants
+ * "nothing", because "0 B freed" reads like a failure. One function with one
+ * argument, rather than two functions that drift.
+ */
+export function humanBytes(bytes: number, zero = "0 B"): string {
+  if (bytes <= 0) return zero;
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

@@ -76,7 +76,7 @@ export function formatTokens(n: number): string {
  * to 23.3 kB, so one decimal below 10 and none above is all the precision the
  * number carries.
  */
-export function formatBytes(n: number): string {
+export function formatCharCount(n: number): string {
   if (n < 1000) return `${n} B`;
   const k = n / 1000;
   return `${k.toFixed(k < 10 ? 1 : 0)} kB`;
@@ -212,7 +212,7 @@ export const SkillRowView: Component<{ row: ToolRow }> = (props) => (
         <span class="tl-skill-failed">did not load</span>
       </Show>
       <Show when={!props.row.isError && props.row.bytes}>
-        <span>{formatBytes(props.row.bytes!)} collapsed</span>
+        <span>{formatCharCount(props.row.bytes!)} collapsed</span>
       </Show>
       <Show when={props.row.at}>
         <span>{clockTime(props.row.at!)}</span>

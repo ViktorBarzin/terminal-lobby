@@ -168,4 +168,26 @@ describe("fileSummary", () => {
     expect(humanBytes(2048)).toBe("2 KB");
     expect(humanBytes(3 * 1024 * 1024)).toBe("3.0 MB");
   });
+
+  // An empty skill still has a real size, and the row says so. The toast that
+  // reports freed space wants the other word for it, which is why humanBytes
+  // takes the zero wording as an argument rather than picking one.
+  it("still calls an empty skill 0 B", () => {
+    expect(fileSummary(skill({ files: 1, executable: 0, bytes: 0 }))).toBe("1 file · 0 B");
+  });
+});
+
+describe("humanBytes' wording for zero", () => {
+  it("says 0 B by default", () => {
+    expect(humanBytes(0)).toBe("0 B");
+  });
+
+  it("says whatever the caller asked for instead", () => {
+    expect(humanBytes(0, "nothing")).toBe("nothing");
+  });
+
+  it("treats a negative size as zero, since there is no such size", () => {
+    expect(humanBytes(-1)).toBe("0 B");
+    expect(humanBytes(-1, "nothing")).toBe("nothing");
+  });
 });
