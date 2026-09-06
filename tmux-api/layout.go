@@ -130,7 +130,41 @@ func (s *layoutStore) loadLocked(osUser string) (Layout, error) {
 			l.Projects[i].Sessions = []string{}
 		}
 	}
+	dropDuplicateSessions(&l)
 	return l, nil
+}
+
+// dropDuplicateSessions keeps the first mention of each session and discards
+// the rest, so a document holding one twice heals on the next read instead of
+// blocking every write.
+//
+// validateLayout rejects a repeated name, and the client sends the whole
+// document back on every change, so one duplicate in the stored file fails not
+// just the write that made it but every later one: dragging a session into a
+// project and placing a newly created session both stop working, each reporting
+// "Couldn't save layout". Repairing the file by hand was the only way out.
+// Found on the devvm 2026-09-06, from the rename below.
+//
+// A dropped entry costs a dead session its remembered placement. Nothing else
+// reads these names, so the live session named by the surviving entry is
+// unaffected.
+func dropDuplicateSessions(l *Layout) {
+	seen := map[string]bool{}
+	keep := func(list []string) []string {
+		out := list[:0]
+		for _, name := range list {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, name)
+		}
+		return out
+	}
+	for i := range l.Projects {
+		l.Projects[i].Sessions = keep(l.Projects[i].Sessions)
+	}
+	l.Ungrouped = keep(l.Ungrouped)
 }
 
 func (s *layoutStore) save(osUser string, l Layout) error {
@@ -158,13 +192,39 @@ func (s *layoutStore) removeSession(osUser, name string) error {
 }
 
 // renameSession follows a tmux rename so the assignment sticks.
+//
+// An entry already sitting under newName is dropped, and only when the rename
+// actually lands. tmux refuses to rename a session onto a live one, so a
+// collision here always means the sitting entry belongs to a session that is
+// already dead: deaths outside the API keep their assignment so a restore
+// regroups them, and derived names hand a dead session's name to a live one.
+// The renamed session is the live one, so it keeps its own place and the stale
+// entry goes. Keeping both wrote a document validateLayout rejects, which
+// stopped every LATER layout write as well -- see dropDuplicateSessions.
 func (s *layoutStore) renameSession(osUser, oldName, newName string) error {
-	return s.mutateSessions(osUser, func(sess string) (string, bool) {
-		if sess == oldName {
+	if oldName == newName {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, err := s.loadLocked(osUser)
+	if err != nil {
+		return err
+	}
+	renaming := layoutHasSession(&l, oldName)
+	changed := applySessionMutation(&l, func(sess string) (string, bool) {
+		switch {
+		case sess == oldName:
 			return newName, true
+		case renaming && sess == newName:
+			return "", false
 		}
 		return sess, true
 	})
+	if !changed {
+		return nil
+	}
+	return s.saveLocked(osUser, l)
 }
 
 // mutateSessions applies fn to every session reference; fn returns the
@@ -177,6 +237,15 @@ func (s *layoutStore) mutateSessions(osUser string, fn func(string) (string, boo
 	if err != nil {
 		return err
 	}
+	if !applySessionMutation(&l, fn) {
+		return nil
+	}
+	return s.saveLocked(osUser, l)
+}
+
+// applySessionMutation is the walk itself, over a layout the caller already
+// holds. Reports whether anything moved.
+func applySessionMutation(l *Layout, fn func(string) (string, bool)) bool {
 	changed := false
 	apply := func(list []string) []string {
 		out := list[:0]
@@ -208,10 +277,24 @@ func (s *layoutStore) mutateSessions(osUser string, fn func(string) (string, boo
 			changed = true
 		}
 	}
-	if !changed {
-		return nil
+	return changed
+}
+
+// layoutHasSession reports whether any list mentions this session.
+func layoutHasSession(l *Layout, name string) bool {
+	for i := range l.Projects {
+		for _, sess := range l.Projects[i].Sessions {
+			if sess == name {
+				return true
+			}
+		}
 	}
-	return s.saveLocked(osUser, l)
+	for _, sess := range l.Ungrouped {
+		if sess == name {
+			return true
+		}
+	}
+	return false
 }
 
 // validateLayout enforces the document invariants: known version, sane
