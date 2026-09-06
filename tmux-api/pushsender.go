@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -254,12 +255,74 @@ func (p *pushSender) notifyPrefsFor(osUser string) notifyPrefs {
 	return parseNotifyPrefs(doc)
 }
 
-// pushPayload is the JSON delivered to the browser's service worker. The field
-// names are EXACTLY what frontend/sw.js reads (title, body, tag, session, badge);
-// TestBuildPushPayloadMatchesServiceWorker / TestBuildDonePayloadMatchesServiceWorker
-// pin the shape so a drift from sw.js fails loudly instead of silently
-// dropping notifications.
+// declarativeWebPushVersion is the protocol version WebKit looks for at the top
+// level of a Declarative Web Push message. 8030 is the only value it accepts;
+// anything else, or a missing key, is the classic path.
+const declarativeWebPushVersion = 8030
+
+// maxPushPayloadBytes is what one message may marshal to.
+//
+// RFC 8291 guarantees a push service accepts a 4096-byte ENCRYPTED body, and
+// aes128gcm spends 103 of those bytes on framing: an 86-byte header (16 salt,
+// 4 record size, 1 key id length, 65 key id), the 1-byte padding delimiter and
+// the 16-byte auth tag. So 4096-103 = 3993 bytes of JSON is the ceiling, and
+// TestWorstCasePayloadFitsTheEncryptedBudget holds waitingListCap to it.
+const maxPushPayloadBytes = 3993
+
+// declarativeData is what a declarative notification carries for our own code
+// to read back.
+//
+// It duplicates the flat session and waiting keys on purpose. With mutable
+// true the service worker's push event still fires, but event.data is NULL and
+// the message arrives as event.notification, so the flat keys are invisible on
+// that path. Our fields come back on event.notification.data instead, and the
+// worker needs the named set to draw the badge (ADR-0015).
+type declarativeData struct {
+	Session string    `json:"session"`
+	Waiting *waitList `json:"waiting,omitempty"`
+}
+
+// declarativeNotification is the "notification" member of a Declarative Web
+// Push message (iOS/iPadOS 18.4+, Safari 18.4+). Its point is Navigate: the OS
+// opens the URL itself on a tap, so the right session opens with nothing
+// inferred and no notificationclick handler in the path (WebKit never
+// dispatches notificationclick for a notification that has a navigation URL —
+// Notifications spec 2.7 steps 5 and 6).
+//
+// Navigate is REQUIRED and must be ABSOLUTE. WebKit parses it with no base, so
+// a relative URL is a SyntaxError that drops the ENTIRE message, banner
+// included. That is why these fields appear only for a subscription that
+// recorded its page origin (push.go).
+type declarativeNotification struct {
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	Navigate string `json:"navigate"`
+	Tag      string `json:"tag"`
+	// AppBadge mirrors Badge's three states for the same reason and with the
+	// same pointer: a count, an explicit zero (which CLEARS the icon), and
+	// ABSENT, which leaves whatever the icon is showing alone. The
+	// session-less self-diagnosis push is the absent case.
+	AppBadge *int             `json:"app_badge,omitempty"`
+	Data     *declarativeData `json:"data,omitempty"`
+}
+
+// pushPayload is the JSON delivered to the browser's service worker. The flat
+// field names are EXACTLY what public/sw.js reads (title, body, tag, session,
+// badge, waiting); TestBuildPushPayloadMatchesServiceWorker /
+// TestBuildDonePayloadMatchesServiceWorker pin the shape so a drift from sw.js
+// fails loudly instead of silently dropping notifications.
+//
+// The three declarative fields ride ALONGSIDE the flat ones rather than
+// replacing them. Chrome, Android and every Apple device below 18.4 ignore
+// web_push/mutable/notification and read the flat keys; iOS 18.4+ reads the
+// declarative half. They are omitted entirely for a subscription with no
+// recorded origin, which keeps that device's payload byte-identical to what
+// shipped before (TestPayloadWithoutAnOriginIsUnchangedOnTheWire).
 type pushPayload struct {
+	WebPush      int                      `json:"web_push,omitempty"`
+	Mutable      bool                     `json:"mutable,omitempty"`
+	Notification *declarativeNotification `json:"notification,omitempty"`
+
 	Title   string `json:"title"`
 	Body    string `json:"body"`
 	Tag     string `json:"tag"`
@@ -293,10 +356,18 @@ type waitList struct {
 	Done     []string `json:"d"`
 }
 
-// waitingListCap bounds the two slices COMBINED. 64 names at 32 bytes is ~2 KB,
-// comfortably inside the payload budget, and no account here is close to it.
-// Past the cap the payload carries Badge alone and the device falls back to the
-// server's total, which is the pre-existing behaviour rather than a new failure.
+// waitingListCap bounds the two slices COMBINED. Past the cap the payload
+// carries Badge alone and the device falls back to the server's total, which is
+// the pre-existing behaviour rather than a new failure.
+//
+// A cap in names cannot be the thing that keeps a payload inside the byte
+// budget, because a name is not the only variable: a 64-rune title of `<` costs
+// 384 bytes where the same 64 runes of emoji cost 256 (encoding/json escapes
+// `<`, `>` and `&` to six bytes each), and the declarative half carries the
+// title twice. So the cap stays where it was and marshalPayload measures the
+// finished bytes, dropping the list when they do not fit. Nobody here is near
+// this number: it is a guard against a pathological account, not a working
+// limit.
 const waitingListCap = 64
 
 // waitingList splits the same set waitingCount totals. Names are sorted so a
@@ -362,33 +433,85 @@ func pushLabel(session, title string) string {
 	return session
 }
 
-// marshalPayload builds the SW payload for one session. Both wordings share
-// the tag `tl-<session>`: coalescing is by tag only (sw.js omits renotify),
-// so a later awaiting push REPLACES a finished one for the same session
-// rather than stacking a second alert.
-func marshalPayload(title, body, session string, badge int, waiting *waitList) []byte {
-	b, _ := json.Marshal(pushPayload{
+// navigateURL is where a tap lands: the lobby with this session selected, on
+// the origin the device recorded when it subscribed. The query name matches
+// what the page already reads off its own URL, so the OS opening this URL and
+// the app switching sessions are the same act.
+//
+// A session name is opaque and matches NAME_RE (/^[a-zA-Z0-9_-]{1,32}$/), so
+// escaping never changes it. It is escaped anyway: a name that somehow got past
+// that must not be able to write a second query parameter.
+func navigateURL(origin, session string) string {
+	if session == "" {
+		return origin + "/"
+	}
+	return origin + "/?session=" + url.QueryEscape(session)
+}
+
+// marshalPayload builds the SW payload for one session and ONE subscription.
+// Both wordings share the tag `tl-<session>`: coalescing is by tag only (sw.js
+// omits renotify), so a later awaiting push REPLACES a finished one for the
+// same session rather than stacking a second alert.
+//
+// `origin` is the page origin that subscription recorded, "" for one that
+// predates the field. Empty means flat keys only — exactly today's bytes — so
+// a device that has not re-subscribed yet loses nothing.
+func marshalPayload(title, body, session string, badge int, waiting *waitList, origin string) []byte {
+	p := pushPayload{
 		Title:   title,
 		Body:    body,
 		Tag:     "tl-" + session,
 		Session: session,
 		Badge:   &badge,
 		Waiting: waiting,
-	})
+	}
+	if origin != "" {
+		p.WebPush = declarativeWebPushVersion
+		p.Mutable = true
+		p.Notification = &declarativeNotification{
+			Title:    title,
+			Body:     body,
+			Navigate: navigateURL(origin, session),
+			Tag:      p.Tag,
+			AppBadge: &badge,
+			Data:     &declarativeData{Session: session, Waiting: waiting},
+		}
+	}
+	b, _ := json.Marshal(p)
+	if len(b) <= maxPushPayloadBytes || waiting == nil {
+		return b
+	}
+	// Over budget: send the same notification without the name list. The device
+	// then draws the server's total (ADR-0015) instead of subtracting what it
+	// has already read, which counts high rather than going quiet.
+	//
+	// Measured here rather than capped by name count because the title is the
+	// other variable and it is not bounded in BYTES: slug.MaxTitleRunes allows
+	// 64 runes, and 64 of `<` marshal to 384 bytes per copy where 64 emoji cost
+	// 256. With a full 40-name list that title reached 4094 bytes, past the
+	// 3993-byte ceiling, and a push service is only required to accept 4096
+	// encrypted bytes — so send() would have logged a failure per device and the
+	// notification would never have arrived.
+	p.Waiting = nil
+	if p.Notification != nil && p.Notification.Data != nil {
+		p.Notification.Data.Waiting = nil
+	}
+	b, _ = json.Marshal(p)
 	return b
 }
 
 // buildPushPayload is the running→awaiting "needs input" wording. `label` is
-// what the person reads (pushLabel); `session` is the address.
-func buildPushPayload(label, session string, badge int, waiting *waitList) []byte {
-	return marshalPayload(label+" needs input", "Claude is awaiting your input.", session, badge, waiting)
+// what the person reads (pushLabel); `session` is the address, and `origin` the
+// subscription's own (marshalPayload).
+func buildPushPayload(label, session string, badge int, waiting *waitList, origin string) []byte {
+	return marshalPayload(label+" needs input", "Claude is awaiting your input.", session, badge, waiting, origin)
 }
 
 // buildDonePayload is the running→done "finished" wording — the first-class
 // notification for a turn completing. Same tag as the awaiting payload (see
 // marshalPayload): a subsequent awaiting alert supersedes it.
-func buildDonePayload(label, session string, badge int, waiting *waitList) []byte {
-	return marshalPayload(label+" finished", "Claude finished its turn.", session, badge, waiting)
+func buildDonePayload(label, session string, badge int, waiting *waitList, origin string) []byte {
+	return marshalPayload(label+" finished", "Claude finished its turn.", session, badge, waiting, origin)
 }
 
 // tick runs one poll cycle: for every subscribed user, diff the current
@@ -521,22 +644,27 @@ func (p *pushSender) markPushed(u, name string) {
 // across kinds so a later push for the same session coalesces (send()).
 func (p *pushSender) notify(osUser, session, title, kind string, badge int, waiting *waitList) {
 	label := pushLabel(session, title)
-	var payload []byte
-	if kind == kindDone {
-		payload = buildDonePayload(label, session, badge, waiting)
-	} else {
-		payload = buildPushPayload(label, session, badge, waiting)
+	build := func(origin string) []byte {
+		if kind == kindDone {
+			return buildDonePayload(label, session, badge, waiting, origin)
+		}
+		return buildPushPayload(label, session, badge, waiting, origin)
 	}
-	p.send(osUser, session, payload, kind)
+	p.send(osUser, session, build, kind)
 }
 
-// send fans `payload` out to every one of the user's stored devices, pruning
+// payloadBuilder renders the wire payload for ONE subscription, given the page
+// origin that subscription recorded ("" when it recorded none). Marshalling is
+// a per-device job since the navigate URL is built from that origin.
+type payloadBuilder func(origin string) []byte
+
+// send fans a payload out to every one of the user's stored devices, pruning
 // any endpoint the push service reports gone (404/410) and logging one
 // observability line per ACCEPTED push (os user, session, kind, HTTP status)
 // — the operator's proof a push actually left the box, the forensics gap that
 // made "notifications don't work" un-diagnosable. Returns the count accepted
 // and the count pruned; the on-demand /push/test endpoint reads them back.
-func (p *pushSender) send(osUser, session string, payload []byte, kind string) (sent, pruned int) {
+func (p *pushSender) send(osUser, session string, build payloadBuilder, kind string) (sent, pruned int) {
 	subs, err := p.store.list(osUser)
 	if err != nil {
 		log.Printf("push sender: loading subs for %s failed: %v", osUser, err)
@@ -560,7 +688,11 @@ func (p *pushSender) send(osUser, session string, payload []byte, kind string) (
 			log.Printf("push sender: held %s for %s (session=%s, on-screen-here)", kind, osUser, session)
 			continue
 		}
-		resp, err := webpush.SendNotification(payload, &webpush.Subscription{
+		// Built HERE, not once for the user: the origin is per subscription,
+		// so two of this user's devices can get different payloads — the phone
+		// that has re-subscribed gets the declarative half, a browser that has
+		// not gets today's flat bytes.
+		resp, err := webpush.SendNotification(build(sub.Origin), &webpush.Subscription{
 			Endpoint: sub.Endpoint,
 			Keys:     webpush.Keys{P256dh: sub.Keys.P256dh, Auth: sub.Keys.Auth},
 		}, opts)

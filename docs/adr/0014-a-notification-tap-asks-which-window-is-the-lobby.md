@@ -88,12 +88,19 @@ breakages reached a device: every one of them was a worker doing something other
 than what the code appeared to say. Six of the eleven cases fail against the
 worker that shipped before this change.
 
-The repository carries two copies of `sw.js` — `frontend-v2/public/sw.js`, which
+The repository carried two copies of `sw.js` — `frontend-v2/public/sw.js`, which
 Vite serves and the tests drive, and `frontend/sw.js`, which the Debian package
-installs (`release/manifest.go`). A test now pins them byte-identical. The copy
-that looks canonical, sitting beside the SPA, is the one that does not ship, so
-editing only that one would have passed the whole suite and changed nothing in
-production.
+installed (`release/manifest.go`). The copy that looked canonical, sitting
+beside the SPA, was the one that did not ship, so editing only that one would
+have passed the whole suite and changed nothing in production. A test pinned
+them byte-identical to close that gap.
+
+Superseded 2026-09-06: there is one copy now. `release/manifest.go` points at
+`frontend-v2/public/sw.js` and the `frontend/` duplicates are deleted, so the
+file the tests drive is the file the package installs. The byte-identity test is
+gone with the second copy; in its place `release/manifest_test.go` checks that
+every non-generated `Src` in the manifest exists in the repo and that
+`packaging/build-deb.sh` stages the directory it lives in.
 
 The cost is up to 400 ms per unresponsive candidate before the tap lands. On a
 warm resident PWA, the first candidate is the lobby and answers immediately.

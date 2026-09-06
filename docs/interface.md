@@ -65,6 +65,13 @@ the box is for overriding one, and leaving it empty hands the session back to
 whatever summary lands next. Clearing a title leaves the name where the last
 title put it.
 
+The `⋯` menus in the sidebar, on a session card and on a project header, open
+where you can read them. One near the bottom of the list opens upwards instead
+of downwards and keeps its edges on screen, so the options at the end of it are
+no longer somewhere you have to scroll the list to reach. Scrolling the list or
+turning the phone closes the menu, the same as pressing Escape or clicking away
+from it.
+
 ## Session image gallery
 
 Every image pasted, uploaded, or drag-dropped into a session, and
