@@ -15,15 +15,26 @@ import (
 // written to say; rowBG is the same line with that column filled in.
 func row(fields ...string) string { return rowBG("", fields...) }
 
-func rowBG(bg string, fields ...string) string {
+func rowBG(bg string, fields ...string) string { return rowBorn(bg, "", fields...) }
+
+// rowBorn is the same line with the birth-name column filled in as well
+// (sessionio.OptionBornAs — the name a renamed session was created with).
+func rowBorn(bg, born string, fields ...string) string {
 	if len(fields) < bgColumn {
 		return strings.Join(fields, listSep)
 	}
-	out := make([]string, 0, len(fields)+1)
+	out := make([]string, 0, len(fields)+2)
 	out = append(out, fields[:bgColumn]...)
 	out = append(out, bg)
 	out = append(out, fields[bgColumn:]...)
-	return strings.Join(out, listSep)
+	if len(out) < bornColumn {
+		return strings.Join(out, listSep)
+	}
+	withBorn := make([]string, 0, len(out)+1)
+	withBorn = append(withBorn, out[:bornColumn]...)
+	withBorn = append(withBorn, born)
+	withBorn = append(withBorn, out[bornColumn:]...)
+	return strings.Join(withBorn, listSep)
 }
 
 // /sessions rows carry TWO arbitrary-text fields: pane_title, which

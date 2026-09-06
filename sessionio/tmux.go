@@ -53,6 +53,23 @@ const (
 	// which is most of them. Like the others it dies with the session, so
 	// tmux-api keeps a durable copy to re-stamp after a restore.
 	OptionTitle = "@title"
+	// OptionBornAs holds the name a session was FIRST created with, written
+	// once by the first rename that moves it (tmux-api carryRenameAcrossStores)
+	// and never again.
+	//
+	// It exists because a rename is invisible to a client that never saw the
+	// old name. ADR-0022 renames a fresh session as soon as its first title
+	// lands — seconds in — and the lobby's session list is behind a 5-second
+	// cache, so a poll can easily miss the window in which the session was
+	// still called the id the browser minted for it. tmux's own session_id
+	// survives a rename and is what the lobby normally follows, but a client
+	// that never saw the session cannot know its id either, and is left holding
+	// a name nothing answers to: its terminal reconnects through `tmux
+	// new-session -A` and resurrects that name as an empty session.
+	//
+	// One name, not a history: the tab at risk is holding the name the session
+	// was CREATED with, and every later rename is one the lobby watched happen.
+	OptionBornAs = "@tl_born"
 )
 
 // Options is the tmux session-option store: read and written as the session's

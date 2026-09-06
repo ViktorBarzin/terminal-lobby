@@ -63,7 +63,7 @@ answers each one.
 |---|---|
 | six stores keyed by the name | `carryRenameAcrossStores`, which stayed in the tree for the migration and repins the grid hooks tmux itself holds |
 | a collision with nobody to ask | `slug.Free`'s suffix walk, backed by tmux refusing duplicates |
-| the terminal iframe re-navigating mid-turn | `followRenamedSelection` moves the selection by tmux session id, which a rename does not change |
+| the terminal iframe re-navigating mid-turn | `followRenamedSelection` moves the selection by tmux session id, which a rename does not change, or by `bornAs` when no poll ever saw the old name |
 | the phantom-session trap | narrowed, not closed. See below. |
 
 **The phantom-session trap is the one that stays open.** A tab holding
@@ -79,6 +79,39 @@ reconnects before its next poll, can still land on a phantom.
 Closing it properly means the attach contract carrying something that survives a
 rename — tmux's `#{session_id}`, or a lookup step between `?arg=` and
 `new-session`. That is a change to ttyd's spawn path and is not made here.
+
+### The gap this left, and what closed it (2026-09-06)
+
+`followRenamedSelection` matched on tmux's session id, which a tab can only know
+by having seen the session in an earlier poll — and for a session it has just
+created it usually has not. A title lands seconds into the first turn while
+`GET /sessions` is behind a 5-second cache, so the list can go straight from
+"no such session" to the new name. Measured the evening this landed: of four
+sessions created, two were renamed 3-5s in, before any poll had listed them.
+Both left their tab holding a name nothing answered to.
+
+What that cost was more than a phantom. The stale mount is the SELECTED one, and
+`pruneKept` keeps the selection whatever the list says — so it stayed mounted
+with its read-write client attached to the renamed session. Clicking the real
+session in the sidebar then read `driven: true` from that client and joined as a
+VIEWER, which is how a session came up read-only a minute after being created.
+Viktor, 2026-09-06: *"once the session is created, it's renamed then the web ui
+shows it as view-only and i have to change the type to take action."*
+
+So the first rename away from a minted id records that id in
+`sessionio.OptionBornAs`, and the session list carries it as `bornAs`. That is
+the link between the name a tab is holding and the session it belongs to when no
+id can be matched, and the selection follows it (`renamesBetween`). Written only
+for a minted id, and only once: a session renamed from a readable name has been
+listed under that name all along, and overwriting would replace the one name a
+stranded tab is actually holding.
+
+The per-browser records keyed by name move with it — the watch choice, the view
+a session was being read in, and an unsent draft (`carryRenamedRecords`). The
+watch choice has to, rather than merely wanting to: the automatic rule reads
+`driven`, which counts this client's own attach, so a view remounting under the
+new name would resolve a session it is itself driving as one somebody else is
+driving.
 
 ## Considered options
 
@@ -100,7 +133,9 @@ rename — tmux's `#{session_id}`, or a lookup step between `?arg=` and
   its place for untitled ones, where it prints the id beside an empty title.
 - Renaming is an ordinary background event again, so anything keyed by a session
   name has to either follow the rename or key by something else. The six stores
-  follow. Per-browser records key by tmux's session id already.
+  follow, and so do the three per-browser records that are keyed by name — the
+  watch choice, the view mode and the composer draft (`carryRenamedRecords`).
+  Read/unread visits key by tmux's session id and need nothing.
 - Two sessions can no longer be told apart by name alone in the way an id
   guaranteed: `deploy` and `deploy-2` are two conversations about deploying. The
   id is gone from the name once a title lands, which is the trade this makes.
