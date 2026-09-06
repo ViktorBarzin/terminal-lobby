@@ -41,7 +41,7 @@ describe("<SoftKeys>", () => {
     for (const arrow of ["Up", "Down", "Left", "Right"]) {
       expect(getByLabelText(`${arrow} arrow`)).toBeInTheDocument();
     }
-    expect(getByLabelText("Copy")).toBeInTheDocument();
+    expect(getByLabelText("Copy the visible screen")).toBeInTheDocument();
     expect(getByLabelText("Paste")).toBeInTheDocument();
     expect(getByLabelText("Dismiss keyboard")).toBeInTheDocument();
     expect(container.querySelectorAll("#soft-keys button")).toHaveLength(9);
@@ -62,10 +62,21 @@ describe("<SoftKeys>", () => {
       "Down arrow",
       "Left arrow",
       "Right arrow",
-      "Copy",
+      "Copy the visible screen",
       "Paste",
       "Dismiss keyboard",
     ]);
+  });
+
+  it("captions the two icon keys, which are the only ones an icon hides", () => {
+    const send = vi.fn();
+    const { container } = render(() => (
+      <SoftKeys send={send} onCopy={() => {}} onPaste={() => {}} onDismissKeyboard={() => {}} />
+    ));
+    const caps = [...container.querySelectorAll("#soft-keys .sk-cap")].map(
+      (e) => e.textContent,
+    );
+    expect(caps).toEqual(["Copy", "Paste"]);
   });
 
   it("has no second tier and no ⋯ toggle to open one", () => {
@@ -141,7 +152,7 @@ describe("<SoftKeys>", () => {
     ));
     // No ⋯ press first: on a phone in terminal mode this row is the only route
     // to either clipboard action, so both are one tap away.
-    fireEvent.click(getByLabelText("Copy"));
+    fireEvent.click(getByLabelText("Copy the visible screen"));
     fireEvent.click(getByLabelText("Paste"));
     fireEvent.click(getByLabelText("Dismiss keyboard"));
     expect(onCopy).toHaveBeenCalledOnce();
