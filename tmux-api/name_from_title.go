@@ -140,3 +140,40 @@ func liveNames(osUser string) map[string]bool {
 	}
 	return taken
 }
+
+// backfillDerivedNames gives a readable name to a session that was titled
+// before this rule existed.
+//
+// The rename fires when a title LANDS, so a session already carrying one is
+// never reached by it: nothing retitles a conversation that has been running
+// for a week. Measured on the box the day ADR-0022 landed — 29 of wizard's
+// sessions were titled and every one still read as a minted id in `tmux ls`,
+// which is the whole complaint.
+//
+// Restricted to MINTED IDS on purpose. The retitle path renames whatever the
+// old name was, because a person asking for a new title is asking for it; this
+// pass acts on a title nobody just touched, so it may only replace a name that
+// says nothing. A shell somebody called `beads` keeps that name whatever its
+// title says.
+//
+// Runs on every listing rather than once at start: it is a fixed point, so a
+// pass with nothing to do costs one map build and a comparison per session, and
+// running continuously also catches a session restored under an id.
+func backfillDerivedNames(osUser string, sessions []Session) {
+	taken := make(map[string]bool, len(sessions))
+	for i := range sessions {
+		taken[sessions[i].Name] = true
+	}
+	for i := range sessions {
+		s := &sessions[i]
+		if s.Title == "" || !isMintedName(s.Name) {
+			continue
+		}
+		origin := s.Name
+		s.Name = renameToDerivedNameAmong(osUser, origin, s.Title, "backfill", taken)
+		if s.Name != origin {
+			delete(taken, origin)
+			taken[s.Name] = true
+		}
+	}
+}
