@@ -44,20 +44,29 @@ elif [[ -n "$auth_local" && -r "$MAP" ]]; then
     ' "$MAP")
 fi
 
-# Journal integrity (TL-23). The two request-controlled values on the line below
-# arrive raw: $1 is the URL's ?arg= and TTYD_USER is the identity header. The
-# NAME_RE gate that constrains $1 sits 20-odd lines further down, past a DENIED
-# branch that exits before ever reaching it, so an unauthenticated request used
-# to choose journal content outright. That matters because the telemetry
-# selector is `|= "TLEVENT"`, which matches on line CONTENT rather than on the
-# syslog tag, so a crafted arg could plant a record attributed to anyone.
+# Journal integrity (TL-23). Three request-controlled values reach a logger
+# call in this script before any charset gate has constrained them: $1, the
+# URL's ?arg=; TTYD_USER, the identity header; and $3, the ?arg= start
+# directory printed on the spawn line at the bottom of the file. The NAME_RE
+# gate that constrains $1 sits 20-odd lines further down, past a DENIED branch
+# that exits before ever reaching it, and the start directory is only ever
+# gated on a leading / and a length cap, because it is a path rather than a
+# name. That matters because the telemetry selector is `|= "TLEVENT"`, which
+# matches on line CONTENT rather than on the syslog tag, so a crafted arg can
+# plant a record attributed to anyone.
 #
-# Each value is folded to its own charset before it is printed. A case/if, no
-# fork and no jq: ttyd runs this once per WebSocket connection. The two
-# placeholders stay distinct so the line still tells "no header arrived" apart
-# from "a header arrived that we decline to print". LOG_USER_RE is a printing
-# rule only, never an authorization gate — the map lookup above is that.
+# Each of the three is folded to its own charset at the point where it is
+# printed. A case/if, no fork and no jq: ttyd runs this once per WebSocket
+# connection. The two placeholders stay distinct so the line still tells "no
+# header arrived" apart from "a header arrived that we decline to print".
+# Everything else that gets logged is already gated where it is parsed: the
+# session name by NAME_RE, the command key by CMD_RE, the owner by NAME_RE, the
+# watch mode by MODE_RE.
+#
+# A fold is a printing rule only, never an authorization gate. The map lookup
+# above is that, and a folded copy is never the value that reaches exec.
 LOG_USER_RE='^[a-zA-Z0-9_@.-]{1,64}$'
+LOG_DIR_RE='^/[A-Za-z0-9_./-]{0,4095}$'
 lv=""
 fold_log() {
     if [[ -z "$1" ]]; then
@@ -218,7 +227,12 @@ EOF
     fi
 fi
 
-logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$start_dir' cmd='${cmd_key:-<none>}' self='$(id -un)'"
+# Print-only copy of the start directory, folded like the two values above.
+# $start_dir itself is untouched and is what the exec below passes on.
+fold_log "$start_dir" "$LOG_DIR_RE"
+log_dir="$lv"
+
+logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$log_dir' cmd='${cmd_key:-<none>}' self='$(id -un)'"
 
 # Launch via tmux-user-attach so the tmux *server* is parented to the OS
 # user's own systemd manager (user@<uid>.service), not the ttyd.service
