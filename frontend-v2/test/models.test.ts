@@ -34,7 +34,6 @@ describe("the model catalogue", () => {
       "claude-sonnet-5",
       "claude-haiku-4-5-20251001",
       "claude-opus-4-8",
-      "claude-fable-5",
     ]);
     expect(modelsFor("codex").map((m) => m.id)).toEqual([
       "default",
@@ -156,6 +155,15 @@ describe("the model catalogue", () => {
     expect(phraseFor("claude", "model", "default")).toBe("default model");
     expect(phraseFor("codex", "model", "default")).toBe("default model");
     expect(phraseFor("claude", "effort", "default")).toBe("default effort");
+  });
+
+  // Nothing is offered that the account cannot run. claude-fable-5 sat here for
+  // a few hours and starts a Sonnet 5 session instead, so it is out — a row
+  // that delivers a different model than it names is worse than no row.
+  it("offers no model this account cannot run", () => {
+    const ids = modelsFor("claude").map((m) => m.id);
+    expect(ids).not.toContain("claude-fable-5");
+    expect(ids).not.toContain("claude-sonnet-5[1m]");
   });
 
   it("falls back to the id itself for a value the catalogue has never heard of", () => {

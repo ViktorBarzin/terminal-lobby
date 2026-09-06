@@ -602,7 +602,6 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
       "claude-sonnet-5",
       "claude-haiku-4-5-20251001",
       "claude-opus-4-8",
-      "claude-fable-5",
     ]);
     expect(sel.value).toBe("default");
     fireEvent.change(sel, { target: { value: "claude-sonnet-5" } });
