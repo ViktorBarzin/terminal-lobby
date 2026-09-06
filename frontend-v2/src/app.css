@@ -1343,10 +1343,6 @@ label.tl-set-row-label {
 .tl-row-tool[data-status="error"] {
   border-color: var(--danger);
 }
-.tl-tool-name {
-  font-family: var(--font-mono);
-  font-weight: 500;
-}
 /* Clickable Read/Edit/Write path -> opens the file-preview overlay. */
 .tl-tool-pathchip {
   flex: 0 1 auto;
