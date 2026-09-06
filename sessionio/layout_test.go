@@ -207,6 +207,34 @@ func TestWithinProjectsFollowsALinkOutOfTheRoot(t *testing.T) {
 	if !WithinProjects(linkedRoot, real) {
 		t.Fatal("a symlinked projects root refused a transcript inside it")
 	}
+
+	// A RELATIVE path is refused whatever it resolves to. The lexical check got
+	// this for free — filepath.Rel of an absolute root against a relative path
+	// errors — and the audit leans on it: a dash-leading stamp value cannot
+	// reach `tmux set-option`, which tmux.go emits with no `--`, because a value
+	// like "-x/a.jsonl" is not absolute. EvalSymlinks would hand back an
+	// absolute result the moment it walked a link with an absolute target, so
+	// the refusal has to be stated rather than inherited.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	if err := os.Symlink(root, filepath.Join(base, "-x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"-x/real.jsonl", "projects/real.jsonl", "real.jsonl"} {
+		if WithinProjects(root, rel) {
+			t.Fatalf("relative path %q was accepted", rel)
+		}
+	}
 }
 
 func TestSessionMapUnstampedSessionDoesNotResolve(t *testing.T) {

@@ -226,8 +226,20 @@ func WithinProjects(root, path string) bool {
 // the session, so a file that is not there yet is an ordinary state. Dropping
 // the fallback would make the stamp path refuse every new session. The read
 // that follows reports the absence itself.
+//
+// A RELATIVE path is refused outright, before anything is resolved. The lexical
+// version got that for free, because filepath.Rel of an absolute root against a
+// relative path errors, and the audit leans on it: a dash-leading stamp value
+// cannot reach `tmux set-option`, which tmux.go emits with no `--`, because
+// such a value is not absolute. EvalSymlinks does not preserve it — it returns
+// an ABSOLUTE result the moment it walks a link whose target is absolute, so
+// "-x/a.jsonl" under a cwd holding `-x -> <root>` would otherwise land inside
+// the root and be accepted, with the caller passing the original string on.
 func PathWithin(root, path string) bool {
 	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return false
+	}
 	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
 		clean = resolved
 	}
