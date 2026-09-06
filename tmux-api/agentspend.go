@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -36,6 +38,14 @@ import (
 // vocabulary (today, 7d, month, all). Absent means today, which is the figure
 // the sidebar shows and the one most people open the page for.
 const spendPeriodParam = "period"
+
+// spendToolParam narrows the answer to one tool's section. Absent means both,
+// which is what the Settings page wants. The sidebar figure follows the
+// attached session's tool and reads a single number out of a single section, so
+// it names the tool and the other half is neither read nor sent — the Codex
+// half walks rollout files and shells out to tmux, and that figure is polled
+// from every open tab.
+const spendToolParam = "tool"
 
 // TMUX_API_SPEND_DIR: scratch-build override for the dev harness, the same
 // seam and the same reason as TMUX_API_PREFS_DIR. The systemd unit sets no
@@ -194,6 +204,11 @@ func handleAgentSpend(w http.ResponseWriter, r *http.Request) {
 		}
 		period = p
 	}
+	tool, ok := parseSpendTool(r.URL.Query().Get(spendToolParam))
+	if !ok {
+		http.Error(w, "unknown tool", http.StatusBadRequest)
+		return
+	}
 
 	doc, err := spendStoreInstance.Load(osUser)
 	if err != nil {
@@ -202,10 +217,12 @@ func handleAgentSpend(w http.ResponseWriter, r *http.Request) {
 	}
 	now := spendNow()
 
-	body := agentSpendBody{
-		Period: string(period),
-		Claude: claudeSpendFor(doc, period, now),
-		Codex:  codexSpendFor(osUser, now),
+	body := agentSpendBody{Period: string(period)}
+	if tool == "" || tool == sessionio.HarnessClaude {
+		body.Claude = claudeSpendFor(doc, period, now)
+	}
+	if tool == "" || tool == sessionio.HarnessCodex {
+		body.Codex = codexSpendFor(osUser, now)
 	}
 
 	// Same no-store rationale as /prefs and /sessions: a figure the user just
@@ -215,6 +232,18 @@ func handleAgentSpend(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		log.Printf("agent-spend encode for %s failed: %v", osUser, err)
 	}
+}
+
+// parseSpendTool reads the tool filter. "" is both sections. Anything the
+// panel cannot draw is a caller's mistake rather than a reason to answer with
+// everything, the same gate ParsePeriod is: a shell spends nothing, and
+// answering "shell" with both sections would be answering a different question.
+func parseSpendTool(raw string) (sessionio.Harness, bool) {
+	switch sessionio.Harness(raw) {
+	case "", sessionio.HarnessClaude, sessionio.HarnessCodex:
+		return sessionio.Harness(raw), true
+	}
+	return "", false
 }
 
 // claudeSpendFor builds the Claude half, or nil when the user has never run
@@ -245,7 +274,10 @@ func claudeSpendFor(doc spendstore.Doc, period spendstore.Period, now time.Time)
 		}
 		out.Models = append(out.Models, spendModelRow{Model: m.Model, Tokens: m.Tokens, CostUSD: m.CostUSD})
 	}
-	for _, s := range doc.Sessions {
+	// LiveRows, not every row: retention retires a row to a bare baseline so a
+	// resumed conversation is differenced rather than counted twice, and those
+	// carry no name or model to show.
+	for _, s := range spendstore.LiveRows(doc.Sessions) {
 		if s.Tool != sessionio.HarnessClaude {
 			continue
 		}
@@ -324,6 +356,20 @@ func codexSpendFor(osUser string, now time.Time) *codexSpendSection {
 		return nil
 	}
 	reader := codexSpendReader{home: home, procDir: spendProcDir}
+	// Ask the cheap question first. Building the pane list shells out to tmux
+	// twice, and this endpoint is polled by every open tab; a box that has never
+	// run Codex should pay a stat and nothing more.
+	switch err := reader.rolloutsReadable(); {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		// Not the same answer as "never ran Codex", and worth saying out loud:
+		// this service runs as one OS user, and another user's home is theirs to
+		// read. The section is omitted either way, but silently omitting a
+		// section for a user who does run Codex is what makes it look broken.
+		log.Printf("codex spend for %s: %v (omitting the section)", osUser, err)
+		return nil
+	}
 	reading, err := reader.read(spendCodexPanes(osUser), now)
 	if err != nil {
 		log.Printf("codex spend read for %s failed (omitting the section): %v", osUser, err)

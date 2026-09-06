@@ -428,6 +428,123 @@ func TestHandleAgentSpendIsNotCached(t *testing.T) {
 	}
 }
 
+// A conversation past the retention window keeps a row in the store as the
+// baseline the next reading is differenced against. It has no name and no model
+// left, so the page must not list it — under All time it would otherwise be a
+// blank row carrying a running total.
+func TestHandleAgentSpendLeavesRetiredRowsOut(t *testing.T) {
+	store := agentSpendFixture(t, nil)
+	osA, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osA+"\n")
+	// The first conversation ages out; the second is what runs the fold.
+	if err := store.Record(claudeReading(osA, "tl-old", "conv-old", "claude-opus-5", 4, 40)); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := store.Record(claudeReading(osA, "tl-new", "conv-new", "claude-opus-5", 1, 0)); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	body := serveAgentSpend(t, "/agent-spend?period=all", "alice")
+	if body.Claude == nil {
+		t.Fatal("claude section absent")
+	}
+	for _, s := range body.Claude.Sessions {
+		if s.SessionID == "conv-old" {
+			t.Fatalf("a retired row reached the page: %+v", s)
+		}
+	}
+	if len(body.Claude.Sessions) != 1 {
+		t.Fatalf("session rows: got %+v, want only the live conversation", body.Claude.Sessions)
+	}
+	// The money is still there: the days hold it.
+	if !closeEnough(body.Claude.CostUSD, 5) {
+		t.Errorf("all time: got %v, want 5", body.Claude.CostUSD)
+	}
+}
+
+// A user who has never run Codex must not pay for the pane walk that only a
+// Codex reading needs. The walk shells out to tmux twice per request, and the
+// sidebar polls this endpoint every 30 seconds per open tab.
+func TestHandleAgentSpendSkipsTheCodexWalkWithoutRollouts(t *testing.T) {
+	agentSpendFixture(t, map[string]string{})
+	osA, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osA+"\n")
+	// A home with no ~/.codex at all, which is the Claude-only box.
+	spendHomeDir = func(string) string { return t.TempDir() }
+
+	asked := 0
+	spendCodexPanes = func(string) []codexPane {
+		asked++
+		return nil
+	}
+
+	body := serveAgentSpend(t, "/agent-spend", "alice")
+	if body.Codex != nil {
+		t.Fatalf("codex section for a user with no rollouts: %+v", body.Codex)
+	}
+	if asked != 0 {
+		t.Fatalf("the pane walk ran %d times for a user with no ~/.codex", asked)
+	}
+}
+
+// The sidebar figure follows the attached session's tool and reads one number
+// out of one section. Asking for that section alone is what keeps a tab
+// attached to Claude from walking the Codex rollouts every thirty seconds.
+func TestHandleAgentSpendCanAskForOneToolOnly(t *testing.T) {
+	admin, other := actAsFixture(t)
+	home := codexHome(t, currentFixture())
+	store := agentSpendFixture(t, map[string]string{admin: home})
+	if err := store.Record(claudeReading(admin, "tl-1", "conv-1", "claude-opus-5", 3, 0)); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	_ = other
+
+	both := serveAgentSpend(t, "/agent-spend", "adminauth")
+	if both.Claude == nil || both.Codex == nil {
+		t.Fatalf("without the filter: %+v, want both sections", both)
+	}
+
+	claudeOnly := serveAgentSpend(t, "/agent-spend?tool=claude", "adminauth")
+	if claudeOnly.Claude == nil {
+		t.Error("tool=claude dropped the claude section")
+	}
+	if claudeOnly.Codex != nil {
+		t.Errorf("tool=claude carried a codex section: %+v", claudeOnly.Codex)
+	}
+
+	codexOnly := serveAgentSpend(t, "/agent-spend?tool=codex", "adminauth")
+	if codexOnly.Codex == nil {
+		t.Error("tool=codex dropped the codex section")
+	}
+	if codexOnly.Claude != nil {
+		t.Errorf("tool=codex carried a claude section: %+v", codexOnly.Claude)
+	}
+
+	// And the codex half is not merely dropped from the answer: it is not read.
+	asked := 0
+	spendCodexPanes = func(string) []codexPane {
+		asked++
+		return nil
+	}
+	serveAgentSpend(t, "/agent-spend?tool=claude", "adminauth")
+	if asked != 0 {
+		t.Fatalf("the codex rollouts were walked %d times for tool=claude", asked)
+	}
+}
+
+// An unknown tool is a caller's mistake, and answering it with everything would
+// hand back more than was asked for.
+func TestHandleAgentSpendRejectsAnUnknownTool(t *testing.T) {
+	agentSpendFixture(t, nil)
+	osA, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osA+"\n")
+	rec := httptest.NewRecorder()
+	handleAgentSpend(rec, agentSpendReq("/agent-spend?tool=shell", "alice"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("tool=shell: got %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 // closeEnough compares dollars without asking two float64 sums to be identical.
 func closeEnough(a, b float64) bool {
 	d := a - b
