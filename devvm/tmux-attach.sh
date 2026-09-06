@@ -154,6 +154,23 @@ owner_arg="${4:-}"
 watch_arg="${5:-}"
 [[ "$watch_arg" =~ $MODE_RE ]] || watch_arg=""
 
+# ---- the model and effort a NEW session launches on ----------------------
+# A 6th and 7th ?arg=, forwarded to tmux-user-attach, which turns them into
+# flags on the command it starts. They are whitelisted TOKENS and nothing else:
+# the command line they join is run through `$SHELL -lic`, so a value carrying a
+# quote, a space or a `$` would be code rather than a name. Both classes are
+# re-checked there — this gate is the first of two, in the same belt-and-braces
+# the command key already gets.
+#
+# Like the command key, they are inert for a session that already exists:
+# `tmux new-session -A` ignores the command entirely when it attaches.
+MODEL_ARG_RE='^[a-z0-9][a-z0-9._-]{0,31}$'
+EFFORT_ARG_RE='^[a-z]{1,12}$'
+model_arg="${6:-}"
+[[ "$model_arg" =~ $MODEL_ARG_RE ]] || model_arg=""
+effort_arg="${7:-}"
+[[ "$effort_arg" =~ $EFFORT_ARG_RE ]] || effort_arg=""
+
 # The server is consulted for a FOREIGN attach (as before) and now also for any
 # attach that asks to watch — including your own session, which is the
 # two-device case and has no share row to authorize it.
@@ -232,13 +249,14 @@ fi
 fold_log "$start_dir" "$LOG_DIR_RE"
 log_dir="$lv"
 
-logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$log_dir' cmd='${cmd_key:-<none>}' self='$(id -un)'"
+logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$log_dir' cmd='${cmd_key:-<none>}' model='${model_arg:-<none>}' effort='${effort_arg:-<none>}' self='$(id -un)'"
 
 # Launch via tmux-user-attach so the tmux *server* is parented to the OS
 # user's own systemd manager (user@<uid>.service), not the ttyd.service
 # cgroup. Without this, a `systemctl restart ttyd` kills every session.
 if [[ "$os_user" == "$(id -un)" ]]; then
-    exec /usr/local/bin/tmux-user-attach "$name" "$start_dir" "$cmd_key"
+    exec /usr/local/bin/tmux-user-attach "$name" "$start_dir" "$cmd_key" "$model_arg" "$effort_arg"
 else
-    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach "$name" "$start_dir" "$cmd_key"
+    exec sudo -n -H -u "$os_user" /usr/local/bin/tmux-user-attach \
+        "$name" "$start_dir" "$cmd_key" "$model_arg" "$effort_arg"
 fi
