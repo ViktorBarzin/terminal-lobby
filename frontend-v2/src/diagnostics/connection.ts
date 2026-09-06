@@ -27,6 +27,8 @@
  * questions.
  */
 
+import { localStorageOrNull, type MinStorage } from "../lib/storage";
+
 /** Which experience a client gets. Deliberately two, not five: every lever this
  *  gates is either worth pulling on a bad link or is not. */
 export type ConnectionTier = "full" | "slow";
@@ -112,20 +114,12 @@ export function sampleNavigation(
   }
 }
 
-type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-
-function storage(): MinStorage | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null; // partitioned or blocked storage — the feature degrades to per-load
-  }
-}
-
 const isTier = (v: unknown): v is ConnectionTier => v === "full" || v === "slow";
 
 /** The verdict from a previous load, or null on a first-ever visit. */
-export function readStoredTier(store: MinStorage | null = storage()): ConnectionTier | null {
+export function readStoredTier(
+  store: MinStorage | null = localStorageOrNull(),
+): ConnectionTier | null {
   try {
     const v = store?.getItem(TIER_STORAGE_KEY);
     return isTier(v) ? v : null;
@@ -134,7 +128,10 @@ export function readStoredTier(store: MinStorage | null = storage()): Connection
   }
 }
 
-export function storeTier(tier: ConnectionTier, store: MinStorage | null = storage()): void {
+export function storeTier(
+  tier: ConnectionTier,
+  store: MinStorage | null = localStorageOrNull(),
+): void {
   try {
     store?.setItem(TIER_STORAGE_KEY, tier);
   } catch {
@@ -144,7 +141,9 @@ export function storeTier(tier: ConnectionTier, store: MinStorage | null = stora
 
 /** The pin, if the user set one. Device-local on purpose: a pin is a statement
  *  about THIS device's link, and roaming it to a desktop would be wrong. */
-export function readTierPreference(store: MinStorage | null = storage()): TierPreference {
+export function readTierPreference(
+  store: MinStorage | null = localStorageOrNull(),
+): TierPreference {
   try {
     const v = store?.getItem(TIER_PREF_STORAGE_KEY);
     return isTier(v) ? v : "auto";
@@ -155,7 +154,7 @@ export function readTierPreference(store: MinStorage | null = storage()): TierPr
 
 export function writeTierPreference(
   pref: TierPreference,
-  store: MinStorage | null = storage(),
+  store: MinStorage | null = localStorageOrNull(),
 ): void {
   try {
     if (pref === "auto") store?.removeItem(TIER_PREF_STORAGE_KEY);
@@ -185,7 +184,7 @@ export function effectiveTier(
  */
 export function recordMeasurement(
   probeMs: number | null = null,
-  store: MinStorage | null = storage(),
+  store: MinStorage | null = localStorageOrNull(),
 ): ConnectionTier | null {
   const nav = sampleNavigation();
   if (!nav) return null;

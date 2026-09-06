@@ -34,6 +34,7 @@
  */
 
 import { apiUrl } from "../lib/config";
+import { localStorageOrNull, type MinStorage } from "../lib/storage";
 import { NET_UNKNOWN, commitNetName } from "./usage";
 
 /** What the server reports about the network a request came from. */
@@ -83,19 +84,11 @@ export function parseNetworkInfo(raw: unknown): NetworkInfo | null {
   };
 }
 
-type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-
-function storage(): MinStorage | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null; // partitioned or blocked storage — the network is re-fetched per load
-  }
-}
-
 /** The last network this device saw. Persisted so a fresh tab has a name to
  *  show immediately, before its first poll answers. */
-export function readStoredNetwork(store: MinStorage | null = storage()): NetworkInfo | null {
+export function readStoredNetwork(
+  store: MinStorage | null = localStorageOrNull(),
+): NetworkInfo | null {
   try {
     const raw = store?.getItem(NETWORK_STORAGE_KEY);
     return raw ? parseNetworkInfo(JSON.parse(raw)) : null;
@@ -106,7 +99,7 @@ export function readStoredNetwork(store: MinStorage | null = storage()): Network
 
 export function writeStoredNetwork(
   info: NetworkInfo,
-  store: MinStorage | null = storage(),
+  store: MinStorage | null = localStorageOrNull(),
 ): void {
   try {
     store?.setItem(NETWORK_STORAGE_KEY, JSON.stringify(info));

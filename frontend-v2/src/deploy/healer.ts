@@ -28,6 +28,7 @@
  * unit-testable with fake timers and a stubbed fetch.
  */
 import { BUILD_ID } from "../lib/config";
+import type { MinStorage } from "../lib/storage";
 import {
   BUILD_SUBSTRING,
   MAX_UPDATE_ATTEMPTS,
@@ -74,7 +75,6 @@ interface UpdateRecord {
   reported?: boolean;
 }
 
-type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 type MinTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
 export interface DeployHealerDeps {

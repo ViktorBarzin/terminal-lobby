@@ -45,6 +45,8 @@
  * count its own WebSocket.
  */
 
+import { localStorageOrNull, type MinStorage } from "../lib/storage";
+
 /** The five feature buckets the panel reports, each named after something that
  *  could be changed rather than after an endpoint. */
 export const BUCKETS = ["term", "app", "text", "files", "api"] as const;
@@ -456,8 +458,6 @@ export function aggregate(
 
 // ---- persistence -------------------------------------------------------------
 
-type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -538,7 +538,7 @@ function liftLegacyMap(v: unknown, version: number): Record<string, NetTotals> {
   return out;
 }
 
-export function readStore(store: MinStorage | null = storage()): UsageStore {
+export function readStore(store: MinStorage | null = localStorageOrNull()): UsageStore {
   try {
     const raw = store?.getItem(USAGE_STORAGE_KEY);
     if (!raw) return emptyStore();
@@ -569,15 +569,10 @@ export function readStore(store: MinStorage | null = storage()): UsageStore {
   }
 }
 
-function storage(): MinStorage | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null; // partitioned or blocked storage — the feature degrades to this page life
-  }
-}
-
-export function writeStore(next: UsageStore, store: MinStorage | null = storage()): void {
+export function writeStore(
+  next: UsageStore,
+  store: MinStorage | null = localStorageOrNull(),
+): void {
   try {
     store?.setItem(USAGE_STORAGE_KEY, JSON.stringify(pruneNets(next)));
   } catch {
@@ -585,7 +580,7 @@ export function writeStore(next: UsageStore, store: MinStorage | null = storage(
   }
 }
 
-export function resetStore(store: MinStorage | null = storage()): void {
+export function resetStore(store: MinStorage | null = localStorageOrNull()): void {
   try {
     store?.removeItem(USAGE_STORAGE_KEY);
   } catch {
@@ -619,7 +614,7 @@ export function commitWindow(
   w: WindowBytes,
   net: string = NET_UNKNOWN,
   now: Date = new Date(),
-  store: MinStorage | null = storage(),
+  store: MinStorage | null = localStorageOrNull(),
 ): Promise<void> {
   return locked((cur) => foldInto(cur, w, now, net), store);
 }
@@ -629,7 +624,7 @@ export function commitNetName(
   net: string,
   meta: { label?: string; cc?: string },
   now: Date = new Date(),
-  store: MinStorage | null = storage(),
+  store: MinStorage | null = localStorageOrNull(),
 ): Promise<void> {
   return locked((cur) => rememberNet(cur, net, meta, now), store);
 }
@@ -637,7 +632,7 @@ export function commitNetName(
 /** Rebaseline the resettable period, leaving every other figure standing. */
 export function commitResetSince(
   now: Date = new Date(),
-  store: MinStorage | null = storage(),
+  store: MinStorage | null = localStorageOrNull(),
 ): Promise<void> {
   return locked((cur) => resetSince(cur, now), store);
 }
