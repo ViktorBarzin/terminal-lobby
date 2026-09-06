@@ -113,11 +113,16 @@ func splitPaneInfo(out string) (cwd, state string) {
 // The flags are this function's own. devvm/start-claude.sh is a sample this
 // package installs nowhere, and the launcher a session on this box actually
 // starts under is the roster's copy in each user's home, which pins
-// --session-id per launch. Nothing here reproduces that, so a pane respawned
-// with --name and --continue resumes whichever conversation tmux-persist's
-// fallback picks for that OS user, which after a reboot need not be the one the
-// pane had. Stamping the resumed conversation id is unfinished, tracked as
-// TL-26. Do not close it by putting a fresh --session-id next to --continue.
+// --session-id per launch. Nothing here stamps a conversation id, so which
+// conversation a respawned pane lands on is decided outside this function.
+// tmux-persist reads, in order, the @claude_transcript stamp Claude Code's own
+// SessionStart hook leaves on the tmux session, then an explicit --session-id
+// or --resume in argv, then a transcript whose own recorded name matches the
+// tmux session, which is what the --name below supplies. Only its last resort,
+// the newest .jsonl by mtime in the cwd-slug directory, is arbitrary. Whether a
+// --continue pane can still mis-map after a reboot was not traced to the end,
+// tracked as TL-26. Do not close it by putting a fresh --session-id next to
+// --continue.
 func claudeCommand(osUser, session string) string {
 	bin := "claude"
 	if u, err := user.Lookup(osUser); err == nil && u.HomeDir != "" {
