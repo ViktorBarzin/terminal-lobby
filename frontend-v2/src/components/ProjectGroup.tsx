@@ -11,7 +11,7 @@ import type { RenderGroup } from "./lobby.logic";
 import { countStates, groupSeqTokens, groupToken, visibleGroupSeqTokens } from "./lobby.logic";
 import type { LobbyStore } from "../store/lobby";
 import { UNGROUPED_KEY } from "../store/collapse";
-import { createDismissableMenu } from "./menu";
+import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import { track } from "../telemetry/track";
 import { SessionCard } from "./SessionCard";
 import { StateDot } from "./StateDot";
@@ -280,7 +280,7 @@ export const ProjectGroup: Component<{
             ⋯
           </button>
           <Show when={menu.open()}>
-            <div class="tl-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+            <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
               <Show when={!isUngrouped()}>
                 <button class="tl-menu-item" role="menuitem" onClick={() => void rename()}>Rename project</button>
               </Show>

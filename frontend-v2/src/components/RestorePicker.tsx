@@ -2,11 +2,14 @@ import {
   createMemo,
   createSignal,
   For,
+  onCleanup,
+  onMount,
   Show,
   type Accessor,
   type Component,
 } from "solid-js";
 import type { Snapshot, SnapshotList, SnapshotRow } from "../types/lobby";
+import { dismissOnPress } from "./overlay";
 
 /**
  * The restore picker (2026-08-14). Port of the vanilla lobby's
@@ -152,6 +155,18 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
   const [status, setStatus] = createSignal("Loading…");
   const [busy, setBusy] = createSignal(false);
 
+  // Escape closes, as it does on the palette, the settings panel, the gallery
+  // and the file preview. Capture, so it lands here rather than in whatever
+  // held the keyboard before the picker opened.
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    props.onClose();
+  };
+  onMount(() => document.addEventListener("keydown", onKey, true));
+  onCleanup(() => document.removeEventListener("keydown", onKey, true));
+
   const snapshots: Accessor<Snapshot[]> = () => list()?.snapshots ?? [];
   const selectedCount = (): number => checked().size;
   // What a restore would do, above what is already running.
@@ -268,9 +283,7 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
   return (
     <div
       class="tl-cmdpalette-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
+      ref={dismissOnPress(() => props.onClose(), { surfaceOnly: true })}
     >
       <div class="tl-schelp tl-restore" role="dialog" aria-label="Restore from snapshot">
         <h2 class="tl-schelp-title">Restore from snapshot</h2>

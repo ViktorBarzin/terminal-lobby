@@ -540,7 +540,10 @@ export const MessagesTimeline: Component<{
    * the layout is not final until then. Recomputing when nothing moved is
    * harmless: it writes back the value it already had.
    */
-  const onClick = () => {
+  // Re-read whether the transcript is parked at the bottom after an
+  // interaction that can change its height, from either device: a mouse click
+  // on a fold, or the Enter that opens the same fold from the keyboard.
+  const recheckPinned = () => {
     if (typeof requestAnimationFrame !== "function") {
       setPinned(atBottom());
       return;
@@ -658,7 +661,8 @@ export const MessagesTimeline: Component<{
       aria-label="Session transcript"
       ref={scroller}
       onScroll={onScroll}
-      onClick={onClick}
+      onClick={recheckPinned}
+      onKeyUp={recheckPinned}
     >
       <Show
         when={allKeys().length > 0}

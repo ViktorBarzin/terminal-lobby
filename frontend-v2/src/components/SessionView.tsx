@@ -22,7 +22,7 @@ import { isLoaded, MAX_JUMP_STEPS } from "./find.logic";
 import { createPreviewStore } from "../store/preview";
 import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
-import { createDismissableMenu } from "./menu";
+import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import { installImageClipboard } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
 import { ownWhile } from "../lib/ownwhile";
@@ -621,7 +621,7 @@ export const SessionView: Component<{
               <span class="tl-session-caret">▾</span>
             </button>
             <Show when={picker.open()}>
-              <div class="tl-menu tl-session-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+              <div class="tl-menu tl-session-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
                 <For each={props.otherSessions?.() ?? []}>
                   {(other) => (
                     <button
@@ -793,7 +793,7 @@ export const SessionView: Component<{
               ⋯
             </button>
             <Show when={barMenu.open()}>
-              <div class="tl-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+              <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
                 <button
                   class="tl-menu-item"
                   role="menuitem"
@@ -834,8 +834,16 @@ export const SessionView: Component<{
                     menu's layout while giving their clicks somewhere to bubble
                     to — the shell has no handle on this menu to close it. */}
                 <span
+                  role="group"
                   style={{ display: "contents" }}
                   onClick={() => barMenu.close()}
+                  // Enter on one of those items fires a click of its own, which
+                  // closes the menu on the line above. keyup runs after that
+                  // click, so it costs nothing and covers an item that acts on
+                  // a key without producing one.
+                  onKeyUp={(e) => {
+                    if (e.key === "Enter" || e.key === " ") barMenu.close();
+                  }}
                 >
                   {props.menuExtra}
                 </span>

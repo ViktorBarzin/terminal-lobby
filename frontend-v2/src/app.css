@@ -890,6 +890,15 @@ label.tl-set-row-label {
 .tl-netusage-row.is-tappable > * {
   cursor: pointer;
 }
+/* The row is `display: contents` and paints no box of its own, so a focus ring
+   has to go on the cells it lends its space to. */
+.tl-netusage-row:focus-visible {
+  outline: none;
+}
+.tl-netusage-row:focus-visible > * {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .tl-netusage-row.is-on > .tl-netusage-name,
 .tl-netusage-row.is-on > .tl-netusage-bytes {
   color: var(--text-primary);
@@ -2063,6 +2072,9 @@ label.tl-set-row-label {
   color: var(--text-muted);
   padding: 6px 10px 10px;
 }
+/* A row is a <button>: it carries the palette's own Enter and Space rather
+   than borrowing them from the query input. The reset is what a button needs
+   to look like the div it replaced. */
 .tl-cp-item {
   display: flex;
   align-items: center;
@@ -2070,6 +2082,16 @@ label.tl-set-row-label {
   padding: 8px 10px;
   border-radius: var(--radius);
   cursor: pointer;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+.tl-cp-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .tl-cp-item.tl-cp-sel {
   background: var(--bg-card-hover);

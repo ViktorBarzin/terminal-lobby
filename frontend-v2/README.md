@@ -473,6 +473,8 @@ src/
                          name box, because a shell has no prompt to receive
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
+    overlay.ts           A backdrop's press-to-dismiss, on the node rather than
+                         as a handler, since the surface is not a control
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot

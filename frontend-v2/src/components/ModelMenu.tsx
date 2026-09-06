@@ -1,5 +1,5 @@
 import { For, Show, createSignal, type Accessor, type Component, type JSX } from "solid-js";
-import { createDismissableMenu } from "./menu";
+import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import {
   DEFAULT_CHOICE,
   isCurrentModel,
@@ -108,7 +108,8 @@ export const ModelMenu: Component<{
           class="tl-menu tl-model-menu"
           role="menu"
           style={place()}
-          onClick={(e) => e.stopPropagation()}
+          onClick={stopMenuClick}
+          onKeyDown={stopMenuActivationKey}
         >
           <For each={["model", "effort"] as ModelField[]}>
             {(field) => (
