@@ -104,12 +104,12 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	// snapshot long after the layout has forgotten where it went, and landing
 	// in Ungrouped is where a recovered session is hardest to find again.
 	rememberKilledAssignment(osUser, name)
-	// The title goes with it, for the same reason the persist manifest row
-	// does: a deliberate kill means this session is not coming back, so
-	// keeping its title would only re-stamp a name someone else may reuse.
-	if err := titleStoreInstance.forget(osUser, name); err != nil {
-		log.Printf("title memory: forgetting %s for %s failed: %v", name, osUser, err)
-	}
+	// The title STAYS, unlike the layout entry and the manifest row. Those two
+	// describe a session that is running; a title describes one that existed,
+	// and the picker restores a killed session from an older snapshot long
+	// after both are gone. Since ADR-0019 a name is a minted id, so the reuse
+	// this used to guard against cannot happen, and dropping the title only
+	// left the picker showing that id. pruneLocked still bounds the file.
 	if err := layoutStoreInstance.removeSession(osUser, name); err != nil {
 		log.Printf("layout cleanup after killing %s for %s failed: %v", name, osUser, err)
 	}

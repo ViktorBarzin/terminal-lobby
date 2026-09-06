@@ -52,8 +52,13 @@ type Snapshot struct {
 // one rule set rather than re-deriving it in two idioms.
 type SnapshotRow struct {
 	Name string `json:"name"`
-	Cwd  string `json:"cwd"`
-	UUID string `json:"uuid,omitempty"`
+	// Title is what a person reads for this row. A name is an opaque id since
+	// ADR-0019, so without this the picker is a list of 12-character strings
+	// nobody can choose between. Empty when the session was never titled, or
+	// when its title is the id itself; the picker then falls back to the name.
+	Title string `json:"title,omitempty"`
+	Cwd   string `json:"cwd"`
+	UUID  string `json:"uuid,omitempty"`
 	// State: missing | live_same | live_other_conv | live_no_claude
 	State string `json:"state"`
 	// Action: new | suffixed | in_place | skip
@@ -204,7 +209,7 @@ func handleSnapshots(w http.ResponseWriter, r *http.Request) {
 		body.Snapshots = parseSnapshotList(p.series, p.live)
 		if p.rowsTS != "" {
 			body.NewestTS = p.rowsTS
-			body.Rows = annotateRowProjects(osUser, parseSnapshotRows(p.rows))
+			body.Rows = annotateRows(osUser, parseSnapshotRows(p.rows))
 		}
 	} else {
 		// A box whose tmux-persist or wrapper predates `open`. The series alone
@@ -302,7 +307,13 @@ func handleSnapshotByTS(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(annotateRowProjects(osUser, parseSnapshotRows(string(out))))
+	_ = json.NewEncoder(w).Encode(annotateRows(osUser, parseSnapshotRows(string(out))))
+}
+
+// annotateRows fills in everything the picker shows that a snapshot does not
+// carry: what each row is called, and where restoring it would put it.
+func annotateRows(osUser string, rows []SnapshotRow) []SnapshotRow {
+	return annotateRowTitles(osUser, annotateRowProjects(osUser, rows))
 }
 
 func parseSnapshotRows(out string) []SnapshotRow {

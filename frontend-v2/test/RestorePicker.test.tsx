@@ -6,6 +6,7 @@ import {
   formatSnapshotTime,
   memoryWarning,
   orderRows,
+  rowLabel,
   rowNote,
   shortCwd,
   snapshotDate,
@@ -144,21 +145,34 @@ describe("restore picker — pure helpers", () => {
     expect(shortCwd("", "/home/wizard")).toBe("");
   });
 
+  // Since ADR-0019 a session name is a 12-character id, so the name is the
+  // WRONG thing to put in front of someone choosing what to bring back.
+  it("labels a row with its title, and keeps the name for the untitled", () => {
+    expect(rowLabel(row({ name: "6j0wjvxxf7e5", title: "Restore feature session naming" }))).toBe(
+      "Restore feature session naming",
+    );
+    expect(rowLabel(row({ name: "4txnmy85ftja" }))).toBe("4txnmy85ftja");
+    expect(rowLabel(row({ name: "4txnmy85ftja", title: "" }))).toBe("4txnmy85ftja");
+  });
+
   it("explains each row state, flagging the two that do something else", () => {
     expect(rowNote(row({ name: "a" })).text).toBe("");
     expect(rowNote(row({ name: "a", state: "live_same", action: "skip" })).text).toBe(
       "already running",
     );
 
+    // The target is `<id>-1250`, which says nothing to a reader — so the note
+    // says what happens instead of naming it.
     const conflict = rowNote(
       row({
-        name: "chesscom",
+        name: "6w2j6dzfm249",
         state: "live_other_conv",
         action: "suffixed",
-        target: "chesscom-1250",
+        target: "6w2j6dzfm249-1250",
       }),
     );
-    expect(conflict.text).toContain("chesscom-1250");
+    expect(conflict.text).toContain("alongside");
+    expect(conflict.text).not.toContain("6w2j6dzfm249");
     expect(conflict.warn).toBe(true);
 
     const inPlace = rowNote(row({ name: "t", state: "live_no_claude", action: "in_place" }));
@@ -445,6 +459,55 @@ describe("restore picker — behaviour", () => {
  * keyboard half of that gesture — the picker was the one overlay without it,
  * so a keyboard user had to find the Close button at the foot.
  */
+// The bug this fixes (2026-09-06): every row read as a 12-character id, so
+// picking the session you wanted was guesswork. Titles come from the server —
+// tmux options die with a session, and the titles file is what outlives it.
+describe("restore picker — rows read as titles", () => {
+  const titled: SnapshotRow[] = [
+    row({ name: "6j0wjvxxf7e5", title: "Restore feature session naming" }),
+    row({ name: "4txnmy85ftja" }), // never titled: the id is all there is
+  ];
+
+  /** A one-call server: the newest snapshot's rows ride with the list. */
+  const titledApi = (): FakeApi => {
+    const api = new FakeApi();
+    api.list = { ...LIST, newestTs: "20260814T130500", rows: titled };
+    return api;
+  };
+
+  it("puts the title in front and the id behind it", async () => {
+    const { container } = mount(titledApi());
+    await waitFor(() => expect(screen.getByText("Restore feature session naming")).toBeTruthy());
+
+    const rows = [...container.querySelectorAll<HTMLElement>(".tl-restore-row")];
+    expect(rows[0]!.querySelector(".tl-restore-name")?.textContent).toBe(
+      "Restore feature session naming",
+    );
+    // The id stays reachable — it is what someone quotes reporting a problem —
+    // but it is not the thing being read.
+    expect(rows[0]!.querySelector(".tl-restore-id")?.textContent).toBe("6j0wjvxxf7e5");
+  });
+
+  it("shows an untitled session's id once, not twice", async () => {
+    const { container } = mount(titledApi());
+    await waitFor(() => expect(screen.getByText("4txnmy85ftja")).toBeTruthy());
+
+    const rows = [...container.querySelectorAll<HTMLElement>(".tl-restore-row")];
+    expect(rows[1]!.querySelector(".tl-restore-name")?.textContent).toBe("4txnmy85ftja");
+    expect(rows[1]!.querySelector(".tl-restore-id")).toBeNull();
+  });
+
+  it("still restores by name, whatever the row is labelled", async () => {
+    const api = titledApi();
+    const { getByText } = mount(api);
+    await waitFor(() => expect(screen.getByText("Restore feature session naming")).toBeTruthy());
+    fireEvent.click(getByText(/^Restore \d+ selected$/));
+
+    await waitFor(() => expect(api.restores.length).toBe(1));
+    expect(api.restores[0]!.sessions).toEqual(["6j0wjvxxf7e5", "4txnmy85ftja"]);
+  });
+});
+
 describe("restore picker — dismissal", () => {
   it("closes on a press on the backdrop, not on a press on the panel", async () => {
     let closed = 0;
