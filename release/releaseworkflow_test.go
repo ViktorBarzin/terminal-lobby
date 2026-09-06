@@ -101,6 +101,23 @@ func shellWords(t *testing.T, prelude, words string) []string {
 	return got
 }
 
+// gitEnumerates reports whether git can list this tree.
+//
+// The workflow derives its module list with `git ls-files`, and the expansion
+// above runs that derivation for real. A checkout git refuses to read (an
+// archive extraction with no .git, a directory git calls dubiously owned, no
+// git on PATH) leaves the assignment empty while sh still exits 0, so the
+// comparison reads as "the release workflow compiles []" and blames the
+// workflow for the checkout. Two reviewers filed exactly that against a branch
+// where the test was green, which is why this says which of the two it is.
+func gitEnumerates(t *testing.T) bool {
+	t.Helper()
+	cmd := exec.Command("git", "ls-files", "go.mod", "*/go.mod")
+	cmd.Dir = ".."
+	out, err := cmd.Output()
+	return err == nil && len(strings.Fields(string(out))) > 0
+}
+
 func TestReleaseWorkflowCompilesEveryGoModule(t *testing.T) {
 	yml := repoFile(t, ".github", "workflows", "release.yml")
 	step := goTestStep(t, yml)
@@ -111,6 +128,9 @@ func TestReleaseWorkflowCompilesEveryGoModule(t *testing.T) {
 	prelude := ""
 	if a := releaseModuleAssign.FindStringSubmatch(step); a != nil {
 		prelude = a[1] + "; "
+	}
+	if !gitEnumerates(t) {
+		t.Skip("git cannot list this tree, so the workflow's own derivation has nothing to return here")
 	}
 	got := shellWords(t, prelude, m[1])
 	want := goModuleDirs(t)
