@@ -172,9 +172,12 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
     );
   };
 
+  // Tab leads. It is the most-tapped key that is not an arrow (71 taps against
+  // Esc's 13 over the 28 days that decided this row), so it gets the end of the
+  // row a thumb reaches first (Viktor, 2026-09-06).
   const primaryKeys: KeyDef[] = [
-    { label: "Esc", bytes: "esc", ariaLabel: "Escape" },
     { label: "Tab", bytes: "tab", ariaLabel: "Tab", repeat: true },
+    { label: "Esc", bytes: "esc", ariaLabel: "Escape" },
   ];
   const arrowKeys: KeyDef[] = [
     { label: "↑", bytes: "up", ariaLabel: "Up arrow", repeat: true, narrow: true },

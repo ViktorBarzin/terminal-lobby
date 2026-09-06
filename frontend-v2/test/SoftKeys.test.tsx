@@ -47,6 +47,27 @@ describe("<SoftKeys>", () => {
     expect(container.querySelectorAll("#soft-keys button")).toHaveLength(9);
   });
 
+  it("leads with Tab, the most-tapped key that is not an arrow", () => {
+    const send = vi.fn();
+    const { container } = render(() => (
+      <SoftKeys send={send} onCopy={() => {}} onPaste={() => {}} onDismissKeyboard={() => {}} />
+    ));
+    const order = [...container.querySelectorAll("#soft-keys button")].map(
+      (b) => (b.getAttribute("aria-label") || b.textContent || "").trim(),
+    );
+    expect(order).toEqual([
+      "Tab",
+      "Escape",
+      "Up arrow",
+      "Down arrow",
+      "Left arrow",
+      "Right arrow",
+      "Copy",
+      "Paste",
+      "Dismiss keyboard",
+    ]);
+  });
+
   it("has no second tier and no ⋯ toggle to open one", () => {
     // The whole point of the 2026-09-06 flatten: one line above the keyboard.
     const send = vi.fn();

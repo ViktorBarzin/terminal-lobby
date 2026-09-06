@@ -130,7 +130,7 @@ xterm pane refits whenever `visualViewport` reports a size change.
 
 **Soft-key row.** On any device that reports `pointer: coarse`, a
 docked row appears above the soft keyboard in the terminal view, with
-the keys a phone keyboard lacks: `Esc`, `Tab`, the four arrows, then
+the keys a phone keyboard lacks: `Tab`, `Esc`, the four arrows, then
 `Copy`, `Paste` and a keyboard-dismiss key. One line, eight keys,
 which is as much as a 390px screen holds without scrolling. Arrows
 and `Tab` repeat while held.
