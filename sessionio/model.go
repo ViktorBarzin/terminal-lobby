@@ -55,10 +55,17 @@ type PickerOption struct {
 }
 
 var (
-	// A numbered row: an optional cursor glyph, the number, then the label and
-	// its description in two space-separated columns. Claude points with ❯ and
-	// codex with ›; the ASCII > is carried because dialog.go already does.
-	rePickerRow = regexp.MustCompile(`^\s*([❯›>]?)\s*(\d+)\.\s+(\S.*)$`)
+	// A numbered row: an optional cursor glyph, an optional SCROLL MARKER, the
+	// number, then the label and its description in two space-separated
+	// columns. Claude points with ❯ and codex with ›; the ASCII > is carried
+	// because dialog.go already does.
+	//
+	// The scroll markers are ↑ and ↓, and a list taller than the pane puts one
+	// where the cursor would go on its topmost and bottommost visible rows.
+	// Without them here that row parsed as nothing at all, which on a browser
+	// -sized pane left a two-row window reading as one row and a one-row window
+	// reading as no picker (measured 2026-09-05 at 80x23).
+	rePickerRow = regexp.MustCompile(`^\s*([❯›>])?\s*([↑↓])?\s*(\d+)\.\s+(\S.*)$`)
 	// The gap between an option's name and its description. Both CLIs pad the
 	// name column, so the run of spaces is always there; a name never contains
 	// one.
@@ -90,6 +97,13 @@ var (
 	// default for new sessions", or "Kept model as Haiku 4.5" when the pick was
 	// the model already in force.
 	reModelReceipt = regexp.MustCompile("(?i)(?:set model to|kept model as)\\s+[`\u2018\u2019\"]?([A-Za-z][\\w.-]*)")
+	// What `/effort` answers with: "Set effort level to xhigh (this session
+	// only): Deeper reasoning than high". Anchored on the whole phrase because
+	// the words "effort level" turn up in ordinary prose — a skill description
+	// in these very transcripts reads "effort level (low/medium: fewer,
+	// high-confidence findings)" — and that is not a session saying anything
+	// about itself.
+	reEffortReceipt = regexp.MustCompile(`(?i)set effort level to\s+([a-z]+)`)
 )
 
 // ClaudeEfforts is the effort ladder Claude Code offers, in slider order.
@@ -120,10 +134,15 @@ var codexEffortRows = map[string]string{
 //
 // The numbers must run consecutively, because they are what a caller would act
 // on: prose that happens to contain "1." and "4." is not a picker, and treating
-// it as one would send a keystroke into somebody's conversation. A list taller
-// than the pane shows a WINDOW of itself, so the run is not required to start
-// at 1 — which is also why the driver walks with arrows rather than reading an
-// index and pressing it.
+// it as one would send a keystroke into somebody's conversation. What carries
+// that guard is the FOOTER, which only a select widget draws — so a window
+// showing a single row is still a picker, and refusing to read one made the
+// walk give up on a picker that was on screen.
+//
+// A list taller than the pane shows a WINDOW of itself, so the run is not
+// required to start at 1, and its topmost and bottommost visible rows carry a
+// scroll marker where the cursor would go. That is also why the driver walks
+// with arrows rather than reading an index and pressing it.
 func PickerOptions(pane string) []PickerOption {
 	if !rePickerFooter.MatchString(pane) {
 		return nil
@@ -140,11 +159,11 @@ func pickerRows(pane string) []PickerOption {
 		if m == nil {
 			continue
 		}
-		n, err := strconv.Atoi(m[2])
+		n, err := strconv.Atoi(m[3])
 		if err != nil {
 			continue
 		}
-		label := optionLabel(m[3])
+		label := optionLabel(m[4])
 		if label == "" {
 			continue
 		}
@@ -157,9 +176,6 @@ func pickerRows(pane string) []PickerOption {
 			out = out[:0]
 		}
 		out = append(out, PickerOption{Index: n, Label: label, Cursor: m[1] != ""})
-	}
-	if len(out) < 2 {
-		return nil
 	}
 	return out
 }
@@ -234,10 +250,21 @@ func ClaudeEffortHint(pane string) string {
 	// Last match wins: a pane holds scrollback, and the hint is redrawn above
 	// the input on every repaint, so the newest one is the live reading.
 	all := reClaudeEffort.FindAllStringSubmatch(pane, -1)
-	if len(all) == 0 {
-		return ""
+	if len(all) > 0 {
+		return strings.ToLower(all[len(all)-1][1])
 	}
-	return strings.ToLower(all[len(all)-1][1])
+	// The hint's line is not always the hint's. Driving the picker means
+	// pressing arrows, and enough of them raise a transient "Scroll wheel is
+	// sending arrow keys" notice that takes it — so a change that worked read
+	// back as nothing at all. The receipt of the change is on the pane too and
+	// is the same session speaking; it stands in, and only stands in, because
+	// it reports what was ASKED FOR where the hint reports what is in force.
+	for _, line := range strings.Split(pane, "\n") {
+		if level, ok := EffortFromReceipt(line); ok {
+			return level
+		}
+	}
+	return ""
 }
 
 // CodexState reads the model and reasoning level off a codex pane.
@@ -267,22 +294,27 @@ func CodexState(pane string) ModelState {
 	return st
 }
 
-// SwitchPrompt reads the confirmation Claude Code raises when the model of a
-// conversation that ALREADY HAS A WARM CACHE is changed, and answers with the
-// row that says yes.
+// SwitchPrompt reads the confirmation Claude Code raises when a change would
+// throw away a conversation's warm cache, and answers with the row that says
+// yes.
 //
-// It is a second dialog, after the picker has committed: "Switch model? … This
-// conversation is cached for the current model." It appears only once a session
-// has taken a turn, which is why a driver tested against fresh sessions never
-// meets it — and it carries none of the select widget's footers, so the picker
-// parser deliberately does not see it. Left unanswered it blocks the session on
-// a dialog nobody is looking at, which is what happened on 2026-09-05.
+// BOTH settings raise it, under their own headings: "Switch model?" and
+// "Change effort level?". It is a second dialog, after the picker has already
+// committed, and it appears only once a session has taken a turn — which is why
+// a driver tested against fresh sessions never meets it. It carries none of the
+// select widget's footers, so the picker parser deliberately does not see it.
+// Left unanswered it blocks the session on a dialog nobody is looking at, and
+// the change does not happen: measured on 2026-09-05 for the model, then again
+// for the effort against the deployed service, which answered a
+// successful-looking empty state while the pane sat waiting.
 //
-// The yes row names the model ("Yes, switch to Opus 5"), so it is returned
-// rather than assumed: the driver walks to that exact label, the same as
-// anywhere else.
+// The anchor is the sentence both share rather than either heading, so a third
+// setting that learns to ask does not need a third case. The yes row names the
+// destination ("Yes, switch to Opus 5", "Yes, switch to high"), so it is
+// returned rather than assumed: the driver walks to that exact label, the same
+// as anywhere else.
 func SwitchPrompt(pane string) (string, bool) {
-	if !strings.Contains(pane, "Switch model?") {
+	if !strings.Contains(pane, switchCacheWarning) {
 		return "", false
 	}
 	for _, o := range pickerRows(pane) {
@@ -292,6 +324,10 @@ func SwitchPrompt(pane string) (string, bool) {
 	}
 	return "", false
 }
+
+// switchCacheWarning is the line every one of those confirmations carries, and
+// the reason the dialog exists at all.
+const switchCacheWarning = "This conversation is cached for the current"
 
 // ModelFromReceipt reads the model out of what `/model` answered with, as the
 // word the picker itself uses.
@@ -333,6 +369,29 @@ func shortClaudeModel(name string) string {
 
 // SameModel reports whether two spellings name the same Claude model.
 func SameModel(a, b string) bool { return shortClaudeModel(a) == shortClaudeModel(b) }
+
+// EffortFromReceipt reads the level out of what `/effort` answered with.
+//
+// It exists for the reason ModelFromReceipt does: an assistant record names the
+// level a TURN ran at, so between a change and the session's next turn the
+// newest record still reports the level the change replaced. The receipt lands
+// immediately.
+//
+// A level this build does not know is not a reading. That is what keeps the
+// phrase from matching prose that happens to follow it with a word.
+func EffortFromReceipt(line string) (string, bool) {
+	m := reEffortReceipt.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	level := strings.ToLower(m[1])
+	for _, known := range ClaudeEfforts {
+		if level == known {
+			return level, true
+		}
+	}
+	return "", false
+}
 
 // CodexEffortLabel names the row to pick for one of codex's levels.
 func CodexEffortLabel(id string) (string, bool) {

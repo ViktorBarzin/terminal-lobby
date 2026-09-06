@@ -12,8 +12,13 @@ import type { DockStore } from "../store/dock";
  * shell running — that is why Ctrl+J cycles create → hide → show rather than
  * tearing the terminal down each time.
  *
- * Desktop only. A phone has room for one terminal, so coarse pointers ignore
- * the dock entirely.
+ * Desktop only, and this is where that is decided: `d.allowed()` is false
+ * under `(pointer: coarse)`, so the `Show` below builds no terminal at all.
+ * CSS used to carry the whole answer (`.tl-dock { display: none }` under the
+ * same query), which hid the panel while a second xterm and a second pty went
+ * on running behind it. tmux sizes a window to its SMALLEST attached client,
+ * so that hidden attach could shrink the window the person is looking at. The
+ * CSS rule is gone; sidebar.css says so at `.tl-dock`.
  */
 export const Dock: Component<{
   dock: DockStore;
@@ -22,9 +27,20 @@ export const Dock: Component<{
   const [dragging, setDragging] = createSignal(false);
 
   // Drag the gutter: the ratio is the DOCK's share of the content column, so a
-  // drag upward grows it. Measured against the wrapper rather than the window,
-  // which is what the sidebar's width would otherwise skew.
+  // drag upward grows it. The box it is measured against is the wrapper's
+  // PARENT, `.tl-shell-body`, which is also what the panel's percentage height
+  // resolves against. The window is the wrong ruler: it counts the shell bar
+  // above the content column, and on a narrow screen the sidebar beside it.
   let wrapEl: HTMLDivElement | undefined;
+  // Ending the drag has to be reachable from the component's own cleanup, and
+  // that registration has to happen HERE. `onCleanup` called from inside the
+  // pointerdown handler runs with no reactive owner, so Solid drops it (with
+  // "cleanups created outside a `createRoot` or `render` will never be run" on
+  // stderr) and a panel that goes away mid-drag left both window listeners
+  // behind. Ctrl+J hiding the dock under a held pointer is exactly that case.
+  let endDrag: (() => void) | null = null;
+  onCleanup(() => endDrag?.());
+
   const onGutterDown = (e: PointerEvent): void => {
     e.preventDefault();
     setDragging(true);
@@ -34,17 +50,18 @@ export const Dock: Component<{
       d.setRatio(((box.bottom - ev.clientY) / box.height) * 100);
     };
     const up = (): void => {
+      endDrag = null;
       setDragging(false);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
+    endDrag = up;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
-    onCleanup(up);
   };
 
   return (
-    <Show when={d.session() && d.visible()}>
+    <Show when={d.allowed() && d.session() && d.visible()}>
       <div
         ref={wrapEl}
         class="tl-dock"

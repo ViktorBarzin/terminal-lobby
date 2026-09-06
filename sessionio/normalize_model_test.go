@@ -132,6 +132,89 @@ func TestModelFromReceiptReadsEveryShapeTheCommandAnswersWith(t *testing.T) {
 	}
 }
 
+// The effort has the same gap the model had: an assistant record names the
+// level a TURN ran at, so until the session takes another one the newest record
+// still reports the level the change replaced. `/effort` writes its own
+// receipt, and that is what closes it.
+func TestNormalizeReportsAnEffortChangeFromItsReceipt(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line([]byte(`{"type":"assistant","effort":"medium","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"hi"}]},"uuid":"a1"}`))
+
+	got := modelEvent(n.Line([]byte(`{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>Set effort level to xhigh (this session only): Deeper reasoning than high</local-command-stdout>"}]},"uuid":"a2"}`)))
+	if got == nil {
+		t.Fatal("the receipt reported no effort change")
+	}
+	if got.Model.Effort != "xhigh" {
+		t.Fatalf("model event = %+v", got.Model)
+	}
+	// The model in force rides along: a reader is shown the pair, and this
+	// receipt says nothing about the other half.
+	if got.Model.Model != "claude-opus-5" {
+		t.Fatalf("the model was dropped: %+v", got.Model)
+	}
+}
+
+func TestNormalizeIgnoresAnEffortReceiptThatChangedNothing(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line([]byte(`{"type":"assistant","effort":"high","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"hi"}]},"uuid":"a1"}`))
+	got := modelEvent(n.Line([]byte(`{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>Set effort level to high (this session only): Comprehensive</local-command-stdout>"}]},"uuid":"a2"}`)))
+	if got != nil {
+		t.Fatalf("a receipt naming the level already in force reported a change: %+v", got.Model)
+	}
+}
+
+func TestEffortFromReceiptReadsOnlyTheCommandsOwnAnswer(t *testing.T) {
+	for line, want := range map[string]string{
+		"Set effort level to xhigh (this session only): Deeper reasoning":      "xhigh",
+		"Set effort level to ultracode (this session only): xhigh + workflows": "ultracode",
+		"Set effort level to low (this session only): Quick, straightforward":  "low",
+	} {
+		got, ok := EffortFromReceipt(line)
+		if !ok || got != want {
+			t.Errorf("EffortFromReceipt(%q) = %q, %v; want %q", line, got, ok, want)
+		}
+	}
+	// Prose that merely names levels is not a receipt. The first of these is a
+	// real skill description that sits in transcripts.
+	for _, line := range []string{
+		"effort level (low/medium: fewer, high-confidence findings; high→max: broader)",
+		"CLAUDE_CODE_EFFORT_LEVEL=max overrides this session",
+		"Set model to `Sonnet 5` for this session only",
+		"Set effort level to sideways (this session only)",
+	} {
+		if got, ok := EffortFromReceipt(line); ok {
+			t.Errorf("EffortFromReceipt(%q) = %q, want no match", line, got)
+		}
+	}
+}
+
+// A RECEIPT NAMES THE FAMILY, A TURN NAMES THE SLUG, and the turn is the better
+// answer. The receipt is what makes a change visible immediately; the assistant
+// record that follows it says exactly which build answered. Treating the two as
+// the same reading left a session reporting `opus` for the rest of its life,
+// which is the half of "which model is this" that the slug exists to give.
+func TestNormalizeUpgradesTheReceiptsFamilyToTheSlug(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line([]byte(`{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>Set model to ` + "`" + `Opus 5` + "`" + ` for this session only</local-command-stdout>"}]},"uuid":"a1"}`))
+
+	got := modelEvent(n.Line([]byte(`{"type":"assistant","effort":"xhigh","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"hi"}]},"uuid":"a2"}`)))
+	if got == nil {
+		t.Fatal("the turn did not replace the receipt's word with the slug")
+	}
+	if got.Model.Model != "claude-opus-5" {
+		t.Fatalf("model event = %+v", got.Model)
+	}
+
+	// And it settles there: the same slug on every turn afterwards says nothing
+	// new, and a later receipt naming the same family does not undo it.
+	if again := modelEvent(n.Line([]byte(`{"type":"assistant","effort":"xhigh","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"more"}]},"uuid":"a3"}`))); again != nil {
+		t.Fatalf("the unchanged slug was reported again: %+v", again.Model)
+	}
+	if back := modelEvent(n.Line([]byte(`{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>Kept model as Opus 5</local-command-stdout>"}]},"uuid":"a4"}`))); back != nil {
+		t.Fatalf("a receipt walked the slug back to its family: %+v", back.Model)
+	}
+}
+
 func modelEvent(evs []Event) *Event {
 	for i := range evs {
 		if evs[i].Kind == KindMeta && evs[i].Meta == MetaModel {

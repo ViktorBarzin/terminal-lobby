@@ -1,0 +1,23 @@
+
+
+✻ Sautéed for 2s · done 11:19 PM
+
+❯ /model
+  ⎿  Kept model as Haiku 4.5
+
+❯ /model
+  ⎿  Kept model as Haiku 4.5
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Select model
+   Switch between Claude models. Your pick becomes the default for new
+   sessions. For other/previous model names, specify with --model.
+
+   ↑ 3. Opus                   Opus 5 · Best for everyday, complex tasks
+   ❯ 4. Haiku ✔                Haiku 4.5 · Fastest for quick answers
+      … +2 models
+
+   ○ Effort not supported for Haiku
+
+   Use /fast to turn on Fast mode (Opus 5).
+
+   Enter to set as default · s to use this session only · Esc to cancel

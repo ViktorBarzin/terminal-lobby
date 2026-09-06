@@ -55,8 +55,28 @@ export function nextDockAction(layout: Layout, taken: Iterable<string>): DockAct
  * The docked shell is not a thread — keep it out of the sidebar, as the vanilla
  * page does. It comes back as an ordinary card the moment it is un-docked,
  * which is what ✕ does.
+ *
+ * `dockAllowed` is the whole of the mobile case, and without it this function
+ * loses a session. `layout.dock` ROAMS, so a shell docked at a desk arrives on
+ * the phone with the name still set, while the panel that would show it is
+ * gated off there (store/dock.ts `allowed`). Hiding the card as well left the
+ * shell running, in no list and in no panel, reachable only by going back to a
+ * desktop. Measured live 2026-09-06: wizard's layout carried
+ * `dock: {session: "shell", visible: true}` with `shell` a running session.
+ *
+ * The vanilla page drew the same line and its design doc (2026-07-17) gives the
+ * rule: "On mobile (no dock) it falls through as a normal card so it's never
+ * lost." Hiding is therefore conditional on somewhere to hide it.
+ *
+ * This was reachable before the panel was gated, because the CSS hid it just as
+ * completely, so it is not new. It is only easy to see now.
  */
-export function hideDockedSession(sessions: Session[], layout: Layout): Session[] {
+export function hideDockedSession(
+  sessions: Session[],
+  layout: Layout,
+  dockAllowed: boolean,
+): Session[] {
+  if (!dockAllowed) return sessions;
   const docked = layout.dock?.session;
   if (!docked) return sessions;
   return sessions.filter((s) => s.name !== docked);

@@ -1,6 +1,9 @@
 package sessionio
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The pickers, read off live panes on 2026-09-05: Claude Code 2.1.261 and
 // codex-cli 0.144.3, both driven through the same tmux send-keys this package
@@ -65,6 +68,40 @@ func TestPickerOptionsReadsCodexsAdvancedReasoning(t *testing.T) {
 	opts := PickerOptions(fixture(t, "picker-codex-advanced.txt"))
 	if len(opts) != 2 || opts[0].Label != "Max" || opts[1].Label != "Ultra" {
 		t.Fatalf("options = %+v", opts)
+	}
+}
+
+// A LIST TALLER THAN THE PANE SHOWS A WINDOW OF ITSELF. The lobby's own attach
+// sizes a session to the browser's terminal, and at 80x23 Claude's model picker
+// draws two of its four rows with "… +2 models" under them — numbered 3 and 4,
+// not 1 and 2. Captured live on 2026-09-05 from a session the browser had
+// attached to.
+func TestPickerOptionsReadsAWindowOfALongerList(t *testing.T) {
+	opts := PickerOptions(fixture(t, "picker-claude-model-narrow.txt"))
+	if len(opts) != 2 {
+		t.Fatalf("options = %+v, want the two rows on screen", opts)
+	}
+	if opts[0].Index != 3 || opts[0].Label != "Opus" {
+		t.Errorf("first visible row = %+v, want 3/Opus", opts[0])
+	}
+	if opts[1].Index != 4 || opts[1].Label != "Haiku" || !opts[1].Cursor {
+		t.Errorf("second visible row = %+v, want 4/Haiku with the cursor", opts[1])
+	}
+}
+
+// And the window can be a SINGLE row, which the walk still has to be able to
+// read: a pane one line shorter than this one shows one. A minimum of two
+// answered nothing at all, and the walk called that "the picker closed" and
+// gave up on a picker that was plainly on screen.
+func TestPickerOptionsReadsASingleVisibleRow(t *testing.T) {
+	pane := "" +
+		"   Select model\n" +
+		"   ❯ 3. Opus                   Opus 5 · Best for everyday, complex tasks\n" +
+		"      … +3 models\n" +
+		"   Enter to set as default · s to use this session only · Esc to cancel\n"
+	opts := PickerOptions(pane)
+	if len(opts) != 1 || opts[0].Label != "Opus" || !opts[0].Cursor {
+		t.Fatalf("options = %+v, want the one row on screen", opts)
 	}
 }
 
@@ -148,6 +185,37 @@ func TestClaudeEffortHintReadsEveryStepOfTheRamp(t *testing.T) {
 	}
 }
 
+// THE HINT IS NOT ALWAYS ON SCREEN. Driving the picker means pressing arrows,
+// and enough of them raise a transient "Scroll wheel is sending arrow keys"
+// notice that takes the hint's line. Measured 2026-09-05: a change that
+// succeeded came back with no effort in it, because the reading was taken while
+// that notice was up. Claude's own receipt for the change is on the pane and
+// says the same thing, so it stands in.
+func TestClaudeEffortHintFallsBackToTheReceiptWhenTheLineIsTaken(t *testing.T) {
+	pane := "" +
+		"❯ /effort\n" +
+		"  ⎿  Set effort level to low (this session only): Quick, straightforward\n" +
+		"                    Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll\n" +
+		"❯ \n"
+	if got := ClaudeEffortHint(pane); got != "low" {
+		t.Fatalf("effort = %q, want low from the receipt", got)
+	}
+}
+
+// The HINT still wins where both are on screen, because it reports the level in
+// force and the receipt only reports what was asked for. That is the difference
+// when something on the box overrides the change.
+func TestClaudeEffortHintPrefersTheLiveLineOverTheReceipt(t *testing.T) {
+	pane := "" +
+		"❯ /effort\n" +
+		"  ⎿  Set effort level to low (this session only): Quick, straightforward\n" +
+		"                                                        ◈ max · /effort\n" +
+		"❯ \n"
+	if got := ClaudeEffortHint(pane); got != "max" {
+		t.Fatalf("effort = %q, want the level in force, not the one asked for", got)
+	}
+}
+
 // The hint names a level from the ladder and nothing else. Prose that happens
 // to carry one of those words is not a reading — the receipt of the change is
 // on the pane too, and it names the level in a sentence.
@@ -228,6 +296,47 @@ func TestSwitchPromptIsRecognisedWithoutAPickerFooter(t *testing.T) {
 	}
 	if yes != "Yes, switch to Opus 5" {
 		t.Fatalf("the row to answer with = %q", yes)
+	}
+}
+
+// EFFORT raises the same confirmation as the model, under a different heading:
+// "Change effort level?" where the other says "Switch model?". Captured live on
+// 2026-09-05 from the DEPLOYED service, which answered a successful-looking
+// `{}` while the pane sat on this dialog — the effort had not changed and the
+// session was blocked.
+func TestSwitchPromptRecognisesTheEffortConfirmationToo(t *testing.T) {
+	pane := fixture(t, "confirm-claude-effort.txt")
+	yes, ok := SwitchPrompt(pane)
+	if !ok {
+		t.Fatal("the effort confirmation was not recognised")
+	}
+	if yes != "Yes, switch to high" {
+		t.Fatalf("the row to answer with = %q", yes)
+	}
+}
+
+// The confirmation draws numbered rows with a cursor, exactly like a picker,
+// and carries NO select-widget footer. Anything that walks it therefore has to
+// read the rows without that guard: PickerOptions answers nothing here by
+// design, and a walk built on it reported "the picker closed" and left the
+// change half made.
+func TestSwitchConfirmationHasWalkableRowsButNoPickerFooter(t *testing.T) {
+	for _, name := range []string{"confirm-claude-switch.txt", "confirm-claude-effort.txt"} {
+		pane := fixture(t, name)
+		if len(PickerOptions(pane)) != 0 {
+			t.Errorf("%s: the footer guard let the confirmation through", name)
+		}
+		rows := pickerRows(pane)
+		if len(rows) != 2 {
+			t.Fatalf("%s: rows = %+v, want the two the dialog offers", name, rows)
+		}
+		cur, ok := CursorOption(rows)
+		if !ok {
+			t.Fatalf("%s: no cursor to walk from", name)
+		}
+		if !strings.HasPrefix(cur.Label, "Yes") {
+			t.Errorf("%s: the cursor starts on %q", name, cur.Label)
+		}
 	}
 }
 

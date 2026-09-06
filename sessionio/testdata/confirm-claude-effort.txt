@@ -1,0 +1,57 @@
+
+  ⎿  Set effort level to high (this session only): Comprehensive implementation with
+     extensive testing and documentation
+
+❯ /effort
+  ⎿  Set effort level to xhigh (this session only): Deeper reasoning than high, just below
+     maximum (Fable 5, Opus 4.7+, Sonnet 5)
+
+❯ /effort
+  ⎿  Set effort level to max (this session only): Maximum capability with deepest reasoning.
+     May use excessive tokens resulting in long response times or overthinking. Use
+     sparingly for the hardest tasks.
+
+❯ /effort
+  ⎿  Set effort level to ultracode (this session only): xhigh + dynamic workflow
+     orchestration
+
+❯ /effort
+  ⎿  Set effort level to low (this session only): Quick, straightforward implementation with
+     minimal overhead
+
+❯ /effort
+  ⎿  Set effort level to high (this session only): Comprehensive implementation with
+     extensive testing and documentation
+
+❯ /effort
+  ⎿  Set effort level to xhigh (this session only): Deeper reasoning than high, just below
+     maximum (Fable 5, Opus 4.7+, Sonnet 5)
+
+❯ /effort
+  ⎿  Set effort level to max (this session only): Maximum capability with deepest reasoning.
+     May use excessive tokens resulting in long response times or overthinking. Use
+     sparingly for the hardest tasks.
+
+❯ /effort
+  ⎿  Set effort level to ultracode (this session only): xhigh + dynamic workflow
+     orchestration
+
+❯ /effort
+  ⎿  Set effort level to medium (this session only): Balanced approach with standard
+     implementation and testing
+
+❯ reply with just: ok
+
+● ok
+
+✻ Churned for 3s · done 10:18 PM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Change effort level?
+   Your next response will be slower and use more tokens
+
+   This conversation is cached for the current effort level. Switching to high means the
+   full history gets re-read on your next message.
+
+   ❯ 1. Yes, switch to high
+     2. No, go back
+

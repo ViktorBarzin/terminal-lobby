@@ -178,6 +178,23 @@ export interface LobbyStoreOptions {
   /** Change the ordering. A drop that names a position calls this with
    *  "manual" — see `move`. */
   setSessionOrder?: (order: SessionOrder) => void;
+  /**
+   * Whether this device can render the Ctrl+J dock, which decides whether the
+   * docked shell may be hidden from the sidebar.
+   *
+   * The dock store publishes the same answer as `allowed`, but it is built out
+   * of THIS store (App.tsx:372) and so cannot be passed to this constructor.
+   * App therefore reads the coarse-pointer query directly, as it already does
+   * for the soft-keys reserve at :221. Both go through `watchQuery` on one
+   * media query, so they are two views of a single browser fact rather than two
+   * mechanisms; the drift worth avoiding is a CSS rule answering it as well,
+   * which is why the `@media (pointer: coarse)` display:none was removed when
+   * the mount was gated.
+   *
+   * Omitted means allowed, which is what every caller predating the phone gate
+   * did. Tests that do not care about the dock keep working unchanged.
+   */
+  dockAllowed?: Accessor<boolean>;
 }
 
 const LAYOUT_GRACE_MS = 4000;
@@ -338,7 +355,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     stabilizeModel(
       prev,
       applySessionOrder(
-        deriveSidebar(layout(), hideDockedSession(mergedSessions(), layout()), me()),
+        deriveSidebar(
+          layout(),
+          hideDockedSession(mergedSessions(), layout(), opts.dockAllowed?.() ?? true),
+          me(),
+        ),
         sessionOrder(),
       ),
     ),
