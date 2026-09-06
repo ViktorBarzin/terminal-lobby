@@ -8,9 +8,9 @@ import { apiUrl, PREFS_PATH } from "../lib/config";
 import { track } from "../telemetry/track";
 import { fetchWithDeadline } from "../lib/http";
 import {
+  adoptModelId,
   DEFAULT_CHOICE,
   isEffortFor,
-  isModelFor,
   type ModelField,
   type ModelHarness,
 } from "../lib/models";
@@ -359,15 +359,14 @@ export function coercePrefs(raw: unknown): Prefs {
       // Each id is checked against ITS OWN harness: a doc that carried
       // "gpt-5.5" under Claude's key came from a client that did not know the
       // two lists are different, and the safe reading of it is no choice.
-      newModel: isModelFor("claude", session.newModel)
-        ? (session.newModel as string)
-        : DEFAULT_CHOICE,
+      // A Claude id also gets carried forward, because the rows were family
+      // words until 2026-09-06 and a doc written then says `opus`
+      // (adoptModelId).
+      newModel: adoptModelId("claude", session.newModel) ?? DEFAULT_CHOICE,
       newEffort: isEffortFor("claude", session.newEffort)
         ? (session.newEffort as string)
         : DEFAULT_CHOICE,
-      newCodexModel: isModelFor("codex", session.newCodexModel)
-        ? (session.newCodexModel as string)
-        : DEFAULT_CHOICE,
+      newCodexModel: adoptModelId("codex", session.newCodexModel) ?? DEFAULT_CHOICE,
       newCodexEffort: isEffortFor("codex", session.newCodexEffort)
         ? (session.newCodexEffort as string)
         : DEFAULT_CHOICE,

@@ -185,8 +185,8 @@ describe("projectDirFor — the layout directory a session should be born in", (
  */
 describe("buildTerminalArgs — the model and effort a new session starts on", () => {
   it("puts the model at arg6, filling every slot before it", () => {
-    const u = buildTerminalArgs("foo", { cmd: "claude", dir: "/srv/p", model: "opus" });
-    expect(u).toBe("arg=foo&arg=claude&arg=%2Fsrv%2Fp&arg=&arg=&arg=opus");
+    const u = buildTerminalArgs("foo", { cmd: "claude", dir: "/srv/p", model: "claude-opus-5" });
+    expect(u).toBe("arg=foo&arg=claude&arg=%2Fsrv%2Fp&arg=&arg=&arg=claude-opus-5");
     expect(u.match(/arg=/g)?.length).toBe(6);
   });
 
@@ -209,9 +209,16 @@ describe("buildTerminalArgs — the model and effort a new session starts on", (
     );
   });
 
+  // The one model name that is not plain alphanumerics. It has to reach the
+  // attach percent-encoded, or the bracket ends the query value.
+  it("percent-encodes the context-window suffix", () => {
+    const u = buildTerminalArgs("foo", { cmd: "claude", model: "claude-opus-5[1m]" });
+    expect(u).toBe("arg=foo&arg=claude&arg=default&arg=&arg=&arg=claude-opus-5%5B1m%5D");
+  });
+
   it("keeps a foreign attach's owner on arg4", () => {
-    const u = buildTerminalArgs("foo", { cmd: "claude", owner: "bob", model: "sonnet" });
-    expect(u).toBe("arg=foo&arg=claude&arg=default&arg=bob&arg=&arg=sonnet");
+    const u = buildTerminalArgs("foo", { cmd: "claude", owner: "bob", model: "claude-sonnet-5" });
+    expect(u).toBe("arg=foo&arg=claude&arg=default&arg=bob&arg=&arg=claude-sonnet-5");
   });
 
   // The default IS the absence of a choice, and the shallow shapes above have

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { currentModel } from "../src/components/timeline.logic";
 import type { Event, SessionState } from "../src/types/events";
 import {
+  adoptModelId,
   DEFAULT_CHOICE,
   effortsFor,
   isEffortFor,
@@ -17,16 +18,23 @@ import {
 
 /**
  * The catalogue behind both pickers: the new-session row, and the chip on a
- * thread. Every list here is what the CLI itself offered on 2026-09-05 — Claude
- * Code 2.1.261 and codex-cli 0.144.3 — read off their own pickers.
+ * thread.
+ *
+ * Every Claude id is an EXACT SLUG, measured against `claude --model <slug>` on
+ * 2026-09-06 (Claude Code 2.1.263), and every one of them is a row in the CLI's
+ * own picker because managed settings declares it (`modelPicker.options`).
+ * Codex's ids are what codex-cli 0.144.3 offered, which were already slugs.
  */
 describe("the model catalogue", () => {
   it("offers each harness its own models", () => {
     expect(modelsFor("claude").map((m) => m.id)).toEqual([
       "default",
-      "opus",
-      "sonnet",
-      "haiku",
+      "claude-opus-5",
+      "claude-opus-5[1m]",
+      "claude-sonnet-5",
+      "claude-haiku-4-5-20251001",
+      "claude-opus-4-8",
+      "claude-fable-5",
     ]);
     expect(modelsFor("codex").map((m) => m.id)).toEqual([
       "default",
@@ -62,21 +70,52 @@ describe("the model catalogue", () => {
     ]);
   });
 
-  // The MATCHER still normalises, because the menu ticks a catalogue row
-  // against whatever spelling the session reported. Only the display stopped
-  // shortening.
-  it("ticks the catalogue row for a slug, however the session spelled it", () => {
-    expect(isCurrentModel("claude", "opus", "claude-opus-5")).toBe(true);
-    expect(isCurrentModel("claude", "haiku", "claude-haiku-4-5-20251001")).toBe(true);
-    expect(isCurrentModel("claude", "sonnet", "sonnet")).toBe(true);
-    expect(isCurrentModel("claude", "opus", "claude-sonnet-5")).toBe(false);
+  // Both sides are slugs now, so the ordinary answer is the string comparison.
+  it("ticks the row whose slug the session reported", () => {
+    expect(isCurrentModel("claude", "claude-opus-5", "claude-opus-5")).toBe(true);
+    expect(
+      isCurrentModel("claude", "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+    ).toBe(true);
+    expect(isCurrentModel("claude", "claude-opus-5", "claude-sonnet-5")).toBe(false);
     expect(isCurrentModel("codex", "gpt-5.6-terra", "gpt-5.6-terra")).toBe(true);
     expect(isCurrentModel("codex", "gpt-5.6-terra", "gpt-5.6-luna")).toBe(false);
-    expect(isCurrentModel("claude", "opus", undefined)).toBe(false);
+    expect(isCurrentModel("claude", "claude-opus-5", undefined)).toBe(false);
+  });
+
+  // The one window where the two sides cannot agree: between a `/model` change
+  // and the session's next turn, the only source is the CLI's own receipt, and
+  // on a box whose managed settings have not caught up that receipt still reads
+  // "Opus 5" and normalises to `opus` server-side. A word with no version in it
+  // means the family's canonical row — never the [1m] variant, never last
+  // generation, and never two rows at once.
+  it("ticks one row, and the plain one, for a bare family word", () => {
+    expect(isCurrentModel("claude", "claude-opus-5", "opus")).toBe(true);
+    expect(isCurrentModel("claude", "claude-opus-5[1m]", "opus")).toBe(false);
+    expect(isCurrentModel("claude", "claude-opus-4-8", "opus")).toBe(false);
+    expect(isCurrentModel("claude", "claude-sonnet-5", "sonnet")).toBe(true);
+    expect(isCurrentModel("claude", "claude-haiku-4-5-20251001", "haiku")).toBe(true);
+    expect(isCurrentModel("claude", "claude-opus-5", "sonnet")).toBe(false);
+  });
+
+  // The stored preference gets the same treatment, for the same reason: a doc
+  // written before 2026-09-06 says `opus`, and that is a choice somebody made.
+  it("carries a stored family word forward to the row it means now", () => {
+    expect(adoptModelId("claude", "opus")).toBe("claude-opus-5");
+    expect(adoptModelId("claude", "haiku")).toBe("claude-haiku-4-5-20251001");
+    expect(adoptModelId("claude", "claude-opus-4-8")).toBe("claude-opus-4-8");
+    expect(adoptModelId("claude", "default")).toBe("default");
+    // A codex id under Claude's key is not a spelling to fix, it is a client
+    // that did not know the two lists are different.
+    expect(adoptModelId("claude", "gpt-5.5")).toBeUndefined();
+    expect(adoptModelId("codex", "gpt-5.5")).toBe("gpt-5.5");
+    expect(adoptModelId("codex", "opus")).toBeUndefined();
+    expect(adoptModelId("claude", "")).toBeUndefined();
+    expect(adoptModelId("claude", 7)).toBeUndefined();
   });
 
   it("validates a stored id against the harness it was stored for", () => {
-    expect(isModelFor("claude", "opus")).toBe(true);
+    expect(isModelFor("claude", "claude-opus-5")).toBe(true);
+    expect(isModelFor("claude", "opus")).toBe(false);
     expect(isModelFor("claude", "gpt-5.5")).toBe(false);
     expect(isModelFor("codex", "gpt-5.5")).toBe(true);
     expect(isModelFor("codex", "opus")).toBe(false);
@@ -100,15 +139,15 @@ describe("the model catalogue", () => {
   // controls have no heading — they are a row of bare values read as one
   // sentence — so the noun travels with the value there and not here.
   it("labels a value for a heading and phrases it for a bare row", () => {
-    expect(labelFor("claude", "model", "opus")).toBe("Opus");
-    expect(phraseFor("claude", "model", "opus")).toBe("Opus model");
+    expect(labelFor("claude", "model", "claude-opus-5")).toBe("claude-opus-5");
+    expect(phraseFor("claude", "model", "claude-opus-5")).toBe("claude-opus-5 model");
     expect(labelFor("claude", "effort", "xhigh")).toBe("Extra high");
     expect(phraseFor("claude", "effort", "xhigh")).toBe("Extra high effort");
     expect(phraseFor("codex", "model", "default")).toBe("default model");
   });
 
   it("falls back to the id itself for a value the catalogue has never heard of", () => {
-    expect(labelFor("claude", "model", "claude-fable-5")).toBe("claude-fable-5");
+    expect(labelFor("claude", "model", "claude-mythos-5")).toBe("claude-mythos-5");
   });
 
   // Which harness a session's tool maps to. A plain shell has no model, and
