@@ -2295,6 +2295,22 @@ body.tl-kb-up {
   display: block;
   margin: 0 auto;
 }
+/* Icon over caption, both inside the button's own 38px. 16px icon + 2px + a
+   9px line is 27px of content, so the row keeps the height it had. */
+#soft-keys button.sk-capped {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
+  line-height: 1;
+}
+#soft-keys button.sk-capped .sk-cap {
+  font-size: calc(9px * var(--tl-text-scale, 1));
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
 #soft-keys button:active {
   background: color-mix(in srgb, var(--accent) 25%, var(--bg-card-hover));
 }

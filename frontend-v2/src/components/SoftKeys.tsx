@@ -221,22 +221,31 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
           <div class="sk-group">
             <For each={arrowKeys}>{(k) => keyButton(k)}</For>
           </div>
+          {/* The two clipboard keys carry a caption under the icon. Every other
+              key on the row says what it is on its face; a bare rectangle-on-a-
+              rectangle does not, and Viktor read the Copy icon as needing a
+              selection first (2026-09-06). The caption sits inside the 38px
+              button, so the row does not grow. */}
           <div class="sk-group">
             <button
               type="button"
-              class="sk-narrow"
-              aria-label="Copy"
+              class="sk-narrow sk-capped"
+              // Named for what it does with no selection, which on touch is
+              // always: a drag scrolls the terminal by design, so there is
+              // never a range, and runCopy falls back to the visible screen.
+              aria-label="Copy the visible screen"
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => {
                 track("terminal.copied", { "tl.kind": "softkey" });
                 props.onCopy?.();
               }}
             >
-              <CopyIcon size={18} />
+              <CopyIcon size={16} />
+              <span class="sk-cap">Copy</span>
             </button>
             <button
               type="button"
-              class="sk-narrow"
+              class="sk-narrow sk-capped"
               aria-label="Paste"
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => {
@@ -248,7 +257,8 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
                 props.onPaste?.();
               }}
             >
-              <ClipboardIcon size={18} />
+              <ClipboardIcon size={16} />
+              <span class="sk-cap">Paste</span>
             </button>
           </div>
         </div>
