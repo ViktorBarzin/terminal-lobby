@@ -12,17 +12,11 @@ import {
   USAGE_STORAGE_KEY,
   aggregate,
   combined,
-  commitResetSince,
-  commitWindow,
   emptyStore,
   foldInto,
-  formatBytes,
   netLabel,
-  readStore,
   rememberNet,
-  resetStore,
   totalOf,
-  writeStore,
   type Bucket,
   type BucketTotals,
   type PeriodKey,
@@ -30,6 +24,14 @@ import {
   type UsageStore,
   type WindowBytes,
 } from "../src/diagnostics/usage";
+import {
+  commitResetSince,
+  commitWindow,
+  formatBytes,
+  readStore,
+  resetStore,
+  writeStore,
+} from "../src/diagnostics/usage-store";
 
 function store(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
   const m = new Map<string, string>();

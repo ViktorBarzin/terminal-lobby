@@ -15,9 +15,8 @@ import {
   emptyStore,
   foldInto,
   rememberNet,
-  resetStore,
-  writeStore,
 } from "../src/diagnostics/usage";
+import { resetStore, writeStore } from "../src/diagnostics/usage-store";
 import {
   NETWORK_STORAGE_KEY,
   resetNetworkState,

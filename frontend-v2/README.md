@@ -204,7 +204,14 @@ src/
                          answered offline can be asked on the device itself.
                          Three buckets measured from Navigation/Resource Timing;
                          the WebSocket and SSE streams are modelled, and labelled
-                         as modelled wherever they are shown
+                         as modelled wherever they are shown. The arithmetic
+                         half only, since the split
+    usage-store.ts       The half of Data used that touches localStorage: read,
+                         write, reset, and the Web-Locked read-modify-write the
+                         shared key needs. Coerces rather than trusts, so a
+                         hand-edited or half-written payload becomes zeroes
+                         instead of a NaN in every total, and lifts schema 1
+                         and 2 into the `earlier` row rather than dropping them
     network.ts           Which network this device is on, so Data used can say
                          where a month went. The browser cannot say (Safari ships
                          no Network Information API, where it exists a wired
