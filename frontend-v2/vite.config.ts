@@ -104,7 +104,12 @@ const proxy: Record<string, ProxyOptions> = {
   // /api/sessions prefix, mirroring the PROD ingress `PathPrefix /api/sessions/`).
   // Covers whoami/sessions/layout/dirs/prefs/projects/users/shares AND Web Push
   // (/api/sessions/push*, spelled out verbatim in pwa/push.ts) — all hit tmux-api
-  // at its root.
+  // at its root. The prefix is wider than the SPA: nothing in frontend-v2 calls
+  // /projects or /shares, and the only thing that drives them is
+  // scripts/qa-harness.py. They stay proxied so the QA fleet reaches them the
+  // way production would. Guarding a client helper against a dead route is what
+  // test/docs.truth.test.ts does; nothing guards a route against having no
+  // client, so this comment is where that is written down.
   "/api/sessions": {
     target: TMUX_API,
     changeOrigin: true,

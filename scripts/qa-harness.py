@@ -2,11 +2,11 @@
 """qa-harness.py — ingress-faithful loopback proxy for the DEV TIER, with a
 mutation guard.
 
-Companion to dev-harness.py, but a different job. dev-harness.py runs the
-VANILLA page against a scratch ttyd + scratch tmux server. This one puts a QA
-fleet in front of the **already-deployed** SPA and the **real** backends, on
-the devvm itself — so what the agents click is byte-for-byte what
-terminal.viktorbarzin.me serves.
+This is the only harness left. Its predecessor, dev-harness.py, ran the
+VANILLA page against a scratch ttyd + scratch tmux server; it was deleted, and
+nothing replaced that job. This one puts a QA fleet in front of the
+**already-deployed** SPA and the **real** backends, on the devvm itself — so
+what the agents click is byte-for-byte what terminal.viktorbarzin.me serves.
 
     browser ── http://127.0.0.1:7998 (this script)
       ├─ 10 exact PWA paths      → :7683 clipboard-upload, UNSTRIPPED, NO auth

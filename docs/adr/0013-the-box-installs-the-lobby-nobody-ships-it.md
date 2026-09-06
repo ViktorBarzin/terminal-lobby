@@ -84,6 +84,10 @@ keep telling the truth about what is installed.
 - `deploy.sh`, `deploy-v2.sh` and `deploy-services.sh` are deleted, and with them
   the ability to ship uncommitted edits. Local iteration is `scripts/devserve`
   and `dev-harness.py`.
+  *Superseded 2026-09-06:* `dev-harness.py` was deleted after this was written.
+  Local iteration is `scripts/devserve`, whose four probes are still tracked,
+  and `scripts/qa-harness.py`, which proxies the deployed SPA and the real
+  backends instead of a scratch stack.
 - ADR-0007's stamps move from deploy time to build time, carrying ADR-0008's
   constraint with them: each surface's fingerprint hashes its own source
   concatenated with `frontend/diag.js`, or a `diag.js`-only fix would never reach
