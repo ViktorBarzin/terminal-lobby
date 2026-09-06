@@ -12,30 +12,43 @@
 # If someone later insists on the sweep anyway, it belongs on the
 # wizard/native-parity branch or after that merges, never on master while it is
 # open, and the sweep's sha goes in ../.git-blame-ignore-revs.
+#
+# Who runs this: you do, before you open a PR. No workflow runs it. The only
+# workflow in this repo triggers on pushes to master, where the base below
+# resolves to the commit being built and the check has nothing to compare, so a
+# step there would pass on everything while reading like a gate. See
+# CONTRIBUTING.md. TL_FORMAT_SINCE is the hook for wiring it up for real: a job
+# that can name the base ref of the change it is building (a pull_request
+# workflow's merge base, or a push event's `before` sha) sets it and gets a
+# check that means something.
 set -eu
 
-# Shallow CI clones often have no origin/master. Fetch it if we can; if we
-# cannot, format nothing rather than failing somebody's release over a missing
-# ref.
+SINCE="${TL_FORMAT_SINCE:-origin/master}"
+
+# Shallow clones often have no origin/master. Fetch it if we can; if we cannot,
+# format nothing rather than failing somebody's build over a missing ref.
 git fetch --no-tags --quiet origin master 2>/dev/null || true
 
-if ! git rev-parse --verify --quiet origin/master >/dev/null 2>&1; then
-  echo "format:changed: no origin/master to compare against, nothing checked."
+if ! git rev-parse --verify --quiet "$SINCE" >/dev/null 2>&1; then
+  echo "format:changed: no $SINCE to compare against, nothing checked."
   exit 0
 fi
 
-if ./node_modules/.bin/biome check --changed --since=origin/master \
-  --linter-enabled=false src test public; then
+# --no-errors-on-unmatched: a branch that changed nothing under src/test/public
+# leaves biome with an empty file list, which it treats as an error and exits 1
+# for. Zero files to check is a pass here, not a failure.
+if ./node_modules/.bin/biome check --changed --since="$SINCE" \
+  --no-errors-on-unmatched --linter-enabled=false src test public; then
   exit 0
 fi
 
-cat >&2 <<'MSG'
+cat >&2 <<MSG
 
 format:changed failed. Fix it with:
 
-    cd frontend-v2 && npx biome check --changed --since=origin/master --linter-enabled=false --write src test public
+    cd frontend-v2 && npx biome check --changed --since="${SINCE}" --linter-enabled=false --write src test public
 
 That formats only the files this branch changed. Do not run a tree-wide
-`biome format --write`: it rewrites 260 of 409 files and takes git blame with it.
+\`biome format --write\`: it rewrites 260 of 409 files and takes git blame with it.
 MSG
 exit 1
