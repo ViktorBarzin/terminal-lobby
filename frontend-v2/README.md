@@ -358,9 +358,12 @@ src/
                          ids are per-transcript, so a session whose transcript
                          was replaced would otherwise resume above the new log
                          and freeze on the old conversation
-  logic/                 PURE rules with no framework in them, read by the stores
-                         and by the components. It sits UNDER both, so neither
-                         layer has to import up into the other
+  logic/                 PURE rules with no framework in them, read by the
+                         stores and by the components, so the stores no longer
+                         import up into components for these. lobby.logic.ts
+                         has not moved yet, so order.logic.ts still takes one
+                         type from it and store/lobby.ts still reads it from
+                         components/
     compose.logic.ts     PURE `/` and `@` completion + the mode cycle
     order.logic.ts       PURE session ordering: newest-first by created or by
                          last DRIVEN time (never session_activity, which a
