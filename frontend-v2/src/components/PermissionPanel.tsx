@@ -5,7 +5,7 @@ import type { PendingPermission } from "./timeline.logic";
 /**
  * Composer-docked permission panel (design pillar #2, "highest-value adapt"
  * from T3): approvals surface here, not inline, keyed by reqId. Approve → allow,
- * Deny → deny (POSTed by the caller via `permissionUrl`). Number keys 1/2 are
+ * Deny → deny, handed to the caller's `onResolve`. Number keys 1/2 are
  * wired in the Composer when the input is empty.
  *
  * INERT SINCE 575d4f5 (2026-07-21). The server half is gone: session-events no
@@ -18,8 +18,11 @@ import type { PendingPermission } from "./timeline.logic";
  * rewrite: the broker answered "ask" for any session nobody was watching in
  * Text mode, and a PreToolUse "ask" OVERRIDES the allowlist, so it forced a
  * prompt on every tool call for every user on the shared devvm. Any revival
- * needs a per-session gate first; this component and `permissionUrl` are the
- * client half waiting on it. Do not wire it to a hook without that gate.
+ * needs a per-session gate first; this component is the client half waiting on
+ * it. Do not wire it to a hook without that gate. The URL builder that used to
+ * sit beside it went on 2026-09-06 — a builder for a route nothing routes is a
+ * 404 waiting to be called, and rebuilding one line is not what makes a revival
+ * expensive.
  */
 export const PermissionPanel: Component<{
   pending: PendingPermission[];

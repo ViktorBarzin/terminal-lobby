@@ -76,8 +76,17 @@ describe("session store — control-channel error toasts", () => {
     expect(notes.some((n) => n.kind === "error")).toBe(true);
   });
 
-  it("toasts when a permission resolve fails and returns false", async () => {
-    g.fetch = respondWith(false, 500);
+  it("answers a permission WITHOUT a request, toasts, and returns false", async () => {
+    // 575d4f5 removed the broker from session-events and the prod ingress stopped
+    // routing /permission, so the POST this used to make had 404'd ever since.
+    // The buttons keep their handler — PermissionPanel is the client half of a
+    // future re-enable — but the request is gone, so the only thing left to
+    // check is that nothing is sent and the caller is told.
+    let calls = 0;
+    g.fetch = (async () => {
+      calls += 1;
+      return { ok: true, status: 204 };
+    }) as unknown as typeof fetch;
     const notes: Note[] = [];
     await createRoot(async (dispose) => {
       const store = createSessionStore("s", {
@@ -87,6 +96,7 @@ describe("session store — control-channel error toasts", () => {
       expect(ok).toBe(false);
       dispose();
     });
+    expect(calls, "resolvePermission still calls a route that is not served").toBe(0);
     expect(notes.some((n) => /permission/i.test(n.msg))).toBe(true);
   });
 

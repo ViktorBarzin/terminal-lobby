@@ -20,7 +20,6 @@ import {
   keysUrl,
   commandsUrl,
   paneUrl,
-  permissionUrl,
   promptUrl,
   resultUrl,
   answerTextUrl,
@@ -559,24 +558,23 @@ export function createSessionStore(
   if (opts.autoStart !== false) start();
   onCleanup(close);
 
-  const resolvePermission = async (
-    reqId: string,
-    decision: PermissionDecision,
+  /**
+   * The Allow/Deny handler. It sends NOTHING, deliberately.
+   *
+   * 575d4f5 removed the web-mediated permission broker from session-events, so
+   * the POST this used to make answered 404 from that day on, and the prod
+   * ingress stopped routing the path entirely. Nothing emits a
+   * permission_request either, so the panel cannot appear in the first place.
+   * The entry point survives because re-enabling is a scoping decision rather
+   * than a rewrite (PermissionPanel.tsx carries the reasoning); until then it
+   * says so instead of spending a request on a route that cannot answer.
+   */
+  const resolvePermission = (
+    _reqId: string,
+    _decision: PermissionDecision,
   ): Promise<boolean> => {
-    try {
-      const res = await fetchWithDeadline(permissionUrl(reqId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision }),
-      });
-      if (!res.ok) {
-        opts.notify?.(`Couldn't resolve permission (HTTP ${res.status})`, "error");
-      }
-      return res.ok; // 204 No Content on success
-    } catch {
-      opts.notify?.("Couldn't resolve permission", "error");
-      return false;
-    }
+    opts.notify?.("Permission prompts are answered in the terminal, not here", "error");
+    return Promise.resolve(false);
   };
 
   const send = async (text: string): Promise<boolean> => {
