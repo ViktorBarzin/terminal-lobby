@@ -100,12 +100,14 @@ who it is, and a tab cannot attribute an event to another user.
 
 | Source | Events |
 |---|---|
-| `tmux-api` | session kill/rename/retitle/restore, the auto-title rule (`session.autonamed`), session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe |
-| `clipboard-upload` | image upload, gallery list, `show-image` registration, non-image transfers |
+| `tmux-api` | session kill/rename/retitle/restore, the auto-title rule (`session.autonamed`), session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe, the stale grid-pin sweep (`session.grid_repinned`, one per repaired session, `tl.client=sweep`) |
+| `clipboard-upload` | image upload, gallery list, `show-image` registration, non-image transfers, files kept beside a session (`file.attached`, `tl.count` = bytes) |
 | `file-api` | file preview, file save (by extension) |
-| `session-events` | prompt sent, cancel, SSE stream open/close |
+| `session-events` | prompt sent, cancel, SSE stream open/close, a blocking prompt answered (`claude.answered`, `tl.client` = `api` for keys or `api-text` for free text, `tl.count` = the answer's size) |
+| `skills-api` | skill install/remove/delete, plugin install/update/uninstall, enable/disable, the editor's write (`skill.edited`, `tl.key`), Claude respawned to load a new skill set |
 | `tmux-user-attach` | `session.attached` — **every** session start flows through this script, including plain ttyd URLs that never touch the lobby |
 | both lobbies | tab boot, selection, creation, palette/commands, view switch, sidebar + group collapse, theme, prefs, gallery/editor opens, paste/drop, soft keys, notification opt-in/delivery, self-updates applied (`app.reloaded`) or given up on (`app.update_failed`, ADR-0007), errors the user saw |
+| v2 lobby | how a member chose to join a session, read-only or read-write (`watch.switched`, `tl.to` = `ro`\|`rw`, plus `tl.as` when the joiner is acting as another user) |
 
 Client events deliberately do **not** duplicate what a service already
 records. Kills, renames, moves, shares, saves and uploads are emitted
