@@ -245,6 +245,16 @@ export function apiUrl(path: string): string {
 }
 
 /**
+ * GET target for what the caller's agents have consumed over one period
+ * (tmux-api/agentspend.go). Carries `?as=` like every other lobby call, so an
+ * admin acting as someone else reads that person's figures rather than their
+ * own.
+ */
+export function agentSpendUrl(period: string): string {
+  return apiUrl(`/agent-spend?period=${encodeURIComponent(period)}`);
+}
+
+/**
  * POST target for the diagnostics batch (telemetry/diag.ts, ADR-0008).
  *
  * Under the tmux-api prefix like everything else, and it picks up `?api=` so a

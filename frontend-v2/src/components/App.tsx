@@ -173,6 +173,13 @@ export const App: Component = () => {
   const skillSessions = createMemo(() =>
     store.sessions.map((s) => ({ name: s.name, state: s.state || "" })),
   );
+  // What the Agent spend page needs to name a row: a session's title, keyed by
+  // the name the spend store recorded it under. A name is an id and nobody
+  // reads one (ADR-0019), so a row falls back to it only when there is nothing
+  // better to show.
+  const sessionTitles = createMemo(() =>
+    store.sessions.map((s) => ({ name: s.name, title: s.title || "" })),
+  );
   // One event per tab boot: the denominator every other count is read against.
   onMount(() => track("app.loaded", { "tl.kind": isCoarsePointer() ? "touch" : "desktop" }));
   onCleanup(() => {
@@ -1037,6 +1044,7 @@ export const App: Component = () => {
           actAs={actAsControl()}
           skills={skills}
           skillSessions={skillSessions}
+          sessionTitles={sessionTitles}
         />
       </Show>
 
