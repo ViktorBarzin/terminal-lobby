@@ -105,7 +105,13 @@ jobs:
                 exit 1
               fi
               go vet ./...
-              go test ./...
+              # -race, not a bare run. The detector was red in tmux-api for a
+              # warmer goroutine that outlived its request, and it stayed
+              # quiet about a rate limiter no test had exercised from two
+              # goroutines. Both are fixed, so the flag turns on here with
+              # them. It costs about 17s on the biggest module against a few
+              # seconds without.
+              go test -race ./...
             )
           done
 
