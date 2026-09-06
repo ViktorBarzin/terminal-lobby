@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,7 +181,10 @@ func TestReadCodexSpendAcrossRolloutShapes(t *testing.T) {
 			},
 		},
 		{
-			name: "the newest turn named no limits, so the last turn that did is the reading",
+			// Two subjects, two turns. The account facts come from the last
+			// turn that named rate limits; the conversation's own tokens and
+			// timestamp stay on the newest turn, which named none.
+			name: "the newest turn named no limits, so the account facts come from the last turn that did",
 			files: []fixtureRollout{{
 				fixture: "latelimits.jsonl", day: "2026/09/06",
 				stamp: "2026-09-06T19-22-53", id: "01a0782c-7052-7920-a671-9b9e209750c3",
@@ -196,10 +201,11 @@ func TestReadCodexSpendAcrossRolloutShapes(t *testing.T) {
 					SessionID: "01a0782c-7052-7920-a671-9b9e209750c3",
 					Model:     "gpt-6-astra",
 					Tokens: codexTokens{
-						Input: 20529, CachedInput: 12160, Output: 5, Total: 20534,
+						Input: 40000, CachedInput: 30000, Output: 900,
+						ReasoningOutput: 100, Total: 41000,
 					},
 					ContextWindow: 258400,
-					At:            time.Date(2026, 9, 6, 19, 23, 3, 179000000, time.UTC),
+					At:            time.Date(2026, 9, 6, 19, 24, 5, 0, time.UTC),
 				},
 			},
 		},
@@ -217,6 +223,45 @@ func TestReadCodexSpendAcrossRolloutShapes(t *testing.T) {
 			}
 			assertCodexReading(t, got, tc.want)
 		})
+	}
+}
+
+// The cap on the walk has to keep the NEWEST rollouts. Spending it on the
+// oldest years would report an account reading from a conversation whose
+// windows reset long ago, and the panel would sit there stale for good.
+func TestReadCodexSpendCapsTheWalkAtTheNewestRollouts(t *testing.T) {
+	old := codexMaxRollouts
+	codexMaxRollouts = 2
+	t.Cleanup(func() { codexMaxRollouts = old })
+
+	home := codexHome(t,
+		fixtureRollout{
+			fixture: "august.jsonl", day: "2024/01/01",
+			stamp: "2024-01-01T09-00-00", id: "01a00a61-13a8-71d2-b285-c2e7cd4f2901",
+			age: 20000 * time.Hour,
+		},
+		fixtureRollout{
+			fixture: "august.jsonl", day: "2024/01/01",
+			stamp: "2024-01-01T10-00-00", id: "01a00a61-13a8-71d2-b285-c2e7cd4f2902",
+			age: 19999 * time.Hour,
+		},
+		fixtureRollout{
+			fixture: "august.jsonl", day: "2025/06/06",
+			stamp: "2025-06-06T10-00-00", id: "01a00a61-13a8-71d2-b285-c2e7cd4f2903",
+			age: 10000 * time.Hour,
+		},
+		currentFixture(),
+	)
+
+	got, err := codexSpendReader{home: home}.read(nil, nowFixture)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got.Newest.SessionID != currentFixture().id {
+		t.Fatalf("read %s, want this evening's rollout %s", got.Newest.SessionID, currentFixture().id)
+	}
+	if len(got.Windows) != 2 {
+		t.Fatalf("windows: got %+v, want the two the newest rollout carries", got.Windows)
 	}
 }
 
@@ -407,6 +452,34 @@ func TestReadCodexSpendReturnsAccountWideWhenNothingCanBeAttributed(t *testing.T
 	}
 	if got.Newest.TmuxSession != "" {
 		t.Errorf("an unattributed rollout must not carry a session name: %q", got.Newest.TmuxSession)
+	}
+}
+
+// "Never ran Codex" and "their rollouts are not ours to read" are different
+// answers, and only the second is worth a log line. This service runs as one OS
+// user and peer homes are 0750, so reading another person's rollouts is the
+// case that produces the second one.
+func TestCodexRolloutsUnreadableIsNotTheSameAsAbsent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens every directory, so there is no refusal to observe")
+	}
+	if err := (codexSpendReader{home: t.TempDir()}).rolloutsReadable(); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a home with no ~/.codex: got %v, want fs.ErrNotExist", err)
+	}
+
+	home := codexHome(t, currentFixture())
+	root := filepath.Join(home, ".codex", "sessions")
+	if err := os.Chmod(root, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
+
+	err := (codexSpendReader{home: home}).rolloutsReadable()
+	if err == nil {
+		t.Fatal("a directory that will not open reported as readable")
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a directory that will not open reads as absent: %v", err)
 	}
 }
 

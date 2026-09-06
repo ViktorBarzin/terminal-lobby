@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -66,15 +67,22 @@ const (
 	// token_count in it at all.
 	codexCandidates = 5
 
-	// codexMaxRollouts bounds the directory walk. A user who has run Codex
-	// daily for years has thousands of files; the newest is always among the
-	// first few thousand.
-	codexMaxRollouts = 5000
-
 	// codexMaxProcsPerPane bounds the descendant walk done per pane when
 	// looking for an open rollout.
 	codexMaxProcsPerPane = 256
+
+	// codexMaxWalkDepth bounds how deep under sessions/ the walk goes. The
+	// layout is YYYY/MM/DD/rollout-*.jsonl, so three is what it needs; the
+	// extra levels are slack for a layout change rather than a promise.
+	codexMaxWalkDepth = 5
 )
+
+// codexMaxRollouts bounds the directory walk. A user who has run Codex daily
+// for years has thousands of files, and only the newest few are ever read.
+//
+// A var rather than a const so the test that proves the cap keeps the NEWEST
+// files can reach it in a handful of them. Production never reassigns it.
+var codexMaxRollouts = 5000
 
 // codexTokens is total_token_usage as the rollout reports it. CachedInput is
 // the part of Input that was served from cache rather than an addition to it,
@@ -151,6 +159,32 @@ type codexSpendReader struct {
 	procDir string
 }
 
+// sessionsRoot is where the CLI writes its rollouts, or "" when the reader has
+// no home to look in.
+func (r codexSpendReader) sessionsRoot() string {
+	if r.home == "" {
+		return ""
+	}
+	return filepath.Join(r.home, ".codex", "sessions")
+}
+
+// rolloutsReadable answers whether there is anything to read, cheaply and
+// before anything expensive is built. fs.ErrNotExist is a box that has never run
+// Codex, which is ordinary; any other error is a directory that exists and will
+// not open, which is a different answer and one the caller should report rather
+// than swallow.
+func (r codexSpendReader) rolloutsReadable() error {
+	root := r.sessionsRoot()
+	if root == "" {
+		return fs.ErrNotExist
+	}
+	f, err := os.Open(root)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 // read returns what the user's rollouts say right now. A missing ~/.codex is
 // not an error: it is a box that has never run Codex.
 func (r codexSpendReader) read(panes []codexPane, now time.Time) (codexReading, error) {
@@ -158,8 +192,7 @@ func (r codexSpendReader) read(panes []codexPane, now time.Time) (codexReading, 
 	if r.home == "" {
 		return out, nil
 	}
-	root := filepath.Join(r.home, ".codex", "sessions")
-	files, err := codexRolloutFiles(root)
+	files, err := codexRolloutFiles(r.sessionsRoot())
 	if err != nil {
 		return out, err
 	}
@@ -219,43 +252,31 @@ func (r codexSpendReader) read(panes []codexPane, now time.Time) (codexReading, 
 	return out, nil
 }
 
-// codexRolloutFiles lists every rollout under root, newest write first. mtime
-// rather than the filename decides: a resumed conversation keeps the name it
-// was created with and goes on being appended to for days.
+// codexRolloutFile is one file the walk found, with the mtime that orders it.
+type codexRolloutFile struct {
+	path string
+	mod  time.Time
+}
+
+// codexRolloutFiles lists the rollouts under root, newest write first. mtime
+// rather than the filename decides which that is: a resumed conversation keeps
+// the name it was created with and goes on being appended to for days.
+//
+// The walk descends in REVERSE NAME ORDER — 2026 before 2025, 12 before 01,
+// this evening's file before this morning's — because it stops at
+// codexMaxRollouts and the path names are timestamps. filepath.WalkDir would
+// have spent the same cap on the oldest years and never reached this week.
 //
 // Directories that cannot be read are skipped rather than failing the walk, so
-// one unreadable day does not blank the panel.
+// one unreadable day does not blank the panel. A root that does not exist is a
+// box that has never run Codex and comes back empty; a root that exists and
+// refuses to open is an error the caller can report.
 func codexRolloutFiles(root string) ([]string, error) {
-	type candidate struct {
-		path string
-		mod  time.Time
+	found := make([]codexRolloutFile, 0, 64)
+	err := collectCodexRollouts(root, 0, &found)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
-	var found []candidate
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// The whole tree missing lands here too, with path == root.
-			if d != nil && d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, ".jsonl") {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		found = append(found, candidate{path: path, mod: info.ModTime()})
-		if len(found) >= codexMaxRollouts {
-			return fs.SkipAll
-		}
-		return nil
-	})
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +291,46 @@ func codexRolloutFiles(root string) ([]string, error) {
 		paths = append(paths, c.path)
 	}
 	return paths, nil
+}
+
+// collectCodexRollouts appends the rollouts under dir, newest name first,
+// stopping once the cap is reached. Only the root's own error is returned; a
+// day directory that will not open is skipped.
+func collectCodexRollouts(dir string, depth int, found *[]codexRolloutFile) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if depth == 0 {
+			return err
+		}
+		return nil
+	}
+	// Reverse name order: the layout is YYYY/MM/DD/rollout-<timestamp>-<uuid>,
+	// so the newest entry at every level sorts last.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() > entries[j].Name() })
+	for _, e := range entries {
+		if len(*found) >= codexMaxRollouts {
+			return nil
+		}
+		if e.IsDir() {
+			if depth+1 > codexMaxWalkDepth {
+				continue
+			}
+			if err := collectCodexRollouts(filepath.Join(dir, e.Name()), depth+1, found); err != nil {
+				return err
+			}
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		*found = append(*found, codexRolloutFile{path: filepath.Join(dir, name), mod: info.ModTime()})
+	}
+	return nil
 }
 
 // codexSessionIDFromPath pulls the conversation uuid out of
@@ -294,11 +355,20 @@ type codexTail struct {
 	limits  *codexRateLimits
 }
 
-// readCodexTail reads back the last token_count that carries rate limits,
-// which is the reading that describes the account, plus the model from the
-// nearest turn_context. A tail whose token_count events name no rate limits at
-// all falls back to the newest of them, so a rollout written by a build that
-// predates the block still reports its tokens.
+// readCodexTail reads two different things out of one tail, because they
+// describe two different subjects.
+//
+// The CONVERSATION — its tokens, its context window, when it last spoke — comes
+// from the NEWEST token_count. The ACCOUNT — the plan, the windows, the credits
+// — comes from the newest token_count that carried rate_limits, which is not
+// always the same turn: a turn can come back without the block. Taking both
+// from the limits-bearing turn would report a token count and a timestamp from
+// earlier in the conversation, and the page would show a session that has gone
+// quiet while it is being worked in.
+//
+// The model comes from the nearest turn_context. A tail whose token_count
+// events name no rate limits at all still reports its tokens, which is what a
+// rollout from a build predating the block looks like.
 //
 // The bool is false when the file could not be read, or when its tail holds no
 // completed turn.
@@ -323,18 +393,19 @@ func readCodexTail(path string) (codexTail, bool) {
 			if err := json.Unmarshal(line.Payload, &ev); err != nil || ev.Type != "token_count" {
 				break
 			}
-			if haveLimits || ev.Info == nil || ev.Info.TotalTokenUsage == nil {
-				break
+			// The conversation's own figures: the newest turn that has them.
+			if !haveTokens && ev.Info != nil && ev.Info.TotalTokenUsage != nil {
+				out.rollout.Tokens = ev.Info.TotalTokenUsage.tokens()
+				out.rollout.ContextWindow = ev.Info.ModelContextWindow
+				out.rollout.At = parseCodexTime(line.Timestamp)
+				haveTokens = true
 			}
-			if haveTokens && ev.RateLimits == nil {
-				break
+			// The account's: the newest turn that named any, which may be an
+			// older one.
+			if !haveLimits && ev.RateLimits != nil {
+				out.limits = ev.RateLimits
+				haveLimits = true
 			}
-			out.rollout.Tokens = ev.Info.TotalTokenUsage.tokens()
-			out.rollout.ContextWindow = ev.Info.ModelContextWindow
-			out.rollout.At = parseCodexTime(line.Timestamp)
-			out.limits = ev.RateLimits
-			haveTokens = true
-			haveLimits = ev.RateLimits != nil
 		case "turn_context":
 			if out.rollout.Model != "" {
 				break
@@ -585,7 +656,7 @@ func (r codexSpendReader) liveRollouts(panes []codexPane) map[string]string {
 	if err != nil {
 		return nil
 	}
-	prefix := filepath.Join(r.home, ".codex", "sessions") + string(filepath.Separator)
+	prefix := r.sessionsRoot() + string(filepath.Separator)
 	out := map[string]string{}
 	for _, pane := range panes {
 		if pane.Session == "" || pane.PID <= 0 {
