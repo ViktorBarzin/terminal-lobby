@@ -44,6 +44,16 @@ Four properties make the derivation safe to run on every title:
   `t3e2e-`, `tlp-t` and pool-slot prefixes, which other services recognise by
   name.
 
+A session titled BEFORE this rule existed is never reached by it — nothing
+retitles a conversation that has been running for a week, and on the day this
+landed that was 29 of wizard's sessions, every one of them still reading as an
+id. `backfillDerivedNames` runs on each listing and covers them, and covers a
+session restored under an id. It is restricted to **minted ids**: the retitle
+path renames whatever the old name was, because someone asking for a new title
+is asking for it, while this pass acts on a title nobody just touched and may
+only replace a name that says nothing. A shell somebody called `beads` keeps
+that name whatever its title says.
+
 ## What this costs, and what pays it
 
 ADR-0019 listed the costs of a derived name. They are real, and this is what
