@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"terminal-lobby/sessionio"
+	"terminal-lobby/spendstore"
 )
 
 // POST /hooks/usage — what a Claude Code session has spent, as its own CLI
@@ -23,9 +24,13 @@ import (
 // out its own arithmetic, so devvm/tl-usage-record takes that slot, posts the
 // payload here and then execs whatever statusLine the user already had.
 //
-// The reading is CUMULATIVE for the session, not a delta: total_cost_usd is the
+// The cost is CUMULATIVE for the session, not a delta: total_cost_usd is the
 // running total of that conversation. So a lost POST costs nothing as long as a
 // later one arrives, and the last POST of a session carries its final figure.
+// The TOKENS are not cumulative. context_window.total_input_tokens is the sum
+// of current_usage's parts (2 + 31538 + 27254 = 58794 in the payload measured
+// on 2026-09-06), so it describes the context the session is carrying right now
+// and goes DOWN after a compaction. The store keeps it as a snapshot.
 //
 // Codex needs none of this. Its rollout files already carry token counts and
 // rate limits on every turn, and tmux-api reads them directly.
@@ -35,63 +40,13 @@ import (
 // could never belong to a real session is refused here rather than stored.
 var tmuxSessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
-// The three windows Claude Code names inside rate_limits. Recorded under the
-// CLI's own keys rather than translated, so a future window can be added
-// without renaming what is already stored.
-const (
-	windowFiveHour   = "five_hour"
-	windowSevenDay   = "seven_day"
-	windowSpendLimit = "spend_limit"
-)
-
-// spendReading is one moment's cumulative figures for one session, in the shape
-// the store keeps rather than the shape the CLI emits.
-//
-// At is when the reading was taken, which is what puts it in a period. It is
-// stamped here rather than read off the payload: the statusLine payload carries
-// no timestamp, and this service's clock is the one the reader's periods are
-// computed against anyway.
-type spendReading struct {
-	User        string
-	TmuxSession string
-	Tool        sessionio.Harness
-	SessionID   string
-	Model       string
-	CostUSD     float64
-	// Cumulative for the session, matching context_window.total_*_tokens.
-	InputTokens  int64
-	OutputTokens int64
-	At           time.Time
-	// Windows is empty for a seat that reports no rate_limits, which is every
-	// enterprise seat (measured 2026-09-06). Empty means "this seat does not
-	// report windows", never "the windows are at zero".
-	Windows []spendWindow
-}
-
-// spendWindow is one rate-limit window as the payload reported it. ResetsAt is
-// the zero instant when the payload named no reset; a window whose reset has
-// passed describes a window that no longer exists, and dropping it is the
-// reader's decision, not this handler's.
-type spendWindow struct {
-	Name        string
-	UsedPercent float64
-	ResetsAt    time.Time
-}
-
 // spendRecorder is the whole of this handler's dependency on storage: one
 // method, no filesystem, so the endpoint is tested against an in-memory
-// implementation. The on-disk store writing /var/lib/tmux-api/spend/<user>.json
-// implements this.
+// implementation. *spendstore.Store, writing
+// /var/lib/tmux-api/spend/<user>.json, is what the service runs with.
 type spendRecorder interface {
-	Record(spendReading) error
+	Record(spendstore.Reading) error
 }
-
-// discardRecorder accepts every reading and keeps none. It is what the service
-// runs with until the on-disk store is wired in, so the endpoint is live and
-// answering while nothing is being written yet.
-type discardRecorder struct{}
-
-func (discardRecorder) Record(spendReading) error { return nil }
 
 // usageBody is what devvm/tl-usage-record puts on the wire: the statusLine
 // payload untouched under "statusline", plus the two facts the script knows and
@@ -121,6 +76,13 @@ type claudeStatusLine struct {
 	ContextWindow struct {
 		TotalInputTokens  int64 `json:"total_input_tokens"`
 		TotalOutputTokens int64 `json:"total_output_tokens"`
+		// current_usage breaks the input total into fresh, cache-write and
+		// cache-read tokens. They are parts OF TotalInputTokens rather than
+		// extra on top of it, which is how spendstore.Tokens keeps them.
+		CurrentUsage struct {
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		} `json:"current_usage"`
 	} `json:"context_window"`
 	Model struct {
 		ID string `json:"id"`
@@ -145,27 +107,27 @@ type claudeWindow struct {
 
 // windows flattens the payload's three optional keys into the store's list, in
 // the order the page shows them: the tighter window first.
-func (rl *claudeRateLimits) windows() []spendWindow {
+func (rl *claudeRateLimits) windows() []spendstore.Window {
 	if rl == nil {
 		return nil
 	}
-	var out []spendWindow
+	var out []spendstore.Window
 	for _, w := range []struct {
 		name string
 		src  *claudeWindow
 	}{
-		{windowFiveHour, rl.FiveHour},
-		{windowSevenDay, rl.SevenDay},
-		{windowSpendLimit, rl.SpendLimit},
+		{spendstore.WindowFiveHour, rl.FiveHour},
+		{spendstore.WindowSevenDay, rl.SevenDay},
+		{spendstore.WindowSpendLimit, rl.SpendLimit},
 	} {
 		if w.src == nil {
 			continue
 		}
-		at := time.Time{}
-		if w.src.ResetsAt > 0 {
-			at = time.Unix(w.src.ResetsAt, 0)
-		}
-		out = append(out, spendWindow{Name: w.name, UsedPercent: w.src.UsedPercentage, ResetsAt: at})
+		out = append(out, spendstore.Window{
+			Name:        w.name,
+			UsedPercent: w.src.UsedPercentage,
+			ResetsAtSec: w.src.ResetsAt,
+		})
 	}
 	return out
 }
@@ -185,17 +147,22 @@ func handleUsage(rec spendRecorder) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		reading := spendReading{
-			User:         b.User,
-			TmuxSession:  b.TmuxSession,
-			Tool:         sessionio.HarnessClaude,
-			SessionID:    b.StatusLine.SessionID,
-			Model:        b.StatusLine.Model.ID,
-			CostUSD:      b.StatusLine.Cost.TotalCostUSD,
-			InputTokens:  b.StatusLine.ContextWindow.TotalInputTokens,
-			OutputTokens: b.StatusLine.ContextWindow.TotalOutputTokens,
-			At:           time.Now(),
-			Windows:      b.StatusLine.RateLimits.windows(),
+		cw := b.StatusLine.ContextWindow
+		reading := spendstore.Reading{
+			User:        b.User,
+			TmuxSession: b.TmuxSession,
+			Tool:        sessionio.HarnessClaude,
+			SessionID:   b.StatusLine.SessionID,
+			Model:       b.StatusLine.Model.ID,
+			CostUSD:     b.StatusLine.Cost.TotalCostUSD,
+			Tokens: spendstore.Tokens{
+				Input:         cw.TotalInputTokens,
+				Output:        cw.TotalOutputTokens,
+				CacheRead:     cw.CurrentUsage.CacheReadInputTokens,
+				CacheCreation: cw.CurrentUsage.CacheCreationInputTokens,
+			},
+			At:      time.Now(),
+			Windows: b.StatusLine.RateLimits.windows(),
 		}
 		if err := rec.Record(reading); err != nil {
 			log.Printf("usage %s/%s: %v", reading.User, reading.TmuxSession, err)

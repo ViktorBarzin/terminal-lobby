@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"terminal-lobby/sessionio"
+	"terminal-lobby/spendstore"
 )
 
 // The two fixtures are the statusLine payloads measured on 2026-09-06 against
@@ -50,11 +50,11 @@ func quote(t *testing.T, s string) string {
 // It is also what proves the handler is testable without a filesystem, which is
 // the point of spendRecorder being an interface.
 type memRecorder struct {
-	got []spendReading
+	got []spendstore.Reading
 	err error
 }
 
-func (m *memRecorder) Record(r spendReading) error {
+func (m *memRecorder) Record(r spendstore.Reading) error {
 	if m.err != nil {
 		return m.err
 	}
@@ -190,14 +190,48 @@ func TestUsageRecordsAnEnterpriseReading(t *testing.T) {
 	if r.CostUSD != 0.329 {
 		t.Fatalf("cost = %v, want 0.329", r.CostUSD)
 	}
-	if r.InputTokens != 58794 || r.OutputTokens != 12 {
-		t.Fatalf("tokens = %d in / %d out, want 58794 / 12", r.InputTokens, r.OutputTokens)
+	if r.Tokens.Input != 58794 || r.Tokens.Output != 12 {
+		t.Fatalf("tokens = %d in / %d out, want 58794 / 12", r.Tokens.Input, r.Tokens.Output)
 	}
 	if len(r.Windows) != 0 {
 		t.Fatalf("windows = %+v, want none for a seat that reports no rate_limits", r.Windows)
 	}
 	if r.At.IsZero() {
 		t.Fatal("the reading carries no timestamp, so nothing downstream can put it in a period")
+	}
+}
+
+// context_window.total_input_tokens is the SUM of current_usage's parts, so the
+// cache figures are a breakdown within it rather than extra on top. The fixture
+// is the measured payload, and 2 + 31538 + 27254 = 58794 is what proves it.
+func TestUsageRecordsTheCacheSplitInsideTheInputTotal(t *testing.T) {
+	rec := &memRecorder{}
+	body := usageEnvelope(t, "wizard", "demo", statusLineFixture(t, "statusline_enterprise.json"))
+	if w := postUsage(t, rec, "127.0.0.1:5000", body); w.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (%s)", w.Code, w.Body.String())
+	}
+	tok := rec.got[0].Tokens
+	if tok.CacheCreation != 31538 || tok.CacheRead != 27254 {
+		t.Fatalf("cache split = %d created / %d read, want 31538 / 27254", tok.CacheCreation, tok.CacheRead)
+	}
+	if tok.CacheCreation+tok.CacheRead > tok.Input {
+		t.Fatalf("the cache figures (%d + %d) exceed the input total %d, so they are not a breakdown of it",
+			tok.CacheCreation, tok.CacheRead, tok.Input)
+	}
+}
+
+// A payload with no current_usage is an ordinary reading with no split to
+// report, not a broken one. The key has moved between versions.
+func TestUsageAcceptsAPayloadWithNoCacheSplit(t *testing.T) {
+	rec := &memRecorder{}
+	sl := `{"session_id":"s1","model":{"id":"claude-opus-5"},"cost":{"total_cost_usd":0.5},` +
+		`"context_window":{"total_input_tokens":900,"total_output_tokens":40}}`
+	if w := postUsage(t, rec, "127.0.0.1:5000", usageEnvelope(t, "wizard", "demo", sl)); w.Code != http.StatusNoContent {
+		t.Fatalf("code = %d, want 204 (%s)", w.Code, w.Body.String())
+	}
+	tok := rec.got[0].Tokens
+	if tok.Input != 900 || tok.Output != 40 || tok.CacheRead != 0 || tok.CacheCreation != 0 {
+		t.Fatalf("tokens = %+v, want 900/40 with no split", tok)
 	}
 }
 
@@ -214,17 +248,16 @@ func TestUsageRecordsSubscriberWindows(t *testing.T) {
 	if r.CostUSD != 1.75 {
 		t.Fatalf("cost = %v, want 1.75", r.CostUSD)
 	}
-	want := []spendWindow{
-		{Name: windowFiveHour, UsedPercent: 37, ResetsAt: time.Unix(1788730052, 0)},
-		{Name: windowSevenDay, UsedPercent: 61, ResetsAt: time.Unix(1788757961, 0)},
-		{Name: windowSpendLimit, UsedPercent: 4, ResetsAt: time.Unix(1789000000, 0)},
+	want := []spendstore.Window{
+		{Name: spendstore.WindowFiveHour, UsedPercent: 37, ResetsAtSec: 1788730052},
+		{Name: spendstore.WindowSevenDay, UsedPercent: 61, ResetsAtSec: 1788757961},
+		{Name: spendstore.WindowSpendLimit, UsedPercent: 4, ResetsAtSec: 1789000000},
 	}
 	if len(r.Windows) != len(want) {
 		t.Fatalf("windows = %+v, want %d of them", r.Windows, len(want))
 	}
 	for i, w := range want {
-		got := r.Windows[i]
-		if got.Name != w.Name || got.UsedPercent != w.UsedPercent || !got.ResetsAt.Equal(w.ResetsAt) {
+		if got := r.Windows[i]; got != w {
 			t.Errorf("window %d = %+v, want %+v", i, got, w)
 		}
 	}
@@ -243,7 +276,7 @@ func TestUsageRecordsOnlyTheWindowsThePayloadCarries(t *testing.T) {
 		t.Fatalf("code = %d, want 204 (%s)", w.Code, w.Body.String())
 	}
 	r := rec.got[0]
-	if len(r.Windows) != 1 || r.Windows[0].Name != windowSevenDay {
+	if len(r.Windows) != 1 || r.Windows[0].Name != spendstore.WindowSevenDay {
 		t.Fatalf("windows = %+v, want only the weekly one", r.Windows)
 	}
 }
@@ -261,8 +294,8 @@ func TestUsageKeepsAWindowWithNoResetInstant(t *testing.T) {
 	if len(r.Windows) != 1 {
 		t.Fatalf("windows = %+v, want the one the payload carried", r.Windows)
 	}
-	if !r.Windows[0].ResetsAt.IsZero() {
-		t.Fatalf("resets at %v, want the zero instant", r.Windows[0].ResetsAt)
+	if r.Windows[0].ResetsAtSec != 0 {
+		t.Fatalf("resets at %d, want zero, meaning no reset known", r.Windows[0].ResetsAtSec)
 	}
 }
 
@@ -299,5 +332,40 @@ func TestUsageRouteIsGated(t *testing.T) {
 	}
 	if !strings.Contains(line, "localhostOnly(") || !strings.Contains(line, "peerOwnsClaim(") {
 		t.Errorf("POST /hooks/usage is not behind both gates:\n%s", line)
+	}
+	// The endpoint answered 204 while keeping nothing for one commit. It must
+	// not go back to that quietly, and nothing else in the suite would notice.
+	if !strings.Contains(line, "spendstore.New(") {
+		t.Errorf("POST /hooks/usage is not wired to the on-disk store:\n%s", line)
+	}
+}
+
+// The handler and the store, together, against a real directory: this is what
+// says a statusLine render reaches the file the Settings page will read.
+func TestUsageReachesTheOnDiskStore(t *testing.T) {
+	dir := t.TempDir()
+	store := spendstore.New(dir)
+	body := usageEnvelope(t, "wizard", "demo", statusLineFixture(t, "statusline_enterprise.json"))
+	for i := 0; i < 3; i++ { // the statusLine renders many times a turn
+		if w := postUsage(t, store, "127.0.0.1:5000", body); w.Code != http.StatusNoContent {
+			t.Fatalf("render %d: code = %d, want 204 (%s)", i, w.Code, w.Body.String())
+		}
+	}
+	doc, err := store.Load("wizard")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(doc.Sessions) != 1 || doc.Sessions[0].CostUSD != 0.329 {
+		t.Fatalf("session rows = %+v, want one at 0.329", doc.Sessions)
+	}
+	var days float64
+	for _, d := range doc.Days {
+		days += d.CostUSD
+	}
+	if days != 0.329 {
+		t.Fatalf("day rollup = %v, want 0.329 — three renders of one running total are not three charges", days)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "wizard.json")); err != nil {
+		t.Fatalf("stat the stored document: %v", err)
 	}
 }
